@@ -1051,11 +1051,10 @@ checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
 
 [[package]]
 name = "colored"
-version = "2.2.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
+checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
 dependencies = [
- "lazy_static",
  "windows-sys 0.59.0",
 ]
 
@@ -1961,6 +1960,7 @@ dependencies = [
 name = "helixdb"
 version = "1.0.85"
 dependencies = [
+ "base64 0.22.1",
  "bincode",
  "chrono",
  "colored",
@@ -1968,6 +1968,7 @@ dependencies = [
  "flume",
  "get_routes",
  "heed3",
+ "hex",
  "inventory",
  "itertools 0.14.0",
  "kdam",
@@ -1981,10 +1982,12 @@ dependencies = [
  "rand 0.9.1",
  "rayon",
  "reqwest",
+ "ring",
  "rusqlite",
  "rust_decimal",
  "serde",
  "serde_json",
+ "sha2",
  "sonic-rs",
  "tempfile",
  "tokio",

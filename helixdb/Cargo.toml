@@ -23,8 +23,12 @@ chrono = "0.4.39"
 flume = "0.11.1"
 rayon = "1.8.0"
 itertools = "0.14.0"
-colored = "2.1.0"
+colored = "3.0.0"
 get_routes = { version = "0.1.0", path = "../get_routes" }
+base64 = "0.22.1"
+ring = "0.17.14"
+sha2 = "0.10.7"
+hex = "0.4.3"
 
 # Compiler
 pest = { version = "2.7", optional = true }
@@ -64,7 +68,7 @@ ingestion = [
     "reqwest",
     "native-tls",
     "rust_decimal",
-    "tempfile"
+    "tempfile",
 ]
 build = ["compiler"]
 full = ["build", "compiler", "ingestion", "cosine"]
