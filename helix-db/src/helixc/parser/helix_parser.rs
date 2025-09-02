@@ -1730,15 +1730,46 @@ impl HelixParser {
                 )));
             }
         };
-        let k = pairs.next().unwrap().as_str().to_string();
+        let k = Some(match pairs.next() {
+            Some(pair) => match pair.as_rule() {
+                Rule::identifier => {
+                    EvaluatesToNumber {
+                        loc: pair.loc(),
+                        value: EvaluatesToNumberType::Identifier(pair.as_str().to_string()),
+                    }
+                }
+                Rule::integer => {
+                    EvaluatesToNumber {
+                        loc: pair.loc(),
+                        value: EvaluatesToNumberType::I32(
+                            pair.as_str()
+                                .to_string()
+                                .parse::<i32>()
+                                .map_err(|_| ParserError::from("Invalid integer value"))?,
+                        ),
+                    }
+                }
+                _ => {
+                    return Err(ParserError::from(format!(
+                        "Unexpected rule in BM25Search: {:?}",
+                        pair.as_rule()
+                    )));
+                }
+            }
+            None => {   
+                return Err(ParserError::from(format!(
+                    "Unexpected rule in BM25Search: {:?}",
+                    pair.as_rule()
+                )));
+            }
+        });
+
+        
         Ok(BM25Search {
             loc: pair.loc(),
             type_arg: Some(vector_type),
             data: Some(query),
-            k: Some(EvaluatesToNumber {
-                loc: pair.loc(),
-                value: EvaluatesToNumberType::U32(k.parse::<u32>().unwrap()),
-            }),
+            k,
         })
     }
 
@@ -1923,7 +1954,7 @@ impl HelixParser {
     fn parse_search_vector(&self, pair: Pair<Rule>) -> Result<SearchVector, ParserError> {
         let mut vector_type = None;
         let mut data = None;
-        let mut k = None;
+        let mut k: Option<EvaluatesToNumber> = None;
         let mut pre_filter = None;
         for p in pair.clone().into_inner() {
             match p.as_rule() {

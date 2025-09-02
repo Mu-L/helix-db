@@ -1165,7 +1165,7 @@ pub(crate) fn infer_expr_type<'a>(
                             bm25_search.loc.clone(),
                             i.as_str(),
                         );
-                        gen_identifier_or_param(original_query, i, true, false)
+                        gen_identifier_or_param(original_query, i, false, true)
                     }
                     _ => {
                         generate_error!(
@@ -1173,7 +1173,7 @@ pub(crate) fn infer_expr_type<'a>(
                             original_query,
                             bm25_search.loc.clone(),
                             E305,
-                            ["k", "SearchV"],
+                            ["k", "SearchBM25"],
                             ["k"]
                         );
                         GeneratedValue::Unknown
