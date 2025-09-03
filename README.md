@@ -74,11 +74,11 @@ The Helix CLI tool can be used to check, compile and deploy Helix locally.
 
    ```js
    QUERY addUser(name: String, age: I64) =>
-      user <- AddN<User({name: name, age: age})
+      user <- AddN<User>({name: name, age: age})
       RETURN user
 
    QUERY getUser(user_name: String) =>
-      user <- N<User::WHERE(_::{name}::EQ(user_name))
+      user <- N<User>::WHERE(_::{name}::EQ(user_name))
       RETURN user
    ```
 
