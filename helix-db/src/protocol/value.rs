@@ -1,6 +1,6 @@
 use crate::debug_println;
 use crate::helix_gateway::mcp::tools::{FilterValues, Operator};
-use crate::protocol::date::{Date, DateError};
+use crate::protocol::date::Date;
 use crate::utils::id::ID;
 use crate::{helix_engine::types::GraphError, helixc::generator::utils::GenRef};
 use chrono::Utc;
@@ -87,6 +87,15 @@ impl Value {
     ) -> Result<bool, GraphError> {
         Ok(f(&self))
     }
+
+    #[inline]
+    pub fn is_in<T>(&self, values: &[T]) -> bool
+    where
+        T: PartialEq,
+        Value: IntoPrimitive<T> + Into<T>,
+    {
+        values.contains(self.into_primitive())
+    }
 }
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -112,6 +121,7 @@ impl Display for Value {
         }
     }
 }
+
 impl Ord for Value {
     fn cmp(&self, other: &Self) -> Ordering {
         let to_i128 = |value: &Value| -> Option<i128> {
@@ -1108,28 +1118,9 @@ impl FilterValues for Value {
     }
 }
 
-pub trait CastValue {
-    fn into_i8(self) -> i8;
-    fn into_i16(self) -> i16;
-    fn into_i32(self) -> i32;
-    fn into_i64(self) -> i64;
-    fn into_u8(self) -> u8;
-    fn into_u16(self) -> u16;
-    fn into_u32(self) -> u32;
-    fn into_u64(self) -> u64;
-    fn into_u128(self) -> u128;
-    fn into_date(self) -> Result<Date, DateError>;
-    fn into_boolean(self) -> bool;
-    fn into_id(self) -> ID;
-    fn into_array(self) -> Vec<Value>;
-    fn into_object(self) -> HashMap<String, Value>;
-    fn into_f32(self) -> f32;
-    fn into_f64(self) -> f64;
-}
-
-impl CastValue for Value {
-    fn into_i8(self) -> i8 {
-        match self {
+impl From<Value> for i8 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::I8(i) => i,
             Value::I16(i) => i as i8,
             Value::I32(i) => i as i8,
@@ -1146,8 +1137,11 @@ impl CastValue for Value {
             _ => panic!("Value cannot be cast to i8"),
         }
     }
-    fn into_i16(self) -> i16 {
-        match self {
+}
+
+impl From<Value> for i16 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::I16(i) => i,
             Value::I8(i) => i as i16,
             Value::I32(i) => i as i16,
@@ -1164,8 +1158,11 @@ impl CastValue for Value {
             _ => panic!("Value cannot be cast to i16"),
         }
     }
-    fn into_i32(self) -> i32 {
-        match self {
+}
+
+impl From<Value> for i32 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::I32(i) => i,
             Value::I8(i) => i as i32,
             Value::I16(i) => i as i32,
@@ -1182,8 +1179,11 @@ impl CastValue for Value {
             _ => panic!("Value cannot be cast to i32"),
         }
     }
-    fn into_i64(self) -> i64 {
-        match self {
+}
+
+impl From<Value> for i64 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::I64(i) => i,
             Value::I8(i) => i as i64,
             Value::I16(i) => i as i64,
@@ -1200,9 +1200,11 @@ impl CastValue for Value {
             _ => panic!("Value cannot be cast to i64"),
         }
     }
+}
 
-    fn into_u8(self) -> u8 {
-        match self {
+impl From<Value> for u8 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::U8(i) => i,
             Value::I8(i) => i as u8,
             Value::I16(i) => i as u8,
@@ -1219,9 +1221,11 @@ impl CastValue for Value {
             _ => panic!("Value cannot be cast to u8"),
         }
     }
+}
 
-    fn into_u16(self) -> u16 {
-        match self {
+impl From<Value> for u16 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::U16(i) => i,
             Value::I8(i) => i as u16,
             Value::I16(i) => i as u16,
@@ -1238,9 +1242,11 @@ impl CastValue for Value {
             _ => panic!("Value cannot be cast to u16"),
         }
     }
+}
 
-    fn into_u32(self) -> u32 {
-        match self {
+impl From<Value> for u32 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::U32(i) => i,
             Value::I8(i) => i as u32,
             Value::I16(i) => i as u32,
@@ -1257,9 +1263,11 @@ impl CastValue for Value {
             _ => panic!("Value cannot be cast to u32"),
         }
     }
+}
 
-    fn into_u64(self) -> u64 {
-        match self {
+impl From<Value> for u64 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::U64(i) => i,
             Value::I8(i) => i as u64,
             Value::I16(i) => i as u64,
@@ -1275,9 +1283,11 @@ impl CastValue for Value {
             _ => panic!("Value cannot be cast to u64"),
         }
     }
+}
 
-    fn into_u128(self) -> u128 {
-        match self {
+impl From<Value> for u128 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::U128(i) => i,
             Value::I8(i) => i as u128,
             Value::I16(i) => i as u128,
@@ -1294,48 +1304,59 @@ impl CastValue for Value {
             _ => panic!("Value cannot be cast to u128"),
         }
     }
+}
 
-    fn into_date(self) -> Result<Date, DateError> {
-        match self {
-            Value::String(s) => Date::new(&Value::String(s)),
-            Value::I64(i) => Date::new(&Value::I64(i)),
-            Value::U64(i) => Date::new(&Value::U64(i)),
+impl From<Value> for Date {
+    fn from(val: Value) -> Self {
+        match val {
+            Value::String(s) => Date::new(&Value::String(s)).unwrap(),
+            Value::I64(i) => Date::new(&Value::I64(i)).unwrap(),
+            Value::U64(i) => Date::new(&Value::U64(i)).unwrap(),
             _ => panic!("Value cannot be cast to date"),
         }
     }
-
-    fn into_boolean(self) -> bool {
-        match self {
+}
+impl From<Value> for bool {
+    fn from(val: Value) -> Self {
+        match val {
             Value::Boolean(b) => b,
             _ => panic!("Value cannot be cast to boolean"),
         }
     }
+}
 
-    fn into_id(self) -> ID {
-        match self {
+impl From<Value> for ID {
+    fn from(val: Value) -> Self {
+        match val {
             Value::Id(id) => id,
             Value::String(s) => ID::from(s),
             Value::U128(i) => ID::from(i),
             _ => panic!("Value cannot be cast to id"),
         }
     }
+}
 
-    fn into_array(self) -> Vec<Value> {
-        match self {
+impl From<Value> for Vec<Value> {
+    fn from(val: Value) -> Self {
+        match val {
             Value::Array(a) => a,
             _ => panic!("Value cannot be cast to array"),
         }
     }
+}
 
-    fn into_object(self) -> HashMap<String, Value> {
-        match self {
+impl From<Value> for HashMap<String, Value> {
+    fn from(val: Value) -> Self {
+        match val {
             Value::Object(o) => o,
             _ => panic!("Value cannot be cast to object"),
         }
     }
+}
 
-    fn into_f32(self) -> f32 {
-        match self {
+impl From<Value> for f32 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::F32(f) => f,
             Value::F64(f) => f as f32,
             Value::I8(i) => i as f32,
@@ -1351,9 +1372,11 @@ impl CastValue for Value {
             _ => panic!("Value cannot be cast to f32"),
         }
     }
+}
 
-    fn into_f64(self) -> f64 {
-        match self {
+impl From<Value> for f64 {
+    fn from(val: Value) -> Self {
+        match val {
             Value::F64(f) => f,
             Value::F32(f) => f as f64,
             Value::I8(i) => i as f64,
@@ -1401,22 +1424,22 @@ pub mod casting {
     pub fn cast(value: Value, cast_type: CastType) -> Value {
         match cast_type {
             CastType::String => Value::String(value.to_string()),
-            CastType::I8 => Value::I8(value.into_i8()),
-            CastType::I16 => Value::I16(value.into_i16()),
-            CastType::I32 => Value::I32(value.into_i32()),
-            CastType::I64 => Value::I64(value.into_i64()),
-            CastType::U8 => Value::U8(value.into_u8()),
-            CastType::U16 => Value::U16(value.into_u16()),
-            CastType::U32 => Value::U32(value.into_u32()),
-            CastType::U64 => Value::U64(value.into_u64()),
-            CastType::U128 => Value::U128(value.into_u128()),
-            CastType::F32 => Value::F32(value.into_f32()),
-            CastType::F64 => Value::F64(value.into_f64()),
-            CastType::Date => Value::Date(value.into_date().unwrap()),
-            CastType::Boolean => Value::Boolean(value.into_boolean()),
-            CastType::Id => Value::Id(value.into_id()),
-            CastType::Array => Value::Array(value.into_array()),
-            CastType::Object => Value::Object(value.into_object()),
+            CastType::I8 => Value::I8(value.into()),
+            CastType::I16 => Value::I16(value.into()),
+            CastType::I32 => Value::I32(value.into()),
+            CastType::I64 => Value::I64(value.into()),
+            CastType::U8 => Value::U8(value.into()),
+            CastType::U16 => Value::U16(value.into()),
+            CastType::U32 => Value::U32(value.into()),
+            CastType::U64 => Value::U64(value.into()),
+            CastType::U128 => Value::U128(value.into()),
+            CastType::F32 => Value::F32(value.into()),
+            CastType::F64 => Value::F64(value.into()),
+            CastType::Date => Value::Date(value.into()),
+            CastType::Boolean => Value::Boolean(value.into()),
+            CastType::Id => Value::Id(value.into()),
+            CastType::Array => Value::Array(value.into()),
+            CastType::Object => Value::Object(value.into()),
             CastType::Empty => Value::Empty,
         }
     }
@@ -1468,6 +1491,154 @@ pub mod casting {
                 FieldType::Object(_) => CastType::Object,
                 _ => CastType::Empty,
             }
+        }
+    }
+}
+
+pub trait IntoPrimitive<T> {
+    fn into_primitive(&self) -> &T;
+}
+
+impl IntoPrimitive<i8> for Value {
+    fn into_primitive(&self) -> &i8 {
+        match self {
+            Value::I8(i) => i,
+            _ => panic!("Value is not an i8"),
+        }
+    }
+}
+
+impl IntoPrimitive<i16> for Value {
+    fn into_primitive(&self) -> &i16 {
+        match self {
+            Value::I16(i) => i,
+            _ => panic!("Value is not an i16"),
+        }
+    }
+}
+
+impl IntoPrimitive<i32> for Value {
+    fn into_primitive(&self) -> &i32 {
+        match self {
+            Value::I32(i) => i,
+            _ => panic!("Value is not an i32"),
+        }
+    }
+}
+
+impl IntoPrimitive<i64> for Value {
+    fn into_primitive(&self) -> &i64 {
+        match self {
+            Value::I64(i) => i,
+            _ => panic!("Value is not an i64"),
+        }
+    }
+}
+
+impl IntoPrimitive<u8> for Value {
+    fn into_primitive(&self) -> &u8 {
+        match self {
+            Value::U8(i) => i,
+            _ => panic!("Value is not an u8"),
+        }
+    }
+}
+
+impl IntoPrimitive<u16> for Value {
+    fn into_primitive(&self) -> &u16 {
+        match self {
+            Value::U16(i) => i,
+            _ => panic!("Value is not an u16"),
+        }
+    }
+}
+
+impl IntoPrimitive<u32> for Value {
+    fn into_primitive(&self) -> &u32 {
+        match self {
+            Value::U32(i) => i,
+            _ => panic!("Value is not an u32"),
+        }
+    }
+}
+
+impl IntoPrimitive<u64> for Value {
+    fn into_primitive(&self) -> &u64 {
+        match self {
+            Value::U64(i) => i,
+            _ => panic!("Value is not an u64"),
+        }
+    }
+}
+
+impl IntoPrimitive<u128> for Value {
+    fn into_primitive(&self) -> &u128 {
+        match self {
+            Value::U128(i) => i,
+            _ => panic!("Value is not an u128"),
+        }
+    }
+}
+
+impl IntoPrimitive<f32> for Value {
+    fn into_primitive(&self) -> &f32 {
+        match self {
+            Value::F32(i) => i,
+            _ => panic!("Value is not an f32"),
+        }
+    }
+}
+
+impl IntoPrimitive<f64> for Value {
+    fn into_primitive(&self) -> &f64 {
+        match self {
+            Value::F64(i) => i,
+            _ => panic!("Value is not an f64"),
+        }
+    }
+}
+
+impl IntoPrimitive<bool> for Value {
+    fn into_primitive(&self) -> &bool {
+        match self {
+            Value::Boolean(i) => i,
+            _ => panic!("Value is not a boolean"),
+        }
+    }
+}
+
+impl IntoPrimitive<ID> for Value {
+    fn into_primitive(&self) -> &ID {
+        match self {
+            Value::Id(i) => i,
+            _ => panic!("Value is not an id"),
+        }
+    }
+}
+
+impl IntoPrimitive<Vec<Value>> for Value {
+    fn into_primitive(&self) -> &Vec<Value> {
+        match self {
+            Value::Array(i) => i,
+            _ => panic!("Value is not an array"),
+        }
+    }
+}
+
+impl IntoPrimitive<HashMap<String, Value>> for Value {
+    fn into_primitive(&self) -> &HashMap<String, Value> {
+        match self {
+            Value::Object(i) => i,
+            _ => panic!("Value is not an object"),
+        }
+    }
+}
+
+impl IntoPrimitive<Date> for Value {
+    fn into_primitive(&self) -> &Date {
+        match self {
+            Value::Date(i) => i,
+            _ => panic!("Value is not a date"),
         }
     }
 }

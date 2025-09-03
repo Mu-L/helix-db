@@ -1,5 +1,4 @@
 use crate::types::BuildMode;
-#[cfg(unix)]
 use super::utils::find_available_port;
 use helix_db::utils::styled_string::StyledString;
 
@@ -373,6 +372,7 @@ impl InstanceManager {
     }
 }
 
+#[cfg(unix)]
 fn kill_and_check_pid(pid: Pid) -> bool {
     println!("Checking pid {pid}");
     match kill(pid, Signal::SIGTERM) {

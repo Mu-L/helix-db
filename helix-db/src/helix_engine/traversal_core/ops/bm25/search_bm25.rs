@@ -2,8 +2,8 @@ use heed3::RoTxn;
 
 use crate::helix_engine::{
     bm25::bm25::BM25,
-    traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
     storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
+    traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
     types::GraphError,
 };
 use std::sync::Arc;
@@ -35,31 +35,38 @@ impl<'scope, 'inner> Iterator for SearchBM25<'scope, 'inner> {
 }
 
 pub trait SearchBM25Adapter<'a>: Iterator<Item = Result<TraversalValue, GraphError>> {
-    fn search_bm25(
+    fn search_bm25<K>(
         self,
         label: &str,
         query: &str,
-        k: usize,
+        k: K,
     ) -> Result<
         RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>>,
         GraphError,
-    >;
+    >
+    where
+        K: TryInto<usize>,
+        K::Error: std::fmt::Debug;
 }
 
 impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> SearchBM25Adapter<'a>
     for RoTraversalIterator<'a, I>
 {
-    fn search_bm25(
+    fn search_bm25<K>(
         self,
         label: &str,
         query: &str,
-        k: usize,
+        k: K,
     ) -> Result<
         RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>>,
         GraphError,
-    > {
+    >
+    where
+        K: TryInto<usize>,
+        K::Error: std::fmt::Debug,
+    {
         let results = match self.storage.bm25.as_ref() {
-            Some(s) => s.search(self.txn, query, k)?,
+            Some(s) => s.search(self.txn, query, k.try_into().unwrap())?,
             None => return Err(GraphError::from("BM25 not enabled!")),
         };
 
@@ -76,4 +83,3 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> SearchBM25Adapt
         })
     }
 }
-

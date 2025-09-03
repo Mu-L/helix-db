@@ -84,8 +84,10 @@ impl Query {
 
     fn print_query(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // prints the function signature
-        self.print_input_struct(f)?;
-        self.print_parameters(f)?;
+        if !self.parameters.is_empty() {
+            self.print_input_struct(f)?;
+            self.print_parameters(f)?;
+        }
         self.print_handler(f)?;
         writeln!(
             f,
@@ -95,17 +97,19 @@ impl Query {
 
         // print the db boilerplate
         writeln!(f, "let db = Arc::clone(&input.graph.storage);")?;
-        match self.hoisted_embedding_calls.is_empty() {
-            true => writeln!(
-                f,
-                "let data = input.request.in_fmt.deserialize::<{}Input>(&input.request.body)?;",
-                self.name
-            )?,
-            false => writeln!(
-                f,
-                "let data = input.request.in_fmt.deserialize::<{}Input>(&input.request.body)?.into_owned();",
-                self.name
-            )?,
+        if !self.parameters.is_empty() {
+            match self.hoisted_embedding_calls.is_empty() {
+                true => writeln!(
+                    f,
+                    "let data = input.request.in_fmt.deserialize::<{}Input>(&input.request.body)?;",
+                    self.name
+                )?,
+                false => writeln!(
+                    f,
+                    "let data = input.request.in_fmt.deserialize::<{}Input>(&input.request.body)?.into_owned();",
+                    self.name
+                )?,
+            }
         }
 
         // print embedding calls
@@ -221,10 +225,7 @@ impl Query {
         )?;
 
         writeln!(f, "connection.iter = result.into_iter();")?;
-        writeln!(
-            f,
-            "let mut connections = connections.lock().unwrap();"
-        )?;
+        writeln!(f, "let mut connections = connections.lock().unwrap();")?;
         writeln!(f, "connections.add_connection(connection);")?;
         writeln!(f, "drop(connections);")?;
         writeln!(

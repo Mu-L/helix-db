@@ -5,12 +5,12 @@ use crate::helixc::{
         methods::{
             migration_validation::validate_migration,
             query_validation::validate_query,
-            schema_methods::{SchemaVersionMap, build_field_lookups, check_schema},
+            schema_methods::{build_field_lookups, check_schema, SchemaVersionMap},
         },
         types::Type,
     },
     generator::Source as GeneratedSource,
-    parser::helix_parser::{EdgeSchema, ExpressionType, Field, Query, Source},
+    parser::helix_parser::{EdgeSchema, ExpressionType, Field, Query, ReturnType, Source},
 };
 use itertools::Itertools;
 use serde::Serialize;
@@ -250,8 +250,12 @@ impl QueryData {
             .return_values
             .iter()
             .flat_map(|e| {
-                if let ExpressionType::Identifier(ident) = &e.expr {
-                    Some(ident.clone())
+                if let ReturnType::Expression(expr) = e {
+                    if let ExpressionType::Identifier(ident) = &expr.expr {
+                        Some(ident.clone())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }

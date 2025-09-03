@@ -411,7 +411,7 @@ pub struct Query {
     pub name: String,
     pub parameters: Vec<Parameter>,
     pub statements: Vec<Statement>,
-    pub return_values: Vec<Expression>,
+    pub return_values: Vec<ReturnType>,
     pub loc: Loc,
 }
 
@@ -489,6 +489,7 @@ pub enum ExpressionType {
     IntegerLiteral(i32),
     FloatLiteral(f64),
     BooleanLiteral(bool),
+    ArrayLiteral(Vec<Expression>),
     Exists(ExistsExpression),
     BatchAddVector(BatchAddVector),
     AddVector(AddVector),
@@ -501,6 +502,15 @@ pub enum ExpressionType {
     BM25Search(BM25Search),
     Empty,
 }
+
+#[derive(Debug, Clone)]
+pub enum ReturnType {
+    Array(Vec<ReturnType>),
+    Object(HashMap<String, ReturnType>),
+    Expression(Expression),
+    Empty,
+}
+
 impl Debug for ExpressionType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -510,6 +520,7 @@ impl Debug for ExpressionType {
             ExpressionType::IntegerLiteral(i) => write!(f, "{i}"),
             ExpressionType::FloatLiteral(fl) => write!(f, "{fl}"),
             ExpressionType::BooleanLiteral(b) => write!(f, "{b}"),
+            ExpressionType::ArrayLiteral(a) => write!(f, "Array({a:?})"),
             ExpressionType::Exists(e) => write!(f, "Exists({e:?})"),
             ExpressionType::BatchAddVector(bav) => write!(f, "BatchAddVector({bav:?})"),
             ExpressionType::AddVector(av) => write!(f, "AddVector({av:?})"),
@@ -533,6 +544,7 @@ impl Display for ExpressionType {
             ExpressionType::IntegerLiteral(i) => write!(f, "{i}"),
             ExpressionType::FloatLiteral(fl) => write!(f, "{fl}"),
             ExpressionType::BooleanLiteral(b) => write!(f, "{b}"),
+            ExpressionType::ArrayLiteral(a) => write!(f, "Array({a:?})"),
             ExpressionType::Exists(e) => write!(f, "Exists({e:?})"),
             ExpressionType::BatchAddVector(bav) => write!(f, "BatchAddVector({bav:?})"),
             ExpressionType::AddVector(av) => write!(f, "AddVector({av:?})"),
@@ -716,6 +728,8 @@ pub enum BooleanOpType {
     LessThanOrEqual(Box<Expression>),
     Equal(Box<Expression>),
     NotEqual(Box<Expression>),
+    Contains(Box<Expression>),
+    IsIn(Box<Expression>),
 }
 
 #[derive(Debug, Clone)]
@@ -1725,15 +1739,46 @@ impl HelixParser {
                 )));
             }
         };
-        let k = pairs.next().unwrap().as_str().to_string();
+        let k = Some(match pairs.next() {
+            Some(pair) => match pair.as_rule() {
+                Rule::identifier => {
+                    EvaluatesToNumber {
+                        loc: pair.loc(),
+                        value: EvaluatesToNumberType::Identifier(pair.as_str().to_string()),
+                    }
+                }
+                Rule::integer => {
+                    EvaluatesToNumber {
+                        loc: pair.loc(),
+                        value: EvaluatesToNumberType::I32(
+                            pair.as_str()
+                                .to_string()
+                                .parse::<i32>()
+                                .map_err(|_| ParserError::from("Invalid integer value"))?,
+                        ),
+                    }
+                }
+                _ => {
+                    return Err(ParserError::from(format!(
+                        "Unexpected rule in BM25Search: {:?}",
+                        pair.as_rule()
+                    )));
+                }
+            }
+            None => {   
+                return Err(ParserError::from(format!(
+                    "Unexpected rule in BM25Search: {:?}",
+                    pair.as_rule()
+                )));
+            }
+        });
+
+        
         Ok(BM25Search {
             loc: pair.loc(),
             type_arg: Some(vector_type),
             data: Some(query),
-            k: Some(EvaluatesToNumber {
-                loc: pair.loc(),
-                value: EvaluatesToNumberType::U32(k.parse::<u32>().unwrap()),
-            }),
+            k,
         })
     }
 
@@ -1918,7 +1963,7 @@ impl HelixParser {
     fn parse_search_vector(&self, pair: Pair<Rule>) -> Result<SearchVector, ParserError> {
         let mut vector_type = None;
         let mut data = None;
-        let mut k = None;
+        let mut k: Option<EvaluatesToNumber> = None;
         let mut pre_filter = None;
         for p in pair.clone().into_inner() {
             match p.as_rule() {
@@ -2212,11 +2257,91 @@ impl HelixParser {
         })
     }
 
-    fn parse_return_statement(&self, pair: Pair<Rule>) -> Result<Vec<Expression>, ParserError> {
+    fn parse_return_statement(&self, pair: Pair<Rule>) -> Result<Vec<ReturnType>, ParserError> {
         // println!("pair: {:?}", pair.clone().into_inner());
+        let inner = pair.into_inner();
+        let mut return_types = Vec::new();
+        for pair in inner {
+            match pair.as_rule() {
+                Rule::array_creation => {
+                    return_types.push(ReturnType::Array(self.parse_array_creation(pair)?));
+                }
+                Rule::object_creation => {
+                    return_types.push(ReturnType::Object(self.parse_object_creation(pair)?));
+                }
+                Rule::evaluates_to_anything => {
+                    return_types.push(ReturnType::Expression(self.parse_expression(pair)?));
+                }
+                _ => {
+                    return Err(ParserError::from(format!(
+                        "Unexpected rule in return statement: {:?}",
+                        pair.as_rule()
+                    )));
+                }
+            }
+        }
+        Ok(return_types)
+    }
+
+    fn parse_array_creation(&self, pair: Pair<Rule>) -> Result<Vec<ReturnType>, ParserError> {
+        let pairs = pair.into_inner();
+        let mut objects = Vec::new();
+        for p in pairs {
+            match p.as_rule() {
+                Rule::identifier => {
+                    objects.push(ReturnType::Expression(Expression {
+                        loc: p.loc(),
+                        expr: ExpressionType::Identifier(p.as_str().to_string()),
+                    }));
+                }
+                _ => {
+                    objects.push(ReturnType::Object(self.parse_object_creation(p)?));
+                }
+            }
+        }
+        Ok(objects)
+    }
+
+    fn parse_object_creation(
+        &self,
+        pair: Pair<Rule>,
+    ) -> Result<HashMap<String, ReturnType>, ParserError> {
         pair.into_inner()
-            .map(|p| self.parse_expression(p))
-            .collect()
+            .map(|p| {
+                let mut object_inner = p.into_inner();
+                let key = object_inner
+                    .next()
+                    .ok_or_else(|| ParserError::from("Missing object inner"))?;
+                let value = object_inner
+                    .next()
+                    .ok_or_else(|| ParserError::from("Missing object inner"))?;
+                let value = self.parse_object_inner(value)?;
+                Ok((key.as_str().to_string(), value))
+            })
+            .collect::<Result<HashMap<String, ReturnType>, _>>()
+    }
+
+    fn parse_object_inner(&self, object_field: Pair<Rule>) -> Result<ReturnType, ParserError> {
+        let object_field_inner = object_field
+            .into_inner()
+            .next()
+            .ok_or_else(|| ParserError::from("Missing object inner"))?;
+
+        match object_field_inner.as_rule() {
+            Rule::evaluates_to_anything => Ok(ReturnType::Expression(
+                self.parse_expression(object_field_inner)?,
+            )),
+            Rule::object_creation => Ok(ReturnType::Object(
+                self.parse_object_creation(object_field_inner)?,
+            )),
+            Rule::array_creation => Ok(ReturnType::Array(
+                self.parse_array_creation(object_field_inner)?,
+            )),
+            _ => Err(ParserError::from(format!(
+                "Unexpected rule in parse_object_inner: {:?}",
+                object_field_inner.as_rule()
+            ))),
+        }
     }
 
     fn parse_expression_vec(&self, pairs: Pairs<Rule>) -> Result<Vec<Expression>, ParserError> {
@@ -2422,6 +2547,10 @@ impl HelixParser {
                 loc: pair.loc(),
                 expr: ExpressionType::BooleanLiteral(pair.as_str() == "true"),
             }),
+            Rule::array_literal => Ok(Expression {
+                loc: pair.loc(),
+                expr: ExpressionType::ArrayLiteral(self.parse_array_literal(pair)?),
+            }),
             Rule::evaluates_to_bool => Ok(self.parse_boolean_expression(pair)?),
             Rule::AddN => Ok(Expression {
                 loc: pair.loc(),
@@ -2456,6 +2585,13 @@ impl HelixParser {
                 pair.as_rule()
             ))),
         }
+    }
+
+    fn parse_array_literal(&self, pair: Pair<Rule>) -> Result<Vec<Expression>, ParserError> {
+        println!("pair: {pair:?}");
+        pair.into_inner()
+            .map(|p| self.parse_expression(p))
+            .collect()
     }
 
     fn parse_string_literal(&self, pair: Pair<Rule>) -> Result<String, ParserError> {
@@ -2915,6 +3051,16 @@ impl HelixParser {
                 op: BooleanOpType::NotEqual(Box::new(
                     self.parse_expression(inner.into_inner().next().unwrap())?,
                 )),
+            },
+            Rule::CONTAINS => BooleanOp {
+                loc: pair.loc(),
+                op: BooleanOpType::Contains(Box::new(
+                    self.parse_expression(inner.into_inner().next().unwrap())?,
+                )),
+            },
+            Rule::IS_IN => BooleanOp {
+                loc: pair.loc(),
+                op: BooleanOpType::IsIn(Box::new(self.parse_expression(inner)?)),
             },
             _ => return Err(ParserError::from("Invalid boolean operation")),
         };

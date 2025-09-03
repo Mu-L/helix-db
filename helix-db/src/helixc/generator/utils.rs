@@ -204,6 +204,7 @@ pub enum GeneratedValue {
     Identifier(GenRef<String>),
     Primitive(GenRef<String>),
     Parameter(GenRef<String>),
+    Array(GenRef<String>),
     Unknown,
 }
 impl GeneratedValue {
@@ -213,6 +214,7 @@ impl GeneratedValue {
             GeneratedValue::Primitive(value) => value,
             GeneratedValue::Identifier(value) => value,
             GeneratedValue::Parameter(value) => value,
+            GeneratedValue::Array(value) => value,
             GeneratedValue::Unknown => panic!("Cannot get inner of unknown"),
         }
     }
@@ -225,6 +227,7 @@ impl Display for GeneratedValue {
             GeneratedValue::Primitive(value) => write!(f, "{value}"),
             GeneratedValue::Identifier(value) => write!(f, "{value}"),
             GeneratedValue::Parameter(value) => write!(f, "{value}"),
+            GeneratedValue::Array(value) => write!(f, "&[{value}]"),
             GeneratedValue::Unknown => write!(f, ""),
         }
     }
@@ -236,6 +239,7 @@ impl Debug for GeneratedValue {
             GeneratedValue::Primitive(value) => write!(f, "Primitive({value})"),
             GeneratedValue::Identifier(value) => write!(f, "Identifier({value})"),
             GeneratedValue::Parameter(value) => write!(f, "Parameter({value})"),
+            GeneratedValue::Array(value) => write!(f, "Array({value:?})"),
             GeneratedValue::Unknown => write!(f, "Unknown"),
         }
     }

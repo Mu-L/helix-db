@@ -1,4 +1,5 @@
 use crate::helixc::analyzer::error_codes::*;
+use crate::helixc::generator::bool_op::{Contains, IsIn};
 use crate::helixc::generator::source_steps::SearchVector;
 use crate::helixc::generator::utils::{EmbedData, VecData};
 use crate::{
@@ -577,14 +578,14 @@ pub(crate) fn validate_traversal<'a>(
                             ))));
                     }
                     GeneratedStatement::BoExp(expr) => {
-                        // if Not(Exists()) or Exits() need to modify the traversal to not collect 
+                        // if Not(Exists()) or Exits() need to modify the traversal to not collect
                         // else return where as normal
                         let where_expr = match expr {
                             BoExp::Not(inner_expr) => {
                                 if let BoExp::Exists(mut traversal) = *inner_expr {
                                     traversal.should_collect = ShouldCollect::No;
                                     Where::Ref(WhereRef {
-                                        expr: BoExp::Exists(traversal),
+                                        expr: BoExp::Not(Box::new(BoExp::Exists(traversal))),
                                     })
                                 } else {
                                     Where::Ref(WhereRef {
@@ -617,7 +618,9 @@ pub(crate) fn validate_traversal<'a>(
                     | BooleanOpType::GreaterThanOrEqual(expr)
                     | BooleanOpType::GreaterThan(expr)
                     | BooleanOpType::Equal(expr)
-                    | BooleanOpType::NotEqual(expr) => {
+                    | BooleanOpType::NotEqual(expr)
+                    | BooleanOpType::Contains(expr)
+                    | BooleanOpType::IsIn(expr) => {
                         match infer_expr_type(
                             ctx,
                             expr,
@@ -661,7 +664,21 @@ pub(crate) fn validate_traversal<'a>(
                             if let Some(field_set) = field_set {
                                 match field_set.get(field_name.as_str()) {
                                     Some(field) => {
-                                        if field.field_type != property_type {
+                                        if let FieldType::Array(inner_type) = &property_type {
+                                            if field.field_type != **inner_type {
+                                                generate_error!(
+                                                    ctx,
+                                                    original_query,
+                                                    b_op.loc.clone(),
+                                                    E622,
+                                                    field_name,
+                                                    cur_ty.kind_str(),
+                                                    &cur_ty.get_type_name(),
+                                                    &field.field_type.to_string(),
+                                                    &property_type.to_string()
+                                                );
+                                            }
+                                        } else if field.field_type != property_type {
                                             generate_error!(
                                                 ctx,
                                                 original_query,
@@ -911,7 +928,80 @@ pub(crate) fn validate_traversal<'a>(
                         };
                         BoolOp::Neq(Neq { value: v })
                     }
-                    _ => unreachable!("shouldve been caught eariler"),
+                    BooleanOpType::Contains(expr) => {
+                        let v = match &expr.expr {
+                            ExpressionType::Identifier(i) => {
+                                is_valid_identifier(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    i.as_str(),
+                                );
+                                gen_identifier_or_param(original_query, i.as_str(), false, true)
+                            }
+                            ExpressionType::BooleanLiteral(b) => {
+                                GeneratedValue::Primitive(GenRef::Std(b.to_string()))
+                            }
+                            ExpressionType::IntegerLiteral(i) => {
+                                GeneratedValue::Primitive(GenRef::Std(i.to_string()))
+                            }
+                            ExpressionType::FloatLiteral(f) => {
+                                GeneratedValue::Primitive(GenRef::Std(f.to_string()))
+                            }
+                            ExpressionType::StringLiteral(s) => {
+                                GeneratedValue::Primitive(GenRef::Literal(s.to_string()))
+                            }
+                            _ => unreachable!("Cannot reach here"),
+                        };
+                        BoolOp::Contains(Contains { value: v })
+                    }
+                    BooleanOpType::IsIn(expr) => {
+                        let v = match &expr.expr {
+                            ExpressionType::Identifier(i) => {
+                                is_valid_identifier(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    i.as_str(),
+                                );
+                                gen_identifier_or_param(original_query, i.as_str(), true, false)
+                            }
+                            ExpressionType::ArrayLiteral(a) => GeneratedValue::Array(GenRef::Std(
+                                a.iter()
+                                    .map(|e| {
+                                        let v = match &e.expr {
+                                            ExpressionType::BooleanLiteral(b) => {
+                                                GeneratedValue::Primitive(GenRef::Std(
+                                                    b.to_string(),
+                                                ))
+                                            }
+                                            ExpressionType::IntegerLiteral(i) => {
+                                                GeneratedValue::Primitive(GenRef::Std(
+                                                    i.to_string(),
+                                                ))
+                                            }
+                                            ExpressionType::FloatLiteral(f) => {
+                                                GeneratedValue::Primitive(GenRef::Std(
+                                                    f.to_string(),
+                                                ))
+                                            }
+                                            ExpressionType::StringLiteral(s) => {
+                                                GeneratedValue::Primitive(GenRef::Literal(
+                                                    s.to_string(),
+                                                ))
+                                            }
+                                            _ => unreachable!("Cannot reach here"),
+                                        };
+                                        v.to_string()
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                            )),
+                            _ => unreachable!("Cannot reach here"),
+                        };
+                        BoolOp::IsIn(IsIn { value: v })
+                    }
+                    _ => unreachable!("shouldve been caught earlier"),
                 };
                 gen_traversal
                     .steps

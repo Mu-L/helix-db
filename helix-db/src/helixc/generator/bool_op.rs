@@ -14,19 +14,21 @@ pub enum BoolOp {
     Eq(Eq),
     Neq(Neq),
     Contains(Contains),
+    IsIn(IsIn),
 }
 impl Display for BoolOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            BoolOp::Gt(gt) => format!("{gt}"),
-            BoolOp::Gte(gte) => format!("{gte}"),
-            BoolOp::Lt(lt) => format!("{lt}"),
-            BoolOp::Lte(lte) => format!("{lte}"),
-            BoolOp::Eq(eq) => format!("{eq}"),
-            BoolOp::Neq(neq) => format!("{neq}"),
-            BoolOp::Contains(_) => unimplemented!(),
+            BoolOp::Gt(gt) => format!("*v{gt}"),
+            BoolOp::Gte(gte) => format!("*v{gte}"),
+            BoolOp::Lt(lt) => format!("*v{lt}"),
+            BoolOp::Lte(lte) => format!("*v{lte}"),
+            BoolOp::Eq(eq) => format!("*v{eq}"),
+            BoolOp::Neq(neq) => format!("*v{neq}"),
+            BoolOp::Contains(contains) => format!("v{contains}"),
+            BoolOp::IsIn(is_in) => format!("v{is_in}"),
         };
-        write!(f, "map_value_or(false, |v| *v{s})?")
+        write!(f, "map_value_or(false, |v| {s})?")
     }
 }
 #[derive(Clone)]
@@ -96,6 +98,16 @@ pub struct Contains {
 impl Display for Contains {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, ".contains({})", self.value)
+    }
+}
+
+#[derive(Clone)]
+pub struct IsIn {
+    pub value: GeneratedValue,
+}
+impl Display for IsIn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, ".is_in({})", self.value)
     }
 }
 

@@ -14,6 +14,7 @@ pub enum Statement {
     Literal(GenRef<String>),
     Identifier(GenRef<String>),
     BoExp(BoExp),
+    Array(Vec<Statement>),
     Empty,
 }
 impl Display for Statement {
@@ -26,6 +27,7 @@ impl Display for Statement {
             Statement::Literal(literal) => write!(f, "{literal}"),
             Statement::Identifier(identifier) => write!(f, "{identifier}"),
             Statement::BoExp(bo) => write!(f, "{bo}"),
+            Statement::Array(array) => write!(f, "[{}]", array.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", ")),
             Statement::Empty => write!(f, ""),
         }
     }

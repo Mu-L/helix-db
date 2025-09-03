@@ -127,7 +127,7 @@ evaluates_to_number = {
 // ---------------------------------------------------------------------
 // Return statement
 // ---------------------------------------------------------------------
-return_stmt = { "RETURN" ~ evaluates_to_anything ~ ("," ~ evaluates_to_anything)* }
+return_stmt = { "RETURN" ~ (evaluates_to_anything ~ ("," ~ evaluates_to_anything)* | array_creation | object_creation) }
 
 // ---------------------------------------------------------------------
 // Creation steps
@@ -209,13 +209,16 @@ embed_method = { "Embed" ~ "(" ~ (identifier | string_literal) ~ ")" }
 // ---------------------------------------------------------------------
 and             = { negate? ~ "AND" ~ "(" ~ (evaluates_to_bool | anonymous_traversal) ~ ("," ~ (evaluates_to_bool | anonymous_traversal))* ~ ")" }
 or              = { negate? ~ "OR" ~ "(" ~ (evaluates_to_bool | anonymous_traversal) ~ ("," ~ (evaluates_to_bool | anonymous_traversal))* ~ ")" }
-bool_operations = { GT | GTE | LT | LTE | EQ | NEQ }
+bool_operations = { GT | GTE | LT | LTE | EQ | NEQ | CONTAINS | IS_IN }
 GT              = { "GT" ~ "(" ~ (evaluates_to_number | anonymous_traversal) ~ ")" }
 GTE             = { "GTE" ~ "(" ~ (evaluates_to_number | anonymous_traversal) ~ ")" }
 LT              = { "LT" ~ "(" ~ (evaluates_to_number | anonymous_traversal) ~ ")" }
 LTE             = { "LTE" ~ "(" ~ (evaluates_to_number | anonymous_traversal) ~ ")" }
 EQ              = { "EQ" ~ "(" ~ (evaluates_to_anything | anonymous_traversal) ~ ")" }
 NEQ             = { "NEQ" ~ "(" ~ (evaluates_to_anything | anonymous_traversal) ~ ")" }
+CONTAINS        = { "CONTAINS" ~ "(" ~ (evaluates_to_anything | anonymous_traversal) ~ ")" }
+IS_IN           = { "IS_IN" ~ "(" ~ (array_literal | identifier) ~ ")" }
+array_literal     = { "[" ~ (evaluates_to_anything) ~ ("," ~ (evaluates_to_anything))* ~ "]" }
 
 
 // ---------------------------------------------------------------------
@@ -226,6 +229,10 @@ exclude_field = { "!" ~ "{" ~ identifier ~ ("," ~ identifier)* ~ "}" }
 closure_step  = { "|" ~ identifier ~ "|" ~ object_step }
 spread_object = { ".." ~ ","?}
 mapping_field = { (identifier ~ (":" ~ (anonymous_traversal | evaluates_to_anything | object_step))) | identifier }
+array_creation = { "[" ~ (identifier | object_creation ) ~ ("," ~ (identifier | object_creation))* ~ ","? ~ "]" }
+object_creation = {  "{" ~ object_inner ~ ("," ~ object_inner)* ~ ","? ~ "}" }
+object_inner = { identifier ~ ":" ~ object_field }
+object_field = { (object_creation | array_creation | evaluates_to_anything) }
 
 // ---------------------------------------------------------------------
 // Macros

@@ -3,10 +3,12 @@ use super::{
     value::Value,
 };
 use crate::{debug_println, helix_engine::traversal_core::traversal_value::TraversalValue};
-use crate::utils::{
-    count::Count,
-    filterable::{Filterable, FilterableType},
-    items::{Edge, Node},
+use crate::{
+    utils::{
+        count::Count,
+        filterable::{Filterable, FilterableType},
+        items::{Edge, Node},
+    },
 };
 use sonic_rs::{Deserialize, Serialize};
 use std::{cell::RefMut, collections::HashMap};
@@ -197,31 +199,6 @@ impl ReturnValue {
         return_value
     }
 
-    #[inline(always)]
-    #[allow(unused_attributes)]
-    #[ignore = "No use for this function yet, however, I believe it may be useful in the future so I'm keeping it here"]
-    pub fn mixin_other<I>(&self, item: I, secondary_properties: ResponseRemapping) -> Self
-    where
-        I: Filterable + Clone,
-    {
-        let mut return_val = ReturnValue::default();
-        if !secondary_properties.should_spread {
-            match item.type_name() {
-                FilterableType::Node => {
-                    return_val = ReturnValue::from(item);
-                }
-                FilterableType::Edge => {
-                    return_val = ReturnValue::from(item);
-                }
-                FilterableType::Vector => {
-                    return_val = ReturnValue::from(item);
-                }
-            }
-        }
-        return_val = return_val.mixin_remapping(secondary_properties.remappings);
-        return_val
-    }
-
     #[inline]
     pub fn from_traversal_value<T: Filterable + Clone>(
         item: T,
@@ -278,6 +255,7 @@ impl ReturnValue {
 
         ReturnValue::Object(properties)
     }
+
 }
 
 impl<I: Filterable + Clone> From<I> for ReturnValue {
@@ -458,6 +436,12 @@ impl From<f32> for ReturnValue {
 impl From<Vec<TraversalValue>> for ReturnValue {
     fn from(array: Vec<TraversalValue>) -> Self {
         ReturnValue::Array(array.into_iter().map(|val| val.into()).collect())
+    }
+}
+
+impl From<Vec<ReturnValue>> for ReturnValue {
+    fn from(array: Vec<ReturnValue>) -> Self {
+        ReturnValue::Array(array)
     }
 }
 
