@@ -17,7 +17,7 @@ use std::{
 
 /// A flexible value type that can represent various property values in nodes and edges.
 /// Handles both JSON and binary serialisation formats via custom implementaions of the Serialize and Deserialize traits.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub enum Value {
     String(String),
     F32(f32),
@@ -196,31 +196,78 @@ impl PartialOrd for Value {
 
 impl Eq for Value {}
 
-// impl PartialEq<Value> for Value {
-//     fn eq(&self, other: &Value) -> bool {
-//         match (self, other) {
-//             (Value::String(s), Value::String(o)) => s == o,
-//             (Value::F32(s), Value::F32(o)) => s == o,
-//             (Value::F64(s), Value::F64(o)) => s == o,
-//             (Value::I8(s), Value::I8(o)) => s == o,
-//             (Value::I16(s), Value::I16(o)) => s == o,
-//             (Value::I32(s), Value::I32(o)) => s == o,
-//             (Value::I64(s), Value::I64(o)) => s == o,
-//             (Value::U8(s), Value::U8(o)) => s == o,
-//             (Value::U16(s), Value::U16(o)) => s == o,
-//             (Value::U32(s), Value::U32(o)) => s == o,
-//             (Value::U64(s), Value::U64(o)) => s == o,
-//             (Value::U128(s), Value::U128(o)) => s == o,
-//             (Value::Date(s), Value::Date(o)) => s == o,
-//             (Value::Boolean(s), Value::Boolean(o)) => s == o,
-//             (Value::Array(s), Value::Array(o)) => s == o,
-//             (Value::Empty, Value::Empty) => true,
-//             (Value::Empty, _) => false,
-//             (_, Value::Empty) => false,
-//             (_, _) => false,
-//         }
-//     }
-// }
+impl PartialEq<Value> for Value {
+    fn eq(&self, other: &Value) -> bool {
+        // Helper function to convert numeric values to f64 for comparison
+        let to_f64 = |value: &Value| -> Option<f64> {
+            match value {
+                Value::I8(v) => Some(*v as f64),
+                Value::I16(v) => Some(*v as f64),
+                Value::I32(v) => Some(*v as f64),
+                Value::I64(v) => Some(*v as f64),
+                Value::U8(v) => Some(*v as f64),
+                Value::U16(v) => Some(*v as f64),
+                Value::U32(v) => Some(*v as f64),
+                Value::U64(v) => Some(*v as f64),
+                Value::U128(v) => Some(*v as f64),
+                Value::F32(v) => Some(*v as f64),
+                Value::F64(v) => Some(*v),
+                _ => None,
+            }
+        };
+
+        // Helper to check if a value is numeric
+        let is_numeric = |value: &Value| -> bool {
+            matches!(
+                value,
+                Value::I8(_)
+                    | Value::I16(_)
+                    | Value::I32(_)
+                    | Value::I64(_)
+                    | Value::U8(_)
+                    | Value::U16(_)
+                    | Value::U32(_)
+                    | Value::U64(_)
+                    | Value::U128(_)
+                    | Value::F32(_)
+                    | Value::F64(_)
+            )
+        };
+
+        match (self, other) {
+            // Same type comparisons
+            (Value::String(s), Value::String(o)) => s == o,
+            (Value::Date(s), Value::Date(o)) => s == o,
+            (Value::Boolean(s), Value::Boolean(o)) => s == o,
+            (Value::Array(s), Value::Array(o)) => s == o,
+            (Value::Empty, Value::Empty) => true,
+            (Value::Empty, _) => false,
+            (_, Value::Empty) => false,
+
+            // Cross-type numeric comparisons
+            (s, o) if is_numeric(s) && is_numeric(o) => {
+                match (to_f64(s), to_f64(o)) {
+                    (Some(s_val), Some(o_val)) => {
+                        // For integer comparisons, check if the f64 conversion is exact
+                        // to avoid floating point precision issues
+                        if !matches!(self, Value::F32(_) | Value::F64(_))
+                            && !matches!(other, Value::F32(_) | Value::F64(_))
+                        {
+                            // Both are integers, compare as integers if possible
+                            self.cmp(other) == Ordering::Equal
+                        } else {
+                            // At least one is a float, use f64 comparison
+                            s_val == o_val
+                        }
+                    }
+                    _ => false,
+                }
+            }
+
+            _ => false,
+        }
+    }
+}
 
 impl PartialEq<ID> for Value {
     fn eq(&self, other: &ID) -> bool {
@@ -234,91 +281,58 @@ impl PartialEq<ID> for Value {
 }
 impl PartialEq<u8> for Value {
     fn eq(&self, other: &u8) -> bool {
-        match self {
-            Value::U8(u) => u == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 impl PartialEq<u16> for Value {
     fn eq(&self, other: &u16) -> bool {
-        match self {
-            Value::U16(u) => u == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 impl PartialEq<u32> for Value {
     fn eq(&self, other: &u32) -> bool {
-        match self {
-            Value::U32(u) => u == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 impl PartialEq<u64> for Value {
     fn eq(&self, other: &u64) -> bool {
-        match self {
-            Value::U64(u) => u == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 impl PartialEq<u128> for Value {
     fn eq(&self, other: &u128) -> bool {
-        match self {
-            Value::U128(u) => u == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 impl PartialEq<i8> for Value {
     fn eq(&self, other: &i8) -> bool {
-        match self {
-            Value::I8(i) => i == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 impl PartialEq<i16> for Value {
     fn eq(&self, other: &i16) -> bool {
-        match self {
-            Value::I16(i) => i == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 impl PartialEq<i32> for Value {
     fn eq(&self, other: &i32) -> bool {
-        match self {
-            Value::I32(i) => i == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 impl PartialEq<i64> for Value {
     fn eq(&self, other: &i64) -> bool {
-        match self {
-            Value::I64(i) => i == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 
 impl PartialEq<f32> for Value {
     fn eq(&self, other: &f32) -> bool {
-        match self {
-            Value::F32(f) => f == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 impl PartialEq<f64> for Value {
     fn eq(&self, other: &f64) -> bool {
-        match self {
-            Value::F64(f) => f == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 
@@ -333,108 +347,69 @@ impl PartialEq<String> for Value {
 
 impl PartialEq<bool> for Value {
     fn eq(&self, other: &bool) -> bool {
-        match self {
-            Value::Boolean(b) => b == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 
 impl PartialEq<&str> for Value {
     fn eq(&self, other: &&str) -> bool {
-        match self {
-            Value::String(s) => s == other,
-            _ => false,
-        }
+        self == &Value::from(*other)
     }
 }
 
 impl PartialOrd<i8> for Value {
     fn partial_cmp(&self, other: &i8) -> Option<Ordering> {
-        match self {
-            Value::I8(i) => i.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 impl PartialOrd<i16> for Value {
     fn partial_cmp(&self, other: &i16) -> Option<Ordering> {
-        match self {
-            Value::I16(i) => i.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 impl PartialOrd<i32> for Value {
     fn partial_cmp(&self, other: &i32) -> Option<Ordering> {
-        match self {
-            Value::I32(i) => i.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 impl PartialOrd<i64> for Value {
     fn partial_cmp(&self, other: &i64) -> Option<Ordering> {
-        match self {
-            Value::I64(i) => i.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 impl PartialOrd<f32> for Value {
     fn partial_cmp(&self, other: &f32) -> Option<Ordering> {
-        match self {
-            Value::F32(f) => f.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 impl PartialOrd<f64> for Value {
     fn partial_cmp(&self, other: &f64) -> Option<Ordering> {
-        match self {
-            Value::F64(f) => f.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 impl PartialOrd<u8> for Value {
     fn partial_cmp(&self, other: &u8) -> Option<Ordering> {
-        match self {
-            Value::U8(u) => u.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 impl PartialOrd<u16> for Value {
     fn partial_cmp(&self, other: &u16) -> Option<Ordering> {
-        match self {
-            Value::U16(u) => u.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 impl PartialOrd<u32> for Value {
     fn partial_cmp(&self, other: &u32) -> Option<Ordering> {
-        match self {
-            Value::U32(u) => u.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 impl PartialOrd<u64> for Value {
     fn partial_cmp(&self, other: &u64) -> Option<Ordering> {
-        match self {
-            Value::U64(u) => u.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 impl PartialOrd<u128> for Value {
     fn partial_cmp(&self, other: &u128) -> Option<Ordering> {
-        match self {
-            Value::U128(u) => u.partial_cmp(other),
-            _ => None,
-        }
+        self.partial_cmp(&Value::from(*other))
     }
 }
 
@@ -1641,4 +1616,15 @@ impl IntoPrimitive<Date> for Value {
             _ => panic!("Value is not a date"),
         }
     }
+}
+
+#[test]
+fn test_value_eq() {
+    assert_eq!(Value::I64(1), Value::I64(1));
+    assert_eq!(Value::U64(1), Value::U64(1));
+    assert_eq!(Value::F64(1.0), Value::F64(1.0));
+    assert_eq!(Value::I64(1), Value::U64(1));
+    assert_eq!(Value::U64(1), Value::I64(1));
+    assert_eq!(Value::I32(1), 1 as i32);
+    assert_eq!(Value::U32(1), 1 as i32);
 }

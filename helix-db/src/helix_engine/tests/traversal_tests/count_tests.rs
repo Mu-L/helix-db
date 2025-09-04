@@ -13,7 +13,7 @@ use crate::{
                     n_from_id::NFromIdAdapter,
                     n_from_type::NFromTypeAdapter,
                 },
-                util::range::RangeAdapter,
+                util::{filter_ref::FilterRefAdapter, range::RangeAdapter},
             },
             traversal_value::Traversable,
         },
@@ -21,6 +21,7 @@ use crate::{
     props,
 };
 
+use rand::Rng;
 use tempfile::TempDir;
 
 fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
@@ -135,4 +136,64 @@ fn test_count_empty() {
         .count();
 
     assert_eq!(count, 0);
+}
+
+#[test]
+fn test_count_filter_ref() {
+    let (storage, _temp_dir) = setup_test_db();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    let mut nodes = Vec::new();
+    for _ in 0..100 {
+        let node = G::new_mut(Arc::clone(&storage), &mut txn)
+            .add_n("Country", Some(props!()), None)
+            .collect_to_obj();
+        nodes.push(node);
+    }
+    let mut num_countries = 0;
+    for node in nodes {
+        let rand_num = rand::rng().random_range(0..100);
+        for _ in 0..rand_num {
+            let city = G::new_mut(Arc::clone(&storage), &mut txn)
+                .add_n("City", Some(props!()), None)
+                .collect_to_obj();
+            G::new_mut(Arc::clone(&storage), &mut txn)
+                .add_e(
+                    "Country_to_City",
+                    Some(props!()),
+                    node.id(),
+                    city.id(),
+                    false,
+                    EdgeType::Node,
+                )
+                .collect_to::<Vec<_>>();
+        }
+        if rand_num > 10 {
+            num_countries += 1;
+        }
+    }
+
+    let count = G::new(Arc::clone(&storage), &txn)
+        .n_from_type("Country")
+        .filter_ref(|val, txn| {
+            if let Ok(val) = val {
+                Ok(G::new_from(Arc::clone(&storage), &txn, val.clone())
+                    .out("Country_to_City", &EdgeType::Node)
+                    .count_to_val()
+                    .map_value_or(false, |v| {
+                        println!(
+                            "v: {v:?}, res: {:?}",
+                            *v > 10.clone()
+                        );
+                        *v > 10.clone()
+                    })?)
+            } else {
+                Ok(false)
+            }
+        })
+        .collect_to::<Vec<_>>();
+
+    println!("count: {count:?}, num_countries: {num_countries}");
+
+    assert_eq!(count.len(), num_countries);
 }
