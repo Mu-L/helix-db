@@ -198,7 +198,6 @@ impl Eq for Value {}
 
 impl PartialEq<Value> for Value {
     fn eq(&self, other: &Value) -> bool {
-        // Helper function to convert numeric values to f64 for comparison
         let to_f64 = |value: &Value| -> Option<f64> {
             match value {
                 Value::I8(v) => Some(*v as f64),
@@ -216,7 +215,6 @@ impl PartialEq<Value> for Value {
             }
         };
 
-        // Helper to check if a value is numeric
         let is_numeric = |value: &Value| -> bool {
             matches!(
                 value,
@@ -235,7 +233,6 @@ impl PartialEq<Value> for Value {
         };
 
         match (self, other) {
-            // Same type comparisons
             (Value::String(s), Value::String(o)) => s == o,
             (Value::Date(s), Value::Date(o)) => s == o,
             (Value::Boolean(s), Value::Boolean(o)) => s == o,
@@ -244,19 +241,14 @@ impl PartialEq<Value> for Value {
             (Value::Empty, _) => false,
             (_, Value::Empty) => false,
 
-            // Cross-type numeric comparisons
             (s, o) if is_numeric(s) && is_numeric(o) => {
                 match (to_f64(s), to_f64(o)) {
                     (Some(s_val), Some(o_val)) => {
-                        // For integer comparisons, check if the f64 conversion is exact
-                        // to avoid floating point precision issues
                         if !matches!(self, Value::F32(_) | Value::F64(_))
                             && !matches!(other, Value::F32(_) | Value::F64(_))
                         {
-                            // Both are integers, compare as integers if possible
                             self.cmp(other) == Ordering::Equal
                         } else {
-                            // At least one is a float, use f64 comparison
                             s_val == o_val
                         }
                     }
