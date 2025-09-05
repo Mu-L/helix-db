@@ -84,6 +84,7 @@ pub(crate) fn validate_statements<'a>(
             stmt
         }
 
+        // PARAMS DONT GET PARSED TO TYPE::ARRAY
         ForLoop(fl) => {
             if !scope.contains_key(fl.in_variable.1.as_str()) {
                 generate_error!(ctx, original_query, fl.loc.clone(), E301, &fl.in_variable.1);
@@ -136,8 +137,9 @@ pub(crate) fn validate_statements<'a>(
             match &fl.variable {
                 ForLoopVars::Identifier { name, loc: _ } => {
                     is_valid_identifier(ctx, original_query, fl.loc.clone(), name.as_str());
-                    body_scope.insert(name.as_str(), Type::Unknown);
-                    scope.insert(name.as_str(), Type::Unknown);
+                    let field_type = scope.get(name.as_str()).unwrap().clone();
+                    body_scope.insert(name.as_str(), field_type.clone());
+                    scope.insert(name.as_str(), field_type);
                     for_variable = ForVariable::Identifier(GenRef::Std(name.clone()));
                 }
                 ForLoopVars::ObjectAccess { .. } => {
@@ -162,8 +164,14 @@ pub(crate) fn validate_statements<'a>(
                                                     [field_name, &fl.in_variable.1]
                                                 );
                                             }
-                                            body_scope.insert(field_name.as_str(), Type::Unknown);
-                                            scope.insert(field_name.as_str(), Type::Unknown);
+                                            let field_type = Type::from(
+                                                param_fields
+                                                    .get(field_name.as_str())
+                                                    .unwrap()
+                                                    .clone(),
+                                            );
+                                            body_scope.insert(field_name.as_str(), field_type.clone());
+                                            scope.insert(field_name.as_str(), field_type);
                                         }
                                         for_variable = ForVariable::ObjectDestructure(
                                             fields
@@ -195,23 +203,37 @@ pub(crate) fn validate_statements<'a>(
                                 }
                             }
                         }
-                        None => match scope.contains_key(fl.in_variable.1.as_str()) {
-                            true => {
-                                for_variable = ForVariable::ObjectDestructure(
-                                    fields
-                                        .iter()
-                                        .map(|(_, f)| {
-                                            let name = f.as_str();
+                        None => match scope.get(fl.in_variable.1.as_str()) {
+                            Some(Type::Array(object_arr)) => {
+                                match object_arr.as_ref() {
+                                    Type::Object(object) => {
+                                        let mut obj_dest_fields = Vec::with_capacity(fields.len());
+                                        let object = object.clone();
+                                        for (_, field_name) in fields {
+                                            let name = field_name.as_str();
                                             // adds non-param fields to scope
-                                            body_scope.insert(name, Type::Unknown);
-                                            scope.insert(name, Type::Unknown);
-
-                                            GenRef::Std(name.to_string())
-                                        })
-                                        .collect(),
-                                );
+                                            let field_type = object.get(name).unwrap().clone();
+                                            let field_type = Type::from(field_type.clone());
+                                            body_scope.insert(name, field_type.clone());
+                                            scope.insert(name, field_type);
+                                            obj_dest_fields.push(GenRef::Std(name.to_string()));
+                                        }
+                                        for_variable =
+                                            ForVariable::ObjectDestructure(obj_dest_fields);
+                                    }
+                                    _ => {
+                                        generate_error!(
+                                            ctx,
+                                            original_query,
+                                            fl.in_variable.0.clone(),
+                                            E653,
+                                            [&fl.in_variable.1],
+                                            [&fl.in_variable.1]
+                                        );
+                                    }
+                                }
                             }
-                            false => {
+                            _ => {
                                 generate_error!(
                                     ctx,
                                     original_query,

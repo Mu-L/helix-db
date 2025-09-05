@@ -9,9 +9,7 @@ use crate::helixc::{
         },
         utils::{GenRef, GeneratedType, GeneratedValue, RustType as GeneratedRustType},
     },
-    parser::types::{
-        DefaultValue, EdgeSchema, FieldType, NodeSchema, Parameter, VectorSchema,
-    },
+    parser::types::{DefaultValue, EdgeSchema, FieldType, NodeSchema, Parameter, VectorSchema},
 };
 
 impl From<NodeSchema> for GeneratedNodeSchema {
@@ -365,8 +363,9 @@ impl From<FieldType> for Type {
         match ft {
             String | Boolean | F32 | F64 | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | U128
             | Uuid | Date => Type::Scalar(ft.clone()),
-            Array(inner_ft) => Type::from(*inner_ft),
-            _ => Type::Unknown,
+            Array(inner_ft) => Type::Array(Box::new(Type::from(*inner_ft))),
+            Object(obj) => Type::Object(obj.into_iter().map(|(k, v)| (k, Type::from(v))).collect()),
+            Identifier(id) => Type::Scalar(FieldType::Identifier(id)),
         }
     }
 }
