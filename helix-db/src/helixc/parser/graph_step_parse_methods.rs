@@ -10,6 +10,12 @@ use crate::helixc::parser::{
 use pest::iterators::Pair;
 
 impl HelixParser {
+    /// Parses an order by step
+    ///
+    /// #### Example
+    /// ```rs
+    /// ::ORDER<Asc>(_::{age})
+    /// ```
     pub fn parse_order_by(&self, pair: Pair<Rule>) -> Result<OrderBy, ParserError> {
         let mut inner = pair.clone().into_inner();
         let order_by_type = match inner.next().unwrap().into_inner().next().unwrap().as_rule() {
@@ -25,15 +31,26 @@ impl HelixParser {
         })
     }
 
+    /// Parses a range step
+    ///
+    /// #### Example
+    /// ```rs
+    /// ::RANGE(1, 10)
+    /// ```
     pub fn parse_range(&self, pair: Pair<Rule>) -> Result<(Expression, Expression), ParserError> {
         let mut inner = pair.into_inner().next().unwrap().into_inner();
-        // println!("inner: {:?}", inner);
         let start = self.parse_expression(inner.next().unwrap())?;
         let end = self.parse_expression(inner.next().unwrap())?;
 
         Ok((start, end))
     }
 
+    /// Parses a boolean operation
+    ///
+    /// #### Example
+    /// ```rs
+    /// ::GT(1)
+    /// ```
     pub fn parse_bool_operation(&self, pair: Pair<Rule>) -> Result<BooleanOp, ParserError> {
         let inner = pair.clone().into_inner().next().unwrap();
         let expr = match inner.as_rule() {
@@ -88,6 +105,12 @@ impl HelixParser {
         Ok(expr)
     }
 
+    /// Parses an update step
+    ///
+    /// #### Example
+    /// ```rs
+    /// ::UPDATE({age: 1})
+    /// ```
     pub fn parse_update(&self, pair: Pair<Rule>) -> Result<Update, ParserError> {
         let fields = self.parse_object_fields(pair.clone())?;
         Ok(Update {
@@ -96,6 +119,12 @@ impl HelixParser {
         })
     }
 
+    /// Parses an object step
+    ///
+    /// #### Example
+    /// ```rs
+    /// ::{username: name}
+    /// ```
     pub fn parse_object_step(&self, pair: Pair<Rule>) -> Result<Object, ParserError> {
         let mut fields = Vec::new();
         let mut should_spread = false;
@@ -148,6 +177,12 @@ impl HelixParser {
         })
     }
 
+    /// Parses a closure step
+    ///
+    /// #### Example
+    /// ```rs
+    /// ::|user|{user_age: user::{age}}
+    /// ```
     pub fn parse_closure(&self, pair: Pair<Rule>) -> Result<Closure, ParserError> {
         let mut pairs = pair.clone().into_inner();
         let identifier = pairs.next().unwrap().as_str().to_string();
@@ -159,6 +194,12 @@ impl HelixParser {
         })
     }
 
+    /// Parses an exclude step
+    ///
+    /// #### Example
+    /// ```rs
+    /// ::!{age, name}
+    /// ```
     pub fn parse_exclude(&self, pair: Pair<Rule>) -> Result<Exclude, ParserError> {
         let mut fields = Vec::new();
         for p in pair.clone().into_inner() {

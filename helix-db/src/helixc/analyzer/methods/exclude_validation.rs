@@ -3,7 +3,7 @@ use crate::{
     generate_error,
     helixc::{
         analyzer::{
-            analyzer::Ctx,
+            Ctx,
             errors::{push_query_err, push_query_err_with_fix},
             fix::Fix,
             types::Type,

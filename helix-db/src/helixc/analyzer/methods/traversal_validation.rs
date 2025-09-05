@@ -7,7 +7,7 @@ use crate::{
     generate_error,
     helixc::{
         analyzer::{
-            analyzer::Ctx,
+            Ctx,
             errors::push_query_err,
             methods::{
                 exclude_validation::validate_exclude, graph_step_validation::apply_graph_step,

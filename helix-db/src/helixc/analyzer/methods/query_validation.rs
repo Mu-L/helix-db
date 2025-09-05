@@ -4,7 +4,7 @@ use crate::generate_error;
 use crate::helixc::analyzer::error_codes::ErrorCode;
 use crate::helixc::{
     analyzer::{
-        analyzer::Ctx,
+        Ctx,
         errors::{push_query_err, push_query_warn},
         methods::{infer_expr_type::infer_expr_type, statement_validation::validate_statements},
         types::Type,

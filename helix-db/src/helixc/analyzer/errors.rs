@@ -1,6 +1,6 @@
 use crate::helixc::{
     analyzer::{
-        analyzer::Ctx,
+        Ctx,
         diagnostic::{Diagnostic, DiagnosticSeverity},
         error_codes::ErrorCode,
         fix::Fix,

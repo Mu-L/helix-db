@@ -3,7 +3,7 @@ use crate::helixc::analyzer::error_codes::ErrorCode;
 use crate::{
     generate_error,
     helixc::{
-        analyzer::{analyzer::Ctx, errors::push_query_err, types::Type},
+        analyzer::{Ctx, errors::push_query_err, types::Type},
         generator::{
             traversal_steps::Step,
             utils::{GenRef, GeneratedValue},

@@ -7,7 +7,7 @@ use futures_util::StreamExt;
 use helix_db::{
     helix_engine::traversal_core::config::Config,
     helixc::{
-        analyzer::analyzer::analyze,
+        analyzer::analyze,
         generator::{Source as GeneratedSource, tsdisplay::ToTypeScript},
         parser::{
             HelixParser,

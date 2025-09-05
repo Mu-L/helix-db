@@ -7,7 +7,7 @@ use crate::{
     helix_engine::traversal_core::ops::source::add_e::EdgeType,
     helixc::{
         analyzer::{
-            analyzer::Ctx,
+            Ctx,
             errors::push_query_err,
             types::Type,
             utils::{gen_identifier_or_param, is_valid_identifier},

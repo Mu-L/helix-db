@@ -6,7 +6,7 @@ use crate::{
     generate_error,
     helixc::{
         analyzer::{
-            analyzer::Ctx,
+            Ctx,
             errors::push_query_err,
             methods::{infer_expr_type::infer_expr_type, traversal_validation::validate_traversal},
             types::Type,

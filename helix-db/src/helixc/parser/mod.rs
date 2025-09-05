@@ -1,3 +1,21 @@
+// Copyright 2025 HelixDB Inc.
+// SPDX-License-Identifier: AGPL-3.0
+
+//! This is the parser for HelixQL.
+//! The parsing methods are broken up into separate files, grouped by general functionality.
+//! File names should be self-explanatory as to what is included in the file.
+
+use crate::helixc::parser::types::{Content, HxFile, Schema, Source};
+use location::HasLoc;
+use parser_methods::ParserError;
+use pest::Parser as PestParser;
+use pest_derive::Parser;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    io::Write,
+};
+
 pub mod creation_step_parse_methods;
 pub mod expression_parse_methods;
 pub mod graph_step_parse_methods;
@@ -10,17 +28,6 @@ pub mod schema_parse_methods;
 pub mod traversal_parse_methods;
 pub mod types;
 pub mod utils;
-
-use crate::helixc::parser::types::{Content, HxFile, Schema, Source};
-use location::HasLoc;
-use parser_methods::ParserError;
-use pest::Parser as PestParser;
-use pest_derive::Parser;
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    io::Write,
-};
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]

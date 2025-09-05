@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use crate::helixc::{
-    analyzer::{analyzer::Ctx, error_codes::ErrorCode, errors::push_schema_err},
+    analyzer::{Ctx, error_codes::ErrorCode, errors::push_schema_err},
     parser::{
         types::{Field, FieldPrefix, FieldType, Source},
         location::Loc,

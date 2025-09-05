@@ -1,6 +1,6 @@
 use crate::{
     helixc::{
-        analyzer::analyzer::Ctx,
+        analyzer::Ctx,
         generator::{
             migrations::{
                 GeneratedMigration, GeneratedMigrationItemMapping,

@@ -1,5 +1,9 @@
-use core::fmt;
-use std::fmt::Display;
+// Copyright 2025 HelixDB Inc.
+// SPDX-License-Identifier: AGPL-3.0
+
+//! This is the generator for HelixQL. It transforms the AST into Rust code.
+//! The generator methods are broken up into separate files, grouped by general functionality.
+//! File names should be self-explanatory as to what is included in the file.
 
 use crate::{
     helix_engine::traversal_core::config::Config,
@@ -10,6 +14,8 @@ use crate::{
         utils::write_headers,
     },
 };
+use core::fmt;
+use std::fmt::Display;
 
 pub mod bool_op;
 pub mod migrations;
