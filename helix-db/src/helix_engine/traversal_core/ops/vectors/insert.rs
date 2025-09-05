@@ -8,7 +8,6 @@ use crate::{
     },
     protocol::value::Value,
 };
-use std::sync::Arc;
 
 pub struct InsertVIterator {
     inner: std::iter::Once<Result<TraversalValue, GraphError>>,
@@ -27,14 +26,6 @@ pub trait InsertVAdapter<'a, 'b>: Iterator<Item = Result<TraversalValue, GraphEr
         self,
         query: &[f64],
         label: &str,
-        fields: Option<Vec<(String, Value)>>,
-    ) -> RwTraversalIterator<'a, 'b, impl Iterator<Item = Result<TraversalValue, GraphError>>>
-    where
-        F: Fn(&HVector, &RoTxn) -> bool;
-
-    fn insert_vs<F>(
-        self,
-        queries: &[Vec<f64>],
         fields: Option<Vec<(String, Value)>>,
     ) -> RwTraversalIterator<'a, 'b, impl Iterator<Item = Result<TraversalValue, GraphError>>>
     where
@@ -75,34 +66,6 @@ impl<'a, 'b, I: Iterator<Item = Result<TraversalValue, GraphError>>> InsertVAdap
             inner: std::iter::once(result),
             storage: self.storage,
             txn: self.txn,
-        }
-    }
-
-    fn insert_vs<F>(
-        self,
-        queries: &[Vec<f64>],
-        fields: Option<Vec<(String, Value)>>,
-    ) -> RwTraversalIterator<'a, 'b, impl Iterator<Item = Result<TraversalValue, GraphError>>>
-    where
-        F: Fn(&HVector, &RoTxn) -> bool,
-    {
-        let txn = self.txn;
-        let storage = Arc::clone(&self.storage);
-        let iter = queries
-            .iter()
-            .map(|vec| {
-                let vector = storage.vectors.insert::<F>(txn, vec, fields.clone()); // TODO: remove clone
-                match vector {
-                    Ok(vector) => Ok(TraversalValue::Vector(vector)),
-                    Err(e) => Err(GraphError::from(e)),
-                }
-            })
-            .collect::<Vec<_>>();
-
-        RwTraversalIterator {
-            inner: iter.into_iter(),
-            storage: self.storage,
-            txn,
         }
     }
 }

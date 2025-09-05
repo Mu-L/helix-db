@@ -33,8 +33,8 @@ impl WorkerPool {
             "Expected number of threads in thread pool to be more than 0, got {size}"
         );
 
-        let (req_tx, req_rx) = flume::bounded::<ReqMsg>(1000); // TODO: make this configurable
-        let (cont_tx, cont_rx) = flume::bounded::<ContMsg>(1000); // TODO: make this configurable
+        let (req_tx, req_rx) = flume::bounded::<ReqMsg>(1000); 
+        let (cont_tx, cont_rx) = flume::bounded::<ContMsg>(1000); 
 
         let workers = (0..size)
             .map(|_| {

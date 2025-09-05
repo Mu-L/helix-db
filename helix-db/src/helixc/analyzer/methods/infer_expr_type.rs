@@ -558,7 +558,6 @@ pub(crate) fn infer_expr_type<'a>(
                     from,
                     label,
                     properties,
-                    // secondary_indices: None, // TODO: Add secondary indices by checking against labeled `INDEX` fields in schema
                 };
                 let stmt = GeneratedStatement::Traversal(GeneratedTraversal {
                     source_step: Separator::Period(SourceStep::AddE(add_e)),

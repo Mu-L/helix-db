@@ -287,7 +287,8 @@ pub(crate) fn validate_traversal<'a>(
         // anonymous will be the traversal type rather than the start type
         StartNode::Anonymous => {
             let parent = parent_ty.unwrap();
-            gen_traversal.traversal_type = TraversalType::FromVar(GenRef::Std(DEFAULT_VAR_NAME.to_string())); 
+            gen_traversal.traversal_type =
+                TraversalType::FromVar(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
             gen_traversal.source_step = Separator::Empty(SourceStep::Anonymous);
             parent
         }
@@ -531,16 +532,6 @@ pub(crate) fn validate_traversal<'a>(
             }
 
             StepType::Object(obj) => {
-                // TODO: Fix issue with step count being incorrect (i think its counting each field as a step)
-                // if i != number_of_steps {
-                //     println!("{} {}", i, number_of_steps);
-                //     push_query_err(ctx,
-                //         original_query,
-                //         obj.loc.clone(),
-                //         "object is only valid as the last step in a traversal".to_string(),
-                //         "move the object to the end of the traversal",
-                //     );
-                // }
                 validate_object(
                     ctx,
                     &cur_ty,
