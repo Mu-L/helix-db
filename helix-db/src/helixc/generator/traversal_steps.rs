@@ -1,7 +1,7 @@
-use crate::helixc::generator::utils::{write_properties, VecData};
+use crate::helixc::generator::utils::{VecData, write_properties};
 
 use super::{
-    bool_op::{BoolOp, BoExp},
+    bool_op::{BoExp, BoolOp},
     object_remapping_generation::Remapping,
     source_steps::SourceStep,
     utils::{GenRef, GeneratedValue, Order, Separator},
@@ -123,12 +123,7 @@ impl Display for Traversal {
                     write!(f, "\n{step}")?;
                 }
                 write!(f, "\n    .collect_to::<Vec<_>>();")?;
-                write!(
-                    f,
-                    "G::new_mut_from(Arc::clone(&db), &mut txn, update_tr)", // TODO: make
-                                                                             // this less
-                                                                             // scrappy
-                )?;
+                write!(f, "G::new_mut_from(Arc::clone(&db), &mut txn, update_tr)",)?;
                 write!(f, "\n    .update({})", write_properties(properties))?;
                 write!(f, "\n    .collect_to_obj()")?;
                 write!(f, "}}")?;
@@ -279,14 +274,11 @@ impl Display for InE {
 #[derive(Clone)]
 pub enum Where {
     Ref(WhereRef),
-    Mut(WhereMut),
 }
 impl Display for Where {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Where::Ref(wr) => write!(f, "{wr}"),
-            Where::Mut(wm) => write!(f, "{wm}"),
-        }
+        let Where::Ref(wr) = self;
+        write!(f, "{wr}")
     }
 }
 
@@ -307,16 +299,6 @@ impl Display for WhereRef {
             }})",
             self.expr
         )
-    }
-}
-
-#[derive(Clone)]
-pub struct WhereMut {
-    pub expr: BoExp,
-}
-impl Display for WhereMut {
-    fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
     }
 }
 

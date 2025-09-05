@@ -1,6 +1,6 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
-use crate::helixc::analyzer::utils::DEFAULT_VAR_NAME;
+use crate::helixc::analyzer::utils::{DEFAULT_VAR_NAME, is_in_scope};
 use crate::helixc::generator::utils::EmbedData;
 use crate::{
     generate_error,
@@ -209,8 +209,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 value.as_str()
                                             );
                                         } else {
-                                            let variable_type =
-                                                scope.get(value.as_str()).unwrap();
+                                            let variable_type = scope.get(value.as_str()).unwrap();
                                             if variable_type
                                                 != &Type::from(
                                                     field_set
@@ -221,7 +220,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 )
                                             {
                                                 generate_error!(
-                                                    ctx,    
+                                                    ctx,
                                                     original_query,
                                                     loc.clone(),
                                                     E205,
@@ -1099,7 +1098,6 @@ pub(crate) fn infer_expr_type<'a>(
         }
         Empty => (Type::Unknown, Some(GeneratedStatement::Empty)),
         BM25Search(bm25_search) => {
-            // TODO: look into how best do type checking for type passed in
             if let Some(ref ty) = bm25_search.type_arg
                 && !ctx.node_set.contains(ty.as_str())
             {
@@ -1117,18 +1115,8 @@ pub(crate) fn infer_expr_type<'a>(
                 }
                 Some(ValueType::Identifier { value: i, loc: _ }) => {
                     is_valid_identifier(ctx, original_query, bm25_search.loc.clone(), i.as_str());
-                    // if is in params then use data.
-                    let _ = type_in_scope(
-                        ctx,
-                        original_query,
-                        bm25_search.loc.clone(),
-                        scope,
-                        i.as_str(),
-                    );
 
-                    if original_query.parameters.iter().any(|p| p.name.1 == *i)
-                        || scope.get(i.as_str()).is_some()
-                    {
+                    if is_in_scope(scope, i.as_str()) {
                         gen_identifier_or_param(original_query, i, true, false)
                     } else {
                         generate_error!(

@@ -76,6 +76,10 @@ pub(super) fn gen_id_access_or_param(original_query: &Query, name: &str) -> Gene
     }
 }
 
+pub(super) fn is_in_scope(scope: &HashMap<&str, Type>, name: &str) -> bool {
+    scope.contains_key(name)
+}
+
 pub(super) fn type_in_scope(
     ctx: &mut Ctx,
     original_query: &Query,
