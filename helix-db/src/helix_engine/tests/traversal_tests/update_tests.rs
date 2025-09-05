@@ -36,10 +36,10 @@ fn test_update_node() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!("name" => "test")), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _ = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!("name" => "test2")), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
     let mut txn = storage.graph_env.write_txn().unwrap();

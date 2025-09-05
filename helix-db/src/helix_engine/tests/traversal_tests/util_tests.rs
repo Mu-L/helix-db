@@ -44,15 +44,15 @@ fn test_order_node_by_asc() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 30 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 20 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node3 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 10 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -75,15 +75,15 @@ fn test_order_node_by_desc() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 30 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 20 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node3 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 10 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -106,15 +106,15 @@ fn test_order_edge_by_asc() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 30 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 20 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node3 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 10 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -125,7 +125,7 @@ fn test_order_edge_by_asc() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let edge2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -136,7 +136,7 @@ fn test_order_edge_by_asc() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -159,15 +159,15 @@ fn test_order_edge_by_desc() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 30 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 20 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node3 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 10 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -178,7 +178,7 @@ fn test_order_edge_by_desc() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let edge2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -189,7 +189,7 @@ fn test_order_edge_by_desc() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -213,15 +213,15 @@ fn test_order_vector_by_asc() {
 
     let vector = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", Some(props! { "age" => 30 }))
-        .collect_to_val();
+        .collect_to_obj();
 
     let vector2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", Some(props! { "age" => 20 }))
-        .collect_to_val();
+        .collect_to_obj();
 
     let vector3 = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", Some(props! { "age" => 10 }))
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -245,15 +245,15 @@ fn test_order_vector_by_desc() {
 
     let vector = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", Some(props! { "age" => 30 }))
-        .collect_to_val();
+        .collect_to_obj();
 
     let vector2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", Some(props! { "age" => 20 }))
-        .collect_to_val();
+        .collect_to_obj();
 
     let vector3 = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", Some(props! { "age" => 10 }))
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -276,15 +276,15 @@ fn test_dedup() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 30 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 20 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node3 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 10 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let _edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -295,7 +295,7 @@ fn test_dedup() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let _edge2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -306,7 +306,7 @@ fn test_dedup() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
