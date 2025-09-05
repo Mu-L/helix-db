@@ -3,7 +3,7 @@ use std::{borrow::Cow, collections::HashMap};
 use crate::helixc::{
     analyzer::{analyzer::Ctx, error_codes::ErrorCode, errors::push_schema_err},
     parser::{
-        helix_parser::{Field, FieldPrefix, FieldType, Source},
+        types::{Field, FieldPrefix, FieldType, Source},
         location::Loc,
     },
 };

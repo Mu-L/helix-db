@@ -10,7 +10,7 @@ use crate::helixc::{
         types::Type,
     },
     generator::Source as GeneratedSource,
-    parser::helix_parser::{EdgeSchema, ExpressionType, Field, Query, ReturnType, Source},
+    parser::types::{EdgeSchema, ExpressionType, Field, Query, ReturnType, Source},
 };
 use itertools::Itertools;
 use serde::Serialize;

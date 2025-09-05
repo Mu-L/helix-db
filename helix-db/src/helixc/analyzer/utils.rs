@@ -8,11 +8,13 @@ use crate::{
             traversal_steps::Step,
             utils::{GenRef, GeneratedValue},
         },
-        parser::{helix_parser::*, location::Loc},
+        parser::{location::Loc, types::*},
     },
 };
 use paste::paste;
 use std::collections::HashMap;
+
+pub(super) const DEFAULT_VAR_NAME: &str = "val";
 
 pub(super) fn is_valid_identifier(
     ctx: &mut Ctx,

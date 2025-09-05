@@ -18,7 +18,7 @@ use crate::helixc::{
         traversal_steps::ShouldCollect,
         utils::{GenRef, GeneratedValue},
     },
-    parser::{helix_parser::*, location::Loc},
+    parser::{types::*, location::Loc},
 };
 use paste::paste;
 use std::collections::HashMap;
@@ -41,8 +41,10 @@ pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
         if let FieldType::Identifier(ref id) = param.param_type.1
             && is_valid_identifier(ctx, original_query, param.param_type.0.clone(), id.as_str())
         {
-            // TODO: add support for edges
-            if !ctx.node_set.contains(id.as_str()) {
+            if !ctx.node_set.contains(id.as_str())
+                && !ctx.edge_map.contains_key(id.as_str())
+                && !ctx.vector_set.contains(id.as_str())
+            {
                 generate_error!(
                     ctx,
                     original_query,

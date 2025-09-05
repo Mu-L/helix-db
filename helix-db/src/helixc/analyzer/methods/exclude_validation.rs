@@ -8,7 +8,7 @@ use crate::{
             fix::Fix,
             types::Type,
         },
-        parser::{helix_parser::*, location::Loc},
+        parser::{types::*, location::Loc},
     },
 };
 use paste::paste;

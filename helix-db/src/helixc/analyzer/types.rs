@@ -9,7 +9,7 @@ use crate::helixc::{
         },
         utils::{GenRef, GeneratedType, GeneratedValue, RustType as GeneratedRustType},
     },
-    parser::helix_parser::{
+    parser::types::{
         DefaultValue, EdgeSchema, FieldType, NodeSchema, Parameter, VectorSchema,
     },
 };
@@ -240,6 +240,7 @@ pub(crate) enum Type {
     Vectors(Option<String>),
     Scalar(FieldType),
     Object(HashMap<String, Type>),
+    Array(Box<Type>),
     Anonymous(Box<Type>),
     Boolean,
     Unknown,
@@ -256,6 +257,7 @@ impl Type {
             Type::Vectors(_) => "vectors",
             Type::Scalar(_) => "scalar",
             Type::Object(_) => "object",
+            Type::Array(_) => "array",
             Type::Boolean => "boolean",
             Type::Unknown => "unknown",
             Type::Anonymous(ty) => ty.kind_str(),
@@ -272,6 +274,7 @@ impl Type {
             Type::Vectors(Some(name)) => name.clone(),
             Type::Scalar(ft) => ft.to_string(),
             Type::Anonymous(ty) => ty.get_type_name(),
+            Type::Array(ty) => ty.get_type_name(),
             Type::Boolean => "boolean".to_string(),
             Type::Unknown => "unknown".to_string(),
             Type::Object(fields) => {
@@ -293,7 +296,6 @@ impl Type {
     #[allow(dead_code)]
     /// Same, but returns an owned clone for convenience.
     pub fn cloned_base(&self) -> Type {
-        // TODO: never used?
         match self {
             Type::Anonymous(inner) => inner.cloned_base(),
             _ => self.clone(),
@@ -335,6 +337,25 @@ impl Type {
                     | FieldType::U128
             )
         )
+    }
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Type::Scalar(ft), Type::Scalar(other_ft)) => ft == other_ft,
+            (Type::Object(fields), Type::Object(other_fields)) => fields == other_fields,
+            (Type::Boolean, Type::Boolean) => true,
+            (Type::Unknown, Type::Unknown) => true,
+            (Type::Anonymous(inner), Type::Anonymous(other_inner)) => inner == other_inner,
+            (Type::Node(name), Type::Node(other_name)) => name == other_name,
+            (Type::Nodes(name), Type::Nodes(other_name)) => name == other_name,
+            (Type::Edge(name), Type::Edge(other_name)) => name == other_name,
+            (Type::Edges(name), Type::Edges(other_name)) => name == other_name,
+            (Type::Vector(name), Type::Vector(other_name)) => name == other_name,
+            (Type::Vectors(name), Type::Vectors(other_name)) => name == other_name,
+            _ => false,
+        }
     }
 }
 

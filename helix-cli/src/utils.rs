@@ -9,7 +9,10 @@ use helix_db::{
     helixc::{
         analyzer::analyzer::analyze,
         generator::{Source as GeneratedSource, tsdisplay::ToTypeScript},
-        parser::helix_parser::{Content, HelixParser, HxFile, Source},
+        parser::{
+            HelixParser,
+            types::{Content, HxFile, Source},
+        },
     },
     utils::styled_string::StyledString,
 };
@@ -956,12 +959,7 @@ pub fn copy_repo_dir_for_build(src: &std::path::Path, dst: &std::path::Path) -> 
         if let Some(file_name) = entry.file_name().to_str()
             && matches!(
                 file_name,
-                ".git"
-                    | ".gitignore"
-                    | ".github"
-                    | ".DS_Store"
-                    | "target"
-                    | "docs"
+                ".git" | ".gitignore" | ".github" | ".DS_Store" | "target" | "docs"
             )
         {
             continue;

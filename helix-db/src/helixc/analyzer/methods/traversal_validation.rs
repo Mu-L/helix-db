@@ -1,4 +1,5 @@
 use crate::helixc::analyzer::error_codes::*;
+use crate::helixc::analyzer::utils::DEFAULT_VAR_NAME;
 use crate::helixc::generator::bool_op::{Contains, IsIn};
 use crate::helixc::generator::source_steps::SearchVector;
 use crate::helixc::generator::utils::{EmbedData, VecData};
@@ -30,7 +31,7 @@ use crate::{
             },
             utils::{GenRef, GeneratedValue, Order, Separator},
         },
-        parser::{helix_parser::*, location::Loc},
+        parser::{location::Loc, types::*},
     },
     protocol::value::Value,
 };
@@ -286,7 +287,7 @@ pub(crate) fn validate_traversal<'a>(
         // anonymous will be the traversal type rather than the start type
         StartNode::Anonymous => {
             let parent = parent_ty.unwrap();
-            gen_traversal.traversal_type = TraversalType::FromVar(GenRef::Std("val".to_string())); // TODO: ensure this default is stable
+            gen_traversal.traversal_type = TraversalType::FromVar(GenRef::Std(DEFAULT_VAR_NAME.to_string())); 
             gen_traversal.source_step = Separator::Empty(SourceStep::Anonymous);
             parent
         }
@@ -515,11 +516,11 @@ pub(crate) fn validate_traversal<'a>(
                 gen_traversal
                     .steps
                     .push(Separator::Period(GeneratedStep::Remapping(Remapping {
-                        variable_name: "item".to_string(), // TODO: Change to start var
+                        variable_name: DEFAULT_VAR_NAME.to_string(),
                         is_inner: false,
                         should_spread: false,
                         remappings: vec![RemappingType::ExcludeField(ExcludeField {
-                            variable_name: "item".to_string(), // TODO: Change to start var
+                            variable_name: DEFAULT_VAR_NAME.to_string(),
                             fields_to_exclude: ex
                                 .fields
                                 .iter()
@@ -1044,7 +1045,6 @@ pub(crate) fn validate_traversal<'a>(
                             );
                         }
                         _ => {
-                            // TODO: maybe use cur_ty instead of update.loc.span?
                             generate_error!(
                                 ctx,
                                 original_query,

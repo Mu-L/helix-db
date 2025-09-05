@@ -1362,7 +1362,7 @@ impl From<Value> for f64 {
 }
 
 pub mod casting {
-    use crate::helixc::parser::helix_parser::FieldType;
+    use crate::helixc::parser::types::FieldType;
 
     use super::*;
 

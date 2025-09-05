@@ -21,7 +21,7 @@ use crate::{
             },
             utils::{GenRef, GeneratedValue, Separator, VecData},
         },
-        parser::helix_parser::*,
+        parser::types::*,
     },
 };
 use paste::paste;
@@ -322,12 +322,10 @@ pub(crate) fn apply_graph_step<'a>(
         }
         (ShortestPath(sp), Type::Nodes(_) | Type::Node(_)) => {
             let type_arg = sp.type_arg.clone().map(GenRef::Literal);
-            // check edge type is valid
             traversal
                 .steps
                 .push(Separator::Period(GeneratedStep::ShortestPath(
                     match (sp.from.clone(), sp.to.clone()) {
-                        // TODO: get rid of clone
                         (Some(from), Some(to)) => GeneratedShortestPath {
                             label: type_arg,
                             from: Some(GenRef::from(from)),

@@ -1,4 +1,4 @@
-use super::helix_parser::Rule;
+use crate::helixc::parser::Rule;
 use core::fmt;
 
 pub trait Parser {
