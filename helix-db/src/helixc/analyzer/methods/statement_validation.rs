@@ -231,9 +231,9 @@ pub(crate) fn validate_statements<'a>(
                     statements.push(s);
                 }
             }
-            body_scope.iter().for_each(|(k, _)| {
-                scope.remove(k);
-            });
+            // body_scope.iter().for_each(|(k, _)| {
+            //     scope.remove(k);
+            // });
 
             let stmt = GeneratedStatement::ForEach(GeneratedForEach {
                 for_variables: for_variable,
