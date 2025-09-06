@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::json;
 use tokio::{io::AsyncWriteExt, process::Command};
 
-use crate::{commands::integrations::Integration, docker::DockerManager, project::ProjectContext};
+use crate::{docker::DockerManager, project::ProjectContext};
 
 static FLY_MACHINES_API_URL: &str = "https://api.machines.dev/v1/";
 static FLY_REGISTRY_URL: &str = "registry.fly.io";
@@ -58,7 +58,7 @@ impl FlyIoClient {
                 let api_key = env
                     .lines()
                     .find(|line| line.starts_with("FLY_API_KEY="))
-                    .map(|line| line.split("=").nth(1).unwrap_or_default().to_string()); // TODO: handle error
+                    .map(|line| line.splitn(2, "=").nth(1).unwrap_or_default().to_string()); // TODO: handle error
                 match api_key {
                     Some(api_key) => (
                         FlyAuthentication::ApiKey(api_key),
@@ -91,7 +91,7 @@ impl FlyIoClient {
         }
     }
 
-    async fn create_app(&self, project: &ProjectContext, app_name: &str) -> Result<()> {
+    async fn init_flyio(&self, project: &ProjectContext, app_name: &str) -> Result<()> {
         // create app
         match &self.client {
             FlyClient::ApiClient(client) => {
@@ -126,7 +126,7 @@ impl FlyIoClient {
         Ok(())
     }
 
-    async fn push_image_and_deploy_to_flyio(
+    async fn deploy_flyio(
         &self,
         image_name: &str,
         image_tag: &str,
@@ -149,25 +149,6 @@ impl FlyIoClient {
     }
 }
 
-#[async_trait]
-impl Integration for FlyIoClient {
-    async fn init(&self, project: &ProjectContext, instance_name: &str) -> Result<()> {
-        self.create_app(project, &instance_name).await
-    }
-
-    async fn push(&self, instance_name: &str) -> Result<()> {
-        self.push_image_and_deploy_to_flyio(instance_name, "latest")
-            .await
-    }
-
-    async fn start(&self, project: &ProjectContext, instance_name: &str) -> Result<()> {
-        todo!()
-    }
-
-    async fn stop(&self, project: &ProjectContext, instance_name: &str) -> Result<()> {
-        todo!()
-    }
-}
 
 async fn authenticate_flyio_via_cli() -> Result<()> {
     let mut child = Command::new("flyctl")
