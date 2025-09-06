@@ -213,7 +213,6 @@ pub(crate) fn validate_statements<'a>(
                                             let name = field_name.as_str();
                                             // adds non-param fields to scope
                                             let field_type = object.get(name).unwrap().clone();
-                                            let field_type = Type::from(field_type.clone());
                                             body_scope.insert(name, field_type.clone());
                                             scope.insert(name, field_type);
                                             obj_dest_fields.push(GenRef::Std(name.to_string()));

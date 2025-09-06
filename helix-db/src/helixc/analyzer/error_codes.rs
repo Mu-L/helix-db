@@ -209,7 +209,7 @@ implement_error_code!(E202,
 implement_error_code!(E203, "cannot access properties on the type `{}`" => { type_name }, "ensure the type is a node, edge, or vector" => {});
 implement_error_code!(E204, "field `{}` is a reserved field name" => { field_name }, "rename the field" => {});
 implement_error_code!(E205, 
-    "type of value `{}` does not match field type `{}` for {} type `{}`" => { value, field_type, item_type, item_type_name }, 
+    "type of value `{}` is `{}`, which does not match field type `{}` for {} type `{}`" => { value, value_type, field_type, item_type, item_type_name }, 
     "change the value type to match the field type defined in the schema" => {});
 implement_error_code!(E206, "invalid value type `{}`" => { value_type }, "use a literal or an identifier" => {});
 implement_error_code!(E207, "edge type `{}` exists but it is not a valid edge type for the given {} type `{}`" => { edge_type, item_type, item_type_name }, "check the schema field names" => {});

@@ -234,11 +234,11 @@ impl Display for GeneratedValue {
 impl Debug for GeneratedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            GeneratedValue::Literal(value) => write!(f, "Literal({value})"),
-            GeneratedValue::Primitive(value) => write!(f, "Primitive({value})"),
-            GeneratedValue::Identifier(value) => write!(f, "Identifier({value})"),
-            GeneratedValue::Parameter(value) => write!(f, "Parameter({value})"),
-            GeneratedValue::Array(value) => write!(f, "Array({value:?})"),
+            GeneratedValue::Literal(value) => write!(f, "GV: Literal({value})"),
+            GeneratedValue::Primitive(value) => write!(f, "GV: Primitive({value})"),
+            GeneratedValue::Identifier(value) => write!(f, "GV: Identifier({value})"),
+            GeneratedValue::Parameter(value) => write!(f, "GV: Parameter({value})"),
+            GeneratedValue::Array(value) => write!(f, "GV: Array({value:?})"),
             GeneratedValue::Unknown => write!(f, "Unknown"),
         }
     }

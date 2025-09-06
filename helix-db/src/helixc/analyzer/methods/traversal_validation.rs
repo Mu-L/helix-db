@@ -98,6 +98,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 original_query,
                                                 loc.clone(),
                                                 E205,
+                                                &value.stringify(),
                                                 &value.to_string(),
                                                 &field.field_type.to_string(),
                                                 "node",

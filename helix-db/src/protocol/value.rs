@@ -40,7 +40,7 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn to_string(&self) -> String {
+    pub fn stringify(&self) -> String {
         match self {
             Value::String(s) => s.to_string(),
             Value::F32(f) => f.to_string(),

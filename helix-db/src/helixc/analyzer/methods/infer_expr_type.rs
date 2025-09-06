@@ -225,6 +225,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                     loc.clone(),
                                                     E205,
                                                     value.as_str(),
+                                                    &variable_type.to_string(),
                                                     &field_set
                                                         .get(field_name.as_str())
                                                         .unwrap()
@@ -252,6 +253,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 loc.clone(),
                                                 E205,
                                                 value.as_str(),
+                                                &value.to_string(),
                                                 &field_type.to_string(),
                                                 "node",
                                                 ty.as_str()
@@ -441,6 +443,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 loc.clone(),
                                                 E205,
                                                 value.as_str(),
+                                                &value.to_string(),
                                                 &field_type.to_string(),
                                                 "edge",
                                                 ty.as_str()
@@ -635,6 +638,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 loc.clone(),
                                                 E205,
                                                 value.as_str(),
+                                                &value.to_string(),
                                                 &field_type.to_string(),
                                                 "vector",
                                                 ty.as_str()

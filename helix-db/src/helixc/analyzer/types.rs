@@ -19,11 +19,14 @@ impl From<NodeSchema> for GeneratedNodeSchema {
             properties: generated
                 .fields
                 .into_iter()
-                .map(|f| SchemaProperty {
-                    name: f.name,
-                    field_type: f.field_type.into(),
-                    default_value: f.defaults.map(|d| d.into()),
-                    is_index: f.prefix,
+                .map(|f| {
+                    // println!("into: {:?}", f.field_type.into());
+                    SchemaProperty {
+                        name: f.name,
+                        field_type: f.field_type.into(),
+                        default_value: f.defaults.map(|d| d.into()),
+                        is_index: f.prefix,
+                    }
                 })
                 .collect(),
         }
@@ -352,7 +355,9 @@ impl PartialEq for Type {
             (Type::Edges(name), Type::Edges(other_name)) => name == other_name,
             (Type::Vector(name), Type::Vector(other_name)) => name == other_name,
             (Type::Vectors(name), Type::Vectors(other_name)) => name == other_name,
-            _ => false,
+            (Type::Array(inner), Type::Array(other_inner)) => inner == other_inner,
+            (Type::Vector(name), Type::Vectors(other_name)) => name == other_name,
+            _ => unreachable!(),
         }
     }
 }
@@ -367,5 +372,11 @@ impl From<FieldType> for Type {
             Object(obj) => Type::Object(obj.into_iter().map(|(k, v)| (k, Type::from(v))).collect()),
             Identifier(id) => Type::Scalar(FieldType::Identifier(id)),
         }
+    }
+}
+
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
