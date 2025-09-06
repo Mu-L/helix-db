@@ -62,7 +62,7 @@ fn test_update_node() {
             .check_property("name")
             .unwrap()
             .into_owned()
-            .to_string(),
+            .inner_stringify(),
         "john"
     );
 }

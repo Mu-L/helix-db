@@ -40,7 +40,7 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn stringify(&self) -> String {
+    pub fn inner_stringify(&self) -> String {
         match self {
             Value::String(s) => s.to_string(),
             Value::F32(f) => f.to_string(),
@@ -59,7 +59,7 @@ impl Value {
             Value::Id(id) => id.stringify(),
             Value::Array(arr) => arr
                 .iter()
-                .map(|v| v.to_string())
+                .map(|v| v.inner_stringify())
                 .collect::<Vec<String>>()
                 .join(" "),
             Value::Object(obj) => obj
