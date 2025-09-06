@@ -121,7 +121,10 @@ pub async fn check_for_updates() -> Result<()> {
         let cache_content = fs::read_to_string(&cache_path)?;
         let update_cache: UpdateCache = toml::from_str(&cache_content)?;
 
-        let latest = update_cache.latest_version?;
+        let Some(latest) = update_cache.latest_version else {
+            return Ok(());
+        };
+
         if is_newer_version(CURRENT_VERSION, &latest) {
             print_update_available(&latest);
         }
