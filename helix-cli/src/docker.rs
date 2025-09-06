@@ -369,7 +369,7 @@ networks:
         Ok(())
     }
 
-    pub async fn tag(image_name: &str, image_tag: &str, registry_url: &str) -> Result<()> {
+    pub async fn tag(&self, image_name: &str, image_tag: &str, registry_url: &str) -> Result<()> {
         let local_image = format!("{image_name}:{image_tag}");
         let registry_image = format!("{registry_url}/{image_name}:{image_tag}");
         Command::new("docker")
@@ -380,7 +380,7 @@ networks:
         Ok(())
     }
 
-    pub async fn push(image_name: &str, image_tag: &str, registry_url: &str) -> Result<()> {
+    pub async fn push(&self, image_name: &str, image_tag: &str, registry_url: &str) -> Result<()> {
         let registry_image = format!("{registry_url}/{image_name}:{image_tag}");
         Command::new("docker")
             .arg("push")

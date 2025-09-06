@@ -5,7 +5,6 @@ use eyre::Result;
 use serde::Serialize;
 use serde_json::json;
 use tokio::{io::AsyncWriteExt, process::Command};
-
 use crate::{docker::DockerManager, project::ProjectContext};
 
 static FLY_MACHINES_API_URL: &str = "https://api.machines.dev/v1/";
@@ -40,6 +39,17 @@ pub enum FlyIoClientSetup {
     #[default]
     Cli,
 }
+
+pub struct FlyIoInstanceConfig {
+    vm_cpus: Option<u16>,
+    vm_cpu_kind: Option<u16>,
+    vm_size: Option<u16>,
+    volume: Option<String>,
+    volume_initial_size: Option<u16>,
+    no_public_ip: bool,
+}
+
+
 
 impl FlyIoClient {
     pub async fn new(project: &ProjectContext, setup: Option<FlyIoClientSetup>) -> Result<Self> {
@@ -128,6 +138,7 @@ impl FlyIoClient {
 
     async fn deploy_flyio(
         &self,
+        docker: &DockerManager<'_>,
         image_name: &str,
         image_tag: &str,
     ) -> Result<()> {
@@ -136,8 +147,8 @@ impl FlyIoClient {
                 todo!()
             }
             FlyClient::Cli => {
-                DockerManager::tag(image_name, image_tag, FLY_REGISTRY_URL).await?;
-                DockerManager::push(image_name, image_tag, FLY_REGISTRY_URL).await?;
+                docker.tag(image_name, image_tag, FLY_REGISTRY_URL).await?;
+                docker.push(image_name, image_tag, FLY_REGISTRY_URL).await?;
                 Command::new("flyctl")
                     .arg("deploy")
                     .arg("--image")

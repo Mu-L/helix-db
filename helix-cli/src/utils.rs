@@ -1,4 +1,5 @@
 use eyre::Result;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -95,4 +96,8 @@ impl DeploymentType {
         };
         Ok(deployment_type)
     }
+}
+
+pub trait ToMap {
+    fn to_map(&self) -> HashMap<String, serde_json::Value>;
 }
