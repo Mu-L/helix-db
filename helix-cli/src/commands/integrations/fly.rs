@@ -155,7 +155,7 @@ impl Integration for FlyIoClient {
         self.create_app(project, &instance_name).await
     }
 
-    async fn deploy(&self, instance_name: &str) -> Result<()> {
+    async fn push(&self, instance_name: &str) -> Result<()> {
         self.push_image_and_deploy_to_flyio(instance_name, "latest")
             .await
     }
