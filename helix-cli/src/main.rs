@@ -49,6 +49,18 @@ enum Commands {
         instance: String,
     },
 
+    /// Start an instance (doesn't rebuild)
+    Start {
+        /// Instance name to start
+        instance: String,
+    },
+
+    /// Stop an instance
+    Stop {
+        /// Instance name to stop
+        instance: String,
+    },
+
     /// Show status of all instances
     Status,
 
@@ -129,6 +141,12 @@ async fn main() -> Result<()> {
         }
         Commands::Pull { instance } => {
             commands::pull::run(instance).await
+        }
+        Commands::Start { instance } => {
+            commands::start::run(instance).await
+        }
+        Commands::Stop { instance } => {
+            commands::stop::run(instance).await
         }
         Commands::Status => {
             commands::status::run().await

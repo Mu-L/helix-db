@@ -13,17 +13,20 @@ impl<'a> DockerManager<'a> {
     }
 
     // === CENTRALIZED NAMING METHODS ===
-    
+
     /// Get the compose project name for an instance
     fn compose_project_name(&self, instance_name: &str) -> String {
-        format!("helix-{}-{}", self.project.config.project.name, instance_name)
+        format!(
+            "helix-{}-{}",
+            self.project.config.project.name, instance_name
+        )
     }
-    
+
     /// Get the service name (always "app")
     fn service_name() -> &'static str {
         "app"
     }
-    
+
     /// Get the image name for an instance
     fn image_name(&self, instance_name: &str, build_mode: BuildMode) -> String {
         let tag = match build_mode {
@@ -32,29 +35,24 @@ impl<'a> DockerManager<'a> {
         };
         format!("{}:{}", self.compose_project_name(instance_name), tag)
     }
-    
+
     /// Get the container name for an instance
     fn container_name(&self, instance_name: &str) -> String {
         format!("{}-app", self.compose_project_name(instance_name))
     }
-    
+
     /// Get the data volume name for an instance
     fn data_volume_name(&self, instance_name: &str) -> String {
         format!("{}-data", self.compose_project_name(instance_name))
     }
-    
-    /// Get the cache volume name for an instance
-    fn cache_volume_name(&self, instance_name: &str) -> String {
-        format!("{}-cache", self.compose_project_name(instance_name))
-    }
-    
+
     /// Get the network name for an instance
     fn network_name(&self, instance_name: &str) -> String {
         format!("{}-net", self.compose_project_name(instance_name))
     }
 
     // === CENTRALIZED DOCKER COMMAND EXECUTION ===
-    
+
     /// Run a docker command with consistent error handling
     pub fn run_docker_command(&self, args: &[&str]) -> Result<Output> {
         let output = Command::new("docker")
@@ -63,15 +61,15 @@ impl<'a> DockerManager<'a> {
             .map_err(|e| eyre!("Failed to run docker {}: {}", args.join(" "), e))?;
         Ok(output)
     }
-    
+
     /// Run a docker-compose command with proper project naming
     fn run_compose_command(&self, instance_name: &str, args: &[&str]) -> Result<Output> {
         let workspace = self.project.instance_workspace(instance_name);
         let project_name = self.compose_project_name(instance_name);
-        
+
         let mut full_args = vec!["--project-name", &project_name];
         full_args.extend(args);
-        
+
         let output = Command::new("docker-compose")
             .args(&full_args)
             .current_dir(&workspace)
@@ -121,8 +119,7 @@ impl<'a> DockerManager<'a> {
 
         let dockerfile = format!(
             r#"# Generated Dockerfile for Helix instance: {instance_name}
-FROM rust:1.88-slim as builder
-
+FROM lukemathwalker/cargo-chef:latest-rust-1.88 AS chef
 WORKDIR /build
 
 # Install system dependencies
@@ -131,20 +128,32 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Set up cargo cache - mounted from host
-ENV CARGO_HOME=/cargo-cache
-ENV CARGO_TARGET_DIR=/cargo-cache/target
-
-# First, copy the entire cached repo workspace (includes all dependencies)
-# This uses the copied repo directory
+# Copy the cached repo workspace first (contains all dependencies and Cargo.toml files)
 COPY helix-repo-copy/ ./
 
-# Then overlay instance-specific files from current directory
-# This overwrites any files with the instance-specific versions
-COPY . ./
+# Then overlay instance-specific files
+COPY helix-container/ ./helix-container/
 
-# Build the helix-container package from the workspace
-# All workspace dependencies are now available
+FROM chef AS planner
+# Generate the recipe file for dependency caching
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+# Copy the recipe file
+COPY --from=planner /build/recipe.json recipe.json
+
+# Install system dependencies again for builder stage
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build dependencies - this is the caching Docker layer!
+RUN cargo chef cook {build_flag} --recipe-path recipe.json --package helix-container
+
+# Copy source code and build the application
+COPY helix-repo-copy/ ./
+COPY helix-container/ ./helix-container/
 RUN cargo build {build_flag} --package helix-container
 
 # Runtime image
@@ -158,7 +167,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the built binary
-COPY --from=builder /cargo-cache/target/{build_mode}/helix-container /usr/local/bin/helix-container
+COPY --from=builder /build/target/{build_mode}/helix-container /usr/local/bin/helix-container
 
 # Create data directory
 RUN mkdir -p /data
@@ -182,14 +191,12 @@ CMD ["helix-container"]
     ) -> Result<String> {
         let port = instance_config.port().unwrap_or(6969);
         let volume_path = self.project.instance_volume(instance_name);
-        let cargo_cache_path = self.project.helix_dir.join(".cargo-cache");
-        
+
         // Use centralized naming methods
         let service_name = Self::service_name();
         let image_name = self.image_name(instance_name, instance_config.build_mode());
         let container_name = self.container_name(instance_name);
         let data_volume_name = self.data_volume_name(instance_name);
-        let cache_volume_name = self.cache_volume_name(instance_name);
         let network_name = self.network_name(instance_name);
 
         let compose = format!(
@@ -207,7 +214,6 @@ services:
       - "{port}:{port}"
     volumes:
       - {data_volume_name}:/data
-      - {cache_volume_name}:/cargo-cache
     environment:
       - HELIX_PORT={port}
       - HELIX_DATA_DIR=/data
@@ -224,19 +230,12 @@ volumes:
       type: bind
       device: {volume_path}
       o: bind
-  {cache_volume_name}:
-    driver: local
-    driver_opts:
-      type: bind
-      device: {cargo_cache_path}
-      o: bind
 
 networks:
   {network_name}:
     driver: bridge
 "#,
             volume_path = volume_path.display(),
-            cargo_cache_path = cargo_cache_path.display(),
             project_name = self.project.config.project.name,
         );
 
@@ -245,7 +244,10 @@ networks:
 
     /// Build Docker image for an instance
     pub fn build_image(&self, instance_name: &str) -> Result<()> {
-        println!("[DOCKER] Building image for instance '{}'...", instance_name);
+        println!(
+            "[DOCKER] Building image for instance '{}'...",
+            instance_name
+        );
 
         let output = self.run_compose_command(instance_name, &["build"])?;
 
@@ -325,7 +327,7 @@ networks:
 
                 // Extract instance name from new container naming scheme: helix-{project}-{instance}-app
                 let expected_prefix = format!("helix-{}-", project_name);
-                
+
                 let instance_name = if let Some(suffix) = name.strip_prefix(&expected_prefix) {
                     // Remove the trailing "-app" if it exists
                     suffix.strip_suffix("-app").unwrap_or(suffix)
