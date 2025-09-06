@@ -1,11 +1,11 @@
 use crate::helixc::{
     analyzer::{
-        analyzer::Ctx,
+        Ctx,
         diagnostic::{Diagnostic, DiagnosticSeverity},
         error_codes::ErrorCode,
         fix::Fix,
     },
-    parser::{helix_parser::Query, location::Loc},
+    parser::{location::Loc, types::Query},
 };
 
 pub(crate) fn push_schema_err(

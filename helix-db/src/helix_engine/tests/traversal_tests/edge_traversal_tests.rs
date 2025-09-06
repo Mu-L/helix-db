@@ -185,10 +185,10 @@ fn test_in_n() {
 
     let person1 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("per son", Some(props!()), None)
-        .collect_to_val();
+        .collect_to_obj();
     let person2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!()), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -199,7 +199,7 @@ fn test_in_n() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(Arc::clone(&storage), &txn)
@@ -218,10 +218,10 @@ fn test_out_n() {
 
     let person1 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!()), None)
-        .collect_to_val();
+        .collect_to_obj();
     let person2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!()), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -232,7 +232,7 @@ fn test_out_n() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(Arc::clone(&storage), &txn)
@@ -254,7 +254,7 @@ fn test_edge_properties() {
     let node1 = node1.first().unwrap().clone();
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!()), None)
-        .collect_to_val();
+        .collect_to_obj();
     let props = props! { "since" => 2020, "date" => 1744965900, "name" => "hello"};
     let _ = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -405,15 +405,15 @@ fn test_add_e_between_node_and_vector() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let vector = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<fn(&HVector, &RoTxn) -> bool>(&[1.0, 2.0, 3.0], "vector", None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let _ = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e("knows", None, node.id(), vector.id(), false, EdgeType::Vec)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 

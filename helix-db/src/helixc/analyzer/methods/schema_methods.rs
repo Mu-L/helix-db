@@ -1,9 +1,9 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use crate::helixc::{
-    analyzer::{analyzer::Ctx, error_codes::ErrorCode, errors::push_schema_err},
+    analyzer::{Ctx, error_codes::ErrorCode, errors::push_schema_err},
     parser::{
-        helix_parser::{Field, FieldPrefix, FieldType, Source},
+        types::{Field, FieldPrefix, FieldType, Source},
         location::Loc,
     },
 };
@@ -149,7 +149,7 @@ pub(crate) fn check_schema(ctx: &mut Ctx) {
         }
         if let Some(v) = edge.properties.as_ref() {
             v.iter().for_each(|f| {
-                if f.name.to_lowercase() == "id" {
+                if RESERVED_FIELD_NAMES.contains(&f.name.to_lowercase().as_str()) {
                     push_schema_err(
                         ctx,
                         f.loc.clone(),
@@ -164,7 +164,7 @@ pub(crate) fn check_schema(ctx: &mut Ctx) {
     }
     for node in &ctx.src.get_latest_schema().node_schemas {
         node.fields.iter().for_each(|f| {
-            if f.name.to_lowercase() == "id" {
+            if RESERVED_FIELD_NAMES.contains(&f.name.to_lowercase().as_str()) {
                 push_schema_err(
                     ctx,
                     f.loc.clone(),
@@ -178,7 +178,7 @@ pub(crate) fn check_schema(ctx: &mut Ctx) {
     }
     for vector in &ctx.src.get_latest_schema().vector_schemas {
         vector.fields.iter().for_each(|f: &Field| {
-            if f.name.to_lowercase() == "id" {
+            if RESERVED_FIELD_NAMES.contains(&f.name.to_lowercase().as_str()) {
                 push_schema_err(
                     ctx,
                     f.loc.clone(),
@@ -191,3 +191,5 @@ pub(crate) fn check_schema(ctx: &mut Ctx) {
         ctx.output.vectors.push(vector.clone().into());
     }
 }
+
+const RESERVED_FIELD_NAMES: &[&str] = &["id", "label", "to_node", "from_node", "data", "score"];

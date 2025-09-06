@@ -81,7 +81,6 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>, K: Into<Value> 
             .storage
             .secondary_indices
             .get(index)
-            // TODO: this
             .ok_or(GraphError::New(format!(
                 "Secondary Index {index} not found"
             )))

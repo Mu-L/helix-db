@@ -259,17 +259,17 @@ fn test_filter_chain() {
             Some(props! { "age" => 25, "name" => "Alice" }),
             None,
         )
-        .collect_to_val();
+        .collect_to_obj();
     let person2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n(
             "person",
             Some(props! { "age" => 30, "name" => "Bob" }),
             None,
         )
-        .collect_to_val();
+        .collect_to_obj();
     let _ = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 35 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();

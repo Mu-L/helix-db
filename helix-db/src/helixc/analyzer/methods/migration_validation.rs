@@ -1,6 +1,6 @@
 use crate::{
     helixc::{
-        analyzer::analyzer::Ctx,
+        analyzer::Ctx,
         generator::{
             migrations::{
                 GeneratedMigration, GeneratedMigrationItemMapping,
@@ -8,7 +8,7 @@ use crate::{
             },
             utils::{GenRef, GeneratedValue, Separator},
         },
-        parser::helix_parser::{
+        parser::types::{
             FieldValueType, Migration, MigrationItem, MigrationPropertyMapping,
         },
     },

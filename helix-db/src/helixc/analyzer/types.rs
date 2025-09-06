@@ -9,9 +9,7 @@ use crate::helixc::{
         },
         utils::{GenRef, GeneratedType, GeneratedValue, RustType as GeneratedRustType},
     },
-    parser::helix_parser::{
-        DefaultValue, EdgeSchema, FieldType, NodeSchema, Parameter, VectorSchema,
-    },
+    parser::types::{DefaultValue, EdgeSchema, FieldType, NodeSchema, Parameter, VectorSchema},
 };
 
 impl From<NodeSchema> for GeneratedNodeSchema {
@@ -21,11 +19,14 @@ impl From<NodeSchema> for GeneratedNodeSchema {
             properties: generated
                 .fields
                 .into_iter()
-                .map(|f| SchemaProperty {
-                    name: f.name,
-                    field_type: f.field_type.into(),
-                    default_value: f.defaults.map(|d| d.into()),
-                    is_index: f.prefix,
+                .map(|f| {
+                    // println!("into: {:?}", f.field_type.into());
+                    SchemaProperty {
+                        name: f.name,
+                        field_type: f.field_type.into(),
+                        default_value: f.defaults.map(|d| d.into()),
+                        is_index: f.prefix,
+                    }
                 })
                 .collect(),
         }
@@ -240,6 +241,7 @@ pub(crate) enum Type {
     Vectors(Option<String>),
     Scalar(FieldType),
     Object(HashMap<String, Type>),
+    Array(Box<Type>),
     Anonymous(Box<Type>),
     Boolean,
     Unknown,
@@ -256,6 +258,7 @@ impl Type {
             Type::Vectors(_) => "vectors",
             Type::Scalar(_) => "scalar",
             Type::Object(_) => "object",
+            Type::Array(_) => "array",
             Type::Boolean => "boolean",
             Type::Unknown => "unknown",
             Type::Anonymous(ty) => ty.kind_str(),
@@ -272,6 +275,7 @@ impl Type {
             Type::Vectors(Some(name)) => name.clone(),
             Type::Scalar(ft) => ft.to_string(),
             Type::Anonymous(ty) => ty.get_type_name(),
+            Type::Array(ty) => ty.get_type_name(),
             Type::Boolean => "boolean".to_string(),
             Type::Unknown => "unknown".to_string(),
             Type::Object(fields) => {
@@ -293,7 +297,6 @@ impl Type {
     #[allow(dead_code)]
     /// Same, but returns an owned clone for convenience.
     pub fn cloned_base(&self) -> Type {
-        // TODO: never used?
         match self {
             Type::Anonymous(inner) => inner.cloned_base(),
             _ => self.clone(),
@@ -338,14 +341,42 @@ impl Type {
     }
 }
 
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Type::Scalar(ft), Type::Scalar(other_ft)) => ft == other_ft,
+            (Type::Object(fields), Type::Object(other_fields)) => fields == other_fields,
+            (Type::Boolean, Type::Boolean) => true,
+            (Type::Unknown, Type::Unknown) => true,
+            (Type::Anonymous(inner), Type::Anonymous(other_inner)) => inner == other_inner,
+            (Type::Node(name), Type::Node(other_name)) => name == other_name,
+            (Type::Nodes(name), Type::Nodes(other_name)) => name == other_name,
+            (Type::Edge(name), Type::Edge(other_name)) => name == other_name,
+            (Type::Edges(name), Type::Edges(other_name)) => name == other_name,
+            (Type::Vector(name), Type::Vector(other_name)) => name == other_name,
+            (Type::Vectors(name), Type::Vectors(other_name)) => name == other_name,
+            (Type::Array(inner), Type::Array(other_inner)) => inner == other_inner,
+            (Type::Vector(name), Type::Vectors(other_name)) => name == other_name,
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl From<FieldType> for Type {
     fn from(ft: FieldType) -> Self {
         use FieldType::*;
         match ft {
             String | Boolean | F32 | F64 | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | U128
             | Uuid | Date => Type::Scalar(ft.clone()),
-            Array(inner_ft) => Type::from(*inner_ft),
-            _ => Type::Unknown,
+            Array(inner_ft) => Type::Array(Box::new(Type::from(*inner_ft))),
+            Object(obj) => Type::Object(obj.into_iter().map(|(k, v)| (k, Type::from(v))).collect()),
+            Identifier(id) => Type::Scalar(FieldType::Identifier(id)),
         }
+    }
+}
+
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }

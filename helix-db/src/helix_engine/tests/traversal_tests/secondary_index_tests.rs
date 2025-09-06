@@ -47,12 +47,12 @@ fn test_delete_node_with_secondary_index() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "name" => "John" }), Some(&["name"]))
-        .collect_to_val();
+        .collect_to_obj();
     let node_id = node.id(); // Save the ID before moving
 
     let _ = G::new_mut_from(Arc::clone(&storage), &mut txn, node)
         .update(Some(props! { "name" => "Jane" }))
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -105,11 +105,11 @@ fn test_update_of_secondary_indices() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "name" => "John" }), Some(&["name"]))
-        .collect_to_val();
+        .collect_to_obj();
 
     let _ = G::new_mut_from(Arc::clone(&storage), &mut txn, node)
         .update(Some(props! { "name" => "Jane" }))
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 

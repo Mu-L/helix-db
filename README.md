@@ -1,7 +1,7 @@
 <div align="center">
 
 <picture>
-  <img src="/docs/full_logo.png" alt="HelixDB Logo">
+  <img src="/assets/full_logo.png" alt="HelixDB Logo">
 </picture>
 
 <b>HelixDB</b>: a database built from scratch to be the storage backend for any AI application.

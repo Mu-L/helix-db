@@ -70,9 +70,9 @@ impl ReturnValue {
             ReturnType::NamedLiteral(name) => name.inner().inner().to_string(),
             ReturnType::NamedExpr(name) => name.inner().inner().to_string(),
             ReturnType::SingleExpr(name) => name.inner().inner().to_string(),
-            ReturnType::UnnamedExpr => todo!(),
-            ReturnType::HashMap => todo!(),
-            ReturnType::Array => todo!(),
+            ReturnType::UnnamedExpr => unimplemented!(),
+            ReturnType::HashMap => unimplemented!(),
+            ReturnType::Array => unimplemented!(),
         }
     }
 
