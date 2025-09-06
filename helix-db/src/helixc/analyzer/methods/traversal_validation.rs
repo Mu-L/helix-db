@@ -1,6 +1,6 @@
 use crate::helixc::analyzer::error_codes::*;
 use crate::helixc::analyzer::utils::DEFAULT_VAR_NAME;
-use crate::helixc::generator::bool_op::{Contains, IsIn};
+use crate::helixc::generator::bool_ops::{Contains, IsIn};
 use crate::helixc::generator::source_steps::SearchVector;
 use crate::helixc::generator::utils::{EmbedData, VecData};
 use crate::{
@@ -20,8 +20,8 @@ use crate::{
             },
         },
         generator::{
-            bool_op::{BoExp, BoolOp, Eq, Gt, Gte, Lt, Lte, Neq},
-            object_remapping_generation::{ExcludeField, Remapping, RemappingType},
+            bool_ops::{BoExp, BoolOp, Eq, Gt, Gte, Lt, Lte, Neq},
+            object_remappings::{ExcludeField, Remapping, RemappingType},
             queries::Query as GeneratedQuery,
             source_steps::{EFromID, EFromType, NFromID, NFromIndex, NFromType, SourceStep},
             statements::Statement as GeneratedStatement,

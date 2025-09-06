@@ -17,9 +17,9 @@ use crate::{
 use core::fmt;
 use std::fmt::Display;
 
-pub mod bool_op;
+pub mod bool_ops;
 pub mod migrations;
-pub mod object_remapping_generation;
+pub mod object_remappings;
 pub mod queries;
 pub mod return_values;
 pub mod schemas;

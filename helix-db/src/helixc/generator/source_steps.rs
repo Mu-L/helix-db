@@ -4,7 +4,7 @@ use std::fmt::Display;
 use crate::helixc::generator::utils::{write_properties, write_secondary_indices, VecData};
 
 use super::{
-    bool_op::BoExp,
+    bool_ops::BoExp,
     utils::{GenRef, GeneratedValue},
 };
 

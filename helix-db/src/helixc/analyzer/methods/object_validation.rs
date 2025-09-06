@@ -1,7 +1,7 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
 use crate::helixc::analyzer::utils::{FieldLookup, DEFAULT_VAR_NAME};
-use crate::helixc::generator::object_remapping_generation::SingleFieldTraversalRemapping;
+use crate::helixc::generator::object_remappings::SingleFieldTraversalRemapping;
 use crate::{
     generate_error,
     helixc::{
@@ -16,7 +16,7 @@ use crate::{
             },
         },
         generator::{
-            object_remapping_generation::{
+            object_remappings::{
                 ExistsRemapping, IdentifierRemapping, ObjectRemapping, Remapping, RemappingType,
                 TraversalRemapping, ValueRemapping,
             },

@@ -15,7 +15,7 @@ use crate::{
             },
         },
         generator::{
-            bool_op::BoExp,
+            bool_ops::BoExp,
             queries::Query as GeneratedQuery,
             source_steps::{
                 AddE, AddN, AddV, SearchBM25, SearchVector as GeneratedSearchVector, SourceStep,
@@ -424,7 +424,34 @@ pub(crate) fn infer_expr_type<'a>(
                                                 E301,
                                                 value.as_str()
                                             );
-                                        };
+                                        } else {
+                                            let variable_type = scope.get(value.as_str()).unwrap();
+                                            if variable_type
+                                                != &Type::from(
+                                                    field_set
+                                                        .get(field_name.as_str())
+                                                        .unwrap()
+                                                        .field_type
+                                                        .clone(),
+                                                )
+                                            {
+                                                generate_error!(
+                                                    ctx,
+                                                    original_query,
+                                                    loc.clone(),
+                                                    E205,
+                                                    value.as_str(),
+                                                    &variable_type.to_string(),
+                                                    &field_set
+                                                        .get(field_name.as_str())
+                                                        .unwrap()
+                                                        .field_type
+                                                        .to_string(),
+                                                    "edge",
+                                                    ty.as_str()
+                                                );
+                                            }
+                                        }
                                     }
                                     ValueType::Literal { value, loc } => {
                                         // check against type
@@ -619,7 +646,34 @@ pub(crate) fn infer_expr_type<'a>(
                                                 E301,
                                                 value.as_str()
                                             );
-                                        };
+                                        } else {
+                                            let variable_type = scope.get(value.as_str()).unwrap();
+                                            if variable_type
+                                                != &Type::from(
+                                                    field_set
+                                                        .get(field_name.as_str())
+                                                        .unwrap()
+                                                        .field_type
+                                                        .clone(),
+                                                )
+                                            {
+                                                generate_error!(
+                                                    ctx,
+                                                    original_query,
+                                                    loc.clone(),
+                                                    E205,
+                                                    value.as_str(),
+                                                    &variable_type.to_string(),
+                                                    &field_set
+                                                        .get(field_name.as_str())
+                                                        .unwrap()
+                                                        .field_type
+                                                        .to_string(),
+                                                    "vector",
+                                                    ty.as_str()
+                                                );
+                                            }
+                                        }
                                     }
                                     ValueType::Literal { value, loc } => {
                                         // check against type
