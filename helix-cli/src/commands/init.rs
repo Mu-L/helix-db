@@ -4,8 +4,10 @@ use std::fs;
 use std::path::Path;
 use crate::config::HelixConfig;
 use crate::utils::{print_success, print_status};
+use crate::utils::{DeploymentType, Template};
 
-pub async fn run(path: Option<String>) -> Result<()> {
+
+pub async fn run(path: Option<String>, template: Option<Template>, deployment_type: Option<DeploymentType>) -> Result<()> {
     let project_dir = match path {
         Some(p) => std::path::PathBuf::from(p),
         None => env::current_dir()?,
@@ -69,7 +71,7 @@ fn create_project_structure(project_dir: &Path) -> Result<()> {
 // N::User {
 //     Name: String,
 //     Label: String,
-//     Age: Integer,
+//     Age: I64,
 //     IsAdmin: Boolean,
 // }
 //
@@ -77,7 +79,7 @@ fn create_project_structure(project_dir: &Path) -> Result<()> {
 //     From: User,
 //     To: User,
 //     Properties: {
-//         Since: Integer,
+//         Since: I64,
 //     }
 // }
 "#;
@@ -114,3 +116,4 @@ target/
     
     Ok(())
 }
+

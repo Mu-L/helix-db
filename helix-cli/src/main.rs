@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
 
+use crate::utils::{DeploymentType, Template};
+
 mod commands;
 mod config;
 mod docker;
@@ -23,6 +25,12 @@ enum Commands {
         /// Project directory (defaults to current directory)
         #[clap(short, long)]
         path: Option<String>,
+
+        #[clap(long)]
+        template: Option<String>,
+
+        #[clap(long, default_value = "helix")]
+        cloud: Option<String>,
     },
 
     /// Validate project configuration and queries
@@ -115,35 +123,26 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { path } => {
-            commands::init::run(path).await
+        Commands::Init {
+            path,
+            template,
+            cloud,
+        } => {
+            commands::init::run(
+                path,
+                template.map(|t| Template::from_str(&t)).transpose()?,
+                cloud.map(|c| DeploymentType::from_str(&c)).transpose()?,
+            )
+            .await
         }
-        Commands::Check { instance } => {
-            commands::check::run(instance).await
-        }
-        Commands::Build { instance } => {
-            commands::build::run(instance).await
-        }
-        Commands::Push { instance } => {
-            commands::push::run(instance).await
-        }
-        Commands::Pull { instance } => {
-            commands::pull::run(instance).await
-        }
-        Commands::Status => {
-            commands::status::run().await
-        }
-        Commands::Cloud { action } => {
-            commands::cloud::run(action).await
-        }
-        Commands::Prune { instance, all } => {
-            commands::prune::run(instance, all).await
-        }
-        Commands::Delete { instance } => {
-            commands::delete::run(instance).await
-        }
-        Commands::Metrics { action } => {
-            commands::metrics::run(action).await
-        }
+        Commands::Check { instance } => commands::check::run(instance).await,
+        Commands::Build { instance } => commands::build::run(instance).await,
+        Commands::Push { instance } => commands::push::run(instance).await,
+        Commands::Pull { instance } => commands::pull::run(instance).await,
+        Commands::Status => commands::status::run().await,
+        Commands::Cloud { action } => commands::cloud::run(action).await,
+        Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
+        Commands::Delete { instance } => commands::delete::run(instance).await,
+        Commands::Metrics { action } => commands::metrics::run(action).await,
     }
 }

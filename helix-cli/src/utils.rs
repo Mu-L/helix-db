@@ -55,3 +55,44 @@ pub fn print_success(message: &str) {
 pub fn print_warning(message: &str) {
     println!("[WARNING] {}", message);
 }
+
+
+#[derive(Default)]
+pub enum Template {
+    Typescript,
+    Python,
+    Rust,
+    Go,
+    #[default]
+    Empty,
+}
+impl Template {
+    pub fn from_str(value: &str) -> Result<Self> {
+        let template = match value {
+            "ts" | "typescript" => Template::Typescript,
+            "py" | "python" => Template::Python,
+            "rs" | "rust" => Template::Rust,
+            "go" => Template::Go,
+            _ => return Err(eyre::eyre!("Invalid template: {}", value)),
+        };
+        Ok(template)
+    }
+}
+#[derive(Default)]
+pub enum DeploymentType {
+    #[default]
+    Helix,  
+    Ecr,
+    Flyio,
+}
+impl DeploymentType {
+    pub fn from_str(value: &str) -> Result<Self> {
+        let deployment_type = match value {
+            "helix" => DeploymentType::Helix,
+            "ecr" => DeploymentType::Ecr,
+            "fly" => DeploymentType::Flyio,
+            _ => return Err(eyre::eyre!("Invalid deployment type: {}", value)),
+        };
+        Ok(deployment_type)
+    }
+}

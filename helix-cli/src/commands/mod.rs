@@ -1,10 +1,11 @@
-pub mod init;
 pub mod build;
 pub mod check;
-pub mod push;
-pub mod pull;
-pub mod status;
 pub mod cloud;
-pub mod prune;
 pub mod delete;
+pub mod init;
+pub mod integrations;
 pub mod metrics;
+pub mod prune;
+pub mod pull;
+pub mod push;
+pub mod status;
