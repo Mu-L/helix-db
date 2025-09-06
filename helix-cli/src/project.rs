@@ -64,12 +64,10 @@ impl ProjectContext {
         let workspace = self.instance_workspace(instance_name);
         let volume = self.instance_volume(instance_name);
         let container = self.container_dir(instance_name);
-        let cargo_cache = self.helix_dir.join(".cargo-cache");
         
         std::fs::create_dir_all(&workspace)?;
         std::fs::create_dir_all(&volume)?;
         std::fs::create_dir_all(&container)?;
-        std::fs::create_dir_all(&cargo_cache)?;
         
         Ok(())
     }

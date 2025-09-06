@@ -26,6 +26,9 @@ async fn push_local_instance(project: &ProjectContext, instance_name: &str) -> R
     // Check Docker availability
     DockerManager::check_docker_available()?;
     
+    // Build the instance first (this ensures it's up to date)
+    crate::commands::build::run(instance_name.to_string()).await?;
+    
     // Start the instance
     docker.start_instance(instance_name)?;
     
