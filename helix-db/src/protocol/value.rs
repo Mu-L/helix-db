@@ -64,7 +64,7 @@ impl Value {
                 .join(" "),
             Value::Object(obj) => obj
                 .iter()
-                .map(|(k, v)| format!("{} {}", k, v.to_string()))
+                .map(|(k, v)| format!("{k} {v}"))
                 .collect::<Vec<String>>()
                 .join(" "),
             _ => panic!("Not primitive"),
