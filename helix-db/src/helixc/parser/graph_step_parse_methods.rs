@@ -1,11 +1,7 @@
 use crate::helixc::parser::{
-    HelixParser, Rule,
-    location::HasLoc,
-    ParserError,
-    types::{
-        BooleanOp, BooleanOpType, Closure, Exclude, Expression, FieldAddition, FieldValue,
-        FieldValueType, Object, OrderBy, OrderByType, Update,
-    },
+    location::HasLoc, types::{
+        BooleanOp, BooleanOpType, Closure, Exclude, Expression, FieldAddition, FieldValue, FieldValueType, GraphStep, GraphStepType, IdType, Object, OrderBy, OrderByType, ShortestPath, Step, StepType, Update
+    }, HelixParser, ParserError, Rule
 };
 use pest::iterators::Pair;
 
@@ -16,7 +12,7 @@ impl HelixParser {
     /// ```rs
     /// ::ORDER<Asc>(_::{age})
     /// ```
-    pub fn parse_order_by(&self, pair: Pair<Rule>) -> Result<OrderBy, ParserError> {
+    pub(super) fn parse_order_by(&self, pair: Pair<Rule>) -> Result<OrderBy, ParserError> {
         let mut inner = pair.clone().into_inner();
         let order_by_type = match inner.next().unwrap().into_inner().next().unwrap().as_rule() {
             Rule::asc => OrderByType::Asc,
@@ -37,7 +33,7 @@ impl HelixParser {
     /// ```rs
     /// ::RANGE(1, 10)
     /// ```
-    pub fn parse_range(&self, pair: Pair<Rule>) -> Result<(Expression, Expression), ParserError> {
+    pub(super) fn parse_range(&self, pair: Pair<Rule>) -> Result<(Expression, Expression), ParserError> {
         let mut inner = pair.into_inner().next().unwrap().into_inner();
         let start = self.parse_expression(inner.next().unwrap())?;
         let end = self.parse_expression(inner.next().unwrap())?;
@@ -51,7 +47,7 @@ impl HelixParser {
     /// ```rs
     /// ::GT(1)
     /// ```
-    pub fn parse_bool_operation(&self, pair: Pair<Rule>) -> Result<BooleanOp, ParserError> {
+    pub(super) fn parse_bool_operation(&self, pair: Pair<Rule>) -> Result<BooleanOp, ParserError> {
         let inner = pair.clone().into_inner().next().unwrap();
         let expr = match inner.as_rule() {
             Rule::GT => BooleanOp {
@@ -111,7 +107,7 @@ impl HelixParser {
     /// ```rs
     /// ::UPDATE({age: 1})
     /// ```
-    pub fn parse_update(&self, pair: Pair<Rule>) -> Result<Update, ParserError> {
+    pub(super) fn parse_update(&self, pair: Pair<Rule>) -> Result<Update, ParserError> {
         let fields = self.parse_object_fields(pair.clone())?;
         Ok(Update {
             fields,
@@ -125,7 +121,7 @@ impl HelixParser {
     /// ```rs
     /// ::{username: name}
     /// ```
-    pub fn parse_object_step(&self, pair: Pair<Rule>) -> Result<Object, ParserError> {
+    pub(super) fn parse_object_step(&self, pair: Pair<Rule>) -> Result<Object, ParserError> {
         let mut fields = Vec::new();
         let mut should_spread = false;
         for p in pair.clone().into_inner() {
@@ -183,7 +179,7 @@ impl HelixParser {
     /// ```rs
     /// ::|user|{user_age: user::{age}}
     /// ```
-    pub fn parse_closure(&self, pair: Pair<Rule>) -> Result<Closure, ParserError> {
+    pub(super) fn parse_closure(&self, pair: Pair<Rule>) -> Result<Closure, ParserError> {
         let mut pairs = pair.clone().into_inner();
         let identifier = pairs.next().unwrap().as_str().to_string();
         let object = self.parse_object_step(pairs.next().unwrap())?;
@@ -200,7 +196,7 @@ impl HelixParser {
     /// ```rs
     /// ::!{age, name}
     /// ```
-    pub fn parse_exclude(&self, pair: Pair<Rule>) -> Result<Exclude, ParserError> {
+    pub(super) fn parse_exclude(&self, pair: Pair<Rule>) -> Result<Exclude, ParserError> {
         let mut fields = Vec::new();
         for p in pair.clone().into_inner() {
             fields.push((p.loc(), p.as_str().to_string()));
@@ -209,5 +205,185 @@ impl HelixParser {
             loc: pair.loc(),
             fields,
         })
+    }
+
+
+    pub(super) fn parse_step(&self, pair: Pair<Rule>) -> Result<Step, ParserError> {
+        let inner = pair.clone().into_inner().next().unwrap();
+        match inner.as_rule() {
+            Rule::graph_step => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::Node(self.parse_graph_step(inner)),
+            }),
+            Rule::object_step => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::Object(self.parse_object_step(inner)?),
+            }),
+            Rule::closure_step => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::Closure(self.parse_closure(inner)?),
+            }),
+            Rule::where_step => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::Where(Box::new(self.parse_expression(inner)?)),
+            }),
+            Rule::range_step => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::Range(self.parse_range(pair)?),
+            }),
+
+            Rule::bool_operations => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::BooleanOperation(self.parse_bool_operation(inner)?),
+            }),
+            Rule::count => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::Count,
+            }),
+            Rule::ID => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::Object(Object {
+                    fields: vec![FieldAddition {
+                        key: "id".to_string(),
+                        value: FieldValue {
+                            loc: pair.loc(),
+                            value: FieldValueType::Identifier("id".to_string()),
+                        },
+                        loc: pair.loc(),
+                    }],
+                    should_spread: false,
+                    loc: pair.loc(),
+                }),
+            }),
+            Rule::update => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::Update(self.parse_update(inner)?),
+            }),
+            Rule::exclude_field => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::Exclude(self.parse_exclude(inner)?),
+            }),
+            Rule::AddE => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::AddEdge(self.parse_add_edge(inner, true)?),
+            }),
+            Rule::order_by => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::OrderBy(self.parse_order_by(inner)?),
+            }),
+            _ => Err(ParserError::from(format!(
+                "Unexpected step type: {:?}",
+                inner.as_rule()
+            ))),
+        }
+    }
+
+    pub(super) fn parse_graph_step(&self, pair: Pair<Rule>) -> GraphStep {
+        let types = |pair: &Pair<Rule>| {
+            pair.clone()
+                .into_inner()
+                .next()
+                .map(|p| p.as_str().to_string())
+                .ok_or_else(|| ParserError::from("Expected type".to_string()))
+                .unwrap()
+        };
+        let pair = pair.into_inner().next().unwrap();
+        match pair.as_rule() {
+            Rule::out_e => {
+                let types = types(&pair);
+                GraphStep {
+                    loc: pair.loc(),
+                    step: GraphStepType::OutE(types),
+                }
+            }
+            Rule::in_e => {
+                let types = types(&pair);
+                GraphStep {
+                    loc: pair.loc(),
+                    step: GraphStepType::InE(types),
+                }
+            }
+            Rule::from_n => GraphStep {
+                loc: pair.loc(),
+                step: GraphStepType::FromN,
+            },
+            Rule::to_n => GraphStep {
+                loc: pair.loc(),
+                step: GraphStepType::ToN,
+            },
+            Rule::from_v => GraphStep {
+                loc: pair.loc(),
+                step: GraphStepType::FromV,
+            },
+            Rule::to_v => GraphStep {
+                loc: pair.loc(),
+                step: GraphStepType::ToV,
+            },
+            Rule::out => {
+                let types = types(&pair);
+                GraphStep {
+                    loc: pair.loc(),
+                    step: GraphStepType::Out(types),
+                }
+            }
+            Rule::in_nodes => {
+                let types = types(&pair);
+                GraphStep {
+                    loc: pair.loc(),
+                    step: GraphStepType::In(types),
+                }
+            }
+            Rule::shortest_path => {
+                let (type_arg, from, to) = pair.clone().into_inner().fold(
+                    (None, None, None),
+                    |(type_arg, from, to), p| match p.as_rule() {
+                        Rule::type_args => (
+                            Some(p.into_inner().next().unwrap().as_str().to_string()),
+                            from,
+                            to,
+                        ),
+                        Rule::to_from => match p.into_inner().next() {
+                            Some(p) => match p.as_rule() {
+                                Rule::to => (
+                                    type_arg,
+                                    from,
+                                    Some(p.into_inner().next().unwrap().as_str().to_string()),
+                                ),
+                                Rule::from => (
+                                    type_arg,
+                                    Some(p.into_inner().next().unwrap().as_str().to_string()),
+                                    to,
+                                ),
+                                _ => unreachable!(),
+                            },
+                            None => (type_arg, from, to),
+                        },
+                        _ => (type_arg, from, to),
+                    },
+                );
+                GraphStep {
+                    loc: pair.loc(),
+                    step: GraphStepType::ShortestPath(ShortestPath {
+                        loc: pair.loc(),
+                        from: from.map(|id| IdType::Identifier {
+                            value: id,
+                            loc: pair.loc(),
+                        }),
+                        to: to.map(|id| IdType::Identifier {
+                            value: id,
+                            loc: pair.loc(),
+                        }),
+                        type_arg,
+                    }),
+                }
+            }
+            Rule::search_vector => GraphStep {
+                loc: pair.loc(),
+                step: GraphStepType::SearchVector(self.parse_search_vector(pair).unwrap()),
+            },
+            _ => {
+                unreachable!()
+            }
+        }
     }
 }
