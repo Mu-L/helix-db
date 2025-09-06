@@ -1,9 +1,18 @@
 use eyre::Result;
 use std::fs;
+use std::fmt::Write;
 use crate::config::InstanceInfo;
 use crate::docker::DockerManager;
 use crate::project::{ProjectContext, get_helix_repo_cache};
-use crate::utils::{copy_dir_recursive, print_status, print_success, print_error};
+use crate::utils::{copy_dir_recursive, print_status, print_success};
+use helix_db::{
+    helix_engine::traversal_core::config::Config,
+    helixc::{
+        analyzer::analyzer::analyze,
+        generator::Source as GeneratedSource,
+        parser::helix_parser::{Content, HelixParser, HxFile, Source},
+    },
+};
 
 // Development flag - set to true when working on V2 locally
 const DEV_MODE: bool = cfg!(debug_assertions);
@@ -114,8 +123,20 @@ async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &st
     // Ensure instance directories exist
     project.ensure_instance_dirs(instance_name)?;
     
-    // We only need to prepare the instance-specific overlay files
-    // The cached repo at ~/.helix/repo will be used directly as Docker build context
+    // Copy cached repo to instance workspace for Docker build context
+    let repo_cache = get_helix_repo_cache()?;
+    let instance_workspace = project.instance_workspace(instance_name);
+    let repo_copy_path = instance_workspace.join("helix-repo-copy");
+    
+    // Remove existing copy if it exists
+    if repo_copy_path.exists() {
+        std::fs::remove_dir_all(&repo_copy_path)?;
+    }
+    
+    // Copy cached repo to instance workspace
+    copy_dir_recursive(&repo_cache, &repo_copy_path)?;
+    
+    print_status("COPY", &format!("Copied cached repo to {}", repo_copy_path.display()));
     
     Ok(())
 }
@@ -126,7 +147,6 @@ async fn compile_project(project: &ProjectContext, instance_name: &str) -> Resul
     // Read project files
     let schema_path = project.root.join("schema.hx");
     let queries_path = project.root.join("queries.hx");
-    let config_path = project.root.join("config.hx.json");
     
     if !schema_path.exists() {
         return Err(eyre::eyre!("schema.hx not found. Run 'helix init' to create a project."));
@@ -134,10 +154,6 @@ async fn compile_project(project: &ProjectContext, instance_name: &str) -> Resul
     
     if !queries_path.exists() {
         return Err(eyre::eyre!("queries.hx not found. Run 'helix init' to create a project."));
-    }
-    
-    if !config_path.exists() {
-        return Err(eyre::eyre!("config.hx.json not found. Run 'helix init' to create a project."));
     }
     
     // Create helix-container directory in instance workspace for generated files
@@ -148,24 +164,27 @@ async fn compile_project(project: &ProjectContext, instance_name: &str) -> Resul
     // Create the directories
     fs::create_dir_all(&src_dir)?;
     
-    // Copy config and schema files to helix-container/src
+    // Copy schema file to helix-container/src
     fs::copy(&schema_path, src_dir.join("schema.hx"))?;
-    fs::copy(&config_path, src_dir.join("config.hx.json"))?;
+    
+    // Generate config.hx.json from helix.toml
+    let legacy_config_json = project.config.to_legacy_json();
+    let legacy_config_str = serde_json::to_string_pretty(&legacy_config_json)?;
+    fs::write(src_dir.join("config.hx.json"), legacy_config_str)?;
     
     // Read and compile the .hx files using the same logic as the original CLI
-    // This uses the helix-db crate to generate Rust code
     print_status("CODEGEN", "Generating Rust code from Helix queries...");
     
-    // Use the existing helix compilation logic
-    // TODO: Import and use the compilation functions from the original CLI
-    // For now, create a basic queries.rs file structure
-    let queries_rs_content = r#"// Generated Helix queries
-use helix_db::prelude::*;
-
-// Generated query implementations would go here
-"#;
+    // Collect all .hx files for compilation
+    let hx_files = collect_hx_files(&project.root)?;
     
-    fs::write(src_dir.join("queries.rs"), queries_rs_content)?;
+    // Generate content and compile using helix-db compilation logic
+    let analyzed_source = compile_helix_files(&hx_files, &src_dir)?;
+    
+    // Write the generated Rust code to queries.rs
+    let mut generated_rust_code = String::new();
+    write!(&mut generated_rust_code, "{}", analyzed_source)?;
+    fs::write(src_dir.join("queries.rs"), generated_rust_code)?;
     
     print_success("Helix queries compiled to Rust files");
     Ok(())
@@ -193,4 +212,114 @@ async fn generate_docker_files(project: &ProjectContext, instance_name: &str, in
     
     print_success("Docker configuration generated");
     Ok(())
+}
+
+fn collect_hx_files(project_root: &std::path::Path) -> Result<Vec<std::fs::DirEntry>> {
+    let files: Vec<std::fs::DirEntry> = std::fs::read_dir(project_root)?
+        .filter_map(|entry| entry.ok())
+        .filter(|file| file.file_name().to_string_lossy().ends_with(".hx"))
+        .collect();
+
+    let has_schema = files.iter().any(|file| file.file_name() == "schema.hx");
+    if !has_schema {
+        return Err(eyre::eyre!("No schema.hx file found"));
+    }
+
+    let has_queries = files.iter().any(|file| file.file_name() != "schema.hx");
+    if !has_queries {
+        return Err(eyre::eyre!("No query files (.hx) found"));
+    }
+
+    Ok(files)
+}
+
+fn compile_helix_files(files: &[std::fs::DirEntry], instance_src_dir: &std::path::Path) -> Result<GeneratedSource> {
+    print_status("PARSE", "Parsing Helix files...");
+    
+    // Generate content from the files
+    let content = generate_content(files)?;
+    
+    // Parse the content
+    print_status("ANALYZE", "Analyzing Helix files...");
+    let source = parse_content(&content)?;
+    
+    // Run static analysis
+    let mut analyzed_source = analyze_source(source)?;
+    
+    // Read and set the config from the instance workspace
+    analyzed_source.config = read_config(instance_src_dir)?;
+    
+    Ok(analyzed_source)
+}
+
+/// Generates a Content object from a vector of DirEntry objects
+/// Returns a Content object with the files and source
+fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
+    let files: Vec<HxFile> = files
+        .iter()
+        .map(|file| {
+            let name = file.path().to_string_lossy().into_owned();
+            let content = fs::read_to_string(file.path())
+                .map_err(|e| eyre::eyre!("Failed to read file {}: {}", name, e))?;
+            Ok(HxFile { name, content })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let content = files
+        .iter()
+        .map(|file| file.content.clone())
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    Ok(Content {
+        content,
+        files,
+        source: Source::default(),
+    })
+}
+
+/// Uses the helix parser to parse the content into a Source object
+fn parse_content(content: &Content) -> Result<Source> {
+    let source = HelixParser::parse_source(content)
+        .map_err(|e| eyre::eyre!("Parse error: {}", e))?;
+    Ok(source)
+}
+
+/// Runs the static analyzer on the parsed source to catch errors and generate diagnostics if any.
+/// Otherwise returns the generated source object which is an IR used to transpile the queries to rust.
+fn analyze_source(source: Source) -> Result<GeneratedSource> {
+    if source.schema.is_empty() {
+        return Err(eyre::eyre!("No schema definitions provided"));
+    }
+
+    let (diagnostics, generated_source) = analyze(&source);
+    if !diagnostics.is_empty() {
+        let mut error_msg = String::new();
+        for diag in diagnostics {
+            let filepath = diag.filepath.clone().unwrap_or("queries.hx".to_string());
+            error_msg.push_str(&diag.render(&source.source, &filepath));
+            error_msg.push('\n');
+        }
+        return Err(eyre::eyre!("Compilation failed:\n{}", error_msg));
+    }
+
+    Ok(generated_source)
+}
+
+/// Read the config.hx.json file from the instance workspace
+fn read_config(instance_src_dir: &std::path::Path) -> Result<Config> {
+    let config_path = instance_src_dir.join("config.hx.json");
+    let schema_path = instance_src_dir.join("schema.hx");
+    
+    if !config_path.exists() {
+        return Err(eyre::eyre!("config.hx.json not found in instance workspace"));
+    }
+    
+    if !schema_path.exists() {
+        return Err(eyre::eyre!("schema.hx not found in instance workspace"));
+    }
+    
+    let config = Config::from_files(config_path, schema_path)
+        .map_err(|e| eyre::eyre!("Failed to load config: {}", e))?;
+    Ok(config)
 }

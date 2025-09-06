@@ -8,6 +8,14 @@ use std::path::{Path, PathBuf};
 pub struct HelixConfig {
     pub project: ProjectConfig,
     #[serde(default)]
+    pub vector_config: VectorConfig,
+    #[serde(default)]
+    pub graph_config: GraphConfig,
+    #[serde(default = "default_true")]
+    pub mcp: bool,
+    #[serde(default = "default_true")]
+    pub bm25: bool,
+    #[serde(default)]
     pub local: HashMap<String, LocalInstanceConfig>,
     #[serde(default)]
     pub cloud: HashMap<String, CloudInstanceConfig>,
@@ -16,6 +24,24 @@ pub struct HelixConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
     pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorConfig {
+    #[serde(default = "default_m")]
+    pub m: u32,
+    #[serde(default = "default_ef_construction")]
+    pub ef_construction: u32,
+    #[serde(default = "default_ef_search")]
+    pub ef_search: u32,
+    #[serde(default = "default_db_max_size_gb")]
+    pub db_max_size_gb: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphConfig {
+    #[serde(default)]
+    pub secondary_indices: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +74,45 @@ fn default_debug_build_mode() -> BuildMode {
 
 fn default_release_build_mode() -> BuildMode {
     BuildMode::Release
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_m() -> u32 {
+    16
+}
+
+fn default_ef_construction() -> u32 {
+    128
+}
+
+fn default_ef_search() -> u32 {
+    768
+}
+
+fn default_db_max_size_gb() -> u32 {
+    20
+}
+
+impl Default for VectorConfig {
+    fn default() -> Self {
+        VectorConfig {
+            m: default_m(),
+            ef_construction: default_ef_construction(),
+            ef_search: default_ef_search(),
+            db_max_size_gb: default_db_max_size_gb(),
+        }
+    }
+}
+
+impl Default for GraphConfig {
+    fn default() -> Self {
+        GraphConfig {
+            secondary_indices: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -171,8 +236,30 @@ impl HelixConfig {
             project: ProjectConfig {
                 name: project_name.to_string(),
             },
+            vector_config: VectorConfig::default(),
+            graph_config: GraphConfig::default(),
+            mcp: true,
+            bm25: true,
             local,
             cloud: HashMap::new(),
         }
+    }
+
+    /// Convert helix.toml config to the legacy config.hx.json format
+    pub fn to_legacy_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "vector_config": {
+                "m": self.vector_config.m,
+                "ef_construction": self.vector_config.ef_construction,
+                "ef_search": self.vector_config.ef_search,
+                "db_max_size": self.vector_config.db_max_size_gb
+            },
+            "graph_config": {
+                "secondary_indices": self.graph_config.secondary_indices
+            },
+            "db_max_size_gb": self.vector_config.db_max_size_gb,
+            "mcp": self.mcp,
+            "bm25": self.bm25
+        })
     }
 }

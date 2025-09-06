@@ -69,9 +69,8 @@ ENV CARGO_HOME=/cargo-cache
 ENV CARGO_TARGET_DIR=/cargo-cache/target
 
 # First, copy the entire cached repo workspace (includes all dependencies)
-# This assumes the cached repo is mounted or available at build time
-ARG HELIX_REPO_PATH
-COPY $HELIX_REPO_PATH/ ./
+# This uses the copied repo directory
+COPY helix-repo-copy/ ./
 
 # Then overlay instance-specific files from current directory
 # This overwrites any files with the instance-specific versions
@@ -120,7 +119,6 @@ CMD ["helix-container"]
         let _workspace_path = self.project.instance_workspace(instance_name);
 
         let cargo_cache_path = self.project.helix_dir.join(".cargo-cache");
-        let repo_cache_path = crate::project::get_helix_repo_cache()?;
 
         let compose = format!(
             r#"# Generated docker-compose.yml for Helix instance: {instance_name}
@@ -129,8 +127,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        HELIX_REPO_PATH: {repo_cache_path}
     container_name: "helix-{project_name}-{instance_name}"
     ports:
       - "{port}:{port}"
@@ -152,7 +148,6 @@ networks:
 "#,
             volume_path = volume_path.display(),
             cargo_cache_path = cargo_cache_path.display(),
-            repo_cache_path = repo_cache_path.display(),
         );
 
         Ok(compose)
