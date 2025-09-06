@@ -59,16 +59,15 @@ async fn prune_all_instances(project: &ProjectContext) -> Result<()> {
     Ok(())
 }
 
-async fn prune_unused_resources(_project: &ProjectContext) -> Result<()> {
+async fn prune_unused_resources(project: &ProjectContext) -> Result<()> {
     print_status("PRUNE", "Pruning unused Docker resources");
     
     // Check Docker availability
     DockerManager::check_docker_available()?;
     
-    // Run docker system prune
-    let output = std::process::Command::new("docker")
-        .args(["system", "prune", "-f"])
-        .output()?;
+    // Use centralized docker command
+    let docker = DockerManager::new(project);
+    let output = docker.run_docker_command(&["system", "prune", "-f"])?;
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

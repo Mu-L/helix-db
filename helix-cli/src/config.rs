@@ -61,7 +61,7 @@ pub struct CloudInstanceConfig {
     pub build_mode: BuildMode,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BuildMode {
     Debug,
@@ -122,10 +122,10 @@ pub enum InstanceInfo<'a> {
 }
 
 impl<'a> InstanceInfo<'a> {
-    pub fn build_mode(&self) -> &BuildMode {
+    pub fn build_mode(&self) -> BuildMode {
         match self {
-            InstanceInfo::Local(config) => &config.build_mode,
-            InstanceInfo::Cloud(config) => &config.build_mode,
+            InstanceInfo::Local(config) => config.build_mode,
+            InstanceInfo::Cloud(config) => config.build_mode,
         }
     }
     
