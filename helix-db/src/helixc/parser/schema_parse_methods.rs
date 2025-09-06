@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::helixc::parser::{
     HelixParser, Rule,
     location::HasLoc,
-    parser_methods::ParserError,
+    ParserError,
     types::{
         DefaultValue, EdgeSchema, Field, FieldPrefix, FieldType, Migration, MigrationItem,
         MigrationItemMapping, MigrationPropertyMapping, NodeSchema, Source, ValueCast,

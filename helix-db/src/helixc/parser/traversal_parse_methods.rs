@@ -2,7 +2,7 @@ use crate::{
     helixc::parser::{
         HelixParser, Rule,
         location::HasLoc,
-        parser_methods::ParserError,
+        ParserError,
         types::{
             FieldAddition, FieldValue, FieldValueType, GraphStep, GraphStepType, IdType, Object,
             ShortestPath, StartNode, Step, StepType, Traversal, ValueType,

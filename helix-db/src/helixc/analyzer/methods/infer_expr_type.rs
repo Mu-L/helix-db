@@ -1276,9 +1276,5 @@ pub(crate) fn infer_expr_type<'a>(
                 })),
             )
         }
-        _ => {
-            println!("Unknown expression: {expr:?}");
-            todo!()
-        }
     }
 }

@@ -1,7 +1,7 @@
 use crate::helixc::parser::{
     HelixParser, Rule,
     location::HasLoc,
-    parser_methods::ParserError,
+    ParserError,
     types::{
         BooleanOp, BooleanOpType, Closure, Exclude, Expression, FieldAddition, FieldValue,
         FieldValueType, Object, OrderBy, OrderByType, Update,

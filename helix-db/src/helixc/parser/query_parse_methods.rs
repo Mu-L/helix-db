@@ -1,7 +1,7 @@
 use crate::helixc::parser::{
     HelixParser, Rule,
     location::HasLoc,
-    parser_methods::ParserError,
+    ParserError,
     types::{BuiltInMacro, Parameter, Query, Statement, StatementType},
 };
 use pest::iterators::Pair;

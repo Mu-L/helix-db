@@ -1,4 +1,4 @@
-use crate::{helix_gateway::router::router::IoContFn, helixc::parser::parser_methods::ParserError};
+use crate::{helix_gateway::router::router::IoContFn, helixc::parser::ParserError};
 use core::fmt;
 use heed3::Error as HeedError;
 use sonic_rs::Error as SonicError;

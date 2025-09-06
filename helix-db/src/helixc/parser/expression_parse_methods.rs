@@ -2,7 +2,7 @@ use crate::{
     helixc::parser::{
         HelixParser, Rule,
         location::{HasLoc, Loc},
-        parser_methods::ParserError,
+        ParserError,
         types::{
             Assignment, BM25Search, Embed, EvaluatesToNumber, EvaluatesToNumberType,
             EvaluatesToString, ExistsExpression, Expression, ExpressionType, ForLoop, ForLoopVars,

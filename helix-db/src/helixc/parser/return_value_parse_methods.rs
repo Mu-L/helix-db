@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::helixc::parser::{
     HelixParser, Rule,
     location::HasLoc,
-    parser_methods::ParserError,
+    ParserError,
     types::{Expression, ExpressionType, ReturnType},
 };
 use pest::iterators::Pair;

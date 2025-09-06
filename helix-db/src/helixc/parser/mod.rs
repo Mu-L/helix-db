@@ -7,12 +7,11 @@
 
 use crate::helixc::parser::types::{Content, HxFile, Schema, Source};
 use location::HasLoc;
-use parser_methods::ParserError;
 use pest::Parser as PestParser;
 use pest_derive::Parser;
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Debug,
+    fmt::{Debug, Display, Formatter},
     io::Write,
 };
 
@@ -21,7 +20,6 @@ pub mod expression_parse_methods;
 pub mod graph_step_parse_methods;
 pub mod location;
 pub mod object_parse_methods;
-pub mod parser_methods;
 pub mod query_parse_methods;
 pub mod return_value_parse_methods;
 pub mod schema_parse_methods;
@@ -196,5 +194,53 @@ pub fn write_to_temp_file(content: Vec<&str>) -> Content {
         content: String::new(),
         files,
         source: Source::default(),
+    }
+}
+
+pub enum ParserError {
+    ParseError(String),
+    LexError(String),
+    ParamDoesNotMatchSchema(String),
+}
+
+impl Display for ParserError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            ParserError::ParseError(e) => write!(f, "Parse error: {e}"),
+            ParserError::LexError(e) => write!(f, "Lex error: {e}"),
+            ParserError::ParamDoesNotMatchSchema(p) => {
+                write!(f, "Parameter with name: {p} does not exist in the schema")
+            }
+        }
+    }
+}
+
+impl From<pest::error::Error<Rule>> for ParserError {
+    fn from(e: pest::error::Error<Rule>) -> Self {
+        ParserError::ParseError(e.to_string())
+    }
+}
+
+impl From<String> for ParserError {
+    fn from(e: String) -> Self {
+        ParserError::LexError(e)
+    }
+}
+
+impl From<&'static str> for ParserError {
+    fn from(e: &'static str) -> Self {
+        ParserError::LexError(e.to_string())
+    }
+}
+
+impl std::fmt::Debug for ParserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ParserError::ParseError(e) => write!(f, "Parse error: {e}"),
+            ParserError::LexError(e) => write!(f, "Lex error: {e}"),
+            ParserError::ParamDoesNotMatchSchema(p) => {
+                write!(f, "Parameter with name: {p} does not exist in the schema")
+            }
+        }
     }
 }

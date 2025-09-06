@@ -1,6 +1,6 @@
 use crate::{
     helixc::parser::{
-        location::{HasLoc, Loc}, parser_methods::ParserError, types::{FieldAddition, FieldValue, FieldValueType, ValueType}, HelixParser, Rule
+        location::{HasLoc, Loc}, types::{FieldAddition, FieldValue, FieldValueType, ValueType}, HelixParser, Rule, ParserError
     },
     protocol::value::Value,
 };
