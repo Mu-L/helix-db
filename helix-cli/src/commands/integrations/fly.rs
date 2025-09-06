@@ -1,11 +1,12 @@
 use std::{default, process::Stdio, sync::LazyLock};
 
+use async_trait::async_trait;
 use eyre::Result;
 use serde::Serialize;
 use serde_json::json;
 use tokio::{io::AsyncWriteExt, process::Command};
 
-use crate::{commands::integrations::docker::DockerManager, project::ProjectContext};
+use crate::{commands::integrations::Integration, docker::DockerManager, project::ProjectContext};
 
 static FLY_MACHINES_API_URL: &str = "https://api.machines.dev/v1/";
 static FLY_REGISTRY_URL: &str = "registry.fly.io";
@@ -41,12 +42,17 @@ pub enum FlyIoClientSetup {
 }
 
 impl FlyIoClient {
-    pub async fn new(setup: Option<FlyIoClientSetup>) -> Result<Self> {
+    pub async fn new(project: &ProjectContext, setup: Option<FlyIoClientSetup>) -> Result<Self> {
         let (authentication, client) = match setup.unwrap_or_default() {
             FlyIoClientSetup::ApiKey => {
-                let env = match std::fs::read_to_string("/.helix/helix.env") {
+                let env = match std::fs::read_to_string(project.helix_dir.join("helix.env")) {
                     Ok(env) => env,
-                    Err(_) => return Err(eyre::eyre!("File /.helix/helix.env not found")),
+                    Err(_) => {
+                        return Err(eyre::eyre!(
+                            "File {}/helix.env not found",
+                            project.helix_dir.display()
+                        ));
+                    }
                 };
                 // parse env by reading lines and checking for FLY_API_KEY
                 let api_key = env
@@ -58,7 +64,12 @@ impl FlyIoClient {
                         FlyAuthentication::ApiKey(api_key),
                         FlyClient::ApiClient(reqwest::Client::new()),
                     ),
-                    None => return Err(eyre::eyre!("No api key found in /.helix/helix.env")),
+                    None => {
+                        return Err(eyre::eyre!(
+                            "No api key found in {}/helix.env",
+                            project.helix_dir.display()
+                        ));
+                    }
                 }
             }
 
@@ -80,7 +91,7 @@ impl FlyIoClient {
         }
     }
 
-    pub async fn create_app(&self, project: &ProjectContext, app_name: &str) -> Result<()> {
+    async fn create_app(&self, project: &ProjectContext, app_name: &str) -> Result<()> {
         // create app
         match &self.client {
             FlyClient::ApiClient(client) => {
@@ -106,7 +117,7 @@ impl FlyIoClient {
                     .arg("launch")
                     .arg("--no-deploy")
                     .arg("--path")
-                    .arg("./.helix/")
+                    .arg(project.helix_dir.display().to_string())
                     .spawn()?;
             }
         }
@@ -115,7 +126,11 @@ impl FlyIoClient {
         Ok(())
     }
 
-    pub async fn push_image_to_flyio(&self, image_name: &str, image_tag: &str) -> Result<()> {
+    async fn push_image_and_deploy_to_flyio(
+        &self,
+        image_name: &str,
+        image_tag: &str,
+    ) -> Result<()> {
         match &self.client {
             FlyClient::ApiClient(client) => {
                 todo!()
@@ -134,7 +149,27 @@ impl FlyIoClient {
     }
 }
 
-pub async fn authenticate_flyio_via_cli() -> Result<()> {
+#[async_trait]
+impl Integration for FlyIoClient {
+    async fn init(&self, project: &ProjectContext, instance_name: &str) -> Result<()> {
+        self.create_app(project, &instance_name).await
+    }
+
+    async fn deploy(&self, instance_name: &str) -> Result<()> {
+        self.push_image_and_deploy_to_flyio(instance_name, "latest")
+            .await
+    }
+
+    async fn start(&self, project: &ProjectContext, instance_name: &str) -> Result<()> {
+        todo!()
+    }
+
+    async fn stop(&self, project: &ProjectContext, instance_name: &str) -> Result<()> {
+        todo!()
+    }
+}
+
+async fn authenticate_flyio_via_cli() -> Result<()> {
     let mut child = Command::new("flyctl")
         .arg("auth")
         .arg("whoami")

@@ -4,8 +4,10 @@ use std::path::{Path, PathBuf};
 use crate::config::HelixConfig;
 
 pub struct ProjectContext {
+    /// The root directory of the project
     pub root: PathBuf,
     pub config: HelixConfig,
+    // The path to the .helix directory
     pub helix_dir: PathBuf,
 }
 
