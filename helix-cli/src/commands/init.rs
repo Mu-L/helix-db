@@ -1,5 +1,5 @@
 use crate::CloudDeploymentTypeCommand;
-use crate::commands::integrations::fly::{FlyIoClient, FlyIoClientAuth, FlyIoInstanceConfig};
+use crate::commands::integrations::fly::{FlyManager, FlyAuthType, VmSize, Privacy};
 use crate::config::HelixConfig;
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
@@ -64,24 +64,27 @@ pub async fn run(
         } => {
             let cwd = env::current_dir()?;
             let project_context = ProjectContext::find_and_load(Some(&cwd))?;
-
-            let setup = FlyIoClientAuth::from(auth);
-            let flyio_client = FlyIoClient::new(&project_context, setup).await?;
-            let instance_config = FlyIoInstanceConfig::new(
-                &DockerManager::new(&project_context),
-                &project_context.config.project.name,
-                &project_context.config.project.name,
-                volume_size.into(),
-                vm_size.into(),
-                public.into(),
+            let docker = DockerManager::new(&project_context);
+            
+            // Parse configuration with proper error handling
+            let auth_type = FlyAuthType::try_from(auth)?;
+            let vm_size_parsed = VmSize::try_from(vm_size)?;
+            let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
+            
+            // Create Fly.io manager
+            let fly_manager = FlyManager::new(&project_context, auth_type).await?;
+            
+            // Create instance configuration 
+            let instance_config = fly_manager.create_instance_config(
+                &docker,
+                "default", // Use "default" as the instance name for init
+                volume_size,
+                vm_size_parsed,
+                privacy,
             );
-            flyio_client
-                .init_flyio(
-                    &project_context,
-                    &project_context.config.project.name,
-                    instance_config,
-                )
-                .await?;
+            
+            // Initialize the Fly.io app
+            fly_manager.init_app("default", &instance_config).await?;
         }
     }
 
