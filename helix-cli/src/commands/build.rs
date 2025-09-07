@@ -168,7 +168,8 @@ async fn compile_project(project: &ProjectContext, instance_name: &str) -> Resul
     fs::copy(&schema_path, src_dir.join("schema.hx"))?;
     
     // Generate config.hx.json from helix.toml
-    let legacy_config_json = project.config.to_legacy_json();
+    let instance = project.config.get_instance(instance_name)?;
+    let legacy_config_json = instance.to_legacy_json();
     let legacy_config_str = serde_json::to_string_pretty(&legacy_config_json)?;
     fs::write(src_dir.join("config.hx.json"), legacy_config_str)?;
     
