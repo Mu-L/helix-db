@@ -71,10 +71,10 @@ pub(crate) enum Privacy {
     Private,
 }
 impl Privacy {
-    fn no_public_ip_command(&self) -> &'static str {
+    fn no_public_ip_command(&self) -> Vec<&'static str> {
         match self {
-            Privacy::Public => "",
-            Privacy::Private => "--no-public-ip",
+            Privacy::Public => vec![],
+            Privacy::Private => vec!["--no-public-ip"],
         }
     }
 }
@@ -146,7 +146,7 @@ impl From<String> for VmSize {
 
 impl VmSize {
     fn into_command_args(&self) -> [&'static str; 2] {
-        static VM_SIZE_COMMAND: &'static str = "--vm-size";
+        const VM_SIZE_COMMAND: &'static str = "--vm-size";
         let vm_size_arg = match self {
             VmSize::SharedCpu1x => "shared-cpu-1x",
             VmSize::SharedCpu2x => "shared-cpu-2x",
@@ -272,7 +272,9 @@ impl FlyIoClient {
                     .arg("apps")
                     .arg("create")
                     .arg(app_name)
-                    .spawn()?;
+                    .spawn()?
+                    .wait()
+                    .await?;
                 Command::new("flyctl")
                     .arg("launch")
                     .arg("--no-deploy")
@@ -280,15 +282,22 @@ impl FlyIoClient {
                     // vm size
                     .args(instance_config.vm_size.into_command_args())
                     // volume
-                    .args([instance_config.volume_command(), instance_config.volume.as_str()])
+                    .args([
+                        instance_config.volume_command(),
+                        instance_config.volume.as_str(),
+                    ])
                     // volume initial size
                     .args([
                         instance_config.volume_initial_size_command(),
                         instance_config.volume_initial_size.to_string().as_str(),
                     ])
                     // no public ip
-                    .args([instance_config.no_public_ip.no_public_ip_command()])
-                    .spawn()?;
+                    .args(instance_config.no_public_ip.no_public_ip_command())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()?
+                    .wait()
+                    .await?;
             }
         }
         // write app name to helix.toml
@@ -313,7 +322,9 @@ impl FlyIoClient {
                     .arg("deploy")
                     .arg("--image")
                     .arg(format!("{FLY_REGISTRY_URL}/{image_name}:{image_tag}"))
-                    .spawn()?;
+                    .spawn()?
+                    .wait()
+                    .await?;
             }
         }
         Ok(())
