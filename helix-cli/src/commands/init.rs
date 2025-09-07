@@ -1,56 +1,108 @@
+use crate::CloudDeploymentTypeCommand;
+use crate::commands::integrations::fly::{FlyIoClient, FlyIoClientAuth, FlyIoInstanceConfig};
+use crate::config::HelixConfig;
+use crate::docker::DockerManager;
+use crate::project::ProjectContext;
+use crate::utils::{print_status, print_success};
 use eyre::Result;
 use std::env;
 use std::fs;
 use std::path::Path;
-use crate::config::HelixConfig;
-use crate::utils::{print_success, print_status};
-use crate::utils::{DeploymentType, Template};
 
-
-pub async fn run(path: Option<String>, template: Option<Template>, deployment_type: Option<DeploymentType>) -> Result<()> {
+pub async fn run(
+    path: Option<String>,
+    template: String,
+    deployment_type: CloudDeploymentTypeCommand,
+) -> Result<()> {
     let project_dir = match path {
         Some(p) => std::path::PathBuf::from(p),
         None => env::current_dir()?,
     };
-    
+
     let project_name = project_dir
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("helix-project");
-    
+
     let config_path = project_dir.join("helix.toml");
-    
+
     if config_path.exists() {
-        return Err(eyre::eyre!("helix.toml already exists in {}", project_dir.display()));
+        return Err(eyre::eyre!(
+            "helix.toml already exists in {}",
+            project_dir.display()
+        ));
     }
-    
-    print_status("INIT", &format!("Initializing Helix project: {}", project_name));
-    
+
+    print_status(
+        "INIT",
+        &format!("Initializing Helix project: {}", project_name),
+    );
+
     // Create project directory if it doesn't exist
     fs::create_dir_all(&project_dir)?;
-    
+
     // Create default helix.toml
     let config = HelixConfig::default_config(project_name);
     config.save_to_file(&config_path)?;
-    
+
     // Create project structure
     create_project_structure(&project_dir)?;
-    
-    print_success(&format!("Helix project initialized in {}", project_dir.display()));
+
+    // Initialize deployment type
+    match deployment_type {
+        CloudDeploymentTypeCommand::Helix => {
+            // Initialize Helix deployment
+        }
+        CloudDeploymentTypeCommand::Ecr => {
+            // Initialize ECR deployment
+        }
+        CloudDeploymentTypeCommand::Fly {
+            auth,
+            volume_size,
+            vm_size,
+            public,
+        } => {
+            let cwd = env::current_dir()?;
+            let project_context = ProjectContext::find_and_load(Some(&cwd))?;
+
+            let setup = FlyIoClientAuth::from(auth);
+            let flyio_client = FlyIoClient::new(&project_context, setup).await?;
+            let instance_config = FlyIoInstanceConfig::new(
+                &DockerManager::new(&project_context),
+                &project_context.config.project.name,
+                &project_context.config.project.name,
+                volume_size.into(),
+                vm_size.into(),
+                public.into(),
+            );
+            flyio_client
+                .init_flyio(
+                    &project_context,
+                    &project_context.config.project.name,
+                    instance_config,
+                )
+                .await?;
+        }
+    }
+
+    print_success(&format!(
+        "Helix project initialized in {}",
+        project_dir.display()
+    ));
     println!();
     println!("Next steps:");
     println!("  1. Edit schema.hx to define your data model");
     println!("  2. Add queries to queries.hx");
     println!("  3. Run 'helix build dev' to compile your project");
     println!("  4. Run 'helix push dev' to start your development instance");
-    
+
     Ok(())
 }
 
 fn create_project_structure(project_dir: &Path) -> Result<()> {
     // Create directories
     fs::create_dir_all(project_dir.join(".helix"))?;
-    
+
     // Create default schema.hx with proper Helix syntax
     let default_schema = r#"// Start building your schema here.
 //
@@ -84,7 +136,7 @@ fn create_project_structure(project_dir: &Path) -> Result<()> {
 // }
 "#;
     fs::write(project_dir.join("schema.hx"), default_schema)?;
-    
+
     // Create default queries.hx with proper Helix query syntax
     let default_queries = r#"// Start writing your queries here.
 //
@@ -106,14 +158,13 @@ fn create_project_structure(project_dir: &Path) -> Result<()> {
 // or checkout our GitHub at https://github.com/HelixDB/helix-db
 "#;
     fs::write(project_dir.join("queries.hx"), default_queries)?;
-    
+
     // Create .gitignore
     let gitignore = r#".helix/
 target/
 *.log
 "#;
     fs::write(project_dir.join(".gitignore"), gitignore)?;
-    
+
     Ok(())
 }
-

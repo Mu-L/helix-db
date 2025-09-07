@@ -1,8 +1,6 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
 
-use crate::utils::{DeploymentType, Template};
-
 mod commands;
 mod config;
 mod docker;
@@ -26,11 +24,11 @@ enum Commands {
         #[clap(short, long)]
         path: Option<String>,
 
-        #[clap(long)]
-        template: Option<String>,
+        #[clap(long, default_value = "empty")]
+        template: String,
 
-        #[clap(long, default_value = "helix")]
-        cloud: Option<String>,
+        #[clap(subcommand)]
+        cloud: CloudDeploymentTypeCommand,
     },
 
     /// Validate project configuration and queries
@@ -124,6 +122,32 @@ enum MetricsAction {
     Status,
 }
 
+#[derive(Subcommand)]
+enum CloudDeploymentTypeCommand {
+    /// Initialize Helix deployment
+    Helix,
+    /// Initialize ECR deployment
+    Ecr,
+    /// Initialize Fly.io deployment
+    Fly {
+        /// Authentication type
+        #[clap(long, default_value = "cli")]
+        auth: String,
+
+        /// volume size
+        #[clap(long, default_value = "20")]
+        volume_size: u16,
+
+        /// vm size
+        #[clap(long, default_value = "shared-cpu-1x")]
+        vm_size: String,
+
+        /// privacy
+        #[clap(long, default_value = "true")]
+        public: bool,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize error reporting
@@ -139,24 +163,13 @@ async fn main() -> Result<()> {
             path,
             template,
             cloud,
-        } => {
-            commands::init::run(
-                path,
-                template.map(|t| Template::from_str(&t)).transpose()?,
-                cloud.map(|c| DeploymentType::from_str(&c)).transpose()?,
-            )
-            .await
-        }
+        } => commands::init::run(path, template, cloud).await,
         Commands::Check { instance } => commands::check::run(instance).await,
         Commands::Build { instance } => commands::build::run(instance).await,
         Commands::Push { instance } => commands::push::run(instance).await,
         Commands::Pull { instance } => commands::pull::run(instance).await,
-        Commands::Start { instance } => {
-            commands::start::run(instance).await
-        }
-        Commands::Stop { instance } => {
-            commands::stop::run(instance).await
-        }
+        Commands::Start { instance } => commands::start::run(instance).await,
+        Commands::Stop { instance } => commands::stop::run(instance).await,
         Commands::Status => commands::status::run().await,
         Commands::Cloud { action } => commands::cloud::run(action).await,
         Commands::Prune { instance, all } => commands::prune::run(instance, all).await,

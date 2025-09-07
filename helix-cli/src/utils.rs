@@ -3,28 +3,30 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use crate::CloudDeploymentTypeCommand;
+
 /// Copy a directory recursively
 pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     if !src.is_dir() {
         return Err(eyre::eyre!("Source is not a directory: {}", src.display()));
     }
-    
+
     // Create destination directory
     fs::create_dir_all(dst)?;
-    
+
     // Read the source directory
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        
+
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path)?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -57,7 +59,6 @@ pub fn print_warning(message: &str) {
     println!("[WARNING] {}", message);
 }
 
-
 #[derive(Default)]
 pub enum Template {
     Typescript,
@@ -68,7 +69,7 @@ pub enum Template {
     Empty,
 }
 impl Template {
-    pub fn from_str(value: &str) -> Result<Self> {
+    pub fn from(value: &str) -> Result<Self> {
         let template = match value {
             "ts" | "typescript" => Template::Typescript,
             "py" | "python" => Template::Python,
@@ -79,25 +80,7 @@ impl Template {
         Ok(template)
     }
 }
-#[derive(Default)]
-pub enum DeploymentType {
-    #[default]
-    Helix,  
-    Ecr,
-    Flyio,
-}
-impl DeploymentType {
-    pub fn from_str(value: &str) -> Result<Self> {
-        let deployment_type = match value {
-            "helix" => DeploymentType::Helix,
-            "ecr" => DeploymentType::Ecr,
-            "fly" => DeploymentType::Flyio,
-            _ => return Err(eyre::eyre!("Invalid deployment type: {}", value)),
-        };
-        Ok(deployment_type)
-    }
-}
 
-pub trait ToMap {
-    fn to_map(&self) -> HashMap<String, serde_json::Value>;
+pub trait ToStr {
+    fn to_str(&self) -> &str;
 }

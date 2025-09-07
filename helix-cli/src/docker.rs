@@ -42,7 +42,7 @@ impl<'a> DockerManager<'a> {
     }
 
     /// Get the data volume name for an instance
-    fn data_volume_name(&self, instance_name: &str) -> String {
+    pub(crate)fn data_volume_name(&self, instance_name: &str) -> String {
         format!("{}-data", self.compose_project_name(instance_name))
     }
 
