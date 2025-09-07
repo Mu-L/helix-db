@@ -92,7 +92,7 @@ pub const DEFAULT_QUERIES: &str = r#"// Start writing your queries here.
 //         RETURN {variable}
 //
 // Example:
-//     QUERY GetUserFriends(user_id: String) =>
+//     QUERY GetUserFriends(user_id: ID) =>
 //         friends <- N<User>(user_id)::Out<Knows>
 //         RETURN friends
 //
