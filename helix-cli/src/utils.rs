@@ -65,7 +65,6 @@ pub const DEFAULT_SCHEMA: &str = r#"// Start building your schema here.
 //
 // N::User {
 //     Name: String,
-//     Label: String,
 //     Age: Integer,
 //     IsAdmin: Boolean,
 // }

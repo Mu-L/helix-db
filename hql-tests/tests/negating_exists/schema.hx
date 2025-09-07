@@ -16,7 +16,6 @@
 //
 // N::User {
 //     Name: String,
-//     Label: String,
 //     Age: Integer,
 //     IsAdmin: Boolean,
 // }
