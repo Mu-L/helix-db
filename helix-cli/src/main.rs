@@ -97,6 +97,13 @@ enum Commands {
         #[clap(subcommand)]
         action: MetricsAction,
     },
+
+    /// Update to the latest version
+    Update {
+        /// Force update even if already on latest version
+        #[clap(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -175,5 +182,6 @@ async fn main() -> Result<()> {
         Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
         Commands::Delete { instance } => commands::delete::run(instance).await,
         Commands::Metrics { action } => commands::metrics::run(action).await,
+        Commands::Update { force } => commands::update::run(force).await,
     }
 }
