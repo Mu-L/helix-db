@@ -16,7 +16,7 @@
 //
 // N::User {
 //     Name: String,
-//     Age: Integer,
+//     Age: I32,
 //     IsAdmin: Boolean,
 // }
 //
@@ -24,7 +24,7 @@
 //     From: User,
 //     To: User,
 //     Properties: {
-//         Since: Integer,
+//         Since: Date,
 //     }
 // }
 //
