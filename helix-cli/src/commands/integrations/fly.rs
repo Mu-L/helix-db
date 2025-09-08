@@ -16,7 +16,7 @@ use tokio::io::AsyncWriteExt;
 
 const FLY_MACHINES_API_URL: &str = "https://api.machines.dev/v1/";
 const FLY_REGISTRY_URL: &str = "registry.fly.io";
-const FLY_TOML_PATH: &str = ".helix/fly.toml";
+const INTERNAL_PORT: &str = "6969";
 
 pub struct FlyManager<'a> {
     project: &'a ProjectContext,
@@ -417,6 +417,9 @@ impl<'a> FlyManager<'a> {
                 let volume_name = config.volume.replace("-", "_");
                 launch_args.extend_from_slice(&["--volume", &volume_name]);
                 launch_args.extend_from_slice(&["--volume-initial-size", &volume_size_str]);
+
+                // Add internal port args
+                launch_args.extend_from_slice(&["--internal-port", INTERNAL_PORT]);
 
                 // name the app
                 launch_args.extend_from_slice(&["--name", &app_name]);

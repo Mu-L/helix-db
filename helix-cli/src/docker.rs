@@ -247,7 +247,7 @@ networks:
   {network_name}:
     driver: bridge
 "#,
-            volume_path = volume_path.display(),
+            volume_path = volume_path.display().to_string().replace("-", "_"),
             platform = instance_config
                 .docker_build_target()
                 .map_or("".to_string(), |p| format!("platforms:\n        - {}", p)),
