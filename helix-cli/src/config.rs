@@ -207,10 +207,6 @@ impl<'a> InstanceInfo<'a> {
         matches!(self, InstanceInfo::Local(_))
     }
 
-    pub fn is_cloud(&self) -> bool {
-        matches!(self, InstanceInfo::HelixCloud(_)) || matches!(self, InstanceInfo::FlyIo(_))
-    }
-
     /// Convert instance config to the legacy config.hx.json format
     pub fn to_legacy_json(&self) -> serde_json::Value {
         let db_config = self.db_config();

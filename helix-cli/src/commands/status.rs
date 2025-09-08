@@ -29,8 +29,26 @@ pub async fn run() -> Result<()> {
     }
     
     // Show cloud instances
+    let mut helix_cloud_instances = Vec::new();
+    let mut flyio_instances = Vec::new();
+    
     for (name, config) in &project.config.cloud {
-        println!("  {} (Cloud) - cluster {}", name, config.get_cluster_id());
+        match config {
+            crate::config::CloudConfig::HelixCloud(helix_config) => {
+                helix_cloud_instances.push((name, &helix_config.cluster_id));
+            }
+            crate::config::CloudConfig::FlyIo(fly_config) => {
+                flyio_instances.push((name, &fly_config.cluster_id));
+            }
+        }
+    }
+    
+    for (name, cluster_id) in helix_cloud_instances {
+        println!("  {} (Helix Cloud) - cluster {}", name, cluster_id);
+    }
+    
+    for (name, cluster_id) in flyio_instances {
+        println!("  {} (Fly.io) - cluster {}", name, cluster_id);
     }
     println!();
     
