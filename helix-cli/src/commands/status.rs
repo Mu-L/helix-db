@@ -67,37 +67,38 @@ async fn show_container_status(project: &ProjectContext) -> Result<()> {
 
     let docker = DockerManager::new(project);
 
-    match docker.get_project_status() {
-        Ok(statuses) => {
-            if statuses.is_empty() {
-                println!("Running Containers: None");
-                return Ok(());
-            }
-
-            println!("Running Containers:");
-            for status in statuses {
-                let status_icon = if status.status.contains("Up") {
-                    "[UP]"
-                } else {
-                    "[DOWN]"
-                };
-
-                println!(
-                    "  {} {} - {} ({})",
-                    status_icon,
-                    status.instance_name,
-                    status.status,
-                    if status.ports.is_empty() {
-                        "no ports"
-                    } else {
-                        &status.ports
-                    }
-                );
-            }
-        }
+    let statuses = match docker.get_project_status() {
+        Ok(statuses) => statuses,
         Err(e) => {
             println!("Container Status: Error getting status ({})", e);
+            return Ok(());
         }
+    };
+
+    if statuses.is_empty() {
+        println!("Running Containers: None");
+        return Ok(());
+    }
+
+    println!("Running Containers:");
+    for status in statuses {
+        let status_icon = if status.status.contains("Up") {
+            "[UP]"
+        } else {
+            "[DOWN]"
+        };
+
+        println!(
+            "  {} {} - {} ({})",
+            status_icon,
+            status.instance_name,
+            status.status,
+            if status.ports.is_empty() {
+                "no ports"
+            } else {
+                &status.ports
+            }
+        );
     }
 
     Ok(())
