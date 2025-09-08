@@ -1,4 +1,4 @@
-use crate::commands::integrations::fly::{FlyAuthType, FlyManager};
+use crate::commands::integrations::fly::FlyManager;
 use crate::config::{CloudConfig, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
@@ -83,8 +83,8 @@ async fn push_cloud_instance(
             let fly = FlyManager::new(project, config.auth_type.clone()).await?;
             let docker = DockerManager::new(project);
             // Get the correct image name from docker compose project name
-            let image_name = format!("helix-{}-{}", project.config.project.name, instance_name);
-            fly.deploy_image(&docker, &config, instance_name, &image_name, "latest")
+            let image_name = docker.image_name(instance_name, config.build_mode);
+            fly.deploy_image(&docker, &config, instance_name, &image_name)
                 .await?;
         }
         CloudConfig::HelixCloud(_config) => {

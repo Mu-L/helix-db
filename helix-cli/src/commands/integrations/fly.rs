@@ -1,3 +1,4 @@
+use crate::config::default_release_build_mode;
 use crate::{
     config::{self, BuildMode},
     docker::DockerManager,
@@ -7,7 +8,10 @@ use crate::{
 use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{path::Path, process::{Command, Output, Stdio}};
+use std::{
+    path::Path,
+    process::{Command, Output, Stdio},
+};
 use tokio::io::AsyncWriteExt;
 
 const FLY_MACHINES_API_URL: &str = "https://api.machines.dev/v1/";
@@ -183,7 +187,10 @@ impl From<bool> for Privacy {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FlyInstanceConfig {
     pub cluster_id: String,
+    #[serde(default = "default_release_build_mode")]
     pub build_mode: BuildMode,
+    #[serde(default)]
+    pub region: Option<String>,
     pub vm_size: VmSize,
     pub volume: String,
     pub volume_initial_size: u16,
@@ -240,8 +247,8 @@ impl<'a> FlyManager<'a> {
     }
 
     /// Get the registry image name for an instance
-    fn registry_image_name(&self, instance_name: &str, tag: &str) -> String {
-        format!("{FLY_REGISTRY_URL}/{}:{tag}", self.app_name(instance_name))
+    fn registry_image_name(&self, image_name: &str) -> String {
+        format!("{FLY_REGISTRY_URL}/{image_name}")
     }
 
     // === CENTRALIZED COMMAND EXECUTION ===
@@ -259,9 +266,10 @@ impl<'a> FlyManager<'a> {
     async fn run_fly_command_async(&self, args: &[&str]) -> Result<std::process::ExitStatus> {
         let status = tokio::process::Command::new("flyctl")
             .args(args)
-            .status()
+            .output()
             .await
-            .map_err(|e| eyre!("Failed to run flyctl {}: {}", args.join(" "), e))?;
+            .map_err(|e| eyre!("Failed to run flyctl {}: {}", args.join(" "), e))?
+            .status;
         Ok(status)
     }
 
@@ -339,6 +347,7 @@ impl<'a> FlyManager<'a> {
         FlyInstanceConfig {
             cluster_id: uuid::Uuid::new_v4().to_string(),
             build_mode: BuildMode::default(),
+            region: None,
             vm_size,
             volume,
             volume_initial_size,
@@ -390,7 +399,13 @@ impl<'a> FlyManager<'a> {
                 // }
 
                 // Configure app with launch
-                let helix_dir_path = self.project.helix_dir.display().to_string();
+                let helix_dir_path = self
+                    .project
+                    .helix_dir
+                    .join(instance_name)
+                    .display()
+                    .to_string();
+
                 let volume_size_str = config.volume_initial_size.to_string();
 
                 let mut launch_args = vec!["launch", "--no-deploy", "--path", &helix_dir_path];
@@ -402,7 +417,7 @@ impl<'a> FlyManager<'a> {
                 // Add volume args
                 launch_args.extend_from_slice(&["--volume", &config.volume]);
                 launch_args.extend_from_slice(&["--volume-initial-size", &volume_size_str]);
-                
+
                 // name the app
                 launch_args.extend_from_slice(&["--name", &app_name]);
 
@@ -420,6 +435,13 @@ impl<'a> FlyManager<'a> {
                 if !launch_status.success() {
                     return Err(eyre!("Failed to configure Fly.io app '{}'", app_name));
                 }
+
+                // authenticate docker
+                let auth_args = vec!["auth", "docker"];
+                let auth_status = self.run_fly_command_async(&auth_args).await?;
+                if !auth_status.success() {
+                    return Err(eyre!("Failed to authenticate Docker with Fly.io"));
+                }
             }
         }
 
@@ -434,11 +456,13 @@ impl<'a> FlyManager<'a> {
         config: &FlyInstanceConfig,
         instance_name: &str,
         image_name: &str,
-        image_tag: &str,
     ) -> Result<()> {
         let app_name = self.app_name(instance_name);
-        let registry_image = self.registry_image_name(instance_name, image_tag);
-        let helix_dir_path = Path::new(&self.project.helix_dir.display().to_string()).join("fly.toml").display().to_string();
+        let registry_image = self.registry_image_name(&image_name);
+        let helix_dir_path = Path::new(&self.project.helix_dir.display().to_string())
+            .join("fly.toml")
+            .display()
+            .to_string();
 
         print_status("FLY", &format!("Deploying '{}' to Fly.io", app_name));
 
@@ -451,16 +475,23 @@ impl<'a> FlyManager<'a> {
             FlyAuth::Cli => {
                 // Tag image for Fly.io registry
                 print_status("FLY", "Tagging image for Fly.io registry");
-                docker.tag(image_name, image_tag, FLY_REGISTRY_URL)?;
+                docker.tag(image_name, FLY_REGISTRY_URL)?;
 
                 // Push image to registry
                 print_status("FLY", "Pushing image to Fly.io registry");
-                docker.push(image_name, image_tag, FLY_REGISTRY_URL)?;
+                docker.push(image_name, FLY_REGISTRY_URL)?;
 
                 // Deploy image
                 print_status("FLY", "Deploying image to Fly.io");
                 let deploy_status = self
-                    .run_fly_command_async(&["deploy", "--image", &registry_image, "--config", &helix_dir_path, "--now"])
+                    .run_fly_command_async(&[
+                        "deploy",
+                        "--image",
+                        &registry_image,
+                        "--config",
+                        &helix_dir_path,
+                        "--now",
+                    ])
                     .await?;
 
                 if !deploy_status.success() {

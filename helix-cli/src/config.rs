@@ -93,11 +93,11 @@ pub enum BuildMode {
     Release,
 }
 
-fn default_debug_build_mode() -> BuildMode {
+pub fn default_debug_build_mode() -> BuildMode {
     BuildMode::Debug
 }
 
-fn default_release_build_mode() -> BuildMode {
+pub fn default_release_build_mode() -> BuildMode {
     BuildMode::Release
 }
 

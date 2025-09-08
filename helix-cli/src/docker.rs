@@ -28,7 +28,7 @@ impl<'a> DockerManager<'a> {
     }
 
     /// Get the image name for an instance
-    fn image_name(&self, instance_name: &str, build_mode: BuildMode) -> String {
+    pub(crate) fn image_name(&self, instance_name: &str, build_mode: BuildMode) -> String {
         let tag = match build_mode {
             BuildMode::Debug => "debug",
             BuildMode::Release => "latest",
@@ -369,20 +369,20 @@ networks:
         Ok(())
     }
 
-    pub fn tag(&self, image_name: &str, image_tag: &str, registry_url: &str) -> Result<()> {
-        let local_image = format!("{image_name}:{image_tag}");
-        let registry_image = format!("{registry_url}/{image_name}:{image_tag}");
+    pub fn tag(&self, image_name: &str, registry_url: &str) -> Result<()> {
+
+        let registry_image = format!("{registry_url}/{image_name}");
         Command::new("docker")
             .arg("tag")
-            .arg(&local_image)
+            .arg(&image_name)
             .arg(&registry_image)
             .spawn()?
             .wait()?; // TODO: Wait?
         Ok(())
     }
 
-    pub fn push(&self, image_name: &str, image_tag: &str, registry_url: &str) -> Result<()> {
-        let registry_image = format!("{registry_url}/{image_name}:{image_tag}");
+    pub fn push(&self, image_name: &str, registry_url: &str) -> Result<()> {
+        let registry_image = format!("{registry_url}/{image_name}");
         Command::new("docker")
             .arg("push")
             .arg(&registry_image)
