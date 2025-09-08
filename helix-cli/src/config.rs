@@ -39,11 +39,7 @@ pub struct GraphConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalInstanceConfig {
-    #[serde(default)]
-    pub port: Option<u16>,
-    #[serde(default = "default_debug_build_mode")]
-    pub build_mode: BuildMode,
+pub struct DbConfig {
     #[serde(default, skip_serializing_if = "is_default_vector_config")]
     pub vector_config: VectorConfig,
     #[serde(default, skip_serializing_if = "is_default_graph_config")]
@@ -55,20 +51,24 @@ pub struct LocalInstanceConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalInstanceConfig {
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default = "default_debug_build_mode")]
+    pub build_mode: BuildMode,
+    #[serde(flatten)]
+    pub db_config: DbConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudInstanceConfig {
     pub cluster_id: String,
     #[serde(default)]
     pub region: Option<String>,
     #[serde(default = "default_release_build_mode")]
     pub build_mode: BuildMode,
-    #[serde(default, skip_serializing_if = "is_default_vector_config")]
-    pub vector_config: VectorConfig,
-    #[serde(default, skip_serializing_if = "is_default_graph_config")]
-    pub graph_config: GraphConfig,
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
-    pub mcp: bool,
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
-    pub bm25: bool,
+    #[serde(flatten)]
+    pub db_config: DbConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +152,17 @@ impl Default for GraphConfig {
     }
 }
 
+impl Default for DbConfig {
+    fn default() -> Self {
+        DbConfig {
+            vector_config: VectorConfig::default(),
+            graph_config: GraphConfig::default(),
+            mcp: true,
+            bm25: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum InstanceInfo<'a> {
     Local(&'a LocalInstanceConfig),
@@ -184,35 +195,11 @@ impl<'a> InstanceInfo<'a> {
         }
     }
 
-    pub fn vector_config(&self) -> VectorConfig {
+    pub fn db_config(&self) -> &DbConfig {
         match self {
-            InstanceInfo::Local(config) => config.vector_config.clone(),
-            InstanceInfo::HelixCloud(config) => config.vector_config.clone(),
-            InstanceInfo::FlyIo(_) => VectorConfig::default(),
-        }
-    }
-
-    pub fn graph_config(&self) -> GraphConfig {
-        match self {
-            InstanceInfo::Local(config) => config.graph_config.clone(),
-            InstanceInfo::HelixCloud(config) => config.graph_config.clone(),
-            InstanceInfo::FlyIo(_) => GraphConfig::default(),
-        }
-    }
-
-    pub fn mcp(&self) -> bool {
-        match self {
-            InstanceInfo::Local(config) => config.mcp,
-            InstanceInfo::HelixCloud(config) => config.mcp,
-            InstanceInfo::FlyIo(_) => true,
-        }
-    }
-
-    pub fn bm25(&self) -> bool {
-        match self {
-            InstanceInfo::Local(config) => config.bm25,
-            InstanceInfo::HelixCloud(config) => config.bm25,
-            InstanceInfo::FlyIo(_) => true,
+            InstanceInfo::Local(config) => &config.db_config,
+            InstanceInfo::HelixCloud(config) => &config.db_config,
+            InstanceInfo::FlyIo(config) => &config.db_config,
         }
     }
 
@@ -226,22 +213,21 @@ impl<'a> InstanceInfo<'a> {
 
     /// Convert instance config to the legacy config.hx.json format
     pub fn to_legacy_json(&self) -> serde_json::Value {
-        let vector_config = self.vector_config();
-        let graph_config = self.graph_config();
+        let db_config = self.db_config();
 
         serde_json::json!({
             "vector_config": {
-                "m": vector_config.m,
-                "ef_construction": vector_config.ef_construction,
-                "ef_search": vector_config.ef_search,
-                "db_max_size": vector_config.db_max_size_gb
+                "m": db_config.vector_config.m,
+                "ef_construction": db_config.vector_config.ef_construction,
+                "ef_search": db_config.vector_config.ef_search,
+                "db_max_size": db_config.vector_config.db_max_size_gb
             },
             "graph_config": {
-                "secondary_indices": graph_config.secondary_indices
+                "secondary_indices": db_config.graph_config.secondary_indices
             },
-            "db_max_size_gb": vector_config.db_max_size_gb,
-            "mcp": self.mcp(),
-            "bm25": self.bm25()
+            "db_max_size_gb": db_config.vector_config.db_max_size_gb,
+            "mcp": db_config.mcp,
+            "bm25": db_config.bm25
         })
     }
 }
@@ -334,10 +320,7 @@ impl HelixConfig {
             LocalInstanceConfig {
                 port: Some(6969),
                 build_mode: BuildMode::Debug,
-                vector_config: VectorConfig::default(),
-                graph_config: GraphConfig::default(),
-                mcp: true,
-                bm25: true,
+                db_config: DbConfig::default(),
             },
         );
 

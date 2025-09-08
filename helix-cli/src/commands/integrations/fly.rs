@@ -1,4 +1,9 @@
-use crate::{config::BuildMode, docker::DockerManager, project::ProjectContext, utils::print_status};
+use crate::{
+    config::{self, BuildMode},
+    docker::DockerManager,
+    project::ProjectContext,
+    utils::print_status,
+};
 use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -182,6 +187,9 @@ pub struct FlyInstanceConfig {
     pub volume: String,
     pub volume_initial_size: u16,
     pub privacy: Privacy,
+
+    #[serde(flatten)]
+    pub db_config: config::DbConfig,
 }
 
 impl<'a> FlyManager<'a> {
@@ -333,6 +341,8 @@ impl<'a> FlyManager<'a> {
             volume,
             volume_initial_size,
             privacy,
+
+            db_config: config::DbConfig::default(),
         }
     }
 
