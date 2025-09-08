@@ -605,6 +605,7 @@ pub enum StepType {
     Range((Expression, Expression)),
     OrderBy(OrderBy),
     AddEdge(AddEdge),
+    First,
 }
 impl PartialEq<StepType> for StepType {
     fn eq(&self, other: &StepType) -> bool {

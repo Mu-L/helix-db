@@ -271,6 +271,10 @@ impl HelixParser {
                 loc: inner.loc(),
                 step: StepType::OrderBy(self.parse_order_by(inner)?),
             }),
+            Rule::first => Ok(Step {
+                loc: inner.loc(),
+                step: StepType::First,
+            }),
             _ => Err(ParserError::from(format!(
                 "Unexpected step type: {:?}",
                 inner.as_rule()

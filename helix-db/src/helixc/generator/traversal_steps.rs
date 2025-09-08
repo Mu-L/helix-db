@@ -156,6 +156,7 @@ pub enum Step {
 
     // utils
     Count,
+
     Where(Where),
     Range(Range),
     OrderBy(OrderBy),

@@ -491,6 +491,11 @@ pub(crate) fn validate_traversal<'a>(
                 }
                 excluded.clear(); // Traversal to a new element resets exclusions
             }
+            StepType::First => {
+                cur_ty = cur_ty.clone().into_single();
+                excluded.clear();
+                gen_traversal.should_collect = ShouldCollect::ToVal;
+            }
 
             StepType::Count => {
                 cur_ty = Type::Scalar(FieldType::I64);

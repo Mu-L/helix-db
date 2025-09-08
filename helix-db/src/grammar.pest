@@ -63,7 +63,7 @@ traversal           = { (start_node | start_edge | search_vector | start_vector)
 id_traversal        = { identifier ~ ((step+ ~ last_step?) | last_step) }
 anonymous_traversal = { "_"  ~ ((step+ ~ last_step?) | last_step)? }
 step                = { "::" ~ (graph_step | order_by | where_step | closure_step | object_step | exclude_field | count | ID | range_step | AddE) }
-last_step           = { "::" ~ (bool_operations | update) }
+last_step           = { "::" ~ (bool_operations | update | first) }
 // change this for loop to be able to take traversals etc in the future. 
 for_loop            = { "FOR" ~ for_argument ~ "IN" ~ identifier ~ "{" ~ query_body ~ "}" }
 for_argument        = { object_access | object_destructuring | identifier }
@@ -194,6 +194,7 @@ ID           = { "ID" }
 update_field = { identifier ~ ":" ~ (evaluates_to_anything | anonymous_traversal) }
 update       = { "UPDATE" ~ "(" ~ "{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" }
 drop = { "DROP" ~ evaluates_to_anything }
+first = { "FIRST" }
 
 // ---------------------------------------------------------------------
 // Vector steps

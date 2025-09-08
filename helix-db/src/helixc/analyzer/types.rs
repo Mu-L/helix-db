@@ -339,6 +339,23 @@ impl Type {
             )
         )
     }
+
+    pub fn into_single(self) -> Type {
+        match self {
+            Type::Scalar(ft) => Type::Scalar(ft),
+            Type::Object(fields) => Type::Object(fields),
+            Type::Boolean => Type::Boolean,
+            Type::Unknown => Type::Unknown,
+            Type::Anonymous(inner) => Type::Anonymous(Box::new(inner.into_single())),
+            Type::Node(name) => Type::Node(name),
+            Type::Nodes(name) => Type::Node(name),
+            Type::Edge(name) => Type::Edge(name),
+            Type::Edges(name) => Type::Edge(name),
+            Type::Vector(name) => Type::Vector(name),
+            Type::Vectors(name) => Type::Vector(name),
+            Type::Array(inner) => *inner,
+        }
+    }
 }
 
 impl PartialEq for Type {
