@@ -73,7 +73,7 @@ pub const DEFAULT_SCHEMA: &str = r#"// Start building your schema here.
 //     From: User,
 //     To: User,
 //     Properties: {
-//         Since: Date,
+//         Since: Date DEFAULT NOW,
 //     }
 // }
 //

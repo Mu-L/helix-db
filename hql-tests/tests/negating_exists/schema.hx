@@ -24,7 +24,7 @@
 //     From: User,
 //     To: User,
 //     Properties: {
-//         Since: Date,
+//         Since: Date DEFAULT NOW,
 //     }
 // }
 //
