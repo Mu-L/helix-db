@@ -207,6 +207,18 @@ impl<'a> InstanceInfo<'a> {
         matches!(self, InstanceInfo::Local(_))
     }
 
+    pub fn should_build_docker_image(&self) -> bool {
+        matches!(self, InstanceInfo::Local(_)) || matches!(self, InstanceInfo::FlyIo(_))
+    }
+
+    pub fn docker_build_target(&self) -> Option<&str> {
+        match self {
+            InstanceInfo::Local(_) => None,
+            InstanceInfo::HelixCloud(_) => None,
+            InstanceInfo::FlyIo(_) => Some("linux/amd64"),
+        }
+    }
+
     /// Convert instance config to the legacy config.hx.json format
     pub fn to_legacy_json(&self) -> serde_json::Value {
         let db_config = self.db_config();

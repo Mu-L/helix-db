@@ -263,13 +263,12 @@ impl<'a> FlyManager<'a> {
     }
 
     /// Run a flyctl command asynchronously with consistent error handling
-    async fn run_fly_command_async(&self, args: &[&str]) -> Result<std::process::ExitStatus> {
+    async fn run_fly_command_async(&self, args: &[&str]) -> Result<Output> {
         let status = tokio::process::Command::new("flyctl")
             .args(args)
             .output()
             .await
-            .map_err(|e| eyre!("Failed to run flyctl {}: {}", args.join(" "), e))?
-            .status;
+            .map_err(|e| eyre!("Failed to run flyctl {}: {}", args.join(" "), e))?;
         Ok(status)
     }
 
@@ -415,7 +414,8 @@ impl<'a> FlyManager<'a> {
                 launch_args.extend_from_slice(&vm_args);
 
                 // Add volume args
-                launch_args.extend_from_slice(&["--volume", &config.volume]);
+                let volume_name = config.volume.replace("-", "_");
+                launch_args.extend_from_slice(&["--volume", &volume_name]);
                 launch_args.extend_from_slice(&["--volume-initial-size", &volume_size_str]);
 
                 // name the app
@@ -435,13 +435,6 @@ impl<'a> FlyManager<'a> {
                 if !launch_status.success() {
                     return Err(eyre!("Failed to configure Fly.io app '{}'", app_name));
                 }
-
-                // authenticate docker
-                let auth_args = vec!["auth", "docker"];
-                let auth_status = self.run_fly_command_async(&auth_args).await?;
-                if !auth_status.success() {
-                    return Err(eyre!("Failed to authenticate Docker with Fly.io"));
-                }
             }
         }
 
@@ -459,12 +452,16 @@ impl<'a> FlyManager<'a> {
     ) -> Result<()> {
         let app_name = self.app_name(instance_name);
         let registry_image = self.registry_image_name(&image_name);
-        let helix_dir_path = Path::new(&self.project.helix_dir.display().to_string())
+        let helix_dir_path = &self
+            .project
+            .helix_dir
+            .join(instance_name)
             .join("fly.toml")
             .display()
             .to_string();
 
         print_status("FLY", &format!("Deploying '{}' to Fly.io", app_name));
+        println!("  Image: {}", image_name);
 
         match &self.auth {
             FlyAuth::ApiKey(_) => {
@@ -475,10 +472,21 @@ impl<'a> FlyManager<'a> {
             FlyAuth::Cli => {
                 // Tag image for Fly.io registry
                 print_status("FLY", "Tagging image for Fly.io registry");
+
+                // authenticate docker
+                let auth_args = vec!["auth", "docker"];
+                let auth_status = self.run_fly_command_async(&auth_args).await?;
+                if !auth_status.status.success() {
+                    return Err(eyre!("Failed to authenticate Docker with Fly.io"));
+                }
+
                 docker.tag(image_name, FLY_REGISTRY_URL)?;
 
                 // Push image to registry
-                print_status("FLY", "Pushing image to Fly.io registry");
+                print_status(
+                    "FLY",
+                    &format!("Pushing image '{}' to Fly.io registry", image_name),
+                );
                 docker.push(image_name, FLY_REGISTRY_URL)?;
 
                 // Deploy image
@@ -494,7 +502,8 @@ impl<'a> FlyManager<'a> {
                     ])
                     .await?;
 
-                if !deploy_status.success() {
+                println!("Deploy status: {:?}", deploy_status);
+                if !deploy_status.status.success() {
                     return Err(eyre!("Failed to deploy image '{}'", registry_image));
                 }
 
@@ -557,7 +566,7 @@ impl<'a> FlyManager<'a> {
             .run_fly_command_async(&["apps", "destroy", &app_name, "--yes"])
             .await?;
 
-        if !delete_status.success() {
+        if !delete_status.status.success() {
             return Err(eyre!("Failed to delete Fly.io app '{}'", app_name));
         }
 

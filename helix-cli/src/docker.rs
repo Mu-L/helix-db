@@ -1,6 +1,7 @@
 use crate::config::{BuildMode, InstanceInfo};
 use crate::project::ProjectContext;
 use eyre::{Result, eyre};
+use std::borrow::Cow;
 use std::process::{Command, Output};
 
 pub struct DockerManager<'a> {
@@ -63,7 +64,11 @@ impl<'a> DockerManager<'a> {
     }
 
     /// Run a docker-compose command with proper project naming
-    fn run_compose_command(&self, instance_name: &str, args: &[&str]) -> Result<Output> {
+    fn run_compose_command<'arg>(
+        &self,
+        instance_name: &str,
+        args: Vec<&'arg str>,
+    ) -> Result<Output> {
         let workspace = self.project.instance_workspace(instance_name);
         let project_name = self.compose_project_name(instance_name);
 
@@ -74,7 +79,13 @@ impl<'a> DockerManager<'a> {
             .args(&full_args)
             .current_dir(&workspace)
             .output()
-            .map_err(|e| eyre!("Failed to run docker-compose {}: {}", args.join(" "), e))?;
+            .map_err(|e| {
+                eyre!(
+                    "Failed to run docker-compose {}: {}",
+                    full_args.join(" "),
+                    e
+                )
+            })?;
         Ok(output)
     }
 
@@ -208,6 +219,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      {platform} 
     image: {image_name}
     container_name: {container_name}
     ports:
@@ -236,6 +248,9 @@ networks:
     driver: bridge
 "#,
             volume_path = volume_path.display(),
+            platform = instance_config
+                .docker_build_target()
+                .map_or("".to_string(), |p| format!("platforms:\n        - {}", p)),
             project_name = self.project.config.project.name,
         );
 
@@ -243,13 +258,24 @@ networks:
     }
 
     /// Build Docker image for an instance
-    pub fn build_image(&self, instance_name: &str) -> Result<()> {
+    pub fn build_image(&self, instance_name: &str, build_target: Option<&str>) -> Result<()> {
         println!(
             "[DOCKER] Building image for instance '{}'...",
             instance_name
         );
 
-        let output = self.run_compose_command(instance_name, &["build"])?;
+        let mut args: Vec<Cow<'_, str>> = vec![Cow::Borrowed("build")];
+        // match build_target {
+        //     Some(build_target) => {
+        //         args.push(Cow::Borrowed("--platform"));
+        //         args.push(Cow::Borrowed(build_target));
+        //     }
+        //     None => {}
+        // };
+        // println!("args: {:?}", args);
+
+        let output =
+            self.run_compose_command(instance_name, args.iter().map(|arg| arg.as_ref()).collect())?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -264,7 +290,7 @@ networks:
     pub fn start_instance(&self, instance_name: &str) -> Result<()> {
         println!("[DOCKER] Starting instance '{}'...", instance_name);
 
-        let output = self.run_compose_command(instance_name, &["up", "-d"])?;
+        let output = self.run_compose_command(instance_name, vec!["up", "-d"])?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -279,7 +305,7 @@ networks:
     pub fn stop_instance(&self, instance_name: &str) -> Result<()> {
         println!("[DOCKER] Stopping instance '{}'...", instance_name);
 
-        let output = self.run_compose_command(instance_name, &["down"])?;
+        let output = self.run_compose_command(instance_name, vec!["down"])?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -358,7 +384,7 @@ networks:
             args.push("--remove-orphans");
         }
 
-        let output = self.run_compose_command(instance_name, &args)?;
+        let output = self.run_compose_command(instance_name, args)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -370,24 +396,23 @@ networks:
     }
 
     pub fn tag(&self, image_name: &str, registry_url: &str) -> Result<()> {
-
         let registry_image = format!("{registry_url}/{image_name}");
         Command::new("docker")
             .arg("tag")
             .arg(&image_name)
             .arg(&registry_image)
-            .spawn()?
-            .wait()?; // TODO: Wait?
+            .output()?;
+
         Ok(())
     }
 
     pub fn push(&self, image_name: &str, registry_url: &str) -> Result<()> {
         let registry_image = format!("{registry_url}/{image_name}");
-        Command::new("docker")
+        println!("pushing image: {}", registry_image);
+        let output = Command::new("docker")
             .arg("push")
             .arg(&registry_image)
-            .spawn()?
-            .wait()?; // TODO: Wait?
+            .output()?; 
         // TODO: Check if pushed
         Ok(())
     }

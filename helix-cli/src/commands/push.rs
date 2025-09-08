@@ -84,6 +84,7 @@ async fn push_cloud_instance(
             let docker = DockerManager::new(project);
             // Get the correct image name from docker compose project name
             let image_name = docker.image_name(instance_name, config.build_mode);
+            
             fly.deploy_image(&docker, &config, instance_name, &image_name)
                 .await?;
         }

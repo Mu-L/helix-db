@@ -43,10 +43,10 @@ pub async fn run(instance_name: String) -> Result<()> {
     generate_docker_files(&project, &instance_name, instance_config.clone()).await?;
 
     // For local instances, build Docker image
-    if instance_config.is_local() {
+    if instance_config.should_build_docker_image() {
         let docker = DockerManager::new(&project);
         DockerManager::check_docker_available()?;
-        docker.build_image(&instance_name)?;
+        docker.build_image(&instance_name, instance_config.docker_build_target())?;
     }
 
     print_success(&format!("Instance '{}' built successfully", instance_name));
@@ -207,7 +207,7 @@ async fn generate_docker_files(
     instance_name: &str,
     instance_config: InstanceInfo<'_>,
 ) -> Result<()> {
-    if !instance_config.is_local() {
+    if !instance_config.should_build_docker_image() {
         // Cloud instances don't need Docker files
         return Ok(());
     }
