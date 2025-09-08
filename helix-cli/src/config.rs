@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::commands::integrations::fly::FlyIoInstanceConfig;
+use crate::commands::integrations::fly::FlyInstanceConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelixConfig {
@@ -74,7 +74,7 @@ pub struct CloudInstanceConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CloudConfig {
     HelixCloud(CloudInstanceConfig),
-    FlyIo(FlyIoInstanceConfig),
+    FlyIo(FlyInstanceConfig),
 }
 
 impl CloudConfig {
@@ -156,7 +156,7 @@ impl Default for GraphConfig {
 pub enum InstanceInfo<'a> {
     Local(&'a LocalInstanceConfig),
     HelixCloud(&'a CloudInstanceConfig),
-    FlyIo(&'a FlyIoInstanceConfig),
+    FlyIo(&'a FlyInstanceConfig),
 }
 
 impl<'a> InstanceInfo<'a> {
