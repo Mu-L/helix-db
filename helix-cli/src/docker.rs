@@ -207,7 +207,7 @@ CMD ["helix-container"]
         let service_name = Self::service_name();
         let image_name = self.image_name(instance_name, instance_config.build_mode());
         let container_name = self.container_name(instance_name);
-        let data_volume_name = self.data_volume_name(instance_name);
+        let data_volume_name = self.data_volume_name(instance_name).replace("-", "_");
         let network_name = self.network_name(instance_name);
 
         let compose = format!(
@@ -247,7 +247,7 @@ networks:
   {network_name}:
     driver: bridge
 "#,
-            volume_path = volume_path.display().to_string().replace("-", "_"),
+            volume_path = volume_path.display().to_string(),
             platform = instance_config
                 .docker_build_target()
                 .map_or("".to_string(), |p| format!("platforms:\n        - {}", p)),
