@@ -30,7 +30,7 @@ pub async fn run() -> Result<()> {
     
     // Show cloud instances
     for (name, config) in &project.config.cloud {
-        println!("  {} (Cloud) - cluster {}", name, config.cluster_id);
+        println!("  {} (Cloud) - cluster {}", name, config.get_cluster_id());
     }
     println!();
     

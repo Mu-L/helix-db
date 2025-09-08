@@ -4,13 +4,15 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::commands::integrations::fly::FlyIoInstanceConfig;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelixConfig {
     pub project: ProjectConfig,
     #[serde(default)]
     pub local: HashMap<String, LocalInstanceConfig>,
     #[serde(default)]
-    pub cloud: HashMap<String, CloudInstanceConfig>,
+    pub cloud: HashMap<String, CloudConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,9 +71,24 @@ pub struct CloudInstanceConfig {
     pub bm25: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CloudConfig {
+    HelixCloud(CloudInstanceConfig),
+    FlyIo(FlyIoInstanceConfig),
+}
+
+impl CloudConfig {
+    pub fn get_cluster_id(&self) -> &str {
+        match self {
+            CloudConfig::HelixCloud(config) => &config.cluster_id,
+            CloudConfig::FlyIo(config) => &config.cluster_id,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum BuildMode {
+    #[default]
     Debug,
     Release,
 }
@@ -138,72 +155,80 @@ impl Default for GraphConfig {
 #[derive(Debug, Clone)]
 pub enum InstanceInfo<'a> {
     Local(&'a LocalInstanceConfig),
-    Cloud(&'a CloudInstanceConfig),
+    HelixCloud(&'a CloudInstanceConfig),
+    FlyIo(&'a FlyIoInstanceConfig),
 }
 
 impl<'a> InstanceInfo<'a> {
     pub fn build_mode(&self) -> BuildMode {
         match self {
             InstanceInfo::Local(config) => config.build_mode,
-            InstanceInfo::Cloud(config) => config.build_mode,
+            InstanceInfo::HelixCloud(config) => config.build_mode,
+            InstanceInfo::FlyIo(config) => config.build_mode,
         }
     }
-    
+
     pub fn port(&self) -> Option<u16> {
         match self {
             InstanceInfo::Local(config) => config.port,
-            InstanceInfo::Cloud(_) => None,
+            InstanceInfo::HelixCloud(_) => None,
+            InstanceInfo::FlyIo(_) => None,
         }
     }
-    
+
     pub fn cluster_id(&self) -> Option<&str> {
         match self {
             InstanceInfo::Local(_) => None,
-            InstanceInfo::Cloud(config) => Some(&config.cluster_id),
+            InstanceInfo::HelixCloud(config) => Some(&config.cluster_id),
+            InstanceInfo::FlyIo(config) => Some(&config.cluster_id),
         }
     }
-    
-    pub fn vector_config(&self) -> &VectorConfig {
+
+    pub fn vector_config(&self) -> VectorConfig {
         match self {
-            InstanceInfo::Local(config) => &config.vector_config,
-            InstanceInfo::Cloud(config) => &config.vector_config,
+            InstanceInfo::Local(config) => config.vector_config.clone(),
+            InstanceInfo::HelixCloud(config) => config.vector_config.clone(),
+            InstanceInfo::FlyIo(_) => VectorConfig::default(),
         }
     }
-    
-    pub fn graph_config(&self) -> &GraphConfig {
+
+    pub fn graph_config(&self) -> GraphConfig {
         match self {
-            InstanceInfo::Local(config) => &config.graph_config,
-            InstanceInfo::Cloud(config) => &config.graph_config,
+            InstanceInfo::Local(config) => config.graph_config.clone(),
+            InstanceInfo::HelixCloud(config) => config.graph_config.clone(),
+            InstanceInfo::FlyIo(_) => GraphConfig::default(),
         }
     }
-    
+
     pub fn mcp(&self) -> bool {
         match self {
             InstanceInfo::Local(config) => config.mcp,
-            InstanceInfo::Cloud(config) => config.mcp,
+            InstanceInfo::HelixCloud(config) => config.mcp,
+            InstanceInfo::FlyIo(_) => true,
         }
     }
-    
+
     pub fn bm25(&self) -> bool {
         match self {
             InstanceInfo::Local(config) => config.bm25,
-            InstanceInfo::Cloud(config) => config.bm25,
+            InstanceInfo::HelixCloud(config) => config.bm25,
+            InstanceInfo::FlyIo(_) => true,
         }
     }
-    
+
     pub fn is_local(&self) -> bool {
         matches!(self, InstanceInfo::Local(_))
     }
-    
+
     pub fn is_cloud(&self) -> bool {
-        matches!(self, InstanceInfo::Cloud(_))
+        matches!(self, InstanceInfo::HelixCloud(_)) || matches!(self, InstanceInfo::FlyIo(_))
     }
-    
+
     /// Convert instance config to the legacy config.hx.json format
     pub fn to_legacy_json(&self) -> serde_json::Value {
         let vector_config = self.vector_config();
         let graph_config = self.graph_config();
-        
+
         serde_json::json!({
             "vector_config": {
                 "m": vector_config.m,
@@ -223,88 +248,99 @@ impl<'a> InstanceInfo<'a> {
 
 impl HelixConfig {
     pub fn from_file(path: &Path) -> Result<Self> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| eyre!("Failed to read helix.toml: {}", e))?;
-        
-        let config: HelixConfig = toml::from_str(&content)
-            .map_err(|e| eyre!("Failed to parse helix.toml: {}", e))?;
-        
+        let content =
+            fs::read_to_string(path).map_err(|e| eyre!("Failed to read helix.toml: {}", e))?;
+
+        let config: HelixConfig =
+            toml::from_str(&content).map_err(|e| eyre!("Failed to parse helix.toml: {}", e))?;
+
         config.validate()?;
         Ok(config)
     }
-    
+
     pub fn save_to_file(&self, path: &Path) -> Result<()> {
         let content = toml::to_string_pretty(self)
             .map_err(|e| eyre!("Failed to serialize helix.toml: {}", e))?;
-        
-        fs::write(path, content)
-            .map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
-        
+
+        fs::write(path, content).map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
+
         Ok(())
     }
-    
+
     fn validate(&self) -> Result<()> {
         // Validate project config
         if self.project.name.is_empty() {
             return Err(eyre!("Project name cannot be empty"));
         }
-        
-        
+
         // Validate instances
         if self.local.is_empty() && self.cloud.is_empty() {
             return Err(eyre!("At least one instance must be defined"));
         }
-        
+
         // Validate local instances
         for name in self.local.keys() {
             if name.is_empty() {
                 return Err(eyre!("Instance name cannot be empty"));
             }
         }
-        
+
         // Validate cloud instances
         for (name, cloud_config) in &self.cloud {
             if name.is_empty() {
                 return Err(eyre!("Instance name cannot be empty"));
             }
-            if cloud_config.cluster_id.is_empty() {
-                return Err(eyre!("Cloud instance '{}' must have a non-empty cluster_id", name));
+            if cloud_config.get_cluster_id().is_empty() {
+                return Err(eyre!(
+                    "Cloud instance '{}' must have a non-empty cluster_id",
+                    name
+                ));
             }
         }
-        
+
         Ok(())
     }
-    
+
     pub fn get_instance(&self, name: &str) -> Result<InstanceInfo> {
         if let Some(local_config) = self.local.get(name) {
             return Ok(InstanceInfo::Local(local_config));
         }
-        
+
         if let Some(cloud_config) = self.cloud.get(name) {
-            return Ok(InstanceInfo::Cloud(cloud_config));
+            match cloud_config {
+                CloudConfig::HelixCloud(config) => {
+                    return Ok(InstanceInfo::HelixCloud(config));
+                }
+                CloudConfig::FlyIo(config) => {
+                    return Ok(InstanceInfo::FlyIo(config));
+                }
+            }
         }
-        
+
         Err(eyre!("Instance '{}' not found in helix.toml", name))
     }
-    
+
     pub fn list_instances(&self) -> Vec<&String> {
         let mut instances = Vec::new();
         instances.extend(self.local.keys());
         instances.extend(self.cloud.keys());
         instances
     }
-    
+
     pub fn default_config(project_name: &str) -> Self {
         let mut local = HashMap::new();
-        local.insert("dev".to_string(), LocalInstanceConfig {
-            port: Some(6969),
-            build_mode: BuildMode::Debug,
-            vector_config: VectorConfig::default(),
-            graph_config: GraphConfig::default(),
-            mcp: true,
-            bm25: true,
-        });
-        
+        local.insert(
+            "dev".to_string(),
+            LocalInstanceConfig {
+                port: Some(6969),
+                build_mode: BuildMode::Debug,
+                vector_config: VectorConfig::default(),
+                graph_config: GraphConfig::default(),
+                mcp: true,
+                bm25: true,
+            },
+        );
+
         HelixConfig {
             project: ProjectConfig {
                 name: project_name.to_string(),
@@ -313,5 +349,4 @@ impl HelixConfig {
             cloud: HashMap::new(),
         }
     }
-
 }

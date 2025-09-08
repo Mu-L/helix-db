@@ -44,31 +44,44 @@ impl TryFrom<String> for FlyAuthType {
 #[derive(Debug, Default)]
 pub enum VmSize {
     /// 1 CPU, 256MB RAM
+    #[serde(rename = "shared-cpu-1x")]
     SharedCpu1x,
     /// 2 CPU, 512MB RAM
+    #[serde(rename = "shared-cpu-2x")]
     SharedCpu2x,
     /// 4 CPU, 1GB RAM
+    #[serde(rename = "shared-cpu-4x")]
     SharedCpu4x,
     /// 8 CPU, 2GB RAM
+    #[serde(rename = "shared-cpu-8x")]
     SharedCpu8x,
     /// 1 CPU, 2GB RAM
+    #[serde(rename = "performance-1x")]
     PerformanceCpu1x,
     /// 2 CPU, 4GB RAM
+    #[serde(rename = "performance-2x")]
     PerformanceCpu2x,
     /// 4 CPU, 8GB RAM
     #[default]
+    #[serde(rename = "performance-4x")]
     PerformanceCpu4x,
     /// 8 CPU, 16GB RAM
+    #[serde(rename = "performance-8x")]
     PerformanceCpu8x,
     /// 16 CPU, 32GB RAM
+    #[serde(rename = "performance-16x")]
     PerformanceCpu16x,
     /// 8 CPU, 32GB RAM, a10 GPU
+    #[serde(rename = "a10")]
     A10,
     /// 8 CPU, 32GB RAM, a100 pcie 40GB GPU
+    #[serde(rename = "a100-40gb")]
     A10040Gb,
     /// 8 CPU, 32GB RAM, a100 sxm 80GB GPU
+    #[serde(rename = "a100-80gb")]
     A10080Gb,
     /// 8 CPU, 32GB RAM, l40s GPU
+    #[serde(rename = "l40s")]
     L40s,
 }
 
