@@ -7,11 +7,12 @@ use crate::{
 use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::process::{Command, Output, Stdio};
+use std::{path::Path, process::{Command, Output, Stdio}};
 use tokio::io::AsyncWriteExt;
 
 const FLY_MACHINES_API_URL: &str = "https://api.machines.dev/v1/";
 const FLY_REGISTRY_URL: &str = "registry.fly.io";
+const FLY_TOML_PATH: &str = ".helix/fly.toml";
 
 pub struct FlyManager<'a> {
     project: &'a ProjectContext,
@@ -26,7 +27,7 @@ enum FlyAuth {
 }
 
 /// Authentication type selection
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub enum FlyAuthType {
     ApiKey,
     #[default]
@@ -187,7 +188,7 @@ pub struct FlyInstanceConfig {
     pub volume: String,
     pub volume_initial_size: u16,
     pub privacy: Privacy,
-
+    pub auth_type: FlyAuthType,
     #[serde(flatten)]
     pub db_config: config::DbConfig,
 }
@@ -285,7 +286,6 @@ impl<'a> FlyManager<'a> {
     /// Check if Fly.io CLI is installed and authenticated
     pub async fn check_fly_cli_available() -> Result<()> {
         let output = Command::new("flyctl")
-            .args(["--version"])
             .output()
             .map_err(|_| eyre!("flyctl is not installed or not available in PATH. Visit https://fly.io/docs/flyctl/install/"))?;
 
@@ -300,6 +300,7 @@ impl<'a> FlyManager<'a> {
     async fn check_fly_cli_auth() -> Result<()> {
         Self::check_fly_cli_available().await?;
 
+        println!("Checking Fly.io CLI authentication");
         let mut child = tokio::process::Command::new("flyctl")
             .args(["auth", "whoami"])
             .stdin(Stdio::piped())
@@ -331,6 +332,7 @@ impl<'a> FlyManager<'a> {
         volume_initial_size: u16,
         vm_size: VmSize,
         privacy: Privacy,
+        auth_type: FlyAuthType,
     ) -> FlyInstanceConfig {
         let volume = format!("{}:/data", self.volume_name(instance_name));
 
@@ -341,7 +343,7 @@ impl<'a> FlyManager<'a> {
             volume,
             volume_initial_size,
             privacy,
-
+            auth_type,
             db_config: config::DbConfig::default(),
         }
     }
@@ -380,12 +382,12 @@ impl<'a> FlyManager<'a> {
             }
             FlyAuth::Cli => {
                 // Create app
-                let create_status = self
-                    .run_fly_command_async(&["apps", "create", &app_name])
-                    .await?;
-                if !create_status.success() {
-                    return Err(eyre!("Failed to create Fly.io app '{}'", app_name));
-                }
+                // let create_status = self
+                //     .run_fly_command_async(&["apps", "create", &app_name])
+                //     .await?;
+                // if !create_status.success() {
+                //     return Err(eyre!("Failed to create Fly.io app '{}'", app_name));
+                // }
 
                 // Configure app with launch
                 let helix_dir_path = self.project.helix_dir.display().to_string();
@@ -400,6 +402,9 @@ impl<'a> FlyManager<'a> {
                 // Add volume args
                 launch_args.extend_from_slice(&["--volume", &config.volume]);
                 launch_args.extend_from_slice(&["--volume-initial-size", &volume_size_str]);
+                
+                // name the app
+                launch_args.extend_from_slice(&["--name", &app_name]);
 
                 // Add privacy args
                 launch_args.extend_from_slice(&config.privacy.no_public_ip_command());
@@ -426,12 +431,14 @@ impl<'a> FlyManager<'a> {
     pub async fn deploy_image(
         &self,
         docker: &DockerManager<'_>,
+        config: &FlyInstanceConfig,
         instance_name: &str,
         image_name: &str,
         image_tag: &str,
     ) -> Result<()> {
         let app_name = self.app_name(instance_name);
         let registry_image = self.registry_image_name(instance_name, image_tag);
+        let helix_dir_path = Path::new(&self.project.helix_dir.display().to_string()).join("fly.toml").display().to_string();
 
         print_status("FLY", &format!("Deploying '{}' to Fly.io", app_name));
 
@@ -444,16 +451,16 @@ impl<'a> FlyManager<'a> {
             FlyAuth::Cli => {
                 // Tag image for Fly.io registry
                 print_status("FLY", "Tagging image for Fly.io registry");
-                docker.tag(image_name, image_tag, FLY_REGISTRY_URL).await?;
+                docker.tag(image_name, image_tag, FLY_REGISTRY_URL)?;
 
                 // Push image to registry
                 print_status("FLY", "Pushing image to Fly.io registry");
-                docker.push(image_name, image_tag, FLY_REGISTRY_URL).await?;
+                docker.push(image_name, image_tag, FLY_REGISTRY_URL)?;
 
                 // Deploy image
                 print_status("FLY", "Deploying image to Fly.io");
                 let deploy_status = self
-                    .run_fly_command_async(&["deploy", "--image", &registry_image])
+                    .run_fly_command_async(&["deploy", "--image", &registry_image, "--config", &helix_dir_path, "--now"])
                     .await?;
 
                 if !deploy_status.success() {

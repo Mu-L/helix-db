@@ -42,7 +42,7 @@ impl<'a> DockerManager<'a> {
     }
 
     /// Get the data volume name for an instance
-    pub(crate)fn data_volume_name(&self, instance_name: &str) -> String {
+    pub(crate) fn data_volume_name(&self, instance_name: &str) -> String {
         format!("{}-data", self.compose_project_name(instance_name))
     }
 
@@ -369,23 +369,25 @@ networks:
         Ok(())
     }
 
-    pub async fn tag(&self, image_name: &str, image_tag: &str, registry_url: &str) -> Result<()> {
+    pub fn tag(&self, image_name: &str, image_tag: &str, registry_url: &str) -> Result<()> {
         let local_image = format!("{image_name}:{image_tag}");
         let registry_image = format!("{registry_url}/{image_name}:{image_tag}");
         Command::new("docker")
             .arg("tag")
             .arg(&local_image)
             .arg(&registry_image)
-            .spawn()?; // TODO: Wait?
+            .spawn()?
+            .wait()?; // TODO: Wait?
         Ok(())
     }
 
-    pub async fn push(&self, image_name: &str, image_tag: &str, registry_url: &str) -> Result<()> {
+    pub fn push(&self, image_name: &str, image_tag: &str, registry_url: &str) -> Result<()> {
         let registry_image = format!("{registry_url}/{image_name}:{image_tag}");
         Command::new("docker")
             .arg("push")
             .arg(&registry_image)
-            .spawn()?; // TODO: Wait?
+            .spawn()?
+            .wait()?; // TODO: Wait?
         // TODO: Check if pushed
         Ok(())
     }

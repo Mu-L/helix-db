@@ -1,6 +1,6 @@
 use crate::CloudDeploymentTypeCommand;
 use crate::commands::integrations::fly::{FlyAuthType, FlyManager, Privacy, VmSize};
-use crate::config::HelixConfig;
+use crate::config::{CloudConfig, HelixConfig};
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
 use crate::utils::{print_status, print_success};
@@ -40,15 +40,15 @@ pub async fn run(
 
     // Create project directory if it doesn't exist
     fs::create_dir_all(&project_dir)?;
-
+    
     // Create default helix.toml
-    let config = HelixConfig::default_config(project_name);
+    let mut config = HelixConfig::default_config(project_name);
     config.save_to_file(&config_path)?;
-
     // Create project structure
     create_project_structure(&project_dir)?;
-
+    
     // Initialize deployment type
+    println!("Deployment");
     match deployment_type {
         CloudDeploymentTypeCommand::Helix => {
             // Initialize Helix deployment
@@ -62,6 +62,7 @@ pub async fn run(
             vm_size,
             public,
         } => {
+            println!("Initializing Fly deployment");
             let cwd = env::current_dir()?;
             let project_context = ProjectContext::find_and_load(Some(&cwd))?;
             let docker = DockerManager::new(&project_context);
@@ -71,9 +72,11 @@ pub async fn run(
             let vm_size_parsed = VmSize::try_from(vm_size)?;
             let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
 
+            println!("Auth type: {:?}", auth_type);
             // Create Fly.io manager
-            let fly_manager = FlyManager::new(&project_context, auth_type).await?;
+            let fly_manager = FlyManager::new(&project_context, auth_type.clone()).await?;
 
+            println!("Creating instance configuration");
             // Create instance configuration
             let instance_config = fly_manager.create_instance_config(
                 &docker,
@@ -81,12 +84,24 @@ pub async fn run(
                 volume_size,
                 vm_size_parsed,
                 privacy,
+                auth_type,
             );
 
+            
+            println!("Initializing Fly.io app");
             // Initialize the Fly.io app
-            fly_manager.init_app("default", &instance_config).await?;
+            fly_manager.init_app(project_name, &instance_config).await?;
+            println!("Fly.io app initialized");
+            
+            config.cloud.insert(project_name.to_string(), CloudConfig::FlyIo(instance_config.clone()));
+            config.save_to_file(&config_path)?;
         }
     }
+
+    
+   
+
+    
 
     print_success(&format!(
         "Helix project initialized in {}",
