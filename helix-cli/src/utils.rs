@@ -1,4 +1,4 @@
-use eyre::Result;
+use eyre::{Result, eyre};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::CloudDeploymentTypeCommand;
 
 /// Copy a directory recursively
-pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+pub fn copy_dir_recursive_excluding(src: &Path, dst: &Path, ignores: &[&str]) -> Result<()> {
     if !src.is_dir() {
         return Err(eyre::eyre!("Source is not a directory: {}", src.display()));
     }
@@ -20,8 +20,18 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
+        if ignores.contains(
+            &entry
+                .file_name()
+                .into_string()
+                .map_err(|s| eyre!("cannot convert file name to string: {s:?}"))?
+                .as_str(),
+        ) {
+            continue;
+        }
+
         if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
+            copy_dir_recursive_excluding(&src_path, &dst_path, ignores)?;
         } else {
             fs::copy(&src_path, &dst_path)?;
         }

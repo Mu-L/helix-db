@@ -1,7 +1,7 @@
 use crate::config::InstanceInfo;
 use crate::docker::DockerManager;
 use crate::project::{ProjectContext, get_helix_repo_cache};
-use crate::utils::{copy_dir_recursive, print_status, print_success};
+use crate::utils::{copy_dir_recursive_excluding, print_status, print_success};
 use eyre::Result;
 use helix_db::{
     helix_engine::traversal_core::config::Config,
@@ -67,7 +67,7 @@ async fn ensure_helix_repo_cached() -> Result<()> {
                 .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))?;
 
             print_status("DEV", "Development mode: copying local workspace...");
-            copy_dir_recursive(&workspace_root, &repo_cache)?;
+            copy_dir_recursive_excluding(&workspace_root, &repo_cache, &["target"])?;
         } else {
             // Production mode: clone from GitHub
             let output = std::process::Command::new("git")
@@ -95,7 +95,7 @@ async fn ensure_helix_repo_cached() -> Result<()> {
             if repo_cache.exists() {
                 std::fs::remove_dir_all(&repo_cache)?;
             }
-            copy_dir_recursive(&workspace_root, &repo_cache)?;
+            copy_dir_recursive_excluding(&workspace_root, &repo_cache, &["target"])?;
         } else {
             // Production mode: git pull
             let output = std::process::Command::new("git")
@@ -138,7 +138,7 @@ async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &st
     }
 
     // Copy cached repo to instance workspace
-    copy_dir_recursive(&repo_cache, &repo_copy_path)?;
+    copy_dir_recursive_excluding(&repo_cache, &repo_copy_path, &["target"])?;
 
     print_status(
         "COPY",
