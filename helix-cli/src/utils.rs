@@ -488,27 +488,34 @@ fn parse_content(content: &Content) -> Result<Source, String> {
 
 /// Runs the static analyzer on the parsed source to catch errors and generate diagnostics if any.
 /// Otherwise returns the generated source object which is an IR used to transpile the queries to rust.
-fn analyze_source(source: Source) -> Result<GeneratedSource, String> {
-    if source.schema.is_empty() {
+fn analyze_source(content: &Content) -> Result<GeneratedSource, String> {
+    if content.source.schema.is_empty() {
         return Err("No schema definitions provided".to_string());
     }
 
-    let (diagnostics, source) = analyze(&source);
+    let (diagnostics, analyzed_source) = analyze(&content.source);
     if !diagnostics.is_empty() {
         for diag in diagnostics {
             let filepath = diag.filepath.clone().unwrap_or("queries.hx".to_string());
-            println!("{}", diag.render(&source.src, &filepath));
+
+            // Find the correct file content for this diagnostic
+            let file_content = content.files.iter()
+                .find(|f| f.name == filepath)
+                .map(|f| &f.content)
+                .unwrap_or(&analyzed_source.src);
+
+            println!("{}", diag.render(file_content, &filepath));
         }
         return Err("compilation failed!".to_string());
     }
 
-    Ok(source)
+    Ok(analyzed_source)
 }
 
 pub fn generate(files: &[DirEntry], path: &str) -> Result<(Content, GeneratedSource), String> {
     let mut content = generate_content(files)?;
     content.source = parse_content(&content)?;
-    let mut analyzed_source = analyze_source(content.source.clone())?;
+    let mut analyzed_source = analyze_source(&content)?;
     analyzed_source.config = read_config(path)?;
     Ok((content, analyzed_source))
 }
