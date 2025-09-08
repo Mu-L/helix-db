@@ -89,7 +89,6 @@ async fn ensure_helix_repo_cached() -> Result<()> {
             // Development mode: re-copy from current workspace
             let workspace_root = std::path::Path::new(CARGO_MANIFEST_DIR)
                 .parent()
-                .and_then(|p| p.parent())
                 .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))?;
 
             // Remove old cache and copy fresh

@@ -1,15 +1,15 @@
 [project]
-name = "helix-cli"
+name = "test"
 
 [local.dev]
 port = 6969
 build_mode = "debug"
 
-[cloud.helix-cli.FlyIo]
-cluster_id = "974af638-d9f6-4492-8d81-81763a524664"
+[cloud.test.FlyIo]
+cluster_id = "942b3d78-9d85-41ac-90e6-694ff6638e45"
 build_mode = "debug"
 vm_size = "shared-cpu-1x"
-volume = "helix-helix-cli-helix-cli-data:/data"
+volume = "helix-test-test-data:/data"
 volume_initial_size = 20
 privacy = "Public"
 auth_type = "Cli"
