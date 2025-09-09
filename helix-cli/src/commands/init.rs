@@ -48,7 +48,6 @@ pub async fn run(
     create_project_structure(&project_dir)?;
     
     // Initialize deployment type
-    println!("Deployment");
     match deployment_type {
         CloudDeploymentTypeCommand::Helix => {
             // Initialize Helix deployment
@@ -62,21 +61,35 @@ pub async fn run(
             vm_size,
             public,
         } => {
-            println!("Initializing Fly deployment");
             let cwd = env::current_dir()?;
             let project_context = ProjectContext::find_and_load(Some(&cwd))?;
             let docker = DockerManager::new(&project_context);
 
             // Parse configuration with proper error handling
             let auth_type = FlyAuthType::try_from(auth)?;
-            let vm_size_parsed = serde_json::from_str(&vm_size)?;
+            
+            // Parse vm_size directly using match statement to avoid trait conflicts
+            let vm_size_parsed = match vm_size.as_str() {
+                "shared-cpu-4x" => VmSize::SharedCpu4x,
+                "shared-cpu-8x" => VmSize::SharedCpu8x,
+                "performance-4x" => VmSize::PerformanceCpu4x,
+                "performance-8x" => VmSize::PerformanceCpu8x,
+                "performance-16x" => VmSize::PerformanceCpu16x,
+                "a10" => VmSize::A10,
+                "a100-40gb" => VmSize::A10040Gb,
+                "a100-80gb" => VmSize::A10080Gb,
+                "l40s" => VmSize::L40s,
+                _ => {
+                    return Err(eyre::eyre!(
+                        "Invalid VM size '{}'. Valid options: shared-cpu-4x, shared-cpu-8x, performance-4x, performance-8x, performance-16x, a10, a100-40gb, a100-80gb, l40s",
+                        vm_size
+                    ));
+                }
+            };
             let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
 
-            println!("Auth type: {:?}", auth_type);
             // Create Fly.io manager
             let fly_manager = FlyManager::new(&project_context, auth_type.clone()).await?;
-
-            println!("Creating instance configuration");
             // Create instance configuration
             let instance_config = fly_manager.create_instance_config(
                 &docker,

@@ -1,5 +1,6 @@
 use eyre::Result;
-use crate::config::InstanceInfo;
+use crate::commands::integrations::fly::FlyManager;
+use crate::config::{CloudConfig, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
 use crate::utils::{print_status, print_success, print_warning, print_error};
@@ -9,6 +10,7 @@ pub async fn run(instance_name: String) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
     
     // Get instance config
+    println!("project.config: {:?}", project.config);
     let instance_config = project.config.get_instance(&instance_name)?;
     
     if instance_config.is_local() {
@@ -45,13 +47,13 @@ async fn start_local_instance(project: &ProjectContext, instance_name: &str) -> 
     
     print_success(&format!("Instance '{}' is now running", instance_name));
     println!("  Local URL: http://localhost:{}", port);
-    println!("  Container: helix-{}-{}", project.config.project.name, instance_name);
+    println!("  Container: helix_{}_{}", project.config.project.name, instance_name);
     println!("  Data volume: {}", project.instance_volume(instance_name).display());
     
     Ok(())
 }
 
-async fn start_cloud_instance(_project: &ProjectContext, instance_name: &str, instance_config: InstanceInfo<'_>) -> Result<()> {
+async fn start_cloud_instance(project: &ProjectContext, instance_name: &str, instance_config: InstanceInfo<'_>) -> Result<()> {
     print_status("CLOUD", &format!("Starting cloud instance '{}'", instance_name));
     
     let cluster_id = instance_config.cluster_id()
@@ -64,10 +66,17 @@ async fn start_cloud_instance(_project: &ProjectContext, instance_name: &str, in
     // 3. Waiting for the instance to be ready
     
     print_status("STARTING", &format!("Starting instance on cluster: {}", cluster_id));
-    
-    // Placeholder for cloud start logic
-    print_warning("Cloud instance start not yet implemented");
-    println!("  This will start your instance on cluster: {}", cluster_id);
+   
+    match project.config.get_instance(instance_name).unwrap() {
+        InstanceInfo::FlyIo(config) => {
+            let fly = FlyManager::new(project, config.auth_type.clone()).await?;
+            fly.start_instance(instance_name).await?;
+        }
+        InstanceInfo::HelixCloud(config) => {
+            todo!()
+        }
+        _ => { unimplemented!() }
+    }
     
     Ok(())
 }

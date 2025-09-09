@@ -43,7 +43,7 @@ async fn push_local_instance(project: &ProjectContext, instance_name: &str) -> R
     print_success(&format!("Instance '{}' is now running", instance_name));
     println!("  Local URL: http://localhost:{}", port);
     println!(
-        "  Container: helix-{}-{}",
+        "  Container: helix_{}_{}",
         project.config.project.name, instance_name
     );
     println!(

@@ -18,7 +18,7 @@ impl<'a> DockerManager<'a> {
     /// Get the compose project name for an instance
     fn compose_project_name(&self, instance_name: &str) -> String {
         format!(
-            "helix_{}_{}",
+            "helix-{}-{}",
             self.project.config.project.name, instance_name
         )
     }
