@@ -84,11 +84,8 @@ pub async fn run(
                 auth_type,
             );
 
-            
-            println!("Initializing Fly.io app");
             // Initialize the Fly.io app
             fly_manager.init_app(project_name, &instance_config).await?;
-            println!("Fly.io app initialized");
             
             config.cloud.insert(project_name.to_string(), CloudConfig::FlyIo(instance_config.clone()));
             config.save_to_file(&config_path)?;

@@ -413,7 +413,6 @@ impl<'a> FlyManager<'a> {
                     .await
                     .map_err(|e| eyre!("Failed to run flyctl launch: {}", e))?;
 
-                println!("launch_status: {:?}", launch_status);
                 if !launch_status.status.success() {
                     return Err(eyre!("Failed to configure Fly.io app '{}'", app_name));
                 }
@@ -442,7 +441,7 @@ impl<'a> FlyManager<'a> {
             .to_string();
 
         print_status("FLY", &format!("Deploying '{}' to Fly.io", app_name));
-        println!("  Image: {}", image_name);
+        println!("\tImage: {}", image_name);
 
         match &self.auth {
             FlyAuth::ApiKey(_) => {

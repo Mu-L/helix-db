@@ -10,7 +10,6 @@ pub async fn run(instance_name: String) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
     
     // Get instance config
-    println!("project.config: {:?}", project.config);
     let instance_config = project.config.get_instance(&instance_name)?;
     
     if instance_config.is_local() {
