@@ -65,8 +65,7 @@ pub const DEFAULT_SCHEMA: &str = r#"// Start building your schema here.
 //
 // N::User {
 //     Name: String,
-//     Label: String,
-//     Age: Integer,
+//     Age: I32,
 //     IsAdmin: Boolean,
 // }
 //
@@ -74,7 +73,7 @@ pub const DEFAULT_SCHEMA: &str = r#"// Start building your schema here.
 //     From: User,
 //     To: User,
 //     Properties: {
-//         Since: Integer,
+//         Since: Date DEFAULT NOW,
 //     }
 // }
 //
@@ -93,7 +92,7 @@ pub const DEFAULT_QUERIES: &str = r#"// Start writing your queries here.
 //         RETURN {variable}
 //
 // Example:
-//     QUERY GetUserFriends(user_id: String) =>
+//     QUERY GetUserFriends(user_id: ID) =>
 //         friends <- N<User>(user_id)::Out<Knows>
 //         RETURN friends
 //
