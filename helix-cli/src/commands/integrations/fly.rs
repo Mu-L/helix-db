@@ -349,14 +349,6 @@ impl<'a> FlyManager<'a> {
                 }
             }
             FlyAuth::Cli => {
-                // Create app
-                // let create_status = self
-                //     .run_fly_command_async(&["apps", "create", &app_name])
-                //     .await?;
-                // if !create_status.success() {
-                //     return Err(eyre!("Failed to create Fly.io app '{}'", app_name));
-                // }
-
                 // Configure app with launch
                 let helix_dir_path = self.project.instance_workspace(instance_name);
 
