@@ -1,18 +1,17 @@
-# fly.toml app configuration file generated for helix-db-quiet-bush-2886 on 2025-09-06T17:07:56+01:00
+# fly.toml app configuration file generated for helix-test-test on 2025-09-09T10:55:53+01:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'helix-db-quiet-bush-2886'
+app = 'helix-test-test'
 primary_region = 'lhr'
 
-[build]
-
-[env]
-  PORT = '8080'
+[[mounts]]
+  source = 'helix_test_test_data'
+  destination = '/data'
 
 [http_service]
-  internal_port = 8080
+  internal_port = 6969
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
@@ -20,6 +19,4 @@ primary_region = 'lhr'
   processes = ['app']
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
+  size = 'shared-cpu-4x'

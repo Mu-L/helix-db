@@ -86,27 +86,7 @@ pub enum VmSize {
     L40s,
 }
 
-impl TryFrom<String> for VmSize {
-    type Error = eyre::Report;
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        match value.as_str() {
-            "shared-cpu-4x" => Ok(Self::SharedCpu4x),
-            "shared-cpu-8x" => Ok(Self::SharedCpu8x),
-            "performance-4x" => Ok(Self::PerformanceCpu4x),
-            "performance-8x" => Ok(Self::PerformanceCpu8x),
-            "performance-16x" => Ok(Self::PerformanceCpu16x),
-            "a10" => Ok(Self::A10),
-            "a100-40gb" => Ok(Self::A10040Gb),
-            "a100-80gb" => Ok(Self::A10080Gb),
-            "l40s" => Ok(Self::L40s),
-            _ => Err(eyre!(
-                "Invalid VM size '{}'. Valid options: shared-cpu-1x, shared-cpu-2x, shared-cpu-4x, shared-cpu-8x, performance-1x, performance-2x, performance-4x, performance-8x, performance-16x, a10, a100-40gb, a100-80gb, l40s",
-                value
-            )),
-        }
-    }
-}
 
 impl VmSize {
     fn into_command_args(&self) -> [&'static str; 2] {
@@ -369,14 +349,6 @@ impl<'a> FlyManager<'a> {
                 }
             }
             FlyAuth::Cli => {
-                // Create app
-                // let create_status = self
-                //     .run_fly_command_async(&["apps", "create", &app_name])
-                //     .await?;
-                // if !create_status.success() {
-                //     return Err(eyre!("Failed to create Fly.io app '{}'", app_name));
-                // }
-
                 // Configure app with launch
                 let helix_dir_path = self.project.instance_workspace(instance_name);
 

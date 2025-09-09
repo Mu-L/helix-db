@@ -69,7 +69,7 @@ pub async fn run(
 
             // Parse configuration with proper error handling
             let auth_type = FlyAuthType::try_from(auth)?;
-            let vm_size_parsed = VmSize::try_from(vm_size)?;
+            let vm_size_parsed = serde_json::from_str(&vm_size)?;
             let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
 
             println!("Auth type: {:?}", auth_type);
