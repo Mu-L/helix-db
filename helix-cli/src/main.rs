@@ -146,7 +146,7 @@ enum CloudDeploymentTypeCommand {
         volume_size: u16,
 
         /// vm size
-        #[clap(long, default_value = "shared-cpu-1x")]
+        #[clap(long, default_value = "shared-cpu-4x")]
         vm_size: String,
 
         /// privacy

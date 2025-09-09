@@ -18,7 +18,7 @@ impl<'a> DockerManager<'a> {
     /// Get the compose project name for an instance
     fn compose_project_name(&self, instance_name: &str) -> String {
         format!(
-            "helix-{}-{}",
+            "helix_{}_{}",
             self.project.config.project.name, instance_name
         )
     }
@@ -39,17 +39,17 @@ impl<'a> DockerManager<'a> {
 
     /// Get the container name for an instance
     fn container_name(&self, instance_name: &str) -> String {
-        format!("{}-app", self.compose_project_name(instance_name))
+        format!("{}_app", self.compose_project_name(instance_name))
     }
 
     /// Get the data volume name for an instance
     pub(crate) fn data_volume_name(&self, instance_name: &str) -> String {
-        format!("{}-data", self.compose_project_name(instance_name))
+        format!("{}_data", self.compose_project_name(instance_name))
     }
 
     /// Get the network name for an instance
     fn network_name(&self, instance_name: &str) -> String {
-        format!("{}-net", self.compose_project_name(instance_name))
+        format!("{}_net", self.compose_project_name(instance_name))
     }
 
     // === CENTRALIZED DOCKER COMMAND EXECUTION ===
@@ -207,7 +207,7 @@ CMD ["helix-container"]
         let service_name = Self::service_name();
         let image_name = self.image_name(instance_name, instance_config.build_mode());
         let container_name = self.container_name(instance_name);
-        let data_volume_name = self.data_volume_name(instance_name).replace("-", "_");
+        let data_volume_name = self.data_volume_name(instance_name);
         let network_name = self.network_name(instance_name);
 
         let compose = format!(
