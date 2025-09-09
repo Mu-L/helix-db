@@ -378,16 +378,21 @@ impl<'a> FlyManager<'a> {
                 // }
 
                 // Configure app with launch
-                let helix_dir_path = self
-                    .project
-                    .helix_dir
-                    .join(instance_name)
-                    .display()
-                    .to_string();
+                let helix_dir_path = self.project.instance_workspace(instance_name);
 
                 let volume_size_str = config.volume_initial_size.to_string();
 
-                let mut launch_args = vec!["launch", "--no-deploy", "--path", &helix_dir_path];
+                let mut launch_args = vec![
+                    "launch",
+                    "--no-deploy",
+                    "--path",
+                    helix_dir_path.to_str().ok_or_else(|| {
+                        eyre!(
+                            "cannot convert helix instance workspace to string: {:?}",
+                            helix_dir_path
+                        )
+                    })?,
+                ];
 
                 // Add VM size args
                 let vm_args = config.vm_size.into_command_args();
