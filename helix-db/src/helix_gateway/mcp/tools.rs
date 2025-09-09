@@ -1,33 +1,24 @@
 use crate::{
-    debug_println,
-    helix_engine::{
+    debug_println, helix_engine::{
         storage_core::HelixGraphStorage,
         traversal_core::{
             ops::{
-                bm25::search_bm25::SearchBM25Adapter,
-                g::G,
-                in_::{
+                bm25::search_bm25::SearchBM25Adapter, g::G, in_::{
                     in_::{InAdapter, InNodesIterator},
                     in_e::{InEdgesAdapter, InEdgesIterator},
-                },
-                out::{
+                }, out::{
                     out::{OutAdapter, OutNodesIterator},
                     out_e::{OutEdgesAdapter, OutEdgesIterator},
-                },
-                source::{add_e::EdgeType, e_from_type::EFromType, n_from_type::NFromType},
-                vectors::{brute_force_search::BruteForceSearchVAdapter, search::SearchVAdapter},
+                }, source::{add_e::EdgeType, e_from_type::EFromType, n_from_type::NFromType}, util::order::OrderByAdapter, vectors::{brute_force_search::BruteForceSearchVAdapter, search::SearchVAdapter}
             },
             traversal_value::{Traversable, TraversalValue},
         },
         types::GraphError,
         vector_core::vector::HVector,
-    },
-    helix_gateway::{
-        embedding_providers::embedding_providers::{EmbeddingModel, get_embedding_model},
+    }, helix_gateway::{
+        embedding_providers::embedding_providers::{get_embedding_model, EmbeddingModel},
         mcp::mcp::{MCPConnection, MCPHandler, MCPHandlerSubmission, MCPToolInput, McpBackend},
-    },
-    protocol::{response::Response, return_values::ReturnValue, value::Value},
-    utils::label_hash::hash_label,
+    }, protocol::{response::Response, return_values::ReturnValue, value::Value}, utils::label_hash::hash_label
 };
 use heed3::RoTxn;
 use helix_macros::{mcp_handler, tool_calls};
@@ -66,7 +57,20 @@ pub enum ToolArgs {
         properties: Option<Vec<(String, String)>>,
         filter_traversals: Option<Vec<ToolArgs>>,
     },
+    OrderBy {
+        properties: String,
+        order: Order,
+    },
 }
+
+#[derive(Clone, Debug, Deserialize)]
+pub enum Order {
+    #[serde(rename = "asc")]
+    Asc,
+    #[serde(rename = "desc")]
+    Desc,
+}
+
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -195,6 +199,14 @@ pub(super) trait McpTools<'a> {
         vector: Vec<f64>,
         k: usize,
         min_score: Option<f64>,
+    ) -> Result<Vec<TraversalValue>, GraphError>;
+
+    fn order_by(
+        &'a self,
+        txn: &'a RoTxn,
+        connection: &'a MCPConnection,
+        properties: String,
+        order: Order,
     ) -> Result<Vec<TraversalValue>, GraphError>;
 }
 
@@ -508,6 +520,27 @@ impl<'a> McpTools<'a> for McpBackend {
                 }
             });
         }
+
+        debug_println!("result: {res:?}");
+        Ok(res)
+    }
+
+    fn order_by(
+        &'a self,
+        txn: &'a RoTxn,
+        connection: &'a MCPConnection,
+        properties: String,
+        order: Order,
+    ) -> Result<Vec<TraversalValue>, GraphError> {
+        let db = Arc::clone(&self.db);
+
+        let iter = connection.iter.clone().collect::<Vec<_>>();
+
+
+        let res = match order {
+            Order::Asc => G::new_from(db, txn, iter).order_by_asc(&properties).collect_to::<Vec<_>>(),
+            Order::Desc => G::new_from(db, txn, iter).order_by_desc(&properties).collect_to::<Vec<_>>(),
+        };
 
         debug_println!("result: {res:?}");
         Ok(res)

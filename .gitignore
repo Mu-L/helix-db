@@ -24,4 +24,4 @@ other_data/
 !examples/rag_demo/**
 test-store/
 helixdb-cfg/
-
+/test/
