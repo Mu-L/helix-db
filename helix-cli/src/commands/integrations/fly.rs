@@ -56,24 +56,12 @@ impl TryFrom<String> for FlyAuthType {
 /// VM sizes available on Fly.io
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub enum VmSize {
-    /// 1 CPU, 256MB RAM
-    #[serde(rename = "shared-cpu-1x")]
-    SharedCpu1x,
-    /// 2 CPU, 512MB RAM
-    #[serde(rename = "shared-cpu-2x")]
-    SharedCpu2x,
     /// 4 CPU, 1GB RAM
     #[serde(rename = "shared-cpu-4x")]
     SharedCpu4x,
     /// 8 CPU, 2GB RAM
     #[serde(rename = "shared-cpu-8x")]
     SharedCpu8x,
-    /// 1 CPU, 2GB RAM
-    #[serde(rename = "performance-1x")]
-    PerformanceCpu1x,
-    /// 2 CPU, 4GB RAM
-    #[serde(rename = "performance-2x")]
-    PerformanceCpu2x,
     /// 4 CPU, 8GB RAM
     #[default]
     #[serde(rename = "performance-4x")]
@@ -103,12 +91,8 @@ impl TryFrom<String> for VmSize {
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.as_str() {
-            "shared-cpu-1x" => Ok(Self::SharedCpu1x),
-            "shared-cpu-2x" => Ok(Self::SharedCpu2x),
             "shared-cpu-4x" => Ok(Self::SharedCpu4x),
             "shared-cpu-8x" => Ok(Self::SharedCpu8x),
-            "performance-1x" => Ok(Self::PerformanceCpu1x),
-            "performance-2x" => Ok(Self::PerformanceCpu2x),
             "performance-4x" => Ok(Self::PerformanceCpu4x),
             "performance-8x" => Ok(Self::PerformanceCpu8x),
             "performance-16x" => Ok(Self::PerformanceCpu16x),
@@ -127,12 +111,8 @@ impl TryFrom<String> for VmSize {
 impl VmSize {
     fn into_command_args(&self) -> [&'static str; 2] {
         let vm_size_arg = match self {
-            VmSize::SharedCpu1x => "shared-cpu-1x",
-            VmSize::SharedCpu2x => "shared-cpu-2x",
             VmSize::SharedCpu4x => "shared-cpu-4x",
             VmSize::SharedCpu8x => "shared-cpu-8x",
-            VmSize::PerformanceCpu1x => "performance-1x",
-            VmSize::PerformanceCpu2x => "performance-2x",
             VmSize::PerformanceCpu4x => "performance-4x",
             VmSize::PerformanceCpu8x => "performance-8x",
             VmSize::PerformanceCpu16x => "performance-16x",
@@ -457,8 +437,7 @@ impl<'a> FlyManager<'a> {
         let registry_image = self.registry_image_name(&image_name);
         let helix_dir_path = &self
             .project
-            .helix_dir
-            .join(instance_name)
+            .instance_workspace(instance_name)
             .join("fly.toml")
             .display()
             .to_string();
