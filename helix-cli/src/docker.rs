@@ -8,6 +8,8 @@ pub struct DockerManager<'a> {
     project: &'a ProjectContext,
 }
 
+pub const HELIX_DATA_DIR: &str = "/data";
+
 impl<'a> DockerManager<'a> {
     pub fn new(project: &'a ProjectContext) -> Self {
         Self { project }
@@ -18,6 +20,8 @@ impl<'a> DockerManager<'a> {
     /// Get the compose project name for an instance
     fn compose_project_name(&self, instance_name: &str) -> String {
         format!(
+            // has to be `-` instead of `_` because fly doesnt allow underscores in instance names 
+            // abd image name must match the instance name
             "helix-{}-{}",
             self.project.config.project.name, instance_name
         )
@@ -37,6 +41,16 @@ impl<'a> DockerManager<'a> {
         format!("{}:{}", self.compose_project_name(instance_name), tag)
     }
 
+    /// Get environment variables for an instance
+    pub(crate) fn environment_variables(&self, instance_name: &str) -> Vec<String> {
+        vec![
+            format!("HELIX_PORT={}", self.project.config.get_instance(instance_name).unwrap().port().unwrap_or(6969)),
+            format!("HELIX_DATA_DIR={}", HELIX_DATA_DIR),
+            format!("HELIX_INSTANCE={}", instance_name),
+            format!("HELIX_PROJECT={}", self.project.config.project.name),
+        ]
+    }
+
     /// Get the container name for an instance
     fn container_name(&self, instance_name: &str) -> String {
         format!("{}_app", self.compose_project_name(instance_name))
@@ -44,7 +58,11 @@ impl<'a> DockerManager<'a> {
 
     /// Get the data volume name for an instance
     pub(crate) fn data_volume_name(&self, instance_name: &str) -> String {
-        format!("{}_data", self.compose_project_name(instance_name))
+        format!(
+            "{}_data",
+            // has to replace all `-` with `_` because fly requires underscores in volume names
+            self.compose_project_name(instance_name).replace("-", "_")
+        )
     }
 
     /// Get the network name for an instance
@@ -228,7 +246,7 @@ services:
       - {data_volume_name}:/data
     environment:
       - HELIX_PORT={port}
-      - HELIX_DATA_DIR=/data
+      - HELIX_DATA_DIR={data_dir}
       - HELIX_INSTANCE={instance_name}
       - HELIX_PROJECT={project_name}
     restart: unless-stopped
@@ -252,6 +270,7 @@ networks:
                 .docker_build_target()
                 .map_or("".to_string(), |p| format!("platforms:\n        - {}", p)),
             project_name = self.project.config.project.name,
+            data_dir = HELIX_DATA_DIR,
         );
 
         Ok(compose)
@@ -380,14 +399,20 @@ networks:
         // Check if workspace exists - if not, there's nothing to prune
         let workspace = self.project.instance_workspace(instance_name);
         if !workspace.exists() {
-            println!("[DOCKER] No workspace found for instance '{}', nothing to prune", instance_name);
+            println!(
+                "[DOCKER] No workspace found for instance '{}', nothing to prune",
+                instance_name
+            );
             return Ok(());
         }
 
         // Check if docker-compose file exists
         let compose_file = workspace.join("docker-compose.yml");
         if !compose_file.exists() {
-            println!("[DOCKER] No docker-compose.yml found for instance '{}', nothing to prune", instance_name);
+            println!(
+                "[DOCKER] No docker-compose.yml found for instance '{}', nothing to prune",
+                instance_name
+            );
             return Ok(());
         }
 
@@ -404,7 +429,10 @@ networks:
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Don't fail if containers are already down
             if stderr.contains("No such container") || stderr.contains("not running") {
-                println!("[DOCKER] Instance '{}' containers already stopped", instance_name);
+                println!(
+                    "[DOCKER] Instance '{}' containers already stopped",
+                    instance_name
+                );
             } else {
                 return Err(eyre!("Failed to prune instance:\n{}", stderr));
             }
@@ -417,7 +445,10 @@ networks:
 
     /// Remove Docker images associated with an instance
     pub fn remove_instance_images(&self, instance_name: &str) -> Result<()> {
-        println!("[DOCKER] Removing images for instance '{}'...", instance_name);
+        println!(
+            "[DOCKER] Removing images for instance '{}'...",
+            instance_name
+        );
 
         // Get image names for both debug and release modes
         let debug_image = self.image_name(instance_name, BuildMode::Debug);
@@ -437,7 +468,13 @@ networks:
     /// Get all Helix-related Docker images from the system
     pub fn get_helix_images() -> Result<Vec<String>> {
         let output = Command::new("docker")
-            .args(["images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=helix-*"])
+            .args([
+                "images",
+                "--format",
+                "{{.Repository}}:{{.Tag}}",
+                "--filter",
+                "reference=helix-*",
+            ])
             .output()
             .map_err(|e| eyre!("Failed to list Docker images: {}", e))?;
 
@@ -459,16 +496,16 @@ networks:
     /// Remove all Helix-related Docker images from the system
     pub fn clean_all_helix_images() -> Result<()> {
         println!("[DOCKER] Finding all Helix images on system...");
-        
+
         let images = Self::get_helix_images()?;
-        
+
         if images.is_empty() {
             println!("[DOCKER] No Helix images found to clean");
             return Ok(());
         }
 
         println!("[DOCKER] Found {} Helix images to remove", images.len());
-        
+
         for image in images {
             let output = Command::new("docker")
                 .args(["rmi", "-f", &image])
@@ -503,7 +540,7 @@ networks:
         let output = Command::new("docker")
             .arg("push")
             .arg(&registry_image)
-            .output()?; 
+            .output()?;
         // TODO: Check if pushed
         Ok(())
     }

@@ -69,23 +69,7 @@ pub async fn run(
             let auth_type = FlyAuthType::try_from(auth)?;
             
             // Parse vm_size directly using match statement to avoid trait conflicts
-            let vm_size_parsed = match vm_size.as_str() {
-                "shared-cpu-4x" => VmSize::SharedCpu4x,
-                "shared-cpu-8x" => VmSize::SharedCpu8x,
-                "performance-4x" => VmSize::PerformanceCpu4x,
-                "performance-8x" => VmSize::PerformanceCpu8x,
-                "performance-16x" => VmSize::PerformanceCpu16x,
-                "a10" => VmSize::A10,
-                "a100-40gb" => VmSize::A10040Gb,
-                "a100-80gb" => VmSize::A10080Gb,
-                "l40s" => VmSize::L40s,
-                _ => {
-                    return Err(eyre::eyre!(
-                        "Invalid VM size '{}'. Valid options: shared-cpu-4x, shared-cpu-8x, performance-4x, performance-8x, performance-16x, a10, a100-40gb, a100-80gb, l40s",
-                        vm_size
-                    ));
-                }
-            };
+            let vm_size_parsed = VmSize::try_from(vm_size)?;
             let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
 
             // Create Fly.io manager

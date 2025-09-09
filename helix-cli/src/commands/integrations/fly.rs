@@ -401,6 +401,7 @@ impl<'a> FlyManager<'a> {
                 // name the app
                 launch_args.extend_from_slice(&["--name", &app_name]);
 
+               
                 // Add privacy args
                 launch_args.extend_from_slice(&config.privacy.no_public_ip_command());
 
@@ -469,19 +470,30 @@ impl<'a> FlyManager<'a> {
                 );
                 docker.push(image_name, FLY_REGISTRY_URL)?;
 
+                // Get environment variables first to ensure they live long enough
+                let env_vars = docker.environment_variables(instance_name);
+                
+                let mut deploy_args = vec![
+                    "deploy",
+                    "--image",
+                    &registry_image,
+                    "--config",
+                    &helix_dir_path,
+                    "-a",
+                    &app_name,
+                    "--now",
+                ];
+
+                // Add environment variables to deploy args
+                for env in &env_vars {
+                    deploy_args.push("--env");
+                    deploy_args.push(env);
+                }
+
                 // Deploy image
                 print_status("FLY", "Deploying image to Fly.io");
                 let deploy_status = self
-                    .run_fly_command_async(&[
-                        "deploy",
-                        "--image",
-                        &registry_image,
-                        "--config",
-                        &helix_dir_path,
-                        "-a",
-                        &app_name,
-                        "--now",
-                    ])
+                    .run_fly_command_async(&deploy_args)
                     .await?;
 
                 println!("Deploy status: {:?}", deploy_status);
