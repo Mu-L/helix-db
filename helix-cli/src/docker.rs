@@ -377,6 +377,20 @@ networks:
     pub fn prune_instance(&self, instance_name: &str, remove_volumes: bool) -> Result<()> {
         println!("[DOCKER] Pruning instance '{}'...", instance_name);
 
+        // Check if workspace exists - if not, there's nothing to prune
+        let workspace = self.project.instance_workspace(instance_name);
+        if !workspace.exists() {
+            println!("[DOCKER] No workspace found for instance '{}', nothing to prune", instance_name);
+            return Ok(());
+        }
+
+        // Check if docker-compose file exists
+        let compose_file = workspace.join("docker-compose.yml");
+        if !compose_file.exists() {
+            println!("[DOCKER] No docker-compose.yml found for instance '{}', nothing to prune", instance_name);
+            return Ok(());
+        }
+
         // Stop and remove containers
         let mut args = vec!["down"];
         if remove_volumes {
@@ -388,10 +402,87 @@ networks:
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("Failed to prune instance:\n{}", stderr));
+            // Don't fail if containers are already down
+            if stderr.contains("No such container") || stderr.contains("not running") {
+                println!("[DOCKER] Instance '{}' containers already stopped", instance_name);
+            } else {
+                return Err(eyre!("Failed to prune instance:\n{}", stderr));
+            }
+        } else {
+            println!("[DOCKER] Instance '{}' pruned successfully", instance_name);
         }
 
-        println!("[DOCKER] Instance '{}' pruned successfully", instance_name);
+        Ok(())
+    }
+
+    /// Remove Docker images associated with an instance
+    pub fn remove_instance_images(&self, instance_name: &str) -> Result<()> {
+        println!("[DOCKER] Removing images for instance '{}'...", instance_name);
+
+        // Get image names for both debug and release modes
+        let debug_image = self.image_name(instance_name, BuildMode::Debug);
+        let release_image = self.image_name(instance_name, BuildMode::Release);
+
+        // Try to remove both images (ignore errors if they don't exist)
+        for image in [debug_image, release_image] {
+            let output = self.run_docker_command(&["rmi", "-f", &image])?;
+            if output.status.success() {
+                println!("[DOCKER] Removed image: {}", image);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get all Helix-related Docker images from the system
+    pub fn get_helix_images() -> Result<Vec<String>> {
+        let output = Command::new("docker")
+            .args(["images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=helix-*"])
+            .output()
+            .map_err(|e| eyre!("Failed to list Docker images: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(eyre!("Failed to list images:\n{}", stderr));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let images: Vec<String> = stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.trim().to_string())
+            .collect();
+
+        Ok(images)
+    }
+
+    /// Remove all Helix-related Docker images from the system
+    pub fn clean_all_helix_images() -> Result<()> {
+        println!("[DOCKER] Finding all Helix images on system...");
+        
+        let images = Self::get_helix_images()?;
+        
+        if images.is_empty() {
+            println!("[DOCKER] No Helix images found to clean");
+            return Ok(());
+        }
+
+        println!("[DOCKER] Found {} Helix images to remove", images.len());
+        
+        for image in images {
+            let output = Command::new("docker")
+                .args(["rmi", "-f", &image])
+                .output()
+                .map_err(|e| eyre!("Failed to remove image {}: {}", image, e))?;
+
+            if output.status.success() {
+                println!("[DOCKER] Removed image: {}", image);
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("[DOCKER] Warning: Failed to remove {}: {}", image, stderr);
+            }
+        }
+
         Ok(())
     }
 

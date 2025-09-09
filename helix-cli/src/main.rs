@@ -76,12 +76,12 @@ enum Commands {
         action: CloudAction,
     },
 
-    /// Clean up containers and volumes
+    /// Prune containers, images and workspace (preserves volumes)
     Prune {
         /// Instance to prune (if not specified, prunes unused resources)
         instance: Option<String>,
 
-        /// Remove all instance data
+        /// Prune all instances in project
         #[clap(short, long)]
         all: bool,
     },
