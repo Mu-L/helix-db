@@ -1,3 +1,4 @@
+use crate::commands::integrations::ecr::EcrManager;
 use crate::commands::integrations::fly::FlyManager;
 use crate::config::InstanceInfo;
 use crate::docker::DockerManager;
@@ -70,11 +71,15 @@ pub async fn run(instance_name: String) -> Result<()> {
             let fly = FlyManager::new(&project, config.auth_type.clone()).await?;
             fly.delete_app(&instance_name).await?;
         }
-        InstanceInfo::HelixCloud(config) => {
+        InstanceInfo::Ecr(config) => {
+            let ecr = EcrManager::new(&project, config.auth_type.clone()).await?;
+            ecr.delete_repository(&instance_name).await?;
+        }
+        InstanceInfo::HelixCloud(_config) => {
             todo!()
         }
-        _ => {
-            unimplemented!()
+        InstanceInfo::Local(_) => {
+            // Local instances don't have cloud resources to delete
         }
     }
 

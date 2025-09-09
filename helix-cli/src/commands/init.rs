@@ -1,4 +1,5 @@
 use crate::CloudDeploymentTypeCommand;
+use crate::commands::integrations::ecr::{EcrAuthType, EcrManager};
 use crate::commands::integrations::fly::{FlyAuthType, FlyManager, Privacy, VmSize};
 use crate::config::{CloudConfig, HelixConfig};
 use crate::docker::DockerManager;
@@ -11,7 +12,7 @@ use std::path::Path;
 
 pub async fn run(
     path: Option<String>,
-    template: String,
+    _template: String,
     deployment_type: CloudDeploymentTypeCommand,
 ) -> Result<()> {
     let project_dir = match path {
@@ -53,7 +54,30 @@ pub async fn run(
             // Initialize Helix deployment
         }
         CloudDeploymentTypeCommand::Ecr => {
-            // Initialize ECR deployment
+            let cwd = env::current_dir()?;
+            let project_context = ProjectContext::find_and_load(Some(&cwd))?;
+            
+            // Create ECR manager
+            let ecr_manager = EcrManager::new(&project_context, EcrAuthType::AwsCli).await?;
+            
+            // Create ECR configuration
+            let ecr_config = ecr_manager.create_ecr_config(
+                project_name,
+                None, // Use default region
+                EcrAuthType::AwsCli,
+            ).await?;
+            
+            // Initialize the ECR repository
+            ecr_manager.init_repository(project_name, &ecr_config).await?;
+            
+            // Save configuration to ecr.toml
+            ecr_manager.save_config(project_name, &ecr_config).await?;
+            
+            // Update helix.toml with cloud config
+            config.cloud.insert(project_name.to_string(), CloudConfig::Ecr(ecr_config.clone()));
+            config.save_to_file(&config_path)?;
+            
+            print_status("ECR", "AWS ECR repository initialized successfully");
         }
         CloudDeploymentTypeCommand::Fly {
             auth,

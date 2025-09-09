@@ -1,8 +1,9 @@
+use crate::commands::integrations::ecr::EcrManager;
 use crate::commands::integrations::fly::FlyManager;
 use crate::config::{CloudConfig, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success, print_warning};
+use crate::utils::{print_status, print_success};
 use eyre::Result;
 
 pub async fn run(instance_name: String) -> Result<()> {
@@ -86,6 +87,15 @@ async fn push_cloud_instance(
             let image_name = docker.image_name(instance_name, config.build_mode);
 
             fly.deploy_image(&docker, &config, instance_name, &image_name)
+                .await?;
+        }
+        CloudConfig::Ecr(config) => {
+            let ecr = EcrManager::new(project, config.auth_type.clone()).await?;
+            let docker = DockerManager::new(project);
+            // Get the correct image name from docker compose project name
+            let image_name = docker.image_name(instance_name, config.build_mode);
+
+            ecr.deploy_image(&docker, &config, instance_name, &image_name, None)
                 .await?;
         }
         CloudConfig::HelixCloud(_config) => {

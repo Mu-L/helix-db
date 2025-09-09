@@ -2,8 +2,9 @@ use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use crate::commands::integrations::ecr::EcrConfig;
 use crate::commands::integrations::fly::FlyInstanceConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +76,7 @@ pub struct CloudInstanceConfig {
 pub enum CloudConfig {
     HelixCloud(CloudInstanceConfig),
     FlyIo(FlyInstanceConfig),
+    Ecr(EcrConfig),
 }
 
 impl CloudConfig {
@@ -82,6 +84,7 @@ impl CloudConfig {
         match self {
             CloudConfig::HelixCloud(config) => &config.cluster_id,
             CloudConfig::FlyIo(config) => &config.cluster_id,
+            CloudConfig::Ecr(_) => "ecr", // ECR doesn't use cluster_id
         }
     }
 }
@@ -168,6 +171,7 @@ pub enum InstanceInfo<'a> {
     Local(&'a LocalInstanceConfig),
     HelixCloud(&'a CloudInstanceConfig),
     FlyIo(&'a FlyInstanceConfig),
+    Ecr(&'a EcrConfig),
 }
 
 impl<'a> InstanceInfo<'a> {
@@ -176,6 +180,7 @@ impl<'a> InstanceInfo<'a> {
             InstanceInfo::Local(config) => config.build_mode,
             InstanceInfo::HelixCloud(config) => config.build_mode,
             InstanceInfo::FlyIo(config) => config.build_mode,
+            InstanceInfo::Ecr(config) => config.build_mode,
         }
     }
 
@@ -184,6 +189,7 @@ impl<'a> InstanceInfo<'a> {
             InstanceInfo::Local(config) => config.port,
             InstanceInfo::HelixCloud(_) => None,
             InstanceInfo::FlyIo(_) => None,
+            InstanceInfo::Ecr(_) => None,
         }
     }
 
@@ -192,6 +198,7 @@ impl<'a> InstanceInfo<'a> {
             InstanceInfo::Local(_) => None,
             InstanceInfo::HelixCloud(config) => Some(&config.cluster_id),
             InstanceInfo::FlyIo(config) => Some(&config.cluster_id),
+            InstanceInfo::Ecr(_) => None, // ECR doesn't use cluster_id
         }
     }
 
@@ -200,6 +207,7 @@ impl<'a> InstanceInfo<'a> {
             InstanceInfo::Local(config) => &config.db_config,
             InstanceInfo::HelixCloud(config) => &config.db_config,
             InstanceInfo::FlyIo(config) => &config.db_config,
+            InstanceInfo::Ecr(config) => &config.db_config,
         }
     }
 
@@ -216,6 +224,7 @@ impl<'a> InstanceInfo<'a> {
             InstanceInfo::Local(_) => None,
             InstanceInfo::HelixCloud(_) => None,
             InstanceInfo::FlyIo(_) => Some("linux/amd64"),
+            InstanceInfo::Ecr(_) => Some("linux/amd64"),
         }
     }
 
@@ -307,6 +316,9 @@ impl HelixConfig {
                 }
                 CloudConfig::FlyIo(config) => {
                     return Ok(InstanceInfo::FlyIo(config));
+                }
+                CloudConfig::Ecr(config) => {
+                    return Ok(InstanceInfo::Ecr(config));
                 }
             }
         }

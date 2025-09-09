@@ -1,4 +1,3 @@
-use crate::config::InstanceInfo;
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
 use crate::utils::print_error;
@@ -31,6 +30,7 @@ pub async fn run() -> Result<()> {
     // Show cloud instances
     let mut helix_cloud_instances = Vec::new();
     let mut flyio_instances = Vec::new();
+    let mut ecr_instances = Vec::new();
 
     for (name, config) in &project.config.cloud {
         match config {
@@ -39,6 +39,9 @@ pub async fn run() -> Result<()> {
             }
             crate::config::CloudConfig::FlyIo(fly_config) => {
                 flyio_instances.push((name, &fly_config.cluster_id));
+            }
+            crate::config::CloudConfig::Ecr(ecr_config) => {
+                ecr_instances.push((name, &ecr_config.repository_name, &ecr_config.region));
             }
         }
     }
@@ -49,6 +52,10 @@ pub async fn run() -> Result<()> {
 
     for (name, cluster_id) in flyio_instances {
         println!("  {} (Fly.io) - cluster {}", name, cluster_id);
+    }
+
+    for (name, repository_name, region) in ecr_instances {
+        println!("  {} (AWS ECR) - repository {} in {}", name, repository_name, region);
     }
     println!();
 
