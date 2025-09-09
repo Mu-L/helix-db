@@ -431,7 +431,7 @@ impl BM25Flatten for HashMap<String, Value> {
             .fold(String::with_capacity(self.len() * 4), |mut s, (k, v)| {
                 s.push_str(k);
                 s.push(' ');
-                s.push_str(&v.to_string());
+                s.push_str(&v.inner_stringify());
                 s.push(' ');
                 s
             })

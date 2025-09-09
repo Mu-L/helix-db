@@ -1,12 +1,13 @@
 use crate::helixc::analyzer::error_codes::*;
-use crate::helixc::generator::bool_op::{Contains, IsIn};
+use crate::helixc::analyzer::utils::DEFAULT_VAR_NAME;
+use crate::helixc::generator::bool_ops::{Contains, IsIn};
 use crate::helixc::generator::source_steps::SearchVector;
 use crate::helixc::generator::utils::{EmbedData, VecData};
 use crate::{
     generate_error,
     helixc::{
         analyzer::{
-            analyzer::Ctx,
+            Ctx,
             errors::push_query_err,
             methods::{
                 exclude_validation::validate_exclude, graph_step_validation::apply_graph_step,
@@ -19,8 +20,8 @@ use crate::{
             },
         },
         generator::{
-            bool_op::{BoExp, BoolOp, Eq, Gt, Gte, Lt, Lte, Neq},
-            object_remapping_generation::{ExcludeField, Remapping, RemappingType},
+            bool_ops::{BoExp, BoolOp, Eq, Gt, Gte, Lt, Lte, Neq},
+            object_remappings::{ExcludeField, Remapping, RemappingType},
             queries::Query as GeneratedQuery,
             source_steps::{EFromID, EFromType, NFromID, NFromIndex, NFromType, SourceStep},
             statements::Statement as GeneratedStatement,
@@ -30,7 +31,7 @@ use crate::{
             },
             utils::{GenRef, GeneratedValue, Order, Separator},
         },
-        parser::{helix_parser::*, location::Loc},
+        parser::{location::Loc, types::*},
     },
     protocol::value::Value,
 };
@@ -97,6 +98,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 original_query,
                                                 loc.clone(),
                                                 E205,
+                                                &value.inner_stringify(),
                                                 &value.to_string(),
                                                 &field.field_type.to_string(),
                                                 "node",
@@ -286,7 +288,8 @@ pub(crate) fn validate_traversal<'a>(
         // anonymous will be the traversal type rather than the start type
         StartNode::Anonymous => {
             let parent = parent_ty.unwrap();
-            gen_traversal.traversal_type = TraversalType::FromVar(GenRef::Std("val".to_string())); // TODO: ensure this default is stable
+            gen_traversal.traversal_type =
+                TraversalType::FromVar(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
             gen_traversal.source_step = Separator::Empty(SourceStep::Anonymous);
             parent
         }
@@ -488,6 +491,11 @@ pub(crate) fn validate_traversal<'a>(
                 }
                 excluded.clear(); // Traversal to a new element resets exclusions
             }
+            StepType::First => {
+                cur_ty = cur_ty.clone().into_single();
+                excluded.clear();
+                gen_traversal.should_collect = ShouldCollect::ToVal;
+            }
 
             StepType::Count => {
                 cur_ty = Type::Scalar(FieldType::I64);
@@ -515,11 +523,11 @@ pub(crate) fn validate_traversal<'a>(
                 gen_traversal
                     .steps
                     .push(Separator::Period(GeneratedStep::Remapping(Remapping {
-                        variable_name: "item".to_string(), // TODO: Change to start var
+                        variable_name: DEFAULT_VAR_NAME.to_string(),
                         is_inner: false,
                         should_spread: false,
                         remappings: vec![RemappingType::ExcludeField(ExcludeField {
-                            variable_name: "item".to_string(), // TODO: Change to start var
+                            variable_name: DEFAULT_VAR_NAME.to_string(),
                             fields_to_exclude: ex
                                 .fields
                                 .iter()
@@ -530,16 +538,6 @@ pub(crate) fn validate_traversal<'a>(
             }
 
             StepType::Object(obj) => {
-                // TODO: Fix issue with step count being incorrect (i think its counting each field as a step)
-                // if i != number_of_steps {
-                //     println!("{} {}", i, number_of_steps);
-                //     push_query_err(ctx,
-                //         original_query,
-                //         obj.loc.clone(),
-                //         "object is only valid as the last step in a traversal".to_string(),
-                //         "move the object to the end of the traversal",
-                //     );
-                // }
                 validate_object(
                     ctx,
                     &cur_ty,
@@ -1044,7 +1042,6 @@ pub(crate) fn validate_traversal<'a>(
                             );
                         }
                         _ => {
-                            // TODO: maybe use cur_ty instead of update.loc.span?
                             generate_error!(
                                 ctx,
                                 original_query,

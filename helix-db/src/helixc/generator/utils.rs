@@ -1,6 +1,5 @@
+use crate::helixc::parser::types::IdType;
 use std::fmt::{self, Debug, Display};
-
-use crate::helixc::parser::helix_parser::IdType;
 
 #[derive(Clone)]
 pub enum GenRef<T>
@@ -235,11 +234,11 @@ impl Display for GeneratedValue {
 impl Debug for GeneratedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            GeneratedValue::Literal(value) => write!(f, "Literal({value})"),
-            GeneratedValue::Primitive(value) => write!(f, "Primitive({value})"),
-            GeneratedValue::Identifier(value) => write!(f, "Identifier({value})"),
-            GeneratedValue::Parameter(value) => write!(f, "Parameter({value})"),
-            GeneratedValue::Array(value) => write!(f, "Array({value:?})"),
+            GeneratedValue::Literal(value) => write!(f, "GV: Literal({value})"),
+            GeneratedValue::Primitive(value) => write!(f, "GV: Primitive({value})"),
+            GeneratedValue::Identifier(value) => write!(f, "GV: Identifier({value})"),
+            GeneratedValue::Parameter(value) => write!(f, "GV: Parameter({value})"),
+            GeneratedValue::Array(value) => write!(f, "GV: Array({value:?})"),
             GeneratedValue::Unknown => write!(f, "Unknown"),
         }
     }
@@ -298,7 +297,7 @@ impl Display for RustType {
             RustType::F32 => write!(f, "f32"),
             RustType::F64 => write!(f, "f64"),
             RustType::Bool => write!(f, "bool"),
-            RustType::Uuid => write!(f, "ID"), // TODO: Change this for actual UUID
+            RustType::Uuid => write!(f, "ID"),
             RustType::Date => write!(f, "DateTime<Utc>"),
         }
     }

@@ -4,31 +4,46 @@ use std::fmt::Display;
 use crate::helixc::generator::utils::{write_properties, write_secondary_indices, VecData};
 
 use super::{
-    bool_op::BoExp,
+    bool_ops::BoExp,
     utils::{GenRef, GeneratedValue},
 };
 
 #[derive(Clone)]
 pub enum SourceStep {
+    /// Traversal starts from an identifier
     Identifier(GenRef<String>),
+    /// Add a node
     AddN(AddN),
+    /// Add an edge
     AddE(AddE),
+    /// Insert a vector
     AddV(AddV),
+    /// Lookup a node by ID
     NFromID(NFromID),
+    /// Lookup a node by index
     NFromIndex(NFromIndex),
+    /// Lookup a node by type
     NFromType(NFromType),
+    /// Lookup an edge by ID
     EFromID(EFromID),
+    /// Lookup an edge by type
     EFromType(EFromType),
+    /// Search for vectors
     SearchVector(SearchVector),
+    /// Search for vectors using BM25
     SearchBM25(SearchBM25),
+    /// Traversal starts from an anonymous node
     Anonymous,
     Empty,
 }
 
 #[derive(Clone)]
 pub struct AddN {
+    /// Label of node
     pub label: GenRef<String>,
+    /// Properties of node
     pub properties: Option<Vec<(String, GeneratedValue)>>,
+    /// Names of properties to index on
     pub secondary_indices: Option<Vec<String>>,
 }
 impl Display for AddN {
@@ -45,11 +60,14 @@ impl Display for AddN {
 
 #[derive(Clone)]
 pub struct AddE {
+    /// Label of edge
     pub label: GenRef<String>,
+    /// Properties of edge
     pub properties: Option<Vec<(String, GeneratedValue)>>,
+    /// From node ID
     pub from: GeneratedValue,
+    /// To node ID
     pub to: GeneratedValue,
-    // pub secondary_indices: Option<Vec<String>>,
 }
 impl Display for AddE {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -65,8 +83,11 @@ impl Display for AddE {
 }
 #[derive(Clone)]
 pub struct AddV {
+    /// Vector to add
     pub vec: VecData,
+    /// Label of vector
     pub label: GenRef<String>,
+    /// Properties of vector
     pub properties: Option<Vec<(String, GeneratedValue)>>,
 }
 impl Display for AddV {
@@ -84,18 +105,22 @@ impl Display for AddV {
 
 #[derive(Clone)]
 pub struct NFromID {
+    /// ID of node
     pub id: GenRef<String>,
-    pub label: GenRef<String>, // possible not needed, do we do runtime label checking?
+    /// Label of node 
+    /// 
+    /// - unused currently but kept in the case ID lookups need to be from specific table based on type
+    pub label: GenRef<String>, 
 }
 impl Display for NFromID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO: possibly add label for runtime label checking?
         write!(f, "n_from_id({})", self.id)
     }
 }
 
 #[derive(Clone)]
 pub struct NFromType {
+    /// Label of nodes to lookup
     pub label: GenRef<String>,
 }
 impl Display for NFromType {
@@ -106,8 +131,12 @@ impl Display for NFromType {
 
 #[derive(Clone)]
 pub struct EFromID {
+    /// ID of edge
     pub id: GenRef<String>,
-    pub label: GenRef<String>, // possible not needed, do we do runtime label checking?
+    /// Label of edge 
+    /// 
+    /// - unused currently but kept in the case ID lookups need to be from specific table based on type
+    pub label: GenRef<String>, 
 }
 impl Display for EFromID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -117,6 +146,7 @@ impl Display for EFromID {
 
 #[derive(Clone)]
 pub struct EFromType {
+    /// Label of edges to lookup
     pub label: GenRef<String>,
 }
 impl Display for EFromType {
@@ -127,8 +157,11 @@ impl Display for EFromType {
 
 #[derive(Clone)]
 pub struct SearchBM25 {
+    /// Type of node to search for
     pub type_arg: GenRef<String>,
+    /// Query to search for
     pub query: GeneratedValue,
+    /// Number of results to return
     pub k: GeneratedValue,
 }
 
@@ -160,9 +193,13 @@ impl Display for SourceStep {
 
 #[derive(Clone)]
 pub struct SearchVector {
+    /// Label of vector to search for
     pub label: GenRef<String>,
+    /// Vector to search for
     pub vec: VecData,
+    /// Number of results to return
     pub k: GeneratedValue,
+    /// Pre-filter to apply to the search - currently not implemented in grammar
     pub pre_filter: Option<Vec<BoExp>>,
 }
 
@@ -194,8 +231,11 @@ impl Display for SearchVector {
 
 #[derive(Clone)]
 pub struct NFromIndex {
+    /// Index to search against
     pub index: GenRef<String>,
+    /// Key to search for in the index
     pub key: GeneratedValue,
+    /// Label of nodes to lookup - used for post filtering
     pub label: GenRef<String>,
 }
 

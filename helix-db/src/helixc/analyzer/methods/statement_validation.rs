@@ -5,18 +5,19 @@ use crate::{
     generate_error,
     helixc::{
         analyzer::{
-            analyzer::Ctx, errors::push_query_err, methods::infer_expr_type::infer_expr_type,
-            types::Type, utils::is_valid_identifier,
+            Ctx, errors::push_query_err, methods::infer_expr_type::infer_expr_type, types::Type,
+            utils::is_valid_identifier,
         },
         generator::{
-            queries::Query as GeneratedQuery, statements::Statement as GeneratedStatement,
+            queries::Query as GeneratedQuery,
+            statements::Statement as GeneratedStatement,
             statements::{
                 Assignment as GeneratedAssignment, Drop as GeneratedDrop,
                 ForEach as GeneratedForEach, ForLoopInVariable, ForVariable,
             },
             utils::GenRef,
         },
-        parser::helix_parser::*,
+        parser::types::*,
     },
 };
 use paste::paste;
@@ -83,20 +84,22 @@ pub(crate) fn validate_statements<'a>(
             stmt
         }
 
+        // PARAMS DONT GET PARSED TO TYPE::ARRAY
         ForLoop(fl) => {
-            // Ensure the collection exists
             if !scope.contains_key(fl.in_variable.1.as_str()) {
                 generate_error!(ctx, original_query, fl.loc.clone(), E301, &fl.in_variable.1);
             }
-            // Add loop vars to new child scope and walk the body
+
             let mut body_scope = HashMap::new();
             let mut for_loop_in_variable: ForLoopInVariable = ForLoopInVariable::Empty;
 
-            // check if fl.in_variable is a valid parameter
+            // Check if the in variable is a parameter
             let param = original_query
                 .parameters
                 .iter()
                 .find(|p| p.name.1 == fl.in_variable.1);
+            // if it is a parameter, add it to the body scope
+            // else assume variable in scope and add it to the body scope
             let _ = match param {
                 Some(param) => {
                     for_loop_in_variable =
@@ -134,22 +137,15 @@ pub(crate) fn validate_statements<'a>(
             match &fl.variable {
                 ForLoopVars::Identifier { name, loc: _ } => {
                     is_valid_identifier(ctx, original_query, fl.loc.clone(), name.as_str());
-                    body_scope.insert(name.as_str(), Type::Unknown);
-                    scope.insert(name.as_str(), Type::Unknown);
+                    let field_type = scope.get(name.as_str()).unwrap().clone();
+                    body_scope.insert(name.as_str(), field_type.clone());
+                    scope.insert(name.as_str(), field_type);
                     for_variable = ForVariable::Identifier(GenRef::Std(name.clone()));
                 }
-                ForLoopVars::ObjectAccess {
-                    name: _,
-                    field: _,
-                    loc: _,
-                } => {
-                    // body_scope.insert(name.as_str(), Type::Unknown);
-                    // for_variable =
-                    //     ForVariable::ObjectDestructure(vec![GenRef::Std(name.clone())]);
-                    unreachable!()
+                ForLoopVars::ObjectAccess { .. } => {
+                    todo!()
                 }
                 ForLoopVars::ObjectDestructuring { fields, loc: _ } => {
-                    // TODO: check if fields are valid
                     match &param {
                         Some(p) => {
                             for_loop_in_variable =
@@ -168,8 +164,14 @@ pub(crate) fn validate_statements<'a>(
                                                     [field_name, &fl.in_variable.1]
                                                 );
                                             }
-                                            body_scope.insert(field_name.as_str(), Type::Unknown);
-                                            scope.insert(field_name.as_str(), Type::Unknown);
+                                            let field_type = Type::from(
+                                                param_fields
+                                                    .get(field_name.as_str())
+                                                    .unwrap()
+                                                    .clone(),
+                                            );
+                                            body_scope.insert(field_name.as_str(), field_type.clone());
+                                            scope.insert(field_name.as_str(), field_type);
                                         }
                                         for_variable = ForVariable::ObjectDestructure(
                                             fields
@@ -201,24 +203,36 @@ pub(crate) fn validate_statements<'a>(
                                 }
                             }
                         }
-                        None => match scope.contains_key(fl.in_variable.1.as_str()) {
-                            true => {
-                                // TODO: Check fields
-                                for_variable = ForVariable::ObjectDestructure(
-                                    fields
-                                        .iter()
-                                        .map(|(_, f)| {
-                                            let name = f.as_str();
+                        None => match scope.get(fl.in_variable.1.as_str()) {
+                            Some(Type::Array(object_arr)) => {
+                                match object_arr.as_ref() {
+                                    Type::Object(object) => {
+                                        let mut obj_dest_fields = Vec::with_capacity(fields.len());
+                                        let object = object.clone();
+                                        for (_, field_name) in fields {
+                                            let name = field_name.as_str();
                                             // adds non-param fields to scope
-                                            body_scope.insert(name, Type::Unknown);
-                                            scope.insert(name, Type::Unknown);
-
-                                            GenRef::Std(name.to_string())
-                                        })
-                                        .collect(),
-                                );
+                                            let field_type = object.get(name).unwrap().clone();
+                                            body_scope.insert(name, field_type.clone());
+                                            scope.insert(name, field_type);
+                                            obj_dest_fields.push(GenRef::Std(name.to_string()));
+                                        }
+                                        for_variable =
+                                            ForVariable::ObjectDestructure(obj_dest_fields);
+                                    }
+                                    _ => {
+                                        generate_error!(
+                                            ctx,
+                                            original_query,
+                                            fl.in_variable.0.clone(),
+                                            E653,
+                                            [&fl.in_variable.1],
+                                            [&fl.in_variable.1]
+                                        );
+                                    }
+                                }
                             }
-                            false => {
+                            _ => {
                                 generate_error!(
                                     ctx,
                                     original_query,
@@ -233,8 +247,6 @@ pub(crate) fn validate_statements<'a>(
             }
             let mut statements = Vec::new();
             for body_stmt in &fl.statements {
-                // Recursive walk (but without infinite nesting for now)
-
                 let stmt = validate_statements(ctx, scope, original_query, query, body_stmt);
                 if let Some(s) = stmt {
                     statements.push(s);

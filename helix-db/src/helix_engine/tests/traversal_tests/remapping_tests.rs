@@ -61,7 +61,7 @@ fn test_exclude_field_remapping() {
             Some(props! { "text" => "test", "other" => "other" }),
             None,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let traversal = G::new(Arc::clone(&storage), &txn)
         .n_from_type("person")
@@ -127,7 +127,7 @@ fn test_field_remapping() {
             Some(props! { "text" => original.new_name.clone(), "other" => "other" }),
             None,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let traversal = G::new(Arc::clone(&storage), &txn)
         .n_from_type("person")
@@ -180,7 +180,7 @@ fn test_identifier_remapping() {
             Some(props! { "field" => original.new_value.clone(), "other" => "other" }),
             None,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let traversal = G::new(Arc::clone(&storage), &txn)
         .n_from_type("person")
@@ -231,14 +231,14 @@ fn test_traversal_remapping() {
             Some(props! { "text" => "test", "other" => "other" }),
             None,
         )
-        .collect_to_val();
+        .collect_to_obj();
     let _other_node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n(
             "friemd",
             Some(props! { "text" => "test", "other" => "other" }),
             None,
         )
-        .collect_to_val();
+        .collect_to_obj();
     let _edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -248,7 +248,7 @@ fn test_traversal_remapping() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -316,7 +316,7 @@ fn test_value_remapping() {
             Some(props! { "text" => "test", "other" => "other" }),
             None,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let traversal = G::new(Arc::clone(&storage), &txn)
         .n_from_type("person")
@@ -366,14 +366,14 @@ fn test_exists_remapping() {
             Some(props! { "text" => "test", "other" => "other" }),
             None,
         )
-        .collect_to_val();
+        .collect_to_obj();
     let _other_node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n(
             "person",
             Some(props! { "text" => "test", "other" => "other" }),
             None,
         )
-        .collect_to_val();
+        .collect_to_obj();
     let _edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -383,7 +383,7 @@ fn test_exists_remapping() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let traversal = G::new(Arc::clone(&storage), &txn)
         .n_from_type("person")
@@ -426,10 +426,10 @@ fn test_one_of_each_remapping() {
 
     let _node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "old_name" => "test" }), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _other_node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! {}), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -439,7 +439,7 @@ fn test_one_of_each_remapping() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let traversal = G::new(Arc::clone(&storage), &txn)
         .n_from_type("person")
@@ -508,10 +508,10 @@ fn test_nested_remapping() {
 
     let _node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "old_name" => "test" }), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _other_node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("thing", Some(props! {}), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -521,7 +521,7 @@ fn test_nested_remapping() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let user = G::new(Arc::clone(&storage), &txn)
         .n_from_id(&_node.id())
@@ -577,10 +577,10 @@ fn test_double_nested_remapping() {
 
     let _node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! {}), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _other_node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("thing", Some(props! {}), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -590,7 +590,7 @@ fn test_double_nested_remapping() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let user = G::new(Arc::clone(&storage), &txn)
         .n_from_id(&_node.id())
@@ -655,10 +655,10 @@ fn test_nested_with_other_remapping() {
 
     let _node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "old_name" => "test" }), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _other_node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! {}), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -668,7 +668,7 @@ fn test_nested_with_other_remapping() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     let traversal = G::new(Arc::clone(&storage), &txn)
         .n_from_type("person")
@@ -756,10 +756,10 @@ fn test_remapping_with_traversal_from_source() {
 
     let _node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "old_name" => "test" }), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _other_node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "other_name" => "other" }), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -769,7 +769,7 @@ fn test_remapping_with_traversal_from_source() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
         let remapping_vals = RemappingMap::new();
 

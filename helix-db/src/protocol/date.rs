@@ -85,8 +85,6 @@ impl<'de> Visitor<'de> for DateVisitor {
     }
 
     /// Visits a string and parses it into a chrono DateTime<Utc>.
-    ///
-    /// TODO: check if this is correct -> is the same as implementation above so should be fine.
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
