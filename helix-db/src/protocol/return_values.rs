@@ -2,14 +2,12 @@ use super::{
     remapping::{Remapping, ResponseRemapping},
     value::Value,
 };
-use crate::{debug_println, helix_engine::traversal_core::traversal_value::TraversalValue};
-use crate::{
-    utils::{
-        count::Count,
-        filterable::{Filterable, FilterableType},
-        items::{Edge, Node},
-    },
+use crate::utils::{
+    count::Count,
+    filterable::{Filterable, FilterableType},
+    items::{Edge, Node},
 };
+use crate::{debug_println, helix_engine::traversal_core::traversal_value::TraversalValue};
 use sonic_rs::{Deserialize, Serialize};
 use std::{cell::RefMut, collections::HashMap};
 
@@ -256,6 +254,14 @@ impl ReturnValue {
         ReturnValue::Object(properties)
     }
 
+    pub fn from_group_by(group_by: HashMap<String, Vec<TraversalValue>>) -> Self {
+        ReturnValue::Object(
+            group_by
+                .into_iter()
+                .map(|(k, v)| (k, ReturnValue::from(v)))
+                .collect(),
+        )
+    }
 }
 
 impl<I: Filterable + Clone> From<I> for ReturnValue {
