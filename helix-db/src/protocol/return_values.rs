@@ -2,12 +2,19 @@ use super::{
     remapping::{Remapping, ResponseRemapping},
     value::Value,
 };
-use crate::utils::{
-    count::Count,
-    filterable::{Filterable, FilterableType},
-    items::{Edge, Node},
+use crate::{
+    debug_println, helix_engine::traversal_core::traversal_value::TraversalValue,
+    utils::count::ShouldCount,
 };
-use crate::{debug_println, helix_engine::traversal_core::traversal_value::TraversalValue};
+use crate::{
+    helix_engine::vector_core::vector::HVector,
+    utils::{
+        count::Count,
+        filterable::{Filterable, FilterableType},
+        group_by::GroupBy,
+        items::{Edge, Node},
+    },
+};
 use sonic_rs::{Deserialize, Serialize};
 use std::{cell::RefMut, collections::HashMap};
 
@@ -35,13 +42,42 @@ impl ReturnValue {
     }
 
     #[inline(always)]
-    fn process_items_with_mixin<T>(
-        item: T,
+    fn process_nodes_with_mixin(
+        item: Node,
         mixin: &mut HashMap<u128, ResponseRemapping>,
-    ) -> ReturnValue
-    where
-        T: Filterable + Clone,
-    {
+    ) -> ReturnValue {
+        if let Some(m) = mixin.remove(item.id()) {
+            if m.should_spread {
+                ReturnValue::from(item).mixin_remapping(m.remappings)
+            } else {
+                ReturnValue::from_traversal_value(item, &m).mixin_remapping(m.remappings)
+            }
+        } else {
+            ReturnValue::from(item)
+        }
+    }
+
+    #[inline(always)]
+    fn process_edges_with_mixin(
+        item: Edge,
+        mixin: &mut HashMap<u128, ResponseRemapping>,
+    ) -> ReturnValue {
+        if let Some(m) = mixin.remove(item.id()) {
+            if m.should_spread {
+                ReturnValue::from(item).mixin_remapping(m.remappings)
+            } else {
+                ReturnValue::from_traversal_value(item, &m).mixin_remapping(m.remappings)
+            }
+        } else {
+            ReturnValue::from(item)
+        }
+    }
+
+    #[inline(always)]
+    fn process_vectors_with_mixin(
+        item: HVector,
+        mixin: &mut HashMap<u128, ResponseRemapping>,
+    ) -> ReturnValue {
         if let Some(m) = mixin.remove(item.id()) {
             if m.should_spread {
                 ReturnValue::from(item).mixin_remapping(m.remappings)
@@ -63,13 +99,13 @@ impl ReturnValue {
                 .into_iter()
                 .map(|val| match val {
                     TraversalValue::Node(node) => {
-                        ReturnValue::process_items_with_mixin(node, &mut mixin)
+                        ReturnValue::process_nodes_with_mixin(node, &mut mixin)
                     }
                     TraversalValue::Edge(edge) => {
-                        ReturnValue::process_items_with_mixin(edge, &mut mixin)
+                        ReturnValue::process_edges_with_mixin(edge, &mut mixin)
                     }
                     TraversalValue::Vector(vector) => {
-                        ReturnValue::process_items_with_mixin(vector, &mut mixin)
+                        ReturnValue::process_vectors_with_mixin(vector, &mut mixin)
                     }
                     TraversalValue::Count(count) => ReturnValue::from(count),
                     TraversalValue::Empty => ReturnValue::Empty,
@@ -99,11 +135,11 @@ impl ReturnValue {
         match traversal_value {
             TraversalValue::Node(node) => {
                 println!("node processing");
-                ReturnValue::process_items_with_mixin(node, &mut mixin)
+                ReturnValue::process_nodes_with_mixin(node, &mut mixin)
             }
-            TraversalValue::Edge(edge) => ReturnValue::process_items_with_mixin(edge, &mut mixin),
+            TraversalValue::Edge(edge) => ReturnValue::process_edges_with_mixin(edge, &mut mixin),
             TraversalValue::Vector(vector) => {
-                ReturnValue::process_items_with_mixin(vector, &mut mixin)
+                ReturnValue::process_vectors_with_mixin(vector, &mut mixin)
             }
             TraversalValue::Count(count) => ReturnValue::from(count),
             TraversalValue::Empty => ReturnValue::Empty,
@@ -254,49 +290,112 @@ impl ReturnValue {
         ReturnValue::Object(properties)
     }
 
-    pub fn from_group_by(group_by: HashMap<String, Vec<TraversalValue>>) -> Self {
-        ReturnValue::Object(
-            group_by
+    pub fn from_group_by(group_by: GroupBy) -> Self {
+        let obj = match group_by {
+            GroupBy::Group(data) => data
                 .into_iter()
-                .map(|(k, v)| (k, ReturnValue::from(v)))
+                .map(|(_, v)| {
+                    ReturnValue::Object(
+                        v.values
+                            .into_iter()
+                            .map(|(k, v)| (k, ReturnValue::from(v)))
+                            .collect(),
+                    )
+                })
                 .collect(),
-        )
+            GroupBy::Count(data) => data
+                .into_iter()
+                .map(|(_, v)| {
+                    let mut values = v
+                        .values
+                        .into_iter()
+                        .map(|(k, v)| (k, ReturnValue::from(v)))
+                        .collect::<HashMap<String, ReturnValue>>();
+                    values.insert("count".to_string(), ReturnValue::from(v.count));
+                    ReturnValue::Object(values)
+                })
+                .collect(),
+        };
+        ReturnValue::Array(obj)
     }
-
-    
 }
 
-impl<I: Filterable + Clone> From<I> for ReturnValue {
+
+impl From<Node> for ReturnValue {
     #[inline]
-    fn from(item: I) -> Self {
+    fn from(item: Node) -> Self {
         let length = match item.properties_ref() {
             Some(properties) => properties.len(),
             None => 0,
         };
-        let mut properties = match item.type_name() {
-            FilterableType::Node => HashMap::with_capacity(Node::NUM_PROPERTIES + length),
-            FilterableType::Edge => {
-                let mut properties = HashMap::with_capacity(Edge::NUM_PROPERTIES + length);
-                properties.insert(
-                    "from_node".to_string(),
-                    ReturnValue::from(item.from_node_uuid()),
-                );
-                properties.insert(
-                    "to_node".to_string(),
-                    ReturnValue::from(item.to_node_uuid()),
-                );
-                properties
-            }
-            FilterableType::Vector => {
-                let data = item.vector_data();
-                let score = item.score();
+        let mut properties = HashMap::with_capacity(Node::NUM_PROPERTIES + length);
+        properties.insert("id".to_string(), ReturnValue::from(item.uuid()));
+        properties.insert(
+            "label".to_string(),
+            ReturnValue::from(item.label().to_string()),
+        );
+        if item.properties_ref().is_some() {
+            properties.extend(
+                item.properties()
+                    .unwrap()
+                    .into_iter()
+                    .map(|(k, v)| (k, ReturnValue::from(v))),
+            );
+        }
 
-                let mut properties = HashMap::with_capacity(2 + length);
-                properties.insert("data".to_string(), ReturnValue::from(data));
-                properties.insert("score".to_string(), ReturnValue::from(score));
-                properties
-            }
+        ReturnValue::Object(properties)
+    }
+}
+
+impl From<Edge> for ReturnValue {
+    #[inline]
+    fn from(item: Edge) -> Self {
+        let length = match item.properties_ref() {
+            Some(properties) => properties.len(),
+            None => 0,
         };
+        let mut properties = HashMap::with_capacity(Edge::NUM_PROPERTIES + length);
+        properties.insert(
+            "from_node".to_string(),
+            ReturnValue::from(item.from_node_uuid()),
+        );
+        properties.insert(
+            "to_node".to_string(),
+            ReturnValue::from(item.to_node_uuid()),
+        );
+
+        properties.insert("id".to_string(), ReturnValue::from(item.uuid()));
+        properties.insert(
+            "label".to_string(),
+            ReturnValue::from(item.label().to_string()),
+        );
+        if item.properties_ref().is_some() {
+            properties.extend(
+                item.properties()
+                    .unwrap()
+                    .into_iter()
+                    .map(|(k, v)| (k, ReturnValue::from(v))),
+            );
+        }
+
+        ReturnValue::Object(properties)
+    }
+}
+
+impl From<HVector> for ReturnValue {
+    #[inline]
+    fn from(item: HVector) -> Self {
+        let length = match item.properties_ref() {
+            Some(properties) => properties.len(),
+            None => 0,
+        };
+
+        let data = item.vector_data();
+        let score = item.score();
+
+        let mut properties = HashMap::with_capacity(2 + length);
+        properties.insert("data".to_string(), ReturnValue::from(data));
+        properties.insert("score".to_string(), ReturnValue::from(score));
         properties.insert("id".to_string(), ReturnValue::from(item.uuid()));
         properties.insert(
             "label".to_string(),

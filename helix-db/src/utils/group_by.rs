@@ -4,21 +4,20 @@ use serde::{Serialize, ser::SerializeSeq};
 
 use crate::protocol::value::Value;
 
+pub struct GroupByItem {
+    pub values: HashMap<String, Value>,
+    pub count: i32,
+}
+
+impl GroupByItem {
+    pub fn new() -> Self {
+        Self { values: HashMap::new(), count: 0 }
+    }
+}
+
+
 pub enum GroupBy {
-    Group(HashMap<String, HashMap<String, Value>>),
-    Count(HashMap<String, HashMap<String, Value>>),
+    Group(HashMap<String, GroupByItem>),
+    Count(HashMap<String, GroupByItem>),
 }
 
-impl GroupBy {
-    pub fn new(data: HashMap<String, HashMap<String, Value>>) -> Self {
-        GroupBy::Group(data)
-    }
-
-    pub fn count(self) -> Self {
-        if let GroupBy::Group(data) = self {
-            GroupBy::Count(data)
-        } else {
-            self
-        }
-    }
-}

@@ -9,7 +9,7 @@ use crate::{
         types::GraphError,
     },
     protocol::value::Value,
-    utils::aggregate::Aggregate,
+    utils::aggregate::{Aggregate, AggregateItem},
 };
 
 pub trait AggregateAdapter<'a>: Iterator {
@@ -20,7 +20,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> AggregateAdapte
     for RoTraversalIterator<'a, I>
 {
     fn aggregate(self, properties: &[&str]) -> Result<Aggregate, GraphError> {
-        let mut groups: HashMap<String, HashSet<TraversalValue>> = HashMap::new();
+        let mut groups: HashMap<String, AggregateItem> = HashMap::new();
 
         for item in self.inner {
             let item = item?;
@@ -42,9 +42,11 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> AggregateAdapte
             }
             let key = key_parts.join("_");
 
-            groups.entry(key).or_insert_with(HashSet::new).insert(item);
+            let group = groups.entry(key).or_insert_with(AggregateItem::new);
+            group.values.insert(item);
+            group.count += 1;
         }
 
-        Ok(Aggregate::new(groups))
+        Ok(Aggregate(groups))
     }
 }

@@ -1,24 +1,17 @@
 use std::collections::{HashMap, HashSet};
 
-use serde::Serialize;
 
 use crate::helix_engine::traversal_core::traversal_value::TraversalValue;
 
-pub enum Aggregate {
-    Group(HashMap<String, HashSet<TraversalValue>>),
-    Count(HashMap<String, HashSet<TraversalValue>>),
+pub struct AggregateItem {
+    pub values: HashSet<TraversalValue>,
+    pub count: i32,
 }
 
-impl Aggregate {
-    pub fn new(data: HashMap<String, HashSet<TraversalValue>>) -> Self {
-        Aggregate::Group(data)
-    }
-
-    pub fn count(self) -> Self {
-        if let Aggregate::Group(data) = self {
-            Aggregate::Count(data)
-        } else {
-            self
-        }
+impl AggregateItem {
+    pub fn new() -> Self {
+        Self { values: HashSet::new(), count: 0 }
     }
 }
+
+pub struct Aggregate(pub HashMap<String, AggregateItem>);
