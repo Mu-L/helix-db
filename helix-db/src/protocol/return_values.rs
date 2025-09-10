@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     debug_println,
-    helix_engine::traversal_core::traversal_value::TraversalValue,
+    helix_engine::{traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue}, types::GraphError},
     utils::{aggregate::Aggregate, count::ShouldCount},
 };
 use crate::{
@@ -98,6 +98,47 @@ impl ReturnValue {
         ReturnValue::Array(
             traversal_value
                 .into_iter()
+                .map(|val| match val {
+                    TraversalValue::Node(node) => {
+                        ReturnValue::process_nodes_with_mixin(node, &mut mixin)
+                    }
+                    TraversalValue::Edge(edge) => {
+                        ReturnValue::process_edges_with_mixin(edge, &mut mixin)
+                    }
+                    TraversalValue::Vector(vector) => {
+                        ReturnValue::process_vectors_with_mixin(vector, &mut mixin)
+                    }
+                    TraversalValue::Count(count) => ReturnValue::from(count),
+                    TraversalValue::Empty => ReturnValue::Empty,
+                    TraversalValue::Value(value) => ReturnValue::from(value),
+                    TraversalValue::Path((nodes, edges)) => {
+                        let mut properties = HashMap::with_capacity(2);
+                        properties.insert(
+                            "nodes".to_string(),
+                            ReturnValue::Array(nodes.into_iter().map(ReturnValue::from).collect()),
+                        );
+                        properties.insert(
+                            "edges".to_string(),
+                            ReturnValue::Array(edges.into_iter().map(ReturnValue::from).collect()),
+                        );
+                        ReturnValue::Object(properties)
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    #[inline]
+    pub fn from_traversal_iter_array_with_mixin<'a>(
+        traversal_iter: RoTraversalIterator<
+            'a,
+            impl Iterator<Item = Result<TraversalValue, GraphError>>,
+        >,
+        mut mixin: RefMut<HashMap<u128, ResponseRemapping>>,
+    ) -> Self {
+        ReturnValue::Array(
+            traversal_iter
+                .filter_map(|val| val.ok())
                 .map(|val| match val {
                     TraversalValue::Node(node) => {
                         ReturnValue::process_nodes_with_mixin(node, &mut mixin)
