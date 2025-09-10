@@ -14,4 +14,8 @@ impl AggregateItem {
     }
 }
 
-pub struct Aggregate(pub HashMap<String, AggregateItem>);
+pub enum Aggregate {
+    Group(HashMap<String, AggregateItem>),
+    Count(HashMap<String, AggregateItem>),
+}
+

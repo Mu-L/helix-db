@@ -3,8 +3,9 @@ use super::{
     value::Value,
 };
 use crate::{
-    debug_println, helix_engine::traversal_core::traversal_value::TraversalValue,
-    utils::count::ShouldCount,
+    debug_println,
+    helix_engine::traversal_core::traversal_value::TraversalValue,
+    utils::{aggregate::Aggregate, count::ShouldCount},
 };
 use crate::{
     helix_engine::vector_core::vector::HVector,
@@ -318,8 +319,38 @@ impl ReturnValue {
         };
         ReturnValue::Array(obj)
     }
-}
 
+    pub fn from_aggregate(aggregate: Aggregate) -> Self {
+        let obj = match aggregate {
+            Aggregate::Group(data) => data
+                .into_iter()
+                .map(|(_, v)| {
+                    ReturnValue::Array(
+                        v.values
+                            .into_iter()
+                            .map(|v| ReturnValue::from(v))
+                            .collect::<Vec<ReturnValue>>(),
+                    )
+                })
+                .collect(),
+            Aggregate::Count(data) => data
+                .into_iter()
+                .map(|(_, v)| {
+                    ReturnValue::Object(HashMap::from([
+                        ("count".to_string(), ReturnValue::from(v.count)),
+                        (
+                            "data".to_string(),
+                            ReturnValue::Array(
+                                v.values.into_iter().map(|v| ReturnValue::from(v)).collect(),
+                            ),
+                        ),
+                    ]))
+                })
+                .collect(),
+        };
+        ReturnValue::Array(obj)
+    }
+}
 
 impl From<Node> for ReturnValue {
     #[inline]

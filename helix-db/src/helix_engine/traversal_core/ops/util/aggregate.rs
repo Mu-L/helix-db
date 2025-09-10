@@ -47,6 +47,6 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> AggregateAdapte
             group.count += 1;
         }
 
-        Ok(Aggregate(groups))
+        Ok(Aggregate::Group(groups))
     }
 }
