@@ -45,6 +45,6 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> AggregateAdapte
             groups.entry(key).or_insert_with(HashSet::new).insert(item);
         }
 
-        Ok(Aggregate(groups))
+        Ok(Aggregate::new(groups))
     }
 }
