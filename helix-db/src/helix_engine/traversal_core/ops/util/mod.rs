@@ -1,3 +1,5 @@
+pub mod aggregate;
+pub mod count;
 pub mod dedup;
 pub mod drop;
 pub mod exist;
@@ -10,4 +12,3 @@ pub mod paths;
 pub mod props;
 pub mod range;
 pub mod update;
-pub mod aggregate;

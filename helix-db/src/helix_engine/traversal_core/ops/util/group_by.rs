@@ -8,14 +8,14 @@ use crate::{
         },
         types::GraphError,
     },
-    protocol::value::Value,
+    protocol::value::Value, utils::group_by::GroupBy,
 };
 
 pub trait GroupByAdapter<'a>: Iterator {
     fn group_by(
         self,
         properties: &[&str],
-    ) -> Result<HashMap<String, Vec<(String, Value)>>, GraphError>;
+    ) -> Result<GroupBy, GraphError>;
 }
 
 impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<'a>
@@ -24,8 +24,8 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<
     fn group_by(
         self,
         properties: &[&str],
-    ) -> Result<HashMap<String, Vec<(String, Value)>>, GraphError> {
-        let mut groups: HashMap<String, Vec<(String, Value)>> = HashMap::new();
+    ) -> Result<GroupBy, GraphError> {
+        let mut groups: HashMap<String, HashMap<String, Value>> = HashMap::new();
 
         for item in self.inner {
             let item = item?;
@@ -47,9 +47,10 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<
             }
             let key = key_parts.join("_");
 
-            groups.entry(key).or_insert_with(Vec::new).extend(kvs);
+            groups.entry(key).or_insert_with(HashMap::new).extend(kvs);
         }
 
-        Ok(groups)
+
+        Ok(GroupBy(groups))
     }
 }
