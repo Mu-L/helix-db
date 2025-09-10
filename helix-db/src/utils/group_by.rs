@@ -4,17 +4,21 @@ use serde::{Serialize, ser::SerializeSeq};
 
 use crate::protocol::value::Value;
 
-pub struct GroupBy(pub HashMap<String, HashMap<String, Value>>);
+pub enum GroupBy {
+    Group(HashMap<String, HashMap<String, Value>>),
+    Count(HashMap<String, HashMap<String, Value>>),
+}
 
-impl Serialize for GroupBy {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-        for (_, v) in &self.0 {
-            seq.serialize_element(&v)?;
+impl GroupBy {
+    pub fn new(data: HashMap<String, HashMap<String, Value>>) -> Self {
+        GroupBy::Group(data)
+    }
+
+    pub fn count(self) -> Self {
+        if let GroupBy::Group(data) = self {
+            GroupBy::Count(data)
+        } else {
+            self
         }
-        seq.end()
     }
 }

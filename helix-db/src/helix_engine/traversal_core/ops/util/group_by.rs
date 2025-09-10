@@ -51,6 +51,6 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<
         }
 
 
-        Ok(GroupBy(groups))
+        Ok(GroupBy::new(groups))
     }
 }
