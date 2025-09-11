@@ -47,6 +47,7 @@ pub struct RawEvent<D: Serialize + std::fmt::Debug> {
     pub event_type: EventType,
     pub event_data: D,
     pub user_id: Option<String>,
+    pub timestamp: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

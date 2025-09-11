@@ -4,6 +4,7 @@ use eyre::Result;
 mod commands;
 mod config;
 mod docker;
+mod metrics_sender;
 mod project;
 mod update;
 mod utils;
@@ -160,20 +161,26 @@ async fn main() -> Result<()> {
     // Initialize error reporting
     color_eyre::install()?;
 
+    // Initialize metrics sender
+    let metrics_sender = metrics_sender::MetricsSender::new()?;
+
+    // Send CLI install event (only first time)
+    metrics_sender.send_cli_install_event_if_first_time();
+
     // Check for updates before processing commands
     update::check_for_updates().await?;
 
     let cli = Cli::parse();
 
-    match cli.command {
+    let result = match cli.command {
         Commands::Init {
             path,
             template,
             cloud,
         } => commands::init::run(path, template, cloud).await,
         Commands::Check { instance } => commands::check::run(instance).await,
-        Commands::Build { instance } => commands::build::run(instance).await,
-        Commands::Push { instance } => commands::push::run(instance).await,
+        Commands::Build { instance } => commands::build::run(instance, &metrics_sender).await.map(|_| ()),
+        Commands::Push { instance } => commands::push::run(instance, &metrics_sender).await,
         Commands::Pull { instance } => commands::pull::run(instance).await,
         Commands::Start { instance } => commands::start::run(instance).await,
         Commands::Stop { instance } => commands::stop::run(instance).await,
@@ -183,5 +190,10 @@ async fn main() -> Result<()> {
         Commands::Delete { instance } => commands::delete::run(instance).await,
         Commands::Metrics { action } => commands::metrics::run(action).await,
         Commands::Update { force } => commands::update::run(force).await,
-    }
+    };
+
+    // Shutdown metrics sender
+    metrics_sender.shutdown().await?;
+    
+    result
 }

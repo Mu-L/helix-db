@@ -1,8 +1,16 @@
 use crate::config::InstanceInfo;
 use crate::docker::DockerManager;
+use crate::metrics_sender::MetricsSender;
 use crate::project::{ProjectContext, get_helix_repo_cache};
 use crate::utils::{copy_dir_recursive_excluding, print_status, print_success};
 use eyre::Result;
+use std::time::Instant;
+
+#[derive(Debug, Clone)]
+pub struct MetricsData {
+    pub queries_string: String,
+    pub num_of_queries: u32,
+}
 use helix_db::{
     helix_engine::traversal_core::config::Config,
     helixc::{
@@ -21,7 +29,9 @@ const HELIX_REPO_URL: &str = "https://github.com/helixdb/helix-db.git";
 // Get the cargo workspace root at compile time
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
-pub async fn run(instance_name: String) -> Result<()> {
+pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Result<MetricsData> {
+    let start_time = Instant::now();
+    
     // Load project context
     let project = ProjectContext::find_and_load(None)?;
 
@@ -37,7 +47,34 @@ pub async fn run(instance_name: String) -> Result<()> {
     prepare_instance_workspace(&project, &instance_name).await?;
 
     // Compile project queries into the workspace
-    compile_project(&project, &instance_name).await?;
+    let compile_result = compile_project(&project, &instance_name).await;
+    
+    // Collect metrics data
+    let compile_time = start_time.elapsed().as_secs() as u32;
+    let success = compile_result.is_ok();
+    let error_messages = compile_result.as_ref().err().map(|e| e.to_string());
+    
+    // Get metrics data from compilation result or use defaults
+    let metrics_data = match &compile_result {
+        Ok(data) => data.clone(),
+        Err(_) => MetricsData {
+            queries_string: String::new(),
+            num_of_queries: 0,
+        },
+    };
+    
+    // Send compile metrics
+    metrics_sender.send_compile_event(
+        instance_name.clone(),
+        metrics_data.queries_string.clone(),
+        metrics_data.num_of_queries,
+        compile_time,
+        success,
+        error_messages,
+    );
+    
+    // Propagate compilation error if any
+    compile_result?;
 
     // Generate Docker files
     generate_docker_files(&project, &instance_name, instance_config.clone()).await?;
@@ -51,7 +88,7 @@ pub async fn run(instance_name: String) -> Result<()> {
 
     print_success(&format!("Instance '{}' built successfully", instance_name));
 
-    Ok(())
+    Ok(metrics_data.clone())
 }
 
 async fn ensure_helix_repo_cached() -> Result<()> {
@@ -148,7 +185,7 @@ async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &st
     Ok(())
 }
 
-async fn compile_project(project: &ProjectContext, instance_name: &str) -> Result<()> {
+async fn compile_project(project: &ProjectContext, instance_name: &str) -> Result<MetricsData> {
     print_status("COMPILE", "Compiling Helix queries...");
 
     // Read project files
@@ -191,7 +228,7 @@ async fn compile_project(project: &ProjectContext, instance_name: &str) -> Resul
     let hx_files = collect_hx_files(&project.root)?;
 
     // Generate content and compile using helix-db compilation logic
-    let analyzed_source = compile_helix_files(&hx_files, &src_dir)?;
+    let (analyzed_source, metrics_data) = compile_helix_files(&hx_files, &src_dir)?;
 
     // Write the generated Rust code to queries.rs
     let mut generated_rust_code = String::new();
@@ -199,7 +236,7 @@ async fn compile_project(project: &ProjectContext, instance_name: &str) -> Resul
     fs::write(src_dir.join("queries.rs"), generated_rust_code)?;
 
     print_success("Helix queries compiled to Rust files");
-    Ok(())
+    Ok(metrics_data)
 }
 
 async fn generate_docker_files(
@@ -252,7 +289,7 @@ fn collect_hx_files(project_root: &std::path::Path) -> Result<Vec<std::fs::DirEn
 fn compile_helix_files(
     files: &[std::fs::DirEntry],
     instance_src_dir: &std::path::Path,
-) -> Result<GeneratedSource> {
+) -> Result<(GeneratedSource, MetricsData)> {
     print_status("PARSE", "Parsing Helix files...");
 
     // Generate content from the files
@@ -262,13 +299,20 @@ fn compile_helix_files(
     print_status("ANALYZE", "Analyzing Helix files...");
     let source = parse_content(&content)?;
 
+    // Extract metrics data during parsing
+    let query_names: Vec<String> = source.queries.iter().map(|q| q.name.clone()).collect();
+    let metrics_data = MetricsData {
+        queries_string: query_names.join("\n"),
+        num_of_queries: query_names.len() as u32,
+    };
+
     // Run static analysis
     let mut analyzed_source = analyze_source(source)?;
 
     // Read and set the config from the instance workspace
     analyzed_source.config = read_config(instance_src_dir)?;
 
-    Ok(analyzed_source)
+    Ok((analyzed_source, metrics_data))
 }
 
 /// Generates a Content object from a vector of DirEntry objects
@@ -344,3 +388,4 @@ fn read_config(instance_src_dir: &std::path::Path) -> Result<Config> {
         .map_err(|e| eyre::eyre!("Failed to load config: {}", e))?;
     Ok(config)
 }
+

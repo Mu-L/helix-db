@@ -91,6 +91,10 @@ impl HelixMetricsClient {
             user_id,
             event_type,
             event_data,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
         };
 
         // Spawn the request in the background for fire-and-forget behavior

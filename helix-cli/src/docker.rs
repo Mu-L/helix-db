@@ -335,6 +335,14 @@ networks:
         Ok(())
     }
 
+    /// Check if an instance container exists (running or stopped)
+    pub fn instance_exists(&self, instance_name: &str) -> Result<bool> {
+        let statuses = self.get_project_status()?;
+        let target_container_name = format!("helix_{}_app", instance_name);
+        
+        Ok(statuses.iter().any(|status| status.container_name.contains(&target_container_name)))
+    }
+
     /// Get status of all Docker containers for this project
     pub fn get_project_status(&self) -> Result<Vec<ContainerStatus>> {
         let project_name = &self.project.config.project.name;

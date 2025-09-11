@@ -1,28 +1,9 @@
 use eyre::Result;
-use serde::{Serialize, Deserialize};
-use crate::{MetricsAction, utils::{print_status, print_success}};
-use dirs::home_dir;
-use std::fs;
-
-#[derive(Serialize, Deserialize)]
-struct MetricsConfig {
-    enabled: bool,
-    user_id: Option<String>,
-    last_updated: u64,
-}
-
-impl Default for MetricsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            user_id: None,
-            last_updated: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        }
-    }
-}
+use crate::{
+    MetricsAction, 
+    metrics_sender::{load_metrics_config, save_metrics_config},
+    utils::{print_status, print_success}
+};
 
 pub async fn run(action: MetricsAction) -> Result<()> {
     match action {
@@ -80,31 +61,5 @@ async fn show_metrics_status() -> Result<()> {
         println!("  Last updated: {} seconds ago", datetime.as_secs());
     }
     
-    Ok(())
-}
-
-fn get_metrics_config_path() -> Result<std::path::PathBuf> {
-    let home = home_dir().ok_or_else(|| eyre::eyre!("Cannot find home directory"))?;
-    let helix_dir = home.join(".helix");
-    fs::create_dir_all(&helix_dir)?;
-    Ok(helix_dir.join("metrics.toml"))
-}
-
-fn load_metrics_config() -> Result<MetricsConfig> {
-    let config_path = get_metrics_config_path()?;
-    
-    if !config_path.exists() {
-        return Ok(MetricsConfig::default());
-    }
-    
-    let content = fs::read_to_string(&config_path)?;
-    let config = toml::from_str(&content)?;
-    Ok(config)
-}
-
-fn save_metrics_config(config: &MetricsConfig) -> Result<()> {
-    let config_path = get_metrics_config_path()?;
-    let content = toml::to_string_pretty(config)?;
-    fs::write(&config_path, content)?;
     Ok(())
 }
