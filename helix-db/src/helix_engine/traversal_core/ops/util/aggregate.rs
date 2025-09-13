@@ -12,13 +12,13 @@ use crate::{
 };
 
 pub trait AggregateAdapter<'a>: Iterator {
-    fn aggregate_by(self, properties: &[&str]) -> Result<Aggregate, GraphError>;
+    fn aggregate_by(self, properties: &[String]) -> Result<Aggregate, GraphError>;
 }
 
 impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> AggregateAdapter<'a>
     for RoTraversalIterator<'a, I>
 {
-    fn aggregate_by(self, properties: &[&str]) -> Result<Aggregate, GraphError> {
+    fn aggregate_by(self, properties: &[String]) -> Result<Aggregate, GraphError> {
         let mut groups: HashMap<String, AggregateItem> = HashMap::new();
 
         for item in self.inner {
@@ -28,7 +28,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> AggregateAdapte
             let mut kvs = Vec::new();
             let mut key_parts = Vec::new();
 
-            for &property in properties {
+            for property in properties {
                 match item.check_property(property) {
                     Ok(val) => {
                         key_parts.push(val.inner_stringify());

@@ -19,3 +19,11 @@ pub enum Aggregate {
     Count(HashMap<String, AggregateItem>),
 }
 
+impl Aggregate {
+    pub fn into_count(self) -> Self {
+        match self {
+            Self::Group(g) => Self::Count(g),
+            _ => self,
+        }
+    }
+}

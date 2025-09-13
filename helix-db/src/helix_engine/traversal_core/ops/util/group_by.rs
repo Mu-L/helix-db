@@ -12,13 +12,13 @@ use crate::{
 };
 
 pub trait GroupByAdapter<'a>: Iterator {
-    fn group_by(self, properties: &[&str]) -> Result<GroupBy, GraphError>;
+    fn group_by(self, properties: &[String]) -> Result<GroupBy, GraphError>;
 }
 
 impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<'a>
     for RoTraversalIterator<'a, I>
 {
-    fn group_by(self, properties: &[&str]) -> Result<GroupBy, GraphError> {
+    fn group_by(self, properties: &[String]) -> Result<GroupBy, GraphError> {
         let mut groups: HashMap<String, GroupByItem> = HashMap::new();
 
         for item in self.inner {
@@ -28,7 +28,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<
             let mut kvs = Vec::new();
             let mut key_parts = Vec::new();
 
-            for &property in properties {
+            for property in properties {
                 match item.check_property(property) {
                     Ok(val) => {
                         key_parts.push(val.inner_stringify());

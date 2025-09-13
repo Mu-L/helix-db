@@ -334,66 +334,6 @@ impl ReturnValue {
 
         ReturnValue::Object(properties)
     }
-
-    pub fn from_group_by(group_by: GroupBy) -> Self {
-        let obj = match group_by {
-            GroupBy::Group(data) => data
-                .into_iter()
-                .map(|(_, v)| {
-                    ReturnValue::Object(
-                        v.values
-                            .into_iter()
-                            .map(|(k, v)| (k, ReturnValue::from(v)))
-                            .collect(),
-                    )
-                })
-                .collect(),
-            GroupBy::Count(data) => data
-                .into_iter()
-                .map(|(_, v)| {
-                    let mut values = v
-                        .values
-                        .into_iter()
-                        .map(|(k, v)| (k, ReturnValue::from(v)))
-                        .collect::<HashMap<String, ReturnValue>>();
-                    values.insert("count".to_string(), ReturnValue::from(v.count));
-                    ReturnValue::Object(values)
-                })
-                .collect(),
-        };
-        ReturnValue::Array(obj)
-    }
-
-    pub fn from_aggregate(aggregate: Aggregate) -> Self {
-        let obj = match aggregate {
-            Aggregate::Group(data) => data
-                .into_iter()
-                .map(|(_, v)| {
-                    ReturnValue::Array(
-                        v.values
-                            .into_iter()
-                            .map(|v| ReturnValue::from(v))
-                            .collect::<Vec<ReturnValue>>(),
-                    )
-                })
-                .collect(),
-            Aggregate::Count(data) => data
-                .into_iter()
-                .map(|(_, v)| {
-                    ReturnValue::Object(HashMap::from([
-                        ("count".to_string(), ReturnValue::from(v.count)),
-                        (
-                            "data".to_string(),
-                            ReturnValue::Array(
-                                v.values.into_iter().map(|v| ReturnValue::from(v)).collect(),
-                            ),
-                        ),
-                    ]))
-                })
-                .collect(),
-        };
-        ReturnValue::Array(obj)
-    }
 }
 
 impl From<Node> for ReturnValue {
@@ -644,6 +584,70 @@ impl From<TraversalValue> for ReturnValue {
 impl From<&[f64]> for ReturnValue {
     fn from(data: &[f64]) -> Self {
         ReturnValue::Array(data.iter().map(|f| ReturnValue::from(*f)).collect())
+    }
+}
+
+impl From<Aggregate> for ReturnValue {
+    fn from(aggregate: Aggregate) -> Self {
+        let obj = match aggregate {
+            Aggregate::Group(data) => data
+                .into_iter()
+                .map(|(_, v)| {
+                    ReturnValue::Array(
+                        v.values
+                            .into_iter()
+                            .map(|v| ReturnValue::from(v))
+                            .collect::<Vec<ReturnValue>>(),
+                    )
+                })
+                .collect(),
+            Aggregate::Count(data) => data
+                .into_iter()
+                .map(|(_, v)| {
+                    ReturnValue::Object(HashMap::from([
+                        ("count".to_string(), ReturnValue::from(v.count)),
+                        (
+                            "data".to_string(),
+                            ReturnValue::Array(
+                                v.values.into_iter().map(|v| ReturnValue::from(v)).collect(),
+                            ),
+                        ),
+                    ]))
+                })
+                .collect(),
+        };
+        ReturnValue::Array(obj)
+    }
+}
+
+impl From<GroupBy> for ReturnValue {
+    fn from(group_by: GroupBy) -> Self {
+        let obj = match group_by {
+            GroupBy::Group(data) => data
+                .into_iter()
+                .map(|(_, v)| {
+                    ReturnValue::Object(
+                        v.values
+                            .into_iter()
+                            .map(|(k, v)| (k, ReturnValue::from(v)))
+                            .collect(),
+                    )
+                })
+                .collect(),
+            GroupBy::Count(data) => data
+                .into_iter()
+                .map(|(_, v)| {
+                    let mut values = v
+                        .values
+                        .into_iter()
+                        .map(|(k, v)| (k, ReturnValue::from(v)))
+                        .collect::<HashMap<String, ReturnValue>>();
+                    values.insert("count".to_string(), ReturnValue::from(v.count));
+                    ReturnValue::Object(values)
+                })
+                .collect(),
+        };
+        ReturnValue::Array(obj)
     }
 }
 
