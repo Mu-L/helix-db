@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use serde::{Serialize, ser::SerializeSeq};
-
 use crate::protocol::value::Value;
 
 pub struct GroupByItem {

@@ -8,30 +8,17 @@ use crate::{
         },
         types::GraphError,
     },
-    protocol::value::Value, utils::group_by::{GroupBy, GroupByItem},
+    utils::group_by::{GroupBy, GroupByItem},
 };
 
-
-
-
 pub trait GroupByAdapter<'a>: Iterator {
-    fn group_by(
-        self,
-        properties: &[&str],
-    ) -> Result<GroupBy, GraphError>;
+    fn group_by(self, properties: &[&str]) -> Result<GroupBy, GraphError>;
 }
 
 impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<'a>
     for RoTraversalIterator<'a, I>
 {
-    fn group_by(
-        self,
-        properties: &[&str],
-    ) -> Result<GroupBy, GraphError> {
-        let mut groups: HashMap<String, HashMap<String, Value>> = HashMap::new();
-
-       
-
+    fn group_by(self, properties: &[&str]) -> Result<GroupBy, GraphError> {
         let mut groups: HashMap<String, GroupByItem> = HashMap::new();
 
         for item in self.inner {

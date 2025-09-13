@@ -4,8 +4,11 @@ use super::{
 };
 use crate::{
     debug_println,
-    helix_engine::{traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue}, types::GraphError},
-    utils::{aggregate::Aggregate, count::ShouldCount},
+    helix_engine::{
+        traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
+        types::GraphError,
+    },
+    utils::aggregate::Aggregate,
 };
 use crate::{
     helix_engine::vector_core::vector::HVector,

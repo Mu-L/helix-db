@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     helix_engine::{
@@ -8,18 +8,17 @@ use crate::{
         },
         types::GraphError,
     },
-    protocol::value::Value,
     utils::aggregate::{Aggregate, AggregateItem},
 };
 
 pub trait AggregateAdapter<'a>: Iterator {
-    fn aggregate(self, properties: &[&str]) -> Result<Aggregate, GraphError>;
+    fn aggregate_by(self, properties: &[&str]) -> Result<Aggregate, GraphError>;
 }
 
 impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> AggregateAdapter<'a>
     for RoTraversalIterator<'a, I>
 {
-    fn aggregate(self, properties: &[&str]) -> Result<Aggregate, GraphError> {
+    fn aggregate_by(self, properties: &[&str]) -> Result<Aggregate, GraphError> {
         let mut groups: HashMap<String, AggregateItem> = HashMap::new();
 
         for item in self.inner {

@@ -195,8 +195,8 @@ update_field = { identifier ~ ":" ~ (evaluates_to_anything | anonymous_traversal
 update       = { "UPDATE" ~ "(" ~ "{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" }
 drop = { "DROP" ~ evaluates_to_anything }
 first = { "FIRST" }
-aggregate = { "AGGREGATE_BY" ~ "(" ~ (anonymous_traversal) ~ ")" }
-group_by = { "GROUP_BY" ~ "(" ~ (anonymous_traversal) ~ ")" }
+aggregate = { "AGGREGATE_BY" ~ "(" ~ (identifier)+ ~ ")" }
+group_by = { "GROUP_BY" ~ "(" ~ (identifier)+ ~ ")" }
 
 
 // ---------------------------------------------------------------------
