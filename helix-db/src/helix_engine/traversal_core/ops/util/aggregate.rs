@@ -41,7 +41,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> AggregateAdapte
             }
             let key = key_parts.join("_");
 
-            let group = groups.entry(key).or_insert_with(AggregateItem::new);
+            let group = groups.entry(key).or_default();
             group.values.insert(item);
             group.count += 1;
         }

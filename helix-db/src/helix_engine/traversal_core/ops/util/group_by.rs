@@ -41,7 +41,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<
             }
             let key = key_parts.join("_");
 
-            let group = groups.entry(key).or_insert_with(GroupByItem::new);
+            let group = groups.entry(key).or_default();
             group.values.extend(kvs);
             group.count += 1;
         }

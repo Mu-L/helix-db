@@ -591,25 +591,25 @@ impl From<Aggregate> for ReturnValue {
     fn from(aggregate: Aggregate) -> Self {
         let obj = match aggregate {
             Aggregate::Group(data) => data
-                .into_iter()
-                .map(|(_, v)| {
+                .into_values()
+                .map(|v| {
                     ReturnValue::Array(
                         v.values
                             .into_iter()
-                            .map(|v| ReturnValue::from(v))
+                            .map(ReturnValue::from)
                             .collect::<Vec<ReturnValue>>(),
                     )
                 })
                 .collect(),
             Aggregate::Count(data) => data
-                .into_iter()
-                .map(|(_, v)| {
+                .into_values()
+                .map(|v| {
                     ReturnValue::Object(HashMap::from([
                         ("count".to_string(), ReturnValue::from(v.count)),
                         (
                             "data".to_string(),
                             ReturnValue::Array(
-                                v.values.into_iter().map(|v| ReturnValue::from(v)).collect(),
+                                v.values.into_iter().map(ReturnValue::from).collect(),
                             ),
                         ),
                     ]))
@@ -624,8 +624,8 @@ impl From<GroupBy> for ReturnValue {
     fn from(group_by: GroupBy) -> Self {
         let obj = match group_by {
             GroupBy::Group(data) => data
-                .into_iter()
-                .map(|(_, v)| {
+                .into_values()
+                .map(|v| {
                     ReturnValue::Object(
                         v.values
                             .into_iter()
@@ -635,8 +635,8 @@ impl From<GroupBy> for ReturnValue {
                 })
                 .collect(),
             GroupBy::Count(data) => data
-                .into_iter()
-                .map(|(_, v)| {
+                .into_values()
+                .map(|v| {
                     let mut values = v
                         .values
                         .into_iter()
