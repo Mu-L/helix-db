@@ -1,7 +1,7 @@
 use crate::helixc::analyzer::error_codes::*;
 use crate::helixc::analyzer::utils::DEFAULT_VAR_NAME;
 use crate::helixc::generator::bool_ops::{Contains, IsIn};
-use crate::helixc::generator::source_steps::SearchVector;
+use crate::helixc::generator::source_steps::{SearchVector, VFromID, VFromType};
 use crate::helixc::generator::utils::{EmbedData, VecData};
 use crate::{
     generate_error,
@@ -259,6 +259,39 @@ pub(crate) fn validate_traversal<'a>(
                 Type::Edges(Some(edge_type.to_string()))
             }
         }
+        StartNode::Vector { vector_type, ids } => {
+            if !ctx.vector_set.contains(vector_type.as_str()) {
+                generate_error!(ctx, original_query, tr.loc.clone(), E103, vector_type);
+            }
+            if let Some(ids) = ids {
+                assert!(ids.len() == 1, "multiple ids not supported yet");
+                gen_traversal.source_step = Separator::Period(SourceStep::VFromID(VFromID {
+                    id: match ids[0].clone() {
+                        IdType::Identifier { value: i, loc } => {
+                            is_valid_identifier(ctx, original_query, loc.clone(), i.as_str());
+                            let _ =
+                                type_in_scope(ctx, original_query, loc.clone(), scope, i.as_str());
+                            let value =
+                                gen_identifier_or_param(original_query, i.as_str(), true, false);
+                            value.inner().clone()
+                        }
+                        IdType::Literal { value: s, loc: _ } => GenRef::Std(s),
+                        _ => unreachable!(),
+                    },
+                    label: GenRef::Literal(vector_type.clone()),
+                }));
+                gen_traversal.traversal_type = TraversalType::Ref;
+                gen_traversal.should_collect = ShouldCollect::ToVal;
+                Type::Vector(Some(vector_type.to_string()))
+            } else {
+                gen_traversal.source_step = Separator::Period(SourceStep::VFromType(VFromType {
+                    label: GenRef::Literal(vector_type.clone()),
+                }));
+                gen_traversal.traversal_type = TraversalType::Ref;
+                Type::Vectors(Some(vector_type.to_string()))
+            }
+        }
+
 
         StartNode::Identifier(identifier) => {
             match is_valid_identifier(ctx, original_query, tr.loc.clone(), identifier.as_str()) {
