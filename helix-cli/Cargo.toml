@@ -21,6 +21,7 @@ self_update = "0.42.0"
 uuid = { version = "1.18.1", features = ["v4", "v6", "fast-rng"] }
 chrono = "0.4.42"
 flume = "0.11.1"
+dotenvy = "0.15.7"
 
 [[bin]]
 name = "helix"
