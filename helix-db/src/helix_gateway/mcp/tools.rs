@@ -1,24 +1,34 @@
 use crate::{
-    debug_println, helix_engine::{
+    debug_println,
+    helix_engine::{
         storage_core::HelixGraphStorage,
         traversal_core::{
             ops::{
-                bm25::search_bm25::SearchBM25Adapter, g::G, in_::{
+                bm25::search_bm25::SearchBM25Adapter,
+                g::G,
+                in_::{
                     in_::{InAdapter, InNodesIterator},
                     in_e::{InEdgesAdapter, InEdgesIterator},
-                }, out::{
+                },
+                out::{
                     out::{OutAdapter, OutNodesIterator},
                     out_e::{OutEdgesAdapter, OutEdgesIterator},
-                }, source::{add_e::EdgeType, e_from_type::EFromType, n_from_type::NFromType}, util::order::OrderByAdapter, vectors::{brute_force_search::BruteForceSearchVAdapter, search::SearchVAdapter}
+                },
+                source::{add_e::EdgeType, e_from_type::EFromType, n_from_type::NFromType},
+                util::order::OrderByAdapter,
+                vectors::{brute_force_search::BruteForceSearchVAdapter, search::SearchVAdapter},
             },
             traversal_value::{Traversable, TraversalValue},
         },
         types::GraphError,
         vector_core::vector::HVector,
-    }, helix_gateway::{
-        embedding_providers::embedding_providers::{get_embedding_model, EmbeddingModel},
+    },
+    helix_gateway::{
+        embedding_providers::embedding_providers::{EmbeddingModel, get_embedding_model},
         mcp::mcp::{MCPConnection, MCPHandler, MCPHandlerSubmission, MCPToolInput, McpBackend},
-    }, protocol::{response::Response, return_values::ReturnValue, value::Value}, utils::label_hash::hash_label
+    },
+    protocol::{response::Response, return_values::ReturnValue, value::Value},
+    utils::label_hash::hash_label,
 };
 use heed3::RoTxn;
 use helix_macros::{mcp_handler, tool_calls};
@@ -70,7 +80,6 @@ pub enum Order {
     #[serde(rename = "desc")]
     Desc,
 }
-
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -536,10 +545,13 @@ impl<'a> McpTools<'a> for McpBackend {
 
         let iter = connection.iter.clone().collect::<Vec<_>>();
 
-
         let res = match order {
-            Order::Asc => G::new_from(db, txn, iter).order_by_asc(&properties).collect_to::<Vec<_>>(),
-            Order::Desc => G::new_from(db, txn, iter).order_by_desc(&properties).collect_to::<Vec<_>>(),
+            Order::Asc => G::new_from(db, txn, iter)
+                .order_by_asc(&properties)
+                .collect_to::<Vec<_>>(),
+            Order::Desc => G::new_from(db, txn, iter)
+                .order_by_desc(&properties)
+                .collect_to::<Vec<_>>(),
         };
 
         debug_println!("result: {res:?}");

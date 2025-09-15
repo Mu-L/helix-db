@@ -596,6 +596,18 @@ pub struct OrderBy {
 }
 
 #[derive(Debug, Clone)]
+pub struct Aggregate {
+    pub loc: Loc,
+    pub properties: Vec<String>
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupBy {
+    pub loc: Loc,
+    pub properties: Vec<String>
+}
+
+#[derive(Debug, Clone)]
 pub enum StepType {
     Node(GraphStep),
     Edge(GraphStep),
@@ -608,6 +620,8 @@ pub enum StepType {
     Closure(Closure),
     Range((Expression, Expression)),
     OrderBy(OrderBy),
+    Aggregate(Aggregate),
+    GroupBy(GroupBy),
     AddEdge(AddEdge),
     First,
 }
@@ -630,6 +644,8 @@ impl PartialEq<StepType> for StepType {
                 | (&StepType::Range(_), &StepType::Range(_))
                 | (&StepType::OrderBy(_), &StepType::OrderBy(_))
                 | (&StepType::AddEdge(_), &StepType::AddEdge(_))
+                | (&StepType::Aggregate(_), &StepType::Aggregate(_))
+                | (&StepType::GroupBy(_), &StepType::GroupBy(_))
         )
     }
 }

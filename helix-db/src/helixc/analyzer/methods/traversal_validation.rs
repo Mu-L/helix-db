@@ -2,6 +2,7 @@ use crate::helixc::analyzer::error_codes::*;
 use crate::helixc::analyzer::utils::DEFAULT_VAR_NAME;
 use crate::helixc::generator::bool_ops::{Contains, IsIn};
 use crate::helixc::generator::source_steps::{SearchVector, VFromID, VFromType};
+use crate::helixc::generator::traversal_steps::{AggregateBy, GroupBy};
 use crate::helixc::generator::utils::{EmbedData, VecData};
 use crate::{
     generate_error,
@@ -1039,7 +1040,36 @@ pub(crate) fn validate_traversal<'a>(
                     .push(Separator::Period(GeneratedStep::BoolOp(op)));
                 gen_traversal.should_collect = ShouldCollect::No;
             }
+            StepType::Aggregate(aggr) => {
+                let properties = aggr
+                    .properties
+                    .iter()
+                    .map(|p| GenRef::Std(p.clone()))
+                    .collect::<Vec<_>>();
+                let should_count = matches!(previous_step, Some(StepType::Count));
 
+                gen_traversal
+                    .steps
+                    .push(Separator::Comma(GeneratedStep::AggregateBy(AggregateBy {
+                        properties,
+                        should_count,
+                    })))
+            }
+            StepType::GroupBy(gb) => {
+                let properties = gb
+                    .properties
+                    .iter()
+                    .map(|p| GenRef::Std(p.clone()))
+                    .collect::<Vec<_>>();
+                let should_count = matches!(previous_step, Some(StepType::Count));
+
+                gen_traversal
+                    .steps
+                    .push(Separator::Comma(GeneratedStep::GroupBy(GroupBy {
+                        properties,
+                        should_count,
+                    })))
+            }
             StepType::Update(update) => {
                 // if type == node, edge, vector then update is valid
                 // otherwise it is invalid
