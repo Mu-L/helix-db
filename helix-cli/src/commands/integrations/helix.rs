@@ -7,7 +7,6 @@ use helix_db::utils::styled_string::StyledString;
 use serde::Deserialize;
 use serde_json::json;
 use std::env;
-use std::path::Path;
 use std::sync::LazyLock;
 use std::{fs, path::PathBuf};
 
@@ -73,9 +72,7 @@ impl<'a> HelixManager<'a> {
         let path = match get_path_or_cwd(path.as_ref()) {
             Ok(path) => path,
             Err(e) => {
-                println!("{}", "Error: failed to get path".red().bold());
-                println!("└── {e}");
-                return Err(eyre!("Error: failed to get path"));
+                return Err(eyre!("Error: failed to get path: {e}"));
             }
         };
         let files = collect_hx_files(&path).unwrap_or_default();
@@ -83,45 +80,12 @@ impl<'a> HelixManager<'a> {
         let content = match generate_content(&files) {
             Ok(content) => content,
             Err(e) => {
-                println!("{}", "Error generating content".red().bold());
-                println!("└── {e}");
-                return Err(eyre!("Error: failed to generate content"));
+                return Err(eyre!("Error: failed to generate content: {e}"));
             }
         };
 
-        // get config from ~/.helix/credentials
-        let home_dir = std::env::var("HOME").unwrap_or("~/".to_string());
-        let config_path = &format!("{home_dir}/.helix");
-        let config_path = Path::new(config_path);
-        let config_path = config_path.join("credentials");
-        if !config_path.exists() {
-            println!("{}", "No credentials found".yellow().bold());
-            println!(
-                "{}",
-                "Please run `helix config` to set your credentials"
-                    .yellow()
-                    .bold()
-            );
-            return Err(eyre!("Error: no credentials found"));
-        }
-
-        // TODO: probable could make this more secure
-        // reads credentials from ~/.helix/credentials
-        let config = fs::read_to_string(config_path).unwrap();
-        let user_id = config
-            .split("helix_user_id=")
-            .nth(1)
-            .unwrap()
-            .split("\n")
-            .next()
-            .unwrap();
-        let user_key = config
-            .split("helix_user_key=")
-            .nth(1)
-            .unwrap()
-            .split("\n")
-            .next()
-            .unwrap();
+        // get credentials - already validated by check_auth()
+        let credentials = Credentials::from(self.credentials_path());
 
         // read config.hx.json
         let config = match Config::from_files(
@@ -130,9 +94,7 @@ impl<'a> HelixManager<'a> {
         ) {
             Ok(config) => config,
             Err(e) => {
-                println!("Error loading config: {e}");
-                println!("{}", "Error loading config".red().bold());
-                return Err(eyre!("Error: failed to load config"));
+                return Err(eyre!("Error: failed to load config: {e}"));
             }
         };
 
@@ -146,7 +108,7 @@ impl<'a> HelixManager<'a> {
 
         // upload queries to central server
         let payload = json!({
-            "user_id": user_id,
+            "user_id": credentials.user_id,
             "queries": content.files,
             "cluster_id": cluster_info.cluster_id,
             "version": "0.1.0",
@@ -158,7 +120,7 @@ impl<'a> HelixManager<'a> {
 
         match client
             .post(cloud_url)
-            .header("x-api-key", user_key) // used to verify user
+            .header("x-api-key", &credentials.helix_admin_key) // used to verify user
             .header("x-cluster-id", &cluster_info.cluster_id) // used to verify instance with user
             .header("Content-Type", "application/json")
             .body(serde_json::to_string(&payload).unwrap())
@@ -169,15 +131,11 @@ impl<'a> HelixManager<'a> {
                 if response.status().is_success() {
                     println!("{}", "Queries uploaded to remote db".green().bold());
                 } else {
-                    println!("{}", "Error uploading queries to remote db".red().bold());
-                    println!("└── {}", response.text().await.unwrap());
                     return Err(eyre!("Error uploading queries to remote db"));
                 }
             }
             Err(e) => {
-                println!("{}", "Error uploading queries to remote db".red().bold());
-                println!("└── {e}");
-                return Err(eyre!("Error uploading queries to remote db"));
+                return Err(eyre!("Error uploading queries to remote db: {e}"));
             }
         };
 
