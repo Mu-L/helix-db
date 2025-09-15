@@ -72,9 +72,9 @@ enum Commands {
     Status,
 
     /// Cloud operations (login, keys, etc.)
-    Cloud {
+    Auth {
         #[clap(subcommand)]
-        action: CloudAction,
+        action: AuthAction,
     },
 
     /// Prune containers, images and workspace (preserves volumes)
@@ -108,7 +108,7 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
-enum CloudAction {
+enum AuthAction {
     /// Login to Helix cloud
     Login,
     /// Logout from Helix cloud
@@ -185,7 +185,7 @@ async fn main() -> Result<()> {
         Commands::Start { instance } => commands::start::run(instance).await,
         Commands::Stop { instance } => commands::stop::run(instance).await,
         Commands::Status => commands::status::run().await,
-        Commands::Cloud { action } => commands::cloud::run(action).await,
+        Commands::Auth { action } => commands::cloud::run(action).await,
         Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
         Commands::Delete { instance } => commands::delete::run(instance).await,
         Commands::Metrics { action } => commands::metrics::run(action).await,
