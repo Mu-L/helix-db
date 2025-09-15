@@ -69,6 +69,7 @@ impl<'a> HelixManager<'a> {
     }
 
     pub(crate) async fn deploy(&self, path: Option<String>, cluster_name: String) -> Result<()> {
+        self.check_auth()?;
         let path = match get_path_or_cwd(path.as_ref()) {
             Ok(path) => path,
             Err(e) => {
