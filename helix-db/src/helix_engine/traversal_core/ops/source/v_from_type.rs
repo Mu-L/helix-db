@@ -28,7 +28,7 @@ impl<'a> Iterator for VFromType<'a, RoTxn<'a>> {
                         .storage
                         .vectors
                         .vector_data_db
-                        .get(self.txn, &key)
+                        .get(self.txn, key)
                         .ok()?
                     {
                         Some(bytes) => Some(
