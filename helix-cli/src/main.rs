@@ -185,7 +185,7 @@ async fn main() -> Result<()> {
         Commands::Start { instance } => commands::start::run(instance).await,
         Commands::Stop { instance } => commands::stop::run(instance).await,
         Commands::Status => commands::status::run().await,
-        Commands::Auth { action } => commands::cloud::run(action).await,
+        Commands::Auth { action } => commands::auth::run(action).await,
         Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
         Commands::Delete { instance } => commands::delete::run(instance).await,
         Commands::Metrics { action } => commands::metrics::run(action).await,
