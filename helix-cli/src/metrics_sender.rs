@@ -15,10 +15,23 @@ use std::{
 };
 use tokio::task::JoinHandle;
 
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum MetricsLevel {
+    #[serde(rename = "full")]
+    Full,
+    #[default]
+    #[serde(rename = "basic")]
+    Basic,
+    #[serde(rename = "off")]
+    Off,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MetricsConfig {
-    pub enabled: bool,
+    pub level: MetricsLevel,
     pub user_id: Option<String>,
+    pub email: Option<String>,
+    pub name: Option<String>,
     pub last_updated: u64,
     pub install_event_sent: bool,
 }
@@ -26,8 +39,10 @@ pub struct MetricsConfig {
 impl Default for MetricsConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            level: MetricsLevel::default(),
             user_id: None,
+            email: None,
+            name: None,
             last_updated: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -39,8 +54,10 @@ impl Default for MetricsConfig {
 impl MetricsConfig {
     pub fn new(user_id: Option<String>) -> Self {
         Self {
-            enabled: true,
+            level: MetricsLevel::default(),
             user_id,
+            email: None,
+            name: None,
             last_updated: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -91,7 +108,7 @@ async fn metrics_task(rx: Receiver<MetricsMessage>) -> Result<()> {
 
     let config = load_metrics_config().unwrap_or_default();
 
-    if config.enabled {
+    if config.level != MetricsLevel::Off {
         let _ = upload_previous_logs().await;
 
         let metrics_dir = get_metrics_dir()?;
@@ -230,6 +247,7 @@ impl MetricsSender {
                 event_type: EventType::CliInstall,
                 event_data: EventData::CliInstall,
                 user_id: get_user_id(),
+                email: get_email(),
                 timestamp: get_current_timestamp(),
             };
             self.send_event(event);
@@ -261,6 +279,7 @@ impl MetricsSender {
                 error_messages,
             }),
             user_id: get_user_id(),
+            email: get_email(),
             timestamp: get_current_timestamp(),
         };
         self.send_event(event);
@@ -287,6 +306,7 @@ impl MetricsSender {
                 error_messages,
             }),
             user_id: get_user_id(),
+            email: get_email(),
             timestamp: get_current_timestamp(),
         };
         self.send_event(event);
@@ -313,6 +333,7 @@ impl MetricsSender {
                 error_messages,
             }),
             user_id: get_user_id(),
+            email: get_email(),
             timestamp: get_current_timestamp(),
         };
         self.send_event(event);
@@ -339,6 +360,7 @@ impl MetricsSender {
                 error_messages,
             }),
             user_id: get_user_id(),
+            email: get_email(),
             timestamp: get_current_timestamp(),
         };
         self.send_event(event);
@@ -365,6 +387,7 @@ impl MetricsSender {
                 error_messages,
             }),
             user_id: get_user_id(),
+            email: get_email(),
             timestamp: get_current_timestamp(),
         };
         self.send_event(event);
@@ -377,6 +400,10 @@ fn get_os_string() -> String {
 
 fn get_user_id() -> Option<String> {
     load_metrics_config().ok().and_then(|config| config.user_id)
+}
+
+fn get_email() -> Option<String> {
+    load_metrics_config().ok().and_then(|config| config.email)
 }
 
 fn get_current_timestamp() -> u64 {

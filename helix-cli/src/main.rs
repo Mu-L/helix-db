@@ -123,7 +123,9 @@ enum AuthAction {
 #[derive(Subcommand)]
 enum MetricsAction {
     /// Enable metrics collection
-    On,
+    Full,
+    /// Disable metrics collection
+    Basic,
     /// Disable metrics collection
     Off,
     /// Show metrics status
