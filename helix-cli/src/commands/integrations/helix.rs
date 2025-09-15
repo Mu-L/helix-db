@@ -1,10 +1,11 @@
+use crate::commands::auth::Credentials;
 use crate::commands::build::{collect_hx_files, generate_content};
 use crate::config::InstanceInfo;
 use crate::project::ProjectContext;
 use eyre::{Result, eyre};
 use helix_db::helix_engine::traversal_core::config::Config;
 use helix_db::utils::styled_string::StyledString;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::env;
 use std::sync::LazyLock;
@@ -19,26 +20,7 @@ pub struct HelixManager<'a> {
     project: &'a ProjectContext,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct Credentials {
-    #[serde(rename = "HELIX_USER_ID")]
-    user_id: String,
-    #[serde(rename = "HELIX_USER_KEY")]
-    helix_admin_key: String,
-}
 
-impl From<PathBuf> for Credentials {
-    fn from(path: PathBuf) -> Self {
-        let content = fs::read_to_string(path).unwrap();
-        toml::from_str(&content).unwrap()
-    }
-}
-
-impl Credentials {
-    fn is_authenticated(&self) -> bool {
-        !self.user_id.is_empty() && !self.helix_admin_key.is_empty()
-    }
-}
 
 impl<'a> HelixManager<'a> {
     pub fn new(project: &'a ProjectContext) -> Self {
@@ -59,7 +41,7 @@ impl<'a> HelixManager<'a> {
             return Err(eyre!("Credentials file not found"));
         }
 
-        let credentials = Credentials::from(credentials_path);
+        let credentials = Credentials::read_from_file(&credentials_path);
         if !credentials.is_authenticated() {
             return Err(eyre!("Credentials file is not authenticated"));
         }
@@ -85,7 +67,7 @@ impl<'a> HelixManager<'a> {
         };
 
         // get credentials - already validated by check_auth()
-        let credentials = Credentials::from(self.credentials_path());
+        let credentials = Credentials::read_from_file(&self.credentials_path());
 
         // read config.hx.json
         let config = match Config::from_files(
