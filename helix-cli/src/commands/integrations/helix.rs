@@ -1,19 +1,20 @@
-use std::env;
-use std::fs::DirEntry;
-use std::path::Path;
-use std::{fs, path::PathBuf};
-
-use dotenvy::from_filename;
+use crate::commands::build::{collect_hx_files, generate_content};
+use crate::config::InstanceInfo;
+use crate::project::ProjectContext;
 use eyre::{Result, eyre};
 use helix_db::helix_engine::traversal_core::config::Config;
 use helix_db::utils::styled_string::StyledString;
 use serde::Deserialize;
-use serde::Serialize;
 use serde_json::json;
-use toml::toml;
+use std::env;
+use std::path::Path;
+use std::sync::LazyLock;
+use std::{fs, path::PathBuf};
 
-use crate::commands::build::{collect_hx_files, generate_content};
-use crate::project::ProjectContext;
+const DEFAULT_CLOUD_AUTHORITY: &str = "ec2-184-72-27-116.us-west-1.compute.amazonaws.com:3000";
+pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
+    std::env::var("CLOUD_AUTHORITY").unwrap_or(DEFAULT_CLOUD_AUTHORITY.to_string())
+});
 
 pub struct HelixManager<'a> {
     project: &'a ProjectContext,
@@ -53,7 +54,7 @@ impl<'a> HelixManager<'a> {
         self.project.helix_dir.join("credentials")
     }
 
-    pub fn check_auth(&self) -> Result<()> {
+    fn check_auth(&self) -> Result<()> {
         let credentials_path = self.credentials_path();
         if !credentials_path.exists() {
             return Err(eyre!("Credentials file not found"));
@@ -67,7 +68,7 @@ impl<'a> HelixManager<'a> {
         Ok(())
     }
 
-    fn deploy(&self, path: Option<String>) -> Result<()> {
+    pub(crate) async fn deploy(&self, path: Option<String>, cluster_name: String) -> Result<()> {
         let path = match get_path_or_cwd(path.as_ref()) {
             Ok(path) => path,
             Err(e) => {
@@ -134,26 +135,19 @@ impl<'a> HelixManager<'a> {
             }
         };
 
-        let deployment = DeployCloudEvent {
-            cluster_id: cluster_id,
-            queries_string: content
-                .source
-                .queries
-                .iter()
-                .map(|q| q.name.clone())
-                .collect::<Vec<String>>()
-                .join("\n"),
-            num_of_queries: content.source.queries.len() as u32,
-            time_taken_sec: 0,
-            success: true,
-            error_messages: None,
+        // get cluster information from helix.toml
+        let cluster_info = match self.project.config.get_instance(&cluster_name)? {
+            InstanceInfo::HelixCloud(config) => config,
+            _ => {
+                return Err(eyre!("Error: cluster is not a cloud instance"));
+            }
         };
 
         // upload queries to central server
         let payload = json!({
             "user_id": user_id,
             "queries": content.files,
-            "cluster_id": cluster,
+            "cluster_id": cluster_info.cluster_id,
             "version": "0.1.0",
             "helix_config": config.to_json()
         });
@@ -164,40 +158,29 @@ impl<'a> HelixManager<'a> {
         match client
             .post(cloud_url)
             .header("x-api-key", user_key) // used to verify user
-            .header("x-cluster-id", &cluster) // used to verify instance with user
+            .header("x-cluster-id", &cluster_info.cluster_id) // used to verify instance with user
             .header("Content-Type", "application/json")
-            .body(sonic_rs::to_string(&payload).unwrap())
+            .body(serde_json::to_string(&payload).unwrap())
             .send()
             .await
         {
             Ok(response) => {
                 if response.status().is_success() {
-                    sp.stop_with_message(
-                        "Queries uploaded to remote db".green().bold().to_string(),
-                    );
-                    HELIX_METRICS_CLIENT.send_event(EventType::DeployCloud, deployment);
+                    println!("{}", "Queries uploaded to remote db".green().bold());
                 } else {
-                    sp.stop_with_message(
-                        "Error uploading queries to remote db"
-                            .red()
-                            .bold()
-                            .to_string(),
-                    );
+                    println!("{}", "Error uploading queries to remote db".red().bold());
                     println!("└── {}", response.text().await.unwrap());
-                    return Err("".to_string());
+                    return Err(eyre!("Error uploading queries to remote db"));
                 }
             }
             Err(e) => {
-                sp.stop_with_message(
-                    "Error uploading queries to remote db"
-                        .red()
-                        .bold()
-                        .to_string(),
-                );
+                println!("{}", "Error uploading queries to remote db".red().bold());
                 println!("└── {e}");
-                return Err("".to_string());
+                return Err(eyre!("Error uploading queries to remote db"));
             }
         };
+
+        Ok(())
     }
 }
 
