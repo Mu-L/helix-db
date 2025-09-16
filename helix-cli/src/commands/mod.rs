@@ -1,6 +1,6 @@
 pub mod build;
 pub mod check;
-pub mod cloud;
+pub mod auth;
 pub mod delete;
 pub mod init;
 pub mod integrations;

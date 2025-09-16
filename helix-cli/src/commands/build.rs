@@ -267,7 +267,7 @@ async fn generate_docker_files(
     Ok(())
 }
 
-fn collect_hx_files(project_root: &std::path::Path) -> Result<Vec<std::fs::DirEntry>> {
+pub(crate) fn collect_hx_files(project_root: &std::path::Path) -> Result<Vec<std::fs::DirEntry>> {
     let files: Vec<std::fs::DirEntry> = std::fs::read_dir(project_root)?
         .filter_map(|entry| entry.ok())
         .filter(|file| file.file_name().to_string_lossy().ends_with(".hx"))
@@ -317,7 +317,7 @@ fn compile_helix_files(
 
 /// Generates a Content object from a vector of DirEntry objects
 /// Returns a Content object with the files and source
-fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
+pub(crate) fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
     let files: Vec<HxFile> = files
         .iter()
         .map(|file| {

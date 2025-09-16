@@ -95,6 +95,7 @@ impl HelixMetricsClient {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
+            email: None,
         };
 
         // Spawn the request in the background for fire-and-forget behavior

@@ -1,6 +1,7 @@
 use crate::commands::build::MetricsData;
 use crate::commands::integrations::ecr::EcrManager;
 use crate::commands::integrations::fly::FlyManager;
+use crate::commands::integrations::helix::HelixManager;
 use crate::config::{CloudConfig, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
@@ -159,7 +160,8 @@ async fn push_cloud_instance(
                 .await?;
         }
         CloudConfig::HelixCloud(_config) => {
-            todo!()
+            let helix = HelixManager::new(project);
+            helix.deploy(None, instance_name.to_string()).await?;
         }
     }
 
