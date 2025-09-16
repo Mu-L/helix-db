@@ -1,9 +1,12 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
+use color_eyre::owo_colors::OwoColorize;
+
 
 mod commands;
 mod config;
 mod docker;
+mod errors;
 mod metrics_sender;
 mod project;
 mod update;
@@ -197,5 +200,12 @@ async fn main() -> Result<()> {
     // Shutdown metrics sender
     metrics_sender.shutdown().await?;
     
-    result
+    // Handle result with proper error formatting
+    if let Err(e) = result {
+        // Check if this is already a formatted error (eyre with our custom display)
+        eprintln!("{}", format!("error: {}", e).red().bold());
+        std::process::exit(1);
+    }
+    
+    Ok(())
 }

@@ -1,5 +1,6 @@
 use crate::config::{BuildMode, InstanceInfo};
 use crate::project::ProjectContext;
+use crate::utils::print_status;
 use eyre::{Result, eyre};
 use std::borrow::Cow;
 use std::process::{Command, Output};
@@ -278,10 +279,7 @@ networks:
 
     /// Build Docker image for an instance
     pub fn build_image(&self, instance_name: &str, build_target: Option<&str>) -> Result<()> {
-        println!(
-            "[DOCKER] Building image for instance '{}'...",
-            instance_name
-        );
+        print_status("DOCKER", &format!("Building image for instance '{}'...", instance_name));
 
         let mut args: Vec<Cow<'_, str>> = vec![Cow::Borrowed("build")];
         // match build_target {
@@ -301,13 +299,13 @@ networks:
             return Err(eyre!("Docker build failed:\n{}", stderr));
         }
 
-        println!("[DOCKER] Image built successfully");
+        print_status("DOCKER", "Image built successfully");
         Ok(())
     }
 
     /// Start instance using docker-compose
     pub fn start_instance(&self, instance_name: &str) -> Result<()> {
-        println!("[DOCKER] Starting instance '{}'...", instance_name);
+        print_status("DOCKER", &format!("Starting instance '{}'...", instance_name));
 
         let output = self.run_compose_command(instance_name, vec!["up", "-d"])?;
 
@@ -316,13 +314,13 @@ networks:
             return Err(eyre!("Failed to start instance:\n{}", stderr));
         }
 
-        println!("[DOCKER] Instance '{}' started successfully", instance_name);
+        print_status("DOCKER", &format!("Instance '{}' started successfully", instance_name));
         Ok(())
     }
 
     /// Stop instance using docker-compose
     pub fn stop_instance(&self, instance_name: &str) -> Result<()> {
-        println!("[DOCKER] Stopping instance '{}'...", instance_name);
+        print_status("DOCKER", &format!("Stopping instance '{}'...", instance_name));
 
         let output = self.run_compose_command(instance_name, vec!["down"])?;
 
@@ -331,7 +329,7 @@ networks:
             return Err(eyre!("Failed to stop instance:\n{}", stderr));
         }
 
-        println!("[DOCKER] Instance '{}' stopped successfully", instance_name);
+        print_status("DOCKER", &format!("Instance '{}' stopped successfully", instance_name));
         Ok(())
     }
 
@@ -402,14 +400,14 @@ networks:
 
     /// Remove instance containers and optionally volumes
     pub fn prune_instance(&self, instance_name: &str, remove_volumes: bool) -> Result<()> {
-        println!("[DOCKER] Pruning instance '{}'...", instance_name);
+        print_status("DOCKER", &format!("Pruning instance '{}'...", instance_name));
 
         // Check if workspace exists - if not, there's nothing to prune
         let workspace = self.project.instance_workspace(instance_name);
         if !workspace.exists() {
-            println!(
-                "[DOCKER] No workspace found for instance '{}', nothing to prune",
-                instance_name
+            print_status(
+                "DOCKER",
+                &format!("No workspace found for instance '{}', nothing to prune", instance_name)
             );
             return Ok(());
         }
@@ -417,9 +415,9 @@ networks:
         // Check if docker-compose file exists
         let compose_file = workspace.join("docker-compose.yml");
         if !compose_file.exists() {
-            println!(
-                "[DOCKER] No docker-compose.yml found for instance '{}', nothing to prune",
-                instance_name
+            print_status(
+                "DOCKER",
+                &format!("No docker-compose.yml found for instance '{}', nothing to prune", instance_name)
             );
             return Ok(());
         }
@@ -437,15 +435,15 @@ networks:
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Don't fail if containers are already down
             if stderr.contains("No such container") || stderr.contains("not running") {
-                println!(
-                    "[DOCKER] Instance '{}' containers already stopped",
-                    instance_name
+                print_status(
+                    "DOCKER",
+                    &format!("Instance '{}' containers already stopped", instance_name)
                 );
             } else {
                 return Err(eyre!("Failed to prune instance:\n{}", stderr));
             }
         } else {
-            println!("[DOCKER] Instance '{}' pruned successfully", instance_name);
+            print_status("DOCKER", &format!("Instance '{}' pruned successfully", instance_name));
         }
 
         Ok(())
@@ -453,9 +451,9 @@ networks:
 
     /// Remove Docker images associated with an instance
     pub fn remove_instance_images(&self, instance_name: &str) -> Result<()> {
-        println!(
-            "[DOCKER] Removing images for instance '{}'...",
-            instance_name
+        print_status(
+            "DOCKER",
+            &format!("Removing images for instance '{}'...", instance_name)
         );
 
         // Get image names for both debug and release modes
@@ -466,7 +464,7 @@ networks:
         for image in [debug_image, release_image] {
             let output = self.run_docker_command(&["rmi", "-f", &image])?;
             if output.status.success() {
-                println!("[DOCKER] Removed image: {}", image);
+                print_status("DOCKER", &format!("Removed image: {}", image));
             }
         }
 
@@ -503,16 +501,16 @@ networks:
 
     /// Remove all Helix-related Docker images from the system
     pub fn clean_all_helix_images() -> Result<()> {
-        println!("[DOCKER] Finding all Helix images on system...");
+        print_status("DOCKER", "Finding all Helix images on system...");
 
         let images = Self::get_helix_images()?;
 
         if images.is_empty() {
-            println!("[DOCKER] No Helix images found to clean");
+            print_status("DOCKER", "No Helix images found to clean");
             return Ok(());
         }
 
-        println!("[DOCKER] Found {} Helix images to remove", images.len());
+        print_status("DOCKER", &format!("Found {} Helix images to remove", images.len()));
 
         for image in images {
             let output = Command::new("docker")
@@ -521,10 +519,10 @@ networks:
                 .map_err(|e| eyre!("Failed to remove image {}: {}", image, e))?;
 
             if output.status.success() {
-                println!("[DOCKER] Removed image: {}", image);
+                print_status("DOCKER", &format!("Removed image: {}", image));
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!("[DOCKER] Warning: Failed to remove {}: {}", image, stderr);
+                print_status("DOCKER", &format!("Warning: Failed to remove {}: {}", image, stderr));
             }
         }
 
@@ -544,7 +542,7 @@ networks:
 
     pub fn push(&self, image_name: &str, registry_url: &str) -> Result<()> {
         let registry_image = format!("{registry_url}/{image_name}");
-        println!("pushing image: {}", registry_image);
+        print_status("DOCKER", &format!("Pushing image: {}", registry_image));
         let output = Command::new("docker")
             .arg("push")
             .arg(&registry_image)

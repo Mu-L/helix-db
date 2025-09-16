@@ -2,7 +2,7 @@ use crate::{
     AuthAction,
     commands::integrations::helix::CLOUD_AUTHORITY,
     metrics_sender::{MetricsConfig, load_metrics_config, save_metrics_config},
-    utils::{print_status, print_success, print_warning},
+    utils::{print_status, print_success, print_warning, print_info, print_line, print_lines},
 };
 use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
@@ -74,7 +74,7 @@ async fn logout() -> Result<()> {
         std::fs::remove_file(&credentials_path)?;
         print_success("Logged out successfully");
     } else {
-        println!("[INFO] Not currently logged in");
+        print_info("Not currently logged in");
     }
 
     Ok(())
@@ -93,7 +93,7 @@ async fn create_key(cluster: &str) -> Result<()> {
     // 3. Display the key to the user
 
     print_warning("API key creation not yet implemented");
-    println!("  This will create a new API key for cluster: {}", cluster);
+    print_line(&format!("  This will create a new API key for cluster: {}", cluster));
 
     Ok(())
 }

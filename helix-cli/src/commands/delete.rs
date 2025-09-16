@@ -3,7 +3,7 @@ use crate::commands::integrations::fly::FlyManager;
 use crate::config::InstanceInfo;
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success, print_warning};
+use crate::utils::{print_status, print_success, print_warning, print_lines, print_newline, print_confirm};
 use eyre::Result;
 use std::io::{self, Write};
 
@@ -18,22 +18,20 @@ pub async fn run(instance_name: String) -> Result<()> {
         "This will permanently delete instance '{}' and ALL its data!",
         instance_name
     ));
-    println!("  - Docker containers and images");
-    println!("  - Persistent volumes (databases, files)");
-    println!("  This action cannot be undone.");
-    println!();
+    print_lines(&[
+        "- Docker containers and images",
+        "- Persistent volumes (databases, files)",
+        "This action cannot be undone.",
+    ]);
+    print_newline();
 
-    print!(
-        "Are you sure you want to delete instance '{}'? (y/N): ",
+    let confirmed = print_confirm(&format!(
+        "Are you sure you want to delete instance '{}'?",
         instance_name
-    );
-    io::stdout().flush()?;
+    ))?;
 
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-
-    if input.trim().to_lowercase() != "y" {
-        println!("Deletion cancelled.");
+    if !confirmed {
+        print_status("DELETE", "Deletion cancelled.");
         return Ok(());
     }
 

@@ -3,7 +3,7 @@ use std::io;
 use eyre::Result;
 use regex::Regex;
 use crate::{
-    metrics_sender::{load_metrics_config, save_metrics_config, MetricsLevel}, utils::{print_status, print_success}, MetricsAction
+    metrics_sender::{load_metrics_config, save_metrics_config, MetricsLevel}, utils::{print_status, print_success, print_line, print_field, print_header, print_prompt}, MetricsAction
 };
 
 pub async fn run(action: MetricsAction) -> Result<()> {
@@ -29,7 +29,7 @@ async fn enable_full_metrics() -> Result<()> {
     save_metrics_config(&config)?;
     
     print_success("Metrics collection enabled");
-    println!("  Anonymous usage data will help improve Helix");
+    print_line("  Anonymous usage data will help improve Helix");
     
     Ok(())
 }
@@ -46,7 +46,7 @@ async fn enable_basic_metrics() -> Result<()> {
     save_metrics_config(&config)?;
     
     print_success("Metrics collection enabled");
-    println!("  Anonymous usage data will help improve Helix");
+    print_line("  Anonymous usage data will help improve Helix");
     
     Ok(())
 }
@@ -71,30 +71,30 @@ async fn disable_metrics() -> Result<()> {
 async fn show_metrics_status() -> Result<()> {
     let config = load_metrics_config().unwrap_or_default();
     
-    println!("Metrics Status");
-    println!("  Metrics Level: {:?}", config.level);
+    print_header("Metrics Status");
+    print_field("Metrics Level", &format!("{:?}", config.level));
     
     if let Some(user_id) = &config.user_id {
-        println!("  User ID: {}", user_id);
+        print_field("User ID", user_id);
     }
     
     let last_updated = std::time::UNIX_EPOCH + std::time::Duration::from_secs(config.last_updated);
     if let Ok(datetime) = last_updated.duration_since(std::time::UNIX_EPOCH) {
-        println!("  Last updated: {} seconds ago", datetime.as_secs());
+        print_field("Last updated", &format!("{} seconds ago", datetime.as_secs()));
     }
     
     Ok(())
 }
 
 fn ask_for_email() -> String {
-    println!("Please enter your email address:");
+    print_line("Please enter your email address:");
     let mut email = String::new();
     io::stdin().read_line(&mut email).unwrap();
     let email = email.trim().to_string();
     // validate email
     let re = Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap();
     if !re.is_match(&email){
-        println!("Invalid email address");
+        print_line("Invalid email address");
         return ask_for_email();
     }
     email

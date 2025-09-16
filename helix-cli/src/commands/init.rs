@@ -3,8 +3,9 @@ use crate::commands::integrations::ecr::{EcrAuthType, EcrManager};
 use crate::commands::integrations::fly::{FlyAuthType, FlyManager, Privacy, VmSize};
 use crate::config::{CloudConfig, HelixConfig};
 use crate::docker::DockerManager;
+use crate::errors::project_error;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success};
+use crate::utils::{print_status, print_success, print_instructions};
 use eyre::Result;
 use std::env;
 use std::fs;
@@ -28,10 +29,10 @@ pub async fn run(
     let config_path = project_dir.join("helix.toml");
 
     if config_path.exists() {
-        return Err(eyre::eyre!(
+        return Err(project_error(format!(
             "helix.toml already exists in {}",
             project_dir.display()
-        ));
+        )).with_hint("use a different directory or remove the existing helix.toml file").into());
     }
 
     print_status(
@@ -125,12 +126,15 @@ pub async fn run(
         "Helix project initialized in {}",
         project_dir.display()
     ));
-    println!();
-    println!("Next steps:");
-    println!("  1. Edit schema.hx to define your data model");
-    println!("  2. Add queries to queries.hx");
-    println!("  3. Run 'helix build dev' to compile your project");
-    println!("  4. Run 'helix push dev' to start your development instance");
+    print_instructions(
+        "Next steps:",
+        &[
+            "Edit schema.hx to define your data model",
+            "Add queries to queries.hx",
+            "Run 'helix build dev' to compile your project",
+            "Run 'helix push dev' to start your development instance",
+        ],
+    );
 
     Ok(())
 }

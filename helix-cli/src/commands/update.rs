@@ -1,7 +1,7 @@
 use eyre::Result;
 use self_update::cargo_crate_version;
 
-use crate::utils::{print_status, print_error, print_success};
+use crate::utils::{print_status, print_error_with_hint, print_success};
 
 pub async fn run(force: bool) -> Result<()> {
     print_status("UPDATE", "Checking for updates...");
@@ -37,7 +37,10 @@ pub async fn run(force: bool) -> Result<()> {
             print_status("UPDATE", "Please restart your terminal or run the command again to use the new version");
         }
         Err(e) => {
-            print_error(&format!("Update failed: {}", e));
+            print_error_with_hint(
+                &format!("Update failed: {}", e),
+                "check your internet connection and try again"
+            );
             return Err(e.into());
         }
     }

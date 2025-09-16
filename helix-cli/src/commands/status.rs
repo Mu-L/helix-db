@@ -1,6 +1,6 @@
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
-use crate::utils::print_error;
+use crate::utils::{print_error, print_header, print_field, print_newline, print_line};
 use eyre::Result;
 
 pub async fn run() -> Result<()> {
@@ -13,18 +13,18 @@ pub async fn run() -> Result<()> {
         }
     };
 
-    println!("Helix Project Status");
-    println!("  Project: {}", project.config.project.name);
-    println!("  Root: {}", project.root.display());
-    println!();
+    print_header("Helix Project Status");
+    print_field("Project", &project.config.project.name);
+    print_field("Root", &project.root.display().to_string());
+    print_newline();
 
     // Show configured instances
-    println!("Configured Instances:");
+    print_header("Configured Instances:");
 
     // Show local instances
     for (name, config) in &project.config.local {
         let port = config.port.unwrap_or(6969);
-        println!("  {} (Local) - port {}", name, port);
+        print_field(&format!("{} (Local)", name), &format!("port {}", port));
     }
 
     // Show cloud instances
@@ -47,17 +47,17 @@ pub async fn run() -> Result<()> {
     }
 
     for (name, cluster_id) in helix_cloud_instances {
-        println!("  {} (Helix Cloud) - cluster {}", name, cluster_id);
+        print_field(&format!("{} (Helix Cloud)", name), &format!("cluster {}", cluster_id));
     }
 
     for (name, cluster_id) in flyio_instances {
-        println!("  {} (Fly.io) - cluster {}", name, cluster_id);
+        print_field(&format!("{} (Fly.io)", name), &format!("cluster {}", cluster_id));
     }
 
     for (name, repository_name, region) in ecr_instances {
-        println!("  {} (AWS ECR) - repository {} in {}", name, repository_name, region);
+        print_field(&format!("{} (AWS ECR)", name), &format!("repository {} in {}", repository_name, region));
     }
-    println!();
+    print_newline();
 
     // Show running containers (for local instances)
     show_container_status(&project).await?;
@@ -68,7 +68,7 @@ pub async fn run() -> Result<()> {
 async fn show_container_status(project: &ProjectContext) -> Result<()> {
     // Check if Docker is available
     if DockerManager::check_docker_available().is_err() {
-        println!("Docker Status: Not available");
+        print_field("Docker Status", "Not available");
         return Ok(());
     }
 
@@ -77,17 +77,17 @@ async fn show_container_status(project: &ProjectContext) -> Result<()> {
     let statuses = match docker.get_project_status() {
         Ok(statuses) => statuses,
         Err(e) => {
-            println!("Container Status: Error getting status ({})", e);
+            print_field("Container Status", &format!("Error getting status ({})", e));
             return Ok(());
         }
     };
 
     if statuses.is_empty() {
-        println!("Running Containers: None");
+        print_field("Running Containers", "None");
         return Ok(());
     }
 
-    println!("Running Containers:");
+    print_header("Running Containers:");
     for status in statuses {
         let status_icon = if status.status.contains("Up") {
             "[UP]"
@@ -95,16 +95,15 @@ async fn show_container_status(project: &ProjectContext) -> Result<()> {
             "[DOWN]"
         };
 
-        println!(
-            "  {} {} - {} ({})",
-            status_icon,
-            status.instance_name,
-            status.status,
-            if status.ports.is_empty() {
-                "no ports"
-            } else {
-                &status.ports
-            }
+        let ports_info = if status.ports.is_empty() {
+            "no ports".to_string()
+        } else {
+            status.ports.clone()
+        };
+        
+        print_field(
+            &format!("{} {}", status_icon, status.instance_name),
+            &format!("{} ({})", status.status, ports_info)
         );
     }
 

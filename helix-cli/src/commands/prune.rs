@@ -1,8 +1,9 @@
 use eyre::Result;
 use std::io::{self, Write};
 use crate::docker::DockerManager;
+use crate::errors::project_error;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success, print_warning};
+use crate::utils::{print_status, print_success, print_warning, print_lines, print_newline, print_confirm};
 
 pub async fn run(instance: Option<String>, all: bool) -> Result<()> {
     // Try to load project context
@@ -20,7 +21,9 @@ pub async fn run(instance: Option<String>, all: bool) -> Result<()> {
         Err(_) => {
             // Outside a Helix project - offer system-wide clean
             if instance.is_some() || all {
-                return Err(eyre::eyre!("Not in a Helix project directory. Use 'helix prune' without arguments for system-wide cleanup."));
+                return Err(project_error(
+                    "not in a Helix project directory"
+                ).with_hint("use 'helix prune' without arguments for system-wide cleanup").into());
             }
             prune_system_wide().await
         }
@@ -109,18 +112,16 @@ async fn prune_unused_resources(project: &ProjectContext) -> Result<()> {
 
 async fn prune_system_wide() -> Result<()> {
     print_warning("You are not in a Helix project directory.");
-    println!("This will remove ALL Helix-related Docker images from your system.");
-    println!("This action cannot be undone.");
-    println!();
+    print_lines(&[
+        "This will remove ALL Helix-related Docker images from your system.",
+        "This action cannot be undone.",
+    ]);
+    print_newline();
     
-    print!("Are you sure you want to proceed? (y/N): ");
-    io::stdout().flush()?;
+    let confirmed = print_confirm("Are you sure you want to proceed?")?;
     
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    
-    if input.trim().to_lowercase() != "y" {
-        println!("Operation cancelled.");
+    if !confirmed {
+        print_status("PRUNE", "Operation cancelled.");
         return Ok(());
     }
     
