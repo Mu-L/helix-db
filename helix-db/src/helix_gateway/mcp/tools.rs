@@ -758,7 +758,7 @@ fn _search_keyword(
     let mut txn = env.write_txn()?;
     let bm25_index = HBM25Config::new_temp(&env, &mut txn, &connection.connection_id)?;
 
-    for item in connection.iter.clone().into_iter() {
+    for item in connection.iter.clone() {
         if let Some(props) = item.get_properties() {
             let mut data = props.flatten_bm25();
             data.push_str(&item.label());
@@ -788,15 +788,15 @@ fn _search_keyword(
                 "BM25 index not initialized yet - returning empty results",
             ))
         }
-        Err(_e) => {
+        Err(e) => {
             // Error accessing metadata database
             debug_println!(
                 "Error checking BM25 metadata: {:?} - returning empty results",
                 e
             );
             println!(
-                "Error checking BM25 metadata: {:?} - returning empty results",
-                _e
+                "Error checking BM25 metadata: {e:?} - returning empty results",
+
             );
             Err(GraphError::from(
                 "Error checking BM25 metadata - returning empty results",
