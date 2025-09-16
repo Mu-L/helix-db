@@ -567,6 +567,10 @@ pub enum StartNode {
         edge_type: String,
         ids: Option<Vec<IdType>>,
     },
+    Vector {
+        vector_type: String,
+        ids: Option<Vec<IdType>>,
+    },
     SearchVector(SearchVector),
     Identifier(String),
     Anonymous,
