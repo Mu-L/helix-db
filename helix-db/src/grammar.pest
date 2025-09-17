@@ -92,6 +92,7 @@ evaluates_to_anything = {
   | search_vector
   | bm25_search
   | string_literal
+  | array_literal
   | float
   | integer
   | boolean
