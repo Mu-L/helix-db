@@ -1,8 +1,8 @@
 use crate::commands::integrations::fly::FlyManager;
-use crate::config::{InstanceInfo};
+use crate::config::InstanceInfo;
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success,     };
+use crate::utils::{print_status, print_success};
 use eyre::Result;
 
 pub async fn run(instance_name: String) -> Result<()> {
@@ -22,7 +22,7 @@ pub async fn run(instance_name: String) -> Result<()> {
 async fn stop_local_instance(project: &ProjectContext, instance_name: &str) -> Result<()> {
     print_status(
         "STOP",
-        &format!("Stopping local instance '{}'", instance_name),
+        &format!("Stopping local instance '{instance_name}'"),
     );
 
     let docker = DockerManager::new(project);
@@ -33,7 +33,7 @@ async fn stop_local_instance(project: &ProjectContext, instance_name: &str) -> R
     // Stop the instance
     docker.stop_instance(instance_name)?;
 
-    print_success(&format!("Instance '{}' has been stopped", instance_name));
+    print_success(&format!("Instance '{instance_name}' has been stopped"));
 
     Ok(())
 }
@@ -45,12 +45,12 @@ async fn stop_cloud_instance(
 ) -> Result<()> {
     print_status(
         "CLOUD",
-        &format!("Stopping cloud instance '{}'", instance_name),
+        &format!("Stopping cloud instance '{instance_name}'"),
     );
 
     let _cluster_id = instance_config
         .cluster_id()
-        .ok_or_else(|| eyre::eyre!("Cloud instance '{}' must have a cluster_id", instance_name))?;
+        .ok_or_else(|| eyre::eyre!("Cloud instance '{instance_name}' must have a cluster_id"))?;
 
     // TODO: Implement cloud instance stop
     // This would involve:
@@ -62,7 +62,7 @@ async fn stop_cloud_instance(
         InstanceInfo::FlyIo(config) => {
             print_status(
                 "FLY",
-                &format!("Stopping Fly.io instance '{}'", instance_name),
+                &format!("Stopping Fly.io instance '{instance_name}'"),
             );
             let fly = FlyManager::new(project, config.auth_type.clone()).await?;
             fly.stop_instance(instance_name).await?;

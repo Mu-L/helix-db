@@ -21,7 +21,7 @@ impl<'a> DockerManager<'a> {
     /// Get the compose project name for an instance
     fn compose_project_name(&self, instance_name: &str) -> String {
         format!(
-            // has to be `-` instead of `_` because fly doesnt allow underscores in instance names 
+            // has to be `-` instead of `_` because fly doesnt allow underscores in instance names
             // abd image name must match the instance name
             "helix-{}-{}",
             self.project.config.project.name, instance_name
@@ -39,22 +39,36 @@ impl<'a> DockerManager<'a> {
             BuildMode::Debug => "debug",
             BuildMode::Release => "latest",
         };
-        format!("{}:{}", self.compose_project_name(instance_name), tag)
+        let project_name = self.compose_project_name(instance_name);
+        format!("{project_name}:{tag}")
     }
 
     /// Get environment variables for an instance
     pub(crate) fn environment_variables(&self, instance_name: &str) -> Vec<String> {
         vec![
-            format!("HELIX_PORT={}", self.project.config.get_instance(instance_name).unwrap().port().unwrap_or(6969)),
-            format!("HELIX_DATA_DIR={}", HELIX_DATA_DIR),
-            format!("HELIX_INSTANCE={}", instance_name),
-            format!("HELIX_PROJECT={}", self.project.config.project.name),
+            {
+                let port = self
+                    .project
+                    .config
+                    .get_instance(instance_name)
+                    .unwrap()
+                    .port()
+                    .unwrap_or(6969);
+                format!("HELIX_PORT={port}")
+            },
+            format!("HELIX_DATA_DIR={HELIX_DATA_DIR}"),
+            format!("HELIX_INSTANCE={instance_name}"),
+            {
+                let project_name = &self.project.config.project.name;
+                format!("HELIX_PROJECT={project_name}")
+            },
         ]
     }
 
     /// Get the container name for an instance
     fn container_name(&self, instance_name: &str) -> String {
-        format!("{}_app", self.compose_project_name(instance_name))
+        let project_name = self.compose_project_name(instance_name);
+        format!("{project_name}_app")
     }
 
     /// Get the data volume name for an instance
@@ -68,7 +82,8 @@ impl<'a> DockerManager<'a> {
 
     /// Get the network name for an instance
     fn network_name(&self, instance_name: &str) -> String {
-        format!("{}_net", self.compose_project_name(instance_name))
+        let project_name = self.compose_project_name(instance_name);
+        format!("{project_name}_net")
     }
 
     // === CENTRALIZED DOCKER COMMAND EXECUTION ===
@@ -78,16 +93,12 @@ impl<'a> DockerManager<'a> {
         let output = Command::new("docker")
             .args(args)
             .output()
-            .map_err(|e| eyre!("Failed to run docker {}: {}", args.join(" "), e))?;
+            .map_err(|e| eyre!("Failed to run docker {}: {e}", args.join(" ")))?;
         Ok(output)
     }
 
     /// Run a docker-compose command with proper project naming
-    fn run_compose_command<'arg>(
-        &self,
-        instance_name: &str,
-        args: Vec<&'arg str>,
-    ) -> Result<Output> {
+    fn run_compose_command(&self, instance_name: &str, args: Vec<&str>) -> Result<Output> {
         let workspace = self.project.instance_workspace(instance_name);
         let project_name = self.compose_project_name(instance_name);
 
@@ -98,13 +109,7 @@ impl<'a> DockerManager<'a> {
             .args(&full_args)
             .current_dir(&workspace)
             .output()
-            .map_err(|e| {
-                eyre!(
-                    "Failed to run docker-compose {}: {}",
-                    full_args.join(" "),
-                    e
-                )
-            })?;
+            .map_err(|e| eyre!("Failed to run docker-compose {}: {e}", full_args.join(" ")))?;
         Ok(output)
     }
 
@@ -266,10 +271,10 @@ networks:
   {network_name}:
     driver: bridge
 "#,
-            volume_path = volume_path.display().to_string(),
+            volume_path = volume_path.display(),
             platform = instance_config
                 .docker_build_target()
-                .map_or("".to_string(), |p| format!("platforms:\n        - {}", p)),
+                .map_or("".to_string(), |p| format!("platforms:\n        - {p}")),
             project_name = self.project.config.project.name,
             data_dir = HELIX_DATA_DIR,
         );
@@ -279,7 +284,10 @@ networks:
 
     /// Build Docker image for an instance
     pub fn build_image(&self, instance_name: &str, _build_target: Option<&str>) -> Result<()> {
-        print_status("DOCKER", &format!("Building image for instance '{}'...", instance_name));
+        print_status(
+            "DOCKER",
+            &format!("Building image for instance '{instance_name}'..."),
+        );
 
         let args: Vec<Cow<'_, str>> = vec![Cow::Borrowed("build")];
         // match build_target {
@@ -296,7 +304,7 @@ networks:
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("Docker build failed:\n{}", stderr));
+            return Err(eyre!("Docker build failed:\n{stderr}"));
         }
 
         print_status("DOCKER", "Image built successfully");
@@ -305,46 +313,54 @@ networks:
 
     /// Start instance using docker-compose
     pub fn start_instance(&self, instance_name: &str) -> Result<()> {
-        print_status("DOCKER", &format!("Starting instance '{}'...", instance_name));
+        print_status("DOCKER", &format!("Starting instance '{instance_name}'..."));
 
         let output = self.run_compose_command(instance_name, vec!["up", "-d"])?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("Failed to start instance:\n{}", stderr));
+            return Err(eyre!("Failed to start instance:\n{stderr}"));
         }
 
-        print_status("DOCKER", &format!("Instance '{}' started successfully", instance_name));
+        print_status(
+            "DOCKER",
+            &format!("Instance '{instance_name}' started successfully"),
+        );
         Ok(())
     }
 
     /// Stop instance using docker-compose
     pub fn stop_instance(&self, instance_name: &str) -> Result<()> {
-        print_status("DOCKER", &format!("Stopping instance '{}'...", instance_name));
+        print_status("DOCKER", &format!("Stopping instance '{instance_name}'..."));
 
         let output = self.run_compose_command(instance_name, vec!["down"])?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("Failed to stop instance:\n{}", stderr));
+            return Err(eyre!("Failed to stop instance:\n{stderr}"));
         }
 
-        print_status("DOCKER", &format!("Instance '{}' stopped successfully", instance_name));
+        print_status(
+            "DOCKER",
+            &format!("Instance '{instance_name}' stopped successfully"),
+        );
         Ok(())
     }
 
     /// Check if an instance container exists (running or stopped)
     pub fn instance_exists(&self, instance_name: &str) -> Result<bool> {
         let statuses = self.get_project_status()?;
-        let target_container_name = format!("helix_{}_app", instance_name);
-        
-        Ok(statuses.iter().any(|status| status.container_name.contains(&target_container_name)))
+        let target_container_name = format!("helix_{instance_name}_app");
+
+        Ok(statuses
+            .iter()
+            .any(|status| status.container_name.contains(&target_container_name)))
     }
 
     /// Get status of all Docker containers for this project
     pub fn get_project_status(&self) -> Result<Vec<ContainerStatus>> {
         let project_name = &self.project.config.project.name;
-        let filter = format!("name=helix-{}-", project_name);
+        let filter = format!("name=helix-{project_name}-");
 
         let output = self.run_docker_command(&[
             "ps",
@@ -357,7 +373,7 @@ networks:
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("Failed to get container status:\n{}", stderr));
+            return Err(eyre!("Failed to get container status:\n{stderr}"));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -377,7 +393,7 @@ networks:
                 let ports = parts[2].trim();
 
                 // Extract instance name from new container naming scheme: helix-{project}-{instance}-app
-                let expected_prefix = format!("helix-{}-", project_name);
+                let expected_prefix = format!("helix-{project_name}-");
 
                 let instance_name = if let Some(suffix) = name.strip_prefix(&expected_prefix) {
                     // Remove the trailing "-app" if it exists
@@ -400,14 +416,14 @@ networks:
 
     /// Remove instance containers and optionally volumes
     pub fn prune_instance(&self, instance_name: &str, remove_volumes: bool) -> Result<()> {
-        print_status("DOCKER", &format!("Pruning instance '{}'...", instance_name));
+        print_status("DOCKER", &format!("Pruning instance '{instance_name}'..."));
 
         // Check if workspace exists - if not, there's nothing to prune
         let workspace = self.project.instance_workspace(instance_name);
         if !workspace.exists() {
             print_status(
                 "DOCKER",
-                &format!("No workspace found for instance '{}', nothing to prune", instance_name)
+                &format!("No workspace found for instance '{instance_name}', nothing to prune"),
             );
             return Ok(());
         }
@@ -417,7 +433,9 @@ networks:
         if !compose_file.exists() {
             print_status(
                 "DOCKER",
-                &format!("No docker-compose.yml found for instance '{}', nothing to prune", instance_name)
+                &format!(
+                    "No docker-compose.yml found for instance '{instance_name}', nothing to prune"
+                ),
             );
             return Ok(());
         }
@@ -437,13 +455,16 @@ networks:
             if stderr.contains("No such container") || stderr.contains("not running") {
                 print_status(
                     "DOCKER",
-                    &format!("Instance '{}' containers already stopped", instance_name)
+                    &format!("Instance '{instance_name}' containers already stopped"),
                 );
             } else {
-                return Err(eyre!("Failed to prune instance:\n{}", stderr));
+                return Err(eyre!("Failed to prune instance:\n{stderr}"));
             }
         } else {
-            print_status("DOCKER", &format!("Instance '{}' pruned successfully", instance_name));
+            print_status(
+                "DOCKER",
+                &format!("Instance '{instance_name}' pruned successfully"),
+            );
         }
 
         Ok(())
@@ -453,7 +474,7 @@ networks:
     pub fn remove_instance_images(&self, instance_name: &str) -> Result<()> {
         print_status(
             "DOCKER",
-            &format!("Removing images for instance '{}'...", instance_name)
+            &format!("Removing images for instance '{instance_name}'..."),
         );
 
         // Get image names for both debug and release modes
@@ -464,7 +485,7 @@ networks:
         for image in [debug_image, release_image] {
             let output = self.run_docker_command(&["rmi", "-f", &image])?;
             if output.status.success() {
-                print_status("DOCKER", &format!("Removed image: {}", image));
+                print_status("DOCKER", &format!("Removed image: {image}"));
             }
         }
 
@@ -482,11 +503,11 @@ networks:
                 "reference=helix-*",
             ])
             .output()
-            .map_err(|e| eyre!("Failed to list Docker images: {}", e))?;
+            .map_err(|e| eyre!("Failed to list Docker images: {e}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("Failed to list images:\n{}", stderr));
+            return Err(eyre!("Failed to list images:\n{stderr}"));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -510,19 +531,23 @@ networks:
             return Ok(());
         }
 
-        print_status("DOCKER", &format!("Found {} Helix images to remove", images.len()));
+        let count = images.len();
+        print_status("DOCKER", &format!("Found {count} Helix images to remove"));
 
         for image in images {
             let output = Command::new("docker")
                 .args(["rmi", "-f", &image])
                 .output()
-                .map_err(|e| eyre!("Failed to remove image {}: {}", image, e))?;
+                .map_err(|e| eyre!("Failed to remove image {image}: {e}"))?;
 
             if output.status.success() {
-                print_status("DOCKER", &format!("Removed image: {}", image));
+                print_status("DOCKER", &format!("Removed image: {image}"));
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                print_status("DOCKER", &format!("Warning: Failed to remove {}: {}", image, stderr));
+                print_status(
+                    "DOCKER",
+                    &format!("Warning: Failed to remove {image}: {stderr}"),
+                );
             }
         }
 
@@ -533,7 +558,7 @@ networks:
         let registry_image = format!("{registry_url}/{image_name}");
         Command::new("docker")
             .arg("tag")
-            .arg(&image_name)
+            .arg(image_name)
             .arg(&registry_image)
             .output()?;
 
@@ -542,7 +567,7 @@ networks:
 
     pub fn push(&self, image_name: &str, registry_url: &str) -> Result<()> {
         let registry_image = format!("{registry_url}/{image_name}");
-        print_status("DOCKER", &format!("Pushing image: {}", registry_image));
+        print_status("DOCKER", &format!("Pushing image: {registry_image}"));
         let _output = Command::new("docker")
             .arg("push")
             .arg(&registry_image)

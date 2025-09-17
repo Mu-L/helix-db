@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Result<()> {
     let start_time = Instant::now();
-    
+
     // Load project context
     let project = ProjectContext::find_and_load(None)?;
 
@@ -22,26 +22,32 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
     let deploy_result = if instance_config.is_local() {
         push_local_instance(&project, &instance_name, metrics_sender).await
     } else {
-        push_cloud_instance(&project, &instance_name, instance_config.clone(), metrics_sender).await
+        push_cloud_instance(
+            &project,
+            &instance_name,
+            instance_config.clone(),
+            metrics_sender,
+        )
+        .await
     };
-    
+
     // Send appropriate deploy metrics based on instance type and result
     let duration = start_time.elapsed().as_secs() as u32;
     let success = deploy_result.is_ok();
     let error_messages = deploy_result.as_ref().err().map(|e| e.to_string());
-    
+
     // Get metrics data from the deploy result, or use defaults on error
     let default_metrics = MetricsData {
         queries_string: String::new(),
         num_of_queries: 0,
     };
     let metrics_data = deploy_result.as_ref().unwrap_or(&default_metrics);
-    
+
     if instance_config.is_local() {
         // Check if this is a redeploy by seeing if container already exists
         let docker = DockerManager::new(&project);
         let is_redeploy = docker.instance_exists(&instance_name).unwrap_or(false);
-        
+
         if is_redeploy {
             metrics_sender.send_redeploy_local_event(
                 instance_name.clone(),
@@ -71,14 +77,18 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
             error_messages,
         );
     }
-    
+
     deploy_result.map(|_| ())
 }
 
-async fn push_local_instance(project: &ProjectContext, instance_name: &str, metrics_sender: &MetricsSender) -> Result<MetricsData> {
+async fn push_local_instance(
+    project: &ProjectContext,
+    instance_name: &str,
+    metrics_sender: &MetricsSender,
+) -> Result<MetricsData> {
     print_status(
         "DEPLOY",
-        &format!("Deploying local instance '{}'", instance_name),
+        &format!("Deploying local instance '{instance_name}'"),
     );
 
     let docker = DockerManager::new(project);
@@ -87,7 +97,8 @@ async fn push_local_instance(project: &ProjectContext, instance_name: &str, metr
     DockerManager::check_docker_available()?;
 
     // Build the instance first (this ensures it's up to date) and get metrics data
-    let metrics_data = crate::commands::build::run(instance_name.to_string(), metrics_sender).await?;
+    let metrics_data =
+        crate::commands::build::run(instance_name.to_string(), metrics_sender).await?;
 
     // Start the instance
     docker.start_instance(instance_name)?;
@@ -96,12 +107,10 @@ async fn push_local_instance(project: &ProjectContext, instance_name: &str, metr
     let instance_config = project.config.get_instance(instance_name)?;
     let port = instance_config.port().unwrap_or(6969);
 
-    print_success(&format!("Instance '{}' is now running", instance_name));
-    println!("  Local URL: http://localhost:{}", port);
-    println!(
-        "  Container: helix_{}_{}",
-        project.config.project.name, instance_name
-    );
+    print_success(&format!("Instance '{instance_name}' is now running"));
+    println!("  Local URL: http://localhost:{port}");
+    let project_name = &project.config.project.name;
+    println!("  Container: helix_{project_name}_{instance_name}");
     println!(
         "  Data volume: {}",
         project.instance_volume(instance_name).display()
@@ -118,12 +127,12 @@ async fn push_cloud_instance(
 ) -> Result<MetricsData> {
     print_status(
         "CLOUD",
-        &format!("Deploying to cloud instance '{}'", instance_name),
+        &format!("Deploying to cloud instance '{instance_name}'"),
     );
 
     let cluster_id = instance_config
         .cluster_id()
-        .ok_or_else(|| eyre::eyre!("Cloud instance '{}' must have a cluster_id", instance_name))?;
+        .ok_or_else(|| eyre::eyre!("Cloud instance '{instance_name}' must have a cluster_id"))?;
 
     let metrics_data = if instance_config.should_build_docker_image() {
         // Build happens, get metrics data from build
@@ -147,7 +156,7 @@ async fn push_cloud_instance(
             // Get the correct image name from docker compose project name
             let image_name = docker.image_name(instance_name, config.build_mode);
 
-            fly.deploy_image(&docker, &config, instance_name, &image_name)
+            fly.deploy_image(&docker, config, instance_name, &image_name)
                 .await?;
         }
         CloudConfig::Ecr(config) => {
@@ -156,7 +165,7 @@ async fn push_cloud_instance(
             // Get the correct image name from docker compose project name
             let image_name = docker.image_name(instance_name, config.build_mode);
 
-            ecr.deploy_image(&docker, &config, instance_name, &image_name, None)
+            ecr.deploy_image(&docker, config, instance_name, &image_name, None)
                 .await?;
         }
         CloudConfig::HelixCloud(_config) => {
@@ -165,17 +174,19 @@ async fn push_cloud_instance(
         }
     }
 
-    print_status("UPLOAD", &format!("Uploading to cluster: {}", cluster_id));
-  
+    print_status("UPLOAD", &format!("Uploading to cluster: {cluster_id}"));
 
     Ok(metrics_data)
 }
 
 /// Lightweight parsing for metrics when no compilation happens  
 fn parse_queries_for_metrics(project: &ProjectContext) -> Result<MetricsData> {
-    use helix_db::helixc::parser::{types::{Content, HxFile, Source}, HelixParser};
+    use helix_db::helixc::parser::{
+        HelixParser,
+        types::{Content, HxFile, Source},
+    };
     use std::fs;
-    
+
     // Collect .hx files in project root
     let dir_entries: Vec<_> = std::fs::read_dir(&project.root)?
         .filter_map(|entry| entry.ok())
@@ -183,7 +194,7 @@ fn parse_queries_for_metrics(project: &ProjectContext) -> Result<MetricsData> {
             entry.path().is_file() && entry.path().extension().map(|s| s == "hx").unwrap_or(false)
         })
         .collect();
-    
+
     // Generate content from the files (similar to build.rs)
     let hx_files: Vec<HxFile> = dir_entries
         .iter()
@@ -206,13 +217,14 @@ fn parse_queries_for_metrics(project: &ProjectContext) -> Result<MetricsData> {
         files: hx_files,
         source: Source::default(),
     };
-    
+
     // Parse the content
-    let source = HelixParser::parse_source(&content).map_err(|e| eyre::eyre!("Parse error: {}", e))?;
-    
+    let source =
+        HelixParser::parse_source(&content).map_err(|e| eyre::eyre!("Parse error: {}", e))?;
+
     // Extract query names
     let all_queries: Vec<String> = source.queries.iter().map(|q| q.name.clone()).collect();
-    
+
     Ok(MetricsData {
         queries_string: all_queries.join("\n"),
         num_of_queries: all_queries.len() as u32,

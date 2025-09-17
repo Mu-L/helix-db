@@ -3,7 +3,9 @@ use crate::commands::integrations::fly::FlyManager;
 use crate::config::InstanceInfo;
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success, print_warning, print_lines, print_newline, print_confirm};
+use crate::utils::{
+    print_confirm, print_lines, print_newline, print_status, print_success, print_warning,
+};
 use eyre::Result;
 
 pub async fn run(instance_name: String) -> Result<()> {
@@ -14,8 +16,7 @@ pub async fn run(instance_name: String) -> Result<()> {
     let _instance_config = project.config.get_instance(&instance_name)?;
 
     print_warning(&format!(
-        "This will permanently delete instance '{}' and ALL its data!",
-        instance_name
+        "This will permanently delete instance '{instance_name}' and ALL its data!"
     ));
     print_lines(&[
         "- Docker containers and images",
@@ -25,8 +26,7 @@ pub async fn run(instance_name: String) -> Result<()> {
     print_newline();
 
     let confirmed = print_confirm(&format!(
-        "Are you sure you want to delete instance '{}'?",
-        instance_name
+        "Are you sure you want to delete instance '{instance_name}'?"
     ))?;
 
     if !confirmed {
@@ -34,7 +34,7 @@ pub async fn run(instance_name: String) -> Result<()> {
         return Ok(());
     }
 
-    print_status("DELETE", &format!("Deleting instance '{}'", instance_name));
+    print_status("DELETE", &format!("Deleting instance '{instance_name}'"));
 
     // Stop and remove Docker containers and volumes
     if DockerManager::check_docker_available().is_ok() {
@@ -80,10 +80,7 @@ pub async fn run(instance_name: String) -> Result<()> {
         }
     }
 
-    print_success(&format!(
-        "Instance '{}' deleted successfully",
-        instance_name
-    ));
+    print_success(&format!("Instance '{instance_name}' deleted successfully"));
 
     Ok(())
 }

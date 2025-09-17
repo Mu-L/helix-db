@@ -8,9 +8,7 @@ use crate::{
 use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{
-    process::{Command, Output, Stdio},
-};
+use std::process::{Command, Output, Stdio};
 use tokio::io::AsyncWriteExt;
 
 const FLY_MACHINES_API_URL: &str = "https://api.machines.dev/v1/";
@@ -45,8 +43,7 @@ impl TryFrom<String> for FlyAuthType {
             "api_key" => Ok(Self::ApiKey),
             "cli" => Ok(Self::Cli),
             _ => Err(eyre!(
-                "Invalid auth type '{}'. Valid options: api_key, cli",
-                value
+                "Invalid auth type '{value}'. Valid options: api_key, cli"
             )),
         }
     }
@@ -100,8 +97,7 @@ impl TryFrom<String> for VmSize {
             "a100-80gb" => Ok(Self::A10080Gb),
             "l40s" => Ok(Self::L40s),
             _ => Err(eyre!(
-                "Invalid VM size '{}'. Valid options: shared-cpu-1x, shared-cpu-2x, shared-cpu-4x, shared-cpu-8x, performance-1x, performance-2x, performance-4x, performance-8x, performance-16x, a10, a100-40gb, a100-80gb, l40s",
-                value
+                "Invalid VM size '{value}'. Valid options: shared-cpu-1x, shared-cpu-2x, shared-cpu-4x, shared-cpu-8x, performance-1x, performance-2x, performance-4x, performance-8x, performance-16x, a10, a100-40gb, a100-80gb, l40s"
             )),
         }
     }
@@ -149,8 +145,7 @@ impl TryFrom<String> for Privacy {
             "public" | "pub" => Ok(Self::Public),
             "private" | "priv" => Ok(Self::Private),
             _ => Err(eyre!(
-                "Invalid privacy setting '{}'. Valid options: public, private",
-                value
+                "Invalid privacy setting '{value}'. Valid options: public, private"
             )),
         }
     }
@@ -195,7 +190,7 @@ impl<'a> FlyManager<'a> {
                 let api_key = env_content
                     .lines()
                     .find(|line| line.starts_with("FLY_API_KEY="))
-                    .and_then(|line| line.splitn(2, '=').nth(1))
+                    .and_then(|line| line.split_once('=').map(|x| x.1))
                     .map(|key| key.trim().to_string())
                     .ok_or_else(|| eyre!("FLY_API_KEY not found in {}", env_path.display()))?;
 
@@ -238,7 +233,7 @@ impl<'a> FlyManager<'a> {
         let output = Command::new("flyctl")
             .args(args)
             .output()
-            .map_err(|e| eyre!("Failed to run flyctl {}: {}", args.join(" "), e))?;
+            .map_err(|e| eyre!("Failed to run flyctl {}: {e}", args.join(" ")))?;
         Ok(output)
     }
 
@@ -248,7 +243,7 @@ impl<'a> FlyManager<'a> {
             .args(args)
             .output()
             .await
-            .map_err(|e| eyre!("Failed to run flyctl {}: {}", args.join(" "), e))?;
+            .map_err(|e| eyre!("Failed to run flyctl {}: {e}", args.join(" ")))?;
         Ok(status)
     }
 
@@ -259,7 +254,7 @@ impl<'a> FlyManager<'a> {
                 // We'll create the client when needed for simplicity
                 // In a real implementation, we might cache this
                 static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-                let client = CLIENT.get_or_init(|| reqwest::Client::new());
+                let client = CLIENT.get_or_init(reqwest::Client::new);
                 Ok((client, api_key))
             }
             FlyAuth::Cli => Err(eyre!(
@@ -293,7 +288,7 @@ impl<'a> FlyManager<'a> {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|e| eyre!("Failed to check Fly.io authentication: {}", e))?;
+            .map_err(|e| eyre!("Failed to check Fly.io authentication: {e}"))?;
 
         if let Some(stdin) = child.stdin.as_mut() {
             stdin.write_all(b"N\n").await?;
@@ -342,7 +337,7 @@ impl<'a> FlyManager<'a> {
     pub async fn init_app(&self, instance_name: &str, config: &FlyInstanceConfig) -> Result<()> {
         let app_name = self.app_name(instance_name);
 
-        print_status("FLY", &format!("Creating Fly.io app '{}'", app_name));
+        print_status("FLY", &format!("Creating Fly.io app '{app_name}'"));
 
         match &self.auth {
             FlyAuth::ApiKey(api_key) => {
@@ -354,16 +349,15 @@ impl<'a> FlyManager<'a> {
                 });
 
                 let response = client
-                    .post(format!("{}/apps", FLY_MACHINES_API_URL))
-                    .header("Authorization", format!("Bearer {}", api_key))
+                    .post(format!("{FLY_MACHINES_API_URL}/apps"))
+                    .header("Authorization", format!("Bearer {api_key}"))
                     .json(&request)
                     .send()
                     .await?;
 
                 if !response.status().is_success() {
                     return Err(eyre!(
-                        "Failed to create Fly.io app '{}': {}",
-                        app_name,
+                        "Failed to create Fly.io app '{app_name}': {}",
                         response.status()
                     ));
                 }
@@ -380,8 +374,7 @@ impl<'a> FlyManager<'a> {
                     "--path",
                     helix_dir_path.to_str().ok_or_else(|| {
                         eyre!(
-                            "cannot convert helix instance workspace to string: {:?}",
-                            helix_dir_path
+                            "cannot convert helix instance workspace to string: {helix_dir_path:?}"
                         )
                     })?,
                 ];
@@ -401,7 +394,6 @@ impl<'a> FlyManager<'a> {
                 // name the app
                 launch_args.extend_from_slice(&["--name", &app_name]);
 
-               
                 // Add privacy args
                 launch_args.extend_from_slice(&config.privacy.no_public_ip_command());
 
@@ -411,15 +403,15 @@ impl<'a> FlyManager<'a> {
                     .stderr(Stdio::null())
                     .output()
                     .await
-                    .map_err(|e| eyre!("Failed to run flyctl launch: {}", e))?;
+                    .map_err(|e| eyre!("Failed to run flyctl launch: {e}"))?;
 
                 if !launch_status.status.success() {
-                    return Err(eyre!("Failed to configure Fly.io app '{}'", app_name));
+                    return Err(eyre!("Failed to configure Fly.io app '{app_name}'"));
                 }
             }
         }
 
-        println!("[FLY] App '{}' created successfully", app_name);
+        println!("[FLY] App '{app_name}' created successfully");
         Ok(())
     }
 
@@ -432,7 +424,7 @@ impl<'a> FlyManager<'a> {
         image_name: &str,
     ) -> Result<()> {
         let app_name = self.app_name(instance_name);
-        let registry_image = self.registry_image_name(&image_name);
+        let registry_image = self.registry_image_name(image_name);
         let helix_dir_path = &self
             .project
             .instance_workspace(instance_name)
@@ -440,15 +432,13 @@ impl<'a> FlyManager<'a> {
             .display()
             .to_string();
 
-        print_status("FLY", &format!("Deploying '{}' to Fly.io", app_name));
-        println!("\tImage: {}", image_name);
+        print_status("FLY", &format!("Deploying '{app_name}' to Fly.io"));
+        println!("\tImage: {image_name}");
 
         match &self.auth {
-            FlyAuth::ApiKey(_) => {
-                return Err(eyre!(
-                    "API-based deployment not yet implemented. Use CLI authentication instead."
-                ));
-            }
+            FlyAuth::ApiKey(_) => Err(eyre!(
+                "API-based deployment not yet implemented. Use CLI authentication instead."
+            )),
             FlyAuth::Cli => {
                 // Tag image for Fly.io registry
                 print_status("FLY", "Tagging image for Fly.io registry");
@@ -465,13 +455,13 @@ impl<'a> FlyManager<'a> {
                 // Push image to registry
                 print_status(
                     "FLY",
-                    &format!("Pushing image '{}' to Fly.io registry", image_name),
+                    &format!("Pushing image '{image_name}' to Fly.io registry"),
                 );
                 docker.push(image_name, FLY_REGISTRY_URL)?;
 
                 // Get environment variables first to ensure they live long enough
                 let env_vars = docker.environment_variables(instance_name);
-                
+
                 let mut deploy_args = vec![
                     "deploy",
                     "--image",
@@ -491,16 +481,14 @@ impl<'a> FlyManager<'a> {
 
                 // Deploy image
                 print_status("FLY", "Deploying image to Fly.io");
-                let deploy_status = self
-                    .run_fly_command_async(&deploy_args)
-                    .await?;
+                let deploy_status = self.run_fly_command_async(&deploy_args).await?;
 
-                println!("Deploy status: {:?}", deploy_status);
+                println!("Deploy status: {deploy_status:?}");
                 if !deploy_status.status.success() {
-                    return Err(eyre!("Failed to deploy image '{}'", registry_image));
+                    return Err(eyre!("Failed to deploy image '{registry_image}'"));
                 }
 
-                println!("[FLY] Image '{}' deployed successfully", registry_image);
+                println!("[FLY] Image '{registry_image}' deployed successfully");
                 Ok(())
             }
         }
@@ -509,24 +497,28 @@ impl<'a> FlyManager<'a> {
     /// Stop a Fly.io instance
     pub async fn stop_instance(&self, instance_name: &str) -> Result<()> {
         let app_name = self.app_name(instance_name);
-        let stop_status = self.run_fly_command_async(&["scale", "count", "0", "-a", &app_name, "-y"]).await?;
+        let stop_status = self
+            .run_fly_command_async(&["scale", "count", "0", "-a", &app_name, "-y"])
+            .await?;
         if !stop_status.status.success() {
-            return Err(eyre!("Failed to stop Fly.io app '{}'", app_name));
+            return Err(eyre!("Failed to stop Fly.io app '{app_name}'"));
         }
 
-        println!("[FLY] App '{}' stopped successfully", app_name);
+        println!("[FLY] App '{app_name}' stopped successfully");
         Ok(())
     }
 
     /// Start a Fly.io instance
     pub async fn start_instance(&self, instance_name: &str) -> Result<()> {
         let app_name = self.app_name(instance_name);
-        let start_status = self.run_fly_command_async(&["scale", "count", "1", "-a", &app_name, "-y"]).await?;
+        let start_status = self
+            .run_fly_command_async(&["scale", "count", "1", "-a", &app_name, "-y"])
+            .await?;
         if !start_status.status.success() {
-            return Err(eyre!("Failed to start Fly.io app '{}'", app_name));
+            return Err(eyre!("Failed to start Fly.io app '{app_name}'"));
         }
 
-        println!("[FLY] App '{}' started successfully", app_name);
+        println!("[FLY] App '{app_name}' started successfully");
         Ok(())
     }
 
@@ -537,12 +529,12 @@ impl<'a> FlyManager<'a> {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("Failed to get Fly.io app status:\n{}", stderr));
+            return Err(eyre!("Failed to get Fly.io app status:\n{stderr}"));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let apps: serde_json::Value = serde_json::from_str(&stdout)
-            .map_err(|e| eyre!("Failed to parse Fly.io apps JSON: {}", e))?;
+            .map_err(|e| eyre!("Failed to parse Fly.io apps JSON: {e}"))?;
 
         let mut statuses = Vec::new();
         let project_prefix = format!("helix-{}-", self.project.config.project.name);
@@ -578,17 +570,17 @@ impl<'a> FlyManager<'a> {
     pub async fn delete_app(&self, instance_name: &str) -> Result<()> {
         let app_name = self.app_name(instance_name);
 
-        print_status("FLY", &format!("Deleting Fly.io app '{}'", app_name));
+        print_status("FLY", &format!("Deleting Fly.io app '{app_name}'"));
 
         let delete_status = self
             .run_fly_command_async(&["apps", "destroy", &app_name, "--yes"])
             .await?;
 
         if !delete_status.status.success() {
-            return Err(eyre!("Failed to delete Fly.io app '{}'", app_name));
+            return Err(eyre!("Failed to delete Fly.io app '{app_name}'"));
         }
 
-        println!("[FLY] App '{}' deleted successfully", app_name);
+        println!("[FLY] App '{app_name}' deleted successfully");
         Ok(())
     }
 }

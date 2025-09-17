@@ -37,13 +37,10 @@ async fn login() -> Result<()> {
     }
 
     // not needed?
-    match Credentials::try_read_from_file(&cred_path) {
-        Some(_) => {
-            println!(
-                "You have an existing key which may be valid, only continue if it doesn't work or you want to switch accounts. (Key checking is WIP)"
-            );
-        }
-        None => {}
+    if Credentials::try_read_from_file(&cred_path).is_some() {
+        println!(
+            "You have an existing key which may be valid, only continue if it doesn't work or you want to switch accounts. (Key checking is WIP)"
+        );
     }
 
     let (key, user_id) = github_login().await.unwrap();
@@ -83,7 +80,7 @@ async fn logout() -> Result<()> {
 async fn create_key(cluster: &str) -> Result<()> {
     print_status(
         "API_KEY",
-        &format!("Creating API key for cluster: {}", cluster),
+        &format!("Creating API key for cluster: {cluster}"),
     );
 
     // TODO: Implement API key creation
@@ -94,8 +91,7 @@ async fn create_key(cluster: &str) -> Result<()> {
 
     print_warning("API key creation not yet implemented");
     print_line(&format!(
-        "  This will create a new API key for cluster: {}",
-        cluster
+        "  This will create a new API key for cluster: {cluster}"
     ));
 
     Ok(())
@@ -121,7 +117,7 @@ impl Credentials {
 
     pub(crate) fn try_read_from_file(path: &PathBuf) -> Option<Self> {
         let content = fs::read_to_string(path).ok()?;
-        Some(toml::from_str(&content).ok()?)
+        toml::from_str(&content).ok()
     }
 
     pub(crate) fn write_to_file(&self, path: &PathBuf) {

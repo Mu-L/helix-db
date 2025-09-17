@@ -24,7 +24,7 @@ pub async fn run() -> Result<()> {
     // Show local instances
     for (name, config) in &project.config.local {
         let port = config.port.unwrap_or(6969);
-        print_field(&format!("{} (Local)", name), &format!("port {}", port));
+        print_field(&format!("{name} (Local)"), &format!("port {port}"));
     }
 
     // Show cloud instances
@@ -48,22 +48,22 @@ pub async fn run() -> Result<()> {
 
     for (name, cluster_id) in helix_cloud_instances {
         print_field(
-            &format!("{} (Helix Cloud)", name),
-            &format!("cluster {}", cluster_id),
+            &format!("{name} (Helix Cloud)"),
+            &format!("cluster {cluster_id}"),
         );
     }
 
     for (name, cluster_id) in flyio_instances {
         print_field(
-            &format!("{} (Fly.io)", name),
-            &format!("cluster {}", cluster_id),
+            &format!("{name} (Fly.io)"),
+            &format!("cluster {cluster_id}"),
         );
     }
 
     for (name, repository_name, region) in ecr_instances {
         print_field(
-            &format!("{} (AWS ECR)", name),
-            &format!("repository {} in {}", repository_name, region),
+            &format!("{name} (AWS ECR)"),
+            &format!("repository {repository_name} in {region}"),
         );
     }
     print_newline();
@@ -86,7 +86,7 @@ async fn show_container_status(project: &ProjectContext) -> Result<()> {
     let statuses = match docker.get_project_status() {
         Ok(statuses) => statuses,
         Err(e) => {
-            print_field("Container Status", &format!("Error getting status ({})", e));
+            print_field("Container Status", &format!("Error getting status ({e})"));
             return Ok(());
         }
     };
@@ -111,8 +111,8 @@ async fn show_container_status(project: &ProjectContext) -> Result<()> {
         };
 
         print_field(
-            &format!("{} {}", status_icon, status.instance_name),
-            &format!("{} ({})", status.status, ports_info),
+            &format!("{status_icon} {}", status.instance_name),
+            &format!("{} ({ports_info})", status.status),
         );
     }
 

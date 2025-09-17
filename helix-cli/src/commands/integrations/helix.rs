@@ -7,8 +7,8 @@ use helix_db::helix_engine::traversal_core::config::Config;
 use helix_db::utils::styled_string::StyledString;
 use serde_json::json;
 use std::env;
-use std::sync::LazyLock;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 const DEFAULT_CLOUD_AUTHORITY: &str = "ec2-184-72-27-116.us-west-1.compute.amazonaws.com:3000";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
@@ -18,8 +18,6 @@ pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
 pub struct HelixManager<'a> {
     project: &'a ProjectContext,
 }
-
-
 
 impl<'a> HelixManager<'a> {
     pub fn new(project: &'a ProjectContext) -> Self {
@@ -65,10 +63,7 @@ impl<'a> HelixManager<'a> {
         let credentials = Credentials::read_from_file(&self.credentials_path());
 
         // read config.hx.json
-        let config = match Config::from_files(
-            PathBuf::from(path.clone()).join("config.hx.json"),
-            PathBuf::from(path.clone()).join("schema.hx"),
-        ) {
+        let config = match Config::from_files(path.join("config.hx.json"), path.join("schema.hx")) {
             Ok(config) => config,
             Err(e) => {
                 return Err(eyre!("Error: failed to load config: {e}"));

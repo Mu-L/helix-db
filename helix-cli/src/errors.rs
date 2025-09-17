@@ -1,5 +1,5 @@
-use std::fmt;
 use color_eyre::owo_colors::OwoColorize;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub enum CliErrorSeverity {
@@ -12,7 +12,7 @@ impl CliErrorSeverity {
     pub fn label(&self) -> &'static str {
         match self {
             CliErrorSeverity::Error => "error",
-            CliErrorSeverity::Warning => "warning", 
+            CliErrorSeverity::Warning => "warning",
             CliErrorSeverity::Info => "info",
         }
     }
@@ -94,7 +94,7 @@ impl CliError {
 
     pub fn render(&self) -> String {
         let mut output = String::new();
-        
+
         // Error header: "error: message"
         let header = format!("{}: {}", self.severity.label(), self.message);
         output.push_str(&self.severity.color_code(header));
@@ -105,7 +105,7 @@ impl CliError {
             output.push_str(&format!("  {} {}\n", "-->".blue().bold(), file_path.bold()));
         }
 
-        // Context if available  
+        // Context if available
         if let Some(context) = &self.context {
             output.push('\n');
             // Add indented context with box drawing
@@ -117,8 +117,9 @@ impl CliError {
         // Caused by if available
         if let Some(caused_by) = &self.caused_by {
             output.push('\n');
-            output.push_str(&format!("   {} {}: {}\n", 
-                "│".blue().bold(), 
+            output.push_str(&format!(
+                "   {} {}: {}\n",
+                "│".blue().bold(),
                 "caused by".bold(),
                 caused_by
             ));
@@ -127,8 +128,9 @@ impl CliError {
         // Hint if available
         if let Some(hint) = &self.hint {
             output.push('\n');
-            output.push_str(&format!("   {} {}: {}\n", 
-                "=".blue().bold(), 
+            output.push_str(&format!(
+                "   {} {}: {}\n",
+                "=".blue().bold(),
                 "help".bold(),
                 hint
             ));
@@ -150,22 +152,15 @@ impl From<std::io::Error> for CliError {
     fn from(err: std::io::Error) -> Self {
         match err.kind() {
             std::io::ErrorKind::NotFound => {
-                CliError::new("file or directory not found")
-                    .with_caused_by(err.to_string())
+                CliError::new("file or directory not found").with_caused_by(err.to_string())
             }
-            std::io::ErrorKind::PermissionDenied => {
-                CliError::new("permission denied")
-                    .with_caused_by(err.to_string())
-                    .with_hint("check file permissions and try again")
-            }
+            std::io::ErrorKind::PermissionDenied => CliError::new("permission denied")
+                .with_caused_by(err.to_string())
+                .with_hint("check file permissions and try again"),
             std::io::ErrorKind::InvalidInput => {
-                CliError::new("invalid input")
-                    .with_caused_by(err.to_string())
+                CliError::new("invalid input").with_caused_by(err.to_string())
             }
-            _ => {
-                CliError::new("I/O operation failed")
-                    .with_caused_by(err.to_string())
-            }
+            _ => CliError::new("I/O operation failed").with_caused_by(err.to_string()),
         }
     }
 }
@@ -180,8 +175,7 @@ impl From<toml::de::Error> for CliError {
 
 impl From<serde_json::Error> for CliError {
     fn from(err: serde_json::Error) -> Self {
-        CliError::new("failed to parse JSON")
-            .with_caused_by(err.to_string())
+        CliError::new("failed to parse JSON").with_caused_by(err.to_string())
     }
 }
 
@@ -191,8 +185,7 @@ pub type CliResult<T> = Result<T, CliError>;
 // Convenience functions for common error patterns
 #[allow(unused)]
 pub fn config_error<S: Into<String>>(message: S) -> CliError {
-    CliError::new(message)
-        .with_hint("run `helix init` if you need to create a new project")
+    CliError::new(message).with_hint("run `helix init` if you need to create a new project")
 }
 
 #[allow(unused)]
@@ -202,24 +195,20 @@ pub fn file_error<S: Into<String>>(message: S, file_path: S) -> CliError {
 
 #[allow(unused)]
 pub fn docker_error<S: Into<String>>(message: S) -> CliError {
-    CliError::new(message)
-        .with_hint("ensure Docker is running and accessible")
+    CliError::new(message).with_hint("ensure Docker is running and accessible")
 }
 
 #[allow(unused)]
 pub fn network_error<S: Into<String>>(message: S) -> CliError {
-    CliError::new(message)
-        .with_hint("check your internet connection and try again")
+    CliError::new(message).with_hint("check your internet connection and try again")
 }
 
 #[allow(unused)]
 pub fn project_error<S: Into<String>>(message: S) -> CliError {
-    CliError::new(message)
-        .with_hint("ensure you're in a valid helix project directory")
+    CliError::new(message).with_hint("ensure you're in a valid helix project directory")
 }
 
 #[allow(unused)]
 pub fn cloud_error<S: Into<String>>(message: S) -> CliError {
-    CliError::new(message)
-        .with_hint("run `helix auth login` to authenticate with Helix Cloud")
+    CliError::new(message).with_hint("run `helix auth login` to authenticate with Helix Cloud")
 }

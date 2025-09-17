@@ -22,7 +22,7 @@ pub async fn run(instance: Option<String>) -> Result<()> {
 }
 
 async fn check_instance(project: &ProjectContext, instance_name: &str) -> Result<()> {
-    print_status("CHECK", &format!("Checking instance '{}'", instance_name));
+    print_status("CHECK", &format!("Checking instance '{instance_name}'"));
 
     // Validate instance exists in config
     let _instance_config = project.config.get_instance(instance_name)?;
@@ -31,11 +31,10 @@ async fn check_instance(project: &ProjectContext, instance_name: &str) -> Result
     check_project_files(&project.root)?;
 
     // Validate queries and schema syntax
-    validate_project_syntax(&project)?;
+    validate_project_syntax(project)?;
 
     print_success(&format!(
-        "Instance '{}' configuration is valid",
-        instance_name
+        "Instance '{instance_name}' configuration is valid"
     ));
     Ok(())
 }
@@ -47,11 +46,11 @@ async fn check_all_instances(project: &ProjectContext) -> Result<()> {
     check_project_files(&project.root)?;
 
     // Validate queries and schema syntax
-    validate_project_syntax(&project)?;
+    validate_project_syntax(project)?;
 
     // Check each instance
     for instance_name in project.config.list_instances() {
-        print_status("CHECK", &format!("Validating instance '{}'", instance_name));
+        print_status("CHECK", &format!("Validating instance '{instance_name}'"));
         let _instance_config = project.config.get_instance(instance_name)?;
     }
 
@@ -122,7 +121,7 @@ fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
         .map(|file| {
             let name = file.path().to_string_lossy().into_owned();
             let content = fs::read_to_string(file.path())
-                .map_err(|e| eyre::eyre!("Failed to read file {}: {}", name, e))?;
+                .map_err(|e| eyre::eyre!("Failed to read file {name}: {e}"))?;
             Ok(HxFile { name, content })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -154,10 +153,10 @@ fn analyze_source(source: Source) -> Result<GeneratedSource> {
     if !diagnostics.is_empty() {
         let error_msg = diagnostics
             .iter()
-            .map(|e| format!("{:?}", e))
+            .map(|e| format!("{e:?}"))
             .collect::<Vec<_>>()
             .join("\n");
-        return Err(eyre::eyre!("Validation failed:\n{}", error_msg));
+        return Err(eyre::eyre!("Validation failed:\n{error_msg}"));
     }
 
     Ok(generated_source)

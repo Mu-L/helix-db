@@ -51,23 +51,23 @@ pub fn command_exists(command: &str) -> bool {
 
 /// Print a status message with a prefix
 pub fn print_status(prefix: &str, message: &str) {
-    println!("{} {}", format!("[{}]", prefix).blue().bold(), message);
+    println!("{} {message}", format!("[{prefix}]").blue().bold());
 }
 
 /// Print an info message with consistent formatting
 pub fn print_info(message: &str) {
-    println!("{} {}", "[INFO]".cyan().bold(), message);
+    println!("{} {message}", "[INFO]".cyan().bold());
 }
 
 /// Print a formatted message with custom color
 #[allow(unused)]
 pub fn print_message(prefix: &str, message: &str) {
-    println!("{} {}", format!("[{}]", prefix).white().bold(), message);
+    println!("{} {message}", format!("[{prefix}]").white().bold());
 }
 
 /// Print a plain message (replaces direct println! usage)
 pub fn print_line(message: &str) {
-    println!("{}", message);
+    println!("{message}");
 }
 
 /// Print an empty line
@@ -78,7 +78,7 @@ pub fn print_newline() {
 /// Print multiple lines with consistent indentation
 pub fn print_lines(lines: &[&str]) {
     for line in lines {
-        println!("  {}", line);
+        println!("  {line}");
     }
 }
 
@@ -87,7 +87,7 @@ pub fn print_instructions(title: &str, steps: &[&str]) {
     print_newline();
     println!("{}", title.bold());
     for (i, step) in steps.iter().enumerate() {
-        println!("  {}. {}", (i + 1).to_string().bright_white().bold(), step);
+        println!("  {}. {step}", (i + 1).to_string().bright_white().bold());
     }
 }
 
@@ -98,7 +98,7 @@ pub fn print_header(title: &str) {
 
 /// Print formatted key-value pairs
 pub fn print_field(key: &str, value: &str) {
-    println!("  {}: {}", key.bright_white().bold(), value);
+    println!("  {}: {value}", key.bright_white().bold());
 }
 
 /// Print an error message
@@ -122,7 +122,7 @@ pub fn print_error_with_hint(message: &str, hint: &str) {
 
 /// Print a success message
 pub fn print_success(message: &str) {
-    println!("{} {}", "[SUCCESS]".green().bold(), message);
+    println!("{} {message}", "[SUCCESS]".green().bold());
 }
 
 /// Print a warning message
@@ -156,7 +156,7 @@ pub fn print_prompt(message: &str) -> std::io::Result<String> {
 
 /// Print a yes/no confirmation prompt
 pub fn print_confirm(message: &str) -> std::io::Result<bool> {
-    let response = print_prompt(&format!("{} (y/N):", message))?;
+    let response = print_prompt(&format!("{message} (y/N):"))?;
     Ok(response.to_lowercase() == "y" || response.to_lowercase() == "yes")
 }
 
@@ -178,7 +178,7 @@ impl Template {
             "py" | "python" => Template::Python,
             "rs" | "rust" => Template::Rust,
             "go" => Template::Go,
-            _ => return Err(eyre::eyre!("Invalid template: {}", value)),
+            _ => return Err(eyre::eyre!("Invalid template: {value}")),
         };
         Ok(template)
     }

@@ -1,7 +1,6 @@
 use clap::{Parser, Subcommand};
-use eyre::Result;
 use color_eyre::owo_colors::OwoColorize;
-
+use eyre::Result;
 
 mod commands;
 mod config;
@@ -184,7 +183,9 @@ async fn main() -> Result<()> {
             cloud,
         } => commands::init::run(path, template, cloud).await,
         Commands::Check { instance } => commands::check::run(instance).await,
-        Commands::Build { instance } => commands::build::run(instance, &metrics_sender).await.map(|_| ()),
+        Commands::Build { instance } => commands::build::run(instance, &metrics_sender)
+            .await
+            .map(|_| ()),
         Commands::Push { instance } => commands::push::run(instance, &metrics_sender).await,
         Commands::Pull { instance } => commands::pull::run(instance).await,
         Commands::Start { instance } => commands::start::run(instance).await,
@@ -199,13 +200,13 @@ async fn main() -> Result<()> {
 
     // Shutdown metrics sender
     metrics_sender.shutdown().await?;
-    
+
     // Handle result with proper error formatting
     if let Err(e) = result {
         // Check if this is already a formatted error (eyre with our custom display)
-        eprintln!("{}", format!("error: {}", e).red().bold());
+        eprintln!("{}", format!("error: {e}").red().bold());
         std::process::exit(1);
     }
-    
+
     Ok(())
 }

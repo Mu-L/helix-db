@@ -7,9 +7,7 @@ use crate::{
 };
 use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
-use std::{
-    process::{Command, Output},
-};
+use std::process::{Command, Output};
 use tokio::fs;
 
 const DEFAULT_ECR_REGION: &str = "us-east-1";
@@ -91,15 +89,12 @@ impl<'a> EcrManager<'a> {
 
     /// Get the ECR repository name for an instance
     fn repository_name(&self, instance_name: &str) -> String {
-        format!(
-            "helix-{}-{}",
-            self.project.config.project.name, instance_name
-        )
+        format!("helix-{}-{instance_name}", self.project.config.project.name)
     }
 
     /// Get the full image URI for an ECR repository
     fn image_uri(&self, registry_url: &str, repository_name: &str, tag: &str) -> String {
-        format!("{}/{}:{}", registry_url, repository_name, tag)
+        format!("{registry_url}/{repository_name}:{tag}")
     }
 
     // === CENTRALIZED COMMAND EXECUTION ===
@@ -110,7 +105,7 @@ impl<'a> EcrManager<'a> {
         let output = Command::new("aws")
             .args(args)
             .output()
-            .map_err(|e| eyre!("Failed to run aws {}: {}", args.join(" "), e))?;
+            .map_err(|e| eyre!("Failed to run aws {}: {e}", args.join(" ")))?;
         Ok(output)
     }
 
@@ -120,7 +115,7 @@ impl<'a> EcrManager<'a> {
             .args(args)
             .output()
             .await
-            .map_err(|e| eyre!("Failed to run aws {}: {}", args.join(" "), e))?;
+            .map_err(|e| eyre!("Failed to run aws {}: {e}", args.join(" ")))?;
         Ok(status)
     }
 
@@ -149,7 +144,7 @@ impl<'a> EcrManager<'a> {
             .args(["sts", "get-caller-identity"])
             .output()
             .await
-            .map_err(|e| eyre!("Failed to check AWS authentication: {}", e))?;
+            .map_err(|e| eyre!("Failed to check AWS authentication: {e}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -164,11 +159,20 @@ impl<'a> EcrManager<'a> {
 
     /// Get the AWS account ID
     async fn get_account_id(&self) -> Result<String> {
-        let output = self.run_aws_command_async(&["sts", "get-caller-identity", "--query", "Account", "--output", "text"]).await?;
-        
+        let output = self
+            .run_aws_command_async(&[
+                "sts",
+                "get-caller-identity",
+                "--query",
+                "Account",
+                "--output",
+                "text",
+            ])
+            .await?;
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("Failed to get AWS account ID: {}", stderr));
+            return Err(eyre!("Failed to get AWS account ID: {stderr}"));
         }
 
         let account_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -178,7 +182,7 @@ impl<'a> EcrManager<'a> {
     /// Get the ECR registry URL for the current account and region
     async fn get_registry_url(&self, region: &str) -> Result<String> {
         let account_id = self.get_account_id().await?;
-        Ok(format!("{}.dkr.ecr.{}.amazonaws.com", account_id, region))
+        Ok(format!("{account_id}.dkr.ecr.{region}.amazonaws.com"))
     }
 
     // === CONFIGURATION MANAGEMENT ===
@@ -206,8 +210,11 @@ impl<'a> EcrManager<'a> {
 
     /// Save ECR configuration to file
     pub async fn save_config(&self, instance_name: &str, config: &EcrConfig) -> Result<()> {
-        let config_path = self.project.instance_workspace(instance_name).join("ecr.toml");
-        
+        let config_path = self
+            .project
+            .instance_workspace(instance_name)
+            .join("ecr.toml");
+
         // Ensure the directory exists
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent).await?;
@@ -215,15 +222,18 @@ impl<'a> EcrManager<'a> {
 
         let toml_content = toml::to_string_pretty(config)?;
         fs::write(&config_path, toml_content).await?;
-        
+
         println!("[ECR] Configuration saved to {}", config_path.display());
         Ok(())
     }
 
     /// Load ECR configuration from file
     pub async fn load_config(&self, instance_name: &str) -> Result<EcrConfig> {
-        let config_path = self.project.instance_workspace(instance_name).join("ecr.toml");
-        
+        let config_path = self
+            .project
+            .instance_workspace(instance_name)
+            .join("ecr.toml");
+
         if !config_path.exists() {
             return Err(eyre!(
                 "ECR configuration not found at {}. Run 'helix init ecr' first.",
@@ -233,7 +243,7 @@ impl<'a> EcrManager<'a> {
 
         let toml_content = fs::read_to_string(&config_path).await?;
         let config: EcrConfig = toml::from_str(&toml_content)?;
-        
+
         Ok(config)
     }
 
@@ -244,41 +254,50 @@ impl<'a> EcrManager<'a> {
         let repository_name = &config.repository_name;
         let region = &config.region;
 
-        print_status("ECR", &format!("Creating ECR repository '{}'", repository_name));
+        print_status(
+            "ECR",
+            &format!("Creating ECR repository '{repository_name}'"),
+        );
 
         // Check if repository already exists
-        let check_output = self.run_aws_command_async(&[
-            "ecr",
-            "describe-repositories",
-            "--repository-names",
-            repository_name,
-            "--region",
-            region,
-        ]).await?;
+        let check_output = self
+            .run_aws_command_async(&[
+                "ecr",
+                "describe-repositories",
+                "--repository-names",
+                repository_name,
+                "--region",
+                region,
+            ])
+            .await?;
 
         if check_output.status.success() {
-            println!("[ECR] Repository '{}' already exists", repository_name);
+            println!("[ECR] Repository '{repository_name}' already exists");
             return Ok(());
         }
 
         // Create the repository
-        let create_output = self.run_aws_command_async(&[
-            "ecr",
-            "create-repository",
-            "--repository-name",
-            repository_name,
-            "--region",
-            region,
-            "--image-scanning-configuration",
-            "scanOnPush=true",
-        ]).await?;
+        let create_output = self
+            .run_aws_command_async(&[
+                "ecr",
+                "create-repository",
+                "--repository-name",
+                repository_name,
+                "--region",
+                region,
+                "--image-scanning-configuration",
+                "scanOnPush=true",
+            ])
+            .await?;
 
         if !create_output.status.success() {
             let stderr = String::from_utf8_lossy(&create_output.stderr);
-            return Err(eyre!("Failed to create ECR repository '{}': {}", repository_name, stderr));
+            return Err(eyre!(
+                "Failed to create ECR repository '{repository_name}': {stderr}"
+            ));
         }
 
-        println!("[ECR] Repository '{}' created successfully", repository_name);
+        println!("[ECR] Repository '{repository_name}' created successfully");
         Ok(())
     }
 
@@ -292,37 +311,39 @@ impl<'a> EcrManager<'a> {
         tag: Option<&str>,
     ) -> Result<()> {
         let tag = tag.unwrap_or("latest");
-        let registry_url = config.registry_url.as_ref()
+        let registry_url = config
+            .registry_url
+            .as_ref()
             .ok_or_else(|| eyre!("Registry URL not found in configuration"))?;
         let repository_name = &config.repository_name;
         let region = &config.region;
 
-        print_status("ECR", &format!("Deploying '{}' to ECR", image_name));
-        println!("\tRepository: {}", repository_name);
-        println!("\tRegion: {}", region);
-        println!("\tTag: {}", tag);
+        print_status("ECR", &format!("Deploying '{image_name}' to ECR"));
+        println!("\tRepository: {repository_name}");
+        println!("\tRegion: {region}");
+        println!("\tTag: {tag}");
 
         // Authenticate Docker with ECR
         print_status("ECR", "Authenticating Docker with ECR");
-        let auth_output = self.run_aws_command_async(&[
-            "ecr",
-            "get-login-password",
-            "--region",
-            region,
-        ]).await?;
+        let auth_output = self
+            .run_aws_command_async(&["ecr", "get-login-password", "--region", region])
+            .await?;
 
         if !auth_output.status.success() {
             let stderr = String::from_utf8_lossy(&auth_output.stderr);
-            return Err(eyre!("Failed to get ECR login password: {}", stderr));
+            return Err(eyre!("Failed to get ECR login password: {stderr}"));
         }
 
-        let password = String::from_utf8_lossy(&auth_output.stdout).trim().to_string();
-        
+        let password = String::from_utf8_lossy(&auth_output.stdout)
+            .trim()
+            .to_string();
+
         // Login to ECR
         let _login_output = tokio::process::Command::new("docker")
             .args([
                 "login",
-                "--username", "AWS",
+                "--username",
+                "AWS",
                 "--password-stdin",
                 registry_url,
             ])
@@ -333,13 +354,15 @@ impl<'a> EcrManager<'a> {
         if let Some(mut stdin) = tokio::process::Command::new("docker")
             .args([
                 "login",
-                "--username", "AWS",
+                "--username",
+                "AWS",
                 "--password-stdin",
                 registry_url,
             ])
             .stdin(std::process::Stdio::piped())
             .spawn()?
-            .stdin {
+            .stdin
+        {
             use tokio::io::AsyncWriteExt;
             stdin.write_all(password.as_bytes()).await?;
         }
@@ -350,10 +373,10 @@ impl<'a> EcrManager<'a> {
         docker.tag(image_name, &ecr_image_uri)?;
 
         // Push image to ECR
-        print_status("ECR", &format!("Pushing image '{}' to ECR", image_name));
+        print_status("ECR", &format!("Pushing image '{image_name}' to ECR"));
         docker.push(&ecr_image_uri, "")?;
 
-        println!("[ECR] Image '{}' deployed successfully to {}", image_name, ecr_image_uri);
+        println!("[ECR] Image '{image_name}' deployed successfully to {ecr_image_uri}");
         Ok(())
     }
 
@@ -363,56 +386,65 @@ impl<'a> EcrManager<'a> {
         let repository_name = &config.repository_name;
         let region = &config.region;
 
-        print_status("ECR", &format!("Deleting ECR repository '{}'", repository_name));
+        print_status(
+            "ECR",
+            &format!("Deleting ECR repository '{repository_name}'"),
+        );
 
-        let delete_output = self.run_aws_command_async(&[
-            "ecr",
-            "delete-repository",
-            "--repository-name",
-            repository_name,
-            "--region",
-            region,
-            "--force",  // Force delete even if repository contains images
-        ]).await?;
+        let delete_output = self
+            .run_aws_command_async(&[
+                "ecr",
+                "delete-repository",
+                "--repository-name",
+                repository_name,
+                "--region",
+                region,
+                "--force", // Force delete even if repository contains images
+            ])
+            .await?;
 
         if !delete_output.status.success() {
             let stderr = String::from_utf8_lossy(&delete_output.stderr);
             // Check if repository doesn't exist
             if stderr.contains("RepositoryNotFoundException") {
-                println!("[ECR] Repository '{}' does not exist", repository_name);
+                println!("[ECR] Repository '{repository_name}' does not exist");
                 return Ok(());
             }
-            return Err(eyre!("Failed to delete ECR repository '{}': {}", repository_name, stderr));
+            return Err(eyre!(
+                "Failed to delete ECR repository '{repository_name}': {stderr}"
+            ));
         }
 
-        println!("[ECR] Repository '{}' deleted successfully", repository_name);
+        println!("[ECR] Repository '{repository_name}' deleted successfully");
         Ok(())
     }
 
     /// Get the status of ECR repositories for this project
     #[allow(dead_code)]
-    pub     async fn get_project_status(&self) -> Result<Vec<EcrRepositoryStatus>> {
+    pub async fn get_project_status(&self) -> Result<Vec<EcrRepositoryStatus>> {
         let _account_id = self.get_account_id().await?;
         let project_prefix = format!("helix-{}-", self.project.config.project.name);
 
         // List all repositories
-        let output = self.run_aws_command_async(&[
-            "ecr",
-            "describe-repositories",
-            "--query",
-            &format!("repositories[?starts_with(repositoryName, '{}')]", project_prefix),
-            "--output",
-            "json",
-        ]).await?;
+        let output = self
+            .run_aws_command_async(&[
+                "ecr",
+                "describe-repositories",
+                "--query",
+                &format!("repositories[?starts_with(repositoryName, '{project_prefix}')]"),
+                "--output",
+                "json",
+            ])
+            .await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("Failed to list ECR repositories: {}", stderr));
+            return Err(eyre!("Failed to list ECR repositories: {stderr}"));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let repositories: serde_json::Value = serde_json::from_str(&stdout)
-            .map_err(|e| eyre!("Failed to parse ECR repositories JSON: {}", e))?;
+            .map_err(|e| eyre!("Failed to parse ECR repositories JSON: {e}"))?;
 
         let mut statuses = Vec::new();
 
@@ -420,10 +452,12 @@ impl<'a> EcrManager<'a> {
             for repo in repos_array {
                 if let Some(name) = repo.get("repositoryName").and_then(|n| n.as_str()) {
                     if let Some(instance_name) = name.strip_prefix(&project_prefix) {
-                        let uri = repo.get("repositoryUri")
+                        let uri = repo
+                            .get("repositoryUri")
                             .and_then(|u| u.as_str())
                             .unwrap_or("unknown");
-                        let created_at = repo.get("createdAt")
+                        let created_at = repo
+                            .get("createdAt")
                             .and_then(|c| c.as_str())
                             .unwrap_or("unknown");
 

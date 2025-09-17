@@ -84,7 +84,7 @@ impl MetricsSender {
         let (tx, rx) = unbounded();
         let handle = tokio::spawn(async move {
             if let Err(e) = metrics_task(rx).await {
-                eprintln!("Metrics task error: {}", e);
+                eprintln!("Metrics task error: {e}");
             }
         });
 
@@ -99,7 +99,7 @@ impl MetricsSender {
         let _ = self.tx.send(MetricsMessage::Shutdown);
         self.handle
             .await
-            .map_err(|e| eyre!("Metrics task join error: {}", e))?;
+            .map_err(|e| eyre!("Metrics task join error: {e}"))?;
         Ok(())
     }
 }
@@ -114,7 +114,7 @@ async fn metrics_task(rx: Receiver<MetricsMessage>) -> Result<()> {
 
         let metrics_dir = get_metrics_dir()?;
         let today = Local::now().format("%Y-%m-%d").to_string();
-        let log_file_path = metrics_dir.join(format!("{}.json", today));
+        let log_file_path = metrics_dir.join(format!("{today}.json"));
 
         log_writer = create_log_writer(&log_file_path).ok();
     }
@@ -124,7 +124,7 @@ async fn metrics_task(rx: Receiver<MetricsMessage>) -> Result<()> {
             MetricsMessage::Event(event) => {
                 if let Some(ref mut writer) = log_writer {
                     if let Err(e) = write_event_to_log(writer, &event) {
-                        eprintln!("Failed to write metrics event: {}", e);
+                        eprintln!("Failed to write metrics event: {e}");
                     }
                 }
             }
@@ -181,7 +181,7 @@ fn create_log_writer(path: &PathBuf) -> Result<BufWriter<File>> {
 
 fn write_event_to_log<W: Write>(writer: &mut W, event: &RawEvent<EventData>) -> Result<()> {
     let json = serde_json::to_string(event)?;
-    writeln!(writer, "{}", json)?;
+    writeln!(writer, "{json}")?;
     writer.flush()?;
     Ok(())
 }
@@ -199,12 +199,11 @@ async fn upload_previous_logs() -> Result<()> {
 
         if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
             if let Some(date_str) = file_name.strip_suffix(".json") {
-                if let Ok(file_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-                    if file_date < today {
-                        if upload_log_file(&client, &path).await.is_ok() {
-                            let _ = fs::remove_file(&path);
-                        }
-                    }
+                if let Ok(file_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+                    && file_date < today
+                    && upload_log_file(&client, &path).await.is_ok()
+                {
+                    let _ = fs::remove_file(&path);
                 }
             }
         }

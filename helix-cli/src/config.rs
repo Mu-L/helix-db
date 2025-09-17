@@ -33,7 +33,7 @@ pub struct VectorConfig {
     pub db_max_size_gb: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct GraphConfig {
     #[serde(default)]
     pub secondary_indices: Vec<String>,
@@ -143,14 +143,6 @@ impl Default for VectorConfig {
             ef_construction: default_ef_construction(),
             ef_search: default_ef_search(),
             db_max_size_gb: default_db_max_size_gb(),
-        }
-    }
-}
-
-impl Default for GraphConfig {
-    fn default() -> Self {
-        GraphConfig {
-            secondary_indices: Vec::new(),
         }
     }
 }

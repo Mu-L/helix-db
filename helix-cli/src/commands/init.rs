@@ -5,7 +5,7 @@ use crate::config::{CloudConfig, HelixConfig};
 use crate::docker::DockerManager;
 use crate::errors::project_error;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success, print_instructions};
+use crate::utils::{print_instructions, print_status, print_success};
 use eyre::Result;
 use std::env;
 use std::fs;
@@ -32,23 +32,25 @@ pub async fn run(
         return Err(project_error(format!(
             "helix.toml already exists in {}",
             project_dir.display()
-        )).with_hint("use a different directory or remove the existing helix.toml file").into());
+        ))
+        .with_hint("use a different directory or remove the existing helix.toml file")
+        .into());
     }
 
     print_status(
         "INIT",
-        &format!("Initializing Helix project: {}", project_name),
+        &format!("Initializing Helix project: {project_name}"),
     );
 
     // Create project directory if it doesn't exist
     fs::create_dir_all(&project_dir)?;
-    
+
     // Create default helix.toml
     let mut config = HelixConfig::default_config(project_name);
     config.save_to_file(&config_path)?;
     // Create project structure
     create_project_structure(&project_dir)?;
-    
+
     // Initialize deployment type
     match deployment_type {
         CloudDeploymentTypeCommand::Helix => {
@@ -57,27 +59,34 @@ pub async fn run(
         CloudDeploymentTypeCommand::Ecr => {
             let cwd = env::current_dir()?;
             let project_context = ProjectContext::find_and_load(Some(&cwd))?;
-            
+
             // Create ECR manager
             let ecr_manager = EcrManager::new(&project_context, EcrAuthType::AwsCli).await?;
-            
+
             // Create ECR configuration
-            let ecr_config = ecr_manager.create_ecr_config(
-                project_name,
-                None, // Use default region
-                EcrAuthType::AwsCli,
-            ).await?;
-            
+            let ecr_config = ecr_manager
+                .create_ecr_config(
+                    project_name,
+                    None, // Use default region
+                    EcrAuthType::AwsCli,
+                )
+                .await?;
+
             // Initialize the ECR repository
-            ecr_manager.init_repository(project_name, &ecr_config).await?;
-            
+            ecr_manager
+                .init_repository(project_name, &ecr_config)
+                .await?;
+
             // Save configuration to ecr.toml
             ecr_manager.save_config(project_name, &ecr_config).await?;
-            
+
             // Update helix.toml with cloud config
-            config.cloud.insert(project_name.to_string(), CloudConfig::Ecr(ecr_config.clone()));
+            config.cloud.insert(
+                project_name.to_string(),
+                CloudConfig::Ecr(ecr_config.clone()),
+            );
             config.save_to_file(&config_path)?;
-            
+
             print_status("ECR", "AWS ECR repository initialized successfully");
         }
         CloudDeploymentTypeCommand::Fly {
@@ -92,7 +101,7 @@ pub async fn run(
 
             // Parse configuration with proper error handling
             let auth_type = FlyAuthType::try_from(auth)?;
-            
+
             // Parse vm_size directly using match statement to avoid trait conflicts
             let vm_size_parsed = VmSize::try_from(vm_size)?;
             let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
@@ -111,16 +120,14 @@ pub async fn run(
 
             // Initialize the Fly.io app
             fly_manager.init_app(project_name, &instance_config).await?;
-            
-            config.cloud.insert(project_name.to_string(), CloudConfig::FlyIo(instance_config.clone()));
+
+            config.cloud.insert(
+                project_name.to_string(),
+                CloudConfig::FlyIo(instance_config.clone()),
+            );
             config.save_to_file(&config_path)?;
         }
     }
-
-    
-   
-
-    
 
     print_success(&format!(
         "Helix project initialized in {}",

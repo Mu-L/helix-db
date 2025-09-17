@@ -152,10 +152,7 @@ pub async fn check_for_updates() -> Result<()> {
 }
 
 fn print_update_available(latest_version: &str) {
-    eprintln!(
-        "[UPDATE] New version available: v{} → v{}",
-        CURRENT_VERSION, latest_version
-    );
+    eprintln!("[UPDATE] New version available: v{CURRENT_VERSION} → v{latest_version}",);
     eprintln!("         Run 'helix update' to upgrade");
     eprintln!();
 }

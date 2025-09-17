@@ -41,7 +41,7 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
     // Get instance config
     let instance_config = project.config.get_instance(&instance_name)?;
 
-    print_status("BUILD", &format!("Building instance '{}'", instance_name));
+    print_status("BUILD", &format!("Building instance '{instance_name}'"));
 
     // Ensure Helix repo is cached
     ensure_helix_repo_cached().await?;
@@ -89,7 +89,7 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
         docker.build_image(&instance_name, instance_config.docker_build_target())?;
     }
 
-    print_success(&format!("Instance '{}' built successfully", instance_name));
+    print_success(&format!("Instance '{instance_name}' built successfully"));
 
     Ok(metrics_data.clone())
 }
@@ -107,7 +107,7 @@ async fn ensure_helix_repo_cached() -> Result<()> {
                 .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))?;
 
             print_status("DEV", "Development mode: copying local workspace...");
-            copy_dir_recursive_excluding(&workspace_root, &repo_cache, &["target"])?;
+            copy_dir_recursive_excluding(workspace_root, &repo_cache, &["target"])?;
         } else {
             // Production mode: clone from GitHub
             let output = std::process::Command::new("git")
@@ -116,7 +116,7 @@ async fn ensure_helix_repo_cached() -> Result<()> {
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(eyre::eyre!("Failed to clone Helix repository:\n{}", stderr));
+                return Err(eyre::eyre!("Failed to clone Helix repository:\n{stderr}"));
             }
         }
 
@@ -135,7 +135,7 @@ async fn ensure_helix_repo_cached() -> Result<()> {
             if repo_cache.exists() {
                 std::fs::remove_dir_all(&repo_cache)?;
             }
-            copy_dir_recursive_excluding(&workspace_root, &repo_cache, &["target"])?;
+            copy_dir_recursive_excluding(workspace_root, &repo_cache, &["target"])?;
         } else {
             // Production mode: git pull
             let output = std::process::Command::new("git")
@@ -161,7 +161,7 @@ async fn ensure_helix_repo_cached() -> Result<()> {
 async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &str) -> Result<()> {
     print_status(
         "PREPARE",
-        &format!("Preparing workspace for '{}'", instance_name),
+        &format!("Preparing workspace for '{instance_name}'"),
     );
 
     // Ensure instance directories exist
@@ -235,7 +235,7 @@ async fn compile_project(project: &ProjectContext, instance_name: &str) -> Resul
 
     // Write the generated Rust code to queries.rs
     let mut generated_rust_code = String::new();
-    write!(&mut generated_rust_code, "{}", analyzed_source)?;
+    write!(&mut generated_rust_code, "{analyzed_source}")?;
     fs::write(src_dir.join("queries.rs"), generated_rust_code)?;
 
     print_success("Helix queries compiled to Rust files");
@@ -326,7 +326,7 @@ pub(crate) fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
         .map(|file| {
             let name = file.path().to_string_lossy().into_owned();
             let content = fs::read_to_string(file.path())
-                .map_err(|e| eyre::eyre!("Failed to read file {}: {}", name, e))?;
+                .map_err(|e| eyre::eyre!("Failed to read file {name}: {e}"))?;
             Ok(HxFile { name, content })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -346,8 +346,7 @@ pub(crate) fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
 
 /// Uses the helix parser to parse the content into a Source object
 fn parse_content(content: &Content) -> Result<Source> {
-    let source =
-        HelixParser::parse_source(content).map_err(|e| eyre::eyre!("Parse error: {}", e))?;
+    let source = HelixParser::parse_source(content).map_err(|e| eyre::eyre!("Parse error: {e}"))?;
     Ok(source)
 }
 
@@ -366,7 +365,7 @@ fn analyze_source(source: Source) -> Result<GeneratedSource> {
             error_msg.push_str(&diag.render(&source.source, &filepath));
             error_msg.push('\n');
         }
-        return Err(eyre::eyre!("Compilation failed:\n{}", error_msg));
+        return Err(eyre::eyre!("Compilation failed:\n{error_msg}"));
     }
 
     Ok(generated_source)
@@ -388,6 +387,6 @@ fn read_config(instance_src_dir: &std::path::Path) -> Result<Config> {
     }
 
     let config = Config::from_files(config_path, schema_path)
-        .map_err(|e| eyre::eyre!("Failed to load config: {}", e))?;
+        .map_err(|e| eyre::eyre!("Failed to load config: {e}"))?;
     Ok(config)
 }
