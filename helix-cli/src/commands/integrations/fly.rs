@@ -541,24 +541,24 @@ impl<'a> FlyManager<'a> {
 
         if let Some(apps_array) = apps.as_array() {
             for app in apps_array {
-                if let Some(name) = app.get("name").and_then(|n| n.as_str()) {
-                    if let Some(instance_name) = name.strip_prefix(&project_prefix) {
-                        let status = app
-                            .get("status")
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("unknown");
-                        let region = app
-                            .get("primaryRegion")
-                            .and_then(|r| r.as_str())
-                            .unwrap_or("unknown");
+                if let Some(name) = app.get("name").and_then(|n| n.as_str())
+                    && let Some(instance_name) = name.strip_prefix(&project_prefix)
+                {
+                    let status = app
+                        .get("status")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("unknown");
+                    let region = app
+                        .get("primaryRegion")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("unknown");
 
-                        statuses.push(FlyAppStatus {
-                            instance_name: instance_name.to_string(),
-                            app_name: name.to_string(),
-                            status: status.to_string(),
-                            region: region.to_string(),
-                        });
-                    }
+                    statuses.push(FlyAppStatus {
+                        instance_name: instance_name.to_string(),
+                        app_name: name.to_string(),
+                        status: status.to_string(),
+                        region: region.to_string(),
+                    });
                 }
             }
         }

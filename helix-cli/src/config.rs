@@ -296,7 +296,7 @@ impl HelixConfig {
         Ok(())
     }
 
-    pub fn get_instance(&self, name: &str) -> Result<InstanceInfo> {
+    pub fn get_instance(&self, name: &str) -> Result<InstanceInfo<'_>> {
         if let Some(local_config) = self.local.get(name) {
             return Ok(InstanceInfo::Local(local_config));
         }

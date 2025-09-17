@@ -15,17 +15,14 @@ static CONFIG: LazyLock<String> = LazyLock::new(|| {
 
 pub static HELIX_USER_ID: LazyLock<String> = LazyLock::new(|| {
     // read from credentials file
-    let user_id = {
-        for line in CONFIG.lines() {
-            if let Some((key, value)) = line.split_once("=")
-                && key.to_lowercase() == "helix_user_id"
-            {
-                return value.to_string();
-            }
+    for line in CONFIG.lines() {
+        if let Some((key, value)) = line.split_once("=")
+            && key.to_lowercase() == "helix_user_id"
+        {
+            return value.to_string();
         }
-        "".to_string()
-    };
-    user_id
+    }
+    "".to_string()
 });
 
 pub static METRICS_ENABLED: LazyLock<bool> = LazyLock::new(|| {

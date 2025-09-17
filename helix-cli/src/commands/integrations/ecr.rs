@@ -450,24 +450,24 @@ impl<'a> EcrManager<'a> {
 
         if let Some(repos_array) = repositories.as_array() {
             for repo in repos_array {
-                if let Some(name) = repo.get("repositoryName").and_then(|n| n.as_str()) {
-                    if let Some(instance_name) = name.strip_prefix(&project_prefix) {
-                        let uri = repo
-                            .get("repositoryUri")
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("unknown");
-                        let created_at = repo
-                            .get("createdAt")
-                            .and_then(|c| c.as_str())
-                            .unwrap_or("unknown");
+                if let Some(name) = repo.get("repositoryName").and_then(|n| n.as_str())
+                    && let Some(instance_name) = name.strip_prefix(&project_prefix)
+                {
+                    let uri = repo
+                        .get("repositoryUri")
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("unknown");
+                    let created_at = repo
+                        .get("createdAt")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("unknown");
 
-                        statuses.push(EcrRepositoryStatus {
-                            instance_name: instance_name.to_string(),
-                            repository_name: name.to_string(),
-                            repository_uri: uri.to_string(),
-                            created_at: created_at.to_string(),
-                        });
-                    }
+                    statuses.push(EcrRepositoryStatus {
+                        instance_name: instance_name.to_string(),
+                        repository_name: name.to_string(),
+                        repository_uri: uri.to_string(),
+                        created_at: created_at.to_string(),
+                    });
                 }
             }
         }

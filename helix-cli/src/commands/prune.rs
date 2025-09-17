@@ -83,10 +83,10 @@ async fn prune_all_instances(project: &ProjectContext) -> Result<()> {
     // Remove instance workspaces but keep volumes
     for instance_name in &instances {
         let workspace = project.instance_workspace(instance_name);
-        if workspace.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&workspace) {
-                eprintln!("Warning: Failed to remove workspace for '{instance_name}': {e}");
-            }
+        if workspace.exists()
+            && let Err(e) = std::fs::remove_dir_all(&workspace)
+        {
+            eprintln!("Warning: Failed to remove workspace for '{instance_name}': {e}");
         }
     }
 

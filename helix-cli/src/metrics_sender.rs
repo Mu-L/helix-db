@@ -122,10 +122,10 @@ async fn metrics_task(rx: Receiver<MetricsMessage>) -> Result<()> {
     while let Ok(message) = rx.recv_async().await {
         match message {
             MetricsMessage::Event(event) => {
-                if let Some(ref mut writer) = log_writer {
-                    if let Err(e) = write_event_to_log(writer, &event) {
-                        eprintln!("Failed to write metrics event: {e}");
-                    }
+                if let Some(ref mut writer) = log_writer
+                    && let Err(e) = write_event_to_log(writer, &event)
+                {
+                    eprintln!("Failed to write metrics event: {e}");
                 }
             }
             MetricsMessage::Shutdown => {
@@ -197,15 +197,13 @@ async fn upload_previous_logs() -> Result<()> {
         let entry = entry?;
         let path = entry.path();
 
-        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-            if let Some(date_str) = file_name.strip_suffix(".json") {
-                if let Ok(file_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-                    && file_date < today
-                    && upload_log_file(&client, &path).await.is_ok()
-                {
-                    let _ = fs::remove_file(&path);
-                }
-            }
+        if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
+            && let Some(date_str) = file_name.strip_suffix(".json")
+            && let Ok(file_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+            && file_date < today
+            && upload_log_file(&client, &path).await.is_ok()
+        {
+            let _ = fs::remove_file(&path);
         }
     }
 
