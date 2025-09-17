@@ -183,3 +183,91 @@ impl Template {
         Ok(template)
     }
 }
+
+pub mod helixc_utils {
+    use eyre::Result;
+    use helix_db::helixc::{
+        analyzer::analyze,
+        generator::{Source as GeneratedSource, generate},
+        parser::{
+            HelixParser,
+            types::{Content, HxFile, Source},
+        },
+    };
+    use std::fs;
+    use std::path::Path;
+
+    /// Collect all .hx files from project root
+    pub fn collect_hx_files(root: &Path) -> Result<Vec<std::fs::DirEntry>> {
+        let mut files = Vec::new();
+
+        for entry in fs::read_dir(root)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_file() && path.extension().map(|s| s == "hx").unwrap_or(false) {
+                files.push(entry);
+            }
+        }
+
+        let has_queries = files.iter().any(|file| file.file_name() != "schema.hx");
+        if !has_queries {
+            return Err(eyre::eyre!("No query files (.hx) found"));
+        }
+
+        Ok(files)
+    }
+
+    /// Generate content from .hx files (similar to build.rs)
+    pub fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
+        let hx_files: Vec<HxFile> = files
+            .iter()
+            .map(|file| {
+                let name = file.path().to_string_lossy().into_owned();
+                let content = fs::read_to_string(file.path())
+                    .map_err(|e| eyre::eyre!("Failed to read file {name}: {e}"))?;
+                Ok(HxFile { name, content })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let content_str = hx_files
+            .iter()
+            .map(|file| file.content.clone())
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        Ok(Content {
+            content: content_str,
+            files: hx_files,
+            source: Source::default(),
+        })
+    }
+
+    /// Parse content (similar to build.rs)
+    pub fn parse_content(content: &Content) -> Result<Source> {
+        let source =
+            HelixParser::parse_source(content).map_err(|e| eyre::eyre!("Parse error: {}", e))?;
+        Ok(source)
+    }
+
+    /// Analyze source for validation (similar to build.rs)
+    pub fn analyze_source(source: Source) -> Result<GeneratedSource> {
+        let (diagnostics, generated_source) = analyze(&source);
+
+        if !diagnostics.is_empty() {
+            let error_msg = diagnostics
+                .iter()
+                .map(|e| format!("{e:?}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(eyre::eyre!("Validation failed:\n{error_msg}"));
+        }
+
+        Ok(generated_source)
+    }
+
+    pub fn generate_rust_code(source: GeneratedSource, path: &Path) -> Result<()> {
+        generate(source, path)?;
+        Ok(())
+    }
+}

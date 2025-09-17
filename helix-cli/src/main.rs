@@ -40,6 +40,17 @@ enum Commands {
         instance: Option<String>,
     },
 
+    /// Compile project queries into the workspace
+    Compile {
+        /// Path to output directory
+        #[clap(short, long)]
+        path: Option<String>,
+
+        /// Instance name to compile
+        #[clap(short, long)]
+        output: Option<String>,
+    },
+
     /// Build and compile project for an instance
     Build {
         /// Instance name to build
@@ -183,6 +194,7 @@ async fn main() -> Result<()> {
             cloud,
         } => commands::init::run(path, template, cloud).await,
         Commands::Check { instance } => commands::check::run(instance).await,
+        Commands::Compile { output, path } => commands::compile::run(output, path).await,
         Commands::Build { instance } => commands::build::run(instance, &metrics_sender)
             .await
             .map(|_| ()),
