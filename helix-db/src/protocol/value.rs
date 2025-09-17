@@ -3,7 +3,7 @@ use crate::helix_gateway::mcp::tools::{FilterValues, Operator};
 use crate::protocol::date::Date;
 use crate::utils::id::ID;
 use crate::{helix_engine::types::GraphError, helixc::generator::utils::GenRef};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{
     Deserializer, Serializer,
     de::{DeserializeSeed, VariantAccess, Visitor},
@@ -349,6 +349,12 @@ impl PartialEq<&str> for Value {
     }
 }
 
+impl PartialEq<DateTime<Utc>> for Value {
+    fn eq(&self, other: &DateTime<Utc>) -> bool {
+        self == &Value::from(*other)
+    }
+}
+
 impl PartialOrd<i8> for Value {
     fn partial_cmp(&self, other: &i8) -> Option<Ordering> {
         self.partial_cmp(&Value::from(*other))
@@ -415,6 +421,13 @@ impl PartialOrd<ID> for Value {
         }
     }
 }
+
+impl PartialOrd<DateTime<Utc>> for Value {
+    fn partial_cmp(&self, other: &DateTime<Utc>) -> Option<Ordering> {
+        self.partial_cmp(&Value::from(*other))
+    }
+}
+
 /// Custom serialisation implementation for Value that removes enum variant names in JSON
 /// whilst preserving them for binary formats like bincode.
 impl Serialize for Value {

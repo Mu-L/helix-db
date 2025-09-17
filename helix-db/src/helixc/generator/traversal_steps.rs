@@ -56,7 +56,7 @@ pub enum ShouldCollect {
 impl Display for ShouldCollect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ShouldCollect::ToVec => write!(f, ""),
+            ShouldCollect::ToVec => write!(f, ".collect_to::<Vec<_>>()"),
             ShouldCollect::ToVal => write!(f, ".collect_to_obj()"),
             ShouldCollect::Try => write!(f, "?"),
             ShouldCollect::No => write!(f, ""),

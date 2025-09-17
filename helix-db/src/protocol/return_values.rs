@@ -132,7 +132,7 @@ impl ReturnValue {
     }
 
     #[inline]
-    pub fn from_traversal_iter_array_with_mixin<'a>(
+    pub fn from_traversal_value_iter_with_mixin<'a>(
         traversal_iter: RoTraversalIterator<
             'a,
             impl Iterator<Item = Result<TraversalValue, GraphError>>,
