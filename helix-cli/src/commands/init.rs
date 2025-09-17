@@ -14,7 +14,7 @@ use std::path::Path;
 pub async fn run(
     path: Option<String>,
     _template: String,
-    deployment_type: CloudDeploymentTypeCommand,
+    deployment_type: Option<CloudDeploymentTypeCommand>,
 ) -> Result<()> {
     let project_dir = match path {
         Some(p) => std::path::PathBuf::from(p),
@@ -52,80 +52,82 @@ pub async fn run(
     create_project_structure(&project_dir)?;
 
     // Initialize deployment type
-    match deployment_type {
-        CloudDeploymentTypeCommand::Helix => {
-            // Initialize Helix deployment
-        }
-        CloudDeploymentTypeCommand::Ecr => {
-            let cwd = env::current_dir()?;
-            let project_context = ProjectContext::find_and_load(Some(&cwd))?;
+    if let Some(deployment_type) = deployment_type {
+        match deployment_type {
+            CloudDeploymentTypeCommand::Helix => {
+                // Initialize Helix deployment
+            }
+            CloudDeploymentTypeCommand::Ecr => {
+                let cwd = env::current_dir()?;
+                let project_context = ProjectContext::find_and_load(Some(&cwd))?;
 
-            // Create ECR manager
-            let ecr_manager = EcrManager::new(&project_context, EcrAuthType::AwsCli).await?;
+                // Create ECR manager
+                let ecr_manager = EcrManager::new(&project_context, EcrAuthType::AwsCli).await?;
 
-            // Create ECR configuration
-            let ecr_config = ecr_manager
-                .create_ecr_config(
-                    project_name,
-                    None, // Use default region
-                    EcrAuthType::AwsCli,
-                )
-                .await?;
+                // Create ECR configuration
+                let ecr_config = ecr_manager
+                    .create_ecr_config(
+                        project_name,
+                        None, // Use default region
+                        EcrAuthType::AwsCli,
+                    )
+                    .await?;
 
-            // Initialize the ECR repository
-            ecr_manager
-                .init_repository(project_name, &ecr_config)
-                .await?;
+                // Initialize the ECR repository
+                ecr_manager
+                    .init_repository(project_name, &ecr_config)
+                    .await?;
 
-            // Save configuration to ecr.toml
-            ecr_manager.save_config(project_name, &ecr_config).await?;
+                // Save configuration to ecr.toml
+                ecr_manager.save_config(project_name, &ecr_config).await?;
 
-            // Update helix.toml with cloud config
-            config.cloud.insert(
-                project_name.to_string(),
-                CloudConfig::Ecr(ecr_config.clone()),
-            );
-            config.save_to_file(&config_path)?;
+                // Update helix.toml with cloud config
+                config.cloud.insert(
+                    project_name.to_string(),
+                    CloudConfig::Ecr(ecr_config.clone()),
+                );
+                config.save_to_file(&config_path)?;
 
-            print_status("ECR", "AWS ECR repository initialized successfully");
-        }
-        CloudDeploymentTypeCommand::Fly {
-            auth,
-            volume_size,
-            vm_size,
-            public,
-        } => {
-            let cwd = env::current_dir()?;
-            let project_context = ProjectContext::find_and_load(Some(&cwd))?;
-            let docker = DockerManager::new(&project_context);
-
-            // Parse configuration with proper error handling
-            let auth_type = FlyAuthType::try_from(auth)?;
-
-            // Parse vm_size directly using match statement to avoid trait conflicts
-            let vm_size_parsed = VmSize::try_from(vm_size)?;
-            let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
-
-            // Create Fly.io manager
-            let fly_manager = FlyManager::new(&project_context, auth_type.clone()).await?;
-            // Create instance configuration
-            let instance_config = fly_manager.create_instance_config(
-                &docker,
-                project_name, // Use "default" as the instance name for init
+                print_status("ECR", "AWS ECR repository initialized successfully");
+            }
+            CloudDeploymentTypeCommand::Fly {
+                auth,
                 volume_size,
-                vm_size_parsed,
-                privacy,
-                auth_type,
-            );
+                vm_size,
+                public,
+            } => {
+                let cwd = env::current_dir()?;
+                let project_context = ProjectContext::find_and_load(Some(&cwd))?;
+                let docker = DockerManager::new(&project_context);
 
-            // Initialize the Fly.io app
-            fly_manager.init_app(project_name, &instance_config).await?;
+                // Parse configuration with proper error handling
+                let auth_type = FlyAuthType::try_from(auth)?;
 
-            config.cloud.insert(
-                project_name.to_string(),
-                CloudConfig::FlyIo(instance_config.clone()),
-            );
-            config.save_to_file(&config_path)?;
+                // Parse vm_size directly using match statement to avoid trait conflicts
+                let vm_size_parsed = VmSize::try_from(vm_size)?;
+                let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
+
+                // Create Fly.io manager
+                let fly_manager = FlyManager::new(&project_context, auth_type.clone()).await?;
+                // Create instance configuration
+                let instance_config = fly_manager.create_instance_config(
+                    &docker,
+                    project_name, // Use "default" as the instance name for init
+                    volume_size,
+                    vm_size_parsed,
+                    privacy,
+                    auth_type,
+                );
+
+                // Initialize the Fly.io app
+                fly_manager.init_app(project_name, &instance_config).await?;
+
+                config.cloud.insert(
+                    project_name.to_string(),
+                    CloudConfig::FlyIo(instance_config.clone()),
+                );
+                config.save_to_file(&config_path)?;
+            }
         }
     }
 

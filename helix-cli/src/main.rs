@@ -31,7 +31,7 @@ enum Commands {
         template: String,
 
         #[clap(subcommand)]
-        cloud: CloudDeploymentTypeCommand,
+        cloud: Option<CloudDeploymentTypeCommand>,
     },
 
     /// Validate project configuration and queries
