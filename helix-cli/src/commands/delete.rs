@@ -5,7 +5,6 @@ use crate::docker::DockerManager;
 use crate::project::ProjectContext;
 use crate::utils::{print_status, print_success, print_warning, print_lines, print_newline, print_confirm};
 use eyre::Result;
-use std::io::{self, Write};
 
 pub async fn run(instance_name: String) -> Result<()> {
     // Load project context

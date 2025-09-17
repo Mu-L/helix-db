@@ -1,8 +1,8 @@
 use crate::{
     AuthAction,
     commands::integrations::helix::CLOUD_AUTHORITY,
-    metrics_sender::{MetricsConfig, load_metrics_config, save_metrics_config},
-    utils::{print_status, print_success, print_warning, print_info, print_line, print_lines},
+    metrics_sender::{load_metrics_config, save_metrics_config},
+    utils::{print_info, print_line, print_status, print_success, print_warning},
 };
 use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
@@ -93,7 +93,10 @@ async fn create_key(cluster: &str) -> Result<()> {
     // 3. Display the key to the user
 
     print_warning("API key creation not yet implemented");
-    print_line(&format!("  This will create a new API key for cluster: {}", cluster));
+    print_line(&format!(
+        "  This will create a new API key for cluster: {}",
+        cluster
+    ));
 
     Ok(())
 }
@@ -126,6 +129,7 @@ impl Credentials {
         fs::write(path, content).unwrap();
     }
 
+    #[allow(unused)]
     pub(crate) fn try_write_to_file(&self, path: &PathBuf) -> Option<()> {
         let content = toml::to_string(&self).ok()?;
         fs::write(path, content).ok()?;

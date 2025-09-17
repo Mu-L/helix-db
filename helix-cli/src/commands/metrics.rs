@@ -3,7 +3,7 @@ use std::io;
 use eyre::Result;
 use regex::Regex;
 use crate::{
-    metrics_sender::{load_metrics_config, save_metrics_config, MetricsLevel}, utils::{print_status, print_success, print_line, print_field, print_header, print_prompt}, MetricsAction
+    metrics_sender::{load_metrics_config, save_metrics_config, MetricsLevel}, utils::{print_status, print_success, print_line, print_field, print_header}, MetricsAction
 };
 
 pub async fn run(action: MetricsAction) -> Result<()> {

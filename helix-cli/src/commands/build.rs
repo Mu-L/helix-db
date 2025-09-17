@@ -14,9 +14,12 @@ pub struct MetricsData {
 use helix_db::{
     helix_engine::traversal_core::config::Config,
     helixc::{
-        analyzer::analyzer::analyze,
+        analyzer::analyze,
         generator::Source as GeneratedSource,
-        parser::helix_parser::{Content, HelixParser, HxFile, Source},
+        parser::{
+            HelixParser,
+            types::{Content, HxFile, Source},
+        },
     },
 };
 use std::fmt::Write;
@@ -31,7 +34,7 @@ const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Result<MetricsData> {
     let start_time = Instant::now();
-    
+
     // Load project context
     let project = ProjectContext::find_and_load(None)?;
 
@@ -48,12 +51,12 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
 
     // Compile project queries into the workspace
     let compile_result = compile_project(&project, &instance_name).await;
-    
+
     // Collect metrics data
     let compile_time = start_time.elapsed().as_secs() as u32;
     let success = compile_result.is_ok();
     let error_messages = compile_result.as_ref().err().map(|e| e.to_string());
-    
+
     // Get metrics data from compilation result or use defaults
     let metrics_data = match &compile_result {
         Ok(data) => data.clone(),
@@ -62,7 +65,7 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
             num_of_queries: 0,
         },
     };
-    
+
     // Send compile metrics
     metrics_sender.send_compile_event(
         instance_name.clone(),
@@ -72,7 +75,7 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
         success,
         error_messages,
     );
-    
+
     // Propagate compilation error if any
     compile_result?;
 
@@ -388,4 +391,3 @@ fn read_config(instance_src_dir: &std::path::Path) -> Result<Config> {
         .map_err(|e| eyre::eyre!("Failed to load config: {}", e))?;
     Ok(config)
 }
-

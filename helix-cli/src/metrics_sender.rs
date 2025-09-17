@@ -52,6 +52,7 @@ impl Default for MetricsConfig {
     }
 }
 impl MetricsConfig {
+    #[allow(unused)]
     pub fn new(user_id: Option<String>) -> Self {
         Self {
             level: MetricsLevel::default(),
@@ -366,6 +367,7 @@ impl MetricsSender {
         self.send_event(event);
     }
 
+    #[allow(unused)]
     pub fn send_test_event(
         &self,
         cluster_id: String,

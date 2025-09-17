@@ -9,7 +9,6 @@ use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    path::Path,
     process::{Command, Output, Stdio},
 };
 use tokio::io::AsyncWriteExt;
@@ -234,6 +233,7 @@ impl<'a> FlyManager<'a> {
     // === CENTRALIZED COMMAND EXECUTION ===
 
     /// Run a flyctl command with consistent error handling
+    #[allow(unused)]
     fn run_fly_command(&self, args: &[&str]) -> Result<Output> {
         let output = Command::new("flyctl")
             .args(args)
@@ -427,7 +427,7 @@ impl<'a> FlyManager<'a> {
     pub async fn deploy_image(
         &self,
         docker: &DockerManager<'_>,
-        config: &FlyInstanceConfig,
+        _config: &FlyInstanceConfig,
         instance_name: &str,
         image_name: &str,
     ) -> Result<()> {
@@ -531,6 +531,7 @@ impl<'a> FlyManager<'a> {
     }
 
     /// Get the status of Fly.io apps for this project
+    #[allow(unused)]
     pub fn get_project_status(&self) -> Result<Vec<FlyAppStatus>> {
         let output = self.run_fly_command(&["apps", "list", "--json"])?;
 
@@ -593,6 +594,7 @@ impl<'a> FlyManager<'a> {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 pub struct FlyAppStatus {
     pub instance_name: String,
     pub app_name: String,

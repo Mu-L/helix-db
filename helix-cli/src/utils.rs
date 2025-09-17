@@ -1,12 +1,8 @@
+use crate::errors::CliError;
+use color_eyre::owo_colors::OwoColorize;
 use eyre::{Result, eyre};
 use std::fs;
 use std::path::Path;
-use color_eyre::owo_colors::OwoColorize;
-use std::io::{self, Write};
-
-use crate::errors::CliError;
-
-
 
 /// Copy a directory recursively
 pub fn copy_dir_recursive_excluding(src: &Path, dst: &Path, ignores: &[&str]) -> Result<()> {
@@ -44,6 +40,7 @@ pub fn copy_dir_recursive_excluding(src: &Path, dst: &Path, ignores: &[&str]) ->
 }
 
 /// Check if a command exists in PATH
+#[allow(unused)]
 pub fn command_exists(command: &str) -> bool {
     std::process::Command::new("which")
         .arg(command)
@@ -63,6 +60,7 @@ pub fn print_info(message: &str) {
 }
 
 /// Print a formatted message with custom color
+#[allow(unused)]
 pub fn print_message(prefix: &str, message: &str) {
     println!("{} {}", format!("[{}]", prefix).white().bold(), message);
 }
@@ -110,6 +108,7 @@ pub fn print_error(message: &str) {
 }
 
 /// Print an error with context
+#[allow(unused)]
 pub fn print_error_with_context(message: &str, context: &str) {
     let error = CliError::new(message).with_context(context);
     eprint!("{}", error.render());
@@ -133,12 +132,14 @@ pub fn print_warning(message: &str) {
 }
 
 /// Print a warning with hint
+#[allow(unused)]
 pub fn print_warning_with_hint(message: &str, hint: &str) {
     let warning = CliError::warning(message).with_hint(hint);
     eprint!("{}", warning.render());
 }
 
 /// Print a formatted CLI error
+#[allow(unused)]
 pub fn print_cli_error(error: &CliError) {
     eprint!("{}", error.render());
 }
@@ -160,6 +161,7 @@ pub fn print_confirm(message: &str) -> std::io::Result<bool> {
 }
 
 #[derive(Default)]
+#[allow(unused)]
 pub enum Template {
     Typescript,
     Python,
@@ -169,6 +171,7 @@ pub enum Template {
     Empty,
 }
 impl Template {
+    #[allow(unused)]
     pub fn from(value: &str) -> Result<Self> {
         let template = match value {
             "ts" | "typescript" => Template::Typescript,
@@ -179,8 +182,4 @@ impl Template {
         };
         Ok(template)
     }
-}
-
-pub trait ToStr {
-    fn to_str(&self) -> &str;
 }

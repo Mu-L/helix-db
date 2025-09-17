@@ -278,10 +278,10 @@ networks:
     }
 
     /// Build Docker image for an instance
-    pub fn build_image(&self, instance_name: &str, build_target: Option<&str>) -> Result<()> {
+    pub fn build_image(&self, instance_name: &str, _build_target: Option<&str>) -> Result<()> {
         print_status("DOCKER", &format!("Building image for instance '{}'...", instance_name));
 
-        let mut args: Vec<Cow<'_, str>> = vec![Cow::Borrowed("build")];
+        let args: Vec<Cow<'_, str>> = vec![Cow::Borrowed("build")];
         // match build_target {
         //     Some(build_target) => {
         //         args.push(Cow::Borrowed("--platform"));
@@ -543,7 +543,7 @@ networks:
     pub fn push(&self, image_name: &str, registry_url: &str) -> Result<()> {
         let registry_image = format!("{registry_url}/{image_name}");
         print_status("DOCKER", &format!("Pushing image: {}", registry_image));
-        let output = Command::new("docker")
+        let _output = Command::new("docker")
             .arg("push")
             .arg(&registry_image)
             .output()?;

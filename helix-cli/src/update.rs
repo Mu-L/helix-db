@@ -11,6 +11,7 @@ const GITHUB_API_URL: &str = "https://api.github.com/repos/helixdb/helix-db/rele
 const UPDATE_CHECK_INTERVAL: u64 = 24 * 60 * 60; // 24 hours in seconds
 
 #[derive(Deserialize)]
+#[allow(unused)]
 struct GitHubRelease {
     tag_name: String,
     name: String,

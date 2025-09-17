@@ -1,9 +1,9 @@
 use eyre::Result;
 use crate::commands::integrations::fly::FlyManager;
-use crate::config::{CloudConfig, InstanceInfo};
+use crate::config::{InstanceInfo};
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success, print_warning, print_error};
+use crate::utils::{print_status, print_success, print_error};
 
 pub async fn run(instance_name: String) -> Result<()> {
     // Load project context
@@ -71,7 +71,7 @@ async fn start_cloud_instance(project: &ProjectContext, instance_name: &str, ins
             let fly = FlyManager::new(project, config.auth_type.clone()).await?;
             fly.start_instance(instance_name).await?;
         }
-        InstanceInfo::HelixCloud(config) => {
+        InstanceInfo::HelixCloud(_config) => {
             todo!()
         }
         _ => { unimplemented!() }

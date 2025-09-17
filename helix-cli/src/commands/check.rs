@@ -1,17 +1,20 @@
-use eyre::Result;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success, print_error};
+use crate::utils::{print_error, print_status, print_success};
+use eyre::Result;
 use helix_db::helixc::{
-    analyzer::analyzer::analyze,
+    analyzer::analyze,
     generator::Source as GeneratedSource,
-    parser::helix_parser::{Content, HelixParser, HxFile, Source},
+    parser::{
+        HelixParser,
+        types::{Content, HxFile, Source},
+    },
 };
 use std::{fs, path::Path};
 
 pub async fn run(instance: Option<String>) -> Result<()> {
     // Load project context
     let project = ProjectContext::find_and_load(None)?;
-    
+
     match instance {
         Some(instance_name) => check_instance(&project, &instance_name).await,
         None => check_all_instances(&project).await,
@@ -20,35 +23,38 @@ pub async fn run(instance: Option<String>) -> Result<()> {
 
 async fn check_instance(project: &ProjectContext, instance_name: &str) -> Result<()> {
     print_status("CHECK", &format!("Checking instance '{}'", instance_name));
-    
+
     // Validate instance exists in config
     let _instance_config = project.config.get_instance(instance_name)?;
-    
+
     // Check project files
     check_project_files(&project.root)?;
-    
+
     // Validate queries and schema syntax
     validate_project_syntax(&project)?;
-    
-    print_success(&format!("Instance '{}' configuration is valid", instance_name));
+
+    print_success(&format!(
+        "Instance '{}' configuration is valid",
+        instance_name
+    ));
     Ok(())
 }
 
 async fn check_all_instances(project: &ProjectContext) -> Result<()> {
     print_status("CHECK", "Checking all instances");
-    
+
     // Check project files
     check_project_files(&project.root)?;
-    
+
     // Validate queries and schema syntax
     validate_project_syntax(&project)?;
-    
+
     // Check each instance
     for instance_name in project.config.list_instances() {
         print_status("CHECK", &format!("Validating instance '{}'", instance_name));
         let _instance_config = project.config.get_instance(instance_name)?;
     }
-    
+
     print_success("All instances are valid");
     Ok(())
 }
@@ -56,17 +62,17 @@ async fn check_all_instances(project: &ProjectContext) -> Result<()> {
 fn check_project_files(project_root: &Path) -> Result<()> {
     let schema_path = project_root.join("schema.hx");
     let queries_path = project_root.join("queries.hx");
-    
+
     if !schema_path.exists() {
         print_error("schema.hx not found");
         return Err(eyre::eyre!("Missing schema.hx file"));
     }
-    
+
     if !queries_path.exists() {
         print_error("queries.hx not found");
         return Err(eyre::eyre!("Missing queries.hx file"));
     }
-    
+
     Ok(())
 }
 
@@ -80,7 +86,7 @@ fn validate_project_syntax(project: &ProjectContext) -> Result<()> {
     // Generate content and validate using helix-db parsing logic
     let content = generate_content(&hx_files)?;
     let source = parse_content(&content)?;
-    
+
     // Run static analysis to catch validation errors
     analyze_source(source)?;
 
@@ -95,7 +101,7 @@ fn collect_hx_files(root: &Path) -> Result<Vec<std::fs::DirEntry>> {
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.is_file() && path.extension().map(|s| s == "hx").unwrap_or(false) {
             files.push(entry);
         }
@@ -136,15 +142,15 @@ fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
 
 /// Parse content (similar to build.rs)
 fn parse_content(content: &Content) -> Result<Source> {
-    let source = 
+    let source =
         HelixParser::parse_source(content).map_err(|e| eyre::eyre!("Parse error: {}", e))?;
     Ok(source)
 }
 
-/// Analyze source for validation (similar to build.rs) 
+/// Analyze source for validation (similar to build.rs)
 fn analyze_source(source: Source) -> Result<GeneratedSource> {
     let (diagnostics, generated_source) = analyze(&source);
-    
+
     if !diagnostics.is_empty() {
         let error_msg = diagnostics
             .iter()

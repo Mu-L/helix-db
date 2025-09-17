@@ -59,6 +59,7 @@ impl CliError {
         }
     }
 
+    #[allow(unused)]
     pub fn info<S: Into<String>>(message: S) -> Self {
         Self {
             severity: CliErrorSeverity::Info,
@@ -80,6 +81,7 @@ impl CliError {
         self
     }
 
+    #[allow(unused)]
     pub fn with_file_path<S: Into<String>>(mut self, file_path: S) -> Self {
         self.file_path = Some(file_path.into());
         self
@@ -183,33 +185,40 @@ impl From<serde_json::Error> for CliError {
     }
 }
 
+#[allow(unused)]
 pub type CliResult<T> = Result<T, CliError>;
 
 // Convenience functions for common error patterns
+#[allow(unused)]
 pub fn config_error<S: Into<String>>(message: S) -> CliError {
     CliError::new(message)
         .with_hint("run `helix init` if you need to create a new project")
 }
 
+#[allow(unused)]
 pub fn file_error<S: Into<String>>(message: S, file_path: S) -> CliError {
     CliError::new(message).with_file_path(file_path)
 }
 
+#[allow(unused)]
 pub fn docker_error<S: Into<String>>(message: S) -> CliError {
     CliError::new(message)
         .with_hint("ensure Docker is running and accessible")
 }
 
+#[allow(unused)]
 pub fn network_error<S: Into<String>>(message: S) -> CliError {
     CliError::new(message)
         .with_hint("check your internet connection and try again")
 }
 
+#[allow(unused)]
 pub fn project_error<S: Into<String>>(message: S) -> CliError {
     CliError::new(message)
         .with_hint("ensure you're in a valid helix project directory")
 }
 
+#[allow(unused)]
 pub fn cloud_error<S: Into<String>>(message: S) -> CliError {
     CliError::new(message)
         .with_hint("run `helix auth login` to authenticate with Helix Cloud")

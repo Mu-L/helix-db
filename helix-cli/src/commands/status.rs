@@ -1,6 +1,6 @@
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
-use crate::utils::{print_error, print_header, print_field, print_newline, print_line};
+use crate::utils::{print_error, print_field, print_header, print_newline};
 use eyre::Result;
 
 pub async fn run() -> Result<()> {
@@ -47,15 +47,24 @@ pub async fn run() -> Result<()> {
     }
 
     for (name, cluster_id) in helix_cloud_instances {
-        print_field(&format!("{} (Helix Cloud)", name), &format!("cluster {}", cluster_id));
+        print_field(
+            &format!("{} (Helix Cloud)", name),
+            &format!("cluster {}", cluster_id),
+        );
     }
 
     for (name, cluster_id) in flyio_instances {
-        print_field(&format!("{} (Fly.io)", name), &format!("cluster {}", cluster_id));
+        print_field(
+            &format!("{} (Fly.io)", name),
+            &format!("cluster {}", cluster_id),
+        );
     }
 
     for (name, repository_name, region) in ecr_instances {
-        print_field(&format!("{} (AWS ECR)", name), &format!("repository {} in {}", repository_name, region));
+        print_field(
+            &format!("{} (AWS ECR)", name),
+            &format!("repository {} in {}", repository_name, region),
+        );
     }
     print_newline();
 
@@ -100,10 +109,10 @@ async fn show_container_status(project: &ProjectContext) -> Result<()> {
         } else {
             status.ports.clone()
         };
-        
+
         print_field(
             &format!("{} {}", status_icon, status.instance_name),
-            &format!("{} ({})", status.status, ports_info)
+            &format!("{} ({})", status.status, ports_info),
         );
     }
 

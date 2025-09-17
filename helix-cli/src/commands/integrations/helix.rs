@@ -5,11 +5,10 @@ use crate::project::ProjectContext;
 use eyre::{Result, eyre};
 use helix_db::helix_engine::traversal_core::config::Config;
 use helix_db::utils::styled_string::StyledString;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::env;
 use std::sync::LazyLock;
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 const DEFAULT_CLOUD_AUTHORITY: &str = "ec2-184-72-27-116.us-west-1.compute.amazonaws.com:3000";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
@@ -25,10 +24,6 @@ pub struct HelixManager<'a> {
 impl<'a> HelixManager<'a> {
     pub fn new(project: &'a ProjectContext) -> Self {
         Self { project }
-    }
-
-    fn cluster_id(id: &str) -> String {
-        format!("{id}")
     }
 
     fn credentials_path(&self) -> PathBuf {

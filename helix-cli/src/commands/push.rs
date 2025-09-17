@@ -173,7 +173,7 @@ async fn push_cloud_instance(
 
 /// Lightweight parsing for metrics when no compilation happens  
 fn parse_queries_for_metrics(project: &ProjectContext) -> Result<MetricsData> {
-    use helix_db::helixc::parser::helix_parser::{Content, HelixParser, HxFile, Source};
+    use helix_db::helixc::parser::{types::{Content, HxFile, Source}, HelixParser};
     use std::fs;
     
     // Collect .hx files in project root

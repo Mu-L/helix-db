@@ -1,8 +1,8 @@
 use crate::commands::integrations::fly::FlyManager;
-use crate::config::{CloudConfig, InstanceInfo};
+use crate::config::{InstanceInfo};
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success, print_warning};
+use crate::utils::{print_status, print_success,     };
 use eyre::Result;
 
 pub async fn run(instance_name: String) -> Result<()> {
@@ -48,7 +48,7 @@ async fn stop_cloud_instance(
         &format!("Stopping cloud instance '{}'", instance_name),
     );
 
-    let cluster_id = instance_config
+    let _cluster_id = instance_config
         .cluster_id()
         .ok_or_else(|| eyre::eyre!("Cloud instance '{}' must have a cluster_id", instance_name))?;
 
@@ -67,7 +67,7 @@ async fn stop_cloud_instance(
             let fly = FlyManager::new(project, config.auth_type.clone()).await?;
             fly.stop_instance(instance_name).await?;
         }
-        InstanceInfo::HelixCloud(config) => {
+        InstanceInfo::HelixCloud(_config) => {
             todo!()
         }
         _ => {
