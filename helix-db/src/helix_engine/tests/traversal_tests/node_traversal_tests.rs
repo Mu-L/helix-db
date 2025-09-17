@@ -375,7 +375,7 @@ fn test_with_id_type() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "name" => "test" }), None)
-        .collect_to_val();
+        .collect_to_obj();
     txn.commit().unwrap();
     #[derive(Serialize, Deserialize, Debug)]
     struct Input {
@@ -407,11 +407,11 @@ fn test_double_add_and_double_fetch() {
 
     let original_node1 = G::new_mut(Arc::clone(&db), &mut txn)
         .add_n("person", Some(props! { "entity_name" => "person1" }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let original_node2 = G::new_mut(Arc::clone(&db), &mut txn)
         .add_n("person", Some(props! { "entity_name" => "person2" }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -449,7 +449,7 @@ fn test_double_add_and_double_fetch() {
 
     let _e = G::new_mut(Arc::clone(&db), &mut txn)
         .add_e("knows", None, node1.id(), node2.id(), false, EdgeType::Node)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 

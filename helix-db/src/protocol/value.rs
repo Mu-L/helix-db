@@ -40,7 +40,7 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn to_string(&self) -> String {
+    pub fn inner_stringify(&self) -> String {
         match self {
             Value::String(s) => s.to_string(),
             Value::F32(f) => f.to_string(),
@@ -59,12 +59,12 @@ impl Value {
             Value::Id(id) => id.stringify(),
             Value::Array(arr) => arr
                 .iter()
-                .map(|v| v.to_string())
+                .map(|v| v.inner_stringify())
                 .collect::<Vec<String>>()
                 .join(" "),
             Value::Object(obj) => obj
                 .iter()
-                .map(|(k, v)| format!("{} {}", k, v.to_string()))
+                .map(|(k, v)| format!("{k} {v}"))
                 .collect::<Vec<String>>()
                 .join(" "),
             _ => panic!("Not primitive"),
@@ -1362,7 +1362,7 @@ impl From<Value> for f64 {
 }
 
 pub mod casting {
-    use crate::helixc::parser::helix_parser::FieldType;
+    use crate::helixc::parser::types::FieldType;
 
     use super::*;
 

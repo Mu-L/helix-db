@@ -1,6 +1,5 @@
-use pest::{iterators::Pair, Position};
-
-use super::helix_parser::Rule;
+use crate::helixc::parser::Rule;
+use pest::{Position, iterators::Pair};
 
 #[derive(Debug, Clone)]
 pub struct Loc {
@@ -44,12 +43,7 @@ impl Loc {
     }
 
     pub fn empty() -> Self {
-        Self::new(
-            None,
-            Span::new(1, 1),
-            Span::new(1, 1),
-            "".to_string(),
-        )
+        Self::new(None, Span::new(1, 1), Span::new(1, 1), "".to_string())
     }
 }
 

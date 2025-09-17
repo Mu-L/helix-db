@@ -49,10 +49,10 @@ fn test_drop_edge() {
 
     let node1 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!()), None)
-        .collect_to_val();
+        .collect_to_obj();
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!()), None)
-        .collect_to_val();
+        .collect_to_obj();
     let edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -62,7 +62,7 @@ fn test_drop_edge() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -99,10 +99,10 @@ fn test_drop_node() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!("name" => "test")), None)
-        .collect_to_val();
+        .collect_to_obj();
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!("name" => "test2")), None)
-        .collect_to_val();
+        .collect_to_obj();
     let _ = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -112,7 +112,7 @@ fn test_drop_node() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
     txn.commit().unwrap();
     let mut txn = storage.graph_env.write_txn().unwrap();
     let traversal = G::new(Arc::clone(&storage), &txn)
@@ -142,12 +142,12 @@ fn test_drop_traversal() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
 
     for _ in 0..10 {
         let new_node = G::new_mut(Arc::clone(&storage), &mut txn)
             .add_n("person", None, None)
-            .collect_to_val();
+            .collect_to_obj();
         let _ = G::new_mut(Arc::clone(&storage), &mut txn)
             .add_e(
                 "knows",
@@ -157,7 +157,7 @@ fn test_drop_traversal() {
                 false,
                 EdgeType::Node,
             )
-            .collect_to_val();
+            .collect_to_obj();
     }
 
     txn.commit().unwrap();
@@ -211,14 +211,14 @@ fn test_node_deletion_in_existing_graph() {
 
     let source_node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let mut other_nodes = Vec::new();
 
     for _ in 0..10 {
         let other_node = G::new_mut(Arc::clone(&storage), &mut txn)
             .add_n("person", None, None)
-            .collect_to_val();
+            .collect_to_obj();
         other_nodes.push(other_node);
     }
 
@@ -233,7 +233,7 @@ fn test_node_deletion_in_existing_graph() {
                 false,
                 EdgeType::Node,
             )
-            .collect_to_val();
+            .collect_to_obj();
 
         // 20 edges from source to other nodes
         let _ = G::new_mut(Arc::clone(&storage), &mut txn)
@@ -245,7 +245,7 @@ fn test_node_deletion_in_existing_graph() {
                 false,
                 EdgeType::Node,
             )
-            .collect_to_val();
+            .collect_to_obj();
         let _ = G::new_mut(Arc::clone(&storage), &mut txn)
             .add_e(
                 "knows",
@@ -255,7 +255,7 @@ fn test_node_deletion_in_existing_graph() {
                 false,
                 EdgeType::Node,
             )
-            .collect_to_val();
+            .collect_to_obj();
     }
 
     let edges = G::new(Arc::clone(&storage), &txn)
@@ -307,19 +307,19 @@ fn test_edge_deletion_in_existing_graph() {
 
     let node1 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let edge = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e("knows", None, node1.id(), node2.id(), false, EdgeType::Node)
-        .collect_to_val();
+        .collect_to_obj();
 
     let edge2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e("knows", None, node2.id(), node1.id(), false, EdgeType::Node)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -352,7 +352,7 @@ fn test_vector_deletion_in_existing_graph() {
 
     let node: TraversalValue = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let mut other_vectors = Vec::new();
 
@@ -363,13 +363,13 @@ fn test_vector_deletion_in_existing_graph() {
                 "vector",
                 None,
             )
-            .collect_to_val();
+            .collect_to_obj();
         other_vectors.push(other_vector);
     }
 
     let vector = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<fn(&HVector, &RoTxn) -> bool>(&[1.0, 1.0, 1.0, 1.0, 1.0, 1.0], "vector", None)
-        .collect_to_val();
+        .collect_to_obj();
 
     for other_vector in &other_vectors {
         let random_vector = other_vectors[rand::rng().random_range(0..other_vectors.len())].id();
@@ -382,13 +382,13 @@ fn test_vector_deletion_in_existing_graph() {
                 false,
                 EdgeType::Node,
             )
-            .collect_to_val();
+            .collect_to_obj();
         let _ = G::new_mut(Arc::clone(&storage), &mut txn)
             .add_e("knows", None, node.id(), vector.id(), false, EdgeType::Vec)
-            .collect_to_val();
+            .collect_to_obj();
         let _ = G::new_mut(Arc::clone(&storage), &mut txn)
             .add_e("knows", None, vector.id(), node.id(), false, EdgeType::Node)
-            .collect_to_val();
+            .collect_to_obj();
     }
 
     let edges = G::new(Arc::clone(&storage), &txn)

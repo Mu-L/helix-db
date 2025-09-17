@@ -1,7 +1,7 @@
 use core::fmt;
 use std::fmt::Display;
 
-use crate::helixc::generator::{bool_op::BoExp, traversal_steps::Traversal, utils::GenRef};
+use crate::helixc::generator::{bool_ops::BoExp, traversal_steps::Traversal, utils::GenRef};
 
 
 

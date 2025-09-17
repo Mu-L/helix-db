@@ -3,16 +3,18 @@ use crate::helixc::analyzer::error_codes::ErrorCode;
 use crate::{
     generate_error,
     helixc::{
-        analyzer::{analyzer::Ctx, errors::push_query_err, types::Type},
+        analyzer::{Ctx, errors::push_query_err, types::Type},
         generator::{
             traversal_steps::Step,
             utils::{GenRef, GeneratedValue},
         },
-        parser::{helix_parser::*, location::Loc},
+        parser::{location::Loc, types::*},
     },
 };
 use paste::paste;
 use std::collections::HashMap;
+
+pub(super) const DEFAULT_VAR_NAME: &str = "val";
 
 pub(super) fn is_valid_identifier(
     ctx: &mut Ctx,
@@ -72,6 +74,10 @@ pub(super) fn gen_id_access_or_param(original_query: &Query, name: &str) -> Gene
     } else {
         GeneratedValue::Identifier(GenRef::Std(format!("{name}.id()")))
     }
+}
+
+pub(super) fn is_in_scope(scope: &HashMap<&str, Type>, name: &str) -> bool {
+    scope.contains_key(name)
 }
 
 pub(super) fn type_in_scope(

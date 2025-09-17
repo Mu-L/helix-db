@@ -1,7 +1,7 @@
 use crate::{
     helixc::{
         generator::utils::{GeneratedValue, Separator},
-        parser::helix_parser::FieldType,
+        parser::types::FieldType,
     },
     protocol::value::casting::CastType,
 };

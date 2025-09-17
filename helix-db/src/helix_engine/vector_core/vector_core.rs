@@ -80,6 +80,7 @@ impl VectorCore {
         })
     }
 
+    /// Vector key: [v, id, ]
     #[inline(always)]
     fn vector_key(id: u128, level: usize) -> Vec<u8> {
         [VECTOR_PREFIX, &id.to_be_bytes(), &level.to_be_bytes()].concat()
@@ -106,8 +107,6 @@ impl VectorCore {
 
     #[inline]
     fn get_new_level(&self) -> usize {
-        // TODO: look at using the XOR shift algorithm for random number generation
-        // Should instead using an atomic mutable seed and the XOR shift algorithm
         let mut rng = rand::rng();
         let r: f64 = rng.random::<f64>();
         (-r.ln() * self.config.m_l).floor() as usize
@@ -175,7 +174,6 @@ impl VectorCore {
         for result in iter {
             let (key, _) = result?;
 
-            // TODO: fix here because not working at all
             let mut arr = [0u8; 16];
             let len = std::cmp::min(key.len(), 16);
             arr[..len].copy_from_slice(&key[prefix_len..(prefix_len + len)]);
@@ -188,7 +186,6 @@ impl VectorCore {
             let vector = self.get_vector(txn, neighbor_id, level, false)?;
 
             let passes_filters = match filter {
-                // TODO: look at implementing a macro that actually just runs each function rather than iterating through
                 Some(filter_slice) => filter_slice.iter().all(|f| f(&vector, txn)),
                 None => true,
             };
@@ -196,12 +193,6 @@ impl VectorCore {
             if passes_filters {
                 neighbors.push(vector);
             }
-
-            //if let Ok(vector) = self.get_vector(txn, neighbor_id, level, true) {
-            //    if filter.is_none() || filter.unwrap().iter().all(|f| f(&vector, txn)) {
-            //        neighbors.push(vector);
-            //    }
-            //}
         }
         neighbors.shrink_to_fit();
 

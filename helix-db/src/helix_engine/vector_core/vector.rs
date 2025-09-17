@@ -25,13 +25,21 @@ pub struct HVector {
     /// Whether the HVector is deleted (will be used for soft deletes)
     // pub is_deleted: bool,
     /// The level of the HVector
+    #[serde(default)]
     pub level: usize,
     /// The distance of the HVector
+    #[serde(default)]
     pub distance: Option<f64>,
     /// The actual vector
+    #[serde(default)]
     pub data: Vec<f64>,
     /// The properties of the HVector
+    #[serde(default)]
     pub properties: Option<HashMap<String, Value>>,
+
+    /// the version of the vector
+    #[serde(default)]
+    pub version: u8,
 }
 
 impl Eq for HVector {}
@@ -71,6 +79,7 @@ impl HVector {
         HVector {
             id,
             // is_deleted: false,
+            version: 1,
             level: 0,
             data,
             distance: None,
@@ -84,11 +93,23 @@ impl HVector {
         HVector {
             id,
             // is_deleted: false,
+            version: 1,
             level,
             data,
             distance: None,
             properties: None,
         }
+    }
+
+    #[inline(always)]
+    pub fn decode_vector(
+        raw_vector_bytes: &[u8],
+        properties: Option<HashMap<String, Value>>,
+        id: u128,
+    ) -> Result<Self, VectorError> {
+        let mut vector = HVector::from_bytes(id, 0, raw_vector_bytes)?;
+        vector.properties = properties;
+        Ok(vector)
     }
 
     /// Returns the data of the HVector
@@ -139,6 +160,7 @@ impl HVector {
             id,
             // is_deleted: false,
             level,
+            version: 1,
             data,
             distance: None,
             properties: None,
@@ -168,6 +190,14 @@ impl HVector {
     #[inline(always)]
     pub fn get_distance(&self) -> f64 {
         self.distance.unwrap_or(2.0)
+    }
+
+    #[inline(always)]
+    pub fn get_label(&self) -> Option<&Value> {
+        match &self.properties {
+            Some(p) => p.get("label"),
+            None => None
+        } 
     }
 }
 
@@ -270,4 +300,3 @@ impl Filterable for HVector {
         unreachable!()
     }
 }
-

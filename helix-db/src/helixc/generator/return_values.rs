@@ -27,7 +27,7 @@ impl Display for ReturnValue {
             ReturnType::NamedExpr(name) => {
                 writeln!(
                     f,
-                    "    return_vals.insert({}.to_string(), ReturnValue::from_traversal_value_array_with_mixin({}.clone(), remapping_vals.borrow_mut()));",
+                    "    return_vals.insert({}.to_string(), ReturnValue::from_traversal_value_iter_with_mixin({}.clone(), remapping_vals.borrow_mut()));",
                     name, self.value
                 )
             }
@@ -41,7 +41,7 @@ impl Display for ReturnValue {
             ReturnType::UnnamedExpr => {
                 writeln!(
                     f,
-                    "    return_vals.insert(\"data\".to_string(), ReturnValue::from_traversal_value_array_with_mixin({}.clone(), remapping_vals.borrow_mut()));",
+                    "    return_vals.insert(\"data\".to_string(), ReturnValue::from_traversal_value_iter_with_mixin({}.clone(), remapping_vals.borrow_mut()));",
                     self.value
                 )
             }
@@ -70,9 +70,9 @@ impl ReturnValue {
             ReturnType::NamedLiteral(name) => name.inner().inner().to_string(),
             ReturnType::NamedExpr(name) => name.inner().inner().to_string(),
             ReturnType::SingleExpr(name) => name.inner().inner().to_string(),
-            ReturnType::UnnamedExpr => todo!(),
-            ReturnType::HashMap => todo!(),
-            ReturnType::Array => todo!(),
+            ReturnType::UnnamedExpr => unimplemented!(),
+            ReturnType::HashMap => unimplemented!(),
+            ReturnType::Array => unimplemented!(),
         }
     }
 

@@ -52,15 +52,15 @@ fn test_from_v() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let vector = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<fn(&HVector, &RoTxn) -> bool>(&[1.0, 2.0, 3.0], "vector", None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let _ = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e("knows", None, vector.id(), node.id(), false, EdgeType::Vec)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -83,15 +83,15 @@ fn test_to_v() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let vector = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<fn(&HVector, &RoTxn) -> bool>(&[1.0, 2.0, 3.0], "vector", None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let _ = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e("knows", None, node.id(), vector.id(), false, EdgeType::Vec)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
     println!("node: {node:?}");
@@ -116,7 +116,7 @@ fn test_brute_force_vector_search() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let vectors = vec![
         vec![1.0, 2.0, 3.0],
@@ -128,7 +128,7 @@ fn test_brute_force_vector_search() {
     for vector in vectors {
         let vector_id = G::new_mut(Arc::clone(&storage), &mut txn)
             .insert_v::<fn(&HVector, &RoTxn) -> bool>(&vector, "vector", None)
-            .collect_to_val()
+            .collect_to_obj()
             .id();
         let _ = G::new_mut(Arc::clone(&storage), &mut txn)
             .add_e(
@@ -139,7 +139,7 @@ fn test_brute_force_vector_search() {
                 false,
                 EdgeType::Vec,
             )
-            .collect_to_val()
+            .collect_to_obj()
             .id();
         vector_ids.push(vector_id);
     }
@@ -169,15 +169,15 @@ fn test_order_by_desc() {
 
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 10 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 20 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let node3 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props! { "age" => 30 }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -214,7 +214,7 @@ fn test_vector_search() {
         ];
         let _ = G::new_mut(Arc::clone(&storage), &mut txn)
             .insert_v::<fn(&HVector, &RoTxn) -> bool>(&random_vector, "vector", None)
-            .collect_to_val();
+            .collect_to_obj();
         println!("inserted vector: {i:?}");
         i += 1;
     }
@@ -235,7 +235,7 @@ fn test_vector_search() {
     for vector in vectors {
         let node = G::new_mut(Arc::clone(&storage), &mut txn)
             .insert_v::<fn(&HVector, &RoTxn) -> bool>(&vector, "vector", None)
-            .collect_to_val();
+            .collect_to_obj();
         inserted_vectors.push(node.id());
         println!("inserted vector: {i:?}");
         i += 1;
@@ -269,13 +269,13 @@ fn test_delete_vector() {
 
     let vector = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<fn(&HVector, &RoTxn) -> bool>(&[1.0, 1.0, 1.0, 1.0, 1.0, 1.0], "vector", None)
-        .collect_to_val();
+        .collect_to_obj();
     let node = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
     let _ = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e("knows", None, node.id(), vector.id(), false, EdgeType::Vec)
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -349,11 +349,11 @@ fn test_drop_vectors_then_add_them_back() {
 
     let entity = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("Entity", Some(props! { "name" => "entity1" }), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let embedding = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<fn(&HVector, &RoTxn) -> bool>(&[1.0, 1.0, 1.0, 1.0, 1.0, 1.0], "vector", None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let _ = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -364,7 +364,7 @@ fn test_drop_vectors_then_add_them_back() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 
@@ -451,7 +451,7 @@ fn test_drop_vectors_then_add_them_back() {
 
     let embedding = G::new_mut(Arc::clone(&storage), &mut txn)
         .insert_v::<fn(&HVector, &RoTxn) -> bool>(&[1.0, 1.0, 1.0, 1.0, 1.0, 1.0], "vector", None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let _ = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -462,7 +462,7 @@ fn test_drop_vectors_then_add_them_back() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
 

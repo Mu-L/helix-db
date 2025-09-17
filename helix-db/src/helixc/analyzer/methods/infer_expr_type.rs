@@ -1,11 +1,12 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
+use crate::helixc::analyzer::utils::{DEFAULT_VAR_NAME, is_in_scope};
 use crate::helixc::generator::utils::EmbedData;
 use crate::{
     generate_error,
     helixc::{
         analyzer::{
-            analyzer::Ctx,
+            Ctx,
             errors::push_query_err,
             methods::traversal_validation::validate_traversal,
             types::Type,
@@ -14,7 +15,7 @@ use crate::{
             },
         },
         generator::{
-            bool_op::BoExp,
+            bool_ops::BoExp,
             queries::Query as GeneratedQuery,
             source_steps::{
                 AddE, AddN, AddV, SearchBM25, SearchVector as GeneratedSearchVector, SourceStep,
@@ -26,7 +27,7 @@ use crate::{
             },
             utils::{GenRef, GeneratedValue, Separator, VecData},
         },
-        parser::helix_parser::*,
+        parser::types::*,
     },
     protocol::date::Date,
 };
@@ -57,7 +58,6 @@ pub(crate) fn infer_expr_type<'a>(
     parent_ty: Option<Type>,
     gen_query: &mut GeneratedQuery,
 ) -> (Type, Option<GeneratedStatement>) {
-    // TODO: Look at returning statement as well or passing mut query to push to
     use ExpressionType::*;
     let expr: &ExpressionType = &expression.expr;
     match expr {
@@ -98,32 +98,40 @@ pub(crate) fn infer_expr_type<'a>(
             Type::Boolean,
             Some(GeneratedStatement::Literal(GenRef::Literal(b.to_string()))),
         ),
+        // Gets expression type for each element in the array
+        // Checks if all elements are of the same type
+        // Returns the type of the array and the statements to generate from the array
         ArrayLiteral(a) => {
             let mut inner_array_ty = None;
-            let stmts = a
-                .iter()
-                .map(|e| {
-                    let (ty, stmt) = infer_expr_type(
-                        ctx,
-                        e,
-                        scope,
-                        original_query,
-                        parent_ty.clone(),
-                        gen_query,
-                    );
-                    if inner_array_ty.is_none() {
-                        inner_array_ty = Some(ty);
-                    } else {
-                        // TODO handle type is same for all elements
+            let result = a.iter().try_fold(Vec::new(), |mut stmts, e| {
+                let (ty, stmt) =
+                    infer_expr_type(ctx, e, scope, original_query, parent_ty.clone(), gen_query);
+                let type_str = ty.kind_str();
+                if let Some(inner_array_ty) = &inner_array_ty {
+                    if inner_array_ty != &ty {
+                        generate_error!(ctx, original_query, e.loc.clone(), E306, type_str);
                     }
-                    // TODO handle none for stmt
-                    stmt.unwrap()
-                })
-                .collect::<Vec<_>>();
-            (
-                inner_array_ty.unwrap(),
-                Some(GeneratedStatement::Array(stmts)),
-            )
+                } else {
+                    inner_array_ty = Some(ty);
+                }
+                match stmt {
+                    Some(s) => {
+                        stmts.push(s);
+                        Ok(stmts)
+                    }
+                    None => {
+                        generate_error!(ctx, original_query, e.loc.clone(), E306, type_str);
+                        Err(())
+                    }
+                }
+            });
+            match result {
+                Ok(stmts) => (
+                    Type::Array(Box::new(inner_array_ty.unwrap())),
+                    Some(GeneratedStatement::Array(stmts)),
+                ),
+                Err(()) => (Type::Unknown, Some(GeneratedStatement::Empty)),
+            }
         }
         Traversal(tr) => {
             let mut gen_traversal = GeneratedTraversal::default();
@@ -136,7 +144,6 @@ pub(crate) fn infer_expr_type<'a>(
                 &mut gen_traversal,
                 gen_query,
             );
-            // push query
             let stmt = GeneratedStatement::Traversal(gen_traversal);
 
             if matches!(expr, Exists(_)) {
@@ -167,14 +174,13 @@ pub(crate) fn infer_expr_type<'a>(
                     .filter_map(|p| p.default_value.clone().map(|v| (p.name.clone(), v)))
                     .collect::<Vec<(String, GeneratedValue)>>();
 
-                // Validate fields if both type and fields are present
+                // Validate fields of add node by traversing the fields
+                // checking they exist in the schema, then checking their types
                 let (properties, secondary_indices) = match &add.fields {
-                    Some(fields) => {
-                        // Get the field set before validation
-                        // TODO: Check field types
-                        let field_set = ctx.node_fields.get(ty.as_str()).cloned();
-                        if let Some(field_set) = field_set {
-                            for (field_name, value) in fields {
+                    Some(fields_to_add) => {
+                        let field_set_from_schema = ctx.node_fields.get(ty.as_str()).cloned();
+                        if let Some(field_set) = field_set_from_schema {
+                            for (field_name, field_value) in fields_to_add {
                                 if !field_set.contains_key(field_name.as_str()) {
                                     generate_error!(
                                         ctx,
@@ -186,7 +192,7 @@ pub(crate) fn infer_expr_type<'a>(
                                         ty.as_str()
                                     );
                                 }
-                                match value {
+                                match field_value {
                                     ValueType::Identifier { value, loc } => {
                                         if is_valid_identifier(
                                             ctx,
@@ -202,10 +208,36 @@ pub(crate) fn infer_expr_type<'a>(
                                                 E301,
                                                 value.as_str()
                                             );
-                                        };
+                                        } else {
+                                            let variable_type = scope.get(value.as_str()).unwrap();
+                                            if variable_type
+                                                != &Type::from(
+                                                    field_set
+                                                        .get(field_name.as_str())
+                                                        .unwrap()
+                                                        .field_type
+                                                        .clone(),
+                                                )
+                                            {
+                                                generate_error!(
+                                                    ctx,
+                                                    original_query,
+                                                    loc.clone(),
+                                                    E205,
+                                                    value.as_str(),
+                                                    &variable_type.to_string(),
+                                                    &field_set
+                                                        .get(field_name.as_str())
+                                                        .unwrap()
+                                                        .field_type
+                                                        .to_string(),
+                                                    "node",
+                                                    ty.as_str()
+                                                );
+                                            }
+                                        }
                                     }
                                     ValueType::Literal { value, loc } => {
-                                        // check against type
                                         let field_type = ctx
                                             .node_fields
                                             .get(ty.as_str())
@@ -221,6 +253,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 loc.clone(),
                                                 E205,
                                                 value.as_str(),
+                                                &value.to_string(),
                                                 &field_type.to_string(),
                                                 "node",
                                                 ty.as_str()
@@ -231,7 +264,7 @@ pub(crate) fn infer_expr_type<'a>(
                                 }
                             }
                         }
-                        let mut properties = fields
+                        let mut properties = fields_to_add
                             .iter()
                             .map(|(field_name, value)| {
                                 (
@@ -267,13 +300,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 )),
                                             }
                                         }
-                                        ValueType::Identifier { value, loc } => {
-                                            is_valid_identifier(
-                                                ctx,
-                                                original_query,
-                                                loc.clone(),
-                                                value.as_str(),
-                                            );
+                                        ValueType::Identifier { value, .. } => {
                                             gen_identifier_or_param(
                                                 original_query,
                                                 value,
@@ -397,7 +424,34 @@ pub(crate) fn infer_expr_type<'a>(
                                                 E301,
                                                 value.as_str()
                                             );
-                                        };
+                                        } else {
+                                            let variable_type = scope.get(value.as_str()).unwrap();
+                                            if variable_type
+                                                != &Type::from(
+                                                    field_set
+                                                        .get(field_name.as_str())
+                                                        .unwrap()
+                                                        .field_type
+                                                        .clone(),
+                                                )
+                                            {
+                                                generate_error!(
+                                                    ctx,
+                                                    original_query,
+                                                    loc.clone(),
+                                                    E205,
+                                                    value.as_str(),
+                                                    &variable_type.to_string(),
+                                                    &field_set
+                                                        .get(field_name.as_str())
+                                                        .unwrap()
+                                                        .field_type
+                                                        .to_string(),
+                                                    "edge",
+                                                    ty.as_str()
+                                                );
+                                            }
+                                        }
                                     }
                                     ValueType::Literal { value, loc } => {
                                         // check against type
@@ -416,6 +470,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 loc.clone(),
                                                 E205,
                                                 value.as_str(),
+                                                &value.to_string(),
                                                 &field_type.to_string(),
                                                 "edge",
                                                 ty.as_str()
@@ -533,7 +588,6 @@ pub(crate) fn infer_expr_type<'a>(
                     from,
                     label,
                     properties,
-                    // secondary_indices: None, // TODO: Add secondary indices by checking against labeled `INDEX` fields in schema
                 };
                 let stmt = GeneratedStatement::Traversal(GeneratedTraversal {
                     source_step: Separator::Period(SourceStep::AddE(add_e)),
@@ -592,7 +646,34 @@ pub(crate) fn infer_expr_type<'a>(
                                                 E301,
                                                 value.as_str()
                                             );
-                                        };
+                                        } else {
+                                            let variable_type = scope.get(value.as_str()).unwrap();
+                                            if variable_type
+                                                != &Type::from(
+                                                    field_set
+                                                        .get(field_name.as_str())
+                                                        .unwrap()
+                                                        .field_type
+                                                        .clone(),
+                                                )
+                                            {
+                                                generate_error!(
+                                                    ctx,
+                                                    original_query,
+                                                    loc.clone(),
+                                                    E205,
+                                                    value.as_str(),
+                                                    &variable_type.to_string(),
+                                                    &field_set
+                                                        .get(field_name.as_str())
+                                                        .unwrap()
+                                                        .field_type
+                                                        .to_string(),
+                                                    "vector",
+                                                    ty.as_str()
+                                                );
+                                            }
+                                        }
                                     }
                                     ValueType::Literal { value, loc } => {
                                         // check against type
@@ -611,6 +692,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 loc.clone(),
                                                 E205,
                                                 value.as_str(),
+                                                &value.to_string(),
                                                 &field_type.to_string(),
                                                 "vector",
                                                 ty.as_str()
@@ -1056,10 +1138,9 @@ pub(crate) fn infer_expr_type<'a>(
             assert!(matches!(stmt, Some(GeneratedStatement::Traversal(_))));
             let traversal = match stmt.unwrap() {
                 GeneratedStatement::Traversal(mut tr) => {
-                    // TODO: FIX VALUE HERE
                     let source_variable = match tr.source_step.inner() {
                         SourceStep::Identifier(id) => id.inner().clone(),
-                        _ => "val".to_string(),
+                        _ => DEFAULT_VAR_NAME.to_string(),
                     };
                     tr.traversal_type = TraversalType::NestedFrom(GenRef::Std(source_variable));
                     tr.should_collect = ShouldCollect::No;
@@ -1074,7 +1155,6 @@ pub(crate) fn infer_expr_type<'a>(
         }
         Empty => (Type::Unknown, Some(GeneratedStatement::Empty)),
         BM25Search(bm25_search) => {
-            // TODO: look into how best do type checking for type passed in
             if let Some(ref ty) = bm25_search.type_arg
                 && !ctx.node_set.contains(ty.as_str())
             {
@@ -1092,18 +1172,8 @@ pub(crate) fn infer_expr_type<'a>(
                 }
                 Some(ValueType::Identifier { value: i, loc: _ }) => {
                     is_valid_identifier(ctx, original_query, bm25_search.loc.clone(), i.as_str());
-                    // if is in params then use data.
-                    let _ = type_in_scope(
-                        ctx,
-                        original_query,
-                        bm25_search.loc.clone(),
-                        scope,
-                        i.as_str(),
-                    );
 
-                    if original_query.parameters.iter().any(|p| p.name.1 == *i)
-                        || scope.get(i.as_str()).is_some()
-                    {
+                    if is_in_scope(scope, i.as_str()) {
                         gen_identifier_or_param(original_query, i, true, false)
                     } else {
                         generate_error!(
@@ -1205,10 +1275,6 @@ pub(crate) fn infer_expr_type<'a>(
                     source_step: Separator::Period(SourceStep::SearchBM25(search_bm25)),
                 })),
             )
-        }
-        _ => {
-            println!("Unknown expression: {expr:?}");
-            todo!()
         }
     }
 }

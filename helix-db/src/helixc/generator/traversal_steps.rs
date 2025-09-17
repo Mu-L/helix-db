@@ -1,8 +1,8 @@
-use crate::helixc::generator::utils::{write_properties, VecData};
+use crate::helixc::generator::utils::{VecData, write_properties};
 
 use super::{
-    bool_op::{BoolOp, BoExp},
-    object_remapping_generation::Remapping,
+    bool_ops::{BoExp, BoolOp},
+    object_remappings::Remapping,
     source_steps::SourceStep,
     utils::{GenRef, GeneratedValue, Order, Separator},
 };
@@ -56,7 +56,7 @@ pub enum ShouldCollect {
 impl Display for ShouldCollect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ShouldCollect::ToVec => write!(f, ".collect_to::<Vec<_>>()"),
+            ShouldCollect::ToVec => write!(f, ""),
             ShouldCollect::ToVal => write!(f, ".collect_to_obj()"),
             ShouldCollect::Try => write!(f, "?"),
             ShouldCollect::No => write!(f, ""),
@@ -123,12 +123,7 @@ impl Display for Traversal {
                     write!(f, "\n{step}")?;
                 }
                 write!(f, "\n    .collect_to::<Vec<_>>();")?;
-                write!(
-                    f,
-                    "G::new_mut_from(Arc::clone(&db), &mut txn, update_tr)", // TODO: make
-                                                                             // this less
-                                                                             // scrappy
-                )?;
+                write!(f, "G::new_mut_from(Arc::clone(&db), &mut txn, update_tr)",)?;
                 write!(f, "\n    .update({})", write_properties(properties))?;
                 write!(f, "\n    .collect_to_obj()")?;
                 write!(f, "}}")?;
@@ -161,6 +156,7 @@ pub enum Step {
 
     // utils
     Count,
+
     Where(Where),
     Range(Range),
     OrderBy(OrderBy),
@@ -183,6 +179,10 @@ pub enum Step {
 
     // search vector
     SearchVector(SearchVectorStep),
+
+    GroupBy(GroupBy),
+
+    AggregateBy(AggregateBy),
 }
 impl Display for Step {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -206,6 +206,8 @@ impl Display for Step {
             Step::Remapping(remapping) => write!(f, "{remapping}"),
             Step::ShortestPath(shortest_path) => write!(f, "{shortest_path}"),
             Step::SearchVector(search_vector) => write!(f, "{search_vector}"),
+            Step::GroupBy(group_by) => write!(f, "{group_by}"),
+            Step::AggregateBy(aggregate_by) => write!(f, "{aggregate_by}"),
         }
     }
 }
@@ -230,6 +232,8 @@ impl Debug for Step {
             Step::Remapping(_) => write!(f, "Remapping"),
             Step::ShortestPath(_) => write!(f, "ShortestPath"),
             Step::SearchVector(_) => write!(f, "SearchVector"),
+            Step::GroupBy(_) => write!(f, "GroupBy"),
+            Step::AggregateBy(_) => write!(f, "AggregateBy"),
         }
     }
 }
@@ -279,14 +283,11 @@ impl Display for InE {
 #[derive(Clone)]
 pub enum Where {
     Ref(WhereRef),
-    Mut(WhereMut),
 }
 impl Display for Where {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Where::Ref(wr) => write!(f, "{wr}"),
-            Where::Mut(wm) => write!(f, "{wm}"),
-        }
+        let Where::Ref(wr) = self;
+        write!(f, "{wr}")
     }
 }
 
@@ -307,16 +308,6 @@ impl Display for WhereRef {
             }})",
             self.expr
         )
-    }
-}
-
-#[derive(Clone)]
-pub struct WhereMut {
-    pub expr: BoExp,
-}
-impl Display for WhereMut {
-    fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
     }
 }
 
@@ -344,6 +335,29 @@ impl Display for OrderBy {
         }
     }
 }
+
+#[derive(Clone)]
+pub struct GroupBy {
+    pub should_count: bool,
+    pub properties: Vec<GenRef<String>>,
+}
+impl Display for GroupBy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "group_by(&[{}])", self.properties.iter().map(|s|s.to_string()).collect::<Vec<_>>().join(","))
+    }
+}
+
+#[derive(Clone)]
+pub struct AggregateBy {
+    pub should_count: bool,
+    pub properties: Vec<GenRef<String>>,
+}
+impl Display for AggregateBy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "aggregate_by(&[{}])", self.properties.iter().map(|s|s.to_string()).collect::<Vec<_>>().join(","))
+    }
+}
+
 
 #[derive(Clone)]
 pub struct ShortestPath {

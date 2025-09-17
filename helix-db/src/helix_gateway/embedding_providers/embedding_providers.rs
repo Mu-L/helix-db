@@ -5,9 +5,6 @@ use sonic_rs::{JsonContainerTrait, json};
 use std::env;
 use url::Url;
 
-// TODO: add support for rust native embedding model libs as well so it runs fully built in
-//      in case we have a gpu or something on the server we're running it on
-
 /// Trait for embedding models to fetch text embeddings.
 #[allow(async_fn_in_trait)]
 pub trait EmbeddingModel {

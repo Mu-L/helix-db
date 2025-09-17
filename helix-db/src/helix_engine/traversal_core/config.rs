@@ -1,6 +1,6 @@
 use crate::{
     helix_engine::types::GraphError,
-    helixc::analyzer::analyzer::{INTROSPECTION_DATA, SECONDARY_INDICES},
+    helixc::analyzer::{INTROSPECTION_DATA, SECONDARY_INDICES},
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf};

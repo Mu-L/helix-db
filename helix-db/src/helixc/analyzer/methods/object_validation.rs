@@ -1,12 +1,12 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
-use crate::helixc::analyzer::utils::FieldLookup;
-use crate::helixc::generator::object_remapping_generation::SingleFieldTraversalRemapping;
+use crate::helixc::analyzer::utils::{FieldLookup, DEFAULT_VAR_NAME};
+use crate::helixc::generator::object_remappings::SingleFieldTraversalRemapping;
 use crate::{
     generate_error,
     helixc::{
         analyzer::{
-            analyzer::Ctx,
+            Ctx,
             errors::push_query_err,
             methods::{infer_expr_type::infer_expr_type, traversal_validation::validate_traversal},
             types::Type,
@@ -16,7 +16,7 @@ use crate::{
             },
         },
         generator::{
-            object_remapping_generation::{
+            object_remappings::{
                 ExistsRemapping, IdentifierRemapping, ObjectRemapping, Remapping, RemappingType,
                 TraversalRemapping, ValueRemapping,
             },
@@ -29,7 +29,7 @@ use crate::{
             },
             utils::{GenRef, Separator},
         },
-        parser::{helix_parser::*, location::Loc},
+        parser::{types::*, location::Loc},
     },
 };
 use paste::paste;
@@ -191,13 +191,10 @@ pub(crate) fn parse_object_remapping<'a>(
                         Some(parent_ty.clone()),
                         gen_query,
                     );
-                    assert!(stmt.is_some());
-                    assert!(matches!(stmt, Some(Statement::Traversal(_))));
                     let expr = match stmt.unwrap() {
                         Statement::Traversal(mut tr) => {
                             tr.traversal_type =
-                                // TODO: FIX VALUE HERE
-                                TraversalType::NestedFrom(GenRef::Std("val".to_string()));
+                                TraversalType::NestedFrom(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
                             tr
                         }
                         _ => unreachable!(),
@@ -267,7 +264,7 @@ pub(crate) fn parse_object_remapping<'a>(
                 RemappingType::ValueRemapping(ValueRemapping {
                     variable_name: closure_variable.get_variable_name(),
                     field_name: key.clone(),
-                    value: GenRef::from(lit.clone()), // TODO: Implement
+                    value: GenRef::from(lit.clone()),
                     should_spread,
                 })
             }
@@ -476,7 +473,6 @@ fn parse_traversal_as_remapping_value<'a>(
                     should_spread,
                 })
             }
-            // TODO: IF CLOSURE
             StepType::Object(ref object)
                 if object.fields.len() == 1 && traversal.steps.len() == 1 =>
             {

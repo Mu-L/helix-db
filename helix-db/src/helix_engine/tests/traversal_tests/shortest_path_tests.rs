@@ -29,16 +29,16 @@ fn test_shortest_path() {
 
     let node1 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!("name" => "node1")), None)
-        .collect_to_val();
+        .collect_to_obj();
     let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!("name" => "node2")), None)
-        .collect_to_val();
+        .collect_to_obj();
     let node3 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!("name" => "node3")), None)
-        .collect_to_val();
+        .collect_to_obj();
     let node4 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_n("person", Some(props!("name" => "node4")), None)
-        .collect_to_val();
+        .collect_to_obj();
 
     let edge1 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
@@ -49,7 +49,7 @@ fn test_shortest_path() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
     let edge2 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -59,7 +59,7 @@ fn test_shortest_path() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
     let edge3 = G::new_mut(Arc::clone(&storage), &mut txn)
         .add_e(
             "knows",
@@ -69,7 +69,7 @@ fn test_shortest_path() {
             false,
             EdgeType::Node,
         )
-        .collect_to_val();
+        .collect_to_obj();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();

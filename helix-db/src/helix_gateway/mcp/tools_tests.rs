@@ -75,7 +75,7 @@ fn test_mcp_tool_search_vector() {
     // creates nodes and vectors
     let node = G::new_mut(Arc::clone(&engine.storage), &mut txn)
         .add_n("person", None, None)
-        .collect_to_val();
+        .collect_to_obj();
     let mut vectors = vec![
         vec![1.0, 1.0, 1.0],
         vec![0.0, 0.0, 0.0],
@@ -95,11 +95,11 @@ fn test_mcp_tool_search_vector() {
     for vector in vectors {
         let vector = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .insert_v::<fn(&HVector, &RoTxn) -> bool>(&vector, "vector", None)
-            .collect_to_val();
+            .collect_to_obj();
 
         let _ = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_e("knows", None, node.id(), vector.id(), false, EdgeType::Vec)
-            .collect_to_val();
+            .collect_to_obj();
     }
     txn.commit().unwrap();
     let txn = engine.storage.graph_env.read_txn().unwrap();

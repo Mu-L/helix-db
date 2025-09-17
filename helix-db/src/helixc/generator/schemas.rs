@@ -1,7 +1,13 @@
 use core::fmt;
 use std::fmt::Display;
 
-use crate::helixc::{generator::{tsdisplay::ToTypeScript, utils::{GeneratedType, GeneratedValue}}, parser::helix_parser::FieldPrefix};
+use crate::helixc::{
+    generator::{
+        tsdisplay::ToTypeScript,
+        utils::{GeneratedType, GeneratedValue},
+    },
+    parser::types::FieldPrefix,
+};
 
 #[derive(Clone)]
 pub struct NodeSchema {
