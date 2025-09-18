@@ -123,7 +123,7 @@ impl Filterable for Node {
     #[inline(always)]
     fn check_property(&self, key: &str) -> Result<Cow<'_,Value>, GraphError> {
         match key {
-            "id" => Ok(Cow::Owned(Value::String(ID::from(self.id).stringify()))),
+            "id" | "ID" | "Id"=> Ok(Cow::Owned(Value::String(ID::from(self.id).stringify()))),
             "label" => Ok(Cow::Owned(Value::from(self.label.to_string()))),
             _ =>  match &self.properties {
                 Some(properties) => properties

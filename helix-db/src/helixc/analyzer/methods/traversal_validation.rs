@@ -1044,13 +1044,15 @@ pub(crate) fn validate_traversal<'a>(
                 let properties = aggr
                     .properties
                     .iter()
-                    .map(|p| GenRef::Std(p.clone()))
+                    .map(|p| GenRef::Std(format!("\"{}\".to_string()", p.clone())))
                     .collect::<Vec<_>>();
                 let should_count = matches!(previous_step, Some(StepType::Count));
-
+                let _ = gen_traversal.steps.pop();
+                cur_ty = Type::Aggregate;
+                gen_traversal.should_collect = ShouldCollect::Try;
                 gen_traversal
                     .steps
-                    .push(Separator::Comma(GeneratedStep::AggregateBy(AggregateBy {
+                    .push(Separator::Period(GeneratedStep::AggregateBy(AggregateBy {
                         properties,
                         should_count,
                     })))
@@ -1059,13 +1061,15 @@ pub(crate) fn validate_traversal<'a>(
                 let properties = gb
                     .properties
                     .iter()
-                    .map(|p| GenRef::Std(p.clone()))
+                    .map(|p| GenRef::Std(format!("\"{}\".to_string()", p.clone())))
                     .collect::<Vec<_>>();
                 let should_count = matches!(previous_step, Some(StepType::Count));
-
+                let _ = gen_traversal.steps.pop();
+                cur_ty = Type::Aggregate;
+                gen_traversal.should_collect = ShouldCollect::Try;
                 gen_traversal
                     .steps
-                    .push(Separator::Comma(GeneratedStep::GroupBy(GroupBy {
+                    .push(Separator::Period(GeneratedStep::GroupBy(GroupBy {
                         properties,
                         should_count,
                     })))

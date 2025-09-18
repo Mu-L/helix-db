@@ -132,7 +132,7 @@ impl ReturnValue {
     }
 
     #[inline]
-    pub fn from_traversal_iter_array_with_mixin<'a>(
+    pub fn from_traversal_value_iter_with_mixin<'a>(
         traversal_iter: RoTraversalIterator<
             'a,
             impl Iterator<Item = Result<TraversalValue, GraphError>>,
@@ -324,12 +324,9 @@ impl ReturnValue {
             ReturnValue::from(item.label().to_string()),
         );
         if item.properties_ref().is_some() {
-            properties.extend(
-                item.properties()
-                    .unwrap()
-                    .into_iter()
-                    .map(|(k, v)| (k, ReturnValue::from(v))),
-            );
+            for (k, v) in item.properties().unwrap().into_iter() {
+                properties.check_and_insert(remapping, k, ReturnValue::from(v));
+            }
         }
 
         ReturnValue::Object(properties)

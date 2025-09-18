@@ -2,12 +2,13 @@ use std::collections::HashMap;
 
 use crate::protocol::value::Value;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct GroupByItem {
     pub values: HashMap<String, Value>,
     pub count: i32,
 }
 
+#[derive(Clone)]
 pub enum GroupBy {
     Group(HashMap<String, GroupByItem>),
     Count(HashMap<String, GroupByItem>),

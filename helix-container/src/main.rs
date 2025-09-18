@@ -10,7 +10,7 @@ use helix_db::helix_gateway::{
     router::router::{HandlerFn, HandlerSubmission},
 };
 use std::{collections::HashMap, sync::Arc};
-use tracing::{Level, info};
+use tracing::{info, Level};
 use tracing_subscriber::util::SubscriberInitExt;
 
 mod queries;
