@@ -141,11 +141,11 @@ impl Display for BoExp {
             BoExp::Not(expr) => write!(f, "!({expr})"),
             BoExp::And(exprs) => {
                 let displayed_exprs = exprs.iter().map(|s| format!("{s}")).collect::<Vec<_>>();
-                write!(f, "{}", displayed_exprs.join(" && "))
+                write!(f, "({})", displayed_exprs.join(" && "))
             }
             BoExp::Or(exprs) => {
                 let displayed_exprs = exprs.iter().map(|s| format!("{s}")).collect::<Vec<_>>();
-                write!(f, "{}", displayed_exprs.join(" || "))
+                write!(f, "({})", displayed_exprs.join(" || "))
             }
             BoExp::Exists(traversal) => write!(f, "Exist::exists(&mut {traversal})"),
             BoExp::Expr(traversal) => write!(f, "{traversal}"),
