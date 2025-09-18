@@ -5,7 +5,7 @@ use crate::{
     utils::{print_info, print_line, print_status, print_success, print_warning},
 };
 use color_eyre::owo_colors::OwoColorize;
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
@@ -28,12 +28,12 @@ pub async fn run(action: AuthAction) -> Result<()> {
 async fn login() -> Result<()> {
     print_status("LOGIN", "Logging into Helix Cloud");
 
-    let home = dirs::home_dir().ok_or_else(|| eyre::eyre!("Cannot find home directory"))?;
+    let home = dirs::home_dir().ok_or_eyre("Cannot find home directory")?;
     let config_path = home.join(".helix");
     let cred_path = config_path.join("credentials");
 
     if !cred_path.exists() {
-        fs::create_dir_all(&cred_path).unwrap();
+        fs::create_dir_all(&cred_path)?;
     }
 
     // not needed?
@@ -64,11 +64,11 @@ async fn logout() -> Result<()> {
     print_status("LOGOUT", "Logging out of Helix Cloud");
 
     // Remove credentials file
-    let home = dirs::home_dir().ok_or_else(|| eyre::eyre!("Cannot find home directory"))?;
-    let credentials_path = home.join(".helix").join("credentials.toml");
+    let home = dirs::home_dir().ok_or_eyre("Cannot find home directory")?;
+    let credentials_path = home.join(".helix").join("credentials");
 
     if credentials_path.exists() {
-        std::fs::remove_file(&credentials_path)?;
+        fs::remove_file(&credentials_path)?;
         print_success("Logged out successfully");
     } else {
         print_info("Not currently logged in");

@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, sync::LazyLock};
 
 use crate::{
     MetricsAction,
@@ -90,14 +90,15 @@ async fn show_metrics_status() -> Result<()> {
     Ok(())
 }
 
+static EMAIL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap());
+
 fn ask_for_email() -> String {
     print_line("Please enter your email address:");
     let mut email = String::new();
     io::stdin().read_line(&mut email).unwrap();
     let email = email.trim().to_string();
     // validate email
-    let re = Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap();
-    if !re.is_match(&email) {
+    if !EMAIL_REGEX.is_match(&email) {
         print_line("Invalid email address");
         return ask_for_email();
     }

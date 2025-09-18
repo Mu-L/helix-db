@@ -338,35 +338,25 @@ impl<'a> EcrManager<'a> {
             .trim()
             .to_string();
 
-        // Login to ECR
-        let _login_output = tokio::process::Command::new("docker")
-            .args([
-                "login",
-                "--username",
-                "AWS",
-                "--password-stdin",
-                registry_url,
-            ])
-            .stdin(std::process::Stdio::piped())
-            .output()
-            .await?;
-
-        if let Some(mut stdin) = tokio::process::Command::new("docker")
-            .args([
-                "login",
-                "--username",
-                "AWS",
-                "--password-stdin",
-                registry_url,
-            ])
-            .stdin(std::process::Stdio::piped())
-            .spawn()?
-            .stdin
-        {
-            use tokio::io::AsyncWriteExt;
+        use tokio::io::AsyncWriteExt;
+        let mut login_cmd = tokio::process::Command::new("docker");
+        login_cmd.args([
+            "login",
+            "--username",
+            "AWS",
+            "--password-stdin",
+            registry_url,
+        ]);
+        login_cmd.stdin(std::process::Stdio::piped());
+        let mut child = login_cmd.spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(password.as_bytes()).await?;
         }
-
+        let output = child.wait_with_output().await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(eyre!("Failed to login to ECR: {}", stderr));
+        }
         // Tag image for ECR
         print_status("ECR", "Tagging image for ECR");
         let ecr_image_uri = self.image_uri(registry_url, repository_name, tag);
