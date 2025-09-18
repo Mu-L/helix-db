@@ -11,11 +11,19 @@ impl Display for ReturnValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.return_type {
             ReturnType::Literal(name) => {
-                writeln!(
-                    f,
-                    "    return_vals.insert({}.to_string(), ReturnValue::from(Value::from({})));",
-                    name, self.value
-                )
+                if let GeneratedValue::Aggregate(name) = name {
+                    writeln!(
+                        f,
+                        "    return_vals.insert({}.to_string(), ReturnValue::from({}));",
+                        name, self.value
+                    )
+                } else {
+                    writeln!(
+                        f,
+                        "    return_vals.insert({}.to_string(), ReturnValue::from(Value::from({})));",
+                        name, self.value
+                    )
+                }
             }
             ReturnType::NamedLiteral(name) => {
                 writeln!(
@@ -59,6 +67,13 @@ impl Display for ReturnValue {
                     self.value
                 )
             }
+            ReturnType::Aggregate(name) => {
+                writeln!(
+                    f,
+                    "    return_vals.insert({}.to_string(), ReturnValue::from({}));",
+                    name, self.value
+                )
+            }
         }
     }
 }
@@ -73,6 +88,7 @@ impl ReturnValue {
             ReturnType::UnnamedExpr => unimplemented!(),
             ReturnType::HashMap => unimplemented!(),
             ReturnType::Array => unimplemented!(),
+            ReturnType::Aggregate(name) => name.to_string(),
         }
     }
 
@@ -118,6 +134,12 @@ impl ReturnValue {
             return_type: ReturnType::HashMap,
         }
     }
+    pub fn new_aggregate(name: GeneratedValue, value: GeneratedValue) -> Self {
+        Self {
+            value: ReturnValueExpr::Value(value.clone()),
+            return_type: ReturnType::Aggregate(name),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -129,6 +151,7 @@ pub enum ReturnType {
     UnnamedExpr,
     HashMap,
     Array,
+    Aggregate(GeneratedValue),
 }
 #[derive(Clone)]
 pub enum ReturnValueExpr {

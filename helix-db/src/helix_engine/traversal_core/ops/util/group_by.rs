@@ -12,13 +12,13 @@ use crate::{
 };
 
 pub trait GroupByAdapter<'a>: Iterator {
-    fn group_by(self, properties: &[String]) -> Result<GroupBy, GraphError>;
+    fn group_by(self, properties: &[String], should_count: bool) -> Result<GroupBy, GraphError>;
 }
 
 impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<'a>
     for RoTraversalIterator<'a, I>
 {
-    fn group_by(self, properties: &[String]) -> Result<GroupBy, GraphError> {
+    fn group_by(self, properties: &[String], should_count: bool) -> Result<GroupBy, GraphError> {
         let mut groups: HashMap<String, GroupByItem> = HashMap::new();
 
         for item in self.inner {
@@ -46,6 +46,10 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<
             group.count += 1;
         }
 
-        Ok(GroupBy::Group(groups))
+        if should_count {
+            Ok(GroupBy::Count(groups))
+        } else {
+            Ok(GroupBy::Group(groups))
+        }
     }
 }

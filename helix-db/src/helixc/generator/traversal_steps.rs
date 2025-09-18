@@ -343,7 +343,7 @@ pub struct GroupBy {
 }
 impl Display for GroupBy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "group_by(&[{}])", self.properties.iter().map(|s|s.to_string()).collect::<Vec<_>>().join(","))
+        write!(f, "group_by(&[{}], {})", self.properties.iter().map(|s|s.to_string()).collect::<Vec<_>>().join(","), self.should_count)
     }
 }
 
@@ -354,7 +354,7 @@ pub struct AggregateBy {
 }
 impl Display for AggregateBy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "aggregate_by(&[{}])", self.properties.iter().map(|s|s.to_string()).collect::<Vec<_>>().join(","))
+        write!(f, "aggregate_by(&[{}], {})", self.properties.iter().map(|s|s.to_string()).collect::<Vec<_>>().join(","), self.should_count)
     }
 }
 

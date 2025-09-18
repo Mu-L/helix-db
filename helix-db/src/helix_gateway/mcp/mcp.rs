@@ -256,7 +256,7 @@ pub fn aggregate_by(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let txn = input.mcp_backend.db.graph_env.read_txn()?;
 
     let values = G::new_from(db, &txn, iter)
-        .aggregate_by(&data.properties)?
+        .aggregate_by(&data.properties, true)?
         .into_count();
 
     let mut connections = input.mcp_connections.lock().unwrap();
@@ -293,7 +293,7 @@ pub fn group_by(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let txn = input.mcp_backend.db.graph_env.read_txn()?;
 
     let values = G::new_from(db, &txn, iter)
-        .group_by(&data.properties)?
+        .group_by(&data.properties, true)?
         .into_count();
 
     let mut connections = input.mcp_connections.lock().unwrap();
