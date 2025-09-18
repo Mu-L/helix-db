@@ -259,7 +259,7 @@ pub(crate) fn apply_graph_step<'a>(
             traversal
                 .steps
                 .push(Separator::Period(GeneratedStep::FromN));
-            traversal.should_collect = ShouldCollect::ToVec;
+            traversal.should_collect = ShouldCollect::ToVal;
             new_ty
         }
         (ToN, Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty))) => {
@@ -277,7 +277,7 @@ pub(crate) fn apply_graph_step<'a>(
                 None
             };
             traversal.steps.push(Separator::Period(GeneratedStep::ToN));
-            traversal.should_collect = ShouldCollect::ToVec;
+            traversal.should_collect = ShouldCollect::ToVal;
             new_ty
         }
         (FromV, Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty))) => {
@@ -298,7 +298,7 @@ pub(crate) fn apply_graph_step<'a>(
             traversal
                 .steps
                 .push(Separator::Period(GeneratedStep::FromV));
-            traversal.should_collect = ShouldCollect::ToVec;
+            traversal.should_collect = ShouldCollect::ToVal;
             new_ty
         }
         (ToV, Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty))) => {
@@ -317,7 +317,7 @@ pub(crate) fn apply_graph_step<'a>(
                 None
             };
             traversal.steps.push(Separator::Period(GeneratedStep::ToV));
-            traversal.should_collect = ShouldCollect::ToVec;
+            traversal.should_collect = ShouldCollect::ToVal;
             new_ty
         }
         (ShortestPath(sp), Type::Nodes(_) | Type::Node(_)) => {
