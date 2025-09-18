@@ -324,12 +324,9 @@ impl ReturnValue {
             ReturnValue::from(item.label().to_string()),
         );
         if item.properties_ref().is_some() {
-            properties.extend(
-                item.properties()
-                    .unwrap()
-                    .into_iter()
-                    .map(|(k, v)| (k, ReturnValue::from(v))),
-            );
+            for (k, v) in item.properties().unwrap().into_iter() {
+                properties.check_and_insert(remapping, k, ReturnValue::from(v));
+            }
         }
 
         ReturnValue::Object(properties)

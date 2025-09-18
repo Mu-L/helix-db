@@ -14,3 +14,7 @@ QUERY CreateUser (name: String, age: U8, email: String) =>
         email: email
     })
     RETURN user
+
+QUERY GetUserDisplayInfo () =>
+    users <- N<User>::RANGE(0, 10)
+    RETURN users::{displayName: name, userAge: age}
