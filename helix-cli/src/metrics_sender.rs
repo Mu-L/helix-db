@@ -1,6 +1,6 @@
 use chrono::{Local, NaiveDate};
 use dirs::home_dir;
-use eyre::{Result, eyre};
+use eyre::{eyre, OptionExt, Result};
 use flume::{Receiver, Sender, unbounded};
 use helix_metrics::events::{
     CompileEvent, DeployCloudEvent, DeployLocalEvent, EventData, EventType, RawEvent,
@@ -16,13 +16,11 @@ use std::{
 use tokio::task::JoinHandle;
 
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MetricsLevel {
-    #[serde(rename = "full")]
     Full,
     #[default]
-    #[serde(rename = "basic")]
     Basic,
-    #[serde(rename = "off")]
     Off,
 }
 
@@ -161,14 +159,14 @@ pub(crate) fn save_metrics_config(config: &MetricsConfig) -> Result<()> {
 }
 
 pub(crate) fn get_metrics_config_path() -> Result<PathBuf> {
-    let home = home_dir().ok_or_else(|| eyre!("Cannot find home directory"))?;
+    let home = home_dir().ok_or_eyre("Cannot find home directory")?;
     let helix_dir = home.join(".helix");
     fs::create_dir_all(&helix_dir)?;
     Ok(helix_dir.join("metrics.toml"))
 }
 
 fn get_metrics_dir() -> Result<PathBuf> {
-    let home = home_dir().ok_or_else(|| eyre!("Cannot find home directory"))?;
+    let home = home_dir().ok_or_eyre("Cannot find home directory")?;
     let metrics_dir = home.join(".helix").join("metrics");
     fs::create_dir_all(&metrics_dir)?;
     Ok(metrics_dir)
@@ -218,7 +216,7 @@ async fn upload_log_file(client: &Client, path: &PathBuf) -> Result<()> {
     }
 
     let response = client
-        .post("https://logs-dummy.helix-db.com/")
+        .post("https://logs-dummy.helix-db.com/") // TODO: change to actual logs endpoint
         .header("Content-Type", "application/json")
         .body(content)
         .send()

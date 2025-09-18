@@ -80,11 +80,11 @@ pub enum CloudConfig {
 }
 
 impl CloudConfig {
-    pub fn get_cluster_id(&self) -> &str {
+    pub fn get_cluster_id(&self) -> Option<&str> {
         match self {
-            CloudConfig::HelixCloud(config) => &config.cluster_id,
-            CloudConfig::FlyIo(config) => &config.cluster_id,
-            CloudConfig::Ecr(_) => "ecr", // ECR doesn't use cluster_id
+            CloudConfig::HelixCloud(config) => Some(&config.cluster_id),
+            CloudConfig::FlyIo(config) => Some(&config.cluster_id),
+            CloudConfig::Ecr(_) => None, // ECR doesn't use cluster_id
         }
     }
 }
@@ -241,6 +241,17 @@ impl<'a> InstanceInfo<'a> {
     }
 }
 
+impl From<InstanceInfo<'_>> for CloudConfig {
+    fn from(instance_info: InstanceInfo<'_>) -> Self {
+        match instance_info {
+            InstanceInfo::HelixCloud(config) => CloudConfig::HelixCloud(config.clone()),
+            InstanceInfo::FlyIo(config) => CloudConfig::FlyIo(config.clone()),
+            InstanceInfo::Ecr(config) => CloudConfig::Ecr(config.clone()),
+            InstanceInfo::Local(_) => unimplemented!(),
+        }
+    }
+}
+
 impl HelixConfig {
     pub fn from_file(path: &Path) -> Result<Self> {
         let content =
@@ -285,7 +296,7 @@ impl HelixConfig {
             if name.is_empty() {
                 return Err(eyre!("Instance name cannot be empty"));
             }
-            if cloud_config.get_cluster_id().is_empty() {
+            if cloud_config.get_cluster_id().is_none() {
                 return Err(eyre!(
                     "Cloud instance '{}' must have a non-empty cluster_id",
                     name

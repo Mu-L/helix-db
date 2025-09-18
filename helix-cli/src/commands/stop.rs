@@ -1,9 +1,9 @@
 use crate::commands::integrations::fly::FlyManager;
-use crate::config::InstanceInfo;
+use crate::config::CloudConfig;
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
 use crate::utils::{print_status, print_success};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 
 pub async fn run(instance_name: String) -> Result<()> {
     // Load project context
@@ -15,7 +15,7 @@ pub async fn run(instance_name: String) -> Result<()> {
     if instance_config.is_local() {
         stop_local_instance(&project, &instance_name).await
     } else {
-        stop_cloud_instance(&project, &instance_name, instance_config).await
+        stop_cloud_instance(&project, &instance_name, instance_config.into()).await
     }
 }
 
@@ -41,7 +41,7 @@ async fn stop_local_instance(project: &ProjectContext, instance_name: &str) -> R
 async fn stop_cloud_instance(
     project: &ProjectContext,
     instance_name: &str,
-    instance_config: InstanceInfo<'_>,
+    instance_config: CloudConfig,
 ) -> Result<()> {
     print_status(
         "CLOUD",
@@ -49,8 +49,8 @@ async fn stop_cloud_instance(
     );
 
     let _cluster_id = instance_config
-        .cluster_id()
-        .ok_or_else(|| eyre::eyre!("Cloud instance '{instance_name}' must have a cluster_id"))?;
+        .get_cluster_id()
+        .ok_or_eyre("Cloud instance '{instance_name}' must have a cluster_id")?;
 
     // TODO: Implement cloud instance stop
     // This would involve:
@@ -59,7 +59,7 @@ async fn stop_cloud_instance(
     // 3. Waiting for the instance to be fully stopped
 
     match instance_config {
-        InstanceInfo::FlyIo(config) => {
+        CloudConfig::FlyIo(config) => {
             print_status(
                 "FLY",
                 &format!("Stopping Fly.io instance '{instance_name}'"),
@@ -67,10 +67,10 @@ async fn stop_cloud_instance(
             let fly = FlyManager::new(project, config.auth_type.clone()).await?;
             fly.stop_instance(instance_name).await?;
         }
-        InstanceInfo::HelixCloud(_config) => {
+        CloudConfig::HelixCloud(_config) => {
             todo!()
         }
-        _ => {
+        CloudConfig::Ecr(_config) => {
             unimplemented!()
         }
     }

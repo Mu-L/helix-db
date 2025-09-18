@@ -1,9 +1,9 @@
 use crate::commands::integrations::fly::FlyManager;
-use crate::config::InstanceInfo;
+use crate::config::CloudConfig;
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
 use crate::utils::{print_error, print_status, print_success};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 
 pub async fn run(instance_name: String) -> Result<()> {
     // Load project context
@@ -15,7 +15,7 @@ pub async fn run(instance_name: String) -> Result<()> {
     if instance_config.is_local() {
         start_local_instance(&project, &instance_name).await
     } else {
-        start_cloud_instance(&project, &instance_name, instance_config).await
+        start_cloud_instance(&project, &instance_name, instance_config.into()).await
     }
 }
 
@@ -64,16 +64,16 @@ async fn start_local_instance(project: &ProjectContext, instance_name: &str) -> 
 async fn start_cloud_instance(
     project: &ProjectContext,
     instance_name: &str,
-    instance_config: InstanceInfo<'_>,
+    cloud_config: CloudConfig,
 ) -> Result<()> {
     print_status(
         "CLOUD",
         &format!("Starting cloud instance '{instance_name}'"),
     );
 
-    let cluster_id = instance_config
-        .cluster_id()
-        .ok_or_else(|| eyre::eyre!("Cloud instance '{instance_name}' must have a cluster_id"))?;
+    let cluster_id = cloud_config
+        .get_cluster_id()
+        .ok_or_eyre("Cloud instance '{instance_name}' must have a cluster_id")?;
 
     // TODO: Implement cloud instance start
     // This would involve:
@@ -86,15 +86,15 @@ async fn start_cloud_instance(
         &format!("Starting instance on cluster: {cluster_id}"),
     );
 
-    match project.config.get_instance(instance_name).unwrap() {
-        InstanceInfo::FlyIo(config) => {
+    match cloud_config {
+        CloudConfig::FlyIo(config) => {
             let fly = FlyManager::new(project, config.auth_type.clone()).await?;
             fly.start_instance(instance_name).await?;
         }
-        InstanceInfo::HelixCloud(_config) => {
+        CloudConfig::HelixCloud(_config) => {
             todo!()
         }
-        _ => {
+        CloudConfig::Ecr(_config) => {
             unimplemented!()
         }
     }

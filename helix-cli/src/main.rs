@@ -215,7 +215,6 @@ async fn main() -> Result<()> {
 
     // Handle result with proper error formatting
     if let Err(e) = result {
-        // Check if this is already a formatted error (eyre with our custom display)
         eprintln!("{}", format!("error: {e}").red().bold());
         std::process::exit(1);
     }
