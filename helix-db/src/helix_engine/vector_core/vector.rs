@@ -144,7 +144,7 @@ impl HVector {
     // will make to use const param for type of encoding (f32, f64, etc)
     /// Converts a byte array into a HVector by chunking the bytes into f64 values
     pub fn from_bytes(id: u128, level: usize, bytes: &[u8]) -> Result<Self, VectorError> {
-        if bytes.len() % std::mem::size_of::<f64>() != 0 {
+        if !bytes.len().is_multiple_of(std::mem::size_of::<f64>()){
             return Err(VectorError::InvalidVectorData);
         }
 
