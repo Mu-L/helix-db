@@ -233,6 +233,7 @@ impl From<DefaultValue> for GeneratedValue {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub(crate) enum Type {
+    Aggregate,
     Node(Option<String>),
     Nodes(Option<String>),
     Edge(Option<String>),
@@ -250,6 +251,7 @@ pub(crate) enum Type {
 impl Type {
     pub fn kind_str(&self) -> &'static str {
         match self {
+            Type::Aggregate => "aggregate",
             Type::Node(_) => "node",
             Type::Nodes(_) => "nodes",
             Type::Edge(_) => "edge",
@@ -267,6 +269,7 @@ impl Type {
 
     pub fn get_type_name(&self) -> String {
         match self {
+            Type::Aggregate => "aggregate".to_string(),
             Type::Node(Some(name)) => name.clone(),
             Type::Nodes(Some(name)) => name.clone(),
             Type::Edge(Some(name)) => name.clone(),
@@ -347,6 +350,7 @@ impl Type {
             Type::Boolean => Type::Boolean,
             Type::Unknown => Type::Unknown,
             Type::Anonymous(inner) => Type::Anonymous(Box::new(inner.into_single())),
+            Type::Aggregate => Type::Aggregate,
             Type::Node(name) => Type::Node(name),
             Type::Nodes(name) => Type::Node(name),
             Type::Edge(name) => Type::Edge(name),
@@ -394,6 +398,6 @@ impl From<FieldType> for Type {
 
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }

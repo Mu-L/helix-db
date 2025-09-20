@@ -1,6 +1,6 @@
 [package]
 name = "helix-db"
-version = "1.0.136"
+version = "1.0.137"
 edition = "2024"
 description = "HelixDB is a powerful, open-source, graph-vector database built in Rust for intelligent data storage for RAG and AI."
 license = "AGPL-3.0"
@@ -27,6 +27,8 @@ flume = { version = "0.11.1", default-features = false, features = ["async", "se
 itertools = "0.14.0"
 tempfile = "3.20.0"
 paste = "1.0.15"
+rayon = "1.11.0"
+mimalloc = "0.1.48"
 
 # compiler dependencies
 pest = { version = "2.7", optional = true }

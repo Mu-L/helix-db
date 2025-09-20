@@ -20,7 +20,7 @@ impl HelixParser {
     ) -> Result<NodeSchema, ParserError> {
         let mut pairs = pair.clone().into_inner();
         let name = pairs.next().unwrap().as_str().to_string();
-        let fields = self.parse_node_body(pairs.next().unwrap())?;
+        let fields = self.parse_node_body(pairs.next().unwrap(), filepath.clone())?;
         Ok(NodeSchema {
             name: (pair.loc(), name),
             fields,
@@ -35,7 +35,7 @@ impl HelixParser {
     ) -> Result<VectorSchema, ParserError> {
         let mut pairs = pair.clone().into_inner();
         let name = pairs.next().unwrap().as_str().to_string();
-        let fields = self.parse_node_body(pairs.next().unwrap())?;
+        let fields = self.parse_node_body(pairs.next().unwrap(), filepath.clone())?;
         Ok(VectorSchema {
             name,
             fields,
@@ -43,7 +43,7 @@ impl HelixParser {
         })
     }
 
-    pub(super) fn parse_node_body(&self, pair: Pair<Rule>) -> Result<Vec<Field>, ParserError> {
+    pub(super) fn parse_node_body(&self, pair: Pair<Rule>, filepath: String) -> Result<Vec<Field>, ParserError> {
         let field_defs = pair
             .into_inner()
             .find(|p| p.as_rule() == Rule::field_defs)
@@ -52,7 +52,7 @@ impl HelixParser {
         // Now parse each individual field_def
         field_defs
             .into_inner()
-            .map(|p| self.parse_field_def(p))
+            .map(|p| self.parse_field_def(p, filepath.clone()))
             .collect::<Result<Vec<_>, _>>()
     }
 
@@ -405,7 +405,7 @@ impl HelixParser {
         }
     }
 
-    pub(super) fn parse_field_def(&self, pair: Pair<Rule>) -> Result<Field, ParserError> {
+    pub(super) fn parse_field_def(&self, pair: Pair<Rule>, filepath: String) -> Result<Field, ParserError> {
         let mut pairs = pair.clone().into_inner();
         // structure is index? ~ identifier ~ ":" ~ param_type
         let prefix: FieldPrefix = match pairs.clone().next().unwrap().as_rule() {
@@ -433,7 +433,7 @@ impl HelixParser {
             defaults,
             name,
             field_type,
-            loc: pair.loc(),
+            loc: pair.loc_with_filepath(filepath),
         })
     }
 
@@ -456,7 +456,7 @@ impl HelixParser {
             (pair.loc(), pair.as_str().to_string())
         };
         let properties = match body_pairs.next() {
-            Some(pair) => Some(self.parse_properties(pair)?),
+            Some(pair) => Some(self.parse_properties(pair, filepath.clone())?),
             None => None,
         };
 
@@ -468,13 +468,13 @@ impl HelixParser {
             loc: pair.loc_with_filepath(filepath),
         })
     }
-    pub(super) fn parse_properties(&self, pair: Pair<Rule>) -> Result<Vec<Field>, ParserError> {
+    pub(super) fn parse_properties(&self, pair: Pair<Rule>, filepath: String) -> Result<Vec<Field>, ParserError> {
         pair.into_inner()
             .find(|p| p.as_rule() == Rule::field_defs)
             .map_or(Ok(Vec::new()), |field_defs| {
                 field_defs
                     .into_inner()
-                    .map(|p| self.parse_field_def(p))
+                    .map(|p| self.parse_field_def(p, filepath.clone()))
                     .collect::<Result<Vec<_>, _>>()
             })
     }

@@ -190,7 +190,13 @@ fn analyze_return_expr<'a>(
                         gen_identifier_or_param(original_query, id.inner().as_str(), false, true);
 
                     match identifier_end_type {
-                        Type::Scalar(_) | Type::Boolean => {
+                        Type::Aggregate => {
+                            query.return_values.push(ReturnValue::new_aggregate(
+                                GeneratedValue::Aggregate(GenRef::Literal(id.inner().clone())),
+                                value,
+                            ));
+                        }
+                        Type::Scalar(_) | Type::Boolean  => {
                             query.return_values.push(ReturnValue::new_named_literal(
                                 GeneratedValue::Literal(GenRef::Literal(id.inner().clone())),
                                 value,
