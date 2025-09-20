@@ -91,7 +91,7 @@ Structure your findings like this:
 - **Group logically** - Make it easy to understand code organization
 - **Include counts** - "Contains X files" for directories
 - **Note naming patterns** - Help user understand conventions
-- **Check multiple extensions** - .js/.ts, .py, .go, etc.
+- **Check multiple extensions** - .js/.ts, .py, .go, .rs, etc.
 
 ## What NOT to Do
 
