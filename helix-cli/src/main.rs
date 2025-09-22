@@ -1,5 +1,4 @@
 use clap::{Parser, Subcommand};
-use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
 
 mod commands;
@@ -29,6 +28,15 @@ enum Commands {
 
         #[clap(long, default_value = "empty")]
         template: String,
+
+        #[clap(subcommand)]
+        cloud: Option<CloudDeploymentTypeCommand>,
+    },
+
+    /// Add a new instance to an existing Helix project
+    Add {
+        /// Instance name
+        name: String,
 
         #[clap(subcommand)]
         cloud: Option<CloudDeploymentTypeCommand>,
@@ -193,6 +201,7 @@ async fn main() -> Result<()> {
             template,
             cloud,
         } => commands::init::run(path, template, cloud).await,
+        Commands::Add { name, cloud } => commands::add::run(name, cloud).await,
         Commands::Check { instance } => commands::check::run(instance).await,
         Commands::Compile { output, path } => commands::compile::run(output, path).await,
         Commands::Build { instance } => commands::build::run(instance, &metrics_sender)
@@ -215,7 +224,7 @@ async fn main() -> Result<()> {
 
     // Handle result with proper error formatting
     if let Err(e) = result {
-        eprintln!("{}", format!("error: {e}").red().bold());
+        eprintln!("{e}");
         std::process::exit(1);
     }
 

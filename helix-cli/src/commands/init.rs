@@ -33,7 +33,7 @@ pub async fn run(
             "helix.toml already exists in {}",
             project_dir.display()
         ))
-        .with_hint("use a different directory or remove the existing helix.toml file")
+        .with_hint("use 'helix add <instance_name>' to add a new instance to the existing project")
         .into());
     }
 
