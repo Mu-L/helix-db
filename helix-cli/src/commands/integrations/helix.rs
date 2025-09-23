@@ -3,7 +3,7 @@ use crate::utils::helixc_utils::{collect_hx_files, generate_content};
 use crate::config::{InstanceInfo, CloudInstanceConfig, BuildMode, DbConfig};
 use crate::project::ProjectContext;
 use crate::utils::{print_status, print_success};
-use eyre::{Result, eyre};
+use eyre::{eyre, OptionExt, Result};
 use helix_db::helix_engine::traversal_core::config::Config;
 use helix_db::utils::styled_string::StyledString;
 use serde_json::json;
@@ -26,12 +26,14 @@ impl<'a> HelixManager<'a> {
         Self { project }
     }
 
-    fn credentials_path(&self) -> PathBuf {
-        self.project.helix_dir.join("credentials")
+    fn credentials_path(&self) -> Result<PathBuf> {
+        // get home directory
+        let home = dirs::home_dir().ok_or_eyre("Cannot find home directory")?;
+        Ok(home.join(".helix").join("credentials"))
     }
 
     fn check_auth(&self) -> Result<()> {
-        let credentials_path = self.credentials_path();
+        let credentials_path = self.credentials_path()?;
         if !credentials_path.exists() {
             return Err(eyre!("Credentials file not found"));
         }
@@ -139,7 +141,7 @@ impl<'a> HelixManager<'a> {
         };
 
         // get credentials - already validated by check_auth()
-        let credentials = Credentials::read_from_file(&self.credentials_path());
+        let credentials = Credentials::read_from_file(&self.credentials_path()?);
 
         // read config.hx.json
         let config_path = path.join("config.hx.json");

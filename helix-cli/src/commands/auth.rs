@@ -7,7 +7,7 @@ use crate::{
 use color_eyre::owo_colors::OwoColorize;
 use eyre::{OptionExt, Result};
 use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{fs, path::PathBuf};
 use tokio_tungstenite::{
     connect_async,
@@ -97,11 +97,9 @@ async fn create_key(cluster: &str) -> Result<()> {
     Ok(())
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Debug)]
 pub struct Credentials {
-    #[serde(rename = "HELIX_USER_ID")]
     pub(crate) user_id: String,
-    #[serde(rename = "HELIX_USER_KEY")]
     pub(crate) helix_admin_key: String,
 }
 
@@ -111,25 +109,53 @@ impl Credentials {
     }
 
     pub(crate) fn read_from_file(path: &PathBuf) -> Self {
-        let content = fs::read_to_string(path).unwrap();
-        toml::from_str(&content).unwrap()
+        let content = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("Failed to read credentials file at {:?}: {}", path, e));
+        Self::parse_key_value_format(&content)
+            .unwrap_or_else(|e| panic!("Failed to parse credentials file at {:?}: {}", path, e))
     }
 
     pub(crate) fn try_read_from_file(path: &PathBuf) -> Option<Self> {
         let content = fs::read_to_string(path).ok()?;
-        toml::from_str(&content).ok()
+        Self::parse_key_value_format(&content).ok()
     }
 
     pub(crate) fn write_to_file(&self, path: &PathBuf) {
-        let content = toml::to_string(&self).unwrap();
-        fs::write(path, content).unwrap();
+        let content = format!("helix_user_id={}\nhelix_user_key={}", self.user_id, self.helix_admin_key);
+        fs::write(path, content)
+            .unwrap_or_else(|e| panic!("Failed to write credentials file to {:?}: {}", path, e));
     }
 
     #[allow(unused)]
     pub(crate) fn try_write_to_file(&self, path: &PathBuf) -> Option<()> {
-        let content = toml::to_string(&self).ok()?;
+        let content = format!("helix_user_id={}\nhelix_user_key={}", self.user_id, self.helix_admin_key);
         fs::write(path, content).ok()?;
         Some(())
+    }
+
+    fn parse_key_value_format(content: &str) -> Result<Self> {
+        let mut user_id = None;
+        let mut helix_admin_key = None;
+
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            if let Some((key, value)) = line.split_once('=') {
+                match key.trim() {
+                    "helix_user_id" => user_id = Some(value.trim().to_string()),
+                    "helix_user_key" => helix_admin_key = Some(value.trim().to_string()),
+                    _ => {} // Ignore unknown keys
+                }
+            }
+        }
+
+        Ok(Credentials {
+            user_id: user_id.ok_or_eyre("Missing helix_user_id in credentials file")?,
+            helix_admin_key: helix_admin_key.ok_or_eyre("Missing helix_user_key in credentials file")?,
+        })
     }
 }
 
