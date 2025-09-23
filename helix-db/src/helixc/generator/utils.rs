@@ -396,7 +396,7 @@ use helix_db::{
                     dedup::DedupAdapter, drop::Drop, exist::Exist, filter_mut::FilterMut,
                     filter_ref::FilterRefAdapter, map::MapAdapter, paths::ShortestPathAdapter,
                     props::PropsAdapter, range::RangeAdapter, update::UpdateAdapter, order::OrderByAdapter,
-                    aggregate::AggregateAdapter, group_by::GroupByAdapter,
+                    aggregate::AggregateAdapter, group_by::GroupByAdapter, count::CountAdapter,
                     },
                     vectors::{
                         brute_force_search::BruteForceSearchVAdapter, insert::InsertVAdapter,
