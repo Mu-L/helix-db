@@ -391,6 +391,8 @@ use helix_db::{
                     n_from_id::NFromIdAdapter,
                     n_from_index::NFromIndexAdapter,
                     n_from_type::NFromTypeAdapter,
+                    v_from_id::VFromIdAdapter,
+                    v_from_type::VFromTypeAdapter
                 },
                 util::{
                     dedup::DedupAdapter, drop::Drop, exist::Exist, filter_mut::FilterMut,
