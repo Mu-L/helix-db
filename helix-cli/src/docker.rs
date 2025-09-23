@@ -236,8 +236,6 @@ CMD ["helix-container"]
 
         let compose = format!(
             r#"# Generated docker-compose.yml for Helix instance: {instance_name}
-version: '3.8'
-
 services:
   {service_name}:
     build:
