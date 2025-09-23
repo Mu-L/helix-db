@@ -178,6 +178,107 @@ impl HelixParser {
             }
             Rule::identifier => Ok(StartNode::Identifier(pair.as_str().to_string())),
             Rule::search_vector => Ok(StartNode::SearchVector(self.parse_search_vector(pair)?)),
+            Rule::start_vector => {
+                let pairs = pair.into_inner();
+                let mut vector_type = String::new();
+                let mut ids = None;
+                for p in pairs {
+                    match p.as_rule() {
+                        Rule::type_args => {
+                            vector_type = p.into_inner().next().unwrap().as_str().to_string();
+                        }
+                        Rule::id_args => {
+                            ids = Some(
+                                p.into_inner()
+                                    .map(|id| {
+                                        let id = id.into_inner().next().unwrap();
+                                        match id.as_rule() {
+                                            Rule::identifier => IdType::Identifier {
+                                                value: id.as_str().to_string(),
+                                                loc: id.loc(),
+                                            },
+                                            Rule::string_literal => IdType::Literal {
+                                                value: id.as_str().to_string(),
+                                                loc: id.loc(),
+                                            },
+                                            other => {
+                                                println!("{other:?}");
+                                                panic!("Should be identifier or string literal")
+                                            }
+                                        }
+                                    })
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                        Rule::by_index => {
+                            ids = Some(
+                                p.into_inner()
+                                    .map(|p| {
+                                        let mut pairs = p.clone().into_inner();
+                                        let index = match pairs.next().unwrap().into_inner().next()
+                                        {
+                                            Some(id) => match id.as_rule() {
+                                                Rule::identifier => IdType::Identifier {
+                                                    value: id.as_str().to_string(),
+                                                    loc: id.loc(),
+                                                },
+                                                Rule::string_literal => IdType::Literal {
+                                                    value: id.as_str().to_string(),
+                                                    loc: id.loc(),
+                                                },
+                                                _ => unreachable!(),
+                                            },
+                                            None => unreachable!(),
+                                        };
+                                        let value = match pairs.next().unwrap().into_inner().next()
+                                        {
+                                            Some(val) => match val.as_rule() {
+                                                Rule::identifier => ValueType::Identifier {
+                                                    value: val.as_str().to_string(),
+                                                    loc: val.loc(),
+                                                },
+                                                Rule::string_literal => ValueType::Literal {
+                                                    value: Value::from(val.as_str()),
+                                                    loc: val.loc(),
+                                                },
+                                                Rule::integer => ValueType::Literal {
+                                                    value: Value::from(
+                                                        val.as_str().parse::<i64>().unwrap(),
+                                                    ),
+                                                    loc: val.loc(),
+                                                },
+                                                Rule::float => ValueType::Literal {
+                                                    value: Value::from(
+                                                        val.as_str().parse::<f64>().unwrap(),
+                                                    ),
+                                                    loc: val.loc(),
+                                                },
+                                                Rule::boolean => ValueType::Literal {
+                                                    value: Value::from(
+                                                        val.as_str().parse::<bool>().unwrap(),
+                                                    ),
+                                                    loc: val.loc(),
+                                                },
+                                                _ => {
+                                                    panic!("Should be identifier or literal")
+                                                }
+                                            },
+                                            _ => unreachable!(),
+                                        };
+                                        IdType::ByIndex {
+                                            index: Box::new(index),
+                                            value: Box::new(value),
+                                            loc: p.loc(),
+                                        }
+                                    })
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                Ok(StartNode::Vector { vector_type, ids })
+            }
             _ => Ok(StartNode::Anonymous),
         }
     }
