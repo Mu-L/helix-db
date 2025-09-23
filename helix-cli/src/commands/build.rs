@@ -2,7 +2,7 @@ use crate::config::InstanceInfo;
 use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
 use crate::project::{ProjectContext, get_helix_repo_cache};
-use crate::utils::{copy_dir_recursive_excluding, print_status, print_success};
+use crate::utils::{copy_dir_recursive_excluding, print_status, print_success, helixc_utils::collect_hx_files};
 use eyre::Result;
 use std::time::Instant;
 
@@ -191,22 +191,6 @@ async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &st
 async fn compile_project(project: &ProjectContext, instance_name: &str) -> Result<MetricsData> {
     print_status("COMPILE", "Compiling Helix queries...");
 
-    // Read project files
-    let schema_path = project.root.join("schema.hx");
-    let queries_path = project.root.join("queries.hx");
-
-    if !schema_path.exists() {
-        return Err(eyre::eyre!(
-            "schema.hx not found. Run 'helix init' to create a project."
-        ));
-    }
-
-    if !queries_path.exists() {
-        return Err(eyre::eyre!(
-            "queries.hx not found. Run 'helix init' to create a project."
-        ));
-    }
-
     // Create helix-container directory in instance workspace for generated files
     let instance_workspace = project.instance_workspace(instance_name);
     let helix_container_dir = instance_workspace.join("helix-container");
@@ -214,9 +198,6 @@ async fn compile_project(project: &ProjectContext, instance_name: &str) -> Resul
 
     // Create the directories
     fs::create_dir_all(&src_dir)?;
-
-    // Copy schema file to helix-container/src
-    fs::copy(&schema_path, src_dir.join("schema.hx"))?;
 
     // Generate config.hx.json from helix.toml
     let instance = project.config.get_instance(instance_name)?;
@@ -228,7 +209,7 @@ async fn compile_project(project: &ProjectContext, instance_name: &str) -> Resul
     print_status("CODEGEN", "Generating Rust code from Helix queries...");
 
     // Collect all .hx files for compilation
-    let hx_files = collect_hx_files(&project.root)?;
+    let hx_files = collect_hx_files(&project.root, &project.config.project.queries)?;
 
     // Generate content and compile using helix-db compilation logic
     let (analyzed_source, metrics_data) = compile_helix_files(&hx_files, &src_dir)?;
@@ -270,24 +251,6 @@ async fn generate_docker_files(
     Ok(())
 }
 
-pub(crate) fn collect_hx_files(project_root: &std::path::Path) -> Result<Vec<std::fs::DirEntry>> {
-    let files: Vec<std::fs::DirEntry> = std::fs::read_dir(project_root)?
-        .filter_map(|entry| entry.ok())
-        .filter(|file| file.file_name().to_string_lossy().ends_with(".hx"))
-        .collect();
-
-    let has_schema = files.iter().any(|file| file.file_name() == "schema.hx");
-    if !has_schema {
-        return Err(eyre::eyre!("No schema.hx file found"));
-    }
-
-    let has_queries = files.iter().any(|file| file.file_name() != "schema.hx");
-    if !has_queries {
-        return Err(eyre::eyre!("No query files (.hx) found"));
-    }
-
-    Ok(files)
-}
 
 fn compile_helix_files(
     files: &[std::fs::DirEntry],

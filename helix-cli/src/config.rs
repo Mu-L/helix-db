@@ -2,7 +2,7 @@ use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::commands::integrations::ecr::EcrConfig;
 use crate::commands::integrations::fly::FlyInstanceConfig;
@@ -19,6 +19,28 @@ pub struct HelixConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
     pub name: String,
+    #[serde(default = "default_queries_path", serialize_with = "serialize_path", deserialize_with = "deserialize_path")]
+    pub queries: PathBuf,
+}
+
+fn default_queries_path() -> PathBuf {
+    PathBuf::from("./db/")
+}
+
+fn serialize_path<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&path.to_string_lossy())
+}
+
+fn deserialize_path<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    // Normalize path separators for cross-platform compatibility
+    Ok(PathBuf::from(s.replace('\\', "/")))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -350,6 +372,7 @@ impl HelixConfig {
         HelixConfig {
             project: ProjectConfig {
                 name: project_name.to_string(),
+                queries: default_queries_path(),
             },
             local,
             cloud: HashMap::new(),

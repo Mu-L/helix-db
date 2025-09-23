@@ -22,6 +22,7 @@ pub async fn run(output_dir: Option<String>, path: Option<String>) -> Result<()>
         &path
             .map(|dir| PathBuf::from(&dir))
             .unwrap_or(project.root.clone()),
+        &project.config.project.queries,
     )?;
 
     // Generate content and validate using helix-db parsing logic

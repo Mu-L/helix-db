@@ -1,5 +1,5 @@
 use crate::commands::auth::Credentials;
-use crate::commands::build::{collect_hx_files, generate_content};
+use crate::utils::helixc_utils::{collect_hx_files, generate_content};
 use crate::config::InstanceInfo;
 use crate::project::ProjectContext;
 use eyre::{Result, eyre};
@@ -50,7 +50,7 @@ impl<'a> HelixManager<'a> {
                 return Err(eyre!("Error: failed to get path: {e}"));
             }
         };
-        let files = collect_hx_files(&path).unwrap_or_default();
+        let files = collect_hx_files(&path, &self.project.config.project.queries).unwrap_or_default();
 
         let content = match generate_content(&files) {
             Ok(content) => content,

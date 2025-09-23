@@ -14,6 +14,7 @@ use std::path::Path;
 pub async fn run(
     path: Option<String>,
     _template: String,
+    queries_path: String,
     deployment_type: Option<CloudDeploymentTypeCommand>,
 ) -> Result<()> {
     let project_dir = match path {
@@ -45,11 +46,12 @@ pub async fn run(
     // Create project directory if it doesn't exist
     fs::create_dir_all(&project_dir)?;
 
-    // Create default helix.toml
+    // Create default helix.toml with custom queries path
     let mut config = HelixConfig::default_config(project_name);
+    config.project.queries = std::path::PathBuf::from(&queries_path);
     config.save_to_file(&config_path)?;
     // Create project structure
-    create_project_structure(&project_dir)?;
+    create_project_structure(&project_dir, &queries_path)?;
 
     // Initialize deployment type
     if let Some(deployment_type) = deployment_type {
@@ -135,11 +137,12 @@ pub async fn run(
         "Helix project initialized in {}",
         project_dir.display()
     ));
+    let queries_path_clean = queries_path.trim_end_matches('/');
     print_instructions(
         "Next steps:",
         &[
-            "Edit schema.hx to define your data model",
-            "Add queries to queries.hx",
+            &format!("Edit {queries_path_clean}/schema.hx to define your data model"),
+            &format!("Add queries to {queries_path_clean}/queries.hx"),
             "Run 'helix build dev' to compile your project",
             "Run 'helix push dev' to start your development instance",
         ],
@@ -148,9 +151,10 @@ pub async fn run(
     Ok(())
 }
 
-fn create_project_structure(project_dir: &Path) -> Result<()> {
+fn create_project_structure(project_dir: &Path, queries_path: &str) -> Result<()> {
     // Create directories
     fs::create_dir_all(project_dir.join(".helix"))?;
+    fs::create_dir_all(project_dir.join(queries_path))?;
 
     // Create default schema.hx with proper Helix syntax
     let default_schema = r#"// Start building your schema here.
@@ -184,9 +188,9 @@ fn create_project_structure(project_dir: &Path) -> Result<()> {
 //     }
 // }
 "#;
-    fs::write(project_dir.join("schema.hx"), default_schema)?;
+    fs::write(project_dir.join(queries_path).join("schema.hx"), default_schema)?;
 
-    // Create default queries.hx with proper Helix query syntax
+    // Create default queries.hx with proper Helix query syntax in the queries directory
     let default_queries = r#"// Start writing your queries here.
 //
 // You can use the schema to help you write your queries.
@@ -206,7 +210,7 @@ fn create_project_structure(project_dir: &Path) -> Result<()> {
 // see the documentation at https://docs.helix-db.com
 // or checkout our GitHub at https://github.com/HelixDB/helix-db
 "#;
-    fs::write(project_dir.join("queries.hx"), default_queries)?;
+    fs::write(project_dir.join(queries_path).join("queries.hx"), default_queries)?;
 
     // Create .gitignore
     let gitignore = r#".helix/

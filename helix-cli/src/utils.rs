@@ -197,22 +197,29 @@ pub mod helixc_utils {
     use std::fs;
     use std::path::Path;
 
-    /// Collect all .hx files from project root
-    pub fn collect_hx_files(root: &Path) -> Result<Vec<std::fs::DirEntry>> {
+    /// Collect all .hx files from queries directory and subdirectories
+    pub fn collect_hx_files(root: &Path, queries_dir: &Path) -> Result<Vec<std::fs::DirEntry>> {
         let mut files = Vec::new();
+        let queries_path = root.join(queries_dir);
 
-        for entry in fs::read_dir(root)? {
-            let entry = entry?;
-            let path = entry.path();
+        fn collect_from_dir(dir: &Path, files: &mut Vec<std::fs::DirEntry>) -> Result<()> {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
 
-            if path.is_file() && path.extension().map(|s| s == "hx").unwrap_or(false) {
-                files.push(entry);
+                if path.is_file() && path.extension().map(|s| s == "hx").unwrap_or(false) {
+                    files.push(entry);
+                } else if path.is_dir() {
+                    collect_from_dir(&path, files)?;
+                }
             }
+            Ok(())
         }
 
-        let has_queries = files.iter().any(|file| file.file_name() != "schema.hx");
-        if !has_queries {
-            return Err(eyre::eyre!("No query files (.hx) found"));
+        collect_from_dir(&queries_path, &mut files)?;
+
+        if files.is_empty() {
+            return Err(eyre::eyre!("No .hx files found in {}", queries_path.display()));
         }
 
         Ok(files)

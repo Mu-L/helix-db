@@ -29,6 +29,10 @@ enum Commands {
         #[clap(long, default_value = "empty")]
         template: String,
 
+        /// Queries directory path (defaults to ./db/)
+        #[clap(short = 'q', long = "queries-path", default_value = "./db/")]
+        queries_path: String,
+
         #[clap(subcommand)]
         cloud: Option<CloudDeploymentTypeCommand>,
     },
@@ -199,8 +203,9 @@ async fn main() -> Result<()> {
         Commands::Init {
             path,
             template,
+            queries_path,
             cloud,
-        } => commands::init::run(path, template, cloud).await,
+        } => commands::init::run(path, template, queries_path, cloud).await,
         Commands::Add { name, cloud } => commands::add::run(name, cloud).await,
         Commands::Check { instance } => commands::check::run(instance).await,
         Commands::Compile { output, path } => commands::compile::run(output, path).await,
