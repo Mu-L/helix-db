@@ -204,6 +204,7 @@ pub enum GeneratedValue {
     Primitive(GenRef<String>),
     Parameter(GenRef<String>),
     Array(GenRef<String>),
+    Aggregate(GenRef<String>),
     Unknown,
 }
 impl GeneratedValue {
@@ -214,6 +215,7 @@ impl GeneratedValue {
             GeneratedValue::Identifier(value) => value,
             GeneratedValue::Parameter(value) => value,
             GeneratedValue::Array(value) => value,
+            GeneratedValue::Aggregate(value) => value,
             GeneratedValue::Unknown => panic!("Cannot get inner of unknown"),
         }
     }
@@ -227,6 +229,7 @@ impl Display for GeneratedValue {
             GeneratedValue::Identifier(value) => write!(f, "{value}"),
             GeneratedValue::Parameter(value) => write!(f, "{value}"),
             GeneratedValue::Array(value) => write!(f, "&[{value}]"),
+            GeneratedValue::Aggregate(value) => write!(f, "{value}"),
             GeneratedValue::Unknown => write!(f, ""),
         }
     }
@@ -239,6 +242,7 @@ impl Debug for GeneratedValue {
             GeneratedValue::Identifier(value) => write!(f, "GV: Identifier({value})"),
             GeneratedValue::Parameter(value) => write!(f, "GV: Parameter({value})"),
             GeneratedValue::Array(value) => write!(f, "GV: Array({value:?})"),
+            GeneratedValue::Aggregate(value) => write!(f, "GV: Aggregate({value:?})"),
             GeneratedValue::Unknown => write!(f, "Unknown"),
         }
     }
@@ -392,7 +396,7 @@ use helix_db::{
                     dedup::DedupAdapter, drop::Drop, exist::Exist, filter_mut::FilterMut,
                     filter_ref::FilterRefAdapter, map::MapAdapter, paths::ShortestPathAdapter,
                     props::PropsAdapter, range::RangeAdapter, update::UpdateAdapter, order::OrderByAdapter,
-                    aggregate::AggregateAdapter, group_by::GroupByAdapter,
+                    aggregate::AggregateAdapter, group_by::GroupByAdapter, count::CountAdapter,
                 },
                 vectors::{
                     brute_force_search::BruteForceSearchVAdapter, insert::InsertVAdapter,
@@ -417,7 +421,7 @@ use helix_db::{
         remapping::{Remapping, RemappingMap, ResponseRemapping},
         response::Response,
         return_values::ReturnValue,
-        value::{Value, casting::{CastType, cast}},
+        value::{casting::{cast, CastType}, Value},
         format::Format,
     },
     utils::{

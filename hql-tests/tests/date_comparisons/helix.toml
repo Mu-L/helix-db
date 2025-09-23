@@ -1,0 +1,8 @@
+[project]
+name = "date_comparisons"
+
+[local.dev]
+port = 6969
+build_mode = "debug"
+
+[cloud]
