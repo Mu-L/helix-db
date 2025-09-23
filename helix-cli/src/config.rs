@@ -19,7 +19,11 @@ pub struct HelixConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
     pub name: String,
-    #[serde(default = "default_queries_path", serialize_with = "serialize_path", deserialize_with = "deserialize_path")]
+    #[serde(
+        default = "default_queries_path",
+        serialize_with = "serialize_path",
+        deserialize_with = "deserialize_path"
+    )]
     pub queries: PathBuf,
 }
 
@@ -230,7 +234,7 @@ impl<'a> InstanceInfo<'a> {
     }
 
     pub fn should_build_docker_image(&self) -> bool {
-        matches!(self, InstanceInfo::Local(_)) || matches!(self, InstanceInfo::FlyIo(_))
+        matches!(self, InstanceInfo::Local(_) | InstanceInfo::FlyIo(_))
     }
 
     pub fn docker_build_target(&self) -> Option<&str> {
