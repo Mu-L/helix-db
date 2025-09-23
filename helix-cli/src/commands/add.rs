@@ -1,6 +1,6 @@
-use crate::CloudDeploymentTypeCommand;
 use crate::commands::integrations::ecr::{EcrAuthType, EcrManager};
 use crate::commands::integrations::fly::{FlyAuthType, FlyManager, Privacy, VmSize};
+use crate::commands::integrations::helix::HelixManager;
 use crate::config::{CloudConfig, LocalInstanceConfig, DbConfig, BuildMode};
 use crate::docker::DockerManager;
 use crate::errors::project_error;
@@ -11,7 +11,14 @@ use std::env;
 
 pub async fn run(
     instance_name: String,
-    deployment_type: Option<CloudDeploymentTypeCommand>,
+    cloud: bool,
+    cloud_region: Option<String>,
+    ecr: bool,
+    fly: bool,
+    fly_auth: String,
+    fly_volume_size: u16,
+    fly_vm_size: String,
+    fly_public: bool,
 ) -> Result<()> {
     let cwd = env::current_dir()?;
     let mut project_context = ProjectContext::find_and_load(Some(&cwd))?;
@@ -31,12 +38,45 @@ pub async fn run(
         &format!("Adding instance '{instance_name}' to Helix project"),
     );
 
-    match deployment_type {
-        Some(CloudDeploymentTypeCommand::Helix) => {
-            // Add Helix cloud instance - for now just add a placeholder
-            print_status("HELIX", "Helix cloud deployment not yet implemented");
+    // Determine instance type
+    let instance_type = if cloud {
+        print_status("TYPE", "Creating Helix cloud instance");
+        "cloud"
+    } else if ecr {
+        print_status("TYPE", "Creating AWS ECR instance");
+        "ecr"
+    } else if fly {
+        print_status("TYPE", "Creating Fly.io instance");
+        "fly"
+    } else {
+        print_status("TYPE", "Creating local instance (default)");
+        "local"
+    };
+
+    match instance_type {
+        "cloud" => {
+            // Add Helix cloud instance
+            let helix_manager = HelixManager::new(&project_context);
+
+            // Create cloud instance configuration
+            let cloud_config = helix_manager
+                .create_instance_config(&instance_name, cloud_region)
+                .await?;
+
+            // Initialize the cloud cluster
+            helix_manager
+                .init_cluster(&instance_name, &cloud_config)
+                .await?;
+
+            // Insert into project configuration
+            project_context.config.cloud.insert(
+                instance_name.clone(),
+                CloudConfig::Helix(cloud_config.clone()),
+            );
+
+            print_status("CLOUD", "Helix cloud instance configuration added");
         }
-        Some(CloudDeploymentTypeCommand::Ecr) => {
+        "ecr" => {
             // Create ECR manager
             let ecr_manager = EcrManager::new(&project_context, EcrAuthType::AwsCli).await?;
 
@@ -65,18 +105,13 @@ pub async fn run(
 
             print_status("ECR", "AWS ECR repository initialized successfully");
         }
-        Some(CloudDeploymentTypeCommand::Fly {
-            auth,
-            volume_size,
-            vm_size,
-            public,
-        }) => {
+        "fly" => {
             let docker = DockerManager::new(&project_context);
 
             // Parse configuration with proper error handling
-            let auth_type = FlyAuthType::try_from(auth)?;
-            let vm_size_parsed = VmSize::try_from(vm_size)?;
-            let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
+            let auth_type = FlyAuthType::try_from(fly_auth)?;
+            let vm_size_parsed = VmSize::try_from(fly_vm_size)?;
+            let privacy = Privacy::from(!fly_public); // public=true means privacy=false (Public)
 
             // Create Fly.io manager
             let fly_manager = FlyManager::new(&project_context, auth_type.clone()).await?;
@@ -85,7 +120,7 @@ pub async fn run(
             let instance_config = fly_manager.create_instance_config(
                 &docker,
                 &instance_name,
-                volume_size,
+                fly_volume_size,
                 vm_size_parsed,
                 privacy,
                 auth_type,
@@ -99,7 +134,7 @@ pub async fn run(
                 CloudConfig::FlyIo(instance_config.clone()),
             );
         }
-        None => {
+        "local" | _ => {
             // Add local instance with default configuration
             let local_config = LocalInstanceConfig {
                 port: None, // Let the system assign a port

@@ -337,7 +337,6 @@ fn analyze_source(source: Source) -> Result<GeneratedSource> {
 /// Read the config.hx.json file from the instance workspace
 fn read_config(instance_src_dir: &std::path::Path) -> Result<Config> {
     let config_path = instance_src_dir.join("config.hx.json");
-    let schema_path = instance_src_dir.join("schema.hx");
 
     if !config_path.exists() {
         return Err(eyre::eyre!(
@@ -345,11 +344,7 @@ fn read_config(instance_src_dir: &std::path::Path) -> Result<Config> {
         ));
     }
 
-    if !schema_path.exists() {
-        return Err(eyre::eyre!("schema.hx not found in instance workspace"));
-    }
-
-    let config = Config::from_files(config_path, schema_path)
+    let config = Config::from_file(config_path)
         .map_err(|e| eyre::eyre!("Failed to load config: {e}"))?;
     Ok(config)
 }

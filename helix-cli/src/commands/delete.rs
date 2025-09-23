@@ -72,7 +72,7 @@ pub async fn run(instance_name: String) -> Result<()> {
             let ecr = EcrManager::new(&project, config.auth_type.clone()).await?;
             ecr.delete_repository(&instance_name).await?;
         }
-        InstanceInfo::HelixCloud(_config) => {
+        InstanceInfo::Helix(_config) => {
             todo!()
         }
         InstanceInfo::Local(_) => {

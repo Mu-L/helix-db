@@ -96,7 +96,7 @@ pub struct CloudInstanceConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CloudConfig {
-    HelixCloud(CloudInstanceConfig),
+    Helix(CloudInstanceConfig),
     FlyIo(FlyInstanceConfig),
     Ecr(EcrConfig),
 }
@@ -104,7 +104,7 @@ pub enum CloudConfig {
 impl CloudConfig {
     pub fn get_cluster_id(&self) -> Option<&str> {
         match self {
-            CloudConfig::HelixCloud(config) => Some(&config.cluster_id),
+            CloudConfig::Helix(config) => Some(&config.cluster_id),
             CloudConfig::FlyIo(config) => Some(&config.cluster_id),
             CloudConfig::Ecr(_) => None, // ECR doesn't use cluster_id
         }
@@ -183,7 +183,7 @@ impl Default for DbConfig {
 #[derive(Debug, Clone)]
 pub enum InstanceInfo<'a> {
     Local(&'a LocalInstanceConfig),
-    HelixCloud(&'a CloudInstanceConfig),
+    Helix(&'a CloudInstanceConfig),
     FlyIo(&'a FlyInstanceConfig),
     Ecr(&'a EcrConfig),
 }
@@ -192,7 +192,7 @@ impl<'a> InstanceInfo<'a> {
     pub fn build_mode(&self) -> BuildMode {
         match self {
             InstanceInfo::Local(config) => config.build_mode,
-            InstanceInfo::HelixCloud(config) => config.build_mode,
+            InstanceInfo::Helix(config) => config.build_mode,
             InstanceInfo::FlyIo(config) => config.build_mode,
             InstanceInfo::Ecr(config) => config.build_mode,
         }
@@ -201,7 +201,7 @@ impl<'a> InstanceInfo<'a> {
     pub fn port(&self) -> Option<u16> {
         match self {
             InstanceInfo::Local(config) => config.port,
-            InstanceInfo::HelixCloud(_) => None,
+            InstanceInfo::Helix(_) => None,
             InstanceInfo::FlyIo(_) => None,
             InstanceInfo::Ecr(_) => None,
         }
@@ -210,7 +210,7 @@ impl<'a> InstanceInfo<'a> {
     pub fn cluster_id(&self) -> Option<&str> {
         match self {
             InstanceInfo::Local(_) => None,
-            InstanceInfo::HelixCloud(config) => Some(&config.cluster_id),
+            InstanceInfo::Helix(config) => Some(&config.cluster_id),
             InstanceInfo::FlyIo(config) => Some(&config.cluster_id),
             InstanceInfo::Ecr(_) => None, // ECR doesn't use cluster_id
         }
@@ -219,7 +219,7 @@ impl<'a> InstanceInfo<'a> {
     pub fn db_config(&self) -> &DbConfig {
         match self {
             InstanceInfo::Local(config) => &config.db_config,
-            InstanceInfo::HelixCloud(config) => &config.db_config,
+            InstanceInfo::Helix(config) => &config.db_config,
             InstanceInfo::FlyIo(config) => &config.db_config,
             InstanceInfo::Ecr(config) => &config.db_config,
         }
@@ -236,7 +236,7 @@ impl<'a> InstanceInfo<'a> {
     pub fn docker_build_target(&self) -> Option<&str> {
         match self {
             InstanceInfo::Local(_) => None,
-            InstanceInfo::HelixCloud(_) => None,
+            InstanceInfo::Helix(_) => None,
             InstanceInfo::FlyIo(_) => Some("linux/amd64"),
             InstanceInfo::Ecr(_) => Some("linux/amd64"),
         }
@@ -266,7 +266,7 @@ impl<'a> InstanceInfo<'a> {
 impl From<InstanceInfo<'_>> for CloudConfig {
     fn from(instance_info: InstanceInfo<'_>) -> Self {
         match instance_info {
-            InstanceInfo::HelixCloud(config) => CloudConfig::HelixCloud(config.clone()),
+            InstanceInfo::Helix(config) => CloudConfig::Helix(config.clone()),
             InstanceInfo::FlyIo(config) => CloudConfig::FlyIo(config.clone()),
             InstanceInfo::Ecr(config) => CloudConfig::Ecr(config.clone()),
             InstanceInfo::Local(_) => unimplemented!(),
@@ -336,8 +336,8 @@ impl HelixConfig {
 
         if let Some(cloud_config) = self.cloud.get(name) {
             match cloud_config {
-                CloudConfig::HelixCloud(config) => {
-                    return Ok(InstanceInfo::HelixCloud(config));
+                CloudConfig::Helix(config) => {
+                    return Ok(InstanceInfo::Helix(config));
                 }
                 CloudConfig::FlyIo(config) => {
                     return Ok(InstanceInfo::FlyIo(config));

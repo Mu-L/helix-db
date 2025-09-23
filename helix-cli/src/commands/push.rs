@@ -168,7 +168,7 @@ async fn push_cloud_instance(
             ecr.deploy_image(&docker, config, instance_name, &image_name, None)
                 .await?;
         }
-        CloudConfig::HelixCloud(_config) => {
+        CloudConfig::Helix(_config) => {
             let helix = HelixManager::new(project);
             helix.deploy(None, instance_name.to_string()).await?;
         }
