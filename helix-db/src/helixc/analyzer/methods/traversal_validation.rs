@@ -163,22 +163,22 @@ pub(crate) fn validate_traversal<'a>(
                                         )
                                     }
                                     ValueType::Literal { value, loc: _ } => {
-                                        GeneratedValue::Primitive(GenRef::Std(match value {
-                                            Value::String(s) => format!("\"{s}\""),
-                                            Value::I8(i) => i.to_string(),
-                                            Value::I16(i) => i.to_string(),
-                                            Value::I32(i) => i.to_string(),
-                                            Value::I64(i) => i.to_string(),
-                                            Value::U8(i) => i.to_string(),
-                                            Value::U16(i) => i.to_string(),
-                                            Value::U32(i) => i.to_string(),
-                                            Value::U64(i) => i.to_string(),
-                                            Value::U128(i) => i.to_string(),
-                                            Value::F32(i) => i.to_string(),
-                                            Value::F64(i) => i.to_string(),
-                                            Value::Boolean(b) => b.to_string(),
+                                        GeneratedValue::Primitive(match value {
+                                            Value::String(s) => GenRef::Ref(format!("\"{s}\"")),
+                                            Value::I8(i) => GenRef::Ref(i.to_string()),
+                                            Value::I16(i) => GenRef::Ref(i.to_string()),
+                                            Value::I32(i) => GenRef::Ref(i.to_string()),
+                                            Value::I64(i) => GenRef::Ref(i.to_string()),
+                                            Value::U8(i) => GenRef::Ref(i.to_string()),
+                                            Value::U16(i) => GenRef::Ref(i.to_string()),
+                                            Value::U32(i) => GenRef::Ref(i.to_string()),
+                                            Value::U64(i) => GenRef::Ref(i.to_string()),
+                                            Value::U128(i) => GenRef::Ref(i.to_string()),
+                                            Value::F32(i) => GenRef::Ref(i.to_string()),
+                                            Value::F64(i) => GenRef::Ref(i.to_string()),
+                                            Value::Boolean(b) => GenRef::Ref(b.to_string()),
                                             _ => unreachable!(),
-                                        }))
+                                        })
                                     }
                                     _ => unreachable!(),
                                 },
