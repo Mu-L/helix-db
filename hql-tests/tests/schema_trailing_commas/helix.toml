@@ -1,5 +1,6 @@
 [project]
-name = "basic_closure_remapping"
+name = "schema_trailing_commas"
+queries = "."
 
 [local.dev]
 port = 6969

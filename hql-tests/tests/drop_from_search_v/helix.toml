@@ -1,5 +1,6 @@
 [project]
-name = "basic_closure_remapping"
+name = "drop_from_search_v"
+queries = "."
 
 [local.dev]
 port = 6969

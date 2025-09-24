@@ -1,5 +1,6 @@
 [project]
-name = "basic_closure_remapping"
+name = "edge_from_node_to_vec"
+queries = "."
 
 [local.dev]
 port = 6969

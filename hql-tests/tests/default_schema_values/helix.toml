@@ -1,5 +1,6 @@
 [project]
-name = "basic_closure_remapping"
+name = "default_schema_values"
+queries = "."
 
 [local.dev]
 port = 6969

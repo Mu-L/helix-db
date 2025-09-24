@@ -1,5 +1,6 @@
 [project]
-name = "basic_closure_remapping"
+name = "shortest_path"
+queries = "."
 
 [local.dev]
 port = 6969

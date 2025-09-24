@@ -1,5 +1,6 @@
 [project]
-name = "basic_closure_remapping"
+name = "custom_return_objects"
+queries = "."
 
 [local.dev]
 port = 6969
