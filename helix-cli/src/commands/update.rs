@@ -18,6 +18,7 @@ fn run_sync(force: bool) -> Result<()> {
         .repo_name("helix-db")
         .bin_name("helix")
         .show_download_progress(true)
+        .show_output(false)
         .current_version(cargo_crate_version!())
         .build()?;
 
