@@ -16,15 +16,17 @@ pub async fn run(output_dir: Option<String>, path: Option<String>) -> Result<()>
     println!("Checking Helix queries...");
     print_status("VALIDATE", "Parsing and validating Helix queries");
 
-    let project = ProjectContext::find_and_load(None)?;
+    // Load project context from the specified path (helix.toml directory) or find it automatically
+    let project = match &path {
+        Some(helix_toml_dir) => {
+            let dir_path = PathBuf::from(helix_toml_dir);
+            ProjectContext::find_and_load(Some(&dir_path))?
+        }
+        None => ProjectContext::find_and_load(None)?,
+    };
 
-    // Collect all .hx files for validation
-    let hx_files = collect_hx_files(
-        &path
-            .map(|dir| PathBuf::from(&dir))
-            .unwrap_or(project.root.clone()),
-        &project.config.project.queries,
-    )?;
+    // Collect all .hx files for validation from the queries directory
+    let hx_files = collect_hx_files(&project.root, &project.config.project.queries)?;
 
     // Generate content and validate using helix-db parsing logic
     let content = generate_content(&hx_files)?;

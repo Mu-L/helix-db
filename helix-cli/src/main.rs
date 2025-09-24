@@ -54,11 +54,11 @@ enum Commands {
 
     /// Compile project queries into the workspace
     Compile {
-        /// Path to output directory
+        /// Directory containing helix.toml (defaults to current directory or project root)
         #[clap(short, long)]
         path: Option<String>,
 
-        /// Instance name to compile
+        /// Path to output compiled queries
         #[clap(short, long)]
         output: Option<String>,
     },
