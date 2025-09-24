@@ -62,7 +62,6 @@ fn validate_project_syntax(project: &ProjectContext) -> Result<()> {
     // Check if schema is empty before analyzing
     if source.schema.is_empty() {
         let error = crate::errors::CliError::new("no schema definitions found in project")
-            .with_code("C201")
             .with_context("searched all .hx files in the queries directory but found no N:: (node) or E:: (edge) definitions")
             .with_hint("add at least one schema definition like 'N::User { name: String }' to your .hx files");
         return Err(eyre::eyre!("{}", error.render()));

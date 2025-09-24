@@ -36,7 +36,6 @@ async fn start_local_instance(project: &ProjectContext, instance_name: &str) -> 
 
     if !compose_file.exists() {
         let error = crate::errors::CliError::new(&format!("instance '{}' has not been built yet", instance_name))
-            .with_code("C202")
             .with_hint(&format!("run 'helix build {}' first to build the instance", instance_name));
         return Err(eyre::eyre!("{}", error.render()));
     }
