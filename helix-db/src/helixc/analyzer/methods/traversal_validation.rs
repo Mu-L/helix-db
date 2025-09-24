@@ -950,7 +950,7 @@ pub(crate) fn validate_traversal<'a>(
                                 // parse traversal
                                 let mut gen_traversal = GeneratedTraversal::default();
                                 validate_traversal(ctx, traversal, scope, original_query, parent_ty.clone(), &mut gen_traversal, gen_query);
-                                gen_traversal.should_collect = ShouldCollect::No;
+                                gen_traversal.should_collect = ShouldCollect::ToValue;
                                 GeneratedValue::Traversal(Box::new(gen_traversal))
                             }
                             _ => {
@@ -982,6 +982,13 @@ pub(crate) fn validate_traversal<'a>(
                                     i.as_str(),
                                 );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
+                            }
+                            ExpressionType::Traversal(traversal) => {
+                                // parse traversal
+                                let mut gen_traversal = GeneratedTraversal::default();
+                                validate_traversal(ctx, traversal, scope, original_query, parent_ty.clone(), &mut gen_traversal, gen_query);
+                                gen_traversal.should_collect = ShouldCollect::ToValue;
+                                GeneratedValue::Traversal(Box::new(gen_traversal))
                             }
                             _ => unreachable!("Cannot reach here"),
                         };

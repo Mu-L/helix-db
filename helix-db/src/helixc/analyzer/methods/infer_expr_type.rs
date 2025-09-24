@@ -1142,7 +1142,7 @@ pub(crate) fn infer_expr_type<'a>(
                         SourceStep::Identifier(id) => id.inner().clone(),
                         _ => DEFAULT_VAR_NAME.to_string(),
                     };
-                    tr.traversal_type = TraversalType::NestedFrom(GenRef::Std(source_variable));
+                    tr.traversal_type = TraversalType::FromVar(GenRef::Std(source_variable));
                     tr.should_collect = ShouldCollect::No;
                     tr
                 }
