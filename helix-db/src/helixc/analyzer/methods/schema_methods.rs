@@ -111,7 +111,66 @@ pub(crate) fn build_field_lookups<'a>(src: &'a Source) -> SchemaVersionMap<'a> {
     )
 }
 
+fn check_duplicate_schema_definitions(ctx: &mut Ctx) {
+    use std::collections::HashMap;
+    
+    // Track seen names for each schema type
+    let mut seen_nodes: HashMap<String, (crate::helixc::parser::location::Loc, String)> = HashMap::new();
+    let mut seen_edges: HashMap<String, (crate::helixc::parser::location::Loc, String)> = HashMap::new();
+    let mut seen_vectors: HashMap<String, (crate::helixc::parser::location::Loc, String)> = HashMap::new();
+    
+    let schema = ctx.src.get_latest_schema();
+    
+    // Check duplicate nodes
+    for node in &schema.node_schemas {
+        if let Some((_first_loc, _)) = seen_nodes.get(&node.name.1) {
+            push_schema_err(
+                ctx,
+                node.name.0.clone(),
+                ErrorCode::E107,
+                format!("duplicate node definition `{}`", node.name.1),
+                Some(format!("rename the node or remove the duplicate definition")),
+            );
+        } else {
+            seen_nodes.insert(node.name.1.clone(), (node.name.0.clone(), node.name.1.clone()));
+        }
+    }
+    
+    // Check duplicate edges
+    for edge in &schema.edge_schemas {
+        if let Some((_first_loc, _)) = seen_edges.get(&edge.name.1) {
+            push_schema_err(
+                ctx,
+                edge.name.0.clone(),
+                ErrorCode::E107,
+                format!("duplicate edge definition `{}`", edge.name.1),
+                Some(format!("rename the edge or remove the duplicate definition")),
+            );
+        } else {
+            seen_edges.insert(edge.name.1.clone(), (edge.name.0.clone(), edge.name.1.clone()));
+        }
+    }
+    
+    // Check duplicate vectors  
+    for vector in &schema.vector_schemas {
+        if let Some((_first_loc, _)) = seen_vectors.get(&vector.name) {
+            push_schema_err(
+                ctx,
+                vector.loc.clone(),
+                ErrorCode::E107,
+                format!("duplicate vector definition `{}`", vector.name),
+                Some(format!("rename the vector or remove the duplicate definition")),
+            );
+        } else {
+            seen_vectors.insert(vector.name.clone(), (vector.loc.clone(), vector.name.clone()));
+        }
+    }
+}
+
 pub(crate) fn check_schema(ctx: &mut Ctx) {
+    // Check for duplicate schema definitions
+    check_duplicate_schema_definitions(ctx);
+    
     for edge in &ctx.src.get_latest_schema().edge_schemas {
         if !ctx.node_set.contains(edge.from.1.as_str())
             && !ctx.vector_set.contains(edge.from.1.as_str())

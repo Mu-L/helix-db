@@ -6,11 +6,27 @@ N::FUNCTION {
     INDEX sha: String
 }
 
+N::FUNCTION {
+    name: String,
+    code: String,
+    created_at: String,
+    updated_at: String,
+    INDEX sha: String
+}
+
 V::CODE_CHUNK {}
 
 E::CALLS {
     From: FUNCTION,
     To: FUNCTION,
+    Properties: {
+        created_at: String,
+    }
+}
+
+E::HAS_EMBEDDING {
+    From: FUNCTION,
+    To: CODE_CHUNK,
     Properties: {
         created_at: String,
     }
@@ -34,9 +50,3 @@ QUERY find_relevant_callees(function_id: ID, query_text: String, k: I64) =>
     RETURN relevant_callees::{id, name}
 
 
-QUERY delete_version(version_sha: String) =>
-    version <- N<VERSION>({ sha: version_sha })
-    files <- version::Out<CONTAINS_CODE>
-    
-    DROP version::InE<CONTAINS_CODE>
-    RETURN "success"
