@@ -1,4 +1,4 @@
-use crate::helixc::parser::types::IdType;
+use crate::helixc::{generator::traversal_steps::Traversal, parser::types::IdType};
 use std::fmt::{self, Debug, Display};
 
 #[derive(Clone)]
@@ -205,6 +205,7 @@ pub enum GeneratedValue {
     Parameter(GenRef<String>),
     Array(GenRef<String>),
     Aggregate(GenRef<String>),
+    Traversal(Box<Traversal>),
     Unknown,
 }
 impl GeneratedValue {
@@ -216,6 +217,7 @@ impl GeneratedValue {
             GeneratedValue::Parameter(value) => value,
             GeneratedValue::Array(value) => value,
             GeneratedValue::Aggregate(value) => value,
+            GeneratedValue::Traversal(_) => panic!("Cannot get inner of traversal"),
             GeneratedValue::Unknown => panic!("Cannot get inner of unknown"),
         }
     }
@@ -230,6 +232,7 @@ impl Display for GeneratedValue {
             GeneratedValue::Parameter(value) => write!(f, "{value}"),
             GeneratedValue::Array(value) => write!(f, "&[{value}]"),
             GeneratedValue::Aggregate(value) => write!(f, "{value}"),
+            GeneratedValue::Traversal(value) => write!(f, "{value}"),
             GeneratedValue::Unknown => write!(f, ""),
         }
     }
@@ -243,6 +246,7 @@ impl Debug for GeneratedValue {
             GeneratedValue::Parameter(value) => write!(f, "GV: Parameter({value})"),
             GeneratedValue::Array(value) => write!(f, "GV: Array({value:?})"),
             GeneratedValue::Aggregate(value) => write!(f, "GV: Aggregate({value:?})"),
+            GeneratedValue::Traversal(value) => write!(f, "GV: Traversal({value})"),
             GeneratedValue::Unknown => write!(f, "Unknown"),
         }
     }

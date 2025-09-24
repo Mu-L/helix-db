@@ -241,7 +241,7 @@ impl HelixParser {
     }
 
     pub(super) fn parse_step(&self, pair: Pair<Rule>) -> Result<Step, ParserError> {
-        let inner = pair.clone().into_inner().next().unwrap();
+        let inner = pair.clone().into_inner().next().ok_or_else(|| ParserError::from(format!("Expected step, got {:?}", pair)))?;
         match inner.as_rule() {
             Rule::graph_step => Ok(Step {
                 loc: inner.loc(),

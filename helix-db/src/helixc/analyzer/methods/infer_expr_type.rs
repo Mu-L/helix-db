@@ -368,7 +368,7 @@ pub(crate) fn infer_expr_type<'a>(
                     source_step: Separator::Period(SourceStep::AddN(add_n)),
                     steps: vec![],
                     traversal_type: TraversalType::Mut,
-                    should_collect: ShouldCollect::ToVal,
+                    should_collect: ShouldCollect::ToObj,
                 });
                 gen_query.is_mut = true;
                 return (Type::Node(Some(ty.to_string())), Some(stmt));
@@ -593,7 +593,7 @@ pub(crate) fn infer_expr_type<'a>(
                     source_step: Separator::Period(SourceStep::AddE(add_e)),
                     steps: vec![],
                     traversal_type: TraversalType::Mut,
-                    should_collect: ShouldCollect::ToVal,
+                    should_collect: ShouldCollect::ToObj,
                 });
                 gen_query.is_mut = true;
                 return (Type::Edge(Some(ty.to_string())), Some(stmt));
@@ -818,7 +818,7 @@ pub(crate) fn infer_expr_type<'a>(
                         source_step: Separator::Period(SourceStep::AddV(add_v)),
                         steps: vec![],
                         traversal_type: TraversalType::Mut,
-                        should_collect: ShouldCollect::ToVal,
+                        should_collect: ShouldCollect::ToObj,
                     });
                     gen_query.is_mut = true;
                     return (Type::Vector(Some(ty.to_string())), Some(stmt));

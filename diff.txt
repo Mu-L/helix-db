@@ -1,0 +1,650 @@
+diff --git a/.gitignore b/.gitignore
+index acb27374..4ba0ae42 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,29 +1,3 @@
+-docs/whitepaperV1.md
+-**/target/
+-/graph_queries/
+-/graph_data/
+-/testing/
+-/dst/
+-count.sh
+-/queries/
+-**/node_modules/
+-**/*.txt
+-**/trump-map/
+-**/call.sh
+-.DS_Store
+-push.sh
+-.vscode/
+-data/
+-venv/
+-other_data/
+-dpedia_openai_ground_truths.csv
+-dpedia_openai_ground_truths_1m.csv
+-helixdb_test/
+-other_data/
+-*.jsonl
+-!examples/rag_demo/**
+-test-store/
+-helixdb-cfg/
+-/test/
+-.claude/
+-/thoughts/
+\ No newline at end of file
++.helix/
++target/
++*.log
+diff --git a/helix-db/src/helix_engine/traversal_core/traversal_iter.rs b/helix-db/src/helix_engine/traversal_core/traversal_iter.rs
+index fa072ad6..49a276ca 100644
+--- a/helix-db/src/helix_engine/traversal_core/traversal_iter.rs
++++ b/helix-db/src/helix_engine/traversal_core/traversal_iter.rs
+@@ -55,6 +55,16 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> RoTraversalIter
+         }
+     }
+ 
++    pub fn collect_to_value(self) -> Value {
++        match self.inner.filter_map(|item| item.ok()).next() {
++            Some(val) => match val {
++                TraversalValue::Value(val) => val,
++                _ => Value::Empty,
++            },
++            None => Value::Empty,
++        }
++    }
++
+     pub fn map_value_or(
+         mut self,
+         default: bool,
+diff --git a/helix-db/src/helixc/analyzer/methods/graph_step_validation.rs b/helix-db/src/helixc/analyzer/methods/graph_step_validation.rs
+index cc5a8750..c6711993 100644
+--- a/helix-db/src/helixc/analyzer/methods/graph_step_validation.rs
++++ b/helix-db/src/helixc/analyzer/methods/graph_step_validation.rs
+@@ -259,7 +259,7 @@ pub(crate) fn apply_graph_step<'a>(
+             traversal
+                 .steps
+                 .push(Separator::Period(GeneratedStep::FromN));
+-            traversal.should_collect = ShouldCollect::ToVal;
++            traversal.should_collect = ShouldCollect::ToObj;
+             new_ty
+         }
+         (ToN, Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty))) => {
+@@ -277,7 +277,7 @@ pub(crate) fn apply_graph_step<'a>(
+                 None
+             };
+             traversal.steps.push(Separator::Period(GeneratedStep::ToN));
+-            traversal.should_collect = ShouldCollect::ToVal;
++            traversal.should_collect = ShouldCollect::ToObj;
+             new_ty
+         }
+         (FromV, Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty))) => {
+@@ -298,7 +298,7 @@ pub(crate) fn apply_graph_step<'a>(
+             traversal
+                 .steps
+                 .push(Separator::Period(GeneratedStep::FromV));
+-            traversal.should_collect = ShouldCollect::ToVal;
++            traversal.should_collect = ShouldCollect::ToObj;
+             new_ty
+         }
+         (ToV, Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty))) => {
+@@ -317,7 +317,7 @@ pub(crate) fn apply_graph_step<'a>(
+                 None
+             };
+             traversal.steps.push(Separator::Period(GeneratedStep::ToV));
+-            traversal.should_collect = ShouldCollect::ToVal;
++            traversal.should_collect = ShouldCollect::ToObj;
+             new_ty
+         }
+         (ShortestPath(sp), Type::Nodes(_) | Type::Node(_)) => {
+diff --git a/helix-db/src/helixc/analyzer/methods/infer_expr_type.rs b/helix-db/src/helixc/analyzer/methods/infer_expr_type.rs
+index ee6ea33b..00a3ab5b 100644
+--- a/helix-db/src/helixc/analyzer/methods/infer_expr_type.rs
++++ b/helix-db/src/helixc/analyzer/methods/infer_expr_type.rs
+@@ -368,7 +368,7 @@ pub(crate) fn infer_expr_type<'a>(
+                     source_step: Separator::Period(SourceStep::AddN(add_n)),
+                     steps: vec![],
+                     traversal_type: TraversalType::Mut,
+-                    should_collect: ShouldCollect::ToVal,
++                    should_collect: ShouldCollect::ToObj,
+                 });
+                 gen_query.is_mut = true;
+                 return (Type::Node(Some(ty.to_string())), Some(stmt));
+@@ -593,7 +593,7 @@ pub(crate) fn infer_expr_type<'a>(
+                     source_step: Separator::Period(SourceStep::AddE(add_e)),
+                     steps: vec![],
+                     traversal_type: TraversalType::Mut,
+-                    should_collect: ShouldCollect::ToVal,
++                    should_collect: ShouldCollect::ToObj,
+                 });
+                 gen_query.is_mut = true;
+                 return (Type::Edge(Some(ty.to_string())), Some(stmt));
+@@ -818,7 +818,7 @@ pub(crate) fn infer_expr_type<'a>(
+                         source_step: Separator::Period(SourceStep::AddV(add_v)),
+                         steps: vec![],
+                         traversal_type: TraversalType::Mut,
+-                        should_collect: ShouldCollect::ToVal,
++                        should_collect: ShouldCollect::ToObj,
+                     });
+                     gen_query.is_mut = true;
+                     return (Type::Vector(Some(ty.to_string())), Some(stmt));
+diff --git a/helix-db/src/helixc/analyzer/methods/object_validation.rs b/helix-db/src/helixc/analyzer/methods/object_validation.rs
+index a8e9d01b..02c336a0 100644
+--- a/helix-db/src/helixc/analyzer/methods/object_validation.rs
++++ b/helix-db/src/helixc/analyzer/methods/object_validation.rs
+@@ -1,6 +1,6 @@
+ //! Semantic analyzer for Helix‑QL.
+ use crate::helixc::analyzer::error_codes::ErrorCode;
+-use crate::helixc::analyzer::utils::{FieldLookup, DEFAULT_VAR_NAME};
++use crate::helixc::analyzer::utils::{get_field_type_from_item_fields, FieldLookup, DEFAULT_VAR_NAME};
+ use crate::helixc::generator::object_remappings::SingleFieldTraversalRemapping;
+ use crate::{
+     generate_error,
+@@ -60,7 +60,7 @@ pub(crate) fn validate_object<'a>(
+     gen_query: &mut GeneratedQuery,
+     scope: &mut HashMap<&'a str, Type>,
+     closure_variable: Option<Variable>,
+-) {
++) -> Type {
+     match &cur_ty {
+         Type::Node(Some(node_ty)) | Type::Nodes(Some(node_ty)) => {
+             validate_property_access(
+@@ -73,7 +73,7 @@ pub(crate) fn validate_object<'a>(
+                 gen_traversal,
+                 cur_ty,
+                 ctx.node_fields.get(node_ty.as_str()).cloned(),
+-            );
++            )
+         }
+         Type::Edge(Some(edge_ty)) | Type::Edges(Some(edge_ty)) => {
+             validate_property_access(
+@@ -86,7 +86,7 @@ pub(crate) fn validate_object<'a>(
+                 gen_traversal,
+                 cur_ty,
+                 ctx.edge_fields.get(edge_ty.as_str()).cloned(),
+-            );
++            )
+         }
+         Type::Vector(Some(vector_ty)) | Type::Vectors(Some(vector_ty)) => {
+             validate_property_access(
+@@ -99,7 +99,7 @@ pub(crate) fn validate_object<'a>(
+                 gen_traversal,
+                 cur_ty,
+                 ctx.vector_fields.get(vector_ty.as_str()).cloned(),
+-            );
++            )
+         }
+         Type::Anonymous(ty) => {
+             validate_object(
+@@ -113,7 +113,7 @@ pub(crate) fn validate_object<'a>(
+                 gen_query,
+                 scope,
+                 closure_variable,
+-            );
++            )
+         }
+         _ => {
+             generate_error!(
+@@ -123,6 +123,7 @@ pub(crate) fn validate_object<'a>(
+                 E203,
+                 &obj.fields[0].value.loc.span
+             );
++            Type::Unknown
+         }
+     }
+ }
+@@ -338,7 +339,7 @@ fn validate_property_access<'a>(
+     gen_traversal: &mut GeneratedTraversal,
+     cur_ty: &Type,
+     fields: Option<HashMap<&'a str, Cow<'a, Field>>>,
+-) {
++) -> Type {
+     match fields {
+         Some(_) => {
+             // if there is only one field then it is a property access
+@@ -369,12 +370,14 @@ fn validate_property_access<'a>(
+                                 gen_traversal.should_collect = ShouldCollect::ToVec;
+                             }
+                             Type::Node(_) | Type::Edge(_) | Type::Vector(_) => {
+-                                gen_traversal.should_collect = ShouldCollect::ToVal;
++                                gen_traversal.should_collect = ShouldCollect::ToObj;
+                             }
+                             _ => {
+                                 unreachable!()
+                             }
+                         }
++                        let field_type = get_field_type_from_item_fields(ctx, cur_ty, lit.as_str());
++                        Type::Scalar(field_type.unwrap())
+                     }
+                     _ => unreachable!(),
+                 }
+@@ -409,9 +412,11 @@ fn validate_property_access<'a>(
+                 gen_traversal
+                     .steps
+                     .push(Separator::Period(GeneratedStep::Remapping(remapping)));
++                Type::Unknown
+             } else {
+                 // error
+                 generate_error!(ctx, original_query, obj.fields[0].value.loc.clone(), E645);
++                Type::Unknown
+             }
+         }
+         None => {
+@@ -422,6 +427,7 @@ fn validate_property_access<'a>(
+                 E201,
+                 &cur_ty.get_type_name()
+             );
++            Type::Unknown
+         }
+     }
+ }
+@@ -534,7 +540,7 @@ fn parse_identifier_as_remapping_value<'a>(
+                     steps: vec![Separator::Period(GeneratedStep::PropertyFetch(
+                         GenRef::Literal(identifier.to_string()),
+                     ))],
+-                    should_collect: ShouldCollect::ToVal,
++                    should_collect: ShouldCollect::ToObj,
+                 },
+                 should_spread,
+             }),
+diff --git a/helix-db/src/helixc/analyzer/methods/query_validation.rs b/helix-db/src/helixc/analyzer/methods/query_validation.rs
+index b3c71368..7612fd37 100644
+--- a/helix-db/src/helixc/analyzer/methods/query_validation.rs
++++ b/helix-db/src/helixc/analyzer/methods/query_validation.rs
+@@ -153,7 +153,7 @@ fn analyze_return_expr<'a>(
+                                         ReturnValueExpr::Traversal(traversal.clone()),
+                                     ));
+                                 }
+-                                ShouldCollect::ToVal => {
++                                ShouldCollect::ToObj => {
+                                     query.return_values.push(ReturnValue::new_single_named(
+                                         GeneratedValue::Literal(GenRef::Literal(v.inner().clone())),
+                                         ReturnValueExpr::Traversal(traversal.clone()),
+@@ -279,7 +279,7 @@ fn process_return_object<'a>(
+                                 ShouldCollect::ToVec => {
+                                     ReturnValueExpr::Traversal(traversal.clone())
+                                 }
+-                                ShouldCollect::ToVal => {
++                                ShouldCollect::ToObj => {
+                                     ReturnValueExpr::Traversal(traversal.clone())
+                                 }
+                                 _ => {
+diff --git a/helix-db/src/helixc/analyzer/methods/traversal_validation.rs b/helix-db/src/helixc/analyzer/methods/traversal_validation.rs
+index 833e69a5..22c1d601 100644
+--- a/helix-db/src/helixc/analyzer/methods/traversal_validation.rs
++++ b/helix-db/src/helixc/analyzer/methods/traversal_validation.rs
+@@ -174,7 +174,7 @@ pub(crate) fn validate_traversal<'a>(
+                                     _ => unreachable!(),
+                                 },
+                             }));
+-                        gen_traversal.should_collect = ShouldCollect::ToVal;
++                        gen_traversal.should_collect = ShouldCollect::ToObj;
+                         gen_traversal.traversal_type = TraversalType::Ref;
+                         Type::Node(Some(node_type.to_string()))
+                     }
+@@ -206,7 +206,7 @@ pub(crate) fn validate_traversal<'a>(
+                                 label: GenRef::Literal(node_type.clone()),
+                             }));
+                         gen_traversal.traversal_type = TraversalType::Ref;
+-                        gen_traversal.should_collect = ShouldCollect::ToVal;
++                        gen_traversal.should_collect = ShouldCollect::ToObj;
+                         Type::Node(Some(node_type.to_string()))
+                     }
+                     IdType::Literal { value: s, loc: _ } => {
+@@ -216,7 +216,7 @@ pub(crate) fn validate_traversal<'a>(
+                                 label: GenRef::Literal(node_type.clone()),
+                             }));
+                         gen_traversal.traversal_type = TraversalType::Ref;
+-                        gen_traversal.should_collect = ShouldCollect::ToVal;
++                        gen_traversal.should_collect = ShouldCollect::ToObj;
+                         Type::Node(Some(node_type.to_string()))
+                     }
+                 }
+@@ -250,7 +250,7 @@ pub(crate) fn validate_traversal<'a>(
+                     label: GenRef::Literal(edge_type.clone()),
+                 }));
+                 gen_traversal.traversal_type = TraversalType::Ref;
+-                gen_traversal.should_collect = ShouldCollect::ToVal;
++                gen_traversal.should_collect = ShouldCollect::ToObj;
+                 Type::Edge(Some(edge_type.to_string()))
+             } else {
+                 gen_traversal.source_step = Separator::Period(SourceStep::EFromType(EFromType {
+@@ -282,7 +282,7 @@ pub(crate) fn validate_traversal<'a>(
+                     label: GenRef::Literal(vector_type.clone()),
+                 }));
+                 gen_traversal.traversal_type = TraversalType::Ref;
+-                gen_traversal.should_collect = ShouldCollect::ToVal;
++                gen_traversal.should_collect = ShouldCollect::ToObj;
+                 Type::Vector(Some(vector_type.to_string()))
+             } else {
+                 gen_traversal.source_step = Separator::Period(SourceStep::VFromType(VFromType {
+@@ -321,7 +321,7 @@ pub(crate) fn validate_traversal<'a>(
+         }
+         // anonymous will be the traversal type rather than the start type
+         StartNode::Anonymous => {
+-            let parent = parent_ty.unwrap();
++            let parent = parent_ty.clone().unwrap();
+             gen_traversal.traversal_type =
+                 TraversalType::FromVar(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
+             gen_traversal.source_step = Separator::Empty(SourceStep::Anonymous);
+@@ -528,7 +528,7 @@ pub(crate) fn validate_traversal<'a>(
+             StepType::First => {
+                 cur_ty = cur_ty.clone().into_single();
+                 excluded.clear();
+-                gen_traversal.should_collect = ShouldCollect::ToVal;
++                gen_traversal.should_collect = ShouldCollect::ToObj;
+             }
+ 
+             StepType::Count => {
+@@ -572,7 +572,7 @@ pub(crate) fn validate_traversal<'a>(
+             }
+ 
+             StepType::Object(obj) => {
+-                validate_object(
++                cur_ty = validate_object(
+                     ctx,
+                     &cur_ty,
+                     tr,
+@@ -664,6 +664,7 @@ pub(crate) fn validate_traversal<'a>(
+                             (Type::Scalar(ft), _) => ft.clone(),
+                             (Type::Boolean, _) => FieldType::Boolean,
+                             (field_type, _) => {
++                                println!("Field type: {:?}", field_type);
+                                 generate_error!(
+                                     ctx,
+                                     original_query,
+@@ -688,9 +689,25 @@ pub(crate) fn validate_traversal<'a>(
+                     }
+                     _ => None,
+                 };
++                println!("Field name 2: {:?}", field_name);
+                 if let Some(FieldValueType::Identifier(field_name)) = &field_name {
+                     is_valid_identifier(ctx, original_query, b_op.loc.clone(), field_name.as_str());
+                     match &cur_ty {
++                        Type::Scalar(ft) => {
++                            if ft != &property_type {
++                                generate_error!(
++                                    ctx,
++                                    original_query,
++                                    b_op.loc.clone(),
++                                    E622,
++                                    field_name,
++                                    cur_ty.kind_str(),
++                                    &cur_ty.get_type_name(),
++                                    &ft.to_string(),
++                                    &property_type.to_string()
++                                );
++                            }
++                        }
+                         Type::Nodes(Some(node_ty)) | Type::Node(Some(node_ty)) => {
+                             let field_set = ctx.node_fields.get(node_ty.as_str()).cloned();
+                             if let Some(field_set) = field_set {
+@@ -929,7 +946,17 @@ pub(crate) fn validate_traversal<'a>(
+                                 );
+                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
+                             }
+-                            _ => unreachable!("Cannot reach here"),
++                            ExpressionType::Traversal(traversal) => {
++                                // parse traversal
++                                let mut gen_traversal = GeneratedTraversal::default();
++                                validate_traversal(ctx, traversal, scope, original_query, parent_ty.clone(), &mut gen_traversal, gen_query);
++                                gen_traversal.should_collect = ShouldCollect::No;
++                                GeneratedValue::Traversal(Box::new(gen_traversal))
++                            }
++                            _ => {
++                                println!("Expr: {:?}", expr);
++                                unreachable!("Cannot reach here");
++                            }
+                         };
+                         BoolOp::Eq(Eq { value: v })
+                     }
+@@ -1417,7 +1444,7 @@ pub(crate) fn validate_traversal<'a>(
+                 // Add identifier to a temporary scope so inner uses pass
+                 scope.insert(cl.identifier.as_str(), cur_ty.clone()); // If true then already exists so return error
+                 let obj = &cl.object;
+-                validate_object(
++                cur_ty = validate_object(
+                     ctx,
+                     &cur_ty,
+                     tr,
+diff --git a/helix-db/src/helixc/analyzer/utils.rs b/helix-db/src/helixc/analyzer/utils.rs
+index 57a5f5f7..1f19ed2f 100644
+--- a/helix-db/src/helixc/analyzer/utils.rs
++++ b/helix-db/src/helixc/analyzer/utils.rs
+@@ -150,6 +150,10 @@ pub(super) fn validate_field_name_existence_for_item_type(
+     }
+ }
+ 
++pub(super) fn get_field_type_from_item_fields(ctx: &mut Ctx, item_type: &Type, name: &str) -> Option<FieldType> {
++    item_type.get_field_type_from_item_fields(ctx, name)
++}
++
+ pub(super) fn gen_property_access(name: &str) -> Step {
+     match name {
+         "id" => Step::PropertyFetch(GenRef::Literal("id".to_string())),
+@@ -196,6 +200,7 @@ impl VariableAccess for Option<Variable> {
+ pub(super) trait FieldLookup {
+     fn item_fields_contains_key(&self, ctx: &Ctx, key: &str) -> bool;
+     fn item_fields_contains_key_with_type(&self, ctx: &Ctx, key: &str) -> (bool, String);
++    fn get_field_type_from_item_fields(&self, ctx: &Ctx, key: &str) -> Option<FieldType>;
+ }
+ 
+ impl FieldLookup for Type {
+@@ -266,4 +271,50 @@ impl FieldLookup for Type {
+ 
+         (is_valid_field, item_type.to_string())
+     }
++
++    fn get_field_type_from_item_fields(&self, ctx: &Ctx, key: &str) -> Option<FieldType> {
++        match self {
++            Type::Node(Some(node_type)) | Type::Nodes(Some(node_type)) => ctx
++                .node_fields
++                .get(node_type.as_str())
++                .map(|fields| match key {
++                    "id" | "ID" => Some(FieldType::Uuid),
++                    "label" => Some(FieldType::String),
++                    _ => fields
++                        .get(key)
++                        .map(|field| Some(field.field_type.clone()))
++                        .unwrap_or(None),
++                })
++                .unwrap_or(None),
++            Type::Edge(Some(edge_type)) | Type::Edges(Some(edge_type)) => ctx
++                .edge_fields
++                .get(edge_type.as_str())
++                .map(|fields| match key {
++                    "id" | "ID" => Some(FieldType::Uuid),
++                    "label" => Some(FieldType::String),
++                    "from_node" | "to_node" => Some(FieldType::Uuid),
++                    _ => fields
++                        .get(key)
++                        .map(|field| Some(field.field_type.clone()))
++                        .unwrap_or(None),
++                })
++                .unwrap_or(None),
++
++            Type::Vector(Some(vector_type)) | Type::Vectors(Some(vector_type)) => ctx
++                .vector_fields
++                .get(vector_type.as_str())
++                .map(|fields| match key {
++                    "id" | "ID" => Some(FieldType::Uuid),
++                    "label" => Some(FieldType::String),
++                    "data" => Some(FieldType::Array(Box::new(FieldType::F64))),
++                    "score" => Some(FieldType::F64),
++                    _ => fields
++                        .get(key)
++                        .map(|field| Some(field.field_type.clone()))
++                        .unwrap_or(None),
++                })
++                .unwrap_or(None),
++            _ => unreachable!("shouldve been caught eariler"),
++        }
++    }
+ }
+diff --git a/helix-db/src/helixc/generator/traversal_steps.rs b/helix-db/src/helixc/generator/traversal_steps.rs
+index c4493306..5ccd1cda 100644
+--- a/helix-db/src/helixc/generator/traversal_steps.rs
++++ b/helix-db/src/helixc/generator/traversal_steps.rs
+@@ -49,17 +49,19 @@ impl Debug for TraversalType {
+ #[derive(Clone)]
+ pub enum ShouldCollect {
+     ToVec,
+-    ToVal,
++    ToObj,
+     No,
+     Try,
++    ToValue
+ }
+ impl Display for ShouldCollect {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+         match self {
+             ShouldCollect::ToVec => write!(f, ".collect_to::<Vec<_>>()"),
+-            ShouldCollect::ToVal => write!(f, ".collect_to_obj()"),
++            ShouldCollect::ToObj => write!(f, ".collect_to_obj()"),
+             ShouldCollect::Try => write!(f, "?"),
+             ShouldCollect::No => write!(f, ""),
++            ShouldCollect::ToValue => write!(f, ".collect_to_value()"),
+         }
+     }
+ }
+diff --git a/helix-db/src/helixc/generator/utils.rs b/helix-db/src/helixc/generator/utils.rs
+index b55b6c8b..13e9e139 100644
+--- a/helix-db/src/helixc/generator/utils.rs
++++ b/helix-db/src/helixc/generator/utils.rs
+@@ -1,4 +1,4 @@
+-use crate::helixc::parser::types::IdType;
++use crate::helixc::{generator::traversal_steps::Traversal, parser::types::IdType};
+ use std::fmt::{self, Debug, Display};
+ 
+ #[derive(Clone)]
+@@ -205,6 +205,7 @@ pub enum GeneratedValue {
+     Parameter(GenRef<String>),
+     Array(GenRef<String>),
+     Aggregate(GenRef<String>),
++    Traversal(Box<Traversal>),
+     Unknown,
+ }
+ impl GeneratedValue {
+@@ -216,6 +217,7 @@ impl GeneratedValue {
+             GeneratedValue::Parameter(value) => value,
+             GeneratedValue::Array(value) => value,
+             GeneratedValue::Aggregate(value) => value,
++            GeneratedValue::Traversal(_) => panic!("Cannot get inner of traversal"),
+             GeneratedValue::Unknown => panic!("Cannot get inner of unknown"),
+         }
+     }
+@@ -230,6 +232,7 @@ impl Display for GeneratedValue {
+             GeneratedValue::Parameter(value) => write!(f, "{value}"),
+             GeneratedValue::Array(value) => write!(f, "&[{value}]"),
+             GeneratedValue::Aggregate(value) => write!(f, "{value}"),
++            GeneratedValue::Traversal(value) => write!(f, "{value}"),
+             GeneratedValue::Unknown => write!(f, ""),
+         }
+     }
+@@ -243,6 +246,7 @@ impl Debug for GeneratedValue {
+             GeneratedValue::Parameter(value) => write!(f, "GV: Parameter({value})"),
+             GeneratedValue::Array(value) => write!(f, "GV: Array({value:?})"),
+             GeneratedValue::Aggregate(value) => write!(f, "GV: Aggregate({value:?})"),
++            GeneratedValue::Traversal(value) => write!(f, "GV: Traversal({value})"),
+             GeneratedValue::Unknown => write!(f, "Unknown"),
+         }
+     }
+diff --git a/helix-db/src/helixc/parser/expression_parse_methods.rs b/helix-db/src/helixc/parser/expression_parse_methods.rs
+index c5cded0a..32e6f65a 100644
+--- a/helix-db/src/helixc/parser/expression_parse_methods.rs
++++ b/helix-db/src/helixc/parser/expression_parse_methods.rs
+@@ -1,8 +1,7 @@
+ use crate::{
+     helixc::parser::{
+-        HelixParser, Rule,
++        HelixParser, ParserError, Rule,
+         location::{HasLoc, Loc},
+-        ParserError,
+         types::{
+             Assignment, BM25Search, Embed, EvaluatesToNumber, EvaluatesToNumberType,
+             EvaluatesToString, ExistsExpression, Expression, ExpressionType, ForLoop, ForLoopVars,
+@@ -13,6 +12,7 @@ use crate::{
+ };
+ use pest::iterators::{Pair, Pairs};
+ 
++
+ impl HelixParser {
+     pub(super) fn parse_assignment(&self, pair: Pair<Rule>) -> Result<Assignment, ParserError> {
+         let mut pairs = pair.clone().into_inner();
+@@ -37,10 +37,13 @@ impl HelixParser {
+                 loc: pair.loc(),
+                 expr: ExpressionType::Traversal(Box::new(self.parse_traversal(pair)?)),
+             }),
+-            Rule::id_traversal => Ok(Expression {
+-                loc: pair.loc(),
+-                expr: ExpressionType::Traversal(Box::new(self.parse_traversal(pair)?)),
+-            }),
++            Rule::id_traversal => {
++                Ok(Expression {
++                    loc: pair.loc(),
++                    expr: ExpressionType::Traversal(Box::new(self.parse_traversal(pair)?)),
++                })
++            }
++
+             Rule::anonymous_traversal => Ok(Expression {
+                 loc: pair.loc(),
+                 expr: ExpressionType::Traversal(Box::new(self.parse_anon_traversal(pair)?)),
+@@ -66,6 +69,7 @@ impl HelixParser {
+                 let traversal = inner
+                     .next()
+                     .ok_or_else(|| ParserError::from("Missing traversal"))?;
++                println!("Parsing exists traversal: {:?}", traversal);
+                 let expr = ExpressionType::Exists(ExistsExpression {
+                     loc: loc.clone(),
+                     expr: Box::new(Expression {
+@@ -200,7 +204,7 @@ impl HelixParser {
+                 expr: ExpressionType::BooleanLiteral(expression.as_str() == "true"),
+             }),
+             Rule::exists => {
+-                let loc = expression.loc();
++               let loc = expression.loc();
+                 let mut inner = expression.into_inner();
+                 let negated = match inner.peek() {
+                     Some(p) => p.as_rule() == Rule::negate,
+@@ -216,9 +220,12 @@ impl HelixParser {
+                     loc: loc.clone(),
+                     expr: Box::new(Expression {
+                         loc: loc.clone(),
+-                        expr: ExpressionType::Traversal(Box::new(
+-                            self.parse_anon_traversal(traversal)?,
+-                        )),
++                        expr: ExpressionType::Traversal(Box::new(match traversal.as_rule() {
++                            Rule::anonymous_traversal => self.parse_anon_traversal(traversal)?,
++                            Rule::id_traversal => self.parse_traversal(traversal)?,
++                            Rule::traversal => self.parse_traversal(traversal)?,
++                            _ => unreachable!(),
++                        })),
+                     }),
+                 });
+                 Ok(Expression {
+diff --git a/helix-db/src/helixc/parser/graph_step_parse_methods.rs b/helix-db/src/helixc/parser/graph_step_parse_methods.rs
+index cfa808c6..ac417147 100644
+--- a/helix-db/src/helixc/parser/graph_step_parse_methods.rs
++++ b/helix-db/src/helixc/parser/graph_step_parse_methods.rs
+@@ -241,7 +241,7 @@ impl HelixParser {
+     }
+ 
+     pub(super) fn parse_step(&self, pair: Pair<Rule>) -> Result<Step, ParserError> {
+-        let inner = pair.clone().into_inner().next().unwrap();
++        let inner = pair.clone().into_inner().next().ok_or_else(|| ParserError::from(format!("Expected step, got {:?}", pair)))?;
+         match inner.as_rule() {
+             Rule::graph_step => Ok(Step {
+                 loc: inner.loc(),
+diff --git a/helix-db/src/helixc/parser/traversal_parse_methods.rs b/helix-db/src/helixc/parser/traversal_parse_methods.rs
+index b4c6d70b..7fc05fec 100644
+--- a/helix-db/src/helixc/parser/traversal_parse_methods.rs
++++ b/helix-db/src/helixc/parser/traversal_parse_methods.rs
+@@ -11,7 +11,7 @@ use pest::iterators::{Pair, Pairs};
+ impl HelixParser {
+     pub(super) fn parse_traversal(&self, pair: Pair<Rule>) -> Result<Traversal, ParserError> {
+         let mut pairs = pair.clone().into_inner();
+-        let start = self.parse_start_node(pairs.next().unwrap())?;
++        let start = self.parse_start_node(pairs.next().ok_or_else(|| ParserError::from(format!("Expected start node, got {:?}", pair)))?)?;
+         let steps = pairs
+             .map(|p| self.parse_step(p))
+             .collect::<Result<Vec<_>, _>>()?;
