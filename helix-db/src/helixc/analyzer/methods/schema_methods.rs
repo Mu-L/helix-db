@@ -51,6 +51,16 @@ pub(crate) fn build_field_lookups<'a>(src: &'a Source) -> SchemaVersionMap<'a> {
                                 loc: Loc::empty(),
                             }),
                         );
+                        props.insert(
+                            "label",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "label".to_string(),
+                                field_type: FieldType::String,
+                                loc: Loc::empty(),
+                            }),
+                        );
                         (n.name.1.as_str(), props)
                     })
                     .collect();
@@ -78,6 +88,36 @@ pub(crate) fn build_field_lookups<'a>(src: &'a Source) -> SchemaVersionMap<'a> {
                                 loc: Loc::empty(),
                             }),
                         );
+                        props.insert(
+                            "label",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "label".to_string(),
+                                field_type: FieldType::String,
+                                loc: Loc::empty(),
+                            }),
+                        );
+                        props.insert(
+                            "from_node",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "from_node".to_string(),
+                                field_type: FieldType::Uuid,
+                                loc: Loc::empty(),
+                            }),
+                        );
+                        props.insert(
+                            "to_node",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "to_node".to_string(),
+                                field_type: FieldType::Uuid,
+                                loc: Loc::empty(),
+                            }),
+                        );
                         (e.name.1.as_str(), props)
                     })
                     .collect();
@@ -98,6 +138,36 @@ pub(crate) fn build_field_lookups<'a>(src: &'a Source) -> SchemaVersionMap<'a> {
                                 defaults: None,
                                 name: "id".to_string(),
                                 field_type: FieldType::Uuid,
+                                loc: Loc::empty(),
+                            }),
+                        );
+                        props.insert(
+                            "label",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "label".to_string(),
+                                field_type: FieldType::String,
+                                loc: Loc::empty(),
+                            }),
+                        );
+                        props.insert(
+                            "data",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "data".to_string(),
+                                field_type: FieldType::Array(Box::new(FieldType::F64)),
+                                loc: Loc::empty(),
+                            }),
+                        );
+                        props.insert(
+                            "score",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "score".to_string(),
+                                field_type: FieldType::F64,
                                 loc: Loc::empty(),
                             }),
                         );

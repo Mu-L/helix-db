@@ -277,6 +277,7 @@ impl Filterable for HVector {
             "data" => Ok(Cow::Owned(Value::Array(
                 self.data.iter().map(|f| Value::F64(*f)).collect(),
             ))),
+            "score" => Ok(Cow::Owned(Value::F64(self.score()))),
             _ => match &self.properties {
                 Some(properties) => properties
                     .get(key)
