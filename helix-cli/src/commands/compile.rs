@@ -29,6 +29,13 @@ pub async fn run(output_dir: Option<String>, path: Option<String>) -> Result<()>
     let content = generate_content(&hx_files)?;
     let source = parse_content(&content)?;
 
+    // Check if schema is empty before analyzing
+    if source.schema.is_empty() {
+        return Err(eyre::eyre!(
+            "No schema definitions found in .hx files. Please add at least one N:: (node) or E:: (edge) definition."
+        ));
+    }
+
     // Run static analysis to catch validation errors
     let generated_source = analyze_source(source)?;
 
