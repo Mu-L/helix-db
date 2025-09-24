@@ -119,7 +119,16 @@ pub(crate) fn validate_traversal<'a>(
                                     }
                                 }
                             }
-                            None => unreachable!(),
+                            None => {
+                                // item type doesnt exist in schema
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    loc.clone(),
+                                    E201,
+                                    node_type
+                                );
+                            }
                         };
                         gen_traversal.source_step =
                             Separator::Period(SourceStep::NFromIndex(NFromIndex {

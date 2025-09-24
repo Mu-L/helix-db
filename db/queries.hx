@@ -3,6 +3,7 @@ N::FUNCTION {
     code: String,
     created_at: String,
     updated_at: String,
+    INDEX sha: String
 }
 
 V::CODE_CHUNK {}
@@ -31,3 +32,11 @@ QUERY find_relevant_callees(function_id: ID, query_text: String, k: I64) =>
         EXISTS(similar_functions::WHERE(_::ID::EQ(callees::ID)))
     )
     RETURN relevant_callees::{id, name}
+
+
+QUERY delete_version(version_sha: String) =>
+    version <- N<VERSION>({ sha: version_sha })
+    files <- version::Out<CONTAINS_CODE>
+    
+    DROP version::InE<CONTAINS_CODE>
+    RETURN "success"
