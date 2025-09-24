@@ -13,7 +13,8 @@ use crate::{
 };
 
 pub async fn run(output_dir: Option<String>, path: Option<String>) -> Result<()> {
-    print_status("VALIDATE", "Parsing and validating Helix queries...");
+    println!("Checking Helix queries...");
+    print_status("VALIDATE", "Parsing and validating Helix queries");
 
     let project = ProjectContext::find_and_load(None)?;
 
@@ -38,6 +39,6 @@ pub async fn run(output_dir: Option<String>, path: Option<String>) -> Result<()>
         .unwrap_or(project.root);
     generate_rust_code(generated_source, &output_dir)?;
 
-    print_success("All queries and schema are valid");
+    print_success("Compilation completed successfully");
     Ok(())
 }

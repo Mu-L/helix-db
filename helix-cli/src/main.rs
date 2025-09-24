@@ -1,5 +1,6 @@
 use clap::{ArgGroup, Parser, Subcommand};
 use eyre::Result;
+use std::panic;
 
 mod commands;
 mod config;
@@ -223,6 +224,31 @@ async fn main() -> Result<()> {
     // Initialize error reporting
     color_eyre::install()?;
 
+    // Install custom panic hook for better user experience
+    panic::set_hook(Box::new(|panic_info| {
+        let msg = match panic_info.payload().downcast_ref::<&str>() {
+            Some(s) => *s,
+            None => match panic_info.payload().downcast_ref::<String>() {
+                Some(s) => s.as_str(),
+                None => "An unexpected error occurred",
+            }
+        };
+
+        let location = if let Some(location) = panic_info.location() {
+            format!("{}:{}", location.file(), location.line())
+        } else {
+            "unknown location".to_string()
+        };
+
+        let error = crate::errors::CliError::new("Helix CLI encountered an unexpected error")
+            .with_context(msg)
+            .with_hint("This is likely a bug. Please report it at https://github.com/HelixDB/helix-db/issues");
+
+        eprint!("{}", error.render());
+        eprintln!("   = note: error occurred at {location}");
+        std::process::exit(1);
+    }));
+
     // Initialize metrics sender
     let metrics_sender = metrics_sender::MetricsSender::new()?;
 
@@ -303,7 +329,10 @@ async fn main() -> Result<()> {
 
     // Handle result with proper error formatting
     if let Err(e) = result {
-        eprintln!("{e}");
+        // Try to convert eyre error to CliError for better formatting
+        let cli_error = crate::errors::CliError::new(&e.to_string())
+            .with_hint("Run 'helix --help' for usage information");
+        eprint!("{}", cli_error.render());
         std::process::exit(1);
     }
 

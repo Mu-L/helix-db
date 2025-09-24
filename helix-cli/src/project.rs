@@ -93,11 +93,10 @@ fn find_project_root(start: &Path) -> Result<PathBuf> {
         }
     }
 
-    Err(eyre!(
-        "Could not find helix.toml file in {} or any parent directory. \
-        Run 'helix init' to create a new Helix project.",
-        start.display()
-    ))
+    let error = crate::errors::config_error("project configuration not found")
+        .with_file_path(start.display().to_string())
+        .with_context(&format!("searched from {} up to filesystem root", start.display()));
+    Err(eyre!("{}", error.render()))
 }
 
 pub fn get_helix_cache_dir() -> Result<PathBuf> {

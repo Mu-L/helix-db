@@ -116,7 +116,11 @@ async fn ensure_helix_repo_cached() -> Result<()> {
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(eyre::eyre!("Failed to clone Helix repository:\n{stderr}"));
+                let error = crate::errors::CliError::new("failed to clone Helix repository")
+                    .with_code("C300")
+                    .with_context(stderr.to_string())
+                    .with_hint("ensure git is installed and you have internet connectivity");
+                return Err(eyre::eyre!("{}", error.render()));
             }
         }
 
@@ -317,7 +321,10 @@ fn parse_content(content: &Content) -> Result<Source> {
 /// Otherwise returns the generated source object which is an IR used to transpile the queries to rust.
 fn analyze_source(source: Source) -> Result<GeneratedSource> {
     if source.schema.is_empty() {
-        return Err(eyre::eyre!("No schema definitions provided"));
+        let error = crate::errors::CliError::new("no schema definitions found in project")
+            .with_code("C201")
+            .with_hint("add at least one schema definition like 'N::User { name: String }' to your .hx files");
+        return Err(eyre::eyre!("{}", error.render()));
     }
 
     let (diagnostics, generated_source) = analyze(&source);
