@@ -34,9 +34,10 @@ pub async fn run(output_dir: Option<String>, path: Option<String>) -> Result<()>
 
     // Check if schema is empty before analyzing
     if source.schema.is_empty() {
-        return Err(eyre::eyre!(
-            "No schema definitions found in .hx files. Please add at least one N:: (node) or E:: (edge) definition."
-        ));
+        let error = crate::errors::CliError::new("no schema definitions found in project")
+            .with_context("searched all .hx files in the queries directory but found no N:: (node) or E:: (edge) definitions")
+            .with_hint("add at least one schema definition like 'N::User { name: String }' to your .hx files");
+        return Err(eyre::eyre!("{}", error.render()));
     }
 
     // Run static analysis to catch validation errors
