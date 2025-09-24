@@ -2,7 +2,7 @@ use crate::commands::integrations::fly::FlyManager;
 use crate::config::CloudConfig;
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
-use crate::utils::{print_error, print_status, print_success};
+use crate::utils::{print_status, print_success};
 use eyre::{OptionExt, Result};
 
 pub async fn run(instance_name: String) -> Result<()> {
@@ -35,11 +35,10 @@ async fn start_local_instance(project: &ProjectContext, instance_name: &str) -> 
     let compose_file = workspace.join("docker-compose.yml");
 
     if !compose_file.exists() {
-        print_error(&format!(
-            "Instance '{instance_name}' has not been built yet"
-        ));
-        println!("  Run 'helix build {instance_name}' first to build the instance.");
-        return Err(eyre::eyre!("Instance '{instance_name}' not built"));
+        let error = crate::errors::CliError::new(&format!("instance '{}' has not been built yet", instance_name))
+            .with_code("C202")
+            .with_hint(&format!("run 'helix build {}' first to build the instance", instance_name));
+        return Err(eyre::eyre!("{}", error.render()));
     }
 
     // Start the instance

@@ -50,7 +50,7 @@ async fn check_all_instances(project: &ProjectContext) -> Result<()> {
 
 /// Validate project syntax by parsing queries and schema (similar to build.rs but without generating files)
 fn validate_project_syntax(project: &ProjectContext) -> Result<()> {
-    print_status("VALIDATE", "Parsing and validating Helix queries...");
+    print_status("VALIDATE", "Parsing and validating Helix queries");
 
     // Collect all .hx files for validation
     let hx_files = collect_hx_files(&project.root, &project.config.project.queries)?;
@@ -61,7 +61,11 @@ fn validate_project_syntax(project: &ProjectContext) -> Result<()> {
 
     // Check if schema is empty before analyzing
     if source.schema.is_empty() {
-        return Err(eyre::eyre!("No schema definitions found in .hx files. Please add at least one N:: (node) or E:: (edge) definition."));
+        let error = crate::errors::CliError::new("no schema definitions found in project")
+            .with_code("C201")
+            .with_context("searched all .hx files in the queries directory but found no N:: (node) or E:: (edge) definitions")
+            .with_hint("add at least one schema definition like 'N::User { name: String }' to your .hx files");
+        return Err(eyre::eyre!("{}", error.render()));
     }
 
     // Run static analysis to catch validation errors

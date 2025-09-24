@@ -34,7 +34,7 @@ fn run_sync(force: bool) -> Result<()> {
         print_status(
             "UPDATE",
             &format!(
-                "Update available: v{current_version} → v{}",
+                "Update available: v{current_version} -> v{}",
                 latest_release.version
             ),
         );

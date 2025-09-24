@@ -125,6 +125,14 @@ pub fn print_success(message: &str) {
     println!("{} {message}", "[SUCCESS]".green().bold());
 }
 
+/// Print a completion message with summary
+pub fn print_completion(operation: &str, details: &str) {
+    println!("{} {} completed successfully", "[SUCCESS]".green().bold(), operation);
+    if !details.is_empty() {
+        println!("  {details}");
+    }
+}
+
 /// Print a warning message
 pub fn print_warning(message: &str) {
     let warning = CliError::warning(message);
@@ -262,15 +270,25 @@ pub mod helixc_utils {
         let (diagnostics, generated_source) = analyze(&source);
 
         if !diagnostics.is_empty() {
-            let error_msg = diagnostics
-                .iter()
-                .map(|e| format!("{e:?}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Err(eyre::eyre!("Validation failed:\n{error_msg}"));
+            // Format diagnostics properly using the helix-db pretty printer
+            let formatted_diagnostics = format_diagnostics(&diagnostics);
+            return Err(eyre::eyre!("Compilation failed with {} error(s):\n\n{}", 
+                diagnostics.len(), formatted_diagnostics));
         }
 
         Ok(generated_source)
+    }
+
+    /// Format diagnostics using the helix-db diagnostic renderer
+    fn format_diagnostics(diagnostics: &[helix_db::helixc::analyzer::diagnostic::Diagnostic]) -> String {
+        let mut output = String::new();
+        for diagnostic in diagnostics {
+            // Use the render method with empty source for now
+            let filepath = diagnostic.filepath.clone().unwrap_or("queries.hx".to_string());
+            output.push_str(&diagnostic.render("", &filepath));
+            output.push('\n');
+        }
+        output
     }
 
     pub fn generate_rust_code(source: GeneratedSource, path: &Path) -> Result<()> {

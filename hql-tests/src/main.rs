@@ -306,7 +306,7 @@ async fn main() -> Result<()> {
 
     if !output.status.success() {
         bail!(
-            "❌ BUILD FAILED: helix-cli build.sh failed\nStderr: {}\nStdout: {}",
+            "[FAILED] BUILD FAILED: helix-cli build.sh failed\nStderr: {}\nStdout: {}",
             String::from_utf8_lossy(&output.stderr),
             String::from_utf8_lossy(&output.stdout)
         );
@@ -363,7 +363,7 @@ async fn main() -> Result<()> {
         }
 
         process_test_directory(test_name, &tests_dir, &temp_repo, &github_config).await?;
-        println!("✅ Successfully processed {test_name}");
+        println!("[SUCCESS] Successfully processed {test_name}");
     } else if let Some(batch_args) = matches.get_many::<u32>("batch") {
         // Process in batch mode
         let batch_values: Vec<u32> = batch_args.copied().collect();
@@ -444,14 +444,14 @@ async fn main() -> Result<()> {
 
         if !failed_tests.is_empty() {
             bail!(
-                "❌ BATCH PROCESSING FAILED: {} out of {} tests failed compilation/check: {:?}",
+                "[FAILED] BATCH PROCESSING FAILED: {} out of {} tests failed compilation/check: {:?}",
                 failed_tests.len(),
                 end_idx - start_idx,
                 failed_tests
             );
         }
 
-        println!("✅ Finished processing batch {current_batch}/{total_batches} successfully");
+        println!("[SUCCESS] Finished processing batch {current_batch}/{total_batches} successfully");
     } else {
         // Process all test directories in parallel (default behavior)
         println!(
@@ -493,7 +493,7 @@ async fn main() -> Result<()> {
 
         if !failed_tests.is_empty() {
             bail!(
-                "❌ PROCESSING FAILED: {} out of {} tests failed compilation/check: {:?}",
+                "[FAILED] PROCESSING FAILED: {} out of {} tests failed compilation/check: {:?}",
                 failed_tests.len(),
                 test_dirs.len(),
                 failed_tests
@@ -501,7 +501,7 @@ async fn main() -> Result<()> {
         }
 
         println!(
-            "✅ Finished processing all {} tests successfully",
+            "[SUCCESS] Finished processing all {} tests successfully",
             test_dirs.len()
         );
     }
@@ -605,7 +605,7 @@ async fn process_test_directory(
         let stdout = String::from_utf8_lossy(&output.stdout);
         // For helix compilation, we'll show the raw output since it's not cargo format
         let error_message =
-            format!("❌ HELIX COMPILE FAILED for {test_name}\nStderr: {stderr}\nStdout: {stdout}");
+            format!("[FAILED] HELIX COMPILE FAILED for {test_name}\nStderr: {stderr}\nStdout: {stdout}");
 
         // Create GitHub issue if configuration is available
         if let Some(config) = github_config {
@@ -655,7 +655,7 @@ async fn process_test_directory(
             let stderr = String::from_utf8_lossy(&output.stderr);
             let _stdout = String::from_utf8_lossy(&output.stdout);
             // let filtered_errors = extract_cargo_errors(&stderr, &stdout);
-            let error_message = format!("❌ CARGO CHECK FAILED for {test_name}\n{stderr}");
+            let error_message = format!("[FAILED] CARGO CHECK FAILED for {test_name}\n{stderr}");
 
             // Create GitHub issue if configuration is available
             if let Some(config) = github_config {

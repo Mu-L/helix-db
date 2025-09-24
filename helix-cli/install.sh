@@ -207,7 +207,7 @@ should_install() {
         return 1
     fi
     
-    log_info "Update available: $installed_version → $latest_version"
+    log_info "Update available: $installed_version -> $latest_version"
     return 0
 }
 
