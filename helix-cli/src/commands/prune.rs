@@ -66,15 +66,23 @@ async fn prune_all_instances(project: &ProjectContext) -> Result<()> {
 
     let instances = project.config.list_instances();
 
+    if instances.is_empty() {
+        print_status("PRUNE", "No instances found in project");
+        return Ok(());
+    }
+
+    print_status("PRUNE", &format!("Found {} instance(s) to prune", instances.len()));
+
     if DockerManager::check_docker_available().is_ok() {
         let docker = DockerManager::new(project);
 
         for instance_name in &instances {
-            print_status("PRUNE", &format!("Pruning instance '{instance_name}'"));
+            print_status("PRUNE", &format!("Removing containers for '{instance_name}'"));
 
             // Remove containers (but not volumes)
             let _ = docker.prune_instance(instance_name, false);
 
+            print_status("PRUNE", &format!("Removing Docker images for '{instance_name}'"));
             // Remove Docker images
             let _ = docker.remove_instance_images(instance_name);
         }
@@ -83,10 +91,11 @@ async fn prune_all_instances(project: &ProjectContext) -> Result<()> {
     // Remove instance workspaces but keep volumes
     for instance_name in &instances {
         let workspace = project.instance_workspace(instance_name);
-        if workspace.exists()
-            && let Err(e) = std::fs::remove_dir_all(&workspace)
-        {
-            eprintln!("Warning: Failed to remove workspace for '{instance_name}': {e}");
+        if workspace.exists() {
+            match std::fs::remove_dir_all(&workspace) {
+                Ok(()) => print_status("PRUNE", &format!("Removed workspace for '{instance_name}'")),
+                Err(e) => print_warning(&format!("Failed to remove workspace for '{instance_name}': {e}")),
+            }
         }
     }
 
@@ -95,11 +104,23 @@ async fn prune_all_instances(project: &ProjectContext) -> Result<()> {
 }
 
 async fn prune_unused_resources(project: &ProjectContext) -> Result<()> {
-    print_status("PRUNE", "Pruning unused Docker resources");
+    print_status("PRUNE", "Cleaning up unused Docker resources in project");
+    print_lines(&[
+        "This will remove:",
+        "  • Unused containers, networks, and build cache",
+        "  • Dangling images not associated with any container",
+        "Note: Volumes and named images are preserved",
+        "",
+        "Hint: To clean all instances while preserving volumes, use 'helix prune --all'",
+        "      To clean a specific instance, use 'helix prune <instance_name>'",
+    ]);
+    print_newline();
 
     // Check Docker availability
+    print_status("PRUNE", "Checking Docker availability");
     DockerManager::check_docker_available()?;
 
+    print_status("PRUNE", "Running Docker system cleanup");
     // Use centralized docker command
     let docker = DockerManager::new(project);
     let output = docker.run_docker_command(&["system", "prune", "-f"])?;
@@ -109,7 +130,13 @@ async fn prune_unused_resources(project: &ProjectContext) -> Result<()> {
         return Err(eyre::eyre!("Failed to prune Docker resources:\n{stderr}"));
     }
 
-    print_success("Unused Docker resources pruned");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.trim().is_empty() {
+        print_status("PRUNE", "Docker cleanup output:");
+        println!("{}", stdout.trim());
+    }
+
+    print_success("Docker cleanup completed successfully");
     Ok(())
 }
 
