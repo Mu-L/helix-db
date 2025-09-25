@@ -68,15 +68,17 @@ impl HelixParser {
                         let schema_version = match schema_pairs.peek() {
                             Some(pair) => {
                                 if pair.as_rule() == Rule::schema_version {
-                                    schema_pairs
+                                    let version_pair = schema_pairs
                                         .next()
-                                        .unwrap()
+                                        .ok_or_else(|| ParserError::from("Expected schema version"))?;
+                                    let version_str = version_pair
                                         .into_inner()
                                         .next()
-                                        .unwrap()
-                                        .as_str()
+                                        .ok_or_else(|| ParserError::from("Schema version missing value"))?
+                                        .as_str();
+                                    version_str
                                         .parse::<usize>()
-                                        .unwrap()
+                                        .map_err(|e| ParserError::from(format!("Invalid schema version number '{}': {}", version_str, e)))?
                                 } else {
                                     1
                                 }

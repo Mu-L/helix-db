@@ -18,6 +18,8 @@ pub enum ErrorCode {
     E106,
     /// `E107` – `duplicate schema definition`
     E107,
+    /// `E108` – `invalid schema version`
+    E108,
 
     // TYPE ERRORS
     /// `E201` – `item type not in schema`
@@ -130,6 +132,7 @@ impl std::fmt::Display for ErrorCode {
             ErrorCode::E105 => write!(f, "E105"),
             ErrorCode::E106 => write!(f, "E106"),
             ErrorCode::E107 => write!(f, "E107"),
+            ErrorCode::E108 => write!(f, "E108"),
             ErrorCode::E201 => write!(f, "E201"),
             ErrorCode::E202 => write!(f, "E202"),
             ErrorCode::E203 => write!(f, "E203"),

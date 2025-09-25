@@ -671,7 +671,7 @@ pub fn compile_and_build_helix(
     let mut args = vec!["build"];
 
     match release_mode {
-        BuildMode::Dev => args.extend_from_slice(&["--profile", "dev"]),
+        BuildMode::Dev => args.extend_from_slice(&["--profile", "debug"]),
         BuildMode::Release => args.push("--release"),
     }
 
