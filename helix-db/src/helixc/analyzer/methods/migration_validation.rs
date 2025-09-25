@@ -81,8 +81,8 @@ pub(crate) fn validate_migration(ctx: &mut Ctx, migration: &Migration) {
                     ctx,
                     item.from_item.0.clone(),
                     ErrorCode::E201,
-                    format!("Migration item '{}' does not exist in schema version {}", item_name, migration.from_version.1),
-                    Some(format!("Ensure '{}' is defined in the source schema", item_name)),
+                    format!("Migration item '{item_name}' does not exist in schema version {}", migration.from_version.1),
+                    Some(format!("Ensure '{item_name}' is defined in the source schema")),
                 );
                 continue;
             }
@@ -100,8 +100,8 @@ pub(crate) fn validate_migration(ctx: &mut Ctx, migration: &Migration) {
                     ctx,
                     item.to_item.0.clone(),
                     ErrorCode::E201,
-                    format!("Migration item '{}' does not exist in schema version {}", item_name, migration.to_version.1),
-                    Some(format!("Ensure '{}' is defined in the target schema", item_name)),
+                    format!("Migration item '{item_name}' does not exist in schema version {}", migration.to_version.1),
+                    Some(format!("Ensure '{item_name}' is defined in the target schema")),
                 );
                 continue;
             }
@@ -178,7 +178,7 @@ pub(crate) fn validate_migration(ctx: &mut Ctx, migration: &Migration) {
                             ErrorCode::E202,
                             format!("Identifier '{}' does not exist in source schema for '{}'",
                                 identifier, item.from_item.1.inner()),
-                            Some(format!("Ensure '{}' is a valid field in the source schema", identifier)),
+                            Some(format!("Ensure '{identifier}' is a valid field in the source schema")),
                         );
                         continue;
                     }

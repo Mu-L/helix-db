@@ -104,7 +104,7 @@ pub const DEFAULT_QUERIES: &str = r#"// Start writing your queries here.
 
 pub fn check_helix_installation() -> Option<PathBuf> {
     let home_dir = dirs::home_dir()?;
-    let repo_path = home_dir.join(".helix/repo/helix-db");
+    let repo_path = home_dir.join(".helix/repo");
     let container_path = repo_path.join("helix-container");
     let cargo_path = container_path.join("Cargo.toml");
 
@@ -317,7 +317,7 @@ pub async fn check_helix_version() {
             Some(dir) => dir,
             None => return,
         };
-        home_dir.join(".helix/repo/helix-db/helix-db")
+        home_dir.join(".helix/repo/helix-db")
     };
 
     let local_cli_version = match Version::parse(&format!("v{}", env!("CARGO_PKG_VERSION"))) {
@@ -719,7 +719,7 @@ pub fn deploy_helix(
     let binary_path = dirs::home_dir()
         .map(|path| {
             path.join(format!(
-                ".helix/repo/helix-db/target/{}/helix-container",
+                ".helix/repo/target/{}/helix-container",
                 release_mode.to_path()
             ))
         })

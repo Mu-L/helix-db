@@ -78,7 +78,7 @@ impl HelixParser {
                                         .as_str();
                                     version_str
                                         .parse::<usize>()
-                                        .map_err(|e| ParserError::from(format!("Invalid schema version number '{}': {}", version_str, e)))?
+                                        .map_err(|e| ParserError::from(format!("Invalid schema version number '{version_str}': {e}")))?
                                 } else {
                                     1
                                 }

@@ -127,7 +127,7 @@ async fn run() -> ExitCode {
 
             let output = dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("./"))
-                .join(".helix/repo/helix-db/helix-container");
+                .join(".helix/repo");
             let start_port = command.port.unwrap_or(6969);
 
             if !command.remote {
@@ -278,7 +278,7 @@ async fn run() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                 };
-                home_dir.join(".helix/repo/helix-db/helix-db")
+                home_dir.join(".helix/repo/helix-db")
             };
 
             if !check_cargo_version() {
@@ -945,7 +945,7 @@ async fn run() -> ExitCode {
                             return ExitCode::FAILURE;
                         }
                     };
-                    home_dir.join(".helix/repo/helix-db/helix-db")
+                    home_dir.join(".helix/repo/helix-db")
                 };
 
                 match get_crate_version(repo_path) {
