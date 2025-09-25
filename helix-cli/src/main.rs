@@ -156,7 +156,8 @@ enum MetricsAction {
 
 #[derive(Subcommand)]
 enum CloudDeploymentTypeCommand {
-    /// Initialize Helix deployment
+    /// Initialize Helix Cloud deployment
+    #[clap(name = "cloud")]
     Helix {
         /// Region for Helix cloud instance (default: us-east-1)
         #[clap(long, default_value = "us-east-1")]
