@@ -49,17 +49,19 @@ impl Debug for TraversalType {
 #[derive(Clone)]
 pub enum ShouldCollect {
     ToVec,
-    ToVal,
+    ToObj,
     No,
     Try,
+    ToValue
 }
 impl Display for ShouldCollect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ShouldCollect::ToVec => write!(f, ".collect_to::<Vec<_>>()"),
-            ShouldCollect::ToVal => write!(f, ".collect_to_obj()"),
+            ShouldCollect::ToObj => write!(f, ".collect_to_obj()"),
             ShouldCollect::Try => write!(f, "?"),
             ShouldCollect::No => write!(f, ""),
+            ShouldCollect::ToValue => write!(f, ".collect_to_value()"),
         }
     }
 }

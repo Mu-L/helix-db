@@ -67,12 +67,14 @@ pub(crate) fn apply_graph_step<'a>(
                     label: GenRef::Literal(label.clone()),
                 })));
             traversal.should_collect = ShouldCollect::ToVec;
-            let edge = ctx.edge_map.get(label.as_str());
-            if edge.is_none() {
-                generate_error!(ctx, original_query, gs.loc.clone(), E102, label.as_str());
-                return None;
-            }
-            match edge.unwrap().from.1 == node_label.clone() {
+            let edge = match ctx.edge_map.get(label.as_str()) {
+                Some(e) => e,
+                None => {
+                    generate_error!(ctx, original_query, gs.loc.clone(), E102, label.as_str());
+                    return None;
+                }
+            };
+            match edge.from.1 == node_label.clone() {
                 true => Some(Type::Edges(Some(label.to_string()))),
                 false => {
                     generate_error!(
@@ -101,13 +103,15 @@ pub(crate) fn apply_graph_step<'a>(
                     label: GenRef::Literal(label.clone()),
                 })));
             traversal.should_collect = ShouldCollect::ToVec;
-            let edge = ctx.edge_map.get(label.as_str());
-            if edge.is_none() {
-                generate_error!(ctx, original_query, gs.loc.clone(), E102, label.as_str());
-                return None;
-            }
+            let edge = match ctx.edge_map.get(label.as_str()) {
+                Some(e) => e,
+                None => {
+                    generate_error!(ctx, original_query, gs.loc.clone(), E102, label.as_str());
+                    return None;
+                }
+            };
 
-            match edge.unwrap().to.1 == node_label.clone() {
+            match edge.to.1 == node_label.clone() {
                 true => Some(Type::Edges(Some(label.to_string()))),
                 false => {
                     generate_error!(ctx, original_query, gs.loc.clone(), E102, label.as_str());
@@ -147,18 +151,19 @@ pub(crate) fn apply_graph_step<'a>(
                     label: GenRef::Literal(label.clone()),
                 })));
             traversal.should_collect = ShouldCollect::ToVec;
-            let edge = ctx.edge_map.get(label.as_str());
-            // assert!(edge.is_some()); // make sure is caught
-            if edge.is_none() {
-                generate_error!(ctx, original_query, gs.loc.clone(), E102, label.as_str());
-                return None;
-            }
-            match edge.unwrap().from.1 == node_label.clone() {
+            let edge = match ctx.edge_map.get(label.as_str()) {
+                Some(e) => e,
+                None => {
+                    generate_error!(ctx, original_query, gs.loc.clone(), E102, label.as_str());
+                    return None;
+                }
+            };
+            match edge.from.1 == node_label.clone() {
                 true => {
                     if EdgeType::Node == edge_type {
-                        Some(Type::Nodes(Some(edge.unwrap().to.1.clone())))
+                        Some(Type::Nodes(Some(edge.to.1.clone())))
                     } else if EdgeType::Vec == edge_type {
-                        Some(Type::Vectors(Some(edge.unwrap().to.1.clone())))
+                        Some(Type::Vectors(Some(edge.to.1.clone())))
                     } else {
                         None
                     }
@@ -209,19 +214,20 @@ pub(crate) fn apply_graph_step<'a>(
                     label: GenRef::Literal(label.clone()),
                 })));
             traversal.should_collect = ShouldCollect::ToVec;
-            let edge = ctx.edge_map.get(label.as_str());
-            // assert!(edge.is_some());
-            if edge.is_none() {
-                generate_error!(ctx, original_query, gs.loc.clone(), E102, label.as_str());
-                return None;
-            }
+            let edge = match ctx.edge_map.get(label.as_str()) {
+                Some(e) => e,
+                None => {
+                    generate_error!(ctx, original_query, gs.loc.clone(), E102, label.as_str());
+                    return None;
+                }
+            };
 
-            match edge.unwrap().to.1 == node_label.clone() {
+            match edge.to.1 == node_label.clone() {
                 true => {
                     if EdgeType::Node == edge_type {
-                        Some(Type::Nodes(Some(edge.unwrap().from.1.clone())))
+                        Some(Type::Nodes(Some(edge.from.1.clone())))
                     } else if EdgeType::Vec == edge_type {
-                        Some(Type::Vectors(Some(edge.unwrap().from.1.clone())))
+                        Some(Type::Vectors(Some(edge.from.1.clone())))
                     } else {
                         None
                     }
@@ -259,7 +265,12 @@ pub(crate) fn apply_graph_step<'a>(
             traversal
                 .steps
                 .push(Separator::Period(GeneratedStep::FromN));
-            traversal.should_collect = ShouldCollect::ToVal;
+            // Preserve collection type: multiple edges -> multiple nodes, single edge -> single node
+            match cur_ty {
+                Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
+                Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
+                _ => {},
+            }
             new_ty
         }
         (ToN, Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty))) => {
@@ -277,7 +288,12 @@ pub(crate) fn apply_graph_step<'a>(
                 None
             };
             traversal.steps.push(Separator::Period(GeneratedStep::ToN));
-            traversal.should_collect = ShouldCollect::ToVal;
+            // Preserve collection type: multiple edges -> multiple nodes, single edge -> single node
+            match cur_ty {
+                Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
+                Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
+                _ => {},
+            }
             new_ty
         }
         (FromV, Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty))) => {
@@ -298,7 +314,12 @@ pub(crate) fn apply_graph_step<'a>(
             traversal
                 .steps
                 .push(Separator::Period(GeneratedStep::FromV));
-            traversal.should_collect = ShouldCollect::ToVal;
+            // Preserve collection type: multiple edges -> multiple vectors, single edge -> single vector
+            match cur_ty {
+                Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
+                Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
+                _ => {},
+            }
             new_ty
         }
         (ToV, Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty))) => {
@@ -317,33 +338,55 @@ pub(crate) fn apply_graph_step<'a>(
                 None
             };
             traversal.steps.push(Separator::Period(GeneratedStep::ToV));
-            traversal.should_collect = ShouldCollect::ToVal;
+            // Preserve collection type: multiple edges -> multiple vectors, single edge -> single vector
+            match cur_ty {
+                Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
+                Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
+                _ => {},
+            }
             new_ty
         }
         (ShortestPath(sp), Type::Nodes(_) | Type::Node(_)) => {
             let type_arg = sp.type_arg.clone().map(GenRef::Literal);
-            traversal
-                .steps
-                .push(Separator::Period(GeneratedStep::ShortestPath(
-                    match (sp.from.clone(), sp.to.clone()) {
-                        (Some(from), Some(to)) => GeneratedShortestPath {
+            match (sp.from.clone(), sp.to.clone()) {
+                (Some(from), Some(to)) => {
+                    traversal.steps.push(Separator::Period(GeneratedStep::ShortestPath(
+                        GeneratedShortestPath {
                             label: type_arg,
                             from: Some(GenRef::from(from)),
                             to: Some(GenRef::from(to)),
-                        },
-                        (Some(from), None) => GeneratedShortestPath {
+                        }
+                    )));
+                }
+                (Some(from), None) => {
+                    traversal.steps.push(Separator::Period(GeneratedStep::ShortestPath(
+                        GeneratedShortestPath {
                             label: type_arg,
                             from: Some(GenRef::from(from)),
                             to: None,
-                        },
-                        (None, Some(to)) => GeneratedShortestPath {
+                        }
+                    )));
+                }
+                (None, Some(to)) => {
+                    traversal.steps.push(Separator::Period(GeneratedStep::ShortestPath(
+                        GeneratedShortestPath {
                             label: type_arg,
                             from: None,
                             to: Some(GenRef::from(to)),
-                        },
-                        (None, None) => panic!("Invalid shortest path"),
-                    },
-                )));
+                        }
+                    )));
+                }
+                (None, None) => {
+                    generate_error!(
+                        ctx,
+                        original_query,
+                        gs.loc.clone(),
+                        E601,
+                        "ShortestPath requires at least one of 'from' or 'to' to be specified"
+                    );
+                    return None;
+                }
+            }
             traversal.should_collect = ShouldCollect::ToVec;
             Some(Type::Unknown)
         }

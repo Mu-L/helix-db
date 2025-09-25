@@ -452,7 +452,7 @@ async fn run() -> ExitCode {
                     output
                 ),
                 Err(e) => {
-                    println!("{} {}", "Failed to write queries file".red().bold(), e);
+                    println!("{} {}", "Failed to write queries file to".red().bold(), output);
                     println!("└── {} {}", "Error:".red().bold(), e);
                     return ExitCode::FAILURE;
                 }

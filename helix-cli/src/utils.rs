@@ -317,7 +317,7 @@ pub async fn check_helix_version() {
             Some(dir) => dir,
             None => return,
         };
-        home_dir.join(".helix/repo/helix-db/helix-db")
+        home_dir.join(".helix/repo/helix-db")
     };
 
     let local_cli_version = match Version::parse(&format!("v{}", env!("CARGO_PKG_VERSION"))) {
@@ -633,7 +633,7 @@ pub fn compile_and_build_helix(
     match fs::write(file_path, generated_rust_code) {
         Ok(_) => println!("{}", "Successfully wrote queries file".green().bold()),
         Err(e) => {
-            println!("{}", "Failed to write queries file".red().bold());
+            println!("{} {}", "Failed to write queries file to:".red().bold(), output.display());
             println!("└── {} {}", "Error:".red().bold(), e);
             return Err("Failed to write queries file".to_string());
         }
