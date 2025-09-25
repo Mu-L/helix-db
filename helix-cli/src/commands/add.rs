@@ -10,12 +10,13 @@ use crate::utils::{print_instructions, print_status, print_success};
 use eyre::Result;
 use std::env;
 
-pub async fn run(
-    instance_name: String,
-    deployment_type: Option<CloudDeploymentTypeCommand>,
-) -> Result<()> {
+pub async fn run(deployment_type: CloudDeploymentTypeCommand) -> Result<()> {
     let cwd = env::current_dir()?;
     let mut project_context = ProjectContext::find_and_load(Some(&cwd))?;
+
+    let instance_name = deployment_type
+        .name()
+        .unwrap_or(project_context.config.project.name.clone());
 
     // Check if instance already exists
     if project_context.config.local.contains_key(&instance_name)
@@ -36,100 +37,88 @@ pub async fn run(
     // Determine instance type
 
     match deployment_type {
-        Some(deployment) => {
-            match deployment {
-                CloudDeploymentTypeCommand::Helix { cloud_region } => {
-                    // Add Helix cloud instance
-                    let helix_manager = HelixManager::new(&project_context);
+        CloudDeploymentTypeCommand::Helix { region, .. } => {
+            // Add Helix cloud instance
+            let helix_manager = HelixManager::new(&project_context);
 
-                    // Create cloud instance configuration
-                    let cloud_config = helix_manager
-                        .create_instance_config(&instance_name, cloud_region)
-                        .await?;
+            // Create cloud instance configuration
+            let cloud_config = helix_manager.create_instance_config(&instance_name, region).await?;
 
-                    // Initialize the cloud cluster
-                    helix_manager
-                        .init_cluster(&instance_name, &cloud_config)
-                        .await?;
+            // Initialize the cloud cluster
+            helix_manager.init_cluster(&instance_name, &cloud_config).await?;
 
-                    // Insert into project configuration
-                    project_context.config.cloud.insert(
-                        instance_name.clone(),
-                        CloudConfig::Helix(cloud_config.clone()),
-                    );
+            // Insert into project configuration
+            project_context
+                .config
+                .cloud
+                .insert(instance_name.clone(), CloudConfig::Helix(cloud_config.clone()));
 
-                    print_status("CLOUD", "Helix cloud instance configuration added");
-                }
-                CloudDeploymentTypeCommand::Ecr => {
-                    // Add ECR instance
-                    // Create ECR manager
-                    let ecr_manager =
-                        EcrManager::new(&project_context, EcrAuthType::AwsCli).await?;
-
-                    // Create ECR configuration
-                    let ecr_config = ecr_manager
-                        .create_ecr_config(
-                            &instance_name,
-                            None, // Use default region
-                            EcrAuthType::AwsCli,
-                        )
-                        .await?;
-
-                    // Initialize the ECR repository
-                    ecr_manager
-                        .init_repository(&instance_name, &ecr_config)
-                        .await?;
-
-                    // Save configuration to ecr.toml
-                    ecr_manager.save_config(&instance_name, &ecr_config).await?;
-
-                    // Update helix.toml with cloud config
-                    project_context
-                        .config
-                        .cloud
-                        .insert(instance_name.clone(), CloudConfig::Ecr(ecr_config.clone()));
-
-                    print_status("ECR", "AWS ECR repository initialized successfully");
-                }
-                CloudDeploymentTypeCommand::Fly {
-                    auth,
-                    volume_size,
-                    vm_size,
-                    public,
-                } => {
-                    let docker = DockerManager::new(&project_context);
-
-                    // Parse configuration with proper error handling
-                    let auth_type = FlyAuthType::try_from(auth)?;
-                    let vm_size_parsed = VmSize::try_from(vm_size)?;
-                    let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
-
-                    // Create Fly.io manager
-                    let fly_manager = FlyManager::new(&project_context, auth_type.clone()).await?;
-
-                    // Create instance configuration
-                    let instance_config = fly_manager.create_instance_config(
-                        &docker,
-                        &instance_name,
-                        volume_size,
-                        vm_size_parsed,
-                        privacy,
-                        auth_type,
-                    );
-
-                    // Initialize the Fly.io app
-                    fly_manager
-                        .init_app(&instance_name, &instance_config)
-                        .await?;
-
-                    project_context.config.cloud.insert(
-                        instance_name.clone(),
-                        CloudConfig::FlyIo(instance_config.clone()),
-                    );
-                }
-            }
+            print_status("CLOUD", "Helix cloud instance configuration added");
         }
-        None => {
+        CloudDeploymentTypeCommand::Ecr { .. } => {
+            // Add ECR instance
+            // Create ECR manager
+            let ecr_manager = EcrManager::new(&project_context, EcrAuthType::AwsCli).await?;
+
+            // Create ECR configuration
+            let ecr_config = ecr_manager
+                .create_ecr_config(
+                    &instance_name,
+                    None, // Use default region
+                    EcrAuthType::AwsCli,
+                )
+                .await?;
+
+            // Initialize the ECR repository
+            ecr_manager.init_repository(&instance_name, &ecr_config).await?;
+
+            // Save configuration to ecr.toml
+            ecr_manager.save_config(&instance_name, &ecr_config).await?;
+
+            // Update helix.toml with cloud config
+            project_context
+                .config
+                .cloud
+                .insert(instance_name.clone(), CloudConfig::Ecr(ecr_config.clone()));
+
+            print_status("ECR", "AWS ECR repository initialized successfully");
+        }
+        CloudDeploymentTypeCommand::Fly {
+            auth,
+            volume_size,
+            vm_size,
+            public,
+            ..
+        } => {
+            let docker = DockerManager::new(&project_context);
+
+            // Parse configuration with proper error handling
+            let auth_type = FlyAuthType::try_from(auth)?;
+            let vm_size_parsed = VmSize::try_from(vm_size)?;
+            let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
+
+            // Create Fly.io manager
+            let fly_manager = FlyManager::new(&project_context, auth_type.clone()).await?;
+
+            // Create instance configuration
+            let instance_config = fly_manager.create_instance_config(
+                &docker,
+                &instance_name,
+                volume_size,
+                vm_size_parsed,
+                privacy,
+                auth_type,
+            );
+
+            // Initialize the Fly.io app
+            fly_manager.init_app(&instance_name, &instance_config).await?;
+
+            project_context
+                .config
+                .cloud
+                .insert(instance_name.clone(), CloudConfig::FlyIo(instance_config.clone()));
+        }
+        _ => {
             // Add local instance with default configuration
             let local_config = LocalInstanceConfig {
                 port: None, // Let the system assign a port

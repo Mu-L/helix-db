@@ -59,7 +59,7 @@ pub async fn run(
     match deployment_type {
         Some(deployment) => {
             match deployment {
-                CloudDeploymentTypeCommand::Helix { cloud_region } => {
+                CloudDeploymentTypeCommand::Helix { region, .. } => {
                     // Initialize Helix deployment
                     let cwd = env::current_dir()?;
                     let project_context = ProjectContext::find_and_load(Some(&cwd))?;
@@ -69,7 +69,7 @@ pub async fn run(
 
                     // Create cloud instance configuration
                     let cloud_config = helix_manager
-                        .create_instance_config(project_name, cloud_region)
+                        .create_instance_config(project_name, region)
                         .await?;
 
                     // Initialize the cloud cluster
@@ -86,7 +86,7 @@ pub async fn run(
                     // save config
                     config.save_to_file(&config_path)?;
                 }
-                CloudDeploymentTypeCommand::Ecr => {
+                CloudDeploymentTypeCommand::Ecr { .. } => {
                     let cwd = env::current_dir()?;
                     let project_context = ProjectContext::find_and_load(Some(&cwd))?;
 
@@ -125,6 +125,7 @@ pub async fn run(
                     volume_size,
                     vm_size,
                     public,
+                    ..
                 } => {
                     let cwd = env::current_dir()?;
                     let project_context = ProjectContext::find_and_load(Some(&cwd))?;
@@ -158,6 +159,7 @@ pub async fn run(
                     );
                     config.save_to_file(&config_path)?;
                 }
+                _ => {}
             }
         }
         None => {

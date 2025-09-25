@@ -566,11 +566,16 @@ networks:
     pub fn push(&self, image_name: &str, registry_url: &str) -> Result<()> {
         let registry_image = format!("{registry_url}/{image_name}");
         print_status("DOCKER", &format!("Pushing image: {registry_image}"));
-        let _output = Command::new("docker")
+        let output = Command::new("docker")
             .arg("push")
             .arg(&registry_image)
             .output()?;
-        // TODO: Check if pushed
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(eyre!("Failed to push image: {}", stderr));
+        }
+
         Ok(())
     }
 }

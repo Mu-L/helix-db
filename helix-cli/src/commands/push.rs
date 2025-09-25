@@ -165,7 +165,7 @@ async fn push_cloud_instance(
             // Get the correct image name from docker compose project name
             let image_name = docker.image_name(instance_name, config.build_mode);
 
-            ecr.deploy_image(&docker, config, instance_name, &image_name, None)
+            ecr.deploy_image(&docker, config, instance_name, &image_name)
                 .await?;
         }
         CloudConfig::Helix(_config) => {

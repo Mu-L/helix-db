@@ -39,11 +39,8 @@ enum Commands {
 
     /// Add a new instance to an existing Helix project
     Add {
-        /// Instance name
-        name: String,
-
         #[clap(subcommand)]
-        cloud: Option<CloudDeploymentTypeCommand>,
+        cloud: CloudDeploymentTypeCommand,
     },
 
     /// Validate project configuration and queries
@@ -160,13 +157,21 @@ enum MetricsAction {
 #[derive(Subcommand)]
 enum CloudDeploymentTypeCommand {
     /// Initialize Helix deployment
-    Helix{
+    Helix {
         /// Region for Helix cloud instance (default: us-east-1)
-        #[clap(long, value_name = "REGION", requires = "cloud")]
-        cloud_region: Option<String>,
+        #[clap(long, default_value = "us-east-1")]
+        region: Option<String>,
+
+        /// Instance name
+        #[clap(short, long)]
+        name: Option<String>,
     },
     /// Initialize ECR deployment
-    Ecr,
+    Ecr {
+        /// Instance name
+        #[clap(short, long)]
+        name: Option<String>,
+    },
     /// Initialize Fly.io deployment
     Fly {
         /// Authentication type
@@ -184,7 +189,29 @@ enum CloudDeploymentTypeCommand {
         /// privacy
         #[clap(long, default_value = "true")]
         public: bool,
+
+        /// Instance name
+        #[clap(short, long)]
+        name: Option<String>,
     },
+
+    /// Initialize Local deployment
+    Local {
+        /// Instance name
+        #[clap(short, long)]
+        name: Option<String>,
+    },
+}
+
+impl CloudDeploymentTypeCommand {
+    fn name(&self) -> Option<String> {
+        match self {
+            CloudDeploymentTypeCommand::Helix { name, .. } => name.clone(),
+            CloudDeploymentTypeCommand::Ecr { name } => name.clone(),
+            CloudDeploymentTypeCommand::Fly { name, .. } => name.clone(),
+            CloudDeploymentTypeCommand::Local { name } => name.clone(),
+        }
+    }
 }
 
 #[tokio::main]
@@ -210,7 +237,7 @@ async fn main() -> Result<()> {
             queries_path,
             cloud,
         } => commands::init::run(path, template, queries_path, cloud).await,
-        Commands::Add { name, cloud } => commands::add::run(name, cloud).await,
+        Commands::Add { cloud } => commands::add::run(cloud).await,
         Commands::Check { instance } => commands::check::run(instance).await,
         Commands::Compile { output, path } => commands::compile::run(output, path).await,
         Commands::Build { instance } => commands::build::run(instance, &metrics_sender)

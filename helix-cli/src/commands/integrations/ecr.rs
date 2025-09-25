@@ -97,6 +97,14 @@ impl<'a> EcrManager<'a> {
         format!("{registry_url}/{repository_name}:{tag}")
     }
 
+    fn image_name(&self, repository_name: &str, build_mode: BuildMode) -> String {
+        let tag = match build_mode {
+            BuildMode::Debug => "debug",
+            BuildMode::Release => "latest",
+        };
+        format!("{repository_name}:{tag}")
+    }
+
     // === CENTRALIZED COMMAND EXECUTION ===
 
     /// Run an AWS CLI command with consistent error handling
@@ -308,9 +316,8 @@ impl<'a> EcrManager<'a> {
         config: &EcrConfig,
         _instance_name: &str,
         image_name: &str,
-        tag: Option<&str>,
     ) -> Result<()> {
-        let tag = tag.unwrap_or("latest");
+        let tag = "latest";
         let registry_url = config
             .registry_url
             .as_ref()
@@ -359,14 +366,14 @@ impl<'a> EcrManager<'a> {
         }
         // Tag image for ECR
         print_status("ECR", "Tagging image for ECR");
-        let ecr_image_uri = self.image_uri(registry_url, repository_name, tag);
-        docker.tag(image_name, &ecr_image_uri)?;
+        let image_name = self.image_name(repository_name, config.build_mode);
+        docker.tag(&image_name, registry_url)?;
 
         // Push image to ECR
         print_status("ECR", &format!("Pushing image '{image_name}' to ECR"));
-        docker.push(&ecr_image_uri, "")?;
+        docker.push(&image_name, registry_url)?;
 
-        println!("[ECR] Image '{image_name}' deployed successfully to {ecr_image_uri}");
+        println!("[ECR] Image '{image_name}' deployed successfully to {registry_url}");
         Ok(())
     }
 
