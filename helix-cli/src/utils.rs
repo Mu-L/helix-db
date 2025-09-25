@@ -104,7 +104,7 @@ pub const DEFAULT_QUERIES: &str = r#"// Start writing your queries here.
 
 pub fn check_helix_installation() -> Option<PathBuf> {
     let home_dir = dirs::home_dir()?;
-    let repo_path = home_dir.join(".helix/repo");
+    let repo_path = home_dir.join(".helix/repo/helix-db");
     let container_path = repo_path.join("helix-container");
     let cargo_path = container_path.join("Cargo.toml");
 
@@ -633,7 +633,7 @@ pub fn compile_and_build_helix(
     match fs::write(file_path, generated_rust_code) {
         Ok(_) => println!("{}", "Successfully wrote queries file".green().bold()),
         Err(e) => {
-            println!("{}", "Failed to write queries file".red().bold());
+            println!("{} {}", "Failed to write queries file to:".red().bold(), output.display());
             println!("└── {} {}", "Error:".red().bold(), e);
             return Err("Failed to write queries file".to_string());
         }
@@ -671,7 +671,7 @@ pub fn compile_and_build_helix(
     let mut args = vec!["build"];
 
     match release_mode {
-        BuildMode::Dev => args.extend_from_slice(&["--profile", "debug"]),
+        BuildMode::Dev => args.extend_from_slice(&["--profile", "dev"]),
         BuildMode::Release => args.push("--release"),
     }
 
@@ -719,7 +719,7 @@ pub fn deploy_helix(
     let binary_path = dirs::home_dir()
         .map(|path| {
             path.join(format!(
-                ".helix/repo/target/{}/helix-container",
+                ".helix/repo/helix-db/target/{}/helix-container",
                 release_mode.to_path()
             ))
         })

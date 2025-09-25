@@ -127,7 +127,7 @@ async fn run() -> ExitCode {
 
             let output = dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("./"))
-                .join(".helix/repo");
+                .join(".helix/repo/helix-db/helix-container");
             let start_port = command.port.unwrap_or(6969);
 
             if !command.remote {
@@ -278,7 +278,7 @@ async fn run() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                 };
-                home_dir.join(".helix/repo/helix-db")
+                home_dir.join(".helix/repo/helix-db/helix-db")
             };
 
             if !check_cargo_version() {
@@ -452,7 +452,7 @@ async fn run() -> ExitCode {
                     output
                 ),
                 Err(e) => {
-                    println!("{} {}", "Failed to write queries file".red().bold(), e);
+                    println!("{} {}", "Failed to write queries file to".red().bold(), output);
                     println!("└── {} {}", "Error:".red().bold(), e);
                     return ExitCode::FAILURE;
                 }
@@ -945,7 +945,7 @@ async fn run() -> ExitCode {
                             return ExitCode::FAILURE;
                         }
                     };
-                    home_dir.join(".helix/repo/helix-db")
+                    home_dir.join(".helix/repo/helix-db/helix-db")
                 };
 
                 match get_crate_version(repo_path) {
