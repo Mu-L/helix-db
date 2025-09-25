@@ -127,6 +127,33 @@ enum Commands {
         #[clap(long)]
         force: bool,
     },
+
+    /// Migrate v1 project to v2 format
+    Migrate {
+        /// Project directory to migrate (defaults to current directory)
+        #[clap(short, long)]
+        path: Option<String>,
+
+        /// Directory to move .hx files to (defaults to ./db/)
+        #[clap(short = 'q', long = "queries-dir", default_value = "./db/")]
+        queries_dir: String,
+
+        /// Name for the default local instance (defaults to "dev")
+        #[clap(short, long, default_value = "dev")]
+        instance_name: String,
+
+        /// Port for local instance (defaults to 6969)
+        #[clap(long, default_value = "6969")]
+        port: u16,
+
+        /// Show what would be migrated without making changes
+        #[clap(long)]
+        dry_run: bool,
+
+        /// Skip creating backup of v1 files
+        #[clap(long)]
+        no_backup: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -254,6 +281,14 @@ async fn main() -> Result<()> {
         Commands::Delete { instance } => commands::delete::run(instance).await,
         Commands::Metrics { action } => commands::metrics::run(action).await,
         Commands::Update { force } => commands::update::run(force).await,
+        Commands::Migrate {
+            path,
+            queries_dir,
+            instance_name,
+            port,
+            dry_run,
+            no_backup,
+        } => commands::migrate::run(path, queries_dir, instance_name, port, dry_run, no_backup).await,
     };
 
     // Shutdown metrics sender

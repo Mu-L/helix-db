@@ -7,6 +7,7 @@ pub mod delete;
 pub mod init;
 pub mod integrations;
 pub mod metrics;
+pub mod migrate;
 pub mod prune;
 pub mod pull;
 pub mod push;
