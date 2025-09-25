@@ -153,7 +153,7 @@ fn analyze_return_expr<'a>(
                                         ReturnValueExpr::Traversal(traversal.clone()),
                                     ));
                                 }
-                                ShouldCollect::ToVal => {
+                                ShouldCollect::ToObj => {
                                     query.return_values.push(ReturnValue::new_single_named(
                                         GeneratedValue::Literal(GenRef::Literal(v.inner().clone())),
                                         ReturnValueExpr::Traversal(traversal.clone()),
@@ -279,7 +279,7 @@ fn process_return_object<'a>(
                                 ShouldCollect::ToVec => {
                                     ReturnValueExpr::Traversal(traversal.clone())
                                 }
-                                ShouldCollect::ToVal => {
+                                ShouldCollect::ToObj => {
                                     ReturnValueExpr::Traversal(traversal.clone())
                                 }
                                 _ => {

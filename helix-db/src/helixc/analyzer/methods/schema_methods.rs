@@ -51,6 +51,16 @@ pub(crate) fn build_field_lookups<'a>(src: &'a Source) -> SchemaVersionMap<'a> {
                                 loc: Loc::empty(),
                             }),
                         );
+                        props.insert(
+                            "label",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "label".to_string(),
+                                field_type: FieldType::String,
+                                loc: Loc::empty(),
+                            }),
+                        );
                         (n.name.1.as_str(), props)
                     })
                     .collect();
@@ -78,6 +88,36 @@ pub(crate) fn build_field_lookups<'a>(src: &'a Source) -> SchemaVersionMap<'a> {
                                 loc: Loc::empty(),
                             }),
                         );
+                        props.insert(
+                            "label",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "label".to_string(),
+                                field_type: FieldType::String,
+                                loc: Loc::empty(),
+                            }),
+                        );
+                        props.insert(
+                            "from_node",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "from_node".to_string(),
+                                field_type: FieldType::Uuid,
+                                loc: Loc::empty(),
+                            }),
+                        );
+                        props.insert(
+                            "to_node",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "to_node".to_string(),
+                                field_type: FieldType::Uuid,
+                                loc: Loc::empty(),
+                            }),
+                        );
                         (e.name.1.as_str(), props)
                     })
                     .collect();
@@ -101,6 +141,36 @@ pub(crate) fn build_field_lookups<'a>(src: &'a Source) -> SchemaVersionMap<'a> {
                                 loc: Loc::empty(),
                             }),
                         );
+                        props.insert(
+                            "label",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "label".to_string(),
+                                field_type: FieldType::String,
+                                loc: Loc::empty(),
+                            }),
+                        );
+                        props.insert(
+                            "data",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "data".to_string(),
+                                field_type: FieldType::Array(Box::new(FieldType::F64)),
+                                loc: Loc::empty(),
+                            }),
+                        );
+                        props.insert(
+                            "score",
+                            Cow::Owned(Field {
+                                prefix: FieldPrefix::Empty,
+                                defaults: None,
+                                name: "score".to_string(),
+                                field_type: FieldType::F64,
+                                loc: Loc::empty(),
+                            }),
+                        );
                         (v.name.as_str(), props)
                     })
                     .collect();
@@ -111,7 +181,66 @@ pub(crate) fn build_field_lookups<'a>(src: &'a Source) -> SchemaVersionMap<'a> {
     )
 }
 
+fn check_duplicate_schema_definitions(ctx: &mut Ctx) {
+    use std::collections::HashMap;
+    
+    // Track seen names for each schema type
+    let mut seen_nodes: HashMap<String, (crate::helixc::parser::location::Loc, String)> = HashMap::new();
+    let mut seen_edges: HashMap<String, (crate::helixc::parser::location::Loc, String)> = HashMap::new();
+    let mut seen_vectors: HashMap<String, (crate::helixc::parser::location::Loc, String)> = HashMap::new();
+    
+    let schema = ctx.src.get_latest_schema();
+    
+    // Check duplicate nodes
+    for node in &schema.node_schemas {
+        if let Some((_first_loc, _)) = seen_nodes.get(&node.name.1) {
+            push_schema_err(
+                ctx,
+                node.name.0.clone(),
+                ErrorCode::E107,
+                format!("duplicate node definition `{}`", node.name.1),
+                Some("rename the node or remove the duplicate definition".to_string()),
+            );
+        } else {
+            seen_nodes.insert(node.name.1.clone(), (node.name.0.clone(), node.name.1.clone()));
+        }
+    }
+    
+    // Check duplicate edges
+    for edge in &schema.edge_schemas {
+        if let Some((_first_loc, _)) = seen_edges.get(&edge.name.1) {
+            push_schema_err(
+                ctx,
+                edge.name.0.clone(),
+                ErrorCode::E107,
+                format!("duplicate edge definition `{}`", edge.name.1),
+                Some("rename the edge or remove the duplicate definition".to_string()),
+            );
+        } else {
+            seen_edges.insert(edge.name.1.clone(), (edge.name.0.clone(), edge.name.1.clone()));
+        }
+    }
+    
+    // Check duplicate vectors  
+    for vector in &schema.vector_schemas {
+        if let Some((_first_loc, _)) = seen_vectors.get(&vector.name) {
+            push_schema_err(
+                ctx,
+                vector.loc.clone(),
+                ErrorCode::E107,
+                format!("duplicate vector definition `{}`", vector.name),
+                Some("rename the vector or remove the duplicate definition".to_string()),
+            );
+        } else {
+            seen_vectors.insert(vector.name.clone(), (vector.loc.clone(), vector.name.clone()));
+        }
+    }
+}
+
 pub(crate) fn check_schema(ctx: &mut Ctx) {
+    // Check for duplicate schema definitions
+    check_duplicate_schema_definitions(ctx);
+    
     for edge in &ctx.src.get_latest_schema().edge_schemas {
         if !ctx.node_set.contains(edge.from.1.as_str())
             && !ctx.vector_set.contains(edge.from.1.as_str())

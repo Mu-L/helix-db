@@ -1,8 +1,7 @@
 use crate::{
     helixc::parser::{
-        HelixParser, Rule,
+        HelixParser, ParserError, Rule,
         location::{HasLoc, Loc},
-        ParserError,
         types::{
             Assignment, BM25Search, Embed, EvaluatesToNumber, EvaluatesToNumberType,
             EvaluatesToString, ExistsExpression, Expression, ExpressionType, ForLoop, ForLoopVars,
@@ -12,6 +11,7 @@ use crate::{
     protocol::value::Value,
 };
 use pest::iterators::{Pair, Pairs};
+
 
 impl HelixParser {
     pub(super) fn parse_assignment(&self, pair: Pair<Rule>) -> Result<Assignment, ParserError> {
@@ -37,10 +37,13 @@ impl HelixParser {
                 loc: pair.loc(),
                 expr: ExpressionType::Traversal(Box::new(self.parse_traversal(pair)?)),
             }),
-            Rule::id_traversal => Ok(Expression {
-                loc: pair.loc(),
-                expr: ExpressionType::Traversal(Box::new(self.parse_traversal(pair)?)),
-            }),
+            Rule::id_traversal => {
+                Ok(Expression {
+                    loc: pair.loc(),
+                    expr: ExpressionType::Traversal(Box::new(self.parse_traversal(pair)?)),
+                })
+            }
+
             Rule::anonymous_traversal => Ok(Expression {
                 loc: pair.loc(),
                 expr: ExpressionType::Traversal(Box::new(self.parse_anon_traversal(pair)?)),
@@ -66,6 +69,7 @@ impl HelixParser {
                 let traversal = inner
                     .next()
                     .ok_or_else(|| ParserError::from("Missing traversal"))?;
+
                 let expr = ExpressionType::Exists(ExistsExpression {
                     loc: loc.clone(),
                     expr: Box::new(Expression {
@@ -200,7 +204,7 @@ impl HelixParser {
                 expr: ExpressionType::BooleanLiteral(expression.as_str() == "true"),
             }),
             Rule::exists => {
-                let loc = expression.loc();
+               let loc = expression.loc();
                 let mut inner = expression.into_inner();
                 let negated = match inner.peek() {
                     Some(p) => p.as_rule() == Rule::negate,
@@ -216,9 +220,12 @@ impl HelixParser {
                     loc: loc.clone(),
                     expr: Box::new(Expression {
                         loc: loc.clone(),
-                        expr: ExpressionType::Traversal(Box::new(
-                            self.parse_anon_traversal(traversal)?,
-                        )),
+                        expr: ExpressionType::Traversal(Box::new(match traversal.as_rule() {
+                            Rule::anonymous_traversal => self.parse_anon_traversal(traversal)?,
+                            Rule::id_traversal => self.parse_traversal(traversal)?,
+                            Rule::traversal => self.parse_traversal(traversal)?,
+                            _ => unreachable!(),
+                        })),
                     }),
                 });
                 Ok(Expression {

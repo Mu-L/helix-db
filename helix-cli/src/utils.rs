@@ -126,6 +126,7 @@ pub fn print_success(message: &str) {
 }
 
 /// Print a completion message with summary
+#[allow(unused)]
 pub fn print_completion(operation: &str, details: &str) {
     println!("{} {} completed successfully", "[SUCCESS]".green().bold(), operation);
     if !details.is_empty() {

@@ -119,7 +119,16 @@ pub(crate) fn validate_traversal<'a>(
                                     }
                                 }
                             }
-                            None => unreachable!(),
+                            None => {
+                                // item type doesnt exist in schema
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    loc.clone(),
+                                    E201,
+                                    node_type
+                                );
+                            }
                         };
                         gen_traversal.source_step =
                             Separator::Period(SourceStep::NFromIndex(NFromIndex {
@@ -154,27 +163,27 @@ pub(crate) fn validate_traversal<'a>(
                                         )
                                     }
                                     ValueType::Literal { value, loc: _ } => {
-                                        GeneratedValue::Primitive(GenRef::Std(match value {
-                                            Value::String(s) => format!("\"{s}\""),
-                                            Value::I8(i) => i.to_string(),
-                                            Value::I16(i) => i.to_string(),
-                                            Value::I32(i) => i.to_string(),
-                                            Value::I64(i) => i.to_string(),
-                                            Value::U8(i) => i.to_string(),
-                                            Value::U16(i) => i.to_string(),
-                                            Value::U32(i) => i.to_string(),
-                                            Value::U64(i) => i.to_string(),
-                                            Value::U128(i) => i.to_string(),
-                                            Value::F32(i) => i.to_string(),
-                                            Value::F64(i) => i.to_string(),
-                                            Value::Boolean(b) => b.to_string(),
+                                        GeneratedValue::Primitive(match value {
+                                            Value::String(s) => GenRef::Ref(format!("\"{s}\"")),
+                                            Value::I8(i) => GenRef::Ref(i.to_string()),
+                                            Value::I16(i) => GenRef::Ref(i.to_string()),
+                                            Value::I32(i) => GenRef::Ref(i.to_string()),
+                                            Value::I64(i) => GenRef::Ref(i.to_string()),
+                                            Value::U8(i) => GenRef::Ref(i.to_string()),
+                                            Value::U16(i) => GenRef::Ref(i.to_string()),
+                                            Value::U32(i) => GenRef::Ref(i.to_string()),
+                                            Value::U64(i) => GenRef::Ref(i.to_string()),
+                                            Value::U128(i) => GenRef::Ref(i.to_string()),
+                                            Value::F32(i) => GenRef::Ref(i.to_string()),
+                                            Value::F64(i) => GenRef::Ref(i.to_string()),
+                                            Value::Boolean(b) => GenRef::Ref(b.to_string()),
                                             _ => unreachable!(),
-                                        }))
+                                        })
                                     }
                                     _ => unreachable!(),
                                 },
                             }));
-                        gen_traversal.should_collect = ShouldCollect::ToVal;
+                        gen_traversal.should_collect = ShouldCollect::ToObj;
                         gen_traversal.traversal_type = TraversalType::Ref;
                         Type::Node(Some(node_type.to_string()))
                     }
@@ -206,7 +215,7 @@ pub(crate) fn validate_traversal<'a>(
                                 label: GenRef::Literal(node_type.clone()),
                             }));
                         gen_traversal.traversal_type = TraversalType::Ref;
-                        gen_traversal.should_collect = ShouldCollect::ToVal;
+                        gen_traversal.should_collect = ShouldCollect::ToObj;
                         Type::Node(Some(node_type.to_string()))
                     }
                     IdType::Literal { value: s, loc: _ } => {
@@ -216,7 +225,7 @@ pub(crate) fn validate_traversal<'a>(
                                 label: GenRef::Literal(node_type.clone()),
                             }));
                         gen_traversal.traversal_type = TraversalType::Ref;
-                        gen_traversal.should_collect = ShouldCollect::ToVal;
+                        gen_traversal.should_collect = ShouldCollect::ToObj;
                         Type::Node(Some(node_type.to_string()))
                     }
                 }
@@ -250,7 +259,7 @@ pub(crate) fn validate_traversal<'a>(
                     label: GenRef::Literal(edge_type.clone()),
                 }));
                 gen_traversal.traversal_type = TraversalType::Ref;
-                gen_traversal.should_collect = ShouldCollect::ToVal;
+                gen_traversal.should_collect = ShouldCollect::ToObj;
                 Type::Edge(Some(edge_type.to_string()))
             } else {
                 gen_traversal.source_step = Separator::Period(SourceStep::EFromType(EFromType {
@@ -282,7 +291,7 @@ pub(crate) fn validate_traversal<'a>(
                     label: GenRef::Literal(vector_type.clone()),
                 }));
                 gen_traversal.traversal_type = TraversalType::Ref;
-                gen_traversal.should_collect = ShouldCollect::ToVal;
+                gen_traversal.should_collect = ShouldCollect::ToObj;
                 Type::Vector(Some(vector_type.to_string()))
             } else {
                 gen_traversal.source_step = Separator::Period(SourceStep::VFromType(VFromType {
@@ -321,7 +330,7 @@ pub(crate) fn validate_traversal<'a>(
         }
         // anonymous will be the traversal type rather than the start type
         StartNode::Anonymous => {
-            let parent = parent_ty.unwrap();
+            let parent = parent_ty.clone().unwrap();
             gen_traversal.traversal_type =
                 TraversalType::FromVar(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
             gen_traversal.source_step = Separator::Empty(SourceStep::Anonymous);
@@ -528,7 +537,7 @@ pub(crate) fn validate_traversal<'a>(
             StepType::First => {
                 cur_ty = cur_ty.clone().into_single();
                 excluded.clear();
-                gen_traversal.should_collect = ShouldCollect::ToVal;
+                gen_traversal.should_collect = ShouldCollect::ToObj;
             }
 
             StepType::Count => {
@@ -572,7 +581,7 @@ pub(crate) fn validate_traversal<'a>(
             }
 
             StepType::Object(obj) => {
-                validate_object(
+                cur_ty = validate_object(
                     ctx,
                     &cur_ty,
                     tr,
@@ -691,6 +700,21 @@ pub(crate) fn validate_traversal<'a>(
                 if let Some(FieldValueType::Identifier(field_name)) = &field_name {
                     is_valid_identifier(ctx, original_query, b_op.loc.clone(), field_name.as_str());
                     match &cur_ty {
+                        Type::Scalar(ft) => {
+                            if ft != &property_type {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    b_op.loc.clone(),
+                                    E622,
+                                    field_name,
+                                    cur_ty.kind_str(),
+                                    &cur_ty.get_type_name(),
+                                    &ft.to_string(),
+                                    &property_type.to_string()
+                                );
+                            }
+                        }
                         Type::Nodes(Some(node_ty)) | Type::Node(Some(node_ty)) => {
                             let field_set = ctx.node_fields.get(node_ty.as_str()).cloned();
                             if let Some(field_set) = field_set {
@@ -929,7 +953,16 @@ pub(crate) fn validate_traversal<'a>(
                                 );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
-                            _ => unreachable!("Cannot reach here"),
+                            ExpressionType::Traversal(traversal) => {
+                                // parse traversal
+                                let mut gen_traversal = GeneratedTraversal::default();
+                                validate_traversal(ctx, traversal, scope, original_query, parent_ty.clone(), &mut gen_traversal, gen_query);
+                                gen_traversal.should_collect = ShouldCollect::ToValue;
+                                GeneratedValue::Traversal(Box::new(gen_traversal))
+                            }
+                            _ => {
+                                unreachable!("Cannot reach here");
+                            }
                         };
                         BoolOp::Eq(Eq { value: v })
                     }
@@ -955,6 +988,13 @@ pub(crate) fn validate_traversal<'a>(
                                     i.as_str(),
                                 );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
+                            }
+                            ExpressionType::Traversal(traversal) => {
+                                // parse traversal
+                                let mut gen_traversal = GeneratedTraversal::default();
+                                validate_traversal(ctx, traversal, scope, original_query, parent_ty.clone(), &mut gen_traversal, gen_query);
+                                gen_traversal.should_collect = ShouldCollect::ToValue;
+                                GeneratedValue::Traversal(Box::new(gen_traversal))
                             }
                             _ => unreachable!("Cannot reach here"),
                         };
@@ -1417,7 +1457,7 @@ pub(crate) fn validate_traversal<'a>(
                 // Add identifier to a temporary scope so inner uses pass
                 scope.insert(cl.identifier.as_str(), cur_ty.clone()); // If true then already exists so return error
                 let obj = &cl.object;
-                validate_object(
+                cur_ty = validate_object(
                     ctx,
                     &cur_ty,
                     tr,

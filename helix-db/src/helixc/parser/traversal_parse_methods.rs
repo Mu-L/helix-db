@@ -11,7 +11,7 @@ use pest::iterators::{Pair, Pairs};
 impl HelixParser {
     pub(super) fn parse_traversal(&self, pair: Pair<Rule>) -> Result<Traversal, ParserError> {
         let mut pairs = pair.clone().into_inner();
-        let start = self.parse_start_node(pairs.next().unwrap())?;
+        let start = self.parse_start_node(pairs.next().ok_or_else(|| ParserError::from(format!("Expected start node, got {pair:?}")))?)?;
         let steps = pairs
             .map(|p| self.parse_step(p))
             .collect::<Result<Vec<_>, _>>()?;

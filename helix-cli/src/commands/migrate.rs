@@ -36,6 +36,7 @@ struct V1GraphConfig {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 struct MigrationContext {
     project_dir: PathBuf,
     project_name: String,
