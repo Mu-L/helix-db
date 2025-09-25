@@ -141,51 +141,51 @@ async fn handle_error_with_github(
         "DEBUG: Handling error with GitHub - Type: {error_type}, Test: {test_name}, Hash: {error_hash}"
     );
 
-    match check_issue_exists(github_config, &error_hash).await {
-        Ok(exists) => {
-            println!("DEBUG: Issue exists check result: {exists}");
-            if !exists {
-                println!("DEBUG: Creating new GitHub issue...");
-                if let Err(e) = create_github_issue(
-                    github_config,
-                    error_type,
-                    error_message,
-                    test_name,
-                    &error_hash,
-                    query,
-                    schema,
-                    generated_rust_code,
-                )
-                .await
-                {
-                    eprintln!("Failed to create GitHub issue: {e}");
-                }
-            } else {
-                println!(
-                    "Issue already exists for {error_type} error in {test_name} (hash: {error_hash})"
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to check existing issues: {e}");
-            // Try to create the issue anyway if we can't check for duplicates
-            println!("DEBUG: Attempting to create issue despite check failure...");
-            if let Err(e) = create_github_issue(
-                github_config,
-                error_type,
-                error_message,
-                test_name,
-                &error_hash,
-                query,
-                schema,
-                generated_rust_code,
-            )
-            .await
-            {
-                eprintln!("Failed to create GitHub issue: {e}");
-            }
-        }
-    }
+    // match check_issue_exists(github_config, &error_hash).await {
+    //     Ok(exists) => {
+    //         println!("DEBUG: Issue exists check result: {exists}");
+    //         if !exists {
+    //             println!("DEBUG: Creating new GitHub issue...");
+    //             if let Err(e) = create_github_issue(
+    //                 github_config,
+    //                 error_type,
+    //                 error_message,
+    //                 test_name,
+    //                 &error_hash,
+    //                 query,
+    //                 schema,
+    //                 generated_rust_code,
+    //             )
+    //             .await
+    //             {
+    //                 eprintln!("Failed to create GitHub issue: {e}");
+    //             }
+    //         } else {
+    //             println!(
+    //                 "Issue already exists for {error_type} error in {test_name} (hash: {error_hash})"
+    //             );
+    //         }
+    //     }
+    //     Err(e) => {
+    //         eprintln!("Failed to check existing issues: {e}");
+    //         // Try to create the issue anyway if we can't check for duplicates
+    //         println!("DEBUG: Attempting to create issue despite check failure...");
+    //         if let Err(e) = create_github_issue(
+    //             github_config,
+    //             error_type,
+    //             error_message,
+    //             test_name,
+    //             &error_hash,
+    //             query,
+    //             schema,
+    //             generated_rust_code,
+    //         )
+    //         .await
+    //         {
+    //             eprintln!("Failed to create GitHub issue: {e}");
+    //         }
+    //     }
+    // }
 
     Ok(())
 }
