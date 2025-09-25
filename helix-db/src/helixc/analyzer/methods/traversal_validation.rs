@@ -673,7 +673,6 @@ pub(crate) fn validate_traversal<'a>(
                             (Type::Scalar(ft), _) => ft.clone(),
                             (Type::Boolean, _) => FieldType::Boolean,
                             (field_type, _) => {
-                                println!("Field type: {:?}", field_type);
                                 generate_error!(
                                     ctx,
                                     original_query,
@@ -698,7 +697,6 @@ pub(crate) fn validate_traversal<'a>(
                     }
                     _ => None,
                 };
-                println!("Field name 2: {:?}", field_name);
                 if let Some(FieldValueType::Identifier(field_name)) = &field_name {
                     is_valid_identifier(ctx, original_query, b_op.loc.clone(), field_name.as_str());
                     match &cur_ty {
@@ -963,7 +961,6 @@ pub(crate) fn validate_traversal<'a>(
                                 GeneratedValue::Traversal(Box::new(gen_traversal))
                             }
                             _ => {
-                                println!("Expr: {:?}", expr);
                                 unreachable!("Cannot reach here");
                             }
                         };

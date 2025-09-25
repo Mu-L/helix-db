@@ -69,7 +69,7 @@ impl HelixParser {
                 let traversal = inner
                     .next()
                     .ok_or_else(|| ParserError::from("Missing traversal"))?;
-                println!("Parsing exists traversal: {:?}", traversal);
+
                 let expr = ExpressionType::Exists(ExistsExpression {
                     loc: loc.clone(),
                     expr: Box::new(Expression {

@@ -245,7 +245,7 @@ impl HelixParser {
             .clone()
             .into_inner()
             .next()
-            .ok_or_else(|| ParserError::from(format!("Expected step, got {:?}", pair)))?;
+            .ok_or_else(|| ParserError::from(format!("Expected step, got {pair:?}")))?;
         match inner.as_rule() {
             Rule::graph_step => Ok(Step {
                 loc: inner.loc(),

@@ -199,7 +199,7 @@ fn check_duplicate_schema_definitions(ctx: &mut Ctx) {
                 node.name.0.clone(),
                 ErrorCode::E107,
                 format!("duplicate node definition `{}`", node.name.1),
-                Some(format!("rename the node or remove the duplicate definition")),
+                Some("rename the node or remove the duplicate definition".to_string()),
             );
         } else {
             seen_nodes.insert(node.name.1.clone(), (node.name.0.clone(), node.name.1.clone()));
@@ -214,7 +214,7 @@ fn check_duplicate_schema_definitions(ctx: &mut Ctx) {
                 edge.name.0.clone(),
                 ErrorCode::E107,
                 format!("duplicate edge definition `{}`", edge.name.1),
-                Some(format!("rename the edge or remove the duplicate definition")),
+                Some("rename the edge or remove the duplicate definition".to_string()),
             );
         } else {
             seen_edges.insert(edge.name.1.clone(), (edge.name.0.clone(), edge.name.1.clone()));
@@ -229,7 +229,7 @@ fn check_duplicate_schema_definitions(ctx: &mut Ctx) {
                 vector.loc.clone(),
                 ErrorCode::E107,
                 format!("duplicate vector definition `{}`", vector.name),
-                Some(format!("rename the vector or remove the duplicate definition")),
+                Some("rename the vector or remove the duplicate definition".to_string()),
             );
         } else {
             seen_vectors.insert(vector.name.clone(), (vector.loc.clone(), vector.name.clone()));
