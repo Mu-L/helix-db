@@ -241,11 +241,15 @@ impl HelixParser {
     }
 
     pub(super) fn parse_step(&self, pair: Pair<Rule>) -> Result<Step, ParserError> {
-        let inner = pair.clone().into_inner().next().unwrap();
+        let inner = pair
+            .clone()
+            .into_inner()
+            .next()
+            .ok_or_else(|| ParserError::from(format!("Expected step, got {pair:?}")))?;
         match inner.as_rule() {
             Rule::graph_step => Ok(Step {
                 loc: inner.loc(),
-                step: StepType::Node(self.parse_graph_step(inner)),
+                step: StepType::Node(self.parse_graph_step(inner)?),
             }),
             Rule::object_step => Ok(Step {
                 loc: inner.loc(),
@@ -322,26 +326,25 @@ impl HelixParser {
         }
     }
 
-    pub(super) fn parse_graph_step(&self, pair: Pair<Rule>) -> GraphStep {
-        let types = |pair: &Pair<Rule>| {
+    pub(super) fn parse_graph_step(&self, pair: Pair<Rule>) -> Result<GraphStep, ParserError> {
+        let types = |pair: &Pair<Rule>| -> Result<String, ParserError> {
             pair.clone()
                 .into_inner()
                 .next()
                 .map(|p| p.as_str().to_string())
-                .ok_or_else(|| ParserError::from("Expected type".to_string()))
-                .unwrap()
+                .ok_or_else(|| ParserError::from(format!("Expected type for {:?}", pair.as_rule())))
         };
-        let pair = pair.into_inner().next().unwrap();
-        match pair.as_rule() {
+        let pair = pair.clone().into_inner().next().ok_or(ParserError::from(format!("Expected graph step, got {:?}", pair.as_rule())))?;
+        let step = match pair.as_rule() {
             Rule::out_e => {
-                let types = types(&pair);
+                let types = types(&pair)?;
                 GraphStep {
                     loc: pair.loc(),
                     step: GraphStepType::OutE(types),
                 }
             }
             Rule::in_e => {
-                let types = types(&pair);
+                let types = types(&pair)?;
                 GraphStep {
                     loc: pair.loc(),
                     step: GraphStepType::InE(types),
@@ -364,14 +367,14 @@ impl HelixParser {
                 step: GraphStepType::ToV,
             },
             Rule::out => {
-                let types = types(&pair);
+                let types = types(&pair)?;
                 GraphStep {
                     loc: pair.loc(),
                     step: GraphStepType::Out(types),
                 }
             }
             Rule::in_nodes => {
-                let types = types(&pair);
+                let types = types(&pair)?;
                 GraphStep {
                     loc: pair.loc(),
                     step: GraphStepType::In(types),
@@ -423,11 +426,15 @@ impl HelixParser {
             }
             Rule::search_vector => GraphStep {
                 loc: pair.loc(),
-                step: GraphStepType::SearchVector(self.parse_search_vector(pair).unwrap()),
+                step: GraphStepType::SearchVector(self.parse_search_vector(pair)?),
             },
             _ => {
-                unreachable!()
+                return Err(ParserError::from(format!(
+                    "Unexpected graph step type: {:?}",
+                    pair.as_rule()
+                )));
             }
-        }
+        };
+        Ok(step)
     }
 }

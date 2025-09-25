@@ -79,7 +79,7 @@ impl Query {
     }
 
     fn print_txn_commit(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "txn.commit().unwrap();")
+        writeln!(f, "txn.commit().map_err(|e| GraphError::New(format!(\"Failed to commit transaction: {{:?}}\", e)))?;")
     }
 
     fn print_query(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -117,8 +117,8 @@ impl Query {
 
         writeln!(f, "let mut remapping_vals = RemappingMap::new();")?;
         match self.is_mut {
-            true => writeln!(f, "let mut txn = db.graph_env.write_txn().unwrap();")?,
-            false => writeln!(f, "let txn = db.graph_env.read_txn().unwrap();")?,
+            true => writeln!(f, "let mut txn = db.graph_env.write_txn().map_err(|e| GraphError::New(format!(\"Failed to start write transaction: {{:?}}\", e)))?;")?,
+            false => writeln!(f, "let txn = db.graph_env.read_txn().map_err(|e| GraphError::New(format!(\"Failed to start read transaction: {{:?}}\", e)))?;")?,
         }
 
         // prints each statement
@@ -185,7 +185,7 @@ impl Query {
 
         writeln!(
             f,
-            "let mut connections = input.mcp_connections.lock().unwrap();"
+            "let mut connections = input.mcp_connections.lock().map_err(|_| GraphError::Default)?;"
         )?;
         writeln!(
             f,
@@ -208,8 +208,8 @@ impl Query {
         writeln!(f, "let mut remapping_vals = RemappingMap::new();")?;
 
         match self.is_mut {
-            true => writeln!(f, "let mut txn = db.graph_env.write_txn().unwrap();")?,
-            false => writeln!(f, "let txn = db.graph_env.read_txn().unwrap();")?,
+            true => writeln!(f, "let mut txn = db.graph_env.write_txn().map_err(|e| GraphError::New(format!(\"Failed to start write transaction: {{:?}}\", e)))?;")?,
+            false => writeln!(f, "let txn = db.graph_env.read_txn().map_err(|e| GraphError::New(format!(\"Failed to start read transaction: {{:?}}\", e)))?;")?,
         }
 
         for statement in &self.statements {
