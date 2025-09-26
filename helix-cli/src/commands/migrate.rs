@@ -494,7 +494,7 @@ fn provide_post_migration_guidance(ctx: &MigrationContext) -> Result<()> {
     Ok(())
 }
 
-fn migrate_home_directory(ctx: &MigrationContext) -> Result<()> {
+fn migrate_home_directory(_ctx: &MigrationContext) -> Result<()> {
     print_status("HOME", "Migrating ~/.helix directory");
 
     let home_dir = dirs::home_dir().ok_or_else(|| {
@@ -524,8 +524,8 @@ fn migrate_home_directory(ctx: &MigrationContext) -> Result<()> {
         })?;
     }
 
-    // Use the existing utility function to copy the directory
-    crate::utils::copy_dir_recursive_excluding(&v1_helix_dir, &backup_dir, &[]).map_err(|e| {
+    // Use the utility function to copy the directory without exclusions
+    crate::utils::copy_dir_recursively(&v1_helix_dir, &backup_dir).map_err(|e| {
         CliError::new("Failed to backup ~/.helix directory")
             .with_caused_by(e.to_string())
     })?;

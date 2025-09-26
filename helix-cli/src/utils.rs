@@ -6,6 +6,31 @@ use std::path::Path;
 
 const IGNORES: [&str; 3] = ["target", ".git", ".helix"];
 
+/// Copy a directory recursively without any exclusions
+pub fn copy_dir_recursively(src: &Path, dst: &Path) -> Result<()> {
+    if !src.is_dir() {
+        return Err(eyre::eyre!("Source is not a directory: {}", src.display()));
+    }
+
+    // Create destination directory
+    fs::create_dir_all(dst)?;
+
+    // Read the source directory
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursively(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Copy a directory recursively
 pub fn copy_dir_recursive_excluding(src: &Path, dst: &Path) -> Result<()> {
     if !src.is_dir() {
