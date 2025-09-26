@@ -107,7 +107,7 @@ async fn ensure_helix_repo_cached() -> Result<()> {
                 .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))?;
 
             print_status("DEV", "Development mode: copying local workspace...");
-            copy_dir_recursive_excluding(workspace_root, &repo_cache, &["target"])?;
+            copy_dir_recursive_excluding(workspace_root, &repo_cache)?;
         } else {
             // Production mode: clone from GitHub
             let output = std::process::Command::new("git")
@@ -138,7 +138,7 @@ async fn ensure_helix_repo_cached() -> Result<()> {
             if repo_cache.exists() {
                 std::fs::remove_dir_all(&repo_cache)?;
             }
-            copy_dir_recursive_excluding(workspace_root, &repo_cache, &["target"])?;
+            copy_dir_recursive_excluding(workspace_root, &repo_cache)?;
         } else {
             // Production mode: git pull
             let output = std::process::Command::new("git")
@@ -181,7 +181,7 @@ async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &st
     }
 
     // Copy cached repo to instance workspace
-    copy_dir_recursive_excluding(&repo_cache, &repo_copy_path, &["target"])?;
+    copy_dir_recursive_excluding(&repo_cache, &repo_copy_path)?;
 
     print_status(
         "COPY",

@@ -4,8 +4,10 @@ use eyre::{Result, eyre};
 use std::fs;
 use std::path::Path;
 
+const IGNORES: [&str; 3] = ["target", ".git", ".helix"];
+
 /// Copy a directory recursively
-pub fn copy_dir_recursive_excluding(src: &Path, dst: &Path, ignores: &[&str]) -> Result<()> {
+pub fn copy_dir_recursive_excluding(src: &Path, dst: &Path) -> Result<()> {
     if !src.is_dir() {
         return Err(eyre::eyre!("Source is not a directory: {}", src.display()));
     }
@@ -18,8 +20,7 @@ pub fn copy_dir_recursive_excluding(src: &Path, dst: &Path, ignores: &[&str]) ->
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-
-        if ignores.contains(
+        if IGNORES.contains(
             &entry
                 .file_name()
                 .into_string()
@@ -30,7 +31,7 @@ pub fn copy_dir_recursive_excluding(src: &Path, dst: &Path, ignores: &[&str]) ->
         }
 
         if src_path.is_dir() {
-            copy_dir_recursive_excluding(&src_path, &dst_path, ignores)?;
+            copy_dir_recursive_excluding(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path)?;
         }
@@ -128,7 +129,11 @@ pub fn print_success(message: &str) {
 /// Print a completion message with summary
 #[allow(unused)]
 pub fn print_completion(operation: &str, details: &str) {
-    println!("{} {} completed successfully", "[SUCCESS]".green().bold(), operation);
+    println!(
+        "{} {} completed successfully",
+        "[SUCCESS]".green().bold(),
+        operation
+    );
     if !details.is_empty() {
         println!("  {details}");
     }
@@ -212,10 +217,14 @@ pub mod helixc_utils {
         let queries_path = root.join(queries_dir);
 
         fn collect_from_dir(dir: &Path, files: &mut Vec<std::fs::DirEntry>) -> Result<()> {
+            if dir.file_name().unwrap_or_default() == ".helix" {
+                return Ok(());
+            }
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;
                 let path = entry.path();
 
+                println!("path: {}", path.display());
                 if path.is_file() && path.extension().map(|s| s == "hx").unwrap_or(false) {
                     files.push(entry);
                 } else if path.is_dir() {
@@ -224,13 +233,18 @@ pub mod helixc_utils {
             }
             Ok(())
         }
+        println!("queries_path: {}", queries_path.display());
 
         collect_from_dir(&queries_path, &mut files)?;
 
         if files.is_empty() {
-            return Err(eyre::eyre!("No .hx files found in {}", queries_path.display()));
+            return Err(eyre::eyre!(
+                "No .hx files found in {}",
+                queries_path.display()
+            ));
         }
 
+        println!("got files: {}", files.len());
         Ok(files)
     }
 
@@ -273,19 +287,27 @@ pub mod helixc_utils {
         if !diagnostics.is_empty() {
             // Format diagnostics properly using the helix-db pretty printer
             let formatted_diagnostics = format_diagnostics(&diagnostics);
-            return Err(eyre::eyre!("Compilation failed with {} error(s):\n\n{}", 
-                diagnostics.len(), formatted_diagnostics));
+            return Err(eyre::eyre!(
+                "Compilation failed with {} error(s):\n\n{}",
+                diagnostics.len(),
+                formatted_diagnostics
+            ));
         }
 
         Ok(generated_source)
     }
 
     /// Format diagnostics using the helix-db diagnostic renderer
-    fn format_diagnostics(diagnostics: &[helix_db::helixc::analyzer::diagnostic::Diagnostic]) -> String {
+    fn format_diagnostics(
+        diagnostics: &[helix_db::helixc::analyzer::diagnostic::Diagnostic],
+    ) -> String {
         let mut output = String::new();
         for diagnostic in diagnostics {
             // Use the render method with empty source for now
-            let filepath = diagnostic.filepath.clone().unwrap_or("queries.hx".to_string());
+            let filepath = diagnostic
+                .filepath
+                .clone()
+                .unwrap_or("queries.hx".to_string());
             output.push_str(&diagnostic.render("", &filepath));
             output.push('\n');
         }
