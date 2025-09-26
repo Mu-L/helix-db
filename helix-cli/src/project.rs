@@ -87,6 +87,16 @@ fn find_project_root(start: &Path) -> Result<PathBuf> {
             return Ok(current);
         }
 
+        // Check for old v1 config.hx.json file
+        let v1_config_path = current.join("config.hx.json");
+        if v1_config_path.exists() {
+            let error = crate::errors::config_error("found v1 project configuration")
+                .with_file_path(v1_config_path.display().to_string())
+                .with_context("This project uses the old v1 configuration format")
+                .with_hint(&format!("Run 'helix migrate --path \"{}\"' to migrate this project to v2 format", current.display()));
+            return Err(eyre!("{}", error.render()));
+        }
+
         match current.parent() {
             Some(parent) => current = parent.to_path_buf(),
             None => break,
@@ -102,7 +112,18 @@ fn find_project_root(start: &Path) -> Result<PathBuf> {
 pub fn get_helix_cache_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| eyre!("Cannot find home directory"))?;
     let helix_dir = home.join(".helix");
+
+    // Check if this is a fresh installation (no .helix directory exists)
+    let is_fresh_install = !helix_dir.exists();
+
     std::fs::create_dir_all(&helix_dir)?;
+
+    // For fresh installations, create .v2 marker to indicate this is a v2 helix directory
+    if is_fresh_install {
+        let v2_marker = helix_dir.join(".v2");
+        std::fs::write(&v2_marker, "")?;
+    }
+
     Ok(helix_dir)
 }
 

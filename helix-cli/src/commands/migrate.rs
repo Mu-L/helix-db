@@ -114,6 +114,9 @@ pub async fn run(
         create_backup(&migration_ctx)?;
     }
 
+    // Migrate home directory structure
+    migrate_home_directory(&migration_ctx)?;
+
     // Create queries directory and move files
     migrate_file_structure(&migration_ctx)?;
 
@@ -267,6 +270,32 @@ fn show_migration_plan(ctx: &MigrationContext) -> Result<()> {
         print_field("Create backup", ".helix/v1-backup/config.hx.json");
     } else {
         print_field("Remove file", "config.hx.json");
+    }
+
+    print_newline();
+    print_header("🏠 Home Directory Migration:");
+    let home_dir = dirs::home_dir().ok_or_else(|| CliError::new("Could not find home directory"))?;
+    let v1_helix_dir = home_dir.join(".helix");
+    if v1_helix_dir.exists() {
+        let v2_marker = v1_helix_dir.join(".v2");
+        if v2_marker.exists() {
+            print_field("Already migrated", "~/.helix directory already migrated to v2");
+        } else {
+            print_field("Create backup", "~/.helix → ~/.helix-v1-backup");
+            if v1_helix_dir.join("dockerdev").exists() {
+                print_field("Clean up Docker", "Stop/remove helix-dockerdev containers and images");
+            }
+            print_field("Clean directory", "Remove all except ~/.helix/credentials and ~/.helix/repo");
+            if v1_helix_dir.join("credentials").exists() {
+                print_field("Preserve file", "~/.helix/credentials");
+            }
+            if v1_helix_dir.join("repo").exists() {
+                print_field("Preserve directory", "~/.helix/repo");
+            }
+            print_field("Mark migrated", "Create ~/.helix/.v2 marker file");
+        }
+    } else {
+        print_field("No action needed", "~/.helix directory not found");
     }
 
     print_newline();
@@ -462,6 +491,164 @@ fn provide_post_migration_guidance(ctx: &MigrationContext) -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+fn migrate_home_directory(ctx: &MigrationContext) -> Result<()> {
+    print_status("HOME", "Migrating ~/.helix directory");
+
+    let home_dir = dirs::home_dir().ok_or_else(|| {
+        CliError::new("Could not find home directory")
+    })?;
+
+    let v1_helix_dir = home_dir.join(".helix");
+
+    if !v1_helix_dir.exists() {
+        print_info("No ~/.helix directory found, skipping home migration");
+        return Ok(());
+    }
+
+    // Check if already migrated
+    let v2_marker = v1_helix_dir.join(".v2");
+    if v2_marker.exists() {
+        print_info("~/.helix directory already migrated to v2, skipping home migration");
+        return Ok(());
+    }
+
+    // Create backup of the entire .helix directory
+    let backup_dir = home_dir.join(".helix-v1-backup");
+    if backup_dir.exists() {
+        fs::remove_dir_all(&backup_dir).map_err(|e| {
+            CliError::new("Failed to remove existing backup directory")
+                .with_caused_by(e.to_string())
+        })?;
+    }
+
+    // Use the existing utility function to copy the directory
+    crate::utils::copy_dir_recursive_excluding(&v1_helix_dir, &backup_dir, &[]).map_err(|e| {
+        CliError::new("Failed to backup ~/.helix directory")
+            .with_caused_by(e.to_string())
+    })?;
+
+    print_success("Created backup: ~/.helix-v1-backup");
+
+    // Clean up dockerdev containers/images if present
+    let dockerdev_dir = v1_helix_dir.join("dockerdev");
+    if dockerdev_dir.exists() {
+        cleanup_dockerdev()?;
+    }
+
+    // Remove everything except credentials and repo
+    let credentials_path = v1_helix_dir.join("credentials");
+    let repo_path = v1_helix_dir.join("repo");
+
+    // Temporarily move credentials and repo out of the way
+    let temp_credentials = if credentials_path.exists() {
+        let temp_path = home_dir.join(".helix-credentials-temp");
+        fs::rename(&credentials_path, &temp_path).map_err(|e| {
+            CliError::new("Failed to backup credentials")
+                .with_caused_by(e.to_string())
+        })?;
+        Some(temp_path)
+    } else {
+        None
+    };
+
+    let temp_repo = if repo_path.exists() {
+        let temp_path = home_dir.join(".helix-repo-temp");
+        fs::rename(&repo_path, &temp_path).map_err(|e| {
+            CliError::new("Failed to backup repo")
+                .with_caused_by(e.to_string())
+        })?;
+        Some(temp_path)
+    } else {
+        None
+    };
+
+    // Remove the entire .helix directory
+    fs::remove_dir_all(&v1_helix_dir).map_err(|e| {
+        CliError::new("Failed to remove ~/.helix directory")
+            .with_caused_by(e.to_string())
+    })?;
+
+    // Recreate .helix directory
+    fs::create_dir_all(&v1_helix_dir).map_err(|e| {
+        CliError::new("Failed to recreate ~/.helix directory")
+            .with_caused_by(e.to_string())
+    })?;
+
+    // Restore credentials and repo
+    if let Some(temp_creds) = temp_credentials {
+        fs::rename(&temp_creds, &credentials_path).map_err(|e| {
+            CliError::new("Failed to restore credentials")
+                .with_caused_by(e.to_string())
+        })?;
+        print_info("Preserved ~/.helix/credentials");
+    }
+
+    if let Some(temp_repo) = temp_repo {
+        fs::rename(&temp_repo, &repo_path).map_err(|e| {
+            CliError::new("Failed to restore repo")
+                .with_caused_by(e.to_string())
+        })?;
+        print_info("Preserved ~/.helix/repo");
+    }
+
+    // Create .v2 marker file to indicate migration is complete
+    fs::write(&v2_marker, "").map_err(|e| {
+        CliError::new("Failed to create v2 marker file")
+            .with_caused_by(e.to_string())
+    })?;
+
+    print_success("Cleaned up ~/.helix directory, preserving credentials and repo");
+    Ok(())
+}
+
+fn cleanup_dockerdev() -> Result<()> {
+    print_status("DOCKER", "Cleaning up Docker dev containers and images");
+
+    // Stop and remove the container
+    let container_name = "helix-dockerdev";
+
+    // Try to stop the container (ignore errors if not running)
+    let _ = std::process::Command::new("docker")
+        .args(["stop", container_name])
+        .output();
+
+    // Try to remove the container (ignore errors if doesn't exist)
+    let _ = std::process::Command::new("docker")
+        .args(["rm", container_name])
+        .output();
+
+    // Try to remove any helix-related images
+    let output = std::process::Command::new("docker")
+        .args(["images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=helix*"])
+        .output();
+
+    if let Ok(output) = output {
+        let images = String::from_utf8_lossy(&output.stdout);
+        for image in images.lines().filter(|line| !line.is_empty()) {
+            let _ = std::process::Command::new("docker")
+                .args(["rmi", image])
+                .output();
+        }
+    }
+
+    // Try to remove helix volumes
+    let output = std::process::Command::new("docker")
+        .args(["volume", "ls", "--format", "{{.Name}}", "--filter", "name=helix"])
+        .output();
+
+    if let Ok(output) = output {
+        let volumes = String::from_utf8_lossy(&output.stdout);
+        for volume in volumes.lines().filter(|line| !line.is_empty()) {
+            let _ = std::process::Command::new("docker")
+                .args(["volume", "rm", volume])
+                .output();
+        }
+    }
+
+    print_info("Cleaned up Docker dev environment");
     Ok(())
 }
 
