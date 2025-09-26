@@ -35,8 +35,8 @@ async fn start_local_instance(project: &ProjectContext, instance_name: &str) -> 
     let compose_file = workspace.join("docker-compose.yml");
 
     if !compose_file.exists() {
-        let error = crate::errors::CliError::new(&format!("instance '{}' has not been built yet", instance_name))
-            .with_hint(&format!("run 'helix build {}' first to build the instance", instance_name));
+        let error = crate::errors::CliError::new(format!("instance '{instance_name}' has not been built yet"))
+            .with_hint(format!("run 'helix build {instance_name}' first to build the instance"));
         return Err(eyre::eyre!("{}", error.render()));
     }
 

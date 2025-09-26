@@ -110,9 +110,9 @@ impl Credentials {
 
     pub(crate) fn read_from_file(path: &PathBuf) -> Self {
         let content = fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("Failed to read credentials file at {:?}: {}", path, e));
+            .unwrap_or_else(|e| panic!("Failed to read credentials file at {path:?}: {e}"));
         Self::parse_key_value_format(&content)
-            .unwrap_or_else(|e| panic!("Failed to parse credentials file at {:?}: {}", path, e))
+            .unwrap_or_else(|e| panic!("Failed to parse credentials file at {path:?}: {e}"))
     }
 
     pub(crate) fn try_read_from_file(path: &PathBuf) -> Option<Self> {
@@ -123,7 +123,7 @@ impl Credentials {
     pub(crate) fn write_to_file(&self, path: &PathBuf) {
         let content = format!("helix_user_id={}\nhelix_user_key={}", self.user_id, self.helix_admin_key);
         fs::write(path, content)
-            .unwrap_or_else(|e| panic!("Failed to write credentials file to {:?}: {}", path, e));
+            .unwrap_or_else(|e| panic!("Failed to write credentials file to {path:?}: {e}"));
     }
 
     #[allow(unused)]

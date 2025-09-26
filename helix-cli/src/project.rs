@@ -95,7 +95,7 @@ fn find_project_root(start: &Path) -> Result<PathBuf> {
 
     let error = crate::errors::config_error("project configuration not found")
         .with_file_path(start.display().to_string())
-        .with_context(&format!("searched from {} up to filesystem root", start.display()));
+        .with_context(format!("searched from {} up to filesystem root", start.display()));
     Err(eyre!("{}", error.render()))
 }
 

@@ -9,6 +9,7 @@ use std::process::Command;
 use tokio::fs;
 
 #[derive(Debug, Clone)]
+#[allow(unused)]
 struct GitHubConfig {
     token: String,
     owner: String,
@@ -37,6 +38,7 @@ fn generate_error_hash(error_type: &str, error_message: &str, _test_name: &str) 
     general_purpose::STANDARD.encode(hash)[0..12].to_string()
 }
 
+#[allow(unused)]
 async fn check_issue_exists(github_config: &GitHubConfig, error_hash: &str) -> Result<bool> {
     println!("DEBUG: Checking if issue exists with hash: {error_hash}");
 
@@ -63,6 +65,7 @@ async fn check_issue_exists(github_config: &GitHubConfig, error_hash: &str) -> R
     Ok(count > 0)
 }
 
+#[allow(unused)]
 async fn create_github_issue(
     github_config: &GitHubConfig,
     error_type: &str,

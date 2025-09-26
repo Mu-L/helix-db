@@ -57,7 +57,7 @@ impl<'a> HelixManager<'a> {
         // Use provided region or default to us-east-1
         let region = region.or_else(|| Some("us-east-1".to_string()));
         
-        print_status("CONFIG", &format!("Creating cloud configuration for cluster: {}", cluster_id));
+        print_status("CONFIG", &format!("Creating cloud configuration for cluster: {cluster_id}"));
         
         Ok(CloudInstanceConfig {
             cluster_id,
@@ -117,7 +117,7 @@ impl<'a> HelixManager<'a> {
         //     }
         // }
         
-        print_success(&format!("Cloud instance '{}' configuration created", instance_name));
+        print_success(format!("Cloud instance '{instance_name}' configuration created").as_str());
         print_status("NEXT", "Run 'helix build <instance>' to compile your project for this instance");
         
         Ok(())
