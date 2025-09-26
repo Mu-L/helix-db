@@ -15,6 +15,8 @@ use std::{
 };
 use tokio::task::JoinHandle;
 
+const METRICS_URL: &str = "https://logs.helix-db.com/v2";
+
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MetricsLevel {
@@ -216,7 +218,7 @@ async fn upload_log_file(client: &Client, path: &PathBuf) -> Result<()> {
     }
 
     let response = client
-        .post("https://logs-dummy.helix-db.com/") // TODO: change to actual logs endpoint
+        .post(METRICS_URL) // TODO: change to actual logs endpoint
         .header("Content-Type", "application/json")
         .body(content)
         .send()

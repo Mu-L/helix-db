@@ -571,10 +571,46 @@ async fn process_test_directory(
         .await
         .context("Failed to create temp directory")?;
 
-    // Copy the file contents to temp directory
+    // Copy the test files (queries.hx, schema.hx, helix.toml, etc.) to temp directory
     copy_dir_recursive(&folder_path, &temp_dir).await?;
-    // copy repo to folder
-    copy_dir_recursive(temp_repo, &temp_dir).await?;
+
+    // Copy the entire helix-db project structure for cargo check
+    // But skip .helix directory to avoid conflicts
+    let helix_db_dir = temp_dir.join("helix-db");
+    fs::create_dir_all(&helix_db_dir).await?;
+
+    // Copy all project crates and dependencies (excluding hql-tests to avoid conflicts)
+    let crates_to_copy = vec![
+        "helix-container",
+        "helix-db",
+        "helix-macros",
+        "helix-cli",
+        "metrics",
+    ];
+
+    for crate_name in crates_to_copy {
+        let src = temp_repo.join(crate_name);
+        let dst = helix_db_dir.join(crate_name);
+        if src.exists() {
+            copy_dir_recursive(&src, &dst).await?;
+        }
+    }
+
+    // Copy root Cargo.toml and Cargo.lock, but remove hql-tests from workspace
+    let cargo_toml_src = temp_repo.join("Cargo.toml");
+    let cargo_toml_dst = helix_db_dir.join("Cargo.toml");
+    if cargo_toml_src.exists() {
+        // Read the Cargo.toml and remove hql-tests from workspace members
+        let cargo_content = fs::read_to_string(&cargo_toml_src).await?;
+        let modified_content = cargo_content.replace("    \"hql-tests\",\n", "");
+        fs::write(&cargo_toml_dst, modified_content).await?;
+    }
+
+    let cargo_lock_src = temp_repo.join("Cargo.lock");
+    let cargo_lock_dst = helix_db_dir.join("Cargo.lock");
+    if cargo_lock_src.exists() {
+        fs::copy(&cargo_lock_src, &cargo_lock_dst).await?;
+    }
 
     // Run helix compile command
     let compile_output_path = temp_dir.join("helix-db/helix-container/src");
@@ -733,4 +769,4 @@ async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-const IGNORE_DIRS: [&str; 2] = ["target", ".git"];
+const IGNORE_DIRS: [&str; 3] = ["target", ".git", ".helix"];
