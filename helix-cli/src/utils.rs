@@ -223,8 +223,6 @@ pub mod helixc_utils {
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;
                 let path = entry.path();
-
-                println!("path: {}", path.display());
                 if path.is_file() && path.extension().map(|s| s == "hx").unwrap_or(false) {
                     files.push(entry);
                 } else if path.is_dir() {

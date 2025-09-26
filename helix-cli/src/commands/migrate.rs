@@ -228,10 +228,8 @@ fn find_hx_files(project_dir: &Path) -> Result<Vec<PathBuf>> {
         let entry = entry?;
         let path = entry.path();
 
-        if let Some(extension) = path.extension() {
-            if extension == "hx" && path.file_name() != Some("schema.hx".as_ref()) {
-                hx_files.push(path);
-            }
+        if let Some(extension) = path.extension() && extension == "hx" && path.file_name() != Some("schema.hx".as_ref()) {
+            hx_files.push(path);
         }
     }
 
