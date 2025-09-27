@@ -8,7 +8,10 @@ use color_eyre::owo_colors::OwoColorize;
 use eyre::{OptionExt, Result};
 use futures_util::StreamExt;
 use serde::Deserialize;
-use std::{fs, path::PathBuf};
+use std::{
+    fs::{self, File},
+    path::PathBuf,
+};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{
@@ -32,8 +35,11 @@ async fn login() -> Result<()> {
     let config_path = home.join(".helix");
     let cred_path = config_path.join("credentials");
 
+    if !config_path.exists() {
+        fs::create_dir_all(&config_path)?;
+    }
     if !cred_path.exists() {
-        fs::create_dir_all(&cred_path)?;
+        File::create(&cred_path)?;
     }
 
     // not needed?
@@ -56,6 +62,9 @@ async fn login() -> Result<()> {
     let mut metrics = load_metrics_config()?;
     metrics.user_id = Some(user_id);
     save_metrics_config(&metrics)?;
+
+    print_success("Logged in successfully");
+    print_info("Your credentials are stored in ~/.helix/credentials");
 
     Ok(())
 }
@@ -121,14 +130,20 @@ impl Credentials {
     }
 
     pub(crate) fn write_to_file(&self, path: &PathBuf) {
-        let content = format!("helix_user_id={}\nhelix_user_key={}", self.user_id, self.helix_admin_key);
+        let content = format!(
+            "helix_user_id={}\nhelix_user_key={}",
+            self.user_id, self.helix_admin_key
+        );
         fs::write(path, content)
             .unwrap_or_else(|e| panic!("Failed to write credentials file to {path:?}: {e}"));
     }
 
     #[allow(unused)]
     pub(crate) fn try_write_to_file(&self, path: &PathBuf) -> Option<()> {
-        let content = format!("helix_user_id={}\nhelix_user_key={}", self.user_id, self.helix_admin_key);
+        let content = format!(
+            "helix_user_id={}\nhelix_user_key={}",
+            self.user_id, self.helix_admin_key
+        );
         fs::write(path, content).ok()?;
         Some(())
     }
@@ -154,7 +169,8 @@ impl Credentials {
 
         Ok(Credentials {
             user_id: user_id.ok_or_eyre("Missing helix_user_id in credentials file")?,
-            helix_admin_key: helix_admin_key.ok_or_eyre("Missing helix_user_key in credentials file")?,
+            helix_admin_key: helix_admin_key
+                .ok_or_eyre("Missing helix_user_key in credentials file")?,
         })
     }
 }

@@ -99,8 +99,11 @@ pub struct CloudInstanceConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+//lowercase all fields
+#[serde(rename_all = "lowercase")]
 pub enum CloudConfig {
     Helix(CloudInstanceConfig),
+    #[serde(rename = "fly")]
     FlyIo(FlyInstanceConfig),
     Ecr(EcrConfig),
 }
