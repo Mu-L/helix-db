@@ -10,7 +10,7 @@ use serde_json::json;
 use std::env;
 use std::path::PathBuf;
 use std::sync::LazyLock;
-use uuid::Uuid;
+// use uuid::Uuid;
 
 const DEFAULT_CLOUD_AUTHORITY: &str = "ec2-184-72-27-116.us-west-1.compute.amazonaws.com:3000";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
@@ -48,11 +48,12 @@ impl<'a> HelixManager<'a> {
 
     pub async fn create_instance_config(
         &self,
-        instance_name: &str,
+        _instance_name: &str,
         region: Option<String>,
     ) -> Result<CloudInstanceConfig> {
         // Generate unique cluster ID
-        let cluster_id = format!("helix-{}-{}", instance_name, Uuid::new_v4());
+        // let cluster_id = format!("helix-{}-{}", instance_name, Uuid::new_v4());
+        let cluster_id = "YOUR_CLUSTER_ID".to_string();
         
         // Use provided region or default to us-east-1
         let region = region.or_else(|| Some("us-east-1".to_string()));
