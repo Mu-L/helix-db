@@ -252,8 +252,8 @@ pub(crate) fn infer_expr_type<'a>(
                                                 original_query,
                                                 loc.clone(),
                                                 E205,
-                                                value.as_str(),
-                                                &value.to_string(),
+                                                &value.inner_stringify(),
+                                                value.to_variant_string(),
                                                 &field_type.to_string(),
                                                 "node",
                                                 ty.as_str()
@@ -469,8 +469,8 @@ pub(crate) fn infer_expr_type<'a>(
                                                 original_query,
                                                 loc.clone(),
                                                 E205,
-                                                value.as_str(),
-                                                &value.to_string(),
+                                                &value.inner_stringify(),
+                                                value.to_variant_string(),
                                                 &field_type.to_string(),
                                                 "edge",
                                                 ty.as_str()
@@ -692,7 +692,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 loc.clone(),
                                                 E205,
                                                 value.as_str(),
-                                                &value.to_string(),
+                                                &value.to_variant_string(),
                                                 &field_type.to_string(),
                                                 "vector",
                                                 ty.as_str()
@@ -1168,7 +1168,7 @@ pub(crate) fn infer_expr_type<'a>(
             }
             let vec = match &bm25_search.data {
                 Some(ValueType::Literal { value, loc: _ }) => {
-                    GeneratedValue::Literal(GenRef::Std(value.to_string()))
+                    GeneratedValue::Literal(GenRef::Std(value.inner_stringify()))
                 }
                 Some(ValueType::Identifier { value: i, loc: _ }) => {
                     is_valid_identifier(ctx, original_query, bm25_search.loc.clone(), i.as_str());

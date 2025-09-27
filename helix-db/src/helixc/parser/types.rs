@@ -875,7 +875,7 @@ impl ValueType {
     }
     pub fn to_string(&self) -> String {
         match self {
-            ValueType::Literal { value, loc: _ } => value.to_string(),
+            ValueType::Literal { value, loc: _ } => value.inner_stringify(),
             ValueType::Identifier { value, loc: _ } => value.clone(),
             ValueType::Object { fields, loc: _ } => {
                 fields.keys().cloned().collect::<Vec<String>>().join(", ")

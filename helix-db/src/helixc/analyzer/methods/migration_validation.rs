@@ -163,7 +163,7 @@ pub(crate) fn validate_migration(ctx: &mut Ctx, migration: &Migration) {
                             property_value.loc.clone(),
                             ErrorCode::E205,
                             format!("Property value type mismatch: expected '{}' but got '{}'",
-                                to_property_field.field_type, literal),
+                                to_property_field.field_type, literal.to_variant_string()),
                             Some("Ensure the property value type matches the field type in the target schema".into()),
                         );
                         continue;
@@ -256,7 +256,7 @@ pub(crate) fn validate_migration(ctx: &mut Ctx, migration: &Migration) {
                                         new_field_type: to_property_field.field_type.clone(),
                                         value: GeneratedValue::Literal(match literal {
                                             Value::String(s) => GenRef::Literal(s.to_string()),
-                                            other => GenRef::Std(other.to_string()),
+                                            other => GenRef::Std(other.inner_stringify()),
                                         }),
                                     },
                                 ));
@@ -270,7 +270,7 @@ pub(crate) fn validate_migration(ctx: &mut Ctx, migration: &Migration) {
                                         old_field: match &property_value.value {
                                             FieldValueType::Literal(literal) => {
                                                 GeneratedValue::Literal(GenRef::Literal(
-                                                    literal.to_string(),
+                                                    literal.inner_stringify(),
                                                 ))
                                             }
                                             FieldValueType::Identifier(identifier) => {

@@ -421,20 +421,22 @@ use helix_db::{
                     n_from_id::NFromIdAdapter,
                     n_from_index::NFromIndexAdapter,
                     n_from_type::NFromTypeAdapter,
+                    v_from_id::VFromIdAdapter,
+                    v_from_type::VFromTypeAdapter
                 },
                 util::{
                     dedup::DedupAdapter, drop::Drop, exist::Exist, filter_mut::FilterMut,
                     filter_ref::FilterRefAdapter, map::MapAdapter, paths::ShortestPathAdapter,
                     props::PropsAdapter, range::RangeAdapter, update::UpdateAdapter, order::OrderByAdapter,
                     aggregate::AggregateAdapter, group_by::GroupByAdapter, count::CountAdapter,
-                    },
-                    vectors::{
-                        brute_force_search::BruteForceSearchVAdapter, insert::InsertVAdapter,
-                        search::SearchVAdapter,
-                    },
                 },
-                traversal_value::{Traversable, TraversalValue},
+                vectors::{
+                    brute_force_search::BruteForceSearchVAdapter, insert::InsertVAdapter,
+                    search::SearchVAdapter,
+                },
             },
+            traversal_value::{Traversable, TraversalValue},
+        },
         types::GraphError,
         vector_core::vector::HVector,
     },

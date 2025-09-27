@@ -163,7 +163,11 @@ impl Query {
         writeln!(f, "#[derive(Deserialize, Clone)]")?;
         writeln!(f, "pub struct {mcp_struct_name} {{")?;
         writeln!(f, "    connection_id: String,")?;
-        writeln!(f, "    data: {struct_name},")?;
+        if !self.parameters.is_empty() {
+            writeln!(f, "    data: {struct_name},")?;
+        } else {
+            writeln!(f, "    data: serde_json::Value,")?;
+        }
         writeln!(f, "}}")?;
 
         writeln!(f, "#[mcp_handler]")?;
