@@ -117,9 +117,14 @@ impl CloudConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum BuildMode {
+    Dev,
     #[default]
     Debug,
     Release,
+}
+
+pub fn default_dev_build_mode() -> BuildMode {
+    BuildMode::Dev
 }
 
 pub fn default_debug_build_mode() -> BuildMode {

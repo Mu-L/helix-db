@@ -100,7 +100,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 loc.clone(),
                                                 E205,
                                                 &value.inner_stringify(),
-                                                &value.to_string(),
+                                                &value.to_variant_string(),
                                                 &field.field_type.to_string(),
                                                 "node",
                                                 node_type
@@ -1224,7 +1224,7 @@ pub(crate) fn validate_traversal<'a>(
                                             GeneratedValue::Literal(GenRef::Literal(s.clone()))
                                         }
                                         other => GeneratedValue::Primitive(GenRef::Std(
-                                            other.to_string(),
+                                            other.inner_stringify(),
                                         )),
                                     },
                                     FieldValueType::Expression(e) => match &e.expr {

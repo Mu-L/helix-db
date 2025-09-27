@@ -38,6 +38,7 @@ impl<'a> DockerManager<'a> {
         let tag = match build_mode {
             BuildMode::Debug => "debug",
             BuildMode::Release => "latest",
+            BuildMode::Dev => "dev",
         };
         let project_name = self.compose_project_name(instance_name);
         format!("{project_name}:{tag}")
@@ -146,10 +147,12 @@ impl<'a> DockerManager<'a> {
         let build_flag = match instance_config.build_mode() {
             BuildMode::Debug => "",
             BuildMode::Release => "--release",
+            BuildMode::Dev => "--features dev",
         };
         let build_mode = match instance_config.build_mode() {
             BuildMode::Debug => "debug",
             BuildMode::Release => "release",
+            BuildMode::Dev => "debug",
         };
 
         let dockerfile = format!(

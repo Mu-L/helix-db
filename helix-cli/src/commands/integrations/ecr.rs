@@ -97,6 +97,7 @@ impl<'a> EcrManager<'a> {
         let tag = match build_mode {
             BuildMode::Debug => "debug",
             BuildMode::Release => "latest",
+            BuildMode::Dev => "dev",
         };
         format!("{repository_name}:{tag}")
     }
