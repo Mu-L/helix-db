@@ -1,9 +1,9 @@
 use crate::commands::auth::Credentials;
-use crate::utils::helixc_utils::{collect_hx_files, generate_content};
-use crate::config::{InstanceInfo, CloudInstanceConfig, BuildMode, DbConfig};
+use crate::config::{BuildMode, CloudInstanceConfig, DbConfig, InstanceInfo};
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success};
-use eyre::{eyre, OptionExt, Result};
+use crate::utils::helixc_utils::{collect_hx_files, generate_content};
+use crate::utils::{print_error_with_hint, print_status, print_success};
+use eyre::{OptionExt, Result, eyre};
 use helix_db::helix_engine::traversal_core::config::Config;
 use helix_db::utils::styled_string::StyledString;
 use serde_json::json;
@@ -35,7 +35,11 @@ impl<'a> HelixManager<'a> {
     fn check_auth(&self) -> Result<()> {
         let credentials_path = self.credentials_path()?;
         if !credentials_path.exists() {
-            return Err(eyre!("Credentials file not found"));
+            print_error_with_hint(
+                "Credentials file not found",
+                "Run 'helix auth login' to authenticate with Helix Cloud",
+            );
+            return Err(eyre!(""));
         }
 
         let credentials = Credentials::read_from_file(&credentials_path);
@@ -54,12 +58,15 @@ impl<'a> HelixManager<'a> {
         // Generate unique cluster ID
         // let cluster_id = format!("helix-{}-{}", instance_name, Uuid::new_v4());
         let cluster_id = "YOUR_CLUSTER_ID".to_string();
-        
+
         // Use provided region or default to us-east-1
         let region = region.or_else(|| Some("us-east-1".to_string()));
-        
-        print_status("CONFIG", &format!("Creating cloud configuration for cluster: {cluster_id}"));
-        
+
+        print_status(
+            "CONFIG",
+            &format!("Creating cloud configuration for cluster: {cluster_id}"),
+        );
+
         Ok(CloudInstanceConfig {
             cluster_id,
             region,
@@ -75,11 +82,20 @@ impl<'a> HelixManager<'a> {
     ) -> Result<()> {
         // Check authentication first
         self.check_auth()?;
-        
-        print_status("CLOUD", &format!("Initializing Helix cloud cluster: {}", config.cluster_id));
-        print_status("INFO", "Note: Cluster provisioning API is not yet implemented");
-        print_status("INFO", "This will create the configuration locally and provision the cluster when the API is ready");
-        
+
+        print_status(
+            "CLOUD",
+            &format!("Initializing Helix cloud cluster: {}", config.cluster_id),
+        );
+        print_status(
+            "INFO",
+            "Note: Cluster provisioning API is not yet implemented",
+        );
+        print_status(
+            "INFO",
+            "This will create the configuration locally and provision the cluster when the API is ready",
+        );
+
         // TODO: When the backend API is ready, implement actual cluster creation
         // let credentials = Credentials::read_from_file(&self.credentials_path());
         // let create_request = json!({
@@ -89,10 +105,10 @@ impl<'a> HelixManager<'a> {
         //     "instance_type": "small",
         //     "user_id": credentials.user_id
         // });
-        
+
         // let client = reqwest::Client::new();
         // let cloud_url = format!("http://{}/clusters/create", *CLOUD_AUTHORITY);
-        
+
         // let response = client
         //     .post(cloud_url)
         //     .header("x-api-key", &credentials.helix_admin_key)
@@ -100,7 +116,7 @@ impl<'a> HelixManager<'a> {
         //     .json(&create_request)
         //     .send()
         //     .await?;
-        
+
         // match response.status() {
         //     reqwest::StatusCode::CREATED => {
         //         print_success("Cluster creation initiated");
@@ -117,10 +133,13 @@ impl<'a> HelixManager<'a> {
         //         return Err(eyre!("Failed to create cluster: {}", error_text));
         //     }
         // }
-        
+
         print_success(format!("Cloud instance '{instance_name}' configuration created").as_str());
-        print_status("NEXT", "Run 'helix build <instance>' to compile your project for this instance");
-        
+        print_status(
+            "NEXT",
+            "Run 'helix build <instance>' to compile your project for this instance",
+        );
+
         Ok(())
     }
 
@@ -132,7 +151,8 @@ impl<'a> HelixManager<'a> {
                 return Err(eyre!("Error: failed to get path: {e}"));
             }
         };
-        let files = collect_hx_files(&path, &self.project.config.project.queries).unwrap_or_default();
+        let files =
+            collect_hx_files(&path, &self.project.config.project.queries).unwrap_or_default();
 
         let content = match generate_content(&files) {
             Ok(content) => content,
@@ -147,7 +167,7 @@ impl<'a> HelixManager<'a> {
         // read config.hx.json
         let config_path = path.join("config.hx.json");
         let schema_path = path.join("schema.hx");
-        
+
         // Use from_files if schema.hx exists (backward compatibility), otherwise use from_file
         let config = if schema_path.exists() {
             match Config::from_files(config_path, schema_path) {

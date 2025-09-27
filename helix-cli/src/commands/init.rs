@@ -1,6 +1,6 @@
 use crate::CloudDeploymentTypeCommand;
 use crate::commands::integrations::ecr::{EcrAuthType, EcrManager};
-use crate::commands::integrations::fly::{FlyAuthType, FlyManager, Privacy, VmSize};
+use crate::commands::integrations::fly::{FlyAuthType, FlyManager, VmSize};
 use crate::commands::integrations::helix::HelixManager;
 use crate::config::{CloudConfig, HelixConfig};
 use crate::docker::DockerManager;
@@ -124,7 +124,7 @@ pub async fn run(
                     auth,
                     volume_size,
                     vm_size,
-                    public,
+                    private,
                     ..
                 } => {
                     let cwd = env::current_dir()?;
@@ -136,7 +136,6 @@ pub async fn run(
 
                     // Parse vm_size directly using match statement to avoid trait conflicts
                     let vm_size_parsed = VmSize::try_from(vm_size)?;
-                    let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
 
                     // Create Fly.io manager
                     let fly_manager = FlyManager::new(&project_context, auth_type.clone()).await?;
@@ -146,7 +145,7 @@ pub async fn run(
                         project_name, // Use "default" as the instance name for init
                         volume_size,
                         vm_size_parsed,
-                        privacy,
+                        private,
                         auth_type,
                     );
 

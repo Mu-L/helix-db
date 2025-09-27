@@ -37,8 +37,8 @@ pub async fn run() -> Result<()> {
             crate::config::CloudConfig::Helix(helix_config) => {
                 helix_cloud_instances.push((name, &helix_config.cluster_id));
             }
-            crate::config::CloudConfig::FlyIo(fly_config) => {
-                flyio_instances.push((name, &fly_config.cluster_id));
+            crate::config::CloudConfig::FlyIo(_) => {
+                flyio_instances.push((name, "flyio"));
             }
             crate::config::CloudConfig::Ecr(ecr_config) => {
                 ecr_instances.push((name, &ecr_config.repository_name, &ecr_config.region));

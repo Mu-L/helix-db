@@ -1,6 +1,6 @@
 use crate::CloudDeploymentTypeCommand;
 use crate::commands::integrations::ecr::{EcrAuthType, EcrManager};
-use crate::commands::integrations::fly::{FlyAuthType, FlyManager, Privacy, VmSize};
+use crate::commands::integrations::fly::{FlyAuthType, FlyManager, VmSize};
 use crate::commands::integrations::helix::HelixManager;
 use crate::config::{BuildMode, CloudConfig, DbConfig, LocalInstanceConfig};
 use crate::docker::DockerManager;
@@ -87,7 +87,7 @@ pub async fn run(deployment_type: CloudDeploymentTypeCommand) -> Result<()> {
             auth,
             volume_size,
             vm_size,
-            public,
+            private,
             ..
         } => {
             let docker = DockerManager::new(&project_context);
@@ -95,7 +95,6 @@ pub async fn run(deployment_type: CloudDeploymentTypeCommand) -> Result<()> {
             // Parse configuration with proper error handling
             let auth_type = FlyAuthType::try_from(auth)?;
             let vm_size_parsed = VmSize::try_from(vm_size)?;
-            let privacy = Privacy::from(!public); // public=true means privacy=false (Public)
 
             // Create Fly.io manager
             let fly_manager = FlyManager::new(&project_context, auth_type.clone()).await?;
@@ -106,7 +105,7 @@ pub async fn run(deployment_type: CloudDeploymentTypeCommand) -> Result<()> {
                 &instance_name,
                 volume_size,
                 vm_size_parsed,
-                privacy,
+                private,
                 auth_type,
             );
 

@@ -119,48 +119,9 @@ impl VmSize {
         ["--vm-size", vm_size_arg]
     }
 }
-
-/// Privacy settings for Fly.io deployment
-#[derive(Debug, Default, Serialize, Deserialize, Clone)]
-pub enum Privacy {
-    #[default]
-    Public,
-    Private,
-}
-
-impl Privacy {
-    fn no_public_ip_command(&self) -> Vec<&'static str> {
-        match self {
-            Privacy::Public => vec![],
-            Privacy::Private => vec!["--no-public-ip"],
-        }
-    }
-}
-
-impl TryFrom<String> for Privacy {
-    type Error = eyre::Report;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        match value.as_str() {
-            "public" | "pub" => Ok(Self::Public),
-            "private" | "priv" => Ok(Self::Private),
-            _ => Err(eyre!(
-                "Invalid privacy setting '{value}'. Valid options: public, private"
-            )),
-        }
-    }
-}
-
-impl From<bool> for Privacy {
-    fn from(private: bool) -> Self {
-        if private { Self::Private } else { Self::Public }
-    }
-}
-
 /// Configuration for a Fly.io instance
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FlyInstanceConfig {
-    pub cluster_id: String,
     #[serde(default = "default_release_build_mode")]
     pub build_mode: BuildMode,
     #[serde(default)]
@@ -168,7 +129,8 @@ pub struct FlyInstanceConfig {
     pub vm_size: VmSize,
     pub volume: String,
     pub volume_initial_size: u16,
-    pub privacy: Privacy,
+    #[serde(default)]
+    pub private: bool,
     pub auth_type: FlyAuthType,
     #[serde(flatten)]
     pub db_config: config::DbConfig,
@@ -313,19 +275,18 @@ impl<'a> FlyManager<'a> {
         instance_name: &str,
         volume_initial_size: u16,
         vm_size: VmSize,
-        privacy: Privacy,
+        private: bool,
         auth_type: FlyAuthType,
     ) -> FlyInstanceConfig {
         let volume = format!("{}:/data", self.volume_name(instance_name));
 
         FlyInstanceConfig {
-            cluster_id: uuid::Uuid::new_v4().to_string(),
             build_mode: BuildMode::default(),
             region: None,
             vm_size,
             volume,
             volume_initial_size,
-            privacy,
+            private,
             auth_type,
             db_config: config::DbConfig::default(),
         }
@@ -395,7 +356,10 @@ impl<'a> FlyManager<'a> {
                 launch_args.extend_from_slice(&["--name", &app_name]);
 
                 // Add privacy args
-                launch_args.extend_from_slice(&config.privacy.no_public_ip_command());
+                launch_args.extend_from_slice(&match config.private {
+                    true => vec!["--no-public-ip"],
+                    false => vec![],
+                });
 
                 let launch_status = tokio::process::Command::new("flyctl")
                     .args(&launch_args)

@@ -109,7 +109,7 @@ impl CloudConfig {
     pub fn get_cluster_id(&self) -> Option<&str> {
         match self {
             CloudConfig::Helix(config) => Some(&config.cluster_id),
-            CloudConfig::FlyIo(config) => Some(&config.cluster_id),
+            CloudConfig::FlyIo(_) => Some("flyio"),
             CloudConfig::Ecr(_) => Some("ecr"), // ECR doesn't use cluster_id
         }
     }
@@ -221,7 +221,7 @@ impl<'a> InstanceInfo<'a> {
         match self {
             InstanceInfo::Local(_) => None,
             InstanceInfo::Helix(config) => Some(&config.cluster_id),
-            InstanceInfo::FlyIo(config) => Some(&config.cluster_id),
+            InstanceInfo::FlyIo(_) => Some("flyio"),
             InstanceInfo::Ecr(_) => Some("ecr"), // ECR doesn't use cluster_id
         }
     }

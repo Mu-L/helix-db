@@ -26,7 +26,7 @@ enum Commands {
         #[clap(short, long)]
         path: Option<String>,
 
-        #[clap(long, default_value = "empty")]
+        #[clap(short, long, default_value = "empty")]
         template: String,
 
         /// Queries directory path (defaults to ./db/)
@@ -216,7 +216,7 @@ enum CloudDeploymentTypeCommand {
 
         /// privacy
         #[clap(long, default_value = "true")]
-        public: bool,
+        private: bool,
 
         /// Instance name
         #[clap(short, long)]
