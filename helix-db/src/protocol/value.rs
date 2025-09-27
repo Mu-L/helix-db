@@ -12,7 +12,7 @@ use sonic_rs::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    fmt::{self, Display},
+    fmt::{self},
 };
 
 /// A flexible value type that can represent various property values in nodes and edges.

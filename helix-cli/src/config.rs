@@ -127,6 +127,7 @@ pub fn default_dev_build_mode() -> BuildMode {
     BuildMode::Dev
 }
 
+#[allow(unused)]
 pub fn default_debug_build_mode() -> BuildMode {
     BuildMode::Debug
 }
