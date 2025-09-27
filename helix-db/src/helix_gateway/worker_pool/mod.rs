@@ -162,7 +162,7 @@ fn request_mapper(
                     request,
                     mcp_backend: Arc::clone(graph_access.mcp_backend.as_ref().unwrap()),
                     mcp_connections: Arc::clone(graph_access.mcp_connections.as_ref().unwrap()),
-                    schema: Some(graph_access.storage.storage_config.schema.clone()),
+                    schema: graph_access.storage.storage_config.schema.clone(),
                 };
                 Some(mcp_handler(&mut mcp_input).map_err(Into::into))
             } else {

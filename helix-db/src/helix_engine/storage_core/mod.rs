@@ -40,7 +40,7 @@ pub type NodeId = u128;
 pub type EdgeId = u128;
 
 pub struct StorageConfig {
-    pub schema: String,
+    pub schema: Option<String>,
     pub graphvis_node_label: Option<String>,
     pub embedding_model: Option<String>,
 }
@@ -160,7 +160,7 @@ impl HelixGraphStorage {
             .transpose()?;
 
         let storage_config = StorageConfig::new(
-            config.schema.unwrap_or("".to_string()),
+            config.schema,
             config.graphvis_node_label,
             config.embedding_model,
         );
@@ -264,7 +264,7 @@ impl HelixGraphStorage {
 
 impl StorageConfig {
     pub fn new(
-        schema: String,
+        schema: Option<String>,
         graphvis_node_label: Option<String>,
         embedding_model: Option<String>,
     ) -> StorageConfig {

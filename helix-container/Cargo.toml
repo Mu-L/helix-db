@@ -23,4 +23,4 @@ tracing = "0.1.41"
 dotenvy = "0.15.7"
 
 [features]
-dev-instance = ["helix-db/dev-instance"]
+dev = ["helix-db/dev-instance"]
