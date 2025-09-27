@@ -81,7 +81,7 @@ pub struct DbConfig {
 pub struct LocalInstanceConfig {
     #[serde(default)]
     pub port: Option<u16>,
-    #[serde(default = "default_debug_build_mode")]
+    #[serde(default = "default_dev_build_mode")]
     pub build_mode: BuildMode,
     #[serde(flatten)]
     pub db_config: DbConfig,
@@ -92,7 +92,7 @@ pub struct CloudInstanceConfig {
     pub cluster_id: String,
     #[serde(default)]
     pub region: Option<String>,
-    #[serde(default = "default_release_build_mode")]
+    #[serde(default = "default_dev_build_mode")]
     pub build_mode: BuildMode,
     #[serde(flatten)]
     pub db_config: DbConfig,
