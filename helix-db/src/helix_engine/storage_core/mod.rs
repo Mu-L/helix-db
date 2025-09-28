@@ -76,8 +76,9 @@ impl HelixGraphStorage {
 
         let graph_env = unsafe {
             EnvOpenOptions::new()
+                
                 .map_size(db_size * 1024 * 1024 * 1024)
-                .max_dbs(20)
+                .max_dbs(200)
                 .max_readers(200)
                 .open(Path::new(path))?
         };
