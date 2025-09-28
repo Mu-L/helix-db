@@ -219,7 +219,7 @@ async fn upload_log_file(client: &Client, path: &PathBuf) -> Result<()> {
 
     let response = client
         .post(METRICS_URL) // TODO: change to actual logs endpoint
-        .header("Content-Type", "application/json")
+        .header("Content-Type", "application/x-ndjson")
         .body(content)
         .send()
         .await?;
