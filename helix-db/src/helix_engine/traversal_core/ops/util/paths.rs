@@ -4,14 +4,14 @@ use crate::{
         traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
     },
-    utils::{items::Edge, label_hash::hash_label},
     protocol::value::Value,
+    utils::{items::Edge, label_hash::hash_label},
 };
 use heed3::RoTxn;
 use std::{
-    collections::{HashMap, HashSet, VecDeque, BinaryHeap},
-    sync::Arc,
     cmp::Ordering,
+    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
+    sync::Arc,
 };
 
 #[derive(Debug, Clone)]
@@ -51,7 +51,9 @@ impl PartialEq for DijkstraState {
 
 impl Ord for DijkstraState {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.distance.partial_cmp(&self.distance)
+        other
+            .distance
+            .partial_cmp(&self.distance)
             .unwrap_or(Ordering::Equal)
             .then_with(|| self.node_id.cmp(&other.node_id))
     }
@@ -116,7 +118,11 @@ impl<'a, I> ShortestPathIterator<'a, I> {
         Ok(TraversalValue::Path((nodes, edges)))
     }
 
-    fn bfs_shortest_path(&self, from: u128, to: u128) -> Option<Result<TraversalValue, GraphError>> {
+    fn bfs_shortest_path(
+        &self,
+        from: u128,
+        to: u128,
+    ) -> Option<Result<TraversalValue, GraphError>> {
         let mut queue = VecDeque::with_capacity(32);
         let mut visited = HashSet::with_capacity(64);
         let mut parent: HashMap<u128, (u128, Edge)> = HashMap::with_capacity(32);
@@ -127,8 +133,7 @@ impl<'a, I> ShortestPathIterator<'a, I> {
             let out_prefix = self.edge_label.map_or_else(
                 || current_id.to_be_bytes().to_vec(),
                 |label| {
-                    HelixGraphStorage::out_edge_key(&current_id, &hash_label(label, None))
-                        .to_vec()
+                    HelixGraphStorage::out_edge_key(&current_id, &hash_label(label, None)).to_vec()
                 },
             );
 
@@ -138,24 +143,23 @@ impl<'a, I> ShortestPathIterator<'a, I> {
                 .prefix_iter(self.txn, &out_prefix)
                 .unwrap();
 
-                    for result in iter {
-                        let value = match result {
-                            Ok((_, value)) => value,
-                            Err(e) => return Some(Err(GraphError::from(e))),
-                        };
-                        let (edge_id, to_node) =
-                            match HelixGraphStorage::unpack_adj_edge_data(value) {
-                                Ok((edge_id, to_node)) => (edge_id, to_node),
-                                Err(e) => return Some(Err(e)),
-                            };
+            for result in iter {
+                let value = match result {
+                    Ok((_, value)) => value,
+                    Err(e) => return Some(Err(GraphError::from(e))),
+                };
+                let (edge_id, to_node) = match HelixGraphStorage::unpack_adj_edge_data(value) {
+                    Ok((edge_id, to_node)) => (edge_id, to_node),
+                    Err(e) => return Some(Err(e)),
+                };
 
-                        if !visited.contains(&to_node) {
-                            visited.insert(to_node);
-                            let edge = match self.storage.get_edge(self.txn, &edge_id) {
-                                Ok(edge) => edge,
-                                Err(e) => return Some(Err(e)),
-                            };
-                            parent.insert(to_node, (current_id, edge));
+                if !visited.contains(&to_node) {
+                    visited.insert(to_node);
+                    let edge = match self.storage.get_edge(self.txn, &edge_id) {
+                        Ok(edge) => edge,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    parent.insert(to_node, (current_id, edge));
 
                     if to_node == to {
                         return Some(self.reconstruct_path(&parent, &from, &to));
@@ -168,20 +172,31 @@ impl<'a, I> ShortestPathIterator<'a, I> {
         Some(Err(GraphError::ShortestPathNotFound))
     }
 
-    fn dijkstra_shortest_path(&self, from: u128, to: u128) -> Option<Result<TraversalValue, GraphError>> {
+    fn dijkstra_shortest_path(
+        &self,
+        from: u128,
+        to: u128,
+    ) -> Option<Result<TraversalValue, GraphError>> {
         let mut heap = BinaryHeap::new();
         let mut distances = HashMap::with_capacity(64);
         let mut parent: HashMap<u128, (u128, Edge)> = HashMap::with_capacity(32);
-        
-        distances.insert(from, 0.0);
-        heap.push(DijkstraState { node_id: from, distance: 0.0 });
 
-        while let Some(DijkstraState { node_id: current_id, distance: current_dist }) = heap.pop() {
+        distances.insert(from, 0.0);
+        heap.push(DijkstraState {
+            node_id: from,
+            distance: 0.0,
+        });
+
+        while let Some(DijkstraState {
+            node_id: current_id,
+            distance: current_dist,
+        }) = heap.pop()
+        {
             // Already found a better path
-            if let Some(&best_dist) = distances.get(&current_id) {
-                if current_dist > best_dist {
-                    continue;
-                }
+            if let Some(&best_dist) = distances.get(&current_id)
+                && current_dist > best_dist
+            {
+                continue;
             }
 
             // Found the target
@@ -192,8 +207,7 @@ impl<'a, I> ShortestPathIterator<'a, I> {
             let out_prefix = self.edge_label.map_or_else(
                 || current_id.to_be_bytes().to_vec(),
                 |label| {
-                    HelixGraphStorage::out_edge_key(&current_id, &hash_label(label, None))
-                        .to_vec()
+                    HelixGraphStorage::out_edge_key(&current_id, &hash_label(label, None)).to_vec()
                 },
             );
 
@@ -205,13 +219,13 @@ impl<'a, I> ShortestPathIterator<'a, I> {
 
             for result in iter {
                 let (_, value) = result.unwrap(); // TODO: handle error
-                let (edge_id, to_node) =
-                    HelixGraphStorage::unpack_adj_edge_data(value).unwrap(); // TODO: handle error
+                let (edge_id, to_node) = HelixGraphStorage::unpack_adj_edge_data(value).unwrap(); // TODO: handle error
 
                 let edge = self.storage.get_edge(self.txn, &edge_id).unwrap(); // TODO: handle error
-                
+
                 // Extract weight from edge properties, default to 1.0 if not present
-                let weight = edge.properties
+                let weight = edge
+                    .properties
                     .as_ref()
                     .and_then(|props| props.get("weight"))
                     .and_then(|w| match w {
@@ -230,18 +244,25 @@ impl<'a, I> ShortestPathIterator<'a, I> {
                     .unwrap_or(1.0);
 
                 if weight < 0.0 {
-                    return Some(Err(GraphError::TraversalError("Negative edge weights are not supported for Dijkstra's algorithm".to_string())));
+                    return Some(Err(GraphError::TraversalError(
+                        "Negative edge weights are not supported for Dijkstra's algorithm"
+                            .to_string(),
+                    )));
                 }
 
                 let new_dist = current_dist + weight;
-                
-                let should_update = distances.get(&to_node)
+
+                let should_update = distances
+                    .get(&to_node)
                     .is_none_or(|&existing_dist| new_dist < existing_dist);
 
                 if should_update {
                     distances.insert(to_node, new_dist);
                     parent.insert(to_node, (current_id, edge));
-                    heap.push(DijkstraState { node_id: to_node, distance: new_dist });
+                    heap.push(DijkstraState {
+                        node_id: to_node,
+                        distance: new_dist,
+                    });
                 }
             }
         }
@@ -273,7 +294,7 @@ pub trait ShortestPathAdapter<'a, I>: Iterator<Item = Result<TraversalValue, Gra
     ) -> RoTraversalIterator<'a, ShortestPathIterator<'a, I>>
     where
         I: 'a;
-    
+
     fn shortest_path_with_algorithm(
         self,
         edge_label: Option<&'a str>,
@@ -300,7 +321,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> ShortestPa
     {
         self.shortest_path_with_algorithm(edge_label, from, to, PathAlgorithm::BFS)
     }
-    
+
     #[inline]
     fn shortest_path_with_algorithm(
         self,
