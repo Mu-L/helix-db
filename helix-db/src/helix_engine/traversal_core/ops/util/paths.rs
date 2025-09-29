@@ -94,14 +94,14 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> Iterator
                         let (edge_id, to_node) =
                             match HelixGraphStorage::unpack_adj_edge_data(value) {
                                 Ok((edge_id, to_node)) => (edge_id, to_node),
-                                Err(e) => return Some(Err(GraphError::from(e))),
+                                Err(e) => return Some(Err(e)),
                             };
 
                         if !visited.contains(&to_node) {
                             visited.insert(to_node);
                             let edge = match self.storage.get_edge(self.txn, &edge_id) {
                                 Ok(edge) => edge,
-                                Err(e) => return Some(Err(GraphError::from(e))),
+                                Err(e) => return Some(Err(e)),
                             };
                             parent.insert(to_node, (current_id, edge));
 
