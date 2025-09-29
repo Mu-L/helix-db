@@ -1,10 +1,9 @@
 use crate::helixc::parser::{
-    HelixParser, Rule,
+    HelixParser, ParserError, Rule,
     location::HasLoc,
-    ParserError,
     types::{EdgeConnection, Expression, IdType},
 };
-use pest::iterators::Pair;
+use pest::iterators::{Pair, Pairs};
 
 impl HelixParser {
     pub(super) fn parse_id_args(&self, pair: Pair<Rule>) -> Result<Option<IdType>, ParserError> {
@@ -82,5 +81,67 @@ impl HelixParser {
             to_id,
             loc: pair.loc(),
         })
+    }
+}
+
+pub trait PairTools<'a> {
+    /// Equivalent to into_inner().next()
+    fn try_inner_next(self) -> Result<Pair<'a, Rule>, ParserError>;
+}
+
+pub trait PairsTools<'a> {
+    /// Equivalent to next()
+    fn try_next(&mut self) -> Result<Pair<'a, Rule>, ParserError>;
+
+    /// Equivalent to next().into_inner()
+    fn try_next_inner(&mut self) -> Result<Pairs<'a, Rule>, ParserError>;
+}
+
+impl<'a> PairTools<'a> for Pair<'a, Rule> {
+    fn try_inner_next(self) -> Result<Pair<'a, Rule>, ParserError> {
+        self.into_inner()
+            .next()
+            .ok_or_else(|| ParserError::from("Expected inner next"))
+    }
+
+
+}
+
+impl<'a> PairTools<'a> for Result<Pair<'a, Rule>, ParserError> {
+    fn try_inner_next(self) -> Result<Pair<'a, Rule>, ParserError> {
+        match self {
+            Ok(pair) => pair.try_inner_next(),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl<'a> PairsTools<'a> for Pairs<'a, Rule> {
+    fn try_next(&mut self) -> Result<Pair<'a, Rule>, ParserError> {
+        self.next()
+            .ok_or_else(|| ParserError::from("Expected next"))
+    }
+
+    fn try_next_inner(&mut self) -> Result<Pairs<'a, Rule>, ParserError> {
+        match self.next() {
+            Some(pair) => Ok(pair.into_inner()),
+            None => Err(ParserError::from("Expected inner next")),
+        }
+    }
+}
+
+impl<'a> PairsTools<'a> for Result<Pairs<'a, Rule>, ParserError> {
+    fn try_next(&mut self) -> Result<Pair<'a, Rule>, ParserError> {
+        match self {
+            Ok(pairs) => pairs.try_next(),
+            Err(e) => Err(e.clone()),
+        }
+    }
+
+    fn try_next_inner(&mut self) -> Result<Pairs<'a, Rule>, ParserError> {
+        match self {
+            Ok(pairs) => pairs.try_next_inner(),
+            Err(e) => Err(e.clone()),
+        }
     }
 }

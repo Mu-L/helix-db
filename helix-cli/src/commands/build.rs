@@ -2,7 +2,9 @@ use crate::config::InstanceInfo;
 use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
 use crate::project::{ProjectContext, get_helix_repo_cache};
-use crate::utils::{copy_dir_recursive_excluding, print_status, print_success, helixc_utils::collect_hx_files};
+use crate::utils::{
+    copy_dir_recursive_excluding, helixc_utils::collect_hx_files, print_status, print_success,
+};
 use eyre::Result;
 use std::time::Instant;
 
@@ -254,7 +256,6 @@ async fn generate_docker_files(
     Ok(())
 }
 
-
 fn compile_helix_files(
     files: &[std::fs::DirEntry],
     instance_src_dir: &std::path::Path,
@@ -325,7 +326,8 @@ fn analyze_source(source: Source) -> Result<GeneratedSource> {
         return Err(eyre::eyre!("{}", error.render()));
     }
 
-    let (diagnostics, generated_source) = analyze(&source);
+    let (diagnostics, generated_source) =
+        analyze(&source).map_err(|e| eyre::eyre!("Analysis error: {}", e))?;
     if !diagnostics.is_empty() {
         let mut error_msg = String::new();
         for diag in diagnostics {
@@ -349,7 +351,7 @@ fn read_config(instance_src_dir: &std::path::Path) -> Result<Config> {
         ));
     }
 
-    let config = Config::from_file(config_path)
-        .map_err(|e| eyre::eyre!("Failed to load config: {e}"))?;
+    let config =
+        Config::from_file(config_path).map_err(|e| eyre::eyre!("Failed to load config: {e}"))?;
     Ok(config)
 }

@@ -6,6 +6,7 @@ use crate::helixc::parser::{
         FieldValue, FieldValueType, GraphStep, GraphStepType, GroupBy, IdType, Object, OrderBy,
         OrderByType, ShortestPath, Step, StepType, Update,
     },
+    utils::{PairTools, PairsTools},
 };
 use pest::iterators::Pair;
 
@@ -18,12 +19,12 @@ impl HelixParser {
     /// ```
     pub(super) fn parse_order_by(&self, pair: Pair<Rule>) -> Result<OrderBy, ParserError> {
         let mut inner = pair.clone().into_inner();
-        let order_by_type = match inner.next().unwrap().into_inner().next().unwrap().as_rule() {
+        let order_by_type = match inner.try_next().try_inner_next()?.as_rule() {
             Rule::asc => OrderByType::Asc,
             Rule::desc => OrderByType::Desc,
             _ => unreachable!(),
         };
-        let expression = self.parse_expression(inner.next().unwrap())?;
+        let expression = self.parse_expression(inner.try_next()?)?;
         Ok(OrderBy {
             loc: pair.loc(),
             order_by_type,
@@ -41,9 +42,9 @@ impl HelixParser {
         &self,
         pair: Pair<Rule>,
     ) -> Result<(Expression, Expression), ParserError> {
-        let mut inner = pair.into_inner().next().unwrap().into_inner();
-        let start = self.parse_expression(inner.next().unwrap())?;
-        let end = self.parse_expression(inner.next().unwrap())?;
+        let mut inner = pair.into_inner().try_next_inner()?;
+        let start = self.parse_expression(inner.try_next()?)?;
+        let end = self.parse_expression(inner.try_next()?)?;
 
         Ok((start, end))
     }
@@ -55,48 +56,46 @@ impl HelixParser {
     /// ::GT(1)
     /// ```
     pub(super) fn parse_bool_operation(&self, pair: Pair<Rule>) -> Result<BooleanOp, ParserError> {
-        let inner = pair.clone().into_inner().next().unwrap();
+        let inner = pair.clone().try_inner_next()?;
         let expr = match inner.as_rule() {
             Rule::GT => BooleanOp {
                 loc: pair.loc(),
                 op: BooleanOpType::GreaterThan(Box::new(
-                    self.parse_expression(inner.into_inner().next().unwrap())?,
+                    self.parse_expression(inner.try_inner_next()?)?,
                 )),
             },
             Rule::GTE => BooleanOp {
                 loc: pair.loc(),
                 op: BooleanOpType::GreaterThanOrEqual(Box::new(
-                    self.parse_expression(inner.into_inner().next().unwrap())?,
+                    self.parse_expression(inner.try_inner_next()?)?,
                 )),
             },
             Rule::LT => BooleanOp {
                 loc: pair.loc(),
                 op: BooleanOpType::LessThan(Box::new(
-                    self.parse_expression(inner.into_inner().next().unwrap())?,
+                    self.parse_expression(inner.try_inner_next()?)?,
                 )),
             },
             Rule::LTE => BooleanOp {
                 loc: pair.loc(),
                 op: BooleanOpType::LessThanOrEqual(Box::new(
-                    self.parse_expression(inner.into_inner().next().unwrap())?,
+                    self.parse_expression(inner.try_inner_next()?)?,
                 )),
             },
             Rule::EQ => BooleanOp {
                 loc: pair.loc(),
-                op: BooleanOpType::Equal(Box::new(
-                    self.parse_expression(inner.into_inner().next().unwrap())?,
-                )),
+                op: BooleanOpType::Equal(Box::new(self.parse_expression(inner.try_inner_next()?)?)),
             },
             Rule::NEQ => BooleanOp {
                 loc: pair.loc(),
                 op: BooleanOpType::NotEqual(Box::new(
-                    self.parse_expression(inner.into_inner().next().unwrap())?,
+                    self.parse_expression(inner.try_inner_next()?)?,
                 )),
             },
             Rule::CONTAINS => BooleanOp {
                 loc: pair.loc(),
                 op: BooleanOpType::Contains(Box::new(
-                    self.parse_expression(inner.into_inner().next().unwrap())?,
+                    self.parse_expression(inner.try_inner_next()?)?,
                 )),
             },
             Rule::IS_IN => BooleanOp {
@@ -137,7 +136,7 @@ impl HelixParser {
                 continue;
             }
             let mut pairs = p.clone().into_inner();
-            let prop_key = pairs.next().unwrap().as_str().to_string();
+            let prop_key = pairs.try_next()?.as_str().to_string();
             let field_addition = match pairs.next() {
                 Some(p) => match p.as_rule() {
                     Rule::evaluates_to_anything => FieldValue {
@@ -188,8 +187,8 @@ impl HelixParser {
     /// ```
     pub(super) fn parse_closure(&self, pair: Pair<Rule>) -> Result<Closure, ParserError> {
         let mut pairs = pair.clone().into_inner();
-        let identifier = pairs.next().unwrap().as_str().to_string();
-        let object = self.parse_object_step(pairs.next().unwrap())?;
+        let identifier = pairs.try_next()?.as_str().to_string();
+        let object = self.parse_object_step(pairs.try_next()?)?;
         Ok(Closure {
             loc: pair.loc(),
             identifier,
@@ -241,11 +240,7 @@ impl HelixParser {
     }
 
     pub(super) fn parse_step(&self, pair: Pair<Rule>) -> Result<Step, ParserError> {
-        let inner = pair
-            .clone()
-            .into_inner()
-            .next()
-            .ok_or_else(|| ParserError::from(format!("Expected step, got {pair:?}")))?;
+        let inner = pair.clone().try_inner_next()?;
         match inner.as_rule() {
             Rule::graph_step => Ok(Step {
                 loc: inner.loc(),
@@ -334,7 +329,14 @@ impl HelixParser {
                 .map(|p| p.as_str().to_string())
                 .ok_or_else(|| ParserError::from(format!("Expected type for {:?}", pair.as_rule())))
         };
-        let pair = pair.clone().into_inner().next().ok_or(ParserError::from(format!("Expected graph step, got {:?}", pair.as_rule())))?;
+        let pair = pair
+            .clone()
+            .into_inner()
+            .next()
+            .ok_or(ParserError::from(format!(
+                "Expected graph step, got {:?}",
+                pair.as_rule()
+            )))?;
         let step = match pair.as_rule() {
             Rule::out_e => {
                 let types = types(&pair)?;
@@ -381,33 +383,34 @@ impl HelixParser {
                 }
             }
             Rule::shortest_path => {
-                let (type_arg, from, to) = pair.clone().into_inner().fold(
+                let (type_arg, from, to) = match pair.clone().into_inner().try_fold(
                     (None, None, None),
                     |(type_arg, from, to), p| match p.as_rule() {
-                        Rule::type_args => (
-                            Some(p.into_inner().next().unwrap().as_str().to_string()),
-                            from,
-                            to,
-                        ),
+                        Rule::type_args => {
+                            Ok((Some(p.try_inner_next()?.as_str().to_string()), from, to))
+                        }
                         Rule::to_from => match p.into_inner().next() {
                             Some(p) => match p.as_rule() {
-                                Rule::to => (
+                                Rule::to => Ok((
                                     type_arg,
                                     from,
-                                    Some(p.into_inner().next().unwrap().as_str().to_string()),
-                                ),
-                                Rule::from => (
+                                    Some(p.try_inner_next()?.as_str().to_string()),
+                                )),
+                                Rule::from => Ok((
                                     type_arg,
-                                    Some(p.into_inner().next().unwrap().as_str().to_string()),
+                                    Some(p.try_inner_next()?.as_str().to_string()),
                                     to,
-                                ),
+                                )),
                                 _ => unreachable!(),
                             },
-                            None => (type_arg, from, to),
+                            None => Ok((type_arg, from, to)),
                         },
-                        _ => (type_arg, from, to),
+                        _ => Ok((type_arg, from, to)),
                     },
-                );
+                ) {
+                    Ok((type_arg, from, to)) => (type_arg, from, to),
+                    Err(e) => return Err(e),
+                };
                 GraphStep {
                     loc: pair.loc(),
                     step: GraphStepType::ShortestPath(ShortestPath {
