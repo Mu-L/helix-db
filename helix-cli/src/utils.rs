@@ -305,7 +305,8 @@ pub mod helixc_utils {
 
     /// Analyze source for validation (similar to build.rs)
     pub fn analyze_source(source: Source) -> Result<GeneratedSource> {
-        let (diagnostics, generated_source) = analyze(&source);
+        let (diagnostics, generated_source) =
+            analyze(&source).map_err(|e| eyre::eyre!("Analysis error: {}", e))?;
 
         if !diagnostics.is_empty() {
             // Format diagnostics properly using the helix-db pretty printer

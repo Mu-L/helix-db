@@ -117,12 +117,12 @@ impl HelixGateway {
         }));
 
         rt.block_on(async move {
-            let listener = tokio::net::TcpListener::bind(self.address).await.unwrap();
+            let listener = tokio::net::TcpListener::bind(self.address).await.expect("Failed to bind listener");
             info!("Listener has been bound, starting server");
             axum::serve(listener, axum_app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await
-                .unwrap()
+                .expect("Failed to serve")
         });
 
         Ok(())

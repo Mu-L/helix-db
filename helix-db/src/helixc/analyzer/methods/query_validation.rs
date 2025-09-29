@@ -159,6 +159,12 @@ fn analyze_return_expr<'a>(
                                         ReturnValueExpr::Traversal(traversal.clone()),
                                     ));
                                 }
+                                ShouldCollect::Try => {
+                                    query.return_values.push(ReturnValue::new_aggregate_traversal(
+                                        GeneratedValue::Literal(GenRef::Literal(v.inner().clone())),
+                                        ReturnValueExpr::Traversal(traversal.clone()),
+                                    ));
+                                }
                                 _ => {
                                     unreachable!()
                                 }

@@ -7,17 +7,17 @@ use crate::{
             EvaluatesToString, ExistsExpression, Expression, ExpressionType, ForLoop, ForLoopVars,
             SearchVector, ValueType, VectorData,
         },
+        utils::{PairTools, PairsTools},
     },
     protocol::value::Value,
 };
 use pest::iterators::{Pair, Pairs};
 
-
 impl HelixParser {
     pub(super) fn parse_assignment(&self, pair: Pair<Rule>) -> Result<Assignment, ParserError> {
         let mut pairs = pair.clone().into_inner();
-        let variable = pairs.next().unwrap().as_str().to_string();
-        let value = self.parse_expression(pairs.next().unwrap())?;
+        let variable = pairs.try_next()?.as_str().to_string();
+        let value = self.parse_expression(pairs.try_next()?)?;
 
         Ok(Assignment {
             variable,
@@ -27,22 +27,17 @@ impl HelixParser {
     }
 
     pub(super) fn parse_expression(&self, p: Pair<Rule>) -> Result<Expression, ParserError> {
-        let pair = p
-            .into_inner()
-            .next()
-            .ok_or_else(|| ParserError::from("Empty expression"))?;
+        let pair = p.try_inner_next()?;
 
         match pair.as_rule() {
             Rule::traversal => Ok(Expression {
                 loc: pair.loc(),
                 expr: ExpressionType::Traversal(Box::new(self.parse_traversal(pair)?)),
             }),
-            Rule::id_traversal => {
-                Ok(Expression {
-                    loc: pair.loc(),
-                    expr: ExpressionType::Traversal(Box::new(self.parse_traversal(pair)?)),
-                })
-            }
+            Rule::id_traversal => Ok(Expression {
+                loc: pair.loc(),
+                expr: ExpressionType::Traversal(Box::new(self.parse_traversal(pair)?)),
+            }),
 
             Rule::anonymous_traversal => Ok(Expression {
                 loc: pair.loc(),
@@ -153,7 +148,7 @@ impl HelixParser {
         &self,
         pair: Pair<Rule>,
     ) -> Result<Expression, ParserError> {
-        let expression = pair.into_inner().next().unwrap();
+        let expression = pair.try_inner_next()?;
         match expression.as_rule() {
             Rule::and => {
                 let loc: Loc = expression.loc();
@@ -204,7 +199,7 @@ impl HelixParser {
                 expr: ExpressionType::BooleanLiteral(expression.as_str() == "true"),
             }),
             Rule::exists => {
-               let loc = expression.loc();
+                let loc = expression.loc();
                 let mut inner = expression.into_inner();
                 let negated = match inner.peek() {
                     Some(p) => p.as_rule() == Rule::negate,
@@ -279,7 +274,7 @@ impl HelixParser {
 
     pub(super) fn parse_bm25_search(&self, pair: Pair<Rule>) -> Result<BM25Search, ParserError> {
         let mut pairs = pair.clone().into_inner();
-        let vector_type = pairs.next().unwrap().as_str().to_string();
+        let vector_type = pairs.try_next()?.as_str().to_string();
         let query = match pairs.next() {
             Some(pair) => match pair.as_rule() {
                 Rule::identifier => ValueType::Identifier {
@@ -345,7 +340,7 @@ impl HelixParser {
     pub(super) fn parse_for_loop(&self, pair: Pair<Rule>) -> Result<ForLoop, ParserError> {
         let mut pairs = pair.clone().into_inner();
         // parse the arguments
-        let argument = pairs.next().unwrap().clone().into_inner().next().unwrap();
+        let argument = pairs.try_next().try_inner_next()?;
         let argument_loc = argument.loc();
         let variable = match argument.as_rule() {
             Rule::object_destructuring => {
@@ -360,8 +355,8 @@ impl HelixParser {
             }
             Rule::object_access => {
                 let mut inner = argument.clone().into_inner();
-                let object_name = inner.next().unwrap().as_str().to_string();
-                let field_name = inner.next().unwrap().as_str().to_string();
+                let object_name = inner.try_next()?.as_str().to_string();
+                let field_name = inner.try_next()?.as_str().to_string();
                 ForLoopVars::ObjectAccess {
                     name: object_name,
                     field: field_name,
@@ -381,7 +376,7 @@ impl HelixParser {
         };
 
         // parse the in
-        let in_ = pairs.next().unwrap().clone();
+        let in_ = pairs.try_next()?.clone();
         let in_variable = match in_.as_rule() {
             Rule::identifier => (in_.loc(), in_.as_str().to_string()),
             _ => {
@@ -392,7 +387,7 @@ impl HelixParser {
             }
         };
         // parse the body
-        let statements = self.parse_query_body(pairs.next().unwrap())?;
+        let statements = self.parse_query_body(pairs.try_next()?)?;
 
         Ok(ForLoop {
             variable,
@@ -415,8 +410,9 @@ impl HelixParser {
                 Rule::identifier_upper => {
                     vector_type = Some(p.as_str().to_string());
                 }
-                Rule::vector_data => match p.clone().into_inner().next() {
-                    Some(vector_data) => match vector_data.as_rule() {
+                Rule::vector_data => {
+                    let vector_data = p.clone().try_inner_next()?;
+                    match vector_data.as_rule() {
                         Rule::identifier => {
                             data = Some(VectorData::Identifier(p.as_str().to_string()));
                         }
@@ -424,29 +420,21 @@ impl HelixParser {
                             data = Some(VectorData::Vector(self.parse_vec_literal(p)?));
                         }
                         Rule::embed_method => {
+                            let inner = vector_data.clone().try_inner_next()?;
                             data = Some(VectorData::Embed(Embed {
                                 loc: vector_data.loc(),
-                                value: match vector_data.clone().into_inner().next() {
-                                    Some(inner) => match inner.as_rule() {
-                                        Rule::identifier => EvaluatesToString::Identifier(
-                                            inner.as_str().to_string(),
-                                        ),
-                                        Rule::string_literal => EvaluatesToString::StringLiteral(
-                                            inner.as_str().to_string(),
-                                        ),
-                                        _ => {
-                                            return Err(ParserError::from(format!(
-                                                "Unexpected rule in SearchV: {:?} => {:?}",
-                                                inner.as_rule(),
-                                                inner,
-                                            )));
-                                        }
-                                    },
-                                    None => {
+                                value: match inner.as_rule() {
+                                    Rule::identifier => {
+                                        EvaluatesToString::Identifier(inner.as_str().to_string())
+                                    }
+                                    Rule::string_literal => {
+                                        EvaluatesToString::StringLiteral(inner.as_str().to_string())
+                                    }
+                                    _ => {
                                         return Err(ParserError::from(format!(
                                             "Unexpected rule in SearchV: {:?} => {:?}",
-                                            p.as_rule(),
-                                            p,
+                                            inner.as_rule(),
+                                            inner,
                                         )));
                                     }
                                 },
@@ -459,15 +447,8 @@ impl HelixParser {
                                 vector_data,
                             )));
                         }
-                    },
-                    None => {
-                        return Err(ParserError::from(format!(
-                            "Unexpected rule in SearchV: {:?} => {:?}",
-                            p.as_rule(),
-                            p,
-                        )));
                     }
-                },
+                }
                 Rule::integer => {
                     k = Some(EvaluatesToNumber {
                         loc: p.loc(),

@@ -90,7 +90,7 @@ impl HelixMetricsClient {
             event_data,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("Failed to get system time")
                 .as_secs(),
             email: None,
         };
@@ -100,7 +100,7 @@ impl HelixMetricsClient {
             let _ = METRICS_CLIENT
                 .post(METRICS_URL)
                 .header("Content-Type", "application/json")
-                .body(sonic_rs::to_vec(&raw_event).unwrap())
+                .body(sonic_rs::to_vec(&raw_event).expect("Failed to serialize event"))
                 .send()
                 .await;
         });

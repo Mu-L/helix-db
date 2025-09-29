@@ -163,6 +163,8 @@ graph_step = {
   | to_v
   | out
   | in_nodes
+  | shortest_path_dijkstras
+  | shortest_path_bfs
   | shortest_path
   | search_vector
 }
@@ -175,6 +177,8 @@ to_v ={ "ToV"}
 out ={ "Out" ~ ("<" ~ type_args ~ ">")?}
 in_nodes ={ "In" ~ ("<" ~ type_args ~ ">")?}
 shortest_path ={ "ShortestPath" ~ ("<" ~ type_args ~ ">")? ~ to_from}
+shortest_path_dijkstras ={ "ShortestPathDijkstras" ~ ("<" ~ type_args ~ ">")? ~ "(" ~ anonymous_traversal ~ ")" ~ to_from}
+shortest_path_bfs ={ "ShortestPathBFS" ~ ("<" ~ type_args ~ ">")? ~ to_from}
 
 
 // ---------------------------------------------------------------------
@@ -247,6 +251,8 @@ mcp_macro = { "#[mcp]" }
 
 model_macro = { "#[" ~ "model" ~ "(" ~ model_name ~ ")" ~ "]" }
 model_name = { identifier | string_literal }
+
+// Removed path_macro and path_algorithm - now using distinct function names
 
 
 
