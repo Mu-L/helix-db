@@ -58,6 +58,7 @@ pub(crate) fn validate_statements<'a>(
 
             let (rhs_ty, stmt) =
                 infer_expr_type(ctx, &assign.value, scope, original_query, None, query);
+            
             scope.insert(assign.variable.as_str(), rhs_ty);
             assert!(stmt.is_some(), "Assignment statement should be generated");
 

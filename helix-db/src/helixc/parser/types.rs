@@ -692,6 +692,8 @@ pub enum GraphStepType {
     InE(String),
 
     ShortestPath(ShortestPath),
+    ShortestPathDijkstras(ShortestPathDijkstras),
+    ShortestPathBFS(ShortestPathBFS),
     SearchVector(SearchVector),
 }
 impl GraphStep {
@@ -714,6 +716,25 @@ pub struct ShortestPath {
     pub to: Option<IdType>,
     pub type_arg: Option<String>,
 }
+
+#[derive(Debug, Clone)]
+pub struct ShortestPathDijkstras {
+    pub loc: Loc,
+    pub from: Option<IdType>,
+    pub to: Option<IdType>,
+    pub type_arg: Option<String>,
+    pub inner_traversal: Option<Traversal>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShortestPathBFS {
+    pub loc: Loc,
+    pub from: Option<IdType>,
+    pub to: Option<IdType>,
+    pub type_arg: Option<String>,
+}
+
+// PathAlgorithm enum removed - now using distinct function names
 
 #[derive(Debug, Clone)]
 pub struct BooleanOp {

@@ -426,7 +426,7 @@ use helix_db::{
                 },
                 util::{
                     dedup::DedupAdapter, drop::Drop, exist::Exist, filter_mut::FilterMut,
-                    filter_ref::FilterRefAdapter, map::MapAdapter, paths::ShortestPathAdapter,
+                    filter_ref::FilterRefAdapter, map::MapAdapter, paths::{PathAlgorithm, ShortestPathAdapter},
                     props::PropsAdapter, range::RangeAdapter, update::UpdateAdapter, order::OrderByAdapter,
                     aggregate::AggregateAdapter, group_by::GroupByAdapter, count::CountAdapter,
                 },
