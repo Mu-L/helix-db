@@ -1,7 +1,7 @@
 use crate::{
     helix_engine::{
-        traversal_core::{traversal_value::TraversalValue, traversal_iter::RoTraversalIterator},
         storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
+        traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
     },
     utils::{items::Edge, label_hash::hash_label},
@@ -87,13 +87,22 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> Iterator
                         .unwrap();
 
                     for result in iter {
-                        let (_, value) = result.unwrap(); // TODO: handle error
+                        let value = match result {
+                            Ok((_, value)) => value,
+                            Err(e) => return Some(Err(GraphError::from(e))),
+                        };
                         let (edge_id, to_node) =
-                            HelixGraphStorage::unpack_adj_edge_data(value).unwrap(); // TODO: handle error
+                            match HelixGraphStorage::unpack_adj_edge_data(value) {
+                                Ok((edge_id, to_node)) => (edge_id, to_node),
+                                Err(e) => return Some(Err(GraphError::from(e))),
+                            };
 
                         if !visited.contains(&to_node) {
                             visited.insert(to_node);
-                            let edge = self.storage.get_edge(self.txn, &edge_id).unwrap(); // TODO: handle error
+                            let edge = match self.storage.get_edge(self.txn, &edge_id) {
+                                Ok(edge) => edge,
+                                Err(e) => return Some(Err(GraphError::from(e))),
+                            };
                             parent.insert(to_node, (current_id, edge));
 
                             if to_node == to {

@@ -33,8 +33,8 @@ impl WorkerPool {
             "Expected number of threads in thread pool to be more than 0, got {size}"
         );
 
-        let (req_tx, req_rx) = flume::bounded::<ReqMsg>(1000); 
-        let (cont_tx, cont_rx) = flume::bounded::<ContMsg>(1000); 
+        let (req_tx, req_rx) = flume::bounded::<ReqMsg>(1000);
+        let (cont_tx, cont_rx) = flume::bounded::<ContMsg>(1000);
 
         let workers = (0..size)
             .map(|_| {
@@ -160,8 +160,18 @@ fn request_mapper(
             if let Some(mcp_handler) = router.mcp_routes.get(&request.name) {
                 let mut mcp_input = MCPToolInput {
                     request,
-                    mcp_backend: Arc::clone(graph_access.mcp_backend.as_ref().unwrap()),
-                    mcp_connections: Arc::clone(graph_access.mcp_connections.as_ref().unwrap()),
+                    mcp_backend: Arc::clone(
+                        graph_access
+                            .mcp_backend
+                            .as_ref()
+                            .expect("MCP backend not found"),
+                    ),
+                    mcp_connections: Arc::clone(
+                        graph_access
+                            .mcp_connections
+                            .as_ref()
+                            .expect("MCP connections not found"),
+                    ),
                     schema: graph_access.storage.storage_config.schema.clone(),
                 };
                 Some(mcp_handler(&mut mcp_input).map_err(Into::into))
