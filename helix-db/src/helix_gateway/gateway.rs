@@ -228,7 +228,7 @@ impl CoreSetter {
             .incrementing_index
             .fetch_add(1, atomic::Ordering::SeqCst);
 
-        let core_index = curr_idx % self.threads_per_core;
+        let core_index = curr_idx / self.threads_per_core;
         match self.cores.get(core_index) {
             Some(c) => {
                 core_affinity::set_for_current(*c);
