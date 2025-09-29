@@ -1,6 +1,5 @@
 use std::sync::LazyLock;
 use std::sync::atomic::{self, AtomicUsize};
-use std::thread::available_parallelism;
 use std::time::Instant;
 use std::{collections::HashMap, sync::Arc};
 
@@ -8,7 +7,7 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use core_affinity::{CoreId, set_for_current};
+use core_affinity::CoreId;
 use helix_metrics::events::{EventType, QueryErrorEvent, QuerySuccessEvent};
 use sonic_rs::json;
 use tracing::{info, trace, warn};
@@ -117,7 +116,9 @@ impl HelixGateway {
         }));
 
         rt.block_on(async move {
-            let listener = tokio::net::TcpListener::bind(self.address).await.expect("Failed to bind listener");
+            let listener = tokio::net::TcpListener::bind(self.address)
+                .await
+                .expect("Failed to bind listener");
             info!("Listener has been bound, starting server");
             axum::serve(listener, axum_app)
                 .with_graceful_shutdown(shutdown_signal())
