@@ -157,29 +157,29 @@ impl HelixGateway {
 
 async fn shutdown_signal() {
     // Respond to either Ctrl-C (SIGINT) or SIGTERM (e.g. `kill` or systemd stop)
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("Received Ctrl-C, starting graceful shutdown…");
-        }
-        // #[cfg(unix)]
-        _ = sigterm() => {
-            info!("Received SIGTERM, starting graceful shutdown…");
-        }
-    }
-}
-
-async fn sigterm() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{SignalKind, signal};
-        let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
-        term.recv().await;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received Ctrl-C, starting graceful shutdown…");
+            }
+            _ = sigterm() => {
+                info!("Received SIGTERM, starting graceful shutdown…");
+            }
+        }
     }
     #[cfg(not(unix))]
     {
-        use tokio::signal::ctrl_c;
-        ctrl_c().await;
+        let _ = tokio::signal::ctrl_c().await;
+        info!("Received Ctrl-C, starting graceful shutdown…");
     }
+}
+
+#[cfg(unix)]
+async fn sigterm() {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+    term.recv().await;
 }
 
 async fn post_handler(
