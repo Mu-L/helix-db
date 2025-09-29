@@ -1,5 +1,5 @@
 use super::location::Loc;
-use crate::{helixc::parser::HelixParser, protocol::value::Value};
+use crate::{helixc::parser::{errors::ParserError, HelixParser}, protocol::value::Value};
 use chrono::{DateTime, NaiveDate, Utc};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -46,14 +46,14 @@ pub struct Source {
 }
 
 impl Source {
-    pub fn get_latest_schema(&self) -> &Schema {
+    pub fn get_latest_schema(&self) -> Result<&Schema, ParserError> {
         let latest_schema = self
             .schema
             .iter()
             .max_by(|a, b| a.1.version.1.cmp(&b.1.version.1))
             .map(|(_, schema)| schema);
         assert!(latest_schema.is_some());
-        latest_schema.unwrap()
+        latest_schema.ok_or_else(|| ParserError::from("No latest schema found"))
     }
 
     /// Gets the schemas in order of version, from oldest to newest.
