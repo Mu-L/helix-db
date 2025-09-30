@@ -6,7 +6,7 @@ on:
 
 jobs:
   test:
-    name: Test helix_engine
+    name: Test dashboard mode clippy check
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -29,7 +29,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo-
           
-    - name: Run tests
+    - name: Run dashboard mode clippy check
       run: | 
         rustup component add clippy
         sh clippy_check.sh dashboard
