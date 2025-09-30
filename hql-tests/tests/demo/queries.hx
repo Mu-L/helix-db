@@ -65,10 +65,8 @@ QUERY GetFollowedUsers(user_id: ID) =>
     followed <- N<User>(user_id)::Out<Follows>
     RETURN followed
 
+
 QUERY GetFollowedUsersPosts(user_id: ID) =>
     followers <- N<User>(user_id)::Out<Follows>
     posts <- followers::Out<Created>::RANGE(0, 40)
-    RETURN posts::{
-        post: content,
-        creatorID: _::In<Created>::ID,
-    }
+    RETURN posts

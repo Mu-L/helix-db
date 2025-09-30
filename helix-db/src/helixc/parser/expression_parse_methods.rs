@@ -340,7 +340,7 @@ impl HelixParser {
     pub(super) fn parse_for_loop(&self, pair: Pair<Rule>) -> Result<ForLoop, ParserError> {
         let mut pairs = pair.clone().into_inner();
         // parse the arguments
-        let argument = pairs.try_next().try_inner_next()?;
+        let argument = pairs.try_next_inner().try_next()?;
         let argument_loc = argument.loc();
         let variable = match argument.as_rule() {
             Rule::object_destructuring => {
@@ -420,9 +420,10 @@ impl HelixParser {
                             data = Some(VectorData::Vector(self.parse_vec_literal(p)?));
                         }
                         Rule::embed_method => {
-                            let inner = vector_data.clone().try_inner_next()?;
+                            let loc = vector_data.loc();
+                            let inner = vector_data.try_inner_next()?;
                             data = Some(VectorData::Embed(Embed {
-                                loc: vector_data.loc(),
+                                loc,
                                 value: match inner.as_rule() {
                                     Rule::identifier => {
                                         EvaluatesToString::Identifier(inner.as_str().to_string())

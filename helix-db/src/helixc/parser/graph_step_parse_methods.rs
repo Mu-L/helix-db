@@ -1,3 +1,5 @@
+use std::panic::Location;
+
 use crate::helixc::parser::{
     HelixParser, ParserError, Rule,
     location::HasLoc,
@@ -19,7 +21,7 @@ impl HelixParser {
     /// ```
     pub(super) fn parse_order_by(&self, pair: Pair<Rule>) -> Result<OrderBy, ParserError> {
         let mut inner = pair.clone().into_inner();
-        let order_by_type = match inner.try_next().try_inner_next()?.as_rule() {
+        let order_by_type = match inner.try_next_inner().try_next()?.as_rule() {
             Rule::asc => OrderByType::Asc,
             Rule::desc => OrderByType::Desc,
             _ => unreachable!(),
@@ -38,11 +40,12 @@ impl HelixParser {
     /// ```rs
     /// ::RANGE(1, 10)
     /// ```
+    #[track_caller]
     pub(super) fn parse_range(
         &self,
         pair: Pair<Rule>,
     ) -> Result<(Expression, Expression), ParserError> {
-        let mut inner = pair.into_inner().try_next_inner()?;
+        let mut inner = pair.into_inner();
         let start = self.parse_expression(inner.try_next()?)?;
         let end = self.parse_expression(inner.try_next()?)?;
 
@@ -331,12 +334,7 @@ impl HelixParser {
         };
         let pair = pair
             .clone()
-            .into_inner()
-            .next()
-            .ok_or(ParserError::from(format!(
-                "Expected graph step, got {:?}",
-                pair.as_rule()
-            )))?;
+            .try_inner_next()?;
         let step = match pair.as_rule() {
             Rule::out_e => {
                 let types = types(&pair)?;
