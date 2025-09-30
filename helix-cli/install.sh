@@ -391,9 +391,14 @@ main() {
     log_info "3. Run: helix --help"
     log_info ""
     log_info "To update in the future, run: helix update"
+    log_info ""
+    log_info "Anonymous metrics are enabled by default."
+    log_info "To help us improve Helix, please consider enabling full metrics."
+    log_info "Run: helix metrics --full"
+    log_info ""
+    log_info "To disable metrics, run: helix metrics --off"
+    log_info ""
+    log_info "To show metrics status, run: helix metrics --status"
 }
 
-# Only run main if script is executed directly (not sourced)
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
-fi
+main "$@"
