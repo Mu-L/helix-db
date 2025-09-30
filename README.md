@@ -55,19 +55,14 @@ The Helix CLI tool can be used to check, compile and deploy Helix locally.
    curl -sSL "https://install.helix-db.com" | bash
    ```
 
-2. Install Helix
+2. Setup
 
    ```bash
-   helix install
-   ```
-
-3. Setup
-
-   ```bash
+   mkdir <path-to-project> && cd <path-to-project>
    helix init --path <path-to-project>
    ```
 
-4. Write queries
+3. Write queries
 
    Open your newly created `.hx` files and start writing your schema and queries.
    Head over to [our docs](https://docs.helix-db.com/introduction/cookbook/basic) for more information about writing queries
@@ -82,21 +77,19 @@ The Helix CLI tool can be used to check, compile and deploy Helix locally.
       RETURN user
    ```
 
-5. Check your queries compile before building them into API endpoints (optional)
+4. Check your queries compile before building them into API endpoints (optional)
 
    ```bash
-   # in ./<path-to-project>
    helix check
    ```
 
-6. Deploy your queries
+5. Deploy your queries
 
    ```bash
-   # in ./<path-to-project>
    helix deploy
    ```
 
-7. Start calling them using our [TypeScript SDK](https://github.com/HelixDB/helix-ts) or [Python SDK](https://github.com/HelixDB/helix-py). For example:
+6. Start calling them using our [TypeScript SDK](https://github.com/HelixDB/helix-ts) or [Python SDK](https://github.com/HelixDB/helix-py). For example:
 
    ```typescript
    import HelixDB from "helix-ts";

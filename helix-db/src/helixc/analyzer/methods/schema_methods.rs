@@ -3,8 +3,9 @@ use std::{borrow::Cow, collections::HashMap};
 use crate::helixc::{
     analyzer::{Ctx, error_codes::ErrorCode, errors::push_schema_err},
     parser::{
-        types::{Field, FieldPrefix, FieldType, Source},
+        errors::ParserError,
         location::Loc,
+        types::{Field, FieldPrefix, FieldType, Source},
     },
 };
 
@@ -181,16 +182,19 @@ pub(crate) fn build_field_lookups<'a>(src: &'a Source) -> SchemaVersionMap<'a> {
     )
 }
 
-fn check_duplicate_schema_definitions(ctx: &mut Ctx) {
+fn check_duplicate_schema_definitions(ctx: &mut Ctx) -> Result<(), ParserError> {
     use std::collections::HashMap;
-    
+
     // Track seen names for each schema type
-    let mut seen_nodes: HashMap<String, (crate::helixc::parser::location::Loc, String)> = HashMap::new();
-    let mut seen_edges: HashMap<String, (crate::helixc::parser::location::Loc, String)> = HashMap::new();
-    let mut seen_vectors: HashMap<String, (crate::helixc::parser::location::Loc, String)> = HashMap::new();
-    
-    let schema = ctx.src.get_latest_schema();
-    
+    let mut seen_nodes: HashMap<String, (crate::helixc::parser::location::Loc, String)> =
+        HashMap::new();
+    let mut seen_edges: HashMap<String, (crate::helixc::parser::location::Loc, String)> =
+        HashMap::new();
+    let mut seen_vectors: HashMap<String, (crate::helixc::parser::location::Loc, String)> =
+        HashMap::new();
+
+    let schema = ctx.src.get_latest_schema()?;
+
     // Check duplicate nodes
     for node in &schema.node_schemas {
         if let Some((_first_loc, _)) = seen_nodes.get(&node.name.1) {
@@ -202,10 +206,13 @@ fn check_duplicate_schema_definitions(ctx: &mut Ctx) {
                 Some("rename the node or remove the duplicate definition".to_string()),
             );
         } else {
-            seen_nodes.insert(node.name.1.clone(), (node.name.0.clone(), node.name.1.clone()));
+            seen_nodes.insert(
+                node.name.1.clone(),
+                (node.name.0.clone(), node.name.1.clone()),
+            );
         }
     }
-    
+
     // Check duplicate edges
     for edge in &schema.edge_schemas {
         if let Some((_first_loc, _)) = seen_edges.get(&edge.name.1) {
@@ -217,11 +224,14 @@ fn check_duplicate_schema_definitions(ctx: &mut Ctx) {
                 Some("rename the edge or remove the duplicate definition".to_string()),
             );
         } else {
-            seen_edges.insert(edge.name.1.clone(), (edge.name.0.clone(), edge.name.1.clone()));
+            seen_edges.insert(
+                edge.name.1.clone(),
+                (edge.name.0.clone(), edge.name.1.clone()),
+            );
         }
     }
-    
-    // Check duplicate vectors  
+
+    // Check duplicate vectors
     for vector in &schema.vector_schemas {
         if let Some((_first_loc, _)) = seen_vectors.get(&vector.name) {
             push_schema_err(
@@ -232,16 +242,20 @@ fn check_duplicate_schema_definitions(ctx: &mut Ctx) {
                 Some("rename the vector or remove the duplicate definition".to_string()),
             );
         } else {
-            seen_vectors.insert(vector.name.clone(), (vector.loc.clone(), vector.name.clone()));
+            seen_vectors.insert(
+                vector.name.clone(),
+                (vector.loc.clone(), vector.name.clone()),
+            );
         }
     }
+    Ok(())
 }
 
-pub(crate) fn check_schema(ctx: &mut Ctx) {
+pub(crate) fn check_schema(ctx: &mut Ctx) -> Result<(), ParserError> {
     // Check for duplicate schema definitions
-    check_duplicate_schema_definitions(ctx);
-    
-    for edge in &ctx.src.get_latest_schema().edge_schemas {
+    check_duplicate_schema_definitions(ctx)?;
+
+    for edge in &ctx.src.get_latest_schema()?.edge_schemas {
         if !ctx.node_set.contains(edge.from.1.as_str())
             && !ctx.vector_set.contains(edge.from.1.as_str())
         {
@@ -300,7 +314,7 @@ pub(crate) fn check_schema(ctx: &mut Ctx) {
         }
         ctx.output.edges.push(edge.clone().into());
     }
-    for node in &ctx.src.get_latest_schema().node_schemas {
+    for node in &ctx.src.get_latest_schema()?.node_schemas {
         node.fields.iter().for_each(|f| {
             if RESERVED_FIELD_NAMES.contains(&f.name.to_lowercase().as_str()) {
                 push_schema_err(
@@ -323,7 +337,7 @@ pub(crate) fn check_schema(ctx: &mut Ctx) {
         });
         ctx.output.nodes.push(node.clone().into());
     }
-    for vector in &ctx.src.get_latest_schema().vector_schemas {
+    for vector in &ctx.src.get_latest_schema()?.vector_schemas {
         vector.fields.iter().for_each(|f: &Field| {
             if RESERVED_FIELD_NAMES.contains(&f.name.to_lowercase().as_str()) {
                 push_schema_err(
@@ -346,6 +360,7 @@ pub(crate) fn check_schema(ctx: &mut Ctx) {
         });
         ctx.output.vectors.push(vector.clone().into());
     }
+    Ok(())
 }
 
 fn is_valid_schema_field_type(ft: &FieldType) -> bool {

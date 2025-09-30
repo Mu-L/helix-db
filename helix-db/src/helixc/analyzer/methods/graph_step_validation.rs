@@ -16,7 +16,9 @@ use crate::{
             queries::Query as GeneratedQuery,
             traversal_steps::{
                 In as GeneratedIn, InE as GeneratedInE, Out as GeneratedOut, OutE as GeneratedOutE,
-                SearchVectorStep, ShortestPath as GeneratedShortestPath, ShouldCollect,
+                SearchVectorStep, ShortestPath as GeneratedShortestPath,
+                ShortestPathBFS as GeneratedShortestPathBFS,
+                ShortestPathDijkstras as GeneratedShortestPathDijkstras, ShouldCollect,
                 Step as GeneratedStep, Traversal as GeneratedTraversal,
             },
             utils::{GenRef, GeneratedValue, Separator, VecData},
@@ -348,45 +350,183 @@ pub(crate) fn apply_graph_step<'a>(
         }
         (ShortestPath(sp), Type::Nodes(_) | Type::Node(_)) => {
             let type_arg = sp.type_arg.clone().map(GenRef::Literal);
-            match (sp.from.clone(), sp.to.clone()) {
-                (Some(from), Some(to)) => {
-                    traversal.steps.push(Separator::Period(GeneratedStep::ShortestPath(
-                        GeneratedShortestPath {
+
+            // ShortestPath always uses BFS for backward compatibility
+            let algorithm = None; // Will default to BFS in the generator
+
+            traversal
+                .steps
+                .push(Separator::Period(GeneratedStep::ShortestPath(
+                    match (sp.from.clone(), sp.to.clone()) {
+                        (Some(from), Some(to)) => GeneratedShortestPath {
                             label: type_arg,
                             from: Some(GenRef::from(from)),
                             to: Some(GenRef::from(to)),
-                        }
-                    )));
-                }
-                (Some(from), None) => {
-                    traversal.steps.push(Separator::Period(GeneratedStep::ShortestPath(
-                        GeneratedShortestPath {
+                            algorithm,
+                        },
+                        (Some(from), None) => GeneratedShortestPath {
                             label: type_arg,
                             from: Some(GenRef::from(from)),
                             to: None,
-                        }
-                    )));
-                }
-                (None, Some(to)) => {
-                    traversal.steps.push(Separator::Period(GeneratedStep::ShortestPath(
-                        GeneratedShortestPath {
+                            algorithm,
+                        },
+                        (None, Some(to)) => GeneratedShortestPath {
                             label: type_arg,
                             from: None,
                             to: Some(GenRef::from(to)),
-                        }
-                    )));
+                            algorithm,
+                        },
+                        (None, None) => panic!("Invalid shortest path"),
+                    },
+                )));
+            traversal.should_collect = ShouldCollect::ToVec;
+            Some(Type::Unknown)
+        }
+        (ShortestPathDijkstras(sp), Type::Nodes(_) | Type::Node(_)) => {
+            let type_arg = sp.type_arg.clone().map(GenRef::Literal);
+
+            // Extract weight property from anonymous traversal
+            let weight_property = if let Some(ref inner_traversal) = sp.inner_traversal {
+                // Check if traversal is _::{property}
+                if let StartNode::Anonymous = inner_traversal.start
+                    && inner_traversal.steps.len() == 1
+                    && let StepType::Object(ref obj) = inner_traversal.steps[0].step
+                    && obj.fields.len() == 1
+                    && !obj.should_spread
+                {
+                    // For _::{weight}, the key is "weight"
+                    Some(obj.fields[0].key.clone())
+                } else {
+                    None
                 }
-                (None, None) => {
+            } else {
+                None
+            };
+
+            // If we have an inner traversal but couldn't extract a simple property, it's an error
+            if sp.inner_traversal.is_some() && weight_property.is_none() {
+                generate_error!(
+                    ctx,
+                    original_query,
+                    sp.loc.clone(),
+                    E202,
+                    "complex weight expression",
+                    "simple property access",
+                    "ShortestPathDijkstras"
+                );
+                return Some(Type::Unknown);
+            }
+
+            // Validate edge type and weight property if provided
+            if let Some(ref edge_type) = sp.type_arg {
+                if !ctx.edge_map.contains_key(edge_type.as_str()) {
                     generate_error!(
                         ctx,
                         original_query,
-                        gs.loc.clone(),
-                        E601,
-                        "ShortestPath requires at least one of 'from' or 'to' to be specified"
+                        sp.loc.clone(),
+                        E102,
+                        edge_type.as_str()
                     );
-                    return None;
+                } else if let Some(ref weight_prop) = weight_property {
+                    // Check if the weight property exists on the edge
+                    if let Some(edge_fields) = ctx.edge_fields.get(edge_type.as_str()) {
+                        if let Some(field) = edge_fields.get(weight_prop.as_str()) {
+                            // Validate that the weight property is numeric
+                            match &field.field_type {
+                                crate::helixc::parser::types::FieldType::F32
+                                | crate::helixc::parser::types::FieldType::F64
+                                | crate::helixc::parser::types::FieldType::I8
+                                | crate::helixc::parser::types::FieldType::I16
+                                | crate::helixc::parser::types::FieldType::I32
+                                | crate::helixc::parser::types::FieldType::I64
+                                | crate::helixc::parser::types::FieldType::U8
+                                | crate::helixc::parser::types::FieldType::U16
+                                | crate::helixc::parser::types::FieldType::U32
+                                | crate::helixc::parser::types::FieldType::U64
+                                | crate::helixc::parser::types::FieldType::U128 => {
+                                    // Valid numeric type for weight
+                                }
+                                _ => {
+                                    // Weight property must be numeric
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        sp.loc.clone(),
+                                        E202,
+                                        weight_prop.as_str(),
+                                        "numeric edge",
+                                        edge_type.as_str()
+                                    );
+                                }
+                            }
+                        } else {
+                            generate_error!(
+                                ctx,
+                                original_query,
+                                sp.loc.clone(),
+                                E202,
+                                weight_prop.as_str(),
+                                "edge",
+                                edge_type.as_str()
+                            );
+                        }
+                    }
                 }
             }
+
+            traversal
+                .steps
+                .push(Separator::Period(GeneratedStep::ShortestPathDijkstras(
+                    match (sp.from.clone(), sp.to.clone()) {
+                        (Some(from), Some(to)) => GeneratedShortestPathDijkstras {
+                            label: type_arg,
+                            from: Some(GenRef::from(from)),
+                            to: Some(GenRef::from(to)),
+                            weight_property: weight_property.clone().map(GenRef::Literal),
+                        },
+                        (Some(from), None) => GeneratedShortestPathDijkstras {
+                            label: type_arg,
+                            from: Some(GenRef::from(from)),
+                            to: None,
+                            weight_property: weight_property.clone().map(GenRef::Literal),
+                        },
+                        (None, Some(to)) => GeneratedShortestPathDijkstras {
+                            label: type_arg,
+                            from: None,
+                            to: Some(GenRef::from(to)),
+                            weight_property: weight_property.clone().map(GenRef::Literal),
+                        },
+                        (None, None) => panic!("Invalid shortest path dijkstras"),
+                    },
+                )));
+            traversal.should_collect = ShouldCollect::ToVec;
+            Some(Type::Unknown)
+        }
+        (ShortestPathBFS(sp), Type::Nodes(_) | Type::Node(_)) => {
+            let type_arg = sp.type_arg.clone().map(GenRef::Literal);
+
+            traversal
+                .steps
+                .push(Separator::Period(GeneratedStep::ShortestPathBFS(
+                    match (sp.from.clone(), sp.to.clone()) {
+                        (Some(from), Some(to)) => GeneratedShortestPathBFS {
+                            label: type_arg,
+                            from: Some(GenRef::from(from)),
+                            to: Some(GenRef::from(to)),
+                        },
+                        (Some(from), None) => GeneratedShortestPathBFS {
+                            label: type_arg,
+                            from: Some(GenRef::from(from)),
+                            to: None,
+                        },
+                        (None, Some(to)) => GeneratedShortestPathBFS {
+                            label: type_arg,
+                            from: None,
+                            to: Some(GenRef::from(to)),
+                        },
+                        (None, None) => panic!("Invalid shortest path bfs"),
+                    },
+                )));
             traversal.should_collect = ShouldCollect::ToVec;
             Some(Type::Unknown)
         }

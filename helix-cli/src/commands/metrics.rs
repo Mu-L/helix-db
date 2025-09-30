@@ -31,7 +31,7 @@ async fn enable_full_metrics() -> Result<()> {
     save_metrics_config(&config)?;
 
     print_success("Metrics collection enabled");
-    print_line("  Anonymous usage data will help improve Helix");
+    print_line("  Thank you for helping us improve Helix!");
 
     Ok(())
 }
@@ -48,7 +48,7 @@ async fn enable_basic_metrics() -> Result<()> {
     save_metrics_config(&config)?;
 
     print_success("Metrics collection enabled");
-    print_line("  Anonymous usage data will help improve Helix");
+    print_line("  Anonymous usage data will help improve Helix!");
 
     Ok(())
 }

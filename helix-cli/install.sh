@@ -106,18 +106,48 @@ set_install_dir() {
 
 # Detect platform and architecture
 detect_platform() {
-    local os arch
+    local target
 
-    # Detect OS
+    # Detect OS and architecture combination to match Rust targets
     case "$OSTYPE" in
         linux*)
-            os="linux"
+            case "$(uname -m)" in
+                x86_64|amd64)
+                    target="x86_64-unknown-linux-gnu"
+                    ;;
+                aarch64|arm64)
+                    target="aarch64-unknown-linux-gnu"
+                    ;;
+                *)
+                    log_error "Unsupported architecture: $(uname -m)"
+                    exit 1
+                    ;;
+            esac
             ;;
         darwin*)
-            os="macos"
+            case "$(uname -m)" in
+                x86_64|amd64)
+                    target="x86_64-apple-darwin"
+                    ;;
+                aarch64|arm64)
+                    target="aarch64-apple-darwin"
+                    ;;
+                *)
+                    log_error "Unsupported architecture: $(uname -m)"
+                    exit 1
+                    ;;
+            esac
             ;;
         msys*|cygwin*)
-            os="windows"
+            case "$(uname -m)" in
+                x86_64|amd64)
+                    target="x86_64-pc-windows-msvc"
+                    ;;
+                *)
+                    log_error "Unsupported architecture: $(uname -m)"
+                    exit 1
+                    ;;
+            esac
             ;;
         *)
             log_error "Unsupported OS: $OSTYPE"
@@ -125,27 +155,13 @@ detect_platform() {
             ;;
     esac
 
-    # Detect architecture
-    case "$(uname -m)" in
-        x86_64|amd64)
-            arch="amd64"
-            ;;
-        aarch64|arm64)
-            arch="arm64"
-            ;;
-        *)
-            log_error "Unsupported architecture: $(uname -m)"
-            exit 1
-            ;;
-    esac
-
     # Set binary name with extension for Windows
     local binary_ext=""
-    if [[ "$os" == "windows" ]]; then
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
         binary_ext=".exe"
     fi
 
-    echo "${BINARY_NAME}-cli-${os}-${arch}${binary_ext}"
+    echo "${BINARY_NAME}-${target}${binary_ext}"
 }
 
 # Get latest release version from GitHub
@@ -375,9 +391,14 @@ main() {
     log_info "3. Run: helix --help"
     log_info ""
     log_info "To update in the future, run: helix update"
+    log_info ""
+    log_info "Anonymous metrics are enabled by default."
+    log_info "To help us improve Helix, please consider enabling full metrics."
+    log_info "Run: helix metrics --full"
+    log_info ""
+    log_info "To disable metrics, run: helix metrics --off"
+    log_info ""
+    log_info "To show metrics status, run: helix metrics --status"
 }
 
-# Only run main if script is executed directly (not sourced)
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
-fi
+main "$@"

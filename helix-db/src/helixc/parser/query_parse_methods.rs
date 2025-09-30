@@ -125,6 +125,7 @@ impl HelixParser {
     pub(super) fn parse_query_body(&self, pair: Pair<Rule>) -> Result<Vec<Statement>, ParserError> {
         pair.into_inner()
             .map(|p| match p.as_rule() {
+                // path_macro_stmt removed - now using distinct function names,
                 Rule::get_stmt => Ok(Statement {
                     loc: p.loc(),
                     statement: StatementType::Assignment(self.parse_assignment(p)?),

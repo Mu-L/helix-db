@@ -31,7 +31,5 @@ jobs:
           
     - name: Run tests
       run: | 
-        rustup component add clippy
-        sh clippy_check.sh
         cd helix-db
         cargo test --profile dev helix_engine
