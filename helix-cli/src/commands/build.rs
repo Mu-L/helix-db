@@ -97,65 +97,117 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
 async fn ensure_helix_repo_cached() -> Result<()> {
     let repo_cache = get_helix_repo_cache()?;
 
-    if !repo_cache.exists() {
-        print_status("CACHE", "Caching Helix repository (first time setup)...");
-
-        if DEV_MODE {
-            // Development mode: copy from current workspace
-            let workspace_root = std::path::Path::new(CARGO_MANIFEST_DIR)
-                .parent() // helix-cli -> helix-db
-                .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))?;
-
-            print_status("DEV", "Development mode: copying local workspace...");
-            copy_dir_recursive_excluding(workspace_root, &repo_cache)?;
-        } else {
-            // Production mode: clone from GitHub
-            let output = std::process::Command::new("git")
-                .args(["clone", HELIX_REPO_URL, &repo_cache.to_string_lossy()])
-                .output()?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let error = crate::errors::CliError::new("failed to clone Helix repository")
-                    .with_context(stderr.to_string())
-                    .with_hint("ensure git is installed and you have internet connectivity");
-                return Err(eyre::eyre!("{}", error.render()));
-            }
-        }
-
-        print_success("Helix repository cached successfully");
+    if needs_cache_recreation(&repo_cache)? {
+        recreate_helix_cache(&repo_cache).await?;
+    } else if repo_cache.exists() {
+        update_helix_cache(&repo_cache).await?;
     } else {
-        // Update existing repository
-        print_status("UPDATE", "Updating Helix repository cache...");
+        create_helix_cache(&repo_cache).await?;
+    }
 
-        if DEV_MODE {
-            // Development mode: re-copy from current workspace
-            let workspace_root = std::path::Path::new(CARGO_MANIFEST_DIR)
-                .parent()
-                .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))?;
+    Ok(())
+}
 
-            // Remove old cache and copy fresh
-            if repo_cache.exists() {
-                std::fs::remove_dir_all(&repo_cache)?;
-            }
-            copy_dir_recursive_excluding(workspace_root, &repo_cache)?;
-        } else {
-            // Production mode: git pull
-            let output = std::process::Command::new("git")
-                .args(["pull"])
-                .current_dir(&repo_cache)
-                .output()?;
+fn needs_cache_recreation(repo_cache: &std::path::Path) -> Result<bool> {
+    if !repo_cache.exists() {
+        return Ok(false);
+    }
 
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(eyre::eyre!(
-                    "Failed to update Helix repository:\n{}",
-                    stderr
-                ));
-            }
-        }
+    let is_git_repo = repo_cache.join(".git").exists();
 
-        print_success("Helix repository updated");
+    match (DEV_MODE, is_git_repo) {
+        (true, true) => {
+            print_status("CACHE", "Cache is git repo but DEV_MODE requires copy - recreating...");
+            Ok(true)
+        },
+        (false, false) => {
+            print_status("CACHE", "Cache is copy but production mode requires git repo - recreating...");
+            Ok(true)
+        },
+        _ => Ok(false),
+    }
+}
+
+async fn recreate_helix_cache(repo_cache: &std::path::Path) -> Result<()> {
+    std::fs::remove_dir_all(repo_cache)?;
+    create_helix_cache(repo_cache).await
+}
+
+async fn create_helix_cache(repo_cache: &std::path::Path) -> Result<()> {
+    print_status("CACHE", "Caching Helix repository (first time setup)...");
+
+    if DEV_MODE {
+        create_dev_cache(repo_cache)?;
+    } else {
+        create_git_cache(repo_cache)?;
+    }
+
+    print_success("Helix repository cached successfully");
+    Ok(())
+}
+
+async fn update_helix_cache(repo_cache: &std::path::Path) -> Result<()> {
+    print_status("UPDATE", "Updating Helix repository cache...");
+
+    if DEV_MODE {
+        update_dev_cache(repo_cache)?;
+    } else {
+        update_git_cache(repo_cache)?;
+    }
+
+    print_success("Helix repository updated");
+    Ok(())
+}
+
+fn create_dev_cache(repo_cache: &std::path::Path) -> Result<()> {
+    let workspace_root = std::path::Path::new(CARGO_MANIFEST_DIR)
+        .parent() // helix-cli -> helix-db
+        .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))?;
+
+    print_status("DEV", "Development mode: copying local workspace...");
+    copy_dir_recursive_excluding(workspace_root, repo_cache)
+}
+
+fn create_git_cache(repo_cache: &std::path::Path) -> Result<()> {
+    let output = std::process::Command::new("git")
+        .args(["clone", HELIX_REPO_URL, &repo_cache.to_string_lossy()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let error = crate::errors::CliError::new("failed to clone Helix repository")
+            .with_context(stderr.to_string())
+            .with_hint("ensure git is installed and you have internet connectivity");
+        return Err(eyre::eyre!("{}", error.render()));
+    }
+
+    Ok(())
+}
+
+fn update_dev_cache(repo_cache: &std::path::Path) -> Result<()> {
+    let workspace_root = std::path::Path::new(CARGO_MANIFEST_DIR)
+        .parent()
+        .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))?;
+
+    // Remove old cache and copy fresh
+    if repo_cache.exists() {
+        std::fs::remove_dir_all(repo_cache)?;
+    }
+    copy_dir_recursive_excluding(workspace_root, repo_cache)
+}
+
+fn update_git_cache(repo_cache: &std::path::Path) -> Result<()> {
+    let output = std::process::Command::new("git")
+        .args(["pull"])
+        .current_dir(repo_cache)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre::eyre!(
+            "Failed to update Helix repository:\n{}",
+            stderr
+        ));
     }
 
     Ok(())
