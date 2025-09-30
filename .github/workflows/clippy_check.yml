@@ -1,4 +1,4 @@
-name: Core Database Tests
+name: Core Clippy Check
 
 on:
   pull_request:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   test:
-    name: Test helix_engine
+    name: Run clippy check
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -29,7 +29,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo-
           
-    - name: Run tests
+    - name: Run clippy check
       run: | 
-        cd helix-db
-        cargo test --profile dev helix_engine
+        rustup component add clippy
+        sh clippy_check.sh

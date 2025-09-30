@@ -101,7 +101,7 @@ use std::panic::Location;
 impl<'a> PairTools<'a> for Pair<'a, Rule> {
     #[track_caller]
     fn try_inner_next(self) -> Result<Pair<'a, Rule>, ParserError> {
-        let err_msg = format!("Expected inner next got {:?}", self);
+        let err_msg = format!("Expected inner next got {self:?}");
         let loc = Location::caller();
         self.into_inner().next().ok_or_else(|| {
             eprintln!("try inner_next failed at {}:{}", loc.file(), loc.line());
