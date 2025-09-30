@@ -1196,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "helix-cli"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1245,7 +1245,7 @@ dependencies = [
 
 [[package]]
 name = "helix-db"
-version = "1.0.139"
+version = "1.0.140"
 dependencies = [
  "async-trait",
  "axum",
