@@ -40,19 +40,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            binary_name: helix-cli-linux-amd64
+            binary_name: helix-x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            binary_name: helix-cli-linux-arm64
+            binary_name: helix-aarch64-unknown-linux-gnu
           - os: macos-13
             target: x86_64-apple-darwin
-            binary_name: helix-cli-macos-amd64
+            binary_name: helix-x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
-            binary_name: helix-cli-macos-arm64
+            binary_name: helix-aarch64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            binary_name: helix-cli-windows-amd64.exe
+            binary_name: helix-x86_64-pc-windows-msvc.exe
 
     steps:
       - uses: actions/checkout@v3
