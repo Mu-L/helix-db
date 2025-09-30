@@ -2,7 +2,6 @@ use crate::config::{BuildMode, InstanceInfo};
 use crate::project::ProjectContext;
 use crate::utils::print_status;
 use eyre::{Result, eyre};
-use std::borrow::Cow;
 use std::process::{Command, Output};
 
 pub struct DockerManager<'a> {
