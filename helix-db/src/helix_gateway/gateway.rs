@@ -178,7 +178,7 @@ async fn sigterm() {
     #[cfg(not(unix))]
     {
         use tokio::signal::ctrl_c;
-        ctrl_c().await;
+        let _ = ctrl_c().await;
     }
 }
 

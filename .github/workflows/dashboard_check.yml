@@ -1,4 +1,4 @@
-name: Core Database Tests
+name: Dashboard Mode Clippy Check
 
 on:
   pull_request:

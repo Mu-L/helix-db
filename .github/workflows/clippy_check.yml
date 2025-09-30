@@ -1,4 +1,4 @@
-name: Core Database Tests
+name: Core Clippy Check
 
 on:
   pull_request:
