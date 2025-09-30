@@ -5,3 +5,4 @@ test/
 /thoughts/
 .claude/
 hack/
+.DS_Store

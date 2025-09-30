@@ -146,8 +146,7 @@ fn main() {
     let gateway = HelixGateway::new(
         &format!("0.0.0.0:{port}"),
         graph,
-        GatewayOpts::DEFAULT_POOL_SIZE,
-        2,
+        GatewayOpts::DEFAULT_WORKERS_PER_CORE,
         Some(query_routes),
         Some(mcp_routes),
         Some(opts),
