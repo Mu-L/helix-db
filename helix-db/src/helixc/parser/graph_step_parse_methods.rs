@@ -1,5 +1,3 @@
-use std::panic::Location;
-
 use crate::helixc::parser::{
     HelixParser, ParserError, Rule,
     location::HasLoc,
@@ -332,9 +330,7 @@ impl HelixParser {
                 .map(|p| p.as_str().to_string())
                 .ok_or_else(|| ParserError::from(format!("Expected type for {:?}", pair.as_rule())))
         };
-        let pair = pair
-            .clone()
-            .try_inner_next()?;
+        let pair = pair.clone().try_inner_next()?;
         let step = match pair.as_rule() {
             Rule::out_e => {
                 let types = types(&pair)?;
