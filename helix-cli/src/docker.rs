@@ -2,7 +2,6 @@ use crate::config::{BuildMode, InstanceInfo};
 use crate::project::ProjectContext;
 use crate::utils::print_status;
 use eyre::{Result, eyre};
-use std::borrow::Cow;
 use std::process::{Command, Output};
 
 pub struct DockerManager<'a> {
@@ -228,7 +227,6 @@ CMD ["helix-container"]
         instance_config: InstanceInfo<'_>,
     ) -> Result<String> {
         let port = instance_config.port().unwrap_or(6969);
-        let volume_path = self.project.instance_volume(instance_name);
 
         // Use centralized naming methods
         let service_name = Self::service_name();
@@ -244,7 +242,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      {platform} 
+      {platform}
     image: {image_name}
     container_name: {container_name}
     ports:
@@ -265,14 +263,13 @@ volumes:
     driver: local
     driver_opts:
       type: bind
-      device: {volume_path}
+      device: ../.volumes/{instance_name}
       o: bind
 
 networks:
   {network_name}:
     driver: bridge
 "#,
-            volume_path = volume_path.display(),
             platform = instance_config
                 .docker_build_target()
                 .map_or("".to_string(), |p| format!("platforms:\n        - {p}")),
@@ -290,18 +287,7 @@ networks:
             &format!("Building image for instance '{instance_name}'..."),
         );
 
-        let args: Vec<Cow<'_, str>> = vec![Cow::Borrowed("build")];
-        // match build_target {
-        //     Some(build_target) => {
-        //         args.push(Cow::Borrowed("--platform"));
-        //         args.push(Cow::Borrowed(build_target));
-        //     }
-        //     None => {}
-        // };
-        // println!("args: {:?}", args);
-
-        let output =
-            self.run_compose_command(instance_name, args.iter().map(|arg| arg.as_ref()).collect())?;
+        let output = self.run_compose_command(instance_name, vec!["build"])?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
