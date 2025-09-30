@@ -1,5 +1,5 @@
 [project]
-name = "nested_for_loops"
+name = "nested_remappings"
 queries = "."
 
 [local.dev]

@@ -56,20 +56,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-
-      - name: Install OpenSSL, pkg-config, and GCC (Linux only)
-        if: matrix.os == 'ubuntu-20.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config gcc
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
-
       - name: Build
         run: |
           cd helix-cli
