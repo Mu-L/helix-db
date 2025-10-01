@@ -130,7 +130,7 @@ impl<'a, I> ShortestPathIterator<'a, I> {
         visited.insert(from);
         
         // find shortest-path from one node to itself
-        if from==to {
+        if from == to {
             return Some(self.reconstruct_path(&parent, &from, &to));
         }
 
