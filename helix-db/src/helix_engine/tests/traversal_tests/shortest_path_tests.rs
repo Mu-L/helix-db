@@ -8,7 +8,6 @@ use crate::{helix_engine::{
         },
     }, props, utils::filterable::Filterable};
 
-use axum::extract::path;
 use tempfile::TempDir;
 
 fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
@@ -457,7 +456,6 @@ fn test_dijkstra_shortest_path_bool_weighted() {
         .shortest_path_with_algorithm(Some("road"), None, Some(&node5_id), PathAlgorithm::Dijkstra)
         .collect_to::<Vec<_>>();
     
-    println!("path: {:?}", path);
     assert_eq!(path.len(), 1);
 
     match path.first() {
