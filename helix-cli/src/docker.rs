@@ -71,15 +71,6 @@ impl<'a> DockerManager<'a> {
         format!("{project_name}_app")
     }
 
-    /// Get the data volume name for an instance
-    pub(crate) fn data_volume_name(&self, instance_name: &str) -> String {
-        format!(
-            "{}_data",
-            // has to replace all `-` with `_` because fly requires underscores in volume names
-            self.compose_project_name(instance_name).replace("-", "_")
-        )
-    }
-
     /// Get the network name for an instance
     fn network_name(&self, instance_name: &str) -> String {
         let project_name = self.compose_project_name(instance_name);
@@ -232,7 +223,6 @@ CMD ["helix-container"]
         let service_name = Self::service_name();
         let image_name = self.image_name(instance_name, instance_config.build_mode());
         let container_name = self.container_name(instance_name);
-        let data_volume_name = self.data_volume_name(instance_name);
         let network_name = self.network_name(instance_name);
 
         let compose = format!(
@@ -248,7 +238,7 @@ services:
     ports:
       - "{port}:{port}"
     volumes:
-      - {data_volume_name}:/data
+      - ../.volumes/{instance_name}:/data
     environment:
       - HELIX_PORT={port}
       - HELIX_DATA_DIR={data_dir}
@@ -257,14 +247,6 @@ services:
     restart: unless-stopped
     networks:
       - {network_name}
-
-volumes:
-  {data_volume_name}:
-    driver: local
-    driver_opts:
-      type: bind
-      device: ../.volumes/{instance_name}
-      o: bind
 
 networks:
   {network_name}:
@@ -452,6 +434,20 @@ networks:
                 "DOCKER",
                 &format!("Instance '{instance_name}' pruned successfully"),
             );
+        }
+
+        // Clean up orphaned named volumes from old CLI versions
+        // Old volume naming pattern: helix_{project_name}_{instance_name}_data
+        if remove_volumes {
+            let old_volume_name = format!(
+                "helix_{}_{}",
+                self.project.config.project.name.replace("-", "_"),
+                instance_name.replace("-", "_")
+            );
+
+            // Try to remove old-style named volume (ignore errors if it doesn't exist)
+            let volume_to_remove = format!("{old_volume_name}_data");
+            let _ = self.run_docker_command(&["volume", "rm", &volume_to_remove]);
         }
 
         Ok(())

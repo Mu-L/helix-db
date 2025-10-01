@@ -357,14 +357,12 @@ impl<'a> FlyManager<'a> {
 
                 // Add privacy args
                 launch_args.extend_from_slice(&match config.private {
-                    true => vec!["--no-public-ip"],
+                    true => vec!["--no-public-ips"],
                     false => vec![],
                 });
 
                 let launch_status = tokio::process::Command::new("flyctl")
                     .args(&launch_args)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
                     .output()
                     .await
                     .map_err(|e| eyre!("Failed to run flyctl launch: {e}"))?;
@@ -447,7 +445,6 @@ impl<'a> FlyManager<'a> {
                 print_status("FLY", "Deploying image to Fly.io");
                 let deploy_status = self.run_fly_command_async(&deploy_args).await?;
 
-                println!("Deploy status: {deploy_status:?}");
                 if !deploy_status.status.success() {
                     return Err(eyre!("Failed to deploy image '{registry_image}'"));
                 }

@@ -215,7 +215,7 @@ enum CloudDeploymentTypeCommand {
         vm_size: String,
 
         /// privacy
-        #[clap(long, default_value = "true")]
+        #[clap(long, default_value = "false")]
         private: bool,
 
         /// Instance name
