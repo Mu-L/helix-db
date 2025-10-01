@@ -71,7 +71,6 @@ impl<'a> DockerManager<'a> {
         format!("{project_name}_app")
     }
 
-
     /// Get the network name for an instance
     fn network_name(&self, instance_name: &str) -> String {
         let project_name = self.compose_project_name(instance_name);
@@ -447,7 +446,7 @@ networks:
             );
 
             // Try to remove old-style named volume (ignore errors if it doesn't exist)
-            let volume_to_remove = format!("{}_data", old_volume_name);
+            let volume_to_remove = format!("{old_volume_name}_data");
             let _ = self.run_docker_command(&["volume", "rm", &volume_to_remove]);
         }
 
