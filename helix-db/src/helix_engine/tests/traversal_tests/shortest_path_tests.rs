@@ -189,7 +189,6 @@ fn test_shortest_path_from_one_node_to_itself() {
     }
 }
 
-// failed
 #[test]
 fn test_shortest_path_not_found() {
     let (storage, _temp_dir) = setup_test_db();
