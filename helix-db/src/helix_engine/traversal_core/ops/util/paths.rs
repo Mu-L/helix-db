@@ -160,10 +160,6 @@ impl<'a, I> ShortestPathIterator<'a, I> {
 
                 if !visited.contains(&to_node) {
                     visited.insert(to_node);
-                    // let edge = match self.storage.get_edge(self.txn, &edge_id) {
-                    //     Ok(edge) => edge,
-                    //     Err(e) => return Some(Err(e)),
-                    // };
                     parent.insert(to_node, (current_id, edge_id));
 
                     if to_node == to {
@@ -229,7 +225,6 @@ impl<'a, I> ShortestPathIterator<'a, I> {
                 let edge = self.storage.get_edge(self.txn, &edge_id).unwrap(); // TODO: handle error
 
                 // Extract weight from edge properties, default to 1.0 if not present
-                // need try catch if cant convert to f64 the return error:3
                 let weight = edge
                     .properties
                     .as_ref()
