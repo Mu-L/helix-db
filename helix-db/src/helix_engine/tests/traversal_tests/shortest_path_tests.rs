@@ -8,6 +8,7 @@ use crate::{helix_engine::{
         },
     }, props, utils::filterable::Filterable};
 
+use axum::extract::path;
 use tempfile::TempDir;
 
 fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
