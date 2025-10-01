@@ -59,7 +59,7 @@ The Helix CLI tool can be used to check, compile and deploy Helix locally.
 
    ```bash
    mkdir <path-to-project> && cd <path-to-project>
-   helix init --path <path-to-project>
+   helix init
    ```
 
 3. Write queries
@@ -86,7 +86,7 @@ The Helix CLI tool can be used to check, compile and deploy Helix locally.
 5. Deploy your queries
 
    ```bash
-   helix deploy
+   helix push dev
    ```
 
 6. Start calling them using our [TypeScript SDK](https://github.com/HelixDB/helix-ts) or [Python SDK](https://github.com/HelixDB/helix-py). For example:
@@ -112,24 +112,12 @@ The Helix CLI tool can be used to check, compile and deploy Helix locally.
    console.log(user);
    ```
 
-Other commands:
-
-- `helix instances` to see all your local instances.
-- `helix stop <instance-id>` to stop your local instance with specified id.
-- `helix stop --all` to stop all your local instances.
-- `helix dockerdev run` to start a Docker development instance.
-- `helix dockerdev status` to check the Docker development instance status.
-- `helix dockerdev logs` to view Docker container logs.
-- `helix dockerdev stop` to stop the Docker development instance.
-- `helix dockerdev delete` to remove the Docker development instance and data.
-
 ## Roadmap
 
 Our current focus areas include:
 
 - Organizational auth to manage teams, and Helix clusters.
 - Improvements to our server code to massively improve network IO performance and scalability.
-- More 3rd party integrations to make it easier to build with Helix.
 - Guides and educational content to help you get started with Helix.
 - Binary quantisation for even better performance.
 
