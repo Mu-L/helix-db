@@ -236,7 +236,6 @@ impl<'a, I> ShortestPathIterator<'a, I> {
                 let edge = self.storage.get_edge(self.txn, &edge_id).unwrap(); // TODO: handle error
 
                 // Extract weight from edge properties, default to 1.0 if not present
-                // need try catch if cant convert to f64 the return error:3
                 let weight = edge
                     .properties
                     .as_ref()
