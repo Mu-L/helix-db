@@ -8,6 +8,7 @@ use crate::{helix_engine::{
         },
     }, props, utils::filterable::Filterable};
 
+use axum::extract::path;
 use tempfile::TempDir;
 
 fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
@@ -76,7 +77,6 @@ fn test_shortest_path() {
     let path = G::new_from(Arc::clone(&storage), &txn, vec![node1.clone()])
         .shortest_path(Some("knows"), None, Some(&node4.id()))
         .collect_to::<Vec<_>>();
-    println!("path: {:?}", path);
     assert_eq!(path.len(), 1);
 
     match path.first() {
@@ -104,9 +104,8 @@ fn test_shortest_path() {
     }
 }
 
-// failed
 #[test]
-fn test_self_shortest_path() {
+fn test_shortest_path_from_one_node_to_itself() {
     let (storage, _temp_dir) = setup_test_db();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -155,36 +154,40 @@ fn test_self_shortest_path() {
         .collect_to_obj();
 
     txn.commit().unwrap();
+    // bfs
     let txn = storage.graph_env.read_txn().unwrap();
     let path = G::new_from(Arc::clone(&storage), &txn, vec![node1.clone()])
         .shortest_path(Some("knows"), None, Some(&node1.id()))
         .collect_to::<Vec<_>>();
-    println!("path: {:?}", path);
     assert_eq!(path.len(), 1);
 
-    // match path.first() {
-    //     Some(TraversalValue::Path((nodes, edges))) => {
-    //         assert_eq!(nodes.len(), 4);
-    //         assert_eq!(edges.len(), 3);
-    //         assert_eq!(*nodes[0].check_property("name").unwrap(), "node1");
-    //         assert_eq!(*nodes[1].check_property("name").unwrap(), "node2");
-    //         assert_eq!(*nodes[2].check_property("name").unwrap(), "node3");
-    //         assert_eq!(*nodes[3].check_property("name").unwrap(), "node4");
-    //         assert_eq!(*edges[0].check_property("name").unwrap(), "edge1");
-    //         assert_eq!(*edges[1].check_property("name").unwrap(), "edge2");
-    //         assert_eq!(*edges[2].check_property("name").unwrap(), "edge3");
-    //         assert_eq!(*nodes[0].id(), node1.id());
-    //         assert_eq!(*nodes[1].id(), node2.id());
-    //         assert_eq!(*nodes[2].id(), node3.id());
-    //         assert_eq!(*nodes[3].id(), node4.id());
-    //         assert_eq!(*edges[0].id(), edge1.id());
-    //         assert_eq!(*edges[1].id(), edge2.id());
-    //         assert_eq!(*edges[2].id(), edge3.id());
-    //     }
-    //     _ => {
-    //         panic!("Expected Path value");
-    //     }
-    // }
+    match path.first() {
+        Some(TraversalValue::Path((nodes, edges))) => {
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(edges.len(), 0);
+            assert_eq!(*nodes[0].check_property("name").unwrap(), "node1");
+        }
+        _ => {
+            panic!("Expected Path value");
+        }
+    }
+    // dijkstra
+    let path = G::new_from(Arc::clone(&storage), &txn, vec![node1.clone()])
+        .shortest_path_with_algorithm(Some("knows"), None, Some(&node1.id()), PathAlgorithm::Dijkstra)
+        .collect_to::<Vec<_>>();
+
+    assert_eq!(path.len(), 1);
+
+    match path.first() {
+        Some(TraversalValue::Path((nodes, edges))) => {
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(edges.len(), 0);
+            assert_eq!(*nodes[0].check_property("name").unwrap(), "node1");
+        }
+        _ => {
+            panic!("Expected Path value");
+        }
+    }
 }
 
 
@@ -244,38 +247,18 @@ fn test_shortest_path_not_found() {
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
+    //bfs
     let path = G::new_from(Arc::clone(&storage), &txn, vec![node1.clone()])
         .shortest_path(Some("knows"), None, Some(&node5.id()))
         .collect_to::<Vec<_>>();
-    println!("path: {:?}", path);
     assert_eq!(path.len(), 0);
 
-    // match path.first() {
-    //     Some(TraversalValue::Path((nodes, edges))) => {
-    //         assert_eq!(nodes.len(), 4);
-    //         assert_eq!(edges.len(), 3);
-    //         assert_eq!(*nodes[0].check_property("name").unwrap(), "node1");
-    //         assert_eq!(*nodes[1].check_property("name").unwrap(), "node2");
-    //         assert_eq!(*nodes[2].check_property("name").unwrap(), "node3");
-    //         assert_eq!(*nodes[3].check_property("name").unwrap(), "node4");
-    //         assert_eq!(*edges[0].check_property("name").unwrap(), "edge1");
-    //         assert_eq!(*edges[1].check_property("name").unwrap(), "edge2");
-    //         assert_eq!(*edges[2].check_property("name").unwrap(), "edge3");
-    //         assert_eq!(*nodes[0].id(), node1.id());
-    //         assert_eq!(*nodes[1].id(), node2.id());
-    //         assert_eq!(*nodes[2].id(), node3.id());
-    //         assert_eq!(*nodes[3].id(), node4.id());
-    //         assert_eq!(*edges[0].id(), edge1.id());
-    //         assert_eq!(*edges[1].id(), edge2.id());
-    //         assert_eq!(*edges[2].id(), edge3.id());
-    //     }
-    //     _ => {
-    //         panic!("Expected Path value");
-    //     }
-    // }
+    //dijkstra
+    let path = G::new_from(Arc::clone(&storage), &txn, vec![node1.clone()])
+        .shortest_path_with_algorithm(Some("knows"), None, Some(&node5.id()), PathAlgorithm::Dijkstra)
+        .collect_to::<Vec<_>>();
+    assert_eq!(path.len(), 0);
 }
-
-
 
 
 #[test]
@@ -390,6 +373,114 @@ fn test_dijkstra_shortest_path_weighted() {
     }
 }
 
+#[test]
+fn test_dijkstra_shortest_path_bool_weighted() {
+    let (storage, _temp_dir) = setup_test_db();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    let node1 = G::new_mut(Arc::clone(&storage), &mut txn)
+        .add_n("city", Some(props!("name" => "city1")), None)
+        .collect_to_obj();
+    let node2 = G::new_mut(Arc::clone(&storage), &mut txn)
+        .add_n("city", Some(props!("name" => "city2")), None)
+        .collect_to_obj();
+    let node3 = G::new_mut(Arc::clone(&storage), &mut txn)
+        .add_n("city", Some(props!("name" => "city3")), None)
+        .collect_to_obj();
+    let node4 = G::new_mut(Arc::clone(&storage), &mut txn)
+        .add_n("city", Some(props!("name" => "city4")), None)
+        .collect_to_obj();
+    let node5 = G::new_mut(Arc::clone(&storage), &mut txn)
+        .add_n("city", Some(props!("name" => "city5")), None)
+        .collect_to_obj();
+
+    // Direct path: node1 -> node2 -> node4 (total weight: 11)
+    G::new_mut(Arc::clone(&storage), &mut txn)
+        .add_e(
+            "road",
+            Some(props!("name" => "road1", "weight" => false)),
+            node1.id(),
+            node2.id(),
+            false,
+            EdgeType::Node,
+        )
+        .collect_to_obj();
+    
+    // Alternative path: node1 -> node3 -> node2 -> node4 (total weight: 9)
+    G::new_mut(Arc::clone(&storage), &mut txn)
+        .add_e(
+            "road",
+            Some(props!("name" => "road2", "weight" => true)),
+            node1.id(),
+            node3.id(),
+            false,
+            EdgeType::Node,
+        )
+        .collect_to_obj();
+    
+    G::new_mut(Arc::clone(&storage), &mut txn)
+        .add_e(
+            "road",
+            Some(props!("name" => "road3", "weight" => true)),
+            node2.id(),
+            node4.id(),
+            false,
+            EdgeType::Node,
+        )
+        .collect_to_obj();
+    
+    G::new_mut(Arc::clone(&storage), &mut txn)
+        .add_e(
+            "road",
+            Some(props!("name" => "road4", "weight" => false)),
+            node4.id(),
+            node5.id(),
+            false,
+            EdgeType::Node,
+        )
+        .collect_to_obj();
+    
+    // Alternative direct path: node3 -> node4 (weight: 9)
+    G::new_mut(Arc::clone(&storage), &mut txn)
+        .add_e(
+            "road",
+            Some(props!("name" => "road5", "weight" => true)),
+            node3.id(),
+            node5.id(),
+            false,
+            EdgeType::Node,
+        )
+        .collect_to_obj();
+
+    txn.commit().unwrap();
+    let txn = storage.graph_env.read_txn().unwrap();
+    
+    // Test Dijkstra's algorithm - it should find the path with minimum weight
+    let node5_id = node5.id();
+    let path = G::new_from(Arc::clone(&storage), &txn, vec![node1.clone()])
+        .shortest_path_with_algorithm(Some("road"), None, Some(&node5_id), PathAlgorithm::Dijkstra)
+        .collect_to::<Vec<_>>();
+    
+    assert_eq!(path.len(), 1);
+
+    match path.first() {
+        Some(TraversalValue::Path((nodes, edges))) => {
+            // The shortest path by weight should be: node1 -> node3 -> node2 -> node4
+            assert_eq!(nodes.len(), 4);
+            assert_eq!(edges.len(), 3);
+            assert_eq!(*nodes[0].check_property("name").unwrap(), "city1");
+            assert_eq!(*nodes[1].check_property("name").unwrap(), "city2");
+            assert_eq!(*nodes[2].check_property("name").unwrap(), "city4");
+            assert_eq!(*nodes[3].check_property("name").unwrap(), "city5");
+            assert_eq!(*edges[0].check_property("name").unwrap(), "road1");
+            assert_eq!(*edges[1].check_property("name").unwrap(), "road3");
+            assert_eq!(*edges[2].check_property("name").unwrap(), "road4");
+        }
+        _ => {
+            panic!("Expected Path value");
+        }
+    }
+}
 #[test]
 fn test_dijkstra_vs_bfs_comparison() {
     let (storage, _temp_dir) = setup_test_db();
