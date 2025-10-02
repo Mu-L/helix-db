@@ -60,7 +60,10 @@ pub(crate) fn validate_statements<'a>(
                 infer_expr_type(ctx, &assign.value, scope, original_query, None, query);
             
             scope.insert(assign.variable.as_str(), rhs_ty);
-            assert!(stmt.is_some(), "Assignment statement should be generated");
+
+            if stmt.is_none() {
+                return None;
+            }
 
             let assignment = GeneratedStatement::Assignment(GeneratedAssignment {
                 variable: GenRef::Std(assign.variable.clone()),
@@ -71,7 +74,9 @@ pub(crate) fn validate_statements<'a>(
 
         Drop(expr) => {
             let (_, stmt) = infer_expr_type(ctx, expr, scope, original_query, None, query);
-            assert!(stmt.is_some());
+            if stmt.is_none() {
+                return None;
+            }
             query.is_mut = true;
             if let Some(GeneratedStatement::Traversal(tr)) = stmt {
                 Some(GeneratedStatement::Drop(GeneratedDrop { expression: tr }))
