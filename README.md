@@ -65,7 +65,9 @@ The Helix CLI tool can be used to check, compile and deploy Helix locally.
 3. Write queries
 
    Open your newly created `.hx` files and start writing your schema and queries.
-   Head over to [our docs](https://docs.helix-db.com/introduction/cookbook/basic) for more information about writing queries
+   Head over to [our docs](https://docs.helix-db.com/documentation/getting-started/intro) for more information about writing queries
+
+
 
    ```js
    QUERY addUser(name: String, age: I64) =>
