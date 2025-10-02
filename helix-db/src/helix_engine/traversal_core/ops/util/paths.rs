@@ -331,8 +331,6 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> ShortestPa
         from: Option<&'a u128>,
         to: Option<&'a u128>,
         algorithm: PathAlgorithm,
-        
-        
     ) -> RoTraversalIterator<'a, ShortestPathIterator<'a, I>>
     where
         I: 'a,
