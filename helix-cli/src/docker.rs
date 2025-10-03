@@ -164,20 +164,14 @@ COPY helix-container/ ./helix-container/
 
 FROM chef AS planner
 # Generate the recipe file for dependency caching
-RUN cargo chef prepare --recipe-path recipe.json
+RUN cargo chef prepare --recipe-path recipe.json --bin helix-container
 
 FROM chef AS builder
 # Copy the recipe file
 COPY --from=planner /build/recipe.json recipe.json
 
-# Install system dependencies again for builder stage
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 # Build dependencies - this is the caching Docker layer!
-RUN cargo chef cook {build_flag} --recipe-path recipe.json --package helix-container
+RUN cargo chef cook {build_flag} --recipe-path recipe.json --bin helix-container
 
 # Copy source code and build the application
 COPY helix-repo-copy/ ./
