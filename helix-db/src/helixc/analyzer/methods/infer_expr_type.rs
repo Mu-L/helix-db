@@ -149,7 +149,12 @@ pub(crate) fn infer_expr_type<'a>(
             if matches!(expr, Exists(_)) {
                 (Type::Boolean, Some(stmt))
             } else {
-                (final_ty, Some(stmt))
+                if let Some(final_ty) = final_ty {
+                    (final_ty, Some(stmt))
+                } else {
+                    generate_error!(ctx, original_query, tr.loc.clone(), E601, &tr.loc.span);
+                    (Type::Unknown, None)
+                }
             }
         }
 

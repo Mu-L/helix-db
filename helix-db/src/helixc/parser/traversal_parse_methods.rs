@@ -57,15 +57,16 @@ impl HelixParser {
                         Rule::id_args => {
                             let mut new_ids = Vec::new();
                             for id in p.into_inner() {
+                                let loc = id.loc();
                                 let id = id.try_inner_next()?;
                                 let id_to_add = match id.as_rule() {
                                     Rule::identifier => IdType::Identifier {
                                         value: id.as_str().to_string(),
-                                        loc: id.loc(),
+                                        loc: loc.clone(),
                                     },
                                     Rule::string_literal => IdType::Literal {
                                         value: id.as_str().to_string(),
-                                        loc: id.loc(),
+                                        loc: loc.clone(),
                                     },
                                     _ => {
                                         return Err(ParserError::from(
@@ -154,6 +155,7 @@ impl HelixParser {
                 let pairs = pair.into_inner();
                 let mut edge_type = String::new();
                 let mut ids = None;
+
                 for p in pairs {
                     match p.as_rule() {
                         Rule::type_args => {
@@ -162,15 +164,16 @@ impl HelixParser {
                         Rule::id_args => {
                             let mut new_ids = Vec::new();
                             for id in p.into_inner() {
+                                let loc = id.loc();
                                 let id = id.try_inner_next()?;
                                 let id_to_add = match id.as_rule() {
                                     Rule::identifier => IdType::Identifier {
                                         value: id.as_str().to_string(),
-                                        loc: id.loc(),
+                                        loc: loc.clone(),
                                     },
                                     Rule::string_literal => IdType::Literal {
                                         value: id.as_str().to_string(),
-                                        loc: id.loc(),
+                                        loc: loc.clone(),
                                     },
                                     _ => {
                                         return Err(ParserError::from(

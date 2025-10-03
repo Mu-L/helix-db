@@ -396,6 +396,19 @@ impl From<FieldType> for Type {
     }
 }
 
+impl From<&FieldType> for Type {
+    fn from(ft: &FieldType) -> Self {
+        use FieldType::*;
+        match ft {
+            String | Boolean | F32 | F64 | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | U128
+            | Uuid | Date => Type::Scalar(ft.clone()),
+            Array(inner_ft) => Type::Array(Box::new(Type::from(*inner_ft.clone()))),
+            Object(obj) => Type::Object(obj.into_iter().map(|(k, v)| (k.clone(), Type::from(v))).collect()),
+            Identifier(id) => Type::Scalar(FieldType::Identifier(id.clone())),
+        }
+    }
+}
+
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
