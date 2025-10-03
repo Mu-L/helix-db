@@ -655,7 +655,9 @@ pub(crate) fn validate_traversal<'a>(
                 );
                 // Where/boolean ops don't change the element type,
                 // so `cur_ty` stays the same.
-                assert!(stmt.is_some());
+                if stmt.is_none() {
+                    return cur_ty.clone();
+                }
                 let stmt = stmt.unwrap();
                 match stmt {
                     GeneratedStatement::Traversal(tr) => {
@@ -1184,84 +1186,34 @@ pub(crate) fn validate_traversal<'a>(
                 // otherwise it is invalid
 
                 // Update returns the same type (nodes/edges) it started with.
-                match tr.steps.iter().nth_back(1) {
-                    Some(step) => match &step.step {
-                        StepType::Node(gs) => {
-                            let node_type = gs.get_item_type().unwrap();
-                            field_exists_on_item_type(
-                                ctx,
-                                original_query,
-                                Type::Node(Some(node_type.clone())),
-                                update
-                                    .fields
-                                    .iter()
-                                    .map(|field| (field.key.as_str(), &field.loc))
-                                    .collect(),
-                            );
-                        }
 
-                        StepType::Edge(gs) => {
-                            let edge_type = gs.get_item_type().unwrap();
-                            field_exists_on_item_type(
-                                ctx,
-                                original_query,
-                                Type::Edge(Some(edge_type)),
-                                update
-                                    .fields
-                                    .iter()
-                                    .map(|field| (field.key.as_str(), &field.loc))
-                                    .collect(),
-                            );
-                        }
-                        _ => {
-                            generate_error!(
-                                ctx,
-                                original_query,
-                                update.loc.clone(),
-                                E604,
-                                &update.loc.span
-                            );
-                            return cur_ty.clone();
-                        }
-                    },
-                    None => match &tr.start {
-                        StartNode::Node { node_type, .. } => {
-                            field_exists_on_item_type(
-                                ctx,
-                                original_query,
-                                Type::Node(Some(node_type.clone())),
-                                update
-                                    .fields
-                                    .iter()
-                                    .map(|field| (field.key.as_str(), &field.loc))
-                                    .collect(),
-                            );
-                        }
-                        StartNode::Edge { edge_type, .. } => {
-                            field_exists_on_item_type(
-                                ctx,
-                                original_query,
-                                Type::Edge(Some(edge_type.clone())),
-                                update
-                                    .fields
-                                    .iter()
-                                    .map(|field| (field.key.as_str(), &field.loc))
-                                    .collect(),
-                            );
-                        }
-                        _ => {
-                            // maybe use cur_ty instead of update.loc.span?
-                            generate_error!(
-                                ctx,
-                                original_query,
-                                update.loc.clone(),
-                                E604,
-                                &update.loc.span
-                            );
-                            return cur_ty.clone();
-                        }
-                    },
-                };
+                match &cur_ty {
+                    Type::Node(Some(ty))
+                    | Type::Nodes(Some(ty))
+                    | Type::Edge(Some(ty))
+                    | Type::Edges(Some(ty)) => {
+                        field_exists_on_item_type(
+                            ctx,
+                            original_query,
+                            Type::Node(Some(ty.clone())),
+                            update
+                                .fields
+                                .iter()
+                                .map(|field| (field.key.as_str(), &field.loc))
+                                .collect(),
+                        );
+                    }
+                    other => {
+                        generate_error!(
+                            ctx,
+                            original_query,
+                            update.loc.clone(),
+                            E604,
+                            &other.get_type_name()
+                        );
+                        return cur_ty.clone();
+                    }
+                }
                 gen_traversal.traversal_type = TraversalType::Update(Some(
                     update
                         .fields
@@ -1334,6 +1286,7 @@ pub(crate) fn validate_traversal<'a>(
                         })
                         .collect(),
                 ));
+                cur_ty = cur_ty.into_single();
                 gen_traversal.should_collect = ShouldCollect::No;
                 excluded.clear();
             }
@@ -1491,7 +1444,9 @@ pub(crate) fn validate_traversal<'a>(
                     gen_query,
                 );
 
-                assert!(stmt.is_some());
+                if stmt.is_none() {
+                    return cur_ty.clone();
+                }
                 match stmt.unwrap() {
                     GeneratedStatement::Traversal(traversal) => {
                         let property = match &traversal.steps.last() {

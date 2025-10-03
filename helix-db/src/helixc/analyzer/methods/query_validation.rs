@@ -77,7 +77,7 @@ pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
             query.statements.push(s);
         } else {
             // given all erroneous statements are caught by the analyzer, this should never happen
-            unreachable!()
+            return;
         }
     }
 
@@ -132,6 +132,10 @@ fn analyze_return_expr<'a>(
     match ret {
         ReturnType::Expression(expr) => {
             let (_, stmt) = infer_expr_type(ctx, expr, scope, original_query, None, query);
+
+            if stmt.is_none() {
+                return;
+            }
 
             match stmt.unwrap() {
                 GeneratedStatement::Traversal(traversal) => {
