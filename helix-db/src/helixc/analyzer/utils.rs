@@ -36,6 +36,31 @@ pub(super) fn is_param<'a>(q: &'a Query, name: &str) -> Option<&'a Parameter> {
     q.parameters.iter().find(|p| p.name.1 == *name)
 }
 
+pub(super) fn check_identifier_is_fieldtype(
+    ctx: &mut Ctx,
+    original_query: &Query,
+    loc: Loc,
+    scope: &HashMap<&str, Type>,
+    identifier_name: &str,
+    field_type: FieldType,
+) -> Option<()> {
+    if let Some(scope_type) = scope.get(identifier_name)
+        && scope_type != &Type::from(&field_type)
+    {
+        generate_error!(
+            ctx,
+            original_query,
+            loc,
+            E210,
+            identifier_name,
+            &field_type.to_string()
+        );
+        return None;
+    }
+
+    Some(())
+}
+
 pub(super) fn gen_identifier_or_param(
     original_query: &Query,
     name: &str,
@@ -150,7 +175,11 @@ pub(super) fn validate_field_name_existence_for_item_type(
     }
 }
 
-pub(super) fn get_field_type_from_item_fields(ctx: &mut Ctx, item_type: &Type, name: &str) -> Option<FieldType> {
+pub(super) fn get_field_type_from_item_fields(
+    ctx: &mut Ctx,
+    item_type: &Type,
+    name: &str,
+) -> Option<FieldType> {
     item_type.get_field_type_from_item_fields(ctx, name)
 }
 
