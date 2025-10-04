@@ -44,19 +44,20 @@ pub(super) fn check_identifier_is_fieldtype(
     identifier_name: &str,
     field_type: FieldType,
 ) -> Option<()> {
-    if let Some(scope_type) = scope.get(identifier_name) {
-        if scope_type != &Type::from(&field_type) {
-            generate_error!(
-                ctx,
-                original_query,
-                loc,
-                E210,
-                identifier_name,
-                &field_type.to_string()
-            );
-            return None;
-        }
+    if let Some(scope_type) = scope.get(identifier_name)
+        && scope_type != &Type::from(&field_type)
+    {
+        generate_error!(
+            ctx,
+            original_query,
+            loc,
+            E210,
+            identifier_name,
+            &field_type.to_string()
+        );
+        return None;
     }
+
     Some(())
 }
 
