@@ -1,5 +1,5 @@
 use crate::helixc::analyzer::error_codes::*;
-use crate::helixc::analyzer::utils::DEFAULT_VAR_NAME;
+use crate::helixc::analyzer::utils::{check_identifier_is_fieldtype, DEFAULT_VAR_NAME};
 use crate::helixc::generator::bool_ops::{Contains, IsIn};
 use crate::helixc::generator::source_steps::{SearchVector, VFromID, VFromType};
 use crate::helixc::generator::traversal_steps::{AggregateBy, GroupBy};
@@ -55,12 +55,13 @@ pub(crate) fn validate_traversal<'a>(
     parent_ty: Option<Type>,
     gen_traversal: &mut GeneratedTraversal,
     gen_query: &mut GeneratedQuery,
-) -> Type {
+) -> Option<Type> {
     let mut previous_step = None;
     let mut cur_ty = match &tr.start {
         StartNode::Node { node_type, ids } => {
             if !ctx.node_set.contains(node_type.as_str()) {
                 generate_error!(ctx, original_query, tr.loc.clone(), E101, node_type);
+                return None;
             }
             if let Some(ids) = ids {
                 assert!(ids.len() == 1, "multiple ids not supported yet");
@@ -87,7 +88,6 @@ pub(crate) fn validate_traversal<'a>(
                                             E201,
                                             node_type
                                         );
-                                        Type::Unknown
                                     })
                                     .unwrap_or_else(|_| {
                                         generate_error!(
@@ -212,6 +212,14 @@ pub(crate) fn validate_traversal<'a>(
                                                 true,
                                                 false,
                                             );
+                                            check_identifier_is_fieldtype(
+                                                ctx,
+                                                original_query,
+                                                loc.clone(),
+                                                scope,
+                                                i.as_str(),
+                                                FieldType::Uuid,
+                                            )?;
                                             value.inner().clone()
                                         },
                                         label: GenRef::Literal(node_type.clone()),
@@ -655,7 +663,9 @@ pub(crate) fn validate_traversal<'a>(
                 );
                 // Where/boolean ops don't change the element type,
                 // so `cur_ty` stays the same.
-                assert!(stmt.is_some());
+                if stmt.is_none() {
+                    return Some(cur_ty.clone());
+                }
                 let stmt = stmt.unwrap();
                 match stmt {
                     GeneratedStatement::Traversal(tr) => {
@@ -730,11 +740,11 @@ pub(crate) fn validate_traversal<'a>(
                                     &b_op.loc.span,
                                     field_type.kind_str()
                                 );
-                                return field_type;
+                                return Some(field_type);
                             }
                         }
                     }
-                    _ => return cur_ty.clone(),
+                    _ => return Some(cur_ty.clone()),
                 };
 
                 // get type of field name
@@ -1184,84 +1194,34 @@ pub(crate) fn validate_traversal<'a>(
                 // otherwise it is invalid
 
                 // Update returns the same type (nodes/edges) it started with.
-                match tr.steps.iter().nth_back(1) {
-                    Some(step) => match &step.step {
-                        StepType::Node(gs) => {
-                            let node_type = gs.get_item_type().unwrap();
-                            field_exists_on_item_type(
-                                ctx,
-                                original_query,
-                                Type::Node(Some(node_type.clone())),
-                                update
-                                    .fields
-                                    .iter()
-                                    .map(|field| (field.key.as_str(), &field.loc))
-                                    .collect(),
-                            );
-                        }
 
-                        StepType::Edge(gs) => {
-                            let edge_type = gs.get_item_type().unwrap();
-                            field_exists_on_item_type(
-                                ctx,
-                                original_query,
-                                Type::Edge(Some(edge_type)),
-                                update
-                                    .fields
-                                    .iter()
-                                    .map(|field| (field.key.as_str(), &field.loc))
-                                    .collect(),
-                            );
-                        }
-                        _ => {
-                            generate_error!(
-                                ctx,
-                                original_query,
-                                update.loc.clone(),
-                                E604,
-                                &update.loc.span
-                            );
-                            return cur_ty.clone();
-                        }
-                    },
-                    None => match &tr.start {
-                        StartNode::Node { node_type, .. } => {
-                            field_exists_on_item_type(
-                                ctx,
-                                original_query,
-                                Type::Node(Some(node_type.clone())),
-                                update
-                                    .fields
-                                    .iter()
-                                    .map(|field| (field.key.as_str(), &field.loc))
-                                    .collect(),
-                            );
-                        }
-                        StartNode::Edge { edge_type, .. } => {
-                            field_exists_on_item_type(
-                                ctx,
-                                original_query,
-                                Type::Edge(Some(edge_type.clone())),
-                                update
-                                    .fields
-                                    .iter()
-                                    .map(|field| (field.key.as_str(), &field.loc))
-                                    .collect(),
-                            );
-                        }
-                        _ => {
-                            // maybe use cur_ty instead of update.loc.span?
-                            generate_error!(
-                                ctx,
-                                original_query,
-                                update.loc.clone(),
-                                E604,
-                                &update.loc.span
-                            );
-                            return cur_ty.clone();
-                        }
-                    },
-                };
+                match &cur_ty {
+                    Type::Node(Some(ty))
+                    | Type::Nodes(Some(ty))
+                    | Type::Edge(Some(ty))
+                    | Type::Edges(Some(ty)) => {
+                        field_exists_on_item_type(
+                            ctx,
+                            original_query,
+                            Type::Node(Some(ty.clone())),
+                            update
+                                .fields
+                                .iter()
+                                .map(|field| (field.key.as_str(), &field.loc))
+                                .collect(),
+                        );
+                    }
+                    other => {
+                        generate_error!(
+                            ctx,
+                            original_query,
+                            update.loc.clone(),
+                            E604,
+                            &other.get_type_name()
+                        );
+                        return Some(cur_ty.clone());
+                    }
+                }
                 gen_traversal.traversal_type = TraversalType::Update(Some(
                     update
                         .fields
@@ -1334,6 +1294,7 @@ pub(crate) fn validate_traversal<'a>(
                         })
                         .collect(),
                 ));
+                cur_ty = cur_ty.into_single();
                 gen_traversal.should_collect = ShouldCollect::No;
                 excluded.clear();
             }
@@ -1372,7 +1333,7 @@ pub(crate) fn validate_traversal<'a>(
                                 [&start.loc.span, &ty.get_type_name()],
                                 [i.as_str()]
                             );
-                            return cur_ty.clone(); // Not sure if this should be here
+                            return Some(cur_ty.clone()); // Not sure if this should be here
                         };
                         let ty =
                             type_in_scope(ctx, original_query, end.loc.clone(), scope, j.as_str());
@@ -1387,7 +1348,7 @@ pub(crate) fn validate_traversal<'a>(
                                 [&end.loc.span, &ty.get_type_name()],
                                 [j.as_str()]
                             );
-                            return cur_ty.clone(); // Not sure if this should be here
+                            return Some(cur_ty.clone()); // Not sure if this should be here
                         }
                         (
                             gen_identifier_or_param(original_query, i.as_str(), false, true),
@@ -1419,7 +1380,7 @@ pub(crate) fn validate_traversal<'a>(
                                 [&start.loc.span, &ty.get_type_name()],
                                 [i.as_str()]
                             );
-                            return cur_ty.clone(); // Not sure if this should be here
+                            return Some(cur_ty.clone()); // Not sure if this should be here
                         }
 
                         (
@@ -1442,7 +1403,7 @@ pub(crate) fn validate_traversal<'a>(
                                 [&end.loc.span, &ty.get_type_name()],
                                 [j.as_str()]
                             );
-                            return cur_ty.clone();
+                            return Some(cur_ty.clone());
                         }
                         (
                             GeneratedValue::Primitive(GenRef::Std(i.to_string())),
@@ -1458,7 +1419,7 @@ pub(crate) fn validate_traversal<'a>(
                             [&start.loc.span, &other.to_string()],
                             [&other.to_string()]
                         );
-                        return cur_ty.clone();
+                        return Some(cur_ty.clone());
                     }
                     (other, ExpressionType::Identifier(_) | ExpressionType::IntegerLiteral(_)) => {
                         generate_error!(
@@ -1469,7 +1430,7 @@ pub(crate) fn validate_traversal<'a>(
                             [&start.loc.span, &other.to_string()],
                             [&other.to_string()]
                         );
-                        return cur_ty.clone();
+                        return Some(cur_ty.clone());
                     }
                     _ => unreachable!("shouldve been caught eariler"),
                 };
@@ -1491,7 +1452,9 @@ pub(crate) fn validate_traversal<'a>(
                     gen_query,
                 );
 
-                assert!(stmt.is_some());
+                if stmt.is_none() {
+                    return Some(cur_ty.clone());
+                }
                 match stmt.unwrap() {
                     GeneratedStatement::Traversal(traversal) => {
                         let property = match &traversal.steps.last() {
@@ -1556,5 +1519,5 @@ pub(crate) fn validate_traversal<'a>(
         }
         _ => {}
     }
-    cur_ty
+    Some(cur_ty)
 }

@@ -64,7 +64,10 @@ Start by installing the Helix CLI tool to deploy Helix locally.
 3. Write queries
 
    Open your newly created `.hx` files and start writing your schema and queries.
-   Head over to [our docs](https://docs.helix-db.com/introduction/cookbook/basic) for more information about writing queries
+   Head over to [our docs](https://docs.helix-db.com/documentation/hql/hql) for more information about writing queries.
+
+
+
    ```js
    N::User {
       name: String,

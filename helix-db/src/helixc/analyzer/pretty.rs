@@ -17,7 +17,6 @@ use crate::utils::styled_string::StyledString;
 /// * `filepath` – label in the left gutter (e.g. `"query.hx"`).
 pub fn render(diag: &Diagnostic, src: &str, filepath: &str) -> String {
     // 1-based → 0-based index
-
     let line_idx = diag.location.start.line.saturating_sub(1);
     let code_line = src.lines().nth(line_idx).unwrap_or("");
     let caret_pad = " ".repeat(diag.location.start.column.saturating_sub(2));
