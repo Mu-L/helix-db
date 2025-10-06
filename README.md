@@ -70,10 +70,6 @@ Start by installing the Helix CLI tool to deploy Helix locally.
       name: String,
       age: U32
    }
-   ```
-   ```js
-   QUERY addUser(name: String, age: I64) =>
-      user <- AddN<User>({name: name, age: age})
       RETURN user
 
    QUERY getUser(user_name: String) =>
