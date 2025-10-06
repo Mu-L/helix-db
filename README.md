@@ -27,7 +27,7 @@
 
 HelixDB is a database that makes it easy to build all the components needed for an AI application in a single platform.
 
-You no longer need a separate application DB, vector DB, graph DB, or application layers to manage the multiple storage locations. All you need to build any application that uses AI, agents or RAG, is a single HelixDB cluster.
+You no longer need a separate application DB, vector DB, graph DB, or application layers to manage the multiple storage locations to build the backend of any application that uses AI, agents or RAG. Just use Helix.
 
 HelixDB primarily operates with a graph + vector data model, but it can also support KV, documents, and relational data.
 
@@ -120,3 +120,7 @@ We made the decision to go with AGPL, to protect us from potentially being explo
 ## Commercial Support
 
 HelixDB is available as a managed service for selected users, if you're interested in using Helix's managed service or want enterprise support, [contact](mailto:founders@helix-db.com) us for more information and deployment options.
+
+---
+
+Just Use Helix
