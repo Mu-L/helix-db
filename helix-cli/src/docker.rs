@@ -96,7 +96,8 @@ impl<'a> DockerManager<'a> {
         let mut full_args = vec!["--project-name", &project_name];
         full_args.extend(args);
 
-        let output = Command::new("docker compose")
+        let output = Command::new("docker")
+            .arg("compose")
             .args(&full_args)
             .current_dir(&workspace)
             .output()
