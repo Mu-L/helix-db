@@ -88,7 +88,7 @@ impl<'a> DockerManager<'a> {
         Ok(output)
     }
 
-    /// Run a docker-compose command with proper project naming
+    /// Run a docker compose command with proper project naming
     fn run_compose_command(&self, instance_name: &str, args: Vec<&str>) -> Result<Output> {
         let workspace = self.project.instance_workspace(instance_name);
         let project_name = self.compose_project_name(instance_name);
@@ -96,11 +96,12 @@ impl<'a> DockerManager<'a> {
         let mut full_args = vec!["--project-name", &project_name];
         full_args.extend(args);
 
-        let output = Command::new("docker-compose")
+        let output = Command::new("docker")
+            .arg("compose")
             .args(&full_args)
             .current_dir(&workspace)
             .output()
-            .map_err(|e| eyre!("Failed to run docker-compose {}: {e}", full_args.join(" ")))?;
+            .map_err(|e| eyre!("Failed to run docker compose {}: {e}", full_args.join(" ")))?;
         Ok(output)
     }
 
@@ -274,7 +275,7 @@ networks:
         Ok(())
     }
 
-    /// Start instance using docker-compose
+    /// Start instance using docker compose
     pub fn start_instance(&self, instance_name: &str) -> Result<()> {
         print_status("DOCKER", &format!("Starting instance '{instance_name}'..."));
 
@@ -292,7 +293,7 @@ networks:
         Ok(())
     }
 
-    /// Stop instance using docker-compose
+    /// Stop instance using docker compose
     pub fn stop_instance(&self, instance_name: &str) -> Result<()> {
         print_status("DOCKER", &format!("Stopping instance '{instance_name}'..."));
 
