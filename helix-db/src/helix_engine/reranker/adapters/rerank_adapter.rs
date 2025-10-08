@@ -71,10 +71,10 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> RerankAdap
         query: Option<&str>,
     ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>> {
         // Collect all items from the iterator
-        let items: Vec<TraversalValue> = self.inner.filter_map(|item| item.ok()).collect();
+        let items = self.inner.filter_map(|item| item.ok());
 
         // Apply reranking
-        let reranked = match reranker.rerank(items.into_iter(), query) {
+        let reranked = match reranker.rerank(items, query) {
             Ok(results) => results
                 .into_iter()
                 .map(|item| Ok::<TraversalValue, GraphError>(item))
@@ -99,12 +99,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> RerankAdap
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        helix_engine::{
-            reranker::fusion::RRFReranker,
-            vector_core::vector::HVector,
-        },
-    };
+    use crate::helix_engine::{reranker::fusion::RRFReranker, vector_core::vector::HVector};
 
     #[test]
     fn test_rerank_adapter_trait() {

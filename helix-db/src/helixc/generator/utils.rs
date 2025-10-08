@@ -430,6 +430,10 @@ use helix_db::{
                     props::PropsAdapter, range::RangeAdapter, update::UpdateAdapter, order::OrderByAdapter,
                     aggregate::AggregateAdapter, group_by::GroupByAdapter, count::CountAdapter,
                 },
+                reranker::{
+                    RerankAdapter,
+                    fusion::{RRFReranker, MMRReranker, DistanceMethod},
+                },
                 vectors::{
                     brute_force_search::BruteForceSearchVAdapter, insert::InsertVAdapter,
                     search::SearchVAdapter,
