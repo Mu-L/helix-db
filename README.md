@@ -70,13 +70,12 @@ Start by installing the Helix CLI tool to deploy Helix locally.
 
    ```js
    N::User {
-      name: String,
+      INDEX name: String,
       age: U32
    }
-      RETURN user
 
    QUERY getUser(user_name: String) =>
-      user <- N<User>::WHERE(_::{name}::EQ(user_name))
+      user <- N<User>({name: user_name})
       RETURN user
    ```
 
