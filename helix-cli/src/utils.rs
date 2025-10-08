@@ -256,7 +256,6 @@ pub mod helixc_utils {
             }
             Ok(())
         }
-        println!("queries_path: {}", queries_path.display());
 
         collect_from_dir(&queries_path, &mut files)?;
 
@@ -267,7 +266,6 @@ pub mod helixc_utils {
             ));
         }
 
-        println!("got files: {}", files.len());
         Ok(files)
     }
 
@@ -310,7 +308,7 @@ pub mod helixc_utils {
 
         if !diagnostics.is_empty() {
             // Format diagnostics properly using the helix-db pretty printer
-            let formatted_diagnostics = format_diagnostics(&diagnostics);
+            let formatted_diagnostics = format_diagnostics(&diagnostics, &generated_source.src);
             return Err(eyre::eyre!(
                 "Compilation failed with {} error(s):\n\n{}",
                 diagnostics.len(),
@@ -324,6 +322,7 @@ pub mod helixc_utils {
     /// Format diagnostics using the helix-db diagnostic renderer
     fn format_diagnostics(
         diagnostics: &[helix_db::helixc::analyzer::diagnostic::Diagnostic],
+        src: &str,
     ) -> String {
         let mut output = String::new();
         for diagnostic in diagnostics {
@@ -332,7 +331,8 @@ pub mod helixc_utils {
                 .filepath
                 .clone()
                 .unwrap_or("queries.hx".to_string());
-            output.push_str(&diagnostic.render("", &filepath));
+
+            output.push_str(&diagnostic.render(src, &filepath));
             output.push('\n');
         }
         output

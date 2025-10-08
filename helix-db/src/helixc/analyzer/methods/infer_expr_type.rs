@@ -148,8 +148,11 @@ pub(crate) fn infer_expr_type<'a>(
 
             if matches!(expr, Exists(_)) {
                 (Type::Boolean, Some(stmt))
-            } else {
+            } else if let Some(final_ty) = final_ty {
                 (final_ty, Some(stmt))
+            } else {
+                generate_error!(ctx, original_query, tr.loc.clone(), E601, &tr.loc.span);
+                (Type::Unknown, None)
             }
         }
 
@@ -964,7 +967,9 @@ pub(crate) fn infer_expr_type<'a>(
                     );
                     // Where/boolean ops don't change the element type,
                     // so `cur_ty` stays the same.
-                    assert!(stmt.is_some());
+                    if stmt.is_none() {
+                        return (Type::Vector(sv.vector_type.clone()), None);
+                    }
                     let stmt = stmt.unwrap();
                     let mut gen_traversal = GeneratedTraversal {
                         traversal_type: TraversalType::NestedFrom(GenRef::Std("v".to_string())),
@@ -1134,7 +1139,9 @@ pub(crate) fn infer_expr_type<'a>(
         Exists(expr) => {
             let (_, stmt) =
                 infer_expr_type(ctx, &expr.expr, scope, original_query, parent_ty, gen_query);
-            assert!(stmt.is_some());
+            if stmt.is_none() {
+                return (Type::Boolean, None);
+            }
             assert!(matches!(stmt, Some(GeneratedStatement::Traversal(_))));
             let traversal = match stmt.unwrap() {
                 GeneratedStatement::Traversal(mut tr) => {
