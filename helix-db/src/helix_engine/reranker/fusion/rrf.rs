@@ -240,11 +240,15 @@ mod tests {
         .unwrap();
 
         // Items 1 and 2 appear in both lists, so should have higher scores
-        assert!(results.len() >= 2);
+        assert_eq!(results.len(), 4);
 
-        // Item 2 appears as rank 1 in both lists, should be highest
+        // Items 1 and 2 both appear at ranks 0 and 1 in the two lists
+        // So they should have equal RRF scores and be the top 2 results
         if let TraversalValue::Vector(v) = &results[0] {
-            assert_eq!(v.id, 2);
+            assert!(v.id == 1 || v.id == 2);
+        }
+        if let TraversalValue::Vector(v) = &results[1] {
+            assert!(v.id == 1 || v.id == 2);
         }
     }
 
@@ -263,5 +267,325 @@ mod tests {
         let empty: Vec<TraversalValue> = vec![];
         let result = reranker.rerank(empty.into_iter(), None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rrf_fuse_empty_lists() {
+        let result = RRFReranker::fuse_lists(Vec::<std::vec::IntoIter<TraversalValue>>::new(), 60.0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rrf_fuse_single_list() {
+        let list: Vec<TraversalValue> = (0..3)
+            .map(|i| {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let results = RRFReranker::fuse_lists(vec![list.into_iter()], 60.0).unwrap();
+
+        assert_eq!(results.len(), 3);
+        // Single list fusion should maintain order with RRF scores
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.id, 0);
+        }
+    }
+
+    #[test]
+    fn test_rrf_fuse_three_lists() {
+        // Create three lists with different overlaps
+        let list1: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![2.0]);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![3.0]);
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let list2: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![4.0]);
+                v.id = 4;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![2.0]);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let list3: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![5.0]);
+                v.id = 5;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = RRFReranker::fuse_lists(
+            vec![list1.into_iter(), list2.into_iter(), list3.into_iter()],
+            60.0,
+        )
+        .unwrap();
+
+        // Item 1 appears in all three lists at rank 0, should be highest
+        assert_eq!(results.len(), 5);
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.id, 1);
+        }
+    }
+
+    #[test]
+    fn test_rrf_fuse_disjoint_lists() {
+        // Two lists with no overlap
+        let list1: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![2.0]);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let list2: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![3.0]);
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![4.0]);
+                v.id = 4;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = RRFReranker::fuse_lists(
+            vec![list1.into_iter(), list2.into_iter()],
+            60.0,
+        )
+        .unwrap();
+
+        // All items should be present with equal RRF scores for same ranks
+        assert_eq!(results.len(), 4);
+
+        // Items at rank 0 in their respective lists should have same score
+        if let (TraversalValue::Vector(v1), TraversalValue::Vector(v2)) = (&results[0], &results[1]) {
+            let score1 = v1.distance.unwrap();
+            let score2 = v2.distance.unwrap();
+            assert!((score1 - score2).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_rrf_very_large_k() {
+        let reranker = RRFReranker::with_k(1000.0).unwrap();
+
+        let vectors: Vec<TraversalValue> = (0..5)
+            .map(|i| {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let results = reranker.rerank(vectors.into_iter(), None).unwrap();
+
+        // With very large k, scores should be very small and close together
+        assert_eq!(results.len(), 5);
+        if let TraversalValue::Vector(v) = &results[0] {
+            let score = v.distance.unwrap();
+            assert!(score < 0.001); // 1/1001 ≈ 0.001
+        }
+    }
+
+    #[test]
+    fn test_rrf_very_small_k() {
+        let reranker = RRFReranker::with_k(0.1).unwrap();
+
+        let vectors: Vec<TraversalValue> = (0..3)
+            .map(|i| {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let results = reranker.rerank(vectors.into_iter(), None).unwrap();
+
+        // With very small k, scores should be more differentiated
+        assert_eq!(results.len(), 3);
+        if let TraversalValue::Vector(v) = &results[0] {
+            let score = v.distance.unwrap();
+            assert!(score > 0.9); // 1/1.1 ≈ 0.909
+        }
+    }
+
+    #[test]
+    fn test_rrf_with_nodes() {
+        let reranker = RRFReranker::new();
+
+        let nodes: Vec<TraversalValue> = (0..3)
+            .map(|i| {
+                let node = Node {
+                    id: i as u128,
+                    label: "test".to_string(),
+                    version: 1,
+                    properties: None,
+                };
+                TraversalValue::Node(node)
+            })
+            .collect();
+
+        let results = reranker.rerank(nodes.into_iter(), None).unwrap();
+
+        assert_eq!(results.len(), 3);
+        // Verify nodes are properly reranked
+        if let TraversalValue::Node(n) = &results[0] {
+            assert_eq!(n.id, 0);
+        }
+    }
+
+    #[test]
+    fn test_rrf_mixed_types() {
+        let reranker = RRFReranker::new();
+
+        let items: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let node = Node {
+                    id: 2,
+                    label: "test".to_string(),
+                    version: 1,
+                    properties: None,
+                };
+                TraversalValue::Node(node)
+            },
+            {
+                let mut v = HVector::new(vec![2.0]);
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = reranker.rerank(items.into_iter(), None).unwrap();
+
+        // Should handle mixed types
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_rrf_fuse_with_different_list_lengths() {
+        let list1: Vec<TraversalValue> = (0..10)
+            .map(|i| {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let list2: Vec<TraversalValue> = (5..8)
+            .map(|i| {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let results = RRFReranker::fuse_lists(
+            vec![list1.into_iter(), list2.into_iter()],
+            60.0,
+        )
+        .unwrap();
+
+        // Items 5, 6, 7 appear in both lists, should rank higher
+        assert_eq!(results.len(), 10);
+        if let TraversalValue::Vector(v) = &results[0] {
+            // First result should be one of the overlapping items
+            assert!(v.id >= 5 && v.id <= 7);
+        }
+    }
+
+    #[test]
+    fn test_rrf_score_monotonicity() {
+        let reranker = RRFReranker::new();
+
+        let vectors: Vec<TraversalValue> = (0..10)
+            .map(|i| {
+                let mut v = HVector::new(vec![1.0]);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let results = reranker.rerank(vectors.into_iter(), None).unwrap();
+
+        // Scores should be monotonically decreasing
+        for i in 0..results.len() - 1 {
+            if let (TraversalValue::Vector(v1), TraversalValue::Vector(v2)) = (&results[i], &results[i + 1]) {
+                assert!(v1.distance.unwrap() >= v2.distance.unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn test_rrf_default_name() {
+        let reranker = RRFReranker::new();
+        assert_eq!(reranker.name(), "RRF");
+    }
+
+    #[test]
+    fn test_rrf_preserves_item_data() {
+        let reranker = RRFReranker::new();
+
+        let vectors: Vec<TraversalValue> = (0..3)
+            .map(|i| {
+                let mut v = HVector::new(vec![1.0 * i as f64, 2.0 * i as f64]);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let results = reranker.rerank(vectors.into_iter(), None).unwrap();
+
+        // Verify vector data is preserved
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.data, vec![0.0, 0.0]);
+        }
+        if let TraversalValue::Vector(v) = &results[1] {
+            assert_eq!(v.data, vec![1.0, 2.0]);
+        }
     }
 }

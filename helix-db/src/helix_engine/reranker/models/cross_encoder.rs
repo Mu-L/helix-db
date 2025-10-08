@@ -71,12 +71,12 @@ impl CrossEncoderConfig {
 /// - External APIs (Cohere, Voyage, etc.)
 #[derive(Debug)]
 pub struct CrossEncoderReranker {
-    config: CrossEncoderConfig,
+    pub config: CrossEncoderConfig,
 }
 
 impl CrossEncoderReranker {
-    pub fn new(config: CrossEncoderConfig) -> Self {
-        Self { config }
+    pub fn new(_config: CrossEncoderConfig) -> Self {
+        todo!();
     }
 
     /// Extract text from a TraversalValue for reranking.
@@ -119,16 +119,7 @@ impl CrossEncoderReranker {
     /// This is a placeholder for actual model inference.
     /// TODO: Implement actual model loading and inference.
     fn score_pair(&self, _query: &str, _document: &str) -> RerankerResult<f64> {
-        // Placeholder: In a real implementation, this would:
-        // 1. Tokenize the query-document pair
-        // 2. Run through the model
-        // 3. Return the relevance score
-
-        Err(RerankerError::ModelError(
-            "Cross-encoder model inference not yet implemented. \
-             This is a placeholder for future local model support (ONNX/Candle) \
-             or external API integration (Cohere, Voyage, etc.)".to_string(),
-        ))
+        todo!();
     }
 }
 

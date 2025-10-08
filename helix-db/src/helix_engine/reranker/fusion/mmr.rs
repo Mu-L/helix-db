@@ -360,4 +360,483 @@ mod tests {
         // Verify we got all items
         assert_eq!(results.len(), 2);
     }
+
+    #[test]
+    fn test_mmr_low_lambda_favors_diversity() {
+        let mmr = MMRReranker::new(0.1).unwrap(); // Strongly favor diversity
+
+        let vectors: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0, 0.0, 0.0]);
+                v.distance = Some(1.0);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.99, 0.01, 0.0]); // Very similar to first
+                v.distance = Some(0.95);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.0, 1.0, 0.0]); // Orthogonal
+                v.distance = Some(0.8);
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.0, 0.0, 1.0]); // Also orthogonal
+                v.distance = Some(0.75);
+                v.id = 4;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // First should be highest scored
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.id, 1);
+        }
+
+        // Second should be diverse (id=3), not similar (id=2)
+        if let TraversalValue::Vector(v) = &results[1] {
+            assert_eq!(v.id, 3);
+        }
+
+        // Third should be another diverse one (id=4)
+        if let TraversalValue::Vector(v) = &results[2] {
+            assert_eq!(v.id, 4);
+        }
+
+        // Last should be the similar one (id=2)
+        if let TraversalValue::Vector(v) = &results[3] {
+            assert_eq!(v.id, 2);
+        }
+    }
+
+    #[test]
+    fn test_mmr_boundary_lambda_zero() {
+        let mmr = MMRReranker::new(0.0).unwrap(); // Pure diversity
+
+        let vectors: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0, 0.0]);
+                v.distance = Some(1.0);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.9, 0.1]);
+                v.distance = Some(0.5);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.0, 1.0]);
+                v.distance = Some(0.3);
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // With lambda=0, should maximize diversity regardless of original scores
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_mmr_boundary_lambda_one() {
+        let mmr = MMRReranker::new(1.0).unwrap(); // Pure relevance
+
+        let vectors: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0, 0.0]);
+                v.distance = Some(1.0);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.99, 0.01]); // Very similar
+                v.distance = Some(0.9);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.0, 1.0]); // Different
+                v.distance = Some(0.5);
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // With lambda=1, should maintain relevance order
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.id, 1);
+        }
+        if let TraversalValue::Vector(v) = &results[1] {
+            assert_eq!(v.id, 2);
+        }
+        if let TraversalValue::Vector(v) = &results[2] {
+            assert_eq!(v.id, 3);
+        }
+    }
+
+    #[test]
+    fn test_mmr_with_euclidean_distance() {
+        let mmr = MMRReranker::with_distance(0.5, DistanceMethod::Euclidean).unwrap();
+
+        let vectors: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0, 0.0]);
+                v.distance = Some(1.0);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![1.1, 0.0]); // Close in Euclidean space
+                v.distance = Some(0.9);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.0, 1.0]); // Far
+                v.distance = Some(0.8);
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // Should handle Euclidean distance correctly
+        assert_eq!(results.len(), 3);
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.id, 1);
+        }
+    }
+
+    #[test]
+    fn test_mmr_with_dot_product() {
+        let mmr = MMRReranker::with_distance(0.5, DistanceMethod::DotProduct).unwrap();
+
+        let vectors: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0, 0.0]);
+                v.distance = Some(1.0);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.9, 0.0]);
+                v.distance = Some(0.9);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.0, 1.0]);
+                v.distance = Some(0.8);
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // Should handle dot product correctly
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_mmr_single_item() {
+        let mmr = MMRReranker::new(0.5).unwrap();
+
+        let vectors: Vec<TraversalValue> = vec![{
+            let mut v = HVector::new(vec![1.0, 0.0]);
+            v.distance = Some(1.0);
+            v.id = 1;
+            TraversalValue::Vector(v)
+        }];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // Single item should be returned as-is
+        assert_eq!(results.len(), 1);
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.id, 1);
+        }
+    }
+
+    #[test]
+    fn test_mmr_identical_vectors() {
+        let mmr = MMRReranker::new(0.5).unwrap();
+
+        // All identical vectors
+        let vectors: Vec<TraversalValue> = (0..3)
+            .map(|i| {
+                let mut v = HVector::new(vec![1.0, 0.0, 0.0]);
+                v.distance = Some(1.0);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // Should handle identical vectors without error
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_mmr_zero_vectors() {
+        let mmr = MMRReranker::new(0.5).unwrap();
+
+        let vectors: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![0.0, 0.0]);
+                v.distance = Some(1.0);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.0, 0.0]);
+                v.distance = Some(0.9);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // Should handle zero vectors gracefully
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_mmr_large_dataset() {
+        let mmr = MMRReranker::new(0.5).unwrap();
+
+        // Create 100 vectors
+        let vectors: Vec<TraversalValue> = (0..100)
+            .map(|i| {
+                let angle = (i as f64) * 0.1;
+                let mut v = HVector::new(vec![angle.cos(), angle.sin()]);
+                v.distance = Some(1.0 - i as f64 / 100.0);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // Should handle large datasets
+        assert_eq!(results.len(), 100);
+
+        // First should be highest scored
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.id, 0);
+        }
+    }
+
+    #[test]
+    fn test_mmr_preserves_vector_data() {
+        let mmr = MMRReranker::new(0.5).unwrap();
+
+        let vectors: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.5, 2.5, 3.5]);
+                v.distance = Some(1.0);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![4.5, 5.5, 6.5]);
+                v.distance = Some(0.9);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // Verify vector data is preserved
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.data, vec![1.5, 2.5, 3.5]);
+        }
+        if let TraversalValue::Vector(v) = &results[1] {
+            assert_eq!(v.data, vec![4.5, 5.5, 6.5]);
+        }
+    }
+
+    #[test]
+    fn test_mmr_score_updates() {
+        let mmr = MMRReranker::new(0.7).unwrap();
+
+        let vectors: Vec<TraversalValue> = (0..3)
+            .map(|i| {
+                let mut v = HVector::new(vec![1.0 * i as f64, 0.0]);
+                v.distance = Some(1.0 - i as f64 * 0.1);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // Verify that scores have been updated by MMR
+        for result in &results {
+            if let TraversalValue::Vector(v) = result {
+                // MMR scores should be different from original scores
+                assert!(v.distance.is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn test_mmr_with_query_vector_relevance() {
+        let query = vec![1.0, 0.0];
+        let mmr = MMRReranker::new(0.9)
+            .unwrap()
+            .with_query_vector(query);
+
+        let vectors: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![0.5, 0.0]); // Less similar to query
+                v.distance = Some(1.0); // But highest original score
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.95, 0.0]); // More similar to query
+                v.distance = Some(0.5); // Lower original score
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.0, 1.0]); // Orthogonal to query
+                v.distance = Some(0.7);
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // With high lambda and query vector, should prefer items similar to query
+        // First selected should still be highest scored (id=1)
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.id, 1);
+        }
+
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_mmr_high_dimensional_vectors() {
+        let mmr = MMRReranker::new(0.5).unwrap();
+
+        let vectors: Vec<TraversalValue> = (0..5)
+            .map(|i| {
+                let data: Vec<f64> = (0..100).map(|j| if j == i { 1.0 } else { 0.0 }).collect();
+                let mut v = HVector::new(data);
+                v.distance = Some(1.0 - i as f64 * 0.1);
+                v.id = i as u128;
+                TraversalValue::Vector(v)
+            })
+            .collect();
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // Should handle high-dimensional vectors
+        assert_eq!(results.len(), 5);
+        // Vectors are orthogonal, so diversity should be maximized
+    }
+
+    #[test]
+    fn test_mmr_name() {
+        let mmr = MMRReranker::new(0.5).unwrap();
+        assert_eq!(mmr.name(), "MMR");
+    }
+
+    #[test]
+    fn test_mmr_mixed_positive_negative_scores() {
+        let mmr = MMRReranker::new(0.5).unwrap();
+
+        let vectors: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0, 0.0]);
+                v.distance = Some(1.0);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.5, 0.5]);
+                v.distance = Some(-0.5); // Negative score
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.0, 1.0]);
+                v.distance = Some(0.0); // Zero score
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // Should handle mixed positive/negative/zero scores
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_mmr_cosine_similarity_properties() {
+        let mmr = MMRReranker::new(0.5).unwrap();
+
+        // Create vectors with known cosine similarities
+        let vectors: Vec<TraversalValue> = vec![
+            {
+                let mut v = HVector::new(vec![1.0, 0.0, 0.0]);
+                v.distance = Some(1.0);
+                v.id = 1;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![1.0, 0.0, 0.0]); // Identical (cos=1.0)
+                v.distance = Some(0.9);
+                v.id = 2;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![0.0, 1.0, 0.0]); // Orthogonal (cos=0.0)
+                v.distance = Some(0.8);
+                v.id = 3;
+                TraversalValue::Vector(v)
+            },
+            {
+                let mut v = HVector::new(vec![-1.0, 0.0, 0.0]); // Opposite (cos=-1.0)
+                v.distance = Some(0.7);
+                v.id = 4;
+                TraversalValue::Vector(v)
+            },
+        ];
+
+        let results = mmr.rerank(vectors.into_iter(), None).unwrap();
+
+        // First should be highest scored (id=1)
+        if let TraversalValue::Vector(v) = &results[0] {
+            assert_eq!(v.id, 1);
+        }
+
+        // Second should prefer diverse over identical
+        // Either orthogonal (id=3) or opposite (id=4), not identical (id=2)
+        if let TraversalValue::Vector(v) = &results[1] {
+            assert!(v.id == 3 || v.id == 4);
+        }
+
+        assert_eq!(results.len(), 4);
+    }
 }

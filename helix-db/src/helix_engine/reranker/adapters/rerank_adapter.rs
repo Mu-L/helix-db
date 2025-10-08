@@ -102,11 +102,9 @@ mod tests {
     use crate::{
         helix_engine::{
             reranker::fusion::RRFReranker,
-            storage_core::HelixGraphStorage,
             vector_core::vector::HVector,
         },
     };
-    use std::sync::Arc;
 
     #[test]
     fn test_rerank_adapter_trait() {
