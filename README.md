@@ -118,7 +118,6 @@ Start by installing the Helix CLI tool to deploy Helix locally.
 ## License
 
 HelixDB is licensed under the The AGPL (Affero General Public License).
-We made the decision to go with AGPL, to protect us from potentially being exploited by cloud providers who host our product with a markup while we gain nothing. This famously happened to Mongo, which led them to making their own license. We want anyone to be able to review, contribute, and use us for their open-source projects for free, but we want to avoid corporate exploitation. We hope you understand :)
 
 ## Commercial Support
 
