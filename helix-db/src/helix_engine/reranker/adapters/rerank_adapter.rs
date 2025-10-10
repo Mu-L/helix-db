@@ -77,7 +77,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> RerankAdap
         let reranked = match reranker.rerank(items, query) {
             Ok(results) => results
                 .into_iter()
-                .map(|item| Ok::<TraversalValue, GraphError>(item))
+                .map(Ok::<TraversalValue, GraphError>)
                 .collect::<Vec<_>>()
                 .into_iter(),
             Err(e) => {
