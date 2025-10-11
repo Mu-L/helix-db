@@ -510,7 +510,7 @@ pub struct RerankRRF {
 impl Display for RerankRRF {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.k {
-            Some(k) => write!(f, "rerank(&RRFReranker::with_k({k}).unwrap(), None)"),
+            Some(k) => write!(f, "rerank(&RRFReranker::with_k({k} as f64).unwrap(), None)"),
             None => write!(f, "rerank(&RRFReranker::new(), None)"),
         }
     }

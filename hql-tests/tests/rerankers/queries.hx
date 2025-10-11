@@ -11,7 +11,7 @@ N::Article {
 // Test 1: RerankRRF with default k
 QUERY testRRFDefault(query_vec: [F64]) =>
     results <- SearchV<Document>(query_vec, 100)
-        ::RerankRRF()
+        ::RerankRRF
         ::RANGE(0, 10)
     RETURN results
 
