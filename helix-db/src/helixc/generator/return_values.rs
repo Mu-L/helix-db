@@ -192,3 +192,170 @@ impl Display for ReturnValueExpr {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helixc::generator::utils::GenRef;
+
+    // ============================================================================
+    // ReturnValueExpr Tests
+    // ============================================================================
+
+    #[test]
+    fn test_return_value_expr_value() {
+        let expr = ReturnValueExpr::Value(GeneratedValue::Literal(GenRef::Literal(
+            "test".to_string(),
+        )));
+        assert_eq!(format!("{}", expr), "\"test\"");
+    }
+
+    #[test]
+    fn test_return_value_expr_identifier() {
+        let expr = ReturnValueExpr::Identifier(GeneratedValue::Identifier(GenRef::Std(
+            "var".to_string(),
+        )));
+        assert_eq!(format!("{}", expr), "var");
+    }
+
+    #[test]
+    fn test_return_value_expr_empty_array() {
+        let expr = ReturnValueExpr::Array(vec![]);
+        assert_eq!(format!("{}", expr), "vec![]");
+    }
+
+    #[test]
+    fn test_return_value_expr_array_with_values() {
+        let expr = ReturnValueExpr::Array(vec![
+            ReturnValueExpr::Value(GeneratedValue::Literal(GenRef::Literal("a".to_string()))),
+            ReturnValueExpr::Value(GeneratedValue::Literal(GenRef::Literal("b".to_string()))),
+        ]);
+        let output = format!("{}", expr);
+        assert!(output.contains("vec!["));
+        assert!(output.contains("ReturnValue::from(\"a\")"));
+        assert!(output.contains("ReturnValue::from(\"b\")"));
+    }
+
+    #[test]
+    fn test_return_value_expr_empty_object() {
+        let expr = ReturnValueExpr::Object(HashMap::new());
+        assert_eq!(format!("{}", expr), "HashMap::from([])");
+    }
+
+    #[test]
+    fn test_return_value_expr_object_with_values() {
+        let mut map = HashMap::new();
+        map.insert(
+            "key1".to_string(),
+            ReturnValueExpr::Value(GeneratedValue::Literal(GenRef::Literal(
+                "value1".to_string(),
+            ))),
+        );
+        let expr = ReturnValueExpr::Object(map);
+        let output = format!("{}", expr);
+        assert!(output.contains("HashMap::from(["));
+        assert!(output.contains("String::from(\"key1\")"));
+        assert!(output.contains("ReturnValue::from(\"value1\")"));
+    }
+
+    // ============================================================================
+    // ReturnValue Constructor Tests
+    // ============================================================================
+
+    #[test]
+    fn test_return_value_new_literal() {
+        let name = GeneratedValue::Literal(GenRef::Literal("result".to_string()));
+        let value = GeneratedValue::Primitive(GenRef::Std("42".to_string()));
+        let ret_val = ReturnValue::new_literal(name, value);
+        assert_eq!(ret_val.get_name(), "result");
+    }
+
+    #[test]
+    fn test_return_value_new_named_literal() {
+        let name = GeneratedValue::Literal(GenRef::Literal("count".to_string()));
+        let value = GeneratedValue::Primitive(GenRef::Std("100".to_string()));
+        let ret_val = ReturnValue::new_named_literal(name, value);
+        assert_eq!(ret_val.get_name(), "count");
+    }
+
+    #[test]
+    fn test_return_value_new_array() {
+        let values = vec![
+            ReturnValueExpr::Value(GeneratedValue::Primitive(GenRef::Std("1".to_string()))),
+            ReturnValueExpr::Value(GeneratedValue::Primitive(GenRef::Std("2".to_string()))),
+        ];
+        let ret_val = ReturnValue::new_array(values);
+        let output = format!("{}", ret_val);
+        assert!(output.contains("\"data\""));
+    }
+
+    #[test]
+    fn test_return_value_new_object() {
+        let mut map = HashMap::new();
+        map.insert(
+            "field".to_string(),
+            ReturnValueExpr::Value(GeneratedValue::Literal(GenRef::Literal(
+                "value".to_string(),
+            ))),
+        );
+        let ret_val = ReturnValue::new_object(map);
+        let output = format!("{}", ret_val);
+        assert!(output.contains("\"data\""));
+    }
+
+    #[test]
+    fn test_return_value_new_aggregate() {
+        let name = GeneratedValue::Literal(GenRef::Literal("total".to_string()));
+        let value = GeneratedValue::Aggregate(GenRef::Std("sum_value".to_string()));
+        let ret_val = ReturnValue::new_aggregate(name, value);
+        let output = format!("{}", ret_val);
+        assert!(output.contains("\"total\""));
+        assert!(output.contains("sum_value"));
+    }
+
+    #[test]
+    fn test_return_value_new_unnamed() {
+        let value = ReturnValueExpr::Value(GeneratedValue::Identifier(GenRef::Std(
+            "result".to_string(),
+        )));
+        let ret_val = ReturnValue::new_unnamed(value);
+        let output = format!("{}", ret_val);
+        assert!(output.contains("\"data\""));
+    }
+
+    #[test]
+    fn test_return_value_display_literal() {
+        let name = GeneratedValue::Literal(GenRef::Literal("output".to_string()));
+        let value = GeneratedValue::Primitive(GenRef::Std("true".to_string()));
+        let ret_val = ReturnValue::new_literal(name, value);
+        let output = format!("{}", ret_val);
+        assert!(output.contains("return_vals.insert"));
+        assert!(output.contains("\"output\""));
+    }
+
+    #[test]
+    fn test_return_value_display_named_expr() {
+        let name = GeneratedValue::Literal(GenRef::Literal("users".to_string()));
+        let value = ReturnValueExpr::Identifier(GeneratedValue::Identifier(GenRef::Std(
+            "user_list".to_string(),
+        )));
+        let ret_val = ReturnValue::new_named(name, value);
+        let output = format!("{}", ret_val);
+        assert!(output.contains("return_vals.insert"));
+        assert!(output.contains("\"users\""));
+        assert!(output.contains("from_traversal_value_array_with_mixin"));
+    }
+
+    #[test]
+    fn test_return_value_display_single_expr() {
+        let name = GeneratedValue::Literal(GenRef::Literal("user".to_string()));
+        let value = ReturnValueExpr::Identifier(GeneratedValue::Identifier(GenRef::Std(
+            "single_user".to_string(),
+        )));
+        let ret_val = ReturnValue::new_single_named(name, value);
+        let output = format!("{}", ret_val);
+        assert!(output.contains("return_vals.insert"));
+        assert!(output.contains("\"user\""));
+        assert!(output.contains("from_traversal_value_with_mixin"));
+    }
+}

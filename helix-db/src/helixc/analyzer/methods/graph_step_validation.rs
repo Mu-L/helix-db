@@ -674,3 +674,273 @@ pub(crate) fn apply_graph_step<'a>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::helixc::analyzer::error_codes::ErrorCode;
+    use crate::helixc::parser::{write_to_temp_file, HelixParser};
+
+    // ============================================================================
+    // Edge Direction Validation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_out_edge_correct_direction() {
+        let source = r#"
+            N::Person { name: String }
+            E::Knows { From: Person, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                friends <- person::Out<Knows>
+                RETURN friends
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_in_edge_correct_direction() {
+        let source = r#"
+            N::Person { name: String }
+            E::Follows { From: Person, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                followers <- person::In<Follows>
+                RETURN followers
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_out_edge_wrong_node_type() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+
+            QUERY test(id: ID) =>
+                company <- N<Company>(id)
+                employees <- company::Out<WorksAt>
+                RETURN employees
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E207));
+    }
+
+    // ============================================================================
+    // Edge-to-Node Conversion Tests
+    // ============================================================================
+
+    #[test]
+    fn test_out_edge_to_target_node() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                edges <- person::OutE<WorksAt>
+                companies <- edges::ToN
+                RETURN companies
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_out_edge_to_source_node() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                edges <- person::OutE<WorksAt>
+                source <- edges::FromN
+                RETURN source
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_in_edge_to_source_node() {
+        let source = r#"
+            N::Person { name: String }
+            E::Follows { From: Person, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                edges <- person::InE<Follows>
+                followers <- edges::FromN
+                RETURN followers
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    // ============================================================================
+    // Multi-Type Graph Tests
+    // ============================================================================
+
+    #[test]
+    fn test_multi_type_traversal() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+            E::LocatedIn { From: Company, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                companies <- person::Out<WorksAt>
+                locations <- companies::Out<LocatedIn>
+                RETURN locations
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_bidirectional_edges() {
+        let source = r#"
+            N::Person { name: String }
+            E::Knows { From: Person, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                outgoing <- person::Out<Knows>
+                incoming <- person::In<Knows>
+                RETURN outgoing, incoming
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    // ============================================================================
+    // Edge Type Validation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_undeclared_edge_in_out_traversal() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                related <- person::Out<UndeclaredEdge>
+                RETURN related
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E102));
+    }
+
+    #[test]
+    fn test_undeclared_edge_in_out_e_traversal() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                edges <- person::OutE<UndeclaredEdge>
+                RETURN edges
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E102));
+    }
+
+    // ============================================================================
+    // Complex Traversal Pattern Tests
+    // ============================================================================
+
+    #[test]
+    fn test_edge_chain_from_to() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+
+            QUERY test(personId: ID, companyId: ID) =>
+                person <- N<Person>(personId)
+                company <- N<Company>(companyId)
+                personEdges <- person::OutE<WorksAt>
+                companyEdges <- company::InE<WorksAt>
+                personCompanies <- personEdges::ToN
+                companyPeople <- companyEdges::FromN
+                RETURN personCompanies, companyPeople
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+}

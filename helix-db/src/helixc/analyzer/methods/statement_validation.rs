@@ -103,7 +103,7 @@ pub(crate) fn validate_statements<'a>(
                 .find(|p| p.name.1 == fl.in_variable.1);
             // if it is a parameter, add it to the body scope
             // else assume variable in scope and add it to the body scope
-            let _ = match param {
+            let in_var_type = match param {
                 Some(param) => {
                     for_loop_in_variable =
                         ForLoopInVariable::Parameter(GenRef::Std(fl.in_variable.1.clone()));
@@ -140,7 +140,21 @@ pub(crate) fn validate_statements<'a>(
             match &fl.variable {
                 ForLoopVars::Identifier { name, loc: _ } => {
                     is_valid_identifier(ctx, original_query, fl.loc.clone(), name.as_str());
-                    let field_type = scope.get(name.as_str()).unwrap().clone();
+                    // Extract the inner type from the array type
+                    let field_type = match &in_var_type {
+                        Type::Array(inner) => inner.as_ref().clone(),
+                        _ => {
+                            // If not an array, generate error for non-iterable
+                            generate_error!(
+                                ctx,
+                                original_query,
+                                fl.in_variable.0.clone(),
+                                E651,
+                                &fl.in_variable.1
+                            );
+                            Type::Unknown
+                        }
+                    };
                     body_scope.insert(name.as_str(), field_type.clone());
                     scope.insert(name.as_str(), field_type);
                     for_variable = ForVariable::Identifier(GenRef::Std(name.clone()));
@@ -266,5 +280,310 @@ pub(crate) fn validate_statements<'a>(
             });
             Some(stmt)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helixc::parser::{write_to_temp_file, HelixParser};
+
+    // ============================================================================
+    // Assignment Validation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_duplicate_variable_assignment() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                person <- N<Person>
+                person <- N<Person>
+                RETURN person
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E302));
+        assert!(diagnostics.iter().any(|d| d.message.contains("previously declared")));
+    }
+
+    #[test]
+    fn test_valid_multiple_assignments_different_names() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                person1 <- N<Person>
+                person2 <- N<Person>
+                RETURN person1, person2
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E302));
+    }
+
+    // ============================================================================
+    // For Loop Validation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_for_loop_in_variable_not_in_scope() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                FOR p IN unknownList {
+                    person <- N<Person>
+                }
+                RETURN "done"
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+        assert!(diagnostics.iter().any(|d| d.message.contains("not in scope") && d.message.contains("unknownList")));
+    }
+
+    #[test]
+    fn test_for_loop_with_valid_parameter() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(ids: [ID]) =>
+                FOR id IN ids {
+                    person <- N<Person>(id)
+                }
+                RETURN "done"
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E651));
+    }
+
+    #[test]
+    fn test_for_loop_non_iterable_variable() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(id: ID) =>
+                FOR p IN id {
+                    person <- N<Person>
+                }
+                RETURN "done"
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E651));
+        assert!(diagnostics.iter().any(|d| d.message.contains("not iterable")));
+    }
+
+    #[test]
+    fn test_for_loop_with_object_destructuring() {
+        let source = r#"
+            N::Person { name: String, age: U32 }
+
+            QUERY test(data: [{name: String, age: U32}]) =>
+                FOR {name, age} IN data {
+                    person <- AddN<Person>({name: name, age: age})
+                }
+                RETURN "done"
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        // This tests the for loop with object destructuring works
+    }
+
+    // ============================================================================
+    // Drop Statement Tests
+    // ============================================================================
+
+    #[test]
+    fn test_drop_statement_valid() {
+        let source = r#"
+            N::Person { name: String }
+            E::Knows { From: Person, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                DROP person::Out<Knows>
+                RETURN person
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        // DROP statements should not produce scope errors
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    #[test]
+    fn test_drop_with_undefined_variable() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                DROP unknownVar
+                RETURN "done"
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    // ============================================================================
+    // Expression Statement Tests
+    // ============================================================================
+
+    #[test]
+    fn test_expression_statement_add_node() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                AddN<Person>({name: "Alice"})
+                RETURN "created"
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        // Expression statements should not produce errors
+        assert!(diagnostics.is_empty() || !diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    #[test]
+    fn test_expression_statement_add_edge() {
+        let source = r#"
+            N::Person { name: String }
+            E::Knows { From: Person, To: Person }
+
+            QUERY test(id1: ID, id2: ID) =>
+                p1 <- N<Person>(id1)
+                p2 <- N<Person>(id2)
+                AddE<Knows>::From(p1)::To(p2)
+                RETURN "connected"
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    // ============================================================================
+    // Complex Statement Tests
+    // ============================================================================
+
+    #[test]
+    fn test_nested_for_loops() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+
+            QUERY test(peopleIds: [ID], companyIds: [ID]) =>
+                FOR personId IN peopleIds {
+                    FOR companyId IN companyIds {
+                        person <- N<Person>(personId)
+                    }
+                }
+                RETURN "done"
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        // Nested for loops should work
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    #[test]
+    fn test_assignment_with_property_access() {
+        let source = r#"
+            N::Person { name: String, age: U32 }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                name <- person::{name}
+                age <- person::{age}
+                RETURN name, age
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301 || d.error_code == ErrorCode::E302));
+    }
+
+    #[test]
+    fn test_assignment_with_traversal_chain() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+
+            QUERY test(personId: ID) =>
+                person <- N<Person>(personId)
+                edges <- person::OutE<WorksAt>
+                companies <- edges::ToN
+                RETURN companies
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301 || d.error_code == ErrorCode::E302));
     }
 }

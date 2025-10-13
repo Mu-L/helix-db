@@ -1285,3 +1285,204 @@ pub(crate) fn infer_expr_type<'a>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::helixc::analyzer::error_codes::ErrorCode;
+    use crate::helixc::parser::{write_to_temp_file, HelixParser};
+
+    // ============================================================================
+    // AddNode Expression Tests
+    // ============================================================================
+
+    #[test]
+    fn test_add_node_valid() {
+        let source = r#"
+            N::Person { name: String, age: U32 }
+
+            QUERY test(personName: String, personAge: U32) =>
+                person <- AddN<Person>({name: personName, age: personAge})
+                RETURN person
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_add_node_undeclared_type() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                company <- AddN<Company>({name: "Acme"})
+                RETURN company
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E101));
+    }
+
+    // ============================================================================
+    // AddEdge Expression Tests  
+    // ============================================================================
+
+    #[test]
+    fn test_add_edge_valid() {
+        let source = r#"
+            N::Person { name: String }
+            E::Knows { From: Person, To: Person }
+
+            QUERY test(id1: ID, id2: ID) =>
+                person1 <- N<Person>(id1)
+                person2 <- N<Person>(id2)
+                edge <- AddE<Knows>::From(person1)::To(person2)
+                RETURN edge
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_add_edge_undeclared_type() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(id1: ID, id2: ID) =>
+                edge <- AddE<UndeclaredEdge>::From(id1)::To(id2)
+                RETURN edge
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E102));
+    }
+
+    // ============================================================================
+    // Array Literal Tests
+    // ============================================================================
+
+    #[test]
+    fn test_array_literal_homogeneous() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                names <- ["Alice", "Bob", "Charlie"]
+                RETURN names
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_array_literal_mixed_types() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                mixed <- ["string", 123]
+                RETURN mixed
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E306));
+    }
+
+    // ============================================================================
+    // Identifier Scope Tests
+    // ============================================================================
+
+    #[test]
+    fn test_identifier_in_scope() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                person <- N<Person>
+                samePerson <- person
+                RETURN samePerson
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_identifier_out_of_scope() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                person <- unknownVariable
+                RETURN person
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    // ============================================================================
+    // Creation with Type Mismatch Tests
+    // ============================================================================
+
+    #[test]
+    fn test_add_node_type_mismatch() {
+        let source = r#"
+            N::Person { name: String, age: U32 }
+
+            QUERY test() =>
+                person <- AddN<Person>({name: "Alice", age: "not a number"})
+                RETURN person
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E205));
+    }
+}

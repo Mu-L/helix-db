@@ -559,3 +559,170 @@ fn parse_identifier_as_remapping_value<'a>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::helixc::parser::{write_to_temp_file, HelixParser};
+
+    // ============================================================================
+    // Property Access Tests
+    // ============================================================================
+
+    #[test]
+    fn test_single_property_access() {
+        let source = r#"
+            N::Person { name: String, age: U32 }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                name <- person::{name}
+                RETURN name
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_property_accesses() {
+        let source = r#"
+            N::Person { name: String, age: U32, email: String }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                name <- person::{name}
+                age <- person::{age}
+                email <- person::{email}
+                RETURN name, age, email
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    // ============================================================================
+    // Object Remapping Tests
+    // ============================================================================
+
+    #[test]
+    fn test_object_remapping_with_rename() {
+        let source = r#"
+            N::Person { name: String, age: U32 }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)::{fullName: name, yearsOld: age}
+                RETURN person
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_object_remapping_with_literal_values() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)::{name: name, type: "person", count: 1}
+                RETURN person
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    // Note: Spread operator and edge properties tests removed - not supported in current syntax
+
+    // ============================================================================
+    // Implicit Field Access Tests
+    // ============================================================================
+
+    #[test]
+    fn test_implicit_id_field_access() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                personId <- person::{id}
+                RETURN personId
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    // ============================================================================
+    // Complex Remapping Tests
+    // ============================================================================
+
+    #[test]
+    fn test_nested_object_remapping() {
+        let source = r#"
+            N::Person { name: String, age: U32 }
+            E::Knows { From: Person, To: Person }
+
+            QUERY test(id: ID) =>
+                people <- N<Person>(id)::Out<Knows>::{
+                    name: name,
+                    info: {
+                        age: age
+                    }
+                }
+                RETURN people
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_object_remapping_with_identifier_from_scope() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(id: ID, customValue: String) =>
+                person <- N<Person>(id)::{name: name, custom: customValue}
+                RETURN person
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+}

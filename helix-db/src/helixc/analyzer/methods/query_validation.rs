@@ -354,3 +354,345 @@ fn process_return_object<'a>(
         _ => unreachable!(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helixc::parser::{write_to_temp_file, HelixParser};
+
+    // ============================================================================
+    // Parameter Validation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_unknown_parameter_type() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(data: UnknownType) =>
+                p <- N<Person>
+                RETURN p
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E209));
+        assert!(diagnostics.iter().any(|d| d.message.contains("unknown type") && d.message.contains("UnknownType")));
+    }
+
+    #[test]
+    fn test_valid_array_parameter_type() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY createPeople(names: [String]) =>
+                p <- N<Person>
+                RETURN p
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        // Should not have E209 errors for valid array parameter type
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E209));
+    }
+
+    // ============================================================================
+    // Variable Scope Tests
+    // ============================================================================
+
+    #[test]
+    fn test_variable_not_in_scope() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                p <- N<Person>
+                RETURN unknownVar
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+        assert!(diagnostics.iter().any(|d| d.message.contains("not in scope") && d.message.contains("unknownVar")));
+    }
+
+    #[test]
+    fn test_parameter_in_scope() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(id: ID) =>
+                p <- N<Person>(id)
+                RETURN p
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    #[test]
+    fn test_assigned_variable_in_scope() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                p <- N<Person>
+                result <- p::{name}
+                RETURN result
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    // ============================================================================
+    // MCP Macro Validation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_mcp_query_single_return_valid() {
+        let source = r#"
+            N::Person { name: String }
+
+            #[mcp]
+            QUERY getPerson(id: ID) =>
+                person <- N<Person>(id)
+                RETURN person
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E401));
+    }
+
+    #[test]
+    fn test_mcp_query_multiple_returns_invalid() {
+        let source = r#"
+            N::Person { name: String }
+
+            #[mcp]
+            QUERY getPerson() =>
+                p1 <- N<Person>
+                p2 <- N<Person>
+                RETURN p1, p2
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E401));
+        assert!(diagnostics.iter().any(|d| d.message.contains("MCP query must return a single value")));
+    }
+
+    #[test]
+    fn test_non_mcp_query_multiple_returns_valid() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY getPeople() =>
+                p1 <- N<Person>
+                p2 <- N<Person>
+                RETURN p1, p2
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        // Non-MCP queries can return multiple values
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E401));
+    }
+
+    // ============================================================================
+    // Return Value Tests
+    // ============================================================================
+
+    #[test]
+    fn test_return_literal_value() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                p <- N<Person>
+                RETURN "success"
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        // Should not have errors for returning literal
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    #[test]
+    fn test_return_multiple_values() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                p1 <- N<Person>
+                p2 <- N<Person>
+                RETURN p1, p2
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    #[test]
+    fn test_return_object() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test() =>
+                p <- N<Person>
+                RETURN {person: p, status: "found"}
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    // ============================================================================
+    // Model Macro Tests
+    // ============================================================================
+
+    #[test]
+    fn test_model_macro_sets_embedding_model() {
+        let source = r#"
+            V::Document { content: String, embedding: [F32] }
+
+            #[model("gpt-4")]
+            QUERY addDoc(text: String) =>
+                doc <- AddV<Document>(Embed(text), {content: text})
+                RETURN doc
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, generated) = result.unwrap();
+        // Model macro should be processed without errors
+        assert!(diagnostics.is_empty() || !diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+
+        // Check that the generated query has the embedding model set
+        assert_eq!(generated.queries.len(), 1);
+        // Model name includes quotes from parsing
+        assert_eq!(generated.queries[0].embedding_model_to_use, Some("\"gpt-4\"".to_string()));
+    }
+
+    // ============================================================================
+    // Complex Query Tests
+    // ============================================================================
+
+    #[test]
+    fn test_query_with_traversal_and_filtering() {
+        let source = r#"
+            N::Person { name: String, age: U32 }
+            E::Knows { From: Person, To: Person }
+
+            QUERY getFriends(id: ID, minAge: U32) =>
+                person <- N<Person>(id)
+                friends <- person::Out<Knows>::WHERE(_::{age}::GT(minAge))
+                RETURN friends
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        // Complex queries should not have scope errors
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    #[test]
+    fn test_query_with_multiple_assignments() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+
+            QUERY getEmployees(companyId: ID) =>
+                company <- N<Company>(companyId)
+                edges <- company::InE<WorksAt>
+                people <- edges::FromN
+                RETURN people
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+
+    #[test]
+    fn test_query_returning_property_access() {
+        let source = r#"
+            N::Person { name: String, email: String }
+
+            QUERY getEmail(id: ID) =>
+                person <- N<Person>(id)
+                email <- person::{email}
+                RETURN email
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+    }
+}

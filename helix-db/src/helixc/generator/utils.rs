@@ -471,3 +471,267 @@ use chrono::{DateTime, Utc};
     "#
     .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // GenRef Tests
+    // ============================================================================
+
+    #[test]
+    fn test_genref_literal_display() {
+        let genref = GenRef::Literal("test".to_string());
+        assert_eq!(format!("{}", genref), "\"test\"");
+    }
+
+    #[test]
+    fn test_genref_std_display() {
+        let genref = GenRef::Std("variable".to_string());
+        assert_eq!(format!("{}", genref), "variable");
+    }
+
+    #[test]
+    fn test_genref_mut_display() {
+        let genref = GenRef::Mut("x".to_string());
+        assert_eq!(format!("{}", genref), "mut x");
+    }
+
+    #[test]
+    fn test_genref_ref_display() {
+        let genref = GenRef::Ref("data".to_string());
+        assert_eq!(format!("{}", genref), "&data");
+    }
+
+    #[test]
+    fn test_genref_ref_with_lifetime() {
+        let genref = GenRef::RefLT("a".to_string(), "value".to_string());
+        assert_eq!(format!("{}", genref), "&'a value");
+    }
+
+    #[test]
+    fn test_genref_deref_display() {
+        let genref = GenRef::DeRef("ptr".to_string());
+        assert_eq!(format!("{}", genref), "*ptr");
+    }
+
+    #[test]
+    fn test_genref_mut_ref_display() {
+        let genref = GenRef::MutRef("item".to_string());
+        assert_eq!(format!("{}", genref), "& mut item");
+    }
+
+    #[test]
+    fn test_genref_id_display() {
+        let genref = GenRef::<String>::Id("user_id".to_string());
+        assert_eq!(format!("{}", genref), "data.user_id");
+    }
+
+    // ============================================================================
+    // RustType Tests
+    // ============================================================================
+
+    #[test]
+    fn test_rust_type_string_display() {
+        assert_eq!(format!("{}", RustType::String), "String");
+    }
+
+    #[test]
+    fn test_rust_type_numeric_display() {
+        assert_eq!(format!("{}", RustType::I32), "i32");
+        assert_eq!(format!("{}", RustType::U64), "u64");
+        assert_eq!(format!("{}", RustType::F64), "f64");
+    }
+
+    #[test]
+    fn test_rust_type_bool_display() {
+        assert_eq!(format!("{}", RustType::Bool), "bool");
+    }
+
+    #[test]
+    fn test_rust_type_uuid_display() {
+        assert_eq!(format!("{}", RustType::Uuid), "ID");
+    }
+
+    #[test]
+    fn test_rust_type_to_typescript_primitives() {
+        assert_eq!(RustType::String.to_ts(), "string");
+        assert_eq!(RustType::Bool.to_ts(), "boolean");
+        assert_eq!(RustType::I32.to_ts(), "number");
+        assert_eq!(RustType::F64.to_ts(), "number");
+    }
+
+    #[test]
+    fn test_rust_type_to_typescript_special() {
+        assert_eq!(RustType::Uuid.to_ts(), "string");
+        assert_eq!(RustType::Date.to_ts(), "Date");
+    }
+
+    // ============================================================================
+    // GeneratedType Tests
+    // ============================================================================
+
+    #[test]
+    fn test_generated_type_rust_type() {
+        let gen_type = GeneratedType::RustType(RustType::String);
+        assert_eq!(format!("{}", gen_type), "String");
+    }
+
+    #[test]
+    fn test_generated_type_vec() {
+        let gen_type = GeneratedType::Vec(Box::new(GeneratedType::RustType(RustType::I32)));
+        assert_eq!(format!("{}", gen_type), "Vec<i32>");
+    }
+
+    #[test]
+    fn test_generated_type_nested_vec() {
+        let gen_type = GeneratedType::Vec(Box::new(GeneratedType::Vec(Box::new(
+            GeneratedType::RustType(RustType::String),
+        ))));
+        assert_eq!(format!("{}", gen_type), "Vec<Vec<String>>");
+    }
+
+    #[test]
+    fn test_generated_type_variable() {
+        let gen_type = GeneratedType::Variable(GenRef::Std("T".to_string()));
+        assert_eq!(format!("{}", gen_type), "T");
+    }
+
+    // ============================================================================
+    // GeneratedValue Tests
+    // ============================================================================
+
+    #[test]
+    fn test_generated_value_literal() {
+        let value = GeneratedValue::Literal(GenRef::Literal("hello".to_string()));
+        assert_eq!(format!("{}", value), "\"hello\"");
+    }
+
+    #[test]
+    fn test_generated_value_identifier() {
+        let value = GeneratedValue::Identifier(GenRef::Std("var_name".to_string()));
+        assert_eq!(format!("{}", value), "var_name");
+    }
+
+    #[test]
+    fn test_generated_value_parameter() {
+        let value = GeneratedValue::Parameter(GenRef::Std("param".to_string()));
+        assert_eq!(format!("{}", value), "param");
+    }
+
+    #[test]
+    fn test_generated_value_array() {
+        let value = GeneratedValue::Array(GenRef::Std("1, 2, 3".to_string()));
+        assert_eq!(format!("{}", value), "&[1, 2, 3]");
+    }
+
+    // ============================================================================
+    // Order Tests
+    // ============================================================================
+
+    #[test]
+    fn test_order_asc_display() {
+        assert_eq!(format!("{}", Order::Asc), "Asc");
+    }
+
+    #[test]
+    fn test_order_desc_display() {
+        assert_eq!(format!("{}", Order::Desc), "Desc");
+    }
+
+    // ============================================================================
+    // VecData Tests
+    // ============================================================================
+
+    #[test]
+    fn test_vecdata_standard_display() {
+        let vec_data = VecData::Standard(GeneratedValue::Identifier(GenRef::Std(
+            "embedding".to_string(),
+        )));
+        assert_eq!(format!("{}", vec_data), "embedding");
+    }
+
+    #[test]
+    fn test_vecdata_hoisted_display() {
+        let vec_data = VecData::Hoisted("vec_var".to_string());
+        assert_eq!(format!("{}", vec_data), "&vec_var");
+    }
+
+    // ============================================================================
+    // Helper Function Tests
+    // ============================================================================
+
+    #[test]
+    fn test_write_properties_some() {
+        let props = Some(vec![
+            ("name".to_string(), GeneratedValue::Literal(GenRef::Literal("Alice".to_string()))),
+            ("age".to_string(), GeneratedValue::Primitive(GenRef::Std("30".to_string()))),
+        ]);
+        let output = write_properties(&props);
+        assert!(output.contains("Some(props!"));
+        assert!(output.contains("\"name\" => \"Alice\""));
+        assert!(output.contains("\"age\" => 30"));
+    }
+
+    #[test]
+    fn test_write_properties_none() {
+        let output = write_properties(&None);
+        assert_eq!(output, "None");
+    }
+
+    #[test]
+    fn test_write_secondary_indices_some() {
+        let indices = Some(vec!["email".to_string(), "username".to_string()]);
+        let output = write_secondary_indices(&indices);
+        assert!(output.contains("Some(&["));
+        assert!(output.contains("\"email\""));
+        assert!(output.contains("\"username\""));
+    }
+
+    #[test]
+    fn test_write_secondary_indices_none() {
+        let output = write_secondary_indices(&None);
+        assert_eq!(output, "None");
+    }
+
+    // ============================================================================
+    // Separator Tests
+    // ============================================================================
+
+    #[test]
+    fn test_separator_comma() {
+        let sep = Separator::Comma("item".to_string());
+        assert_eq!(format!("{}", sep), ",\nitem");
+    }
+
+    #[test]
+    fn test_separator_semicolon() {
+        let sep = Separator::Semicolon("stmt".to_string());
+        assert_eq!(format!("{}", sep), "stmt;\n");
+    }
+
+    #[test]
+    fn test_separator_period() {
+        let sep = Separator::Period("method".to_string());
+        assert_eq!(format!("{}", sep), "\n.method");
+    }
+
+    #[test]
+    fn test_separator_newline() {
+        let sep = Separator::Newline("line".to_string());
+        assert_eq!(format!("{}", sep), "\nline");
+    }
+
+    #[test]
+    fn test_separator_empty() {
+        let sep = Separator::Empty("content".to_string());
+        assert_eq!(format!("{}", sep), "content");
+    }
+
+    #[test]
+    fn test_separator_inner() {
+        let sep = Separator::Comma("value".to_string());
+        assert_eq!(sep.inner(), "value");
+    }
+}
