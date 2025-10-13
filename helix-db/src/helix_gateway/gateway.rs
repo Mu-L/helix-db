@@ -243,24 +243,14 @@ impl CoreSetter {
 
     pub fn set_current_once(self: Arc<Self>) {
         use std::sync::OnceLock;
-
+    
         thread_local! {
-            static CORE_SET: OnceLock<()> = OnceLock::new();
+            static CORE_SET: OnceLock<()> = const { OnceLock::new() };
         }
-
+    
         CORE_SET.with(|flag| {
-            flag.get_or_init(|| {
-                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.set_current();
-                }));
-
-                if res.is_err() {
-                    warn!(
-                        "CoreSetter::set_current_once panicked on thread {:?}",
-                        std::thread::current().id()
-                    );
-                }
-            });
+            flag.get_or_init(move || self.set_current());
         });
     }
+    
 }
