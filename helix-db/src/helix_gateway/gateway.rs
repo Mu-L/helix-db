@@ -79,7 +79,7 @@ impl HelixGateway {
         let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(tokio_core_setter.num_threads())
-                .on_thread_start(move || Arc::clone(&tokio_core_setter).set_current())
+                .on_thread_unpark(move || Arc::clone(&tokio_core_setter).set_current_once())
                 .enable_all()
                 .build()?,
         );
@@ -240,4 +240,17 @@ impl CoreSetter {
             ),
         };
     }
+
+    pub fn set_current_once(self: Arc<Self>) {
+        use std::sync::OnceLock;
+    
+        thread_local! {
+            static CORE_SET: OnceLock<()> = const { OnceLock::new() };
+        }
+    
+        CORE_SET.with(|flag| {
+            flag.get_or_init(move || self.set_current());
+        });
+    }
+    
 }
