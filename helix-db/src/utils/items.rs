@@ -186,3 +186,378 @@ impl PartialOrd for Edge {
         Some(self.cmp(other))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper function to create a test node
+    fn create_test_node(id: u128, label: &str, props: Option<HashMap<String, Value>>) -> Node {
+        Node {
+            id,
+            label: label.to_string(),
+            version: 0,
+            properties: props,
+        }
+    }
+
+    // Helper function to create a test edge
+    fn create_test_edge(
+        id: u128,
+        label: &str,
+        from: u128,
+        to: u128,
+        props: Option<HashMap<String, Value>>,
+    ) -> Edge {
+        Edge {
+            id,
+            label: label.to_string(),
+            version: 0,
+            from_node: from,
+            to_node: to,
+            properties: props,
+        }
+    }
+
+    // Node encoding/decoding tests
+
+    #[test]
+    fn test_node_encode_decode_roundtrip_basic() {
+        let props = Some(HashMap::from([
+            ("name".to_string(), Value::String("Alice".to_string())),
+            ("age".to_string(), Value::I32(30)),
+        ]));
+
+        let node = create_test_node(12345, "person", props);
+        let encoded = node.encode_node().unwrap();
+        let decoded = Node::decode_node(&encoded, 12345).unwrap();
+
+        assert_eq!(node.id, decoded.id);
+        assert_eq!(node.label, decoded.label);
+        assert_eq!(node.properties, decoded.properties);
+    }
+
+    #[test]
+    fn test_node_encode_decode_empty_properties() {
+        let node = create_test_node(123, "empty", None);
+        let encoded = node.encode_node().unwrap();
+        let decoded = Node::decode_node(&encoded, 123).unwrap();
+
+        assert_eq!(node.id, decoded.id);
+        assert_eq!(node.label, decoded.label);
+        assert_eq!(decoded.properties, None);
+    }
+
+    #[test]
+    fn test_node_encode_decode_all_value_types() {
+        let props = Some(HashMap::from([
+            ("string".to_string(), Value::String("test".to_string())),
+            ("i32".to_string(), Value::I32(42)),
+            ("i64".to_string(), Value::I64(123456789)),
+            ("u64".to_string(), Value::U64(987654321)),
+            ("f64".to_string(), Value::F64(3.14159)),
+            ("bool".to_string(), Value::Boolean(true)),
+        ]));
+
+        let node = create_test_node(456, "test_node", props);
+        let encoded = node.encode_node().unwrap();
+        let decoded = Node::decode_node(&encoded, 456).unwrap();
+
+        assert_eq!(node.properties, decoded.properties);
+    }
+
+    #[test]
+    fn test_node_encode_decode_large_properties() {
+        // Test with many properties (100+)
+        let mut props_map = HashMap::new();
+        for i in 0..150 {
+            props_map.insert(
+                format!("prop_{}", i),
+                Value::String(format!("value_{}", i)),
+            );
+        }
+
+        let node = create_test_node(789, "large_node", Some(props_map.clone()));
+        let encoded = node.encode_node().unwrap();
+        let decoded = Node::decode_node(&encoded, 789).unwrap();
+
+        assert_eq!(node.properties.unwrap().len(), decoded.properties.unwrap().len());
+    }
+
+    #[test]
+    fn test_node_encode_decode_long_strings() {
+        // Test with very long property values
+        let long_string = "a".repeat(10_000);
+        let props = Some(HashMap::from([
+            ("long_value".to_string(), Value::String(long_string.clone())),
+        ]));
+
+        let node = create_test_node(999, "long_string_node", props);
+        let encoded = node.encode_node().unwrap();
+        let decoded = Node::decode_node(&encoded, 999).unwrap();
+
+        match &decoded.properties {
+            Some(p) => {
+                if let Some(Value::String(s)) = p.get("long_value") {
+                    assert_eq!(s.len(), 10_000);
+                    assert_eq!(s, &long_string);
+                } else {
+                    panic!("Expected String value");
+                }
+            }
+            None => panic!("Expected properties"),
+        }
+    }
+
+    #[test]
+    fn test_node_encode_decode_utf8_strings() {
+        let props = Some(HashMap::from([
+            ("chinese".to_string(), Value::String("你好世界".to_string())),
+            ("emoji".to_string(), Value::String("🚀🎉🔥".to_string())),
+            ("arabic".to_string(), Value::String("مرحبا".to_string())),
+        ]));
+
+        let node = create_test_node(111, "utf8_node", props);
+        let encoded = node.encode_node().unwrap();
+        let decoded = Node::decode_node(&encoded, 111).unwrap();
+
+        assert_eq!(node.properties, decoded.properties);
+    }
+
+    #[test]
+    fn test_node_decode_with_different_id() {
+        // Test that decode properly uses the provided ID
+        let node = create_test_node(100, "person", None);
+        let encoded = node.encode_node().unwrap();
+
+        // Decode with different ID
+        let decoded = Node::decode_node(&encoded, 200).unwrap();
+
+        assert_eq!(decoded.id, 200); // Should use the provided ID
+        assert_eq!(decoded.label, node.label);
+    }
+
+    #[test]
+    fn test_node_decode_malformed_data() {
+        // Test decoding with invalid/malformed data
+        let bad_data = vec![1, 2, 3, 4, 5];
+        let result = Node::decode_node(&bad_data, 123);
+
+        assert!(result.is_err(), "Should fail to decode malformed data");
+    }
+
+    // Edge encoding/decoding tests
+
+    #[test]
+    fn test_edge_encode_decode_roundtrip_basic() {
+        let props = Some(HashMap::from([
+            ("weight".to_string(), Value::F64(0.75)),
+            ("since".to_string(), Value::String("2020-01-01".to_string())),
+        ]));
+
+        let edge = create_test_edge(1, "knows", 100, 200, props);
+        let encoded = edge.encode_edge().unwrap();
+        let decoded = Edge::decode_edge(&encoded, 1).unwrap();
+
+        assert_eq!(edge.id, decoded.id);
+        assert_eq!(edge.label, decoded.label);
+        assert_eq!(edge.from_node, decoded.from_node);
+        assert_eq!(edge.to_node, decoded.to_node);
+        assert_eq!(edge.properties, decoded.properties);
+    }
+
+    #[test]
+    fn test_edge_encode_decode_empty_properties() {
+        let edge = create_test_edge(2, "follows", 300, 400, None);
+        let encoded = edge.encode_edge().unwrap();
+        let decoded = Edge::decode_edge(&encoded, 2).unwrap();
+
+        assert_eq!(edge.id, decoded.id);
+        assert_eq!(edge.from_node, decoded.from_node);
+        assert_eq!(edge.to_node, decoded.to_node);
+        assert_eq!(decoded.properties, None);
+    }
+
+    #[test]
+    fn test_edge_encode_decode_all_value_types() {
+        let props = Some(HashMap::from([
+            ("string".to_string(), Value::String("edge_prop".to_string())),
+            ("number".to_string(), Value::I32(99)),
+            ("float".to_string(), Value::F64(2.718)),
+            ("bool".to_string(), Value::Boolean(false)),
+        ]));
+
+        let edge = create_test_edge(3, "likes", 500, 600, props);
+        let encoded = edge.encode_edge().unwrap();
+        let decoded = Edge::decode_edge(&encoded, 3).unwrap();
+
+        assert_eq!(edge.properties, decoded.properties);
+    }
+
+    #[test]
+    fn test_edge_encode_decode_self_loop() {
+        // Test edge where from_node == to_node (self-loop)
+        let edge = create_test_edge(4, "self_reference", 700, 700, None);
+        let encoded = edge.encode_edge().unwrap();
+        let decoded = Edge::decode_edge(&encoded, 4).unwrap();
+
+        assert_eq!(decoded.from_node, decoded.to_node);
+        assert_eq!(decoded.from_node, 700);
+    }
+
+    #[test]
+    fn test_edge_decode_with_different_id() {
+        let edge = create_test_edge(5, "works_at", 800, 900, None);
+        let encoded = edge.encode_edge().unwrap();
+
+        // Decode with different ID
+        let decoded = Edge::decode_edge(&encoded, 50).unwrap();
+
+        assert_eq!(decoded.id, 50); // Should use the provided ID
+        assert_eq!(decoded.label, edge.label);
+        assert_eq!(decoded.from_node, edge.from_node);
+        assert_eq!(decoded.to_node, edge.to_node);
+    }
+
+    #[test]
+    fn test_edge_decode_malformed_data() {
+        let bad_data = vec![1, 2, 3, 4, 5];
+        let result = Edge::decode_edge(&bad_data, 123);
+
+        assert!(result.is_err(), "Should fail to decode malformed data");
+    }
+
+    #[test]
+    fn test_edge_encode_decode_large_node_ids() {
+        // Test with maximum u128 values
+        let max_id = u128::MAX;
+        let edge = create_test_edge(6, "test", max_id - 1, max_id, None);
+        let encoded = edge.encode_edge().unwrap();
+        let decoded = Edge::decode_edge(&encoded, 6).unwrap();
+
+        assert_eq!(decoded.from_node, max_id - 1);
+        assert_eq!(decoded.to_node, max_id);
+    }
+
+    // Performance tests
+
+    #[test]
+    fn test_node_encode_decode_performance() {
+        // Encode/decode 10k nodes
+        let node = create_test_node(
+            123,
+            "test_node",
+            Some(HashMap::from([
+                ("name".to_string(), Value::String("test".to_string())),
+                ("value".to_string(), Value::I32(42)),
+            ])),
+        );
+
+        let start = std::time::Instant::now();
+
+        for _ in 0..10_000 {
+            let encoded = node.encode_node().unwrap();
+            let _ = Node::decode_node(&encoded, 123).unwrap();
+        }
+
+        let elapsed = start.elapsed();
+
+        // Should complete in less than 1 second
+        assert!(
+            elapsed.as_secs() < 1,
+            "Node encode/decode too slow: {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_edge_encode_decode_performance() {
+        let edge = create_test_edge(
+            456,
+            "test_edge",
+            100,
+            200,
+            Some(HashMap::from([
+                ("weight".to_string(), Value::F64(0.5)),
+            ])),
+        );
+
+        let start = std::time::Instant::now();
+
+        for _ in 0..10_000 {
+            let encoded = edge.encode_edge().unwrap();
+            let _ = Edge::decode_edge(&encoded, 456).unwrap();
+        }
+
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed.as_secs() < 1,
+            "Edge encode/decode too slow: {:?}",
+            elapsed
+        );
+    }
+
+    // Test Display and Debug implementations
+
+    #[test]
+    fn test_node_display() {
+        let node = create_test_node(
+            123456789,
+            "test",
+            Some(HashMap::from([
+                ("key".to_string(), Value::String("value".to_string())),
+            ])),
+        );
+
+        let display = format!("{}", node);
+        assert!(display.contains("test"));
+        assert!(display.contains("id"));
+    }
+
+    #[test]
+    fn test_edge_display() {
+        let edge = create_test_edge(123, "knows", 100, 200, None);
+
+        let display = format!("{}", edge);
+        assert!(display.contains("knows"));
+        assert!(display.contains("from_node"));
+        assert!(display.contains("to_node"));
+    }
+
+    // Test ordering implementations
+
+    #[test]
+    fn test_node_ordering() {
+        let node1 = create_test_node(100, "a", None);
+        let node2 = create_test_node(200, "b", None);
+        let node3 = create_test_node(100, "a", None); // Same ID and label
+
+        assert!(node1 < node2);
+        assert!(node2 > node1);
+        // Nodes with same ID and same data are equal
+        assert_eq!(node1, node3);
+        // Nodes with same ID but different data are NOT equal (PartialEq compares all fields)
+        let node4 = create_test_node(100, "different", None);
+        assert_ne!(node1, node4);
+        // But ordering only considers ID
+        assert_eq!(node1.cmp(&node4), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_edge_ordering() {
+        let edge1 = create_test_edge(100, "a", 1, 2, None);
+        let edge2 = create_test_edge(200, "b", 3, 4, None);
+        let edge3 = create_test_edge(100, "a", 1, 2, None); // Same ID and data
+
+        assert!(edge1 < edge2);
+        assert!(edge2 > edge1);
+        // Edges with same ID and same data are equal
+        assert_eq!(edge1, edge3);
+        // Edges with same ID but different data are NOT equal (PartialEq compares all fields)
+        let edge4 = create_test_edge(100, "different", 5, 6, None);
+        assert_ne!(edge1, edge4);
+        // But ordering only considers ID
+        assert_eq!(edge1.cmp(&edge4), Ordering::Equal);
+    }
+}

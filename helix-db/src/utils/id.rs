@@ -124,7 +124,7 @@ mod tests {
 
     use super::*;
 
-    
+
     #[test]
     fn test_uuid_deserialization() {
         let uuid = json!({ "id": "1f07ae4b-e354-6660-b5f0-fd3ce8bc4b49" });
@@ -150,5 +150,163 @@ mod tests {
         let uuid = uuid::Uuid::from_u128(uuid_u128);
 
         assert_eq!(uuid.to_string(), "1f07ae4b-e354-6660-b5f0-fd3ce8bc4b49");
+    }
+
+    // New comprehensive tests for v6_uuid() and ID type
+
+    #[test]
+    fn test_v6_uuid_generation_uniqueness() {
+        let id1 = v6_uuid();
+        let id2 = v6_uuid();
+
+        // UUIDs must be unique
+        assert_ne!(id1, id2, "Generated UUIDs should be unique");
+
+        // Must be valid u128 (non-zero)
+        assert!(id1 > 0, "UUID should be non-zero");
+        assert!(id2 > 0, "UUID should be non-zero");
+    }
+
+    #[test]
+    fn test_v6_uuid_monotonicity() {
+        // UUID v6 should be time-ordered (monotonically increasing)
+        let mut ids = Vec::new();
+        for _ in 0..100 {
+            ids.push(v6_uuid());
+            // Small delay to ensure time difference
+            std::thread::sleep(std::time::Duration::from_micros(1));
+        }
+
+        // Check that most IDs are monotonically increasing
+        let mut increasing_count = 0;
+        for window in ids.windows(2) {
+            if window[0] < window[1] {
+                increasing_count += 1;
+            }
+        }
+
+        // At least 95% should be increasing (allowing for some edge cases)
+        assert!(
+            increasing_count >= 95,
+            "UUID v6 should be mostly monotonically increasing. Got {}/99 increasing",
+            increasing_count
+        );
+    }
+
+    #[test]
+    fn test_uuid_roundtrip_string() {
+        let original_id = v6_uuid();
+        let id = ID::from(original_id);
+        let string = id.stringify();
+        let parsed = ID::from(string.as_str());
+
+        assert_eq!(*id, *parsed, "UUID roundtrip through string should preserve value");
+        assert_eq!(id.inner(), parsed.inner());
+    }
+
+    #[test]
+    fn test_id_from_u128() {
+        let value: u128 = 12345678901234567890;
+        let id = ID::from(value);
+
+        assert_eq!(*id, value);
+        assert_eq!(id.inner(), value);
+    }
+
+    #[test]
+    fn test_id_from_string() {
+        let uuid_str = "1f07ae4b-e354-6660-b5f0-fd3ce8bc4b49";
+        let id = ID::from(uuid_str);
+
+        assert_eq!(id.stringify(), uuid_str);
+    }
+
+    #[test]
+    fn test_id_from_string_owned() {
+        let uuid_str = String::from("1f07ae4b-e354-6660-b5f0-fd3ce8bc4b49");
+        let id = ID::from(uuid_str.clone());
+
+        assert_eq!(id.stringify(), uuid_str);
+    }
+
+    #[test]
+    fn test_id_from_string_ref() {
+        let uuid_str = String::from("1f07ae4b-e354-6660-b5f0-fd3ce8bc4b49");
+        let id = ID::from(&uuid_str);
+
+        assert_eq!(id.stringify(), uuid_str);
+    }
+
+    #[test]
+    fn test_id_deref() {
+        let value: u128 = 12345678901234567890;
+        let id = ID::from(value);
+
+        // Test Deref trait
+        let deref_value: &u128 = &*id;
+        assert_eq!(*deref_value, value);
+    }
+
+    #[test]
+    fn test_id_into_u128() {
+        let value: u128 = 12345678901234567890;
+        let id = ID::from(value);
+        let back: u128 = id.into();
+
+        assert_eq!(back, value);
+    }
+
+    #[test]
+    fn test_id_comparison() {
+        let id1 = ID::from(100u128);
+        let id2 = ID::from(200u128);
+        let id3 = ID::from(100u128);
+
+        assert!(id1 < id2);
+        assert!(id2 > id1);
+        assert_eq!(id1, id3);
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_id_ordering() {
+        let mut ids = vec![
+            ID::from(300u128),
+            ID::from(100u128),
+            ID::from(200u128),
+        ];
+
+        ids.sort();
+
+        assert_eq!(*ids[0], 100u128);
+        assert_eq!(*ids[1], 200u128);
+        assert_eq!(*ids[2], 300u128);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_id_from_invalid_uuid_string() {
+        // This should panic because the UUID string is invalid
+        let _ = ID::from("not-a-valid-uuid");
+    }
+
+    #[test]
+    fn test_v6_uuid_performance() {
+        // Generate 10k UUIDs and ensure it completes in reasonable time
+        let start = std::time::Instant::now();
+        let mut ids = Vec::with_capacity(10_000);
+
+        for _ in 0..10_000 {
+            ids.push(v6_uuid());
+        }
+
+        let elapsed = start.elapsed();
+
+        // Should complete in less than 1 second
+        assert!(elapsed.as_secs() < 1, "UUID generation too slow: {:?}", elapsed);
+
+        // Verify all are unique
+        let unique_count = ids.iter().collect::<std::collections::HashSet<_>>().len();
+        assert_eq!(unique_count, 10_000, "All generated UUIDs should be unique");
     }
 }
