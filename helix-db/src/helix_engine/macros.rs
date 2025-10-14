@@ -82,7 +82,7 @@ pub mod macros {
     ///
     /// let node = Node::new("person", vec![
     ///    ("name".to_string(), Value::String("Will".to_string())),
-    ///   ("age".to_string(), Value::Integer(21)),
+    ///   ("age".to_string(), Value::I64(21)),
     /// ]);
     ///
     ///

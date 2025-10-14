@@ -57,8 +57,6 @@ impl WorkerPool {
     pub async fn process(&self, req: Request) -> Result<Response, HelixError> {
         let (ret_tx, ret_rx) = oneshot::channel();
 
-        // TODO: add graceful shutdown handling here
-
         // this read by Worker in start()
         self.tx
             .send_async((req, ret_tx))
