@@ -11,7 +11,6 @@ pub struct PropsIterator<'a, I> {
     prop: &'a str,
 }
 
-// TODO: get rid of clones in return values
 impl<'a, I> Iterator for PropsIterator<'a, I>
 where
     I: Iterator<Item = Result<TraversalValue, GraphError>>,

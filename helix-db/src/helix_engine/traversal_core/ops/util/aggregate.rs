@@ -24,7 +24,6 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> AggregateAdapte
         for item in self.inner {
             let item = item?;
 
-            // TODO HANDLE COUNT
             let mut kvs = Vec::new();
             let mut key_parts = Vec::new();
 
