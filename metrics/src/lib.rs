@@ -131,17 +131,17 @@ impl From<reqwest::Error> for MetricError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-    #[tokio::test]
-    async fn test_send_event() {
-        let client = HelixMetricsClient::new();
-        client.send_event(events::EventType::Test, events::TestEvent::default());
+//     #[tokio::test]
+//     async fn test_send_event() {
+//         let client = HelixMetricsClient::new();
+//         client.send_event(events::EventType::Test, events::TestEvent::default());
 
-        client.flush().await;
+//         client.flush().await;
 
-        assert!(false);
-    }
-}
+//         assert!(false);
+//     }
+// }

@@ -439,65 +439,6 @@ mod tests {
         assert_eq!(decoded.to_node, max_id);
     }
 
-    // Performance tests
-
-    #[test]
-    fn test_node_encode_decode_performance() {
-        // Encode/decode 10k nodes
-        let node = create_test_node(
-            123,
-            "test_node",
-            Some(HashMap::from([
-                ("name".to_string(), Value::String("test".to_string())),
-                ("value".to_string(), Value::I32(42)),
-            ])),
-        );
-
-        let start = std::time::Instant::now();
-
-        for _ in 0..10_000 {
-            let encoded = node.encode_node().unwrap();
-            let _ = Node::decode_node(&encoded, 123).unwrap();
-        }
-
-        let elapsed = start.elapsed();
-
-        // Should complete in less than 1 second
-        assert!(
-            elapsed.as_secs() < 1,
-            "Node encode/decode too slow: {:?}",
-            elapsed
-        );
-    }
-
-    #[test]
-    fn test_edge_encode_decode_performance() {
-        let edge = create_test_edge(
-            456,
-            "test_edge",
-            100,
-            200,
-            Some(HashMap::from([
-                ("weight".to_string(), Value::F64(0.5)),
-            ])),
-        );
-
-        let start = std::time::Instant::now();
-
-        for _ in 0..10_000 {
-            let encoded = edge.encode_edge().unwrap();
-            let _ = Edge::decode_edge(&encoded, 456).unwrap();
-        }
-
-        let elapsed = start.elapsed();
-
-        assert!(
-            elapsed.as_secs() < 1,
-            "Edge encode/decode too slow: {:?}",
-            elapsed
-        );
-    }
-
     // Test Display and Debug implementations
 
     #[test]

@@ -274,7 +274,7 @@ impl ReturnValue {
             }
             _ => unreachable!(),
         };
-        debug_println!("Return value: {:return_value?}");
+        debug_println!("Return value: {:#?}", return_value);
         return_value
     }
 

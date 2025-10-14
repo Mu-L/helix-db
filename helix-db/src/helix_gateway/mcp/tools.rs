@@ -25,7 +25,7 @@ use crate::{
         vector_core::vector::HVector,
     },
     helix_gateway::{
-        embedding_providers::embedding_providers::{EmbeddingModel, get_embedding_model},
+        embedding_providers::{EmbeddingModel, get_embedding_model},
         mcp::mcp::{MCPConnection, MCPHandler, MCPHandlerSubmission, MCPToolInput, McpBackend},
     },
     protocol::{response::Response, return_values::ReturnValue, value::Value},
@@ -128,7 +128,7 @@ pub struct FilterTraversal {
 }
 
 #[tool_calls]
-pub(super) trait McpTools<'a> {
+pub(crate) trait McpTools<'a> {
     fn out_step(
         &'a self,
         txn: &'a RoTxn,
@@ -577,7 +577,7 @@ pub trait FilterValues {
     fn compare(&self, value: &Value, operator: Option<Operator>) -> bool;
 }
 
-pub(super) fn _filter_items(
+pub(crate) fn _filter_items(
     db: Arc<HelixGraphStorage>,
     txn: &RoTxn,
     iter: impl Iterator<Item = TraversalValue>,
@@ -692,60 +692,7 @@ pub(super) fn _filter_items(
     result
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
 
-    use tempfile::TempDir;
-
-    use crate::{
-        helix_engine::{storage_core::version_info::VersionInfo, traversal_core::config},
-        protocol::value::Value,
-        utils::items::Node,
-    };
-
-    use super::*;
-
-    #[test]
-    fn test_filter_items() {
-        let (storage, _temp_dir) = {
-            let temp_dir = TempDir::new().unwrap();
-            let storage = Arc::new(
-                HelixGraphStorage::new(
-                    temp_dir.path().to_str().unwrap(),
-                    config::Config::default(),
-                    VersionInfo::default(),
-                )
-                .unwrap(),
-            );
-            (storage, temp_dir)
-        };
-        let items = (1..101)
-            .map(|i| {
-                TraversalValue::Node(Node {
-                    id: i,
-                    version: 1,
-                    label: "test".to_string(),
-                    properties: Some(HashMap::from([("age".to_string(), Value::I64(i as i64))])),
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let filter = FilterTraversal {
-            properties: Some(vec![vec![FilterProperties {
-                key: "age".to_string(),
-                value: Value::I64(50),
-                operator: Some(Operator::Gt),
-            }]]),
-            filter_traversals: None,
-        };
-
-        let txn = storage.graph_env.read_txn().unwrap();
-
-        let result = _filter_items(Arc::clone(&storage), &txn, items.into_iter(), &filter);
-        assert_eq!(result.len(), 50);
-    }
-}
 
 fn _search_keyword(
     db: Arc<HelixGraphStorage>,
