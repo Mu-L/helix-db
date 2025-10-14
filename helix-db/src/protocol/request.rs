@@ -22,7 +22,7 @@ pub struct Request {
     pub out_fmt: Format,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RequestType {
     Query,
     MCP,

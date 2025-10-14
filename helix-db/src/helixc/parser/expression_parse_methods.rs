@@ -492,7 +492,6 @@ impl HelixParser {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::helixc::parser::{write_to_temp_file, HelixParser};
 
     // ============================================================================
