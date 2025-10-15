@@ -101,7 +101,7 @@ pub fn config() -> Option<Config> {
             ef_search: Some(768),
         }),
         graph_config: Some(GraphConfig {
-            secondary_indices: Some(vec![]),
+            secondary_indices: Some(vec!["key".to_string()]),
         }),
         db_max_size_gb: Some(10),
         mcp: Some(true),
