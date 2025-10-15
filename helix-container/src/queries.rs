@@ -19,7 +19,9 @@ use helix_db::{
                 g::G,
                 in_::{in_::InAdapter, in_e::InEdgesAdapter, to_n::ToNAdapter, to_v::ToVAdapter},
                 out::{
-                    from_n::FromNAdapter, from_v::FromVAdapter, out::{OutAdapter, OutAdapterArena},
+                    from_n::FromNAdapter,
+                    from_v::FromVAdapter,
+                    out::{OutAdapter, OutAdapterArena},
                     out_e::OutEdgesAdapter,
                 },
                 source::{
@@ -27,7 +29,7 @@ use helix_db::{
                     add_n::AddNAdapter,
                     e_from_id::EFromIdAdapter,
                     e_from_type::EFromTypeAdapter,
-                    n_from_id::NFromIdAdapter,
+                    n_from_id::{NFromIdAdapter, NFromIdAdapterArena},
                     n_from_index::NFromIndexAdapter,
                     n_from_type::NFromTypeAdapter,
                     v_from_id::VFromIdAdapter,
@@ -40,9 +42,9 @@ use helix_db::{
                     drop::Drop,
                     exist::Exist,
                     filter_mut::FilterMut,
-                    filter_ref::FilterRefAdapter,
+                    filter_ref::{FilterRefAdapter, FilterRefAdapterArena},
                     group_by::GroupByAdapter,
-                    map::MapAdapter,
+                    map::{MapAdapter, MapAdapterArena},
                     order::OrderByAdapter,
                     paths::{PathAlgorithm, ShortestPathAdapter},
                     props::PropsAdapter,
@@ -55,12 +57,13 @@ use helix_db::{
                 },
             },
             traversal_value::{Traversable, TraversalValue},
+            traversal_value_arena::{Traversable as TraversableArena, TraversalValueArena},
         },
         types::GraphError,
         vector_core::vector::HVector,
     },
     helix_gateway::{
-        embedding_providers::{get_embedding_model, EmbeddingModel},
+        embedding_providers::{EmbeddingModel, get_embedding_model},
         mcp::mcp::{MCPHandler, MCPHandlerSubmission, MCPToolInput},
         router::router::{HandlerInput, IoContFn},
     },
@@ -71,7 +74,8 @@ use helix_db::{
         response::Response,
         return_values::ReturnValue,
         value::{
-            casting::{cast, CastType}, Value
+            Value,
+            casting::{CastType, cast},
         },
     },
     traversal_remapping,
@@ -79,7 +83,7 @@ use helix_db::{
         count::Count,
         filterable::Filterable,
         id::ID,
-        items::{Edge, Node},
+        items::{self, Edge, Node},
     },
     value_remapping,
 };
@@ -186,10 +190,6 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
         .read_txn()
         .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
 
-
-
-
-
     let items = G::new_with_arena(&arena, &db, &txn)
         .n_from_id(&data.user_id)
         .out_vec("Interacted")
@@ -202,18 +202,17 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
                 Ok(false)
             }
         })
+        .map_traversal(|item: TraversalValueArena, txn| {
+            field_remapping!(remapping_vals, item, false, "id" => "id")?;
+            identifier_remapping!(remapping_vals, item, false, "category" => "category")?;
+            Ok(item)
+        })
         .collect_to::<Vec<_>>();
     let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
     return_vals.insert(
         "items".to_string(),
-        ReturnValue::from_traversal_value_array_with_mixin(
-            G::new_from(Arc::clone(&db), &txn, items)
-                .map_traversal(|item: TraversalValue, txn| {
-                    field_remapping!(remapping_vals, item, false, "id" => "id")?;
-                    identifier_remapping!(remapping_vals, item, false, "category" => "category")?;
-                    Ok(item)
-                })
-                .collect_to::<Vec<_>>(),
+        ReturnValue::from_traversal_value_array_arena_with_mixin(
+            items,
             remapping_vals.borrow_mut(),
         ),
     );

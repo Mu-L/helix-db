@@ -5,13 +5,16 @@ use super::{
 use crate::{
     debug_println,
     helix_engine::{
-        traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
+        traversal_core::{
+            traversal_iter::RoTraversalIterator, traversal_value::TraversalValue,
+            traversal_value_arena::TraversalValueArena,
+        },
         types::GraphError,
     },
     utils::aggregate::Aggregate,
 };
 use crate::{
-    helix_engine::vector_core::vector::HVector,
+    helix_engine::vector_core::{arena::vector::HVector as ArenaHVector, vector::HVector},
     utils::{
         count::Count,
         filterable::{Filterable, FilterableType},
@@ -93,6 +96,22 @@ impl ReturnValue {
         }
     }
 
+    #[inline(always)]
+    fn process_vector_arena_with_mixin<'a>(
+        item: ArenaHVector<'a>,
+        mixin: &mut HashMap<u128, ResponseRemapping>,
+    ) -> ReturnValue {
+        if let Some(m) = mixin.remove(item.id()) {
+            if m.should_spread {
+                ReturnValue::from(item).mixin_remapping(m.remappings)
+            } else {
+                ReturnValue::from_traversal_value(item, &m).mixin_remapping(m.remappings)
+            }
+        } else {
+            ReturnValue::from(item)
+        }
+    }
+
     #[inline]
     pub fn from_traversal_value_array_with_mixin(
         traversal_value: Vec<TraversalValue>,
@@ -115,6 +134,44 @@ impl ReturnValue {
                     TraversalValue::Empty => ReturnValue::Empty,
                     TraversalValue::Value(value) => ReturnValue::from(value),
                     TraversalValue::Path((nodes, edges)) => {
+                        let mut properties = HashMap::with_capacity(2);
+                        properties.insert(
+                            "nodes".to_string(),
+                            ReturnValue::Array(nodes.into_iter().map(ReturnValue::from).collect()),
+                        );
+                        properties.insert(
+                            "edges".to_string(),
+                            ReturnValue::Array(edges.into_iter().map(ReturnValue::from).collect()),
+                        );
+                        ReturnValue::Object(properties)
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    #[inline]
+    pub fn from_traversal_value_array_arena_with_mixin<'a>(
+        traversal_value: Vec<TraversalValueArena<'a>>,
+        mut mixin: RefMut<HashMap<u128, ResponseRemapping>>,
+    ) -> Self {
+        ReturnValue::Array(
+            traversal_value
+                .into_iter()
+                .map(|val| match val {
+                    TraversalValueArena::Node(node) => {
+                        ReturnValue::process_nodes_with_mixin(node, &mut mixin)
+                    }
+                    TraversalValueArena::Edge(edge) => {
+                        ReturnValue::process_edges_with_mixin(edge, &mut mixin)
+                    }
+                    TraversalValueArena::Vector(vector) => {
+                        ReturnValue::process_vector_arena_with_mixin(vector, &mut mixin)
+                    }
+                    TraversalValueArena::Count(count) => ReturnValue::from(count),
+                    TraversalValueArena::Empty => ReturnValue::Empty,
+                    TraversalValueArena::Value(value) => ReturnValue::from(value),
+                    TraversalValueArena::Path((nodes, edges)) => {
                         let mut properties = HashMap::with_capacity(2);
                         properties.insert(
                             "nodes".to_string(),
@@ -397,6 +454,38 @@ impl From<Edge> for ReturnValue {
 impl From<HVector> for ReturnValue {
     #[inline]
     fn from(item: HVector) -> Self {
+        let length = match item.properties_ref() {
+            Some(properties) => properties.len(),
+            None => 0,
+        };
+
+        let data = item.vector_data();
+        let score = item.score();
+
+        let mut properties = HashMap::with_capacity(2 + length);
+        properties.insert("data".to_string(), ReturnValue::from(data));
+        properties.insert("score".to_string(), ReturnValue::from(score));
+        properties.insert("id".to_string(), ReturnValue::from(item.uuid()));
+        properties.insert(
+            "label".to_string(),
+            ReturnValue::from(item.label().to_string()),
+        );
+        if item.properties_ref().is_some() {
+            properties.extend(
+                item.properties()
+                    .unwrap()
+                    .into_iter()
+                    .map(|(k, v)| (k, ReturnValue::from(v))),
+            );
+        }
+
+        ReturnValue::Object(properties)
+    }
+}
+
+impl<'a> From<ArenaHVector<'a>> for ReturnValue {
+    #[inline]
+    fn from(item: ArenaHVector<'a>) -> Self {
         let length = match item.properties_ref() {
             Some(properties) => properties.len(),
             None => 0,

@@ -3,7 +3,7 @@ use itertools::Itertools;
 
 use crate::{
     helix_engine::{
-        storage_core::HelixGraphStorage, types::GraphError, vector_core::arena::vector::HVector,
+        storage_core::HelixGraphStorage, types::GraphError, vector_core::arena::vector::HVector as ArenaHVector,
     },
     protocol::value::Value,
     utils::{
@@ -21,7 +21,7 @@ pub enum TraversalValueArena<'a> {
     /// An edge in the graph
     Edge(Edge),
     /// A vector in the graph
-    Vector(HVector<'a>),
+    Vector(ArenaHVector<'a>),
     /// A count of the number of items
     Count(Count),
     /// A path between two nodes in the graph
