@@ -274,16 +274,15 @@ pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
 pub fn OneHopNoInput(input: HandlerInput) -> Result<Response, GraphError> {
     let db = Arc::clone(&input.graph.storage);
     let arena = Bump::new();
-    let data = input
-        .request
-        .in_fmt
-        .deserialize::<OneHopInput>(&input.request.body)?;
+    info!("got to arena");
     let mut remapping_vals = RemappingMap::new();
+    info!("got to remapping vals");
     let txn = db
         .graph_env
         .read_txn()
         .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
 
+    info!("got to new with arena");
     let items = G::new_with_arena(&arena, &db, &txn)
         .n_from_type("User")
         .range(0, 1)
