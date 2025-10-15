@@ -1,6 +1,6 @@
 use crate::{
     helix_engine::{
-        storage_core::{storage_core_arena::HelixGraphStorageArena, storage_methods::StorageMethods, HelixGraphStorage},
+        storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
         traversal_core::{
             ops::source::add_e::EdgeType,
             traversal_iter::RoTraversalIterator,
@@ -200,7 +200,7 @@ pub struct OutVecIteratorArena<'a, 'env, T> {
         heed3::types::LazyDecode<Bytes>,
         heed3::iteration_method::MoveOnCurrentKeyDuplicates,
     >,
-    pub storage: &'env HelixGraphStorageArena,
+    pub storage: &'env HelixGraphStorage,
     pub txn: &'a T,
     pub arena: &'a bumpalo::Bump,
 }
@@ -220,7 +220,7 @@ impl<'a, 'env> Iterator for OutVecIteratorArena<'a, 'env, RoTxn<'a>> {
                             return Some(Err(e));
                         }
                     };
-                    if let Ok(node) = self.storage.get_vector(self.txn, &item_id, self.arena) {
+                    if let Ok(node) = self.storage.get_vector_in(self.txn, &item_id, self.arena) {
                         return Some(Ok(TraversalValueArena::Vector(node)));
                     }
                 }

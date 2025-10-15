@@ -1,6 +1,5 @@
 pub mod storage_methods;
 pub mod version_info;
-pub mod storage_core_arena;
 
 use crate::{
     helix_engine::{
@@ -12,6 +11,11 @@ use crate::{
         traversal_core::config::Config,
         types::GraphError,
         vector_core::{
+            arena::{
+                hnsw::HNSW as ArenaHNSW,
+                vector::HVector as ArenaHVector,
+                vector_core::{HNSWConfig as ArenaHNSWConfig, VectorCore as VectorCoreArena},
+            },
             hnsw::HNSW,
             vector::HVector,
             vector_core::{HNSWConfig, VectorCore},
@@ -54,6 +58,7 @@ pub struct HelixGraphStorage {
     pub in_edges_db: Database<Bytes, Bytes>,
     pub secondary_indices: HashMap<String, Database<Bytes, U128<BE>>>,
     pub vectors: VectorCore,
+    pub vectors_arena: VectorCoreArena,
     pub bm25: Option<HBM25Config>,
     pub version_info: VersionInfo,
 
@@ -76,7 +81,6 @@ impl HelixGraphStorage {
 
         let graph_env = unsafe {
             EnvOpenOptions::new()
-                
                 .map_size(db_size * 1024 * 1024 * 1024)
                 .max_dbs(200)
                 .max_readers(200)
@@ -155,6 +159,17 @@ impl HelixGraphStorage {
             ),
         )?;
 
+        let vector_config = config.get_vector_config();
+        let vectors_arena = VectorCoreArena::new(
+            &graph_env,
+            &mut wtxn,
+            ArenaHNSWConfig::new(
+                vector_config.m,
+                vector_config.ef_construction,
+                vector_config.ef_search,
+            ),
+        )?;
+
         let bm25 = config
             .get_bm25()
             .then(|| HBM25Config::new(&graph_env, &mut wtxn))
@@ -175,6 +190,7 @@ impl HelixGraphStorage {
             in_edges_db,
             secondary_indices,
             vectors,
+            vectors_arena,
             bm25,
             storage_config,
             version_info,
@@ -260,6 +276,15 @@ impl HelixGraphStorage {
     /// Gets a vector from level 0 of HNSW index (because that's where all are stored)
     pub fn get_vector(&self, txn: &RoTxn, id: &u128) -> Result<HVector, GraphError> {
         Ok(self.vectors.get_vector(txn, *id, 0, true)?)
+    }
+
+    pub fn get_vector_in<'arena>(
+        &self,
+        txn: &RoTxn,
+        id: &u128,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<ArenaHVector<'arena>, GraphError> {
+        Ok(self.vectors_arena.get_vector(txn, *id, 0, true, arena)?)
     }
 }
 

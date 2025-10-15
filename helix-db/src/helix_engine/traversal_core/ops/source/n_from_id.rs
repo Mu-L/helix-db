@@ -1,8 +1,9 @@
 use crate::{
     helix_engine::{
-        storage_core::{storage_core_arena::HelixGraphStorageArena, storage_methods::StorageMethods, HelixGraphStorage},
+        storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
         traversal_core::{
-            traversal_iter::RoTraversalIterator, traversal_value::TraversalValue,
+            traversal_iter::RoTraversalIterator,
+            traversal_value::TraversalValue,
             traversal_value_arena::{RoArenaTraversalIterator, TraversalValueArena},
         },
         types::GraphError,
@@ -66,8 +67,9 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> NFromIdAdapter<
     }
 }
 
-
-pub trait NFromIdAdapterArena<'a>: Iterator<Item = Result<TraversalValueArena<'a>, GraphError>> {
+pub trait NFromIdAdapterArena<'a>:
+    Iterator<Item = Result<TraversalValueArena<'a>, GraphError>>
+{
     type OutputIter: Iterator<Item = Result<TraversalValueArena<'a>, GraphError>>;
 
     /// Returns an iterator containing the node with the given id.
@@ -78,7 +80,7 @@ pub trait NFromIdAdapterArena<'a>: Iterator<Item = Result<TraversalValueArena<'a
 
 pub struct NFromIdArena<'a, 'env, T> {
     iter: Once<Result<TraversalValueArena<'a>, GraphError>>,
-    storage: &'env HelixGraphStorageArena,
+    storage: &'env HelixGraphStorage,
     txn: &'a T,
     id: u128,
 }
@@ -98,8 +100,8 @@ impl<'a, 'env> Iterator for NFromIdArena<'a, 'env, RoTxn<'a>> {
     }
 }
 
-impl<'a, 'env, I: Iterator<Item = Result<TraversalValueArena<'a>, GraphError>>> NFromIdAdapterArena<'a>
-    for RoArenaTraversalIterator<'a, 'env, I>
+impl<'a, 'env, I: Iterator<Item = Result<TraversalValueArena<'a>, GraphError>>>
+    NFromIdAdapterArena<'a> for RoArenaTraversalIterator<'a, 'env, I>
 {
     type OutputIter = RoArenaTraversalIterator<'a, 'env, NFromIdArena<'a, 'env, RoTxn<'a>>>;
 

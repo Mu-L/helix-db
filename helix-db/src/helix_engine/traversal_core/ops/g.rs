@@ -1,7 +1,9 @@
 use crate::helix_engine::{
-    storage_core::{storage_core_arena::HelixGraphStorageArena, HelixGraphStorage},
+    storage_core::HelixGraphStorage,
     traversal_core::{
-        traversal_iter::{RoTraversalIterator, RwTraversalIterator}, traversal_value::{IntoTraversalValues, TraversalValue}, traversal_value_arena::{RoArenaTraversalIterator, TraversalValueArena}
+        traversal_iter::{RoTraversalIterator, RwTraversalIterator},
+        traversal_value::{IntoTraversalValues, TraversalValue},
+        traversal_value_arena::{RoArenaTraversalIterator, TraversalValueArena},
     },
     types::GraphError,
 };
@@ -43,7 +45,7 @@ impl G {
     #[inline]
     pub fn new_with_arena<'a, 'env>(
         arena: &'a bumpalo::Bump,
-        storage: &'env HelixGraphStorageArena,
+        storage: &'env HelixGraphStorage,
         txn: &'a RoTxn<'a>,
     ) -> RoArenaTraversalIterator<
         'a,
@@ -107,11 +109,7 @@ impl G {
     pub fn new_mut<'scope, 'env, 'a>(
         storage: Arc<HelixGraphStorage>,
         txn: &'scope mut RwTxn<'env>,
-    ) -> RwTraversalIterator<
-        'scope,
-        'env,
-        impl Iterator<Item = Result<TraversalValue, GraphError>>,
-    >
+    ) -> RwTraversalIterator<'scope, 'env, impl Iterator<Item = Result<TraversalValue, GraphError>>>
     where
         Self: Sized,
     {
@@ -141,11 +139,8 @@ impl G {
         storage: Arc<HelixGraphStorage>,
         txn: &'scope mut RwTxn<'env>,
         vals: T,
-    ) -> RwTraversalIterator<
-        'scope,
-        'env,
-        impl Iterator<Item = Result<TraversalValue, GraphError>>,
-    > {
+    ) -> RwTraversalIterator<'scope, 'env, impl Iterator<Item = Result<TraversalValue, GraphError>>>
+    {
         RwTraversalIterator {
             inner: vals.into().into_iter().map(Ok),
             storage,

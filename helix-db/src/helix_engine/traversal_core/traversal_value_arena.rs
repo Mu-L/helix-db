@@ -3,7 +3,7 @@ use itertools::Itertools;
 
 use crate::{
     helix_engine::{
-        storage_core::{storage_core_arena::HelixGraphStorageArena, HelixGraphStorage}, types::GraphError, vector_core::arena::vector::HVector,
+        storage_core::HelixGraphStorage, types::GraphError, vector_core::arena::vector::HVector,
     },
     protocol::value::Value,
     utils::{
@@ -48,8 +48,12 @@ impl Eq for TraversalValueArena<'_> {}
 impl PartialEq for TraversalValueArena<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (TraversalValueArena::Node(node1), TraversalValueArena::Node(node2)) => node1.id == node2.id,
-            (TraversalValueArena::Edge(edge1), TraversalValueArena::Edge(edge2)) => edge1.id == edge2.id,
+            (TraversalValueArena::Node(node1), TraversalValueArena::Node(node2)) => {
+                node1.id == node2.id
+            }
+            (TraversalValueArena::Edge(edge1), TraversalValueArena::Edge(edge2)) => {
+                edge1.id == edge2.id
+            }
             (TraversalValueArena::Vector(vector1), TraversalValueArena::Vector(vector2)) => {
                 vector1.id() == vector2.id()
             }
@@ -202,7 +206,7 @@ impl<'a> IntoTraversalValues<'a> for TraversalValueArena<'a> {
 
 pub struct RoArenaTraversalIterator<'a, 'env, I> {
     pub inner: I,
-    pub storage: &'env HelixGraphStorageArena,
+    pub storage: &'env HelixGraphStorage,
     pub arena: &'a bumpalo::Bump,
     pub txn: &'a RoTxn<'a>,
 }
