@@ -279,6 +279,9 @@ pub fn ConvertAllVectors(input: HandlerInput) -> Result<Response, GraphError> {
     let vectors_iter = db.vectors.vectors_db.iter(&txn)?;
     for vector in vectors_iter {
         let (key, value) = vector?;
+        if key == b"entry_point" {
+            continue;
+        }
 
         let id = u128::from_be_bytes(key[1..17].try_into().unwrap());
         let level = usize::from_be_bytes(key[17..25].try_into().unwrap());
