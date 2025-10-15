@@ -88,6 +88,7 @@ use helix_db::{
 };
 use helix_macros::{handler, mcp_handler, migration, tool_call};
 use sonic_rs::{Deserialize, Serialize};
+use tracing::info;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -289,12 +290,19 @@ pub fn OneHopNoInput(input: HandlerInput) -> Result<Response, GraphError> {
         .collect_to::<Vec<_>>();
     let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
     println!("completed traversal");
+
+    println!("got to return value");
+    println!("items: {:?}", items);
+    info!("items: {:?}", items);
+    let items = ReturnValue::from_traversal_value_array_arena_with_mixin(
+        items,
+        remapping_vals.borrow_mut(),
+    );
+    println!("return values: {:?}", items);
+    info!("return values: {:?}", items);
     return_vals.insert(
         "items".to_string(),
-        ReturnValue::from_traversal_value_array_arena_with_mixin(
-            items,
-            remapping_vals.borrow_mut(),
-        ),
+        items,
     );
 
     println!("completed return values");
