@@ -222,6 +222,48 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
     Ok(input.request.out_fmt.create_response(&return_vals))
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OneHopInput {
+    pub user_id: ID,
+    pub category: u16,
+}
+#[handler]
+pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let arena = Bump::new();
+    let data = input
+        .request
+        .in_fmt
+        .deserialize::<OneHopInput>(&input.request.body)?;
+    let mut remapping_vals = RemappingMap::new();
+    let txn = db
+        .graph_env
+        .read_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
+
+    let items = G::new_with_arena(&arena, &db, &txn)
+        .n_from_id(&data.user_id)
+        .out_vec("Interacted")
+        .map_traversal(|item: TraversalValueArena, txn| {
+            field_remapping!(remapping_vals, item, false, "id" => "id")?;
+            identifier_remapping!(remapping_vals, item, false, "category" => "category")?;
+            Ok(item)
+        })
+        .collect_to::<Vec<_>>();
+    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
+    return_vals.insert(
+        "items".to_string(),
+        ReturnValue::from_traversal_value_array_arena_with_mixin(
+            items,
+            remapping_vals.borrow_mut(),
+        ),
+    );
+
+    txn.commit()
+        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
+    Ok(input.request.out_fmt.create_response(&return_vals))
+}
+
 #[handler]
 pub fn ConvertAllVectors(input: HandlerInput) -> Result<Response, GraphError> {
     let db = Arc::clone(&input.graph.storage);
