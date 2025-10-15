@@ -225,7 +225,6 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OneHopInput {
     pub user_id: ID,
-    pub category: u16,
 }
 #[handler]
 pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
