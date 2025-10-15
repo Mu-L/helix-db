@@ -1,10 +1,7 @@
 use crate::helix_engine::{
-    traversal_core::{
-        traversal_value::{IntoTraversalValues, TraversalValue},
-        traversal_iter::{RoTraversalIterator, RwTraversalIterator},
-    },
-    storage_core::HelixGraphStorage,
-    types::GraphError,
+    storage_core::HelixGraphStorage, traversal_core::{
+        traversal_iter::{RoArenaTraversalIterator, RoTraversalIterator, RwTraversalIterator}, traversal_value::{IntoTraversalValues, TraversalValue}
+    }, types::GraphError
 };
 use heed3::{RoTxn, RwTxn};
 use std::sync::Arc;
@@ -37,6 +34,24 @@ impl G {
         RoTraversalIterator {
             inner: std::iter::once(Ok(TraversalValue::Empty)),
             storage,
+            txn,
+        }
+    }
+
+    #[inline]
+    pub fn new_with_arena<'env,'a>(
+        arena: &'a bumpalo::Bump,
+        storage: &'env HelixGraphStorage,
+        txn: &'a RoTxn<'a>,
+    ) -> RoArenaTraversalIterator<'a, 'env, impl Iterator<Item = Result<TraversalValue, GraphError>>> 
+    where
+        'env: 'a,
+        Self: Sized,
+    {
+        RoArenaTraversalIterator {
+            inner: std::iter::once(Ok(TraversalValue::Empty)),
+            storage,
+            arena,
             txn,
         }
     }

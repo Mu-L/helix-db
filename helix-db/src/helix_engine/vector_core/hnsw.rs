@@ -15,17 +15,19 @@ pub trait HNSW
     /// # Returns
     ///
     /// A vector of tuples containing the id and distance of the nearest neighbors
-    fn search<F>(
+    fn search<'a, 'q, F>(
         &self,
-        txn: &RoTxn,
-        query: &[f64],
+        txn: &'a RoTxn<'a>,
+        query: &'q [f64],
         k: usize,
-        label: &str,
-        filter: Option<&[F]>,
+        label: &'q str,
+        filter: Option<&'q [F]>,
         should_trickle: bool,
-    ) -> Result<Vec<HVector>, VectorError>
+        arena: &'a bumpalo::Bump,
+    ) -> Result<bumpalo::collections::Vec<'a, HVector<'a>>, VectorError>
     where
-        F: Fn(&HVector, &RoTxn) -> bool;
+        F: Fn(&HVector, &RoTxn) -> bool,
+        'a: 'q;
 
     /// Insert a new vector into the index
     ///
@@ -37,30 +39,14 @@ pub trait HNSW
     /// # Returns
     ///
     /// An HVector of the data inserted
-    fn insert<F>(
+    fn insert<'arena, F>(
         &self,
         txn: &mut RwTxn,
         data: &[f64],
         fields: Option<Vec<(String, Value)>>,
-    ) -> Result<HVector, VectorError>
+    ) -> Result<HVector<'arena>, VectorError>
     where
         F: Fn(&HVector, &RoTxn) -> bool;
-
-    /// Get all vectors from the index at a specific level
-    ///
-    /// # Arguments
-    ///
-    /// * `txn` - The read-only transaction to use for retrieving vectors
-    /// * `level` - A usize for which level to get all vectors from
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing a `Vec` of `HVector` if successful
-    fn get_all_vectors(
-        &self,
-        txn: &RoTxn,
-        level: Option<usize>,
-    ) -> Result<Vec<HVector>, VectorError>;
 
     /// Delete a vector from the index
     ///
@@ -86,12 +72,13 @@ pub trait HNSW
     /// # Returns
     ///
     /// A `Result` containing a `Vec` of `HVector` if successful
-    fn get_vector(
+    fn get_vector<'arena>(
         &self,
         txn: &RoTxn,
         id: u128,
         level: usize,
         with_data: bool,
-    ) -> Result<HVector, VectorError>;
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<HVector<'arena>, VectorError>;
 }
 
