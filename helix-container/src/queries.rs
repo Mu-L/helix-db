@@ -204,7 +204,7 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
         })
         .map_traversal(|item: TraversalValueArena, txn| {
             field_remapping!(remapping_vals, item, false, "id" => "id")?;
-            identifier_remapping!(remapping_vals, item, false, "category" => "category")?;
+            field_remapping!(remapping_vals, item, false, "category" => "category")?;
             Ok(item)
         })
         .collect_to::<Vec<_>>();
@@ -247,7 +247,7 @@ pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
         .map_traversal(|item: TraversalValueArena, txn| {
             println!("got to map traversal");
             field_remapping!(remapping_vals, item, false, "id" => "id")?;
-            identifier_remapping!(remapping_vals, item, false, "category" => "category")?;
+            field_remapping!(remapping_vals, item, false, "category" => "category")?;
             println!("completed remapping");
             Ok(item)
         })
