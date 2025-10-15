@@ -1,4 +1,4 @@
-pub mod arena;
+pub mod binary_heap;
 pub mod hnsw;
 pub mod utils;
 pub mod vector;

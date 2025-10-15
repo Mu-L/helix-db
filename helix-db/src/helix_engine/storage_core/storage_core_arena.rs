@@ -1,17 +1,14 @@
-pub mod storage_methods;
-pub mod version_info;
-pub mod storage_core_arena;
-
 use crate::{
     helix_engine::{
         bm25::bm25::HBM25Config,
         storage_core::{
+            EdgeId, NodeId, StorageConfig,
             storage_methods::{DBMethods, StorageMethods},
             version_info::VersionInfo,
         },
         traversal_core::config::Config,
         types::GraphError,
-        vector_core::{
+        vector_core::arena::{
             hnsw::HNSW,
             vector::HVector,
             vector_core::{HNSWConfig, VectorCore},
@@ -36,16 +33,7 @@ const DB_EDGES: &str = "edges"; // for edge data (e:)
 const DB_OUT_EDGES: &str = "out_edges"; // for outgoing edge indices (o:)
 const DB_IN_EDGES: &str = "in_edges"; // for incoming edge indices (i:)
 
-pub type NodeId = u128;
-pub type EdgeId = u128;
-
-pub struct StorageConfig {
-    pub schema: Option<String>,
-    pub graphvis_node_label: Option<String>,
-    pub embedding_model: Option<String>,
-}
-
-pub struct HelixGraphStorage {
+pub struct HelixGraphStorageArena {
     pub graph_env: Env,
 
     pub nodes_db: Database<U128<BE>, Bytes>,
@@ -60,12 +48,12 @@ pub struct HelixGraphStorage {
     pub storage_config: StorageConfig,
 }
 
-impl HelixGraphStorage {
+impl HelixGraphStorageArena {
     pub fn new(
         path: &str,
         config: Config,
         version_info: VersionInfo,
-    ) -> Result<HelixGraphStorage, GraphError> {
+    ) -> Result<HelixGraphStorageArena, GraphError> {
         fs::create_dir_all(path)?;
 
         let db_size = if config.db_max_size_gb.unwrap_or(100) >= 9999 {
@@ -76,7 +64,6 @@ impl HelixGraphStorage {
 
         let graph_env = unsafe {
             EnvOpenOptions::new()
-                
                 .map_size(db_size * 1024 * 1024 * 1024)
                 .max_dbs(200)
                 .max_readers(200)
@@ -258,26 +245,17 @@ impl HelixGraphStorage {
     }
 
     /// Gets a vector from level 0 of HNSW index (because that's where all are stored)
-    pub fn get_vector(&self, txn: &RoTxn, id: &u128) -> Result<HVector, GraphError> {
-        Ok(self.vectors.get_vector(txn, *id, 0, true)?)
+    pub fn get_vector<'arena>(
+        &self,
+        txn: &RoTxn,
+        id: &u128,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<HVector<'arena>, GraphError> {
+        Ok(self.vectors.get_vector(txn, *id, 0, true, arena)?)
     }
 }
 
-impl StorageConfig {
-    pub fn new(
-        schema: Option<String>,
-        graphvis_node_label: Option<String>,
-        embedding_model: Option<String>,
-    ) -> StorageConfig {
-        Self {
-            schema,
-            graphvis_node_label,
-            embedding_model,
-        }
-    }
-}
-
-impl DBMethods for HelixGraphStorage {
+impl DBMethods for HelixGraphStorageArena {
     /// Creates a secondary index lmdb db (table) for a given index name
     fn create_secondary_index(&mut self, name: &str) -> Result<(), GraphError> {
         let mut wtxn = self.graph_env.write_txn()?;
@@ -301,7 +279,7 @@ impl DBMethods for HelixGraphStorage {
     }
 }
 
-impl StorageMethods for HelixGraphStorage {
+impl StorageMethods for HelixGraphStorageArena {
     #[inline(always)]
     fn check_exists(&self, txn: &RoTxn, id: &u128) -> Result<bool, GraphError> {
         Ok(self.nodes_db.get(txn, Self::node_key(id))?.is_some())

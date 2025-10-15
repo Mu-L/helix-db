@@ -42,6 +42,18 @@ impl<'arena, T: Ord> BinaryHeap<'arena, T> {
         })
     }
 
+    #[must_use]
+    pub fn peek(&self) -> Option<&T> {
+        self.data.get(0)
+    }
+
+    pub fn from(
+        arena: &'arena bumpalo::Bump,
+        data: bumpalo::collections::Vec<'arena, T>,
+    ) -> BinaryHeap<'arena, T> {
+        BinaryHeap { arena, data }
+    }
+
     pub fn push(&mut self, item: T) {
         let old_len = self.len();
         self.data.push(item);
@@ -503,7 +515,6 @@ pub struct IntoIter<'arena, T> {
     iter: bumpalo::collections::vec::IntoIter<'arena, T>,
 }
 
-
 impl<'arena, T> Iterator for IntoIter<'arena, T> {
     type Item = T;
 
@@ -526,7 +537,6 @@ impl<'arena, T> DoubleEndedIterator for IntoIter<'arena, T> {
 }
 
 impl<T> FusedIterator for IntoIter<'_, T> {}
-
 
 impl<'arena, T> IntoIterator for BinaryHeap<'arena, T> {
     type Item = T;
@@ -551,6 +561,8 @@ impl<'arena, T> IntoIterator for BinaryHeap<'arena, T> {
     /// }
     /// ```
     fn into_iter(self) -> IntoIter<'arena, T> {
-        IntoIter { iter: self.data.into_iter() }
+        IntoIter {
+            iter: self.data.into_iter(),
+        }
     }
 }

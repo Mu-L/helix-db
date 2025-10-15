@@ -1,4 +1,4 @@
-use crate::helix_engine::{types::VectorError, vector_core::vector::HVector};
+use crate::helix_engine::{types::VectorError, vector_core::arena::vector::HVector};
 
 pub const MAX_DISTANCE: f64 = 2.0;
 pub const ORTHOGONAL: f64 = 1.0;
@@ -7,7 +7,7 @@ pub const MIN_DISTANCE: f64 = 0.0;
 pub trait DistanceCalc {
     fn distance(from: &HVector, to: &HVector) -> Result<f64, VectorError>;
 }
-impl DistanceCalc for HVector {
+impl<'a> DistanceCalc for HVector<'a> {
     /// Calculates the distance between two vectors.
     ///
     /// It normalizes the distance to be between 0 and 2.

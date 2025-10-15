@@ -1,7 +1,9 @@
+use serde::Serialize;
+
 use crate::{
     helix_engine::{
         types::{GraphError, VectorError},
-        vector_core::vector_distance::DistanceCalc,
+        vector_core::arena::vector_distance::DistanceCalc,
     },
     protocol::{return_values::ReturnValue, value::Value},
     utils::{
@@ -10,7 +12,7 @@ use crate::{
     },
 };
 use core::fmt;
-use serde::{Deserialize, Serialize};
+
 use std::{borrow::Cow, cmp::Ordering, collections::HashMap, fmt::Debug};
 
 // TODO: make this generic over the type of encoding (f32, f64, etc)
@@ -18,8 +20,8 @@ use std::{borrow::Cow, cmp::Ordering, collections::HashMap, fmt::Debug};
 // TODO: set level as u8
 
 #[repr(C, align(16))] // TODO: see performance impact of repr(C) and align(16)
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
-pub struct HVector {
+#[derive(Clone, Serialize, PartialEq)]
+pub struct HVector<'arena> {
     /// The id of the HVector
     pub id: u128,
     /// Whether the HVector is deleted (will be used for soft deletes)
@@ -32,7 +34,7 @@ pub struct HVector {
     pub distance: Option<f64>,
     /// The actual vector
     #[serde(default)]
-    pub data: Vec<f64>,
+    pub data: bumpalo::collections::Vec<'arena, f64>,
     /// The properties of the HVector
     #[serde(default)]
     pub properties: Option<HashMap<String, Value>>,
@@ -42,13 +44,13 @@ pub struct HVector {
     pub version: u8,
 }
 
-impl Eq for HVector {}
-impl PartialOrd for HVector {
+impl Eq for HVector<'_> {}
+impl PartialOrd for HVector<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
-impl Ord for HVector {
+impl Ord for HVector<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         other
             .distance
@@ -57,7 +59,7 @@ impl Ord for HVector {
     }
 }
 
-impl Debug for HVector {
+impl Debug for HVector<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -72,9 +74,9 @@ impl Debug for HVector {
     }
 }
 
-impl HVector {
+impl<'arena> HVector<'arena> {
     #[inline(always)]
-    pub fn new(data: Vec<f64>) -> Self {
+    pub fn new(data: bumpalo::collections::Vec<'arena, f64>) -> Self {
         let id = v6_uuid();
         HVector {
             id,
@@ -88,7 +90,7 @@ impl HVector {
     }
 
     #[inline(always)]
-    pub fn from_slice(level: usize, data: Vec<f64>) -> Self {
+    pub fn from_slice(level: usize, data: bumpalo::collections::Vec<'arena, f64>) -> Self {
         let id = v6_uuid();
         HVector {
             id,
@@ -106,8 +108,9 @@ impl HVector {
         raw_vector_bytes: &[u8],
         properties: Option<HashMap<String, Value>>,
         id: u128,
+        arena: &'arena bumpalo::Bump,
     ) -> Result<Self, VectorError> {
-        let mut vector = HVector::from_bytes(id, 0, raw_vector_bytes)?;
+        let mut vector = HVector::from_bytes(id, 0, raw_vector_bytes, arena)?;
         vector.properties = properties;
         Ok(vector)
     }
@@ -132,10 +135,10 @@ impl HVector {
 
     /// Converts the HVector to an vec of bytes by accessing the data field directly
     /// and converting each f64 to a byte slice
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self, arena: &'arena bumpalo::Bump) -> bumpalo::collections::Vec<u8> {
         let size = self.data.len() * std::mem::size_of::<f64>();
-        let mut bytes = Vec::with_capacity(size);
-        for &value in &self.data {
+        let mut bytes = bumpalo::collections::Vec::with_capacity_in(size, arena);
+        for value in &self.data {
             bytes.extend_from_slice(&value.to_be_bytes());
         }
         bytes
@@ -143,12 +146,20 @@ impl HVector {
 
     // will make to use const param for type of encoding (f32, f64, etc)
     /// Converts a byte array into a HVector by chunking the bytes into f64 values
-    pub fn from_bytes(id: u128, level: usize, bytes: &[u8]) -> Result<Self, VectorError> {
+    pub fn from_bytes(
+        id: u128,
+        level: usize,
+        bytes: &[u8],
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<Self, VectorError> {
         if !bytes.len().is_multiple_of(std::mem::size_of::<f64>()) {
             return Err(VectorError::InvalidVectorData);
         }
 
-        let mut data = Vec::with_capacity(bytes.len() / std::mem::size_of::<f64>());
+        let mut data = bumpalo::collections::Vec::with_capacity_in(
+            bytes.len() / std::mem::size_of::<f64>(),
+            arena,
+        );
         let chunks = bytes.chunks_exact(std::mem::size_of::<f64>());
 
         for chunk in chunks {
@@ -167,6 +178,30 @@ impl HVector {
             properties: None,
         })
     }
+
+    // /// Converts the HVector to an vec of bytes by accessing the data field directly
+    // /// and converting each f64 to a byte slice
+    // pub fn to_le_bytes(&self) -> Vec<u8> {
+    //     bytemuck::cast_slice(&self.data).to_vec()
+    // }
+
+    // // will make to use const param for type of encoding (f32, f64, etc)
+    // /// Converts a byte array into a HVector by chunking the bytes into f64 values
+    // pub fn from_le_bytes(id: u128, level: usize, bytes: &[u8]) -> Result<Self, VectorError> {
+    //     let data = bytemuck::try_cast_slice::<u8, f64>(bytes)
+    //         .map_err(|_| VectorError::InvalidVectorData)?
+    //         .to_vec();
+
+    //     Ok(HVector {
+    //         id,
+    //         // is_deleted: false,
+    //         level,
+    //         version: 1,
+    //         data,
+    //         distance: None,
+    //         properties: None,
+    //     })
+    // }
 
     #[inline(always)]
     pub fn len(&self) -> usize {
@@ -207,7 +242,7 @@ impl HVector {
 /// see helix_db/src/protocol/filterable.rs
 ///
 /// NOTE: This could be moved to the protocol module with the node and edges in `helix_db/protocol/items.rs``
-impl Filterable for HVector {
+impl Filterable for HVector<'_> {
     fn type_name(&self) -> FilterableType {
         FilterableType::Vector
     }

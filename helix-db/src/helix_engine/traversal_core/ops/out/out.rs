@@ -1,8 +1,15 @@
 use crate::{
     helix_engine::{
-        storage_core::{storage_methods::StorageMethods, HelixGraphStorage}, traversal_core::{
-            ops::source::add_e::EdgeType, traversal_iter::{RoArenaTraversalIterator, RoTraversalIterator}, traversal_value::{Traversable, TraversalValue}
-        }, types::GraphError
+        storage_core::{storage_core_arena::HelixGraphStorageArena, storage_methods::StorageMethods, HelixGraphStorage},
+        traversal_core::{
+            ops::source::add_e::EdgeType,
+            traversal_iter::RoTraversalIterator,
+            traversal_value::{Traversable, TraversalValue},
+            traversal_value_arena::{
+                RoArenaTraversalIterator, Traversable as TraversableArena, TraversalValueArena,
+            },
+        },
+        types::GraphError,
     },
     utils::label_hash::hash_label,
 };
@@ -127,11 +134,9 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> OutAdapter<'a, 
     }
 }
 
-
-
-
-
-pub trait OutAdapterArena<'a, 'env, T>: Iterator<Item = Result<TraversalValue, GraphError>> {
+pub trait OutAdapterArena<'a, 'env, T>:
+    Iterator<Item = Result<TraversalValueArena<'a>, GraphError>>
+{
     /// Returns an iterator containing the nodes that have an outgoing edge with the given label.
     ///
     /// Note that the `edge_label` cannot be empty and must be a valid, existing edge label.
@@ -141,9 +146,12 @@ pub trait OutAdapterArena<'a, 'env, T>: Iterator<Item = Result<TraversalValue, G
     fn out_vec(
         self,
         edge_label: &'a str,
-    ) -> RoArenaTraversalIterator<'a, 'env, impl Iterator<Item = Result<TraversalValue, GraphError>>>;
+    ) -> RoArenaTraversalIterator<
+        'a,
+        'env,
+        impl Iterator<Item = Result<TraversalValueArena<'a>, GraphError>>,
+    >;
 }
-
 
 pub struct OutNodesIteratorArena<'a, 'env, T> {
     pub iter: heed3::RoIter<
@@ -157,7 +165,7 @@ pub struct OutNodesIteratorArena<'a, 'env, T> {
 }
 
 impl<'a, 'env> Iterator for OutNodesIteratorArena<'a, 'env, RoTxn<'a>> {
-    type Item = Result<TraversalValue, GraphError>;
+    type Item = Result<TraversalValueArena<'a>, GraphError>;
 
     #[debug_trace("OUT")]
     fn next(&mut self) -> Option<Self::Item> {
@@ -172,7 +180,7 @@ impl<'a, 'env> Iterator for OutNodesIteratorArena<'a, 'env, RoTxn<'a>> {
                         }
                     };
                     if let Ok(node) = self.storage.get_node(self.txn, &item_id) {
-                        return Some(Ok(TraversalValue::Node(node)));
+                        return Some(Ok(TraversalValueArena::Node(node)));
                     }
                 }
                 Err(e) => {
@@ -192,12 +200,13 @@ pub struct OutVecIteratorArena<'a, 'env, T> {
         heed3::types::LazyDecode<Bytes>,
         heed3::iteration_method::MoveOnCurrentKeyDuplicates,
     >,
-    pub storage: &'env HelixGraphStorage,
+    pub storage: &'env HelixGraphStorageArena,
     pub txn: &'a T,
+    pub arena: &'a bumpalo::Bump,
 }
 
 impl<'a, 'env> Iterator for OutVecIteratorArena<'a, 'env, RoTxn<'a>> {
-    type Item = Result<TraversalValue, GraphError>;
+    type Item = Result<TraversalValueArena<'a>, GraphError>;
 
     #[debug_trace("OUT")]
     fn next(&mut self) -> Option<Self::Item> {
@@ -211,8 +220,8 @@ impl<'a, 'env> Iterator for OutVecIteratorArena<'a, 'env, RoTxn<'a>> {
                             return Some(Err(e));
                         }
                     };
-                    if let Ok(node) = self.storage.get_vector(self.txn, &item_id) {
-                        return Some(Ok(TraversalValue::Vector(node)));
+                    if let Ok(node) = self.storage.get_vector(self.txn, &item_id, self.arena) {
+                        return Some(Ok(TraversalValueArena::Vector(node)));
                     }
                 }
                 Err(e) => {
@@ -225,15 +234,18 @@ impl<'a, 'env> Iterator for OutVecIteratorArena<'a, 'env, RoTxn<'a>> {
     }
 }
 
-
-impl<'a, 'env, I: Iterator<Item = Result<TraversalValue, GraphError>>> OutAdapterArena<'a, 'env, RoTxn<'a>>
-    for RoArenaTraversalIterator<'a, 'env, I>
+impl<'a, 'env, I: Iterator<Item = Result<TraversalValueArena<'a>, GraphError>>>
+    OutAdapterArena<'a, 'env, RoTxn<'a>> for RoArenaTraversalIterator<'a, 'env, I>
 {
     #[inline]
     fn out_vec(
         self,
         edge_label: &'a str,
-    ) -> RoArenaTraversalIterator<'a, 'env, impl Iterator<Item = Result<TraversalValue, GraphError>>> {
+    ) -> RoArenaTraversalIterator<
+        'a,
+        'env,
+        impl Iterator<Item = Result<TraversalValueArena<'a>, GraphError>>,
+    > {
         let txn = self.txn;
 
         let iter = self
@@ -247,7 +259,8 @@ impl<'a, 'env, I: Iterator<Item = Result<TraversalValue, GraphError>>> OutAdapte
                     },
                     &edge_label_hash,
                 );
-                match self.storage
+                match self
+                    .storage
                     .out_edges_db
                     .lazily_decode_data()
                     .get_duplicates(txn, &prefix)
@@ -256,6 +269,7 @@ impl<'a, 'env, I: Iterator<Item = Result<TraversalValue, GraphError>>> OutAdapte
                         iter,
                         storage: self.storage,
                         txn,
+                        arena: self.arena,
                     }),
                     Ok(None) => None,
                     Err(e) => {
@@ -275,4 +289,3 @@ impl<'a, 'env, I: Iterator<Item = Result<TraversalValue, GraphError>>> OutAdapte
         }
     }
 }
-
