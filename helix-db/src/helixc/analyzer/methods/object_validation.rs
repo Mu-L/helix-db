@@ -1,7 +1,7 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
 use crate::helixc::analyzer::utils::{get_field_type_from_item_fields, FieldLookup, DEFAULT_VAR_NAME};
-use crate::helixc::generator::object_remappings::SingleFieldTraversalRemapping;
+use crate::helixc::generator::object_remappings::{DirectPropertyRemapping, SingleFieldTraversalRemapping};
 use crate::{
     generate_error,
     helixc::{
@@ -21,7 +21,6 @@ use crate::{
                 TraversalRemapping, ValueRemapping,
             },
             queries::Query as GeneratedQuery,
-            source_steps::SourceStep,
             statements::Statement,
             traversal_steps::{
                 ShouldCollect, Step as GeneratedStep, Traversal as GeneratedTraversal,
@@ -529,19 +528,12 @@ fn parse_identifier_as_remapping_value<'a>(
             parent_ty.item_fields_contains_key_with_type(ctx, identifier.as_str());
 
         match is_valid_field {
-            true => RemappingType::SingleFieldTraversalRemapping(SingleFieldTraversalRemapping {
+            // Optimization: Use direct property access instead of full traversal
+            // This avoids unnecessary .clone() calls in generated code
+            true => RemappingType::DirectPropertyRemapping(DirectPropertyRemapping {
                 variable_name: closure_variable.get_variable_name(),
                 new_field: key.clone(),
-                new_value: GeneratedTraversal {
-                    traversal_type: TraversalType::NestedFrom(GenRef::Std(
-                        closure_variable.get_variable_name(),
-                    )),
-                    source_step: Separator::Empty(SourceStep::Anonymous),
-                    steps: vec![Separator::Period(GeneratedStep::PropertyFetch(
-                        GenRef::Literal(identifier.to_string()),
-                    ))],
-                    should_collect: ShouldCollect::ToObj,
-                },
+                property_name: identifier.to_string(),
                 should_spread,
             }),
             false => {

@@ -441,7 +441,7 @@ use helix_db::{
         vector_core::vector::HVector,
     },
     helix_gateway::{
-        embedding_providers::embedding_providers::{EmbeddingModel, get_embedding_model},
+        embedding_providers::{EmbeddingModel, get_embedding_model},
         router::router::{HandlerInput, IoContFn},
         mcp::mcp::{MCPHandlerSubmission, MCPToolInput, MCPHandler}
     },

@@ -15,7 +15,7 @@ impl Display for TraversalRemapping {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "traversal_remapping!(remapping_vals, {}.clone(), {}, \"{}\" => {})",
+            "traversal_remapping!(remapping_vals, {}, {}, \"{}\" => {})",
             self.variable_name, self.should_spread, self.new_field, self.new_value
         )
     }
@@ -33,8 +33,26 @@ impl Display for SingleFieldTraversalRemapping {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "identifier_remapping!(remapping_vals, {}.clone(), {}, \"{}\" => {})",
+            "identifier_remapping!(remapping_vals, {}, {}, \"{}\" => {})",
             self.variable_name, self.should_spread, self.new_field, self.new_value
+        )
+    }
+}
+
+/// This is for creating a new field via direct property access (optimized, no clone)
+#[derive(Clone)]
+pub struct DirectPropertyRemapping {
+    pub variable_name: String,
+    pub new_field: String,
+    pub property_name: String,
+    pub should_spread: bool,
+}
+impl Display for DirectPropertyRemapping {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "field_remapping!(remapping_vals, {}, {}, \"{}\" => \"{}\")",
+            self.variable_name, self.should_spread, self.property_name, self.new_field
         )
     }
 }
@@ -51,7 +69,7 @@ impl Display for FieldRemapping {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "field_remapping!(remapping_vals, {}.clone(), {}, \"{}\" => \"{}\")",
+            "field_remapping!(remapping_vals, {}, {}, \"{}\" => \"{}\")",
             self.variable_name, self.should_spread, self.field_name, self.new_name
         )
     }
@@ -67,7 +85,7 @@ impl Display for ExcludeField {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "exclude_field!(remapping_vals, {}.clone(), {})",
+            "exclude_field!(remapping_vals, {}, {})",
             self.variable_name,
             self.fields_to_exclude
                 .iter()
@@ -120,7 +138,7 @@ impl Display for ValueRemapping {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "value_remapping!(remapping_vals, {}.clone(), {}, \"{}\" => {})",
+            "value_remapping!(remapping_vals, {}, {}, \"{}\" => {})",
             self.variable_name, self.should_spread, self.field_name, self.value
         )
     }
@@ -137,7 +155,7 @@ impl Display for IdentifierRemapping {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "identifier_remapping!(remapping_vals, {}.clone(), {}, \"{}\" => \"{}\")",
+            "identifier_remapping!(remapping_vals, {}, {}, \"{}\" => \"{}\")",
             self.variable_name, self.should_spread, self.field_name, self.identifier_value
         )
     }
@@ -153,7 +171,7 @@ impl Display for ExistsRemapping {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "exists_remapping!(remapping_vals, {}.clone(), {}, {})",
+            "exists_remapping!(remapping_vals, {}, {}, {})",
             self.variable_name, self.should_spread, self.remapping
         )
     }
@@ -221,6 +239,7 @@ pub enum RemappingType {
     ExcludeField(ExcludeField),
     TraversalRemapping(TraversalRemapping),
     SingleFieldTraversalRemapping(SingleFieldTraversalRemapping),
+    DirectPropertyRemapping(DirectPropertyRemapping),
     ValueRemapping(ValueRemapping),
     IdentifierRemapping(IdentifierRemapping),
     Exists(ExistsRemapping),
@@ -235,6 +254,7 @@ impl Display for RemappingType {
             RemappingType::ExcludeField(r) => write!(f, "{r}"),
             RemappingType::TraversalRemapping(r) => write!(f, "{r}"),
             RemappingType::SingleFieldTraversalRemapping(r) => write!(f, "{r}"),
+            RemappingType::DirectPropertyRemapping(r) => write!(f, "{r}"),
             RemappingType::ValueRemapping(r) => write!(f, "{r}"),
             RemappingType::IdentifierRemapping(r) => write!(f, "{r}"),
             RemappingType::Exists(r) => write!(f, "{r}"),

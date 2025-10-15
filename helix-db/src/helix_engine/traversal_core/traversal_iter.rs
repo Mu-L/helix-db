@@ -69,7 +69,6 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> RoTraversalIter
     ) -> Result<bool, GraphError> {
         let val = match &self.inner.next() {
             Some(Ok(TraversalValue::Value(val))) => {
-                println!("value : {val:?}");
                 Ok(f(val))
             }
             Some(Ok(_)) => Err(GraphError::ConversionError(
@@ -78,7 +77,6 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> RoTraversalIter
             Some(Err(err)) => Err(GraphError::from(err.to_string())),
             None => Ok(default),
         };
-        println!("result: {val:?}");
         val
     }
 }
@@ -143,7 +141,6 @@ impl<'scope, 'env, I: Iterator<Item = Result<TraversalValue, GraphError>>>
     ) -> Result<bool, GraphError> {
         let val = match &self.inner.next() {
             Some(Ok(TraversalValue::Value(val))) => {
-                println!("value : {val:?}");
                 Ok(f(val))
             }
             Some(Ok(_)) => Err(GraphError::ConversionError(
@@ -152,7 +149,6 @@ impl<'scope, 'env, I: Iterator<Item = Result<TraversalValue, GraphError>>>
             Some(Err(err)) => Err(GraphError::from(err.to_string())),
             None => Ok(default),
         };
-        println!("result: {val:?}");
         val
     }
 }

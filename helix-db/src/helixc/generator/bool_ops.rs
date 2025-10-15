@@ -1,9 +1,9 @@
 use core::fmt;
 use std::fmt::Display;
 
-use crate::helixc::generator::traversal_steps::Traversal;
+use crate::helixc::generator::traversal_steps::{Traversal, TraversalType, Step};
 
-use super::utils::GeneratedValue;
+use super::utils::{GeneratedValue, Separator, GenRef};
 
 #[derive(Clone)]
 pub enum BoolOp {
@@ -148,7 +148,71 @@ impl Display for BoExp {
                 write!(f, "({})", displayed_exprs.join(" || "))
             }
             BoExp::Exists(traversal) => write!(f, "Exist::exists(&mut {traversal})"),
-            BoExp::Expr(traversal) => write!(f, "{traversal}"),
+            BoExp::Expr(traversal) => {
+                // Optimize simple property checks in filters to avoid unnecessary cloning and traversal creation
+                // Check if this is a FromVar("val") traversal with just property fetch + bool op
+                if let TraversalType::FromVar(var) = &traversal.traversal_type {
+                    // Check if the variable is "val" (the filter variable)
+                    let is_val = match var {
+                        GenRef::Std(s) | GenRef::Literal(s) => s == "val",
+                        _ => false,
+                    };
+
+                    // Remove the source_step check - it might not always be Empty
+                    if is_val {
+                        // Look for PropertyFetch followed by BoolOp pattern (in any Separator type)
+                        let mut prop_info: Option<&GenRef<String>> = None;
+                        let mut bool_op_info: Option<&BoolOp> = None;
+                        let mut other_steps = 0;
+
+                        for step in traversal.steps.iter() {
+                            match step {
+                                Separator::Period(Step::PropertyFetch(prop)) |
+                                Separator::Newline(Step::PropertyFetch(prop)) |
+                                Separator::Empty(Step::PropertyFetch(prop)) |
+                                Separator::Comma(Step::PropertyFetch(prop)) |
+                                Separator::Semicolon(Step::PropertyFetch(prop)) => {
+                                    if prop_info.is_none() {
+                                        prop_info = Some(prop);
+                                    }
+                                }
+                                Separator::Period(Step::BoolOp(op)) |
+                                Separator::Newline(Step::BoolOp(op)) |
+                                Separator::Empty(Step::BoolOp(op)) |
+                                Separator::Comma(Step::BoolOp(op)) |
+                                Separator::Semicolon(Step::BoolOp(op)) => {
+                                    if bool_op_info.is_none() {
+                                        bool_op_info = Some(op);
+                                    }
+                                }
+                                _ => {
+                                    other_steps += 1;
+                                }
+                            }
+                        }
+
+                        // If we found exactly one PropertyFetch and one BoolOp, and no other steps, optimize
+                        if let (Some(prop), Some(bool_op)) = (prop_info, bool_op_info) {
+                            if other_steps == 0 {
+                                // Generate optimized code: val.check_property("prop").map_or(false, |v| ...)
+                                let bool_expr = match bool_op {
+                                    BoolOp::Gt(gt) => format!("*v{gt}"),
+                                    BoolOp::Gte(gte) => format!("*v{gte}"),
+                                    BoolOp::Lt(lt) => format!("*v{lt}"),
+                                    BoolOp::Lte(lte) => format!("*v{lte}"),
+                                    BoolOp::Eq(eq) => format!("*v{eq}"),
+                                    BoolOp::Neq(neq) => format!("*v{neq}"),
+                                    BoolOp::Contains(contains) => format!("v{contains}"),
+                                    BoolOp::IsIn(is_in) => format!("v{is_in}"),
+                                };
+                                return write!(f, "val\n                    .check_property({})\n                    .map_or(false, |v| {})", prop, bool_expr);
+                            }
+                        }
+                    }
+                }
+                // Fall back to full traversal for complex expressions
+                write!(f, "{traversal}")
+            },
             BoExp::Empty => write!(f, ""),
         }
     }

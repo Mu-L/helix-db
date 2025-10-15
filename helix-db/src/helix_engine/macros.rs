@@ -141,7 +141,7 @@ pub mod macros {
     /// - `new_name`: String - the new name of the field
     macro_rules! field_remapping {
         ($remapping_vals:expr, $item:expr, $should_spread:expr, $old_name:expr => $new_name:expr) => {{
-            let old_value = match $item.check_property($old_name) {
+            let old_value = match (&$item).check_property($old_name) {
                 Ok(val) => val.into_owned(),
                 Err(e) => {
                     return Err(GraphError::ConversionError(format!(
@@ -156,13 +156,13 @@ pub mod macros {
                 Some(ReturnValue::from(old_value)),
             );
             $remapping_vals.insert(
-                $item.id(),
+                (&$item).id(),
                 ResponseRemapping::new(
                     HashMap::from([($new_name.to_string(), old_value_remapping)]),
                     $should_spread,
                 ),
             );
-            Ok::<TraversalValue, GraphError>($item) // Return the Ok value
+            Ok::<(), GraphError>(()) // Don't consume the item
         }};
     }
 
@@ -189,13 +189,13 @@ pub mod macros {
                 Some(nested_return_value),
             );
             $remapping_vals.insert(
-                $var_name.id(),
+                (&$var_name).id(),
                 ResponseRemapping::new(
                     HashMap::from([($new_name.to_string(), new_remapping)]),
                     $should_spread,
                 ),
             );
-            Ok::<TraversalValue, GraphError>($var_name)
+            Ok::<(), GraphError>(())
         }};
     }
 
@@ -217,7 +217,7 @@ pub mod macros {
                     None,
                 );
                 $remapping_vals.insert(
-                    $var_name.id(),
+                    (&$var_name).id(),
                     ResponseRemapping::new(
                         HashMap::from([($field_to_exclude.to_string(), field_to_exclude_remapping)]),
                         true,
@@ -225,7 +225,7 @@ pub mod macros {
                 );
                 println!("inserting remapping: {:?}", $remapping_vals.borrow_mut());
             )*
-                Ok::<TraversalValue, GraphError>($var_name)
+                Ok::<(), GraphError>(())
         }};
     }
 
@@ -247,13 +247,13 @@ pub mod macros {
                 Some(ReturnValue::from($identifier_value)),
             );
             $remapping_vals.insert(
-                $var_name.id(),
+                (&$var_name).id(),
                 ResponseRemapping::new(
                     HashMap::from([($field_name.to_string(), old_value_remapping)]),
                     $should_spread,
                 ),
             );
-            Ok::<TraversalValue, GraphError>($var_name)
+            Ok::<(), GraphError>(())
         }};
     }
 
@@ -275,13 +275,13 @@ pub mod macros {
                 Some(ReturnValue::from($value)),
             );
             $remapping_vals.insert(
-                $var_name.id(),
+                (&$var_name).id(),
                 ResponseRemapping::new(
                     HashMap::from([($field_name.to_string(), old_value_remapping)]),
                     $should_spread,
                 ),
             );
-            Ok::<TraversalValue, GraphError>($var_name) // Return the Ok value
+            Ok::<(), GraphError>(())
         }};
     }
 
@@ -308,13 +308,13 @@ pub mod macros {
                 Some(ReturnValue::from(exists)),
             );
             $remapping_vals.insert(
-                $var_name.id(),
+                (&$var_name).id(),
                 ResponseRemapping::new(
                     HashMap::from([($field_name.to_string(), value_remapping)]),
                     $should_spread,
                 ),
             );
-            Ok::<TraversalValue, GraphError>($var_name)
+            Ok::<(), GraphError>(())
         }};
     }
 

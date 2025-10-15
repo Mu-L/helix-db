@@ -305,10 +305,64 @@ pub struct WhereRef {
 }
 impl Display for WhereRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Check if this is a simple property check that can be optimized
+        if let BoExp::Expr(traversal) = &self.expr {
+            if let TraversalType::FromVar(var) = &traversal.traversal_type {
+                // Check if the variable is "val"
+                let is_val = matches!(var, GenRef::Std(s) | GenRef::Literal(s) if s == "val");
+
+                if is_val && traversal.steps.len() == 2 {
+                    // Check if we have PropertyFetch followed by BoolOp
+                    let mut prop: Option<&GenRef<String>> = None;
+                    let mut bool_op: Option<&BoolOp> = None;
+
+                    for step in &traversal.steps {
+                        match step {
+                            Separator::Period(Step::PropertyFetch(p)) |
+                            Separator::Newline(Step::PropertyFetch(p)) |
+                            Separator::Empty(Step::PropertyFetch(p)) => prop = Some(p),
+                            Separator::Period(Step::BoolOp(op)) |
+                            Separator::Newline(Step::BoolOp(op)) |
+                            Separator::Empty(Step::BoolOp(op)) => bool_op = Some(op),
+                            _ => {}
+                        }
+                    }
+
+                    // If we found both PropertyFetch and BoolOp, generate optimized code
+                    if let (Some(prop), Some(bool_op)) = (prop, bool_op) {
+                        let bool_expr = match bool_op {
+                            BoolOp::Gt(gt) => format!("*v{gt}"),
+                            BoolOp::Gte(gte) => format!("*v{gte}"),
+                            BoolOp::Lt(lt) => format!("*v{lt}"),
+                            BoolOp::Lte(lte) => format!("*v{lte}"),
+                            BoolOp::Eq(eq) => format!("*v{eq}"),
+                            BoolOp::Neq(neq) => format!("*v{neq}"),
+                            BoolOp::Contains(contains) => format!("v{contains}"),
+                            BoolOp::IsIn(is_in) => format!("v{is_in}"),
+                        };
+                        return write!(
+                            f,
+                            "filter_ref(|val, txn|{{
+                if let Ok(val) = val {{
+                    Ok(val
+                    .check_property({})
+                    .map_or(false, |v| {}))
+                }} else {{
+                    Ok(false)
+                }}
+            }})",
+                            prop, bool_expr
+                        );
+                    }
+                }
+            }
+        }
+
+        // Fall back to default (unoptimized) code generation
         write!(
             f,
             "filter_ref(|val, txn|{{
-                if let Ok(val) = val {{ 
+                if let Ok(val) = val {{
                     Ok({})
                 }} else {{
                     Ok(false)
@@ -403,13 +457,13 @@ impl Display for ShortestPath {
                     f,
                     "shortest_path_with_algorithm({}, {}, {}, PathAlgorithm::Dijkstra)",
                     self.label
-                        .clone()
+                        .as_ref()
                         .map_or("None".to_string(), |label| format!("Some({label})")),
                     self.from
-                        .clone()
+                        .as_ref()
                         .map_or("None".to_string(), |from| format!("Some(&{from})")),
                     self.to
-                        .clone()
+                        .as_ref()
                         .map_or("None".to_string(), |to| format!("Some(&{to})"))
                 )
             }
@@ -418,13 +472,13 @@ impl Display for ShortestPath {
                     f,
                     "shortest_path_with_algorithm({}, {}, {}, PathAlgorithm::BFS)",
                     self.label
-                        .clone()
+                        .as_ref()
                         .map_or("None".to_string(), |label| format!("Some({label})")),
                     self.from
-                        .clone()
+                        .as_ref()
                         .map_or("None".to_string(), |from| format!("Some(&{from})")),
                     self.to
-                        .clone()
+                        .as_ref()
                         .map_or("None".to_string(), |to| format!("Some(&{to})"))
                 )
             }
@@ -434,13 +488,13 @@ impl Display for ShortestPath {
                     f,
                     "shortest_path({}, {}, {})",
                     self.label
-                        .clone()
+                        .as_ref()
                         .map_or("None".to_string(), |label| format!("Some({label})")),
                     self.from
-                        .clone()
+                        .as_ref()
                         .map_or("None".to_string(), |from| format!("Some(&{from})")),
                     self.to
-                        .clone()
+                        .as_ref()
                         .map_or("None".to_string(), |to| format!("Some(&{to})"))
                 )
             }
@@ -454,13 +508,13 @@ impl Display for ShortestPathDijkstras {
             f,
             "shortest_path_with_algorithm({}, {}, {}, PathAlgorithm::Dijkstra)",
             self.label
-                .clone()
+                .as_ref()
                 .map_or("None".to_string(), |label| format!("Some({label})")),
             self.from
-                .clone()
+                .as_ref()
                 .map_or("None".to_string(), |from| format!("Some(&{from})")),
             self.to
-                .clone()
+                .as_ref()
                 .map_or("None".to_string(), |to| format!("Some(&{to})"))
         )
     }
@@ -472,13 +526,13 @@ impl Display for ShortestPathBFS {
             f,
             "shortest_path_with_algorithm({}, {}, {}, PathAlgorithm::BFS)",
             self.label
-                .clone()
+                .as_ref()
                 .map_or("None".to_string(), |label| format!("Some({label})")),
             self.from
-                .clone()
+                .as_ref()
                 .map_or("None".to_string(), |from| format!("Some(&{from})")),
             self.to
-                .clone()
+                .as_ref()
                 .map_or("None".to_string(), |to| format!("Some(&{to})"))
         )
     }
