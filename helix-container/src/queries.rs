@@ -304,3 +304,109 @@ pub fn ConvertAllVectors(input: HandlerInput) -> Result<Response, GraphError> {
         .out_fmt
         .create_response(&ReturnValue::from("Success")))
 }
+
+pub struct Metadata {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateDatasetIdInput {
+    pub dataset_id: String,
+}
+#[handler]
+pub fn CreateDatasetId(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let data = input
+        .request
+        .in_fmt
+        .deserialize::<CreateDatasetIdInput>(&input.request.body)?;
+    let mut remapping_vals = RemappingMap::new();
+    let mut txn = db
+        .graph_env
+        .write_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start write transaction: {:?}", e)))?;
+    let metadata = G::new_mut(Arc::clone(&db), &mut txn)
+        .add_n(
+            "Metadata",
+            Some(props! { "value" => &data.dataset_id, "key" => "dataset_id" }),
+            Some(&["key"]),
+        )
+        .collect_to_obj();
+    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
+    return_vals.insert(
+        "metadata".to_string(),
+        ReturnValue::from_traversal_value_with_mixin(metadata.clone(), remapping_vals.borrow_mut()),
+    );
+
+    txn.commit()
+        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
+    Ok(input.request.out_fmt.create_response(&return_vals))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateDatasetIdInput {
+    pub dataset_id: String,
+}
+#[handler]
+pub fn UpdateDatasetId(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let data = input
+        .request
+        .in_fmt
+        .deserialize::<UpdateDatasetIdInput>(&input.request.body)?;
+    let mut remapping_vals = RemappingMap::new();
+    let mut txn = db
+        .graph_env
+        .write_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start write transaction: {:?}", e)))?;
+    Drop::<Vec<_>>::drop_traversal(
+        G::new(Arc::clone(&db), &txn)
+            .n_from_index("Metadata", "key", &"dataset_id")
+            .collect_to_obj(),
+        Arc::clone(&db),
+        &mut txn,
+    )?;
+    let metadata = G::new_mut(Arc::clone(&db), &mut txn)
+        .add_n(
+            "Metadata",
+            Some(props! { "value" => &data.dataset_id, "key" => "dataset_id" }),
+            Some(&["key"]),
+        )
+        .collect_to_obj();
+    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
+    return_vals.insert(
+        "metadata".to_string(),
+        ReturnValue::from_traversal_value_with_mixin(metadata.clone(), remapping_vals.borrow_mut()),
+    );
+
+    txn.commit()
+        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
+    Ok(input.request.out_fmt.create_response(&return_vals))
+}
+#[handler]
+pub fn GetDatasetId(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let mut remapping_vals = RemappingMap::new();
+    let txn = db
+        .graph_env
+        .read_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
+    let dataset_id = G::new(Arc::clone(&db), &txn)
+        .n_from_index("Metadata", "key", &"dataset_id")
+        .collect_to_obj();
+    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
+    return_vals.insert(
+        "dataset_id".to_string(),
+        ReturnValue::from_traversal_value_with_mixin(
+            G::new_from(Arc::clone(&db), &txn, dataset_id.clone())
+                .check_property("value")
+                .collect_to_obj(),
+            remapping_vals.borrow_mut(),
+        ),
+    );
+
+    txn.commit()
+        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
+    Ok(input.request.out_fmt.create_response(&return_vals))
+}
