@@ -31,7 +31,7 @@ use helix_db::{
                     e_from_type::EFromTypeAdapter,
                     n_from_id::{NFromIdAdapter, NFromIdAdapterArena},
                     n_from_index::NFromIndexAdapter,
-                    n_from_type::NFromTypeAdapter,
+                    n_from_type::{NFromTypeAdapter, NFromTypeAdapterArena},
                     v_from_id::VFromIdAdapter,
                     v_from_type::VFromTypeAdapter,
                 },
@@ -48,7 +48,7 @@ use helix_db::{
                     order::OrderByAdapter,
                     paths::{PathAlgorithm, ShortestPathAdapter},
                     props::PropsAdapter,
-                    range::RangeAdapter,
+                    range::{RangeAdapter, RangeAdapterArena},
                     update::UpdateAdapter,
                 },
                 vectors::{
@@ -63,7 +63,7 @@ use helix_db::{
         vector_core::{vector::HVector, vector_core::VectorCore},
     },
     helix_gateway::{
-        embedding_providers::{EmbeddingModel, get_embedding_model},
+        embedding_providers::{get_embedding_model, EmbeddingModel},
         mcp::mcp::{MCPHandler, MCPHandlerSubmission, MCPToolInput},
         router::router::{HandlerInput, IoContFn},
     },
@@ -74,8 +74,7 @@ use helix_db::{
         response::Response,
         return_values::ReturnValue,
         value::{
-            Value,
-            casting::{CastType, cast},
+            casting::{cast, CastType}, Value
         },
     },
     traversal_remapping,
@@ -268,6 +267,51 @@ pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
         .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
     Ok(input.request.out_fmt.create_response(&return_vals))
 }
+
+
+#[handler]
+pub fn OneHopNoInput(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let arena = Bump::new();
+    let data = input
+        .request
+        .in_fmt
+        .deserialize::<OneHopInput>(&input.request.body)?;
+    let mut remapping_vals = RemappingMap::new();
+    let txn = db
+        .graph_env
+        .read_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
+
+    let items = G::new_with_arena(&arena, &db, &txn)
+        .n_from_type("User")
+        .range(0, 1)
+        .out_vec("Interacted")
+        .map_traversal(|item: TraversalValueArena, txn| {
+            println!("got to map traversal");
+            field_remapping!(remapping_vals, item, false, "id" => "id")?;
+            identifier_remapping!(remapping_vals, item, false, "category" => "category")?;
+            println!("completed remapping");
+            Ok(item)
+        })
+        .collect_to::<Vec<_>>();
+    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
+    println!("completed traversal");
+    return_vals.insert(
+        "items".to_string(),
+        ReturnValue::from_traversal_value_array_arena_with_mixin(
+            items,
+            remapping_vals.borrow_mut(),
+        ),
+    );
+
+    println!("completed return values");
+
+    txn.commit()
+        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
+    Ok(input.request.out_fmt.create_response(&return_vals))
+}
+
 
 #[handler]
 pub fn ConvertAllVectors(input: HandlerInput) -> Result<Response, GraphError> {
