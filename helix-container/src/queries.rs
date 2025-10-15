@@ -60,7 +60,7 @@ use helix_db::{
             traversal_value_arena::{Traversable as TraversableArena, TraversalValueArena},
         },
         types::GraphError,
-        vector_core::vector::HVector,
+        vector_core::{vector::HVector, vector_core::VectorCore},
     },
     helix_gateway::{
         embedding_providers::{EmbeddingModel, get_embedding_model},
@@ -220,4 +220,42 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
     txn.commit()
         .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
     Ok(input.request.out_fmt.create_response(&return_vals))
+}
+
+#[handler]
+pub fn ConvertAllVectors(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let arena = Bump::new();
+
+    let mut txn = db
+        .graph_env
+        .write_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
+
+    let mut vectors = Vec::with_capacity(5000);
+
+    let vectors_iter = db.vectors.vectors_db.iter(&txn)?;
+    for vector in vectors_iter {
+        let (key, value) = vector?;
+
+        let id = u128::from_be_bytes(key[1..17].try_into().unwrap());
+        let level = usize::from_be_bytes(key[17..25].try_into().unwrap());
+
+        let vector = HVector::from_bytes(id, level, &value)?;
+        vectors.push(vector);
+    }
+
+    for vector in vectors {
+        db.vectors.vectors_db.put(
+            &mut txn,
+            &VectorCore::vector_key(vector.get_id(), vector.get_level()),
+            &vector.to_le_bytes(),
+        )?;
+    }
+    txn.commit()?;
+
+    Ok(input
+        .request
+        .out_fmt
+        .create_response(&ReturnValue::from("Success")))
 }

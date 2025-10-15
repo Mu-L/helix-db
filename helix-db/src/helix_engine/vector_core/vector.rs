@@ -168,6 +168,30 @@ impl HVector {
         })
     }
 
+    /// Converts the HVector to an vec of bytes by accessing the data field directly
+    /// and converting each f64 to a byte slice
+    pub fn to_le_bytes(&self) -> Vec<u8> {
+        bytemuck::cast_slice(&self.data).to_vec()
+    }
+
+    // will make to use const param for type of encoding (f32, f64, etc)
+    /// Converts a byte array into a HVector by chunking the bytes into f64 values
+    pub fn from_le_bytes(id: u128, level: usize, bytes: &[u8]) -> Result<Self, VectorError> {
+        let data = bytemuck::try_cast_slice::<u8, f64>(bytes)
+            .map_err(|_| VectorError::InvalidVectorData)?
+            .to_vec();
+
+        Ok(HVector {
+            id,
+            // is_deleted: false,
+            level,
+            version: 1,
+            data,
+            distance: None,
+            properties: None,
+        })
+    }
+
     #[inline(always)]
     pub fn len(&self) -> usize {
         self.data.len()

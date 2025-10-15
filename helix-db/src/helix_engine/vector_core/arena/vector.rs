@@ -135,13 +135,8 @@ impl<'arena> HVector<'arena> {
 
     /// Converts the HVector to an vec of bytes by accessing the data field directly
     /// and converting each f64 to a byte slice
-    pub fn to_bytes(&self, arena: &'arena bumpalo::Bump) -> bumpalo::collections::Vec<u8> {
-        let size = self.data.len() * std::mem::size_of::<f64>();
-        let mut bytes = bumpalo::collections::Vec::with_capacity_in(size, arena);
-        for value in &self.data {
-            bytes.extend_from_slice(&value.to_be_bytes());
-        }
-        bytes
+    pub fn to_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.data)
     }
 
     // will make to use const param for type of encoding (f32, f64, etc)
@@ -152,56 +147,22 @@ impl<'arena> HVector<'arena> {
         bytes: &[u8],
         arena: &'arena bumpalo::Bump,
     ) -> Result<Self, VectorError> {
-        if !bytes.len().is_multiple_of(std::mem::size_of::<f64>()) {
-            return Err(VectorError::InvalidVectorData);
-        }
+        let data = bytemuck::try_cast_slice::<u8, f64>(bytes)
+            .map_err(|_| VectorError::InvalidVectorData)?;
 
-        let mut data = bumpalo::collections::Vec::with_capacity_in(
-            bytes.len() / std::mem::size_of::<f64>(),
-            arena,
-        );
-        let chunks = bytes.chunks_exact(std::mem::size_of::<f64>());
-
-        for chunk in chunks {
-            // panic here because panic means corruption of some sort
-            let value = f64::from_be_bytes(chunk.try_into().expect("Invalid chunk"));
-            data.push(value);
-        }
+        let mut new_vec = bumpalo::collections::Vec::with_capacity_in(data.len(), arena);
+        new_vec.extend_from_slice(data);
 
         Ok(HVector {
             id,
             // is_deleted: false,
             level,
             version: 1,
-            data,
+            data: new_vec,
             distance: None,
             properties: None,
         })
     }
-
-    // /// Converts the HVector to an vec of bytes by accessing the data field directly
-    // /// and converting each f64 to a byte slice
-    // pub fn to_le_bytes(&self) -> Vec<u8> {
-    //     bytemuck::cast_slice(&self.data).to_vec()
-    // }
-
-    // // will make to use const param for type of encoding (f32, f64, etc)
-    // /// Converts a byte array into a HVector by chunking the bytes into f64 values
-    // pub fn from_le_bytes(id: u128, level: usize, bytes: &[u8]) -> Result<Self, VectorError> {
-    //     let data = bytemuck::try_cast_slice::<u8, f64>(bytes)
-    //         .map_err(|_| VectorError::InvalidVectorData)?
-    //         .to_vec();
-
-    //     Ok(HVector {
-    //         id,
-    //         // is_deleted: false,
-    //         level,
-    //         version: 1,
-    //         data,
-    //         distance: None,
-    //         properties: None,
-    //     })
-    // }
 
     #[inline(always)]
     pub fn len(&self) -> usize {

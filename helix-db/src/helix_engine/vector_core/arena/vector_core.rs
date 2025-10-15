@@ -144,17 +144,16 @@ impl VectorCore {
     }
 
     #[inline(always)]
-    fn put_vector<'arena>(
+    pub fn put_vector<'arena>(
         &self,
         txn: &mut RwTxn,
         vector: &HVector<'arena>,
-        arena: &'arena bumpalo::Bump,
     ) -> Result<(), VectorError> {
         self.vectors_db
             .put(
                 txn,
                 &Self::vector_key(vector.get_id(), vector.get_level()),
-                vector.to_bytes(arena).as_ref(),
+                vector.to_bytes(),
             )
             .map_err(VectorError::from)?;
         Ok(())
@@ -496,10 +495,10 @@ impl HNSW for VectorCore {
         let mut arena_data = bumpalo::collections::Vec::with_capacity_in(data.len(), arena);
         arena_data.copy_from_slice(data);
         let mut query = HVector::from_slice(0, arena_data);
-        self.put_vector(txn, &query, arena)?;
+        self.put_vector(txn, &query)?;
         query.level = new_level;
         if new_level > 0 {
-            self.put_vector(txn, &query, arena)?;
+            self.put_vector(txn, &query)?;
         }
 
         let entry_point = match self.get_entry_point(txn, arena) {
