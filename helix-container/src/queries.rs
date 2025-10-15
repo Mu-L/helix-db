@@ -286,14 +286,6 @@ pub fn OneHopNoInput(input: HandlerInput) -> Result<Response, GraphError> {
     let items = G::new_with_arena(&arena, &db, &txn)
         .n_from_type("User")
         .range(0, 1)
-        .out_vec("Interacted")
-        .map_traversal(|item: TraversalValueArena, txn| {
-            println!("got to map traversal");
-            field_remapping!(remapping_vals, item, false, "id" => "id")?;
-            identifier_remapping!(remapping_vals, item, false, "category" => "category")?;
-            println!("completed remapping");
-            Ok(item)
-        })
         .collect_to::<Vec<_>>();
     let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
     println!("completed traversal");
