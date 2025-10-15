@@ -244,15 +244,12 @@ pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
         .n_from_id(&data.user_id)
         .out_vec("Interacted")
         .map_traversal(|item: TraversalValueArena, txn| {
-            println!("got to map traversal");
             field_remapping!(remapping_vals, item, false, "id" => "id")?;
             field_remapping!(remapping_vals, item, false, "category" => "category")?;
-            println!("completed remapping");
             Ok(item)
         })
         .collect_to::<Vec<_>>();
     let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
-    println!("completed traversal");
     return_vals.insert(
         "items".to_string(),
         ReturnValue::from_traversal_value_array_arena_with_mixin(
@@ -260,8 +257,6 @@ pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
             remapping_vals.borrow_mut(),
         ),
     );
-
-    println!("completed return values");
 
     txn.commit()
         .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
