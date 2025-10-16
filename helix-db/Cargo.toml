@@ -23,7 +23,7 @@ heed3 = "0.22.0"
 uuid = { version = "1.12.1", features = ["v4", "v6", "fast-rng"] }
 rand = "0.9.0"
 chrono = "0.4.39"
-flume = { version = "0.11.1", default-features = false, features = ["async", "select"] }
+flume = { version = "0.11.1", default-features = false, features = ["async", "select", "eventual-fairness"] }
 itertools = "0.14.0"
 tempfile = "3.20.0"
 paste = "1.0.15"
