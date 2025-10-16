@@ -73,13 +73,13 @@ impl HelixGateway {
 
         let all_core_ids = core_affinity::get_core_ids().expect("unable to get core IDs");
 
-        let tokio_core_ids = all_core_ids.clone();
-        let tokio_core_setter = Arc::new(CoreSetter::new(tokio_core_ids, 1));
+        // let tokio_core_ids = all_core_ids.clone();
+        // let tokio_core_setter = Arc::new(CoreSetter::new(tokio_core_ids, 1));
 
         let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(tokio_core_setter.num_threads())
-                .on_thread_start(move || Arc::clone(&tokio_core_setter).set_current())
+                // .worker_threads(tokio_core_setter.num_threads())
+                // .on_thread_start(move || Arc::clone(&tokio_core_setter).set_current())
                 .enable_all()
                 .build()?,
         );
