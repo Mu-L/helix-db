@@ -149,6 +149,7 @@ impl Traversable for TraversalValueArena<'_> {
             TraversalValueArena::Node(node) => node.check_property(prop),
             TraversalValueArena::Edge(edge) => edge.check_property(prop),
             TraversalValueArena::Vector(vector) => vector.check_property(prop),
+            TraversalValueArena::VectorNodeWithoutVectorData(vector) => vector.check_property(prop),
             _ => Err(GraphError::ConversionError(
                 "Invalid traversal value".to_string(),
             )),
@@ -160,6 +161,7 @@ impl Traversable for TraversalValueArena<'_> {
             TraversalValueArena::Node(node) => &node.properties,
             TraversalValueArena::Edge(edge) => &edge.properties,
             TraversalValueArena::Vector(vector) => &vector.properties,
+            TraversalValueArena::VectorNodeWithoutVectorData(vector) => &vector.properties,
             _ => &None,
         }
     }
