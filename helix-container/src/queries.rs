@@ -185,7 +185,6 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
         .request
         .in_fmt
         .deserialize::<OneHopFilterInput>(&input.request.body)?;
-    let mut remapping_vals = RemappingMap::new();
     let txn = db
         .graph_env
         .read_txn()
@@ -241,7 +240,6 @@ pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
         .request
         .in_fmt
         .deserialize::<OneHopInput>(&input.request.body)?;
-    let mut remapping_vals = RemappingMap::new();
     let txn = db
         .graph_env
         .read_txn()
