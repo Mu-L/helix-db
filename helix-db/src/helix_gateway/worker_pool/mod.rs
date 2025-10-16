@@ -32,7 +32,7 @@ impl WorkerPool {
     ) -> WorkerPool {
         let (req_tx, req_rx) = flume::bounded::<ReqMsg>(1000);
         let (cont_tx, cont_rx) = flume::bounded::<ContMsg>(1000);
-
+        trace!("WorkerPool created");
         let num_workers = workers_core_setter.num_threads();
         let workers = iter::repeat_n(workers_core_setter, num_workers)
             .map(|setter| {
@@ -95,9 +95,11 @@ impl Worker {
             loop {
                 Selector::new()
                     .recv(&cont_rx, |m| match m {
-                        Ok((ret_chan, cfn)) => {
-                            ret_chan.send(cfn().map_err(Into::into)).expect("todo")
-                        }
+                        Ok((ret_chan, cfn)) => ret_chan
+                            .send(cfn().map_err(Into::into))
+                            .unwrap_or_else(|_| {
+                                error!("return channel was dropped, could not send result")
+                            }),
                         Err(_) => error!("Continuation Channel was dropped"),
                     })
                     .recv(&rx, |m| match m {
@@ -125,7 +127,6 @@ impl Worker {
                 //     Err(_) => error!("Request Channel was dropped"),
                 // }
             }
-            // trace!("thread shutting down");
         });
         Worker { _handle: handle }
     }

@@ -11,15 +11,24 @@ use helix_db::helix_gateway::{
 };
 use std::{collections::HashMap, sync::Arc};
 use tracing::{Level, info};
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod queries;
 
 fn main() {
     let env_res = dotenvy::dotenv();
-    tracing_subscriber::fmt()
-        .with_max_level(Level::TRACE)
-        .finish()
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer().with_filter(tracing_subscriber::filter::filter_fn(
+                |metadata| {
+                    let target = metadata.target();
+                    !target.starts_with("axum")
+                        && !target.starts_with("hyper")
+                        && !target.starts_with("tower")
+                        && !target.starts_with("h2")
+                },
+            )),
+        )
         .init();
 
     match env_res {
