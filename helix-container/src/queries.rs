@@ -193,13 +193,12 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
     let items = G::new_with_arena(&arena, &db, &txn)
         .n_from_id(&data.user_id)
         .out_vec("Interacted", false)
-        .filter_ref(|val, txn| {
+        .filter(|val| {
             if let Ok(val) = val {
-                Ok(val
-                    .check_property("category")
-                    .map_or(false, |v| *v == data.category.clone()))
+                val.check_property("category")
+                    .map_or(false, |v| *v == data.category.clone())
             } else {
-                Ok(false)
+                false
             }
         })
         .filter_map(|item| item.ok())
