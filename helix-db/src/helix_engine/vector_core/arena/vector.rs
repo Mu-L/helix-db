@@ -104,6 +104,25 @@ impl<'arena> HVector<'arena> {
     }
 
     #[inline(always)]
+    pub fn from_properties(
+        id: u128,
+        level: usize,
+        properties: Option<HashMap<String, Value>>,
+        arena: &'arena bumpalo::Bump,
+    ) -> Self {
+        let data = bumpalo::collections::Vec::new_in(arena);
+        HVector {
+            id,
+            // is_deleted: false,
+            version: 1,
+            level,
+            data,
+            distance: None,
+            properties,
+        }
+    }
+
+    #[inline(always)]
     pub fn decode_vector(
         raw_vector_bytes: &[u8],
         properties: Option<HashMap<String, Value>>,

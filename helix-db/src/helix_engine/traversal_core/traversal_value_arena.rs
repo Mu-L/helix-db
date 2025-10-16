@@ -3,7 +3,8 @@ use itertools::Itertools;
 
 use crate::{
     helix_engine::{
-        storage_core::HelixGraphStorage, types::GraphError, vector_core::arena::vector::HVector as ArenaHVector,
+        storage_core::HelixGraphStorage, types::GraphError,
+        vector_core::arena::vector::HVector as ArenaHVector,
     },
     protocol::value::Value,
     utils::{
@@ -22,6 +23,8 @@ pub enum TraversalValueArena<'a> {
     Edge(Edge),
     /// A vector in the graph
     Vector(ArenaHVector<'a>),
+    /// Vector node without vector data
+    VectorNodeWithoutVectorData(ArenaHVector<'a>),
     /// A count of the number of items
     Count(Count),
     /// A path between two nodes in the graph
@@ -38,6 +41,7 @@ impl Hash for TraversalValueArena<'_> {
             TraversalValueArena::Node(node) => node.id.hash(state),
             TraversalValueArena::Edge(edge) => edge.id.hash(state),
             TraversalValueArena::Vector(vector) => vector.id.hash(state),
+            TraversalValueArena::VectorNodeWithoutVectorData(vector) => vector.id.hash(state),
             TraversalValueArena::Empty => state.write_u8(0),
             _ => state.write_u8(0),
         }
@@ -57,6 +61,18 @@ impl PartialEq for TraversalValueArena<'_> {
             (TraversalValueArena::Vector(vector1), TraversalValueArena::Vector(vector2)) => {
                 vector1.id() == vector2.id()
             }
+            (
+                TraversalValueArena::VectorNodeWithoutVectorData(vector1),
+                TraversalValueArena::VectorNodeWithoutVectorData(vector2),
+            ) => vector1.id() == vector2.id(),
+            (
+                TraversalValueArena::Vector(vector1),
+                TraversalValueArena::VectorNodeWithoutVectorData(vector2),
+            ) => vector1.id() == vector2.id(),
+            (
+                TraversalValueArena::VectorNodeWithoutVectorData(vector1),
+                TraversalValueArena::Vector(vector2),
+            ) => vector1.id() == vector2.id(),
             (TraversalValueArena::Empty, TraversalValueArena::Empty) => true,
             _ => false,
         }
@@ -94,6 +110,7 @@ impl Traversable for TraversalValueArena<'_> {
             TraversalValueArena::Node(node) => node.id,
             TraversalValueArena::Edge(edge) => edge.id,
             TraversalValueArena::Vector(vector) => vector.id,
+            TraversalValueArena::VectorNodeWithoutVectorData(vector) => vector.id,
             TraversalValueArena::Value(_) => unreachable!(),
             TraversalValueArena::Empty => 0,
             t => {
@@ -112,6 +129,9 @@ impl Traversable for TraversalValueArena<'_> {
             TraversalValueArena::Node(node) => uuid::Uuid::from_u128(node.id).to_string(),
             TraversalValueArena::Edge(edge) => uuid::Uuid::from_u128(edge.id).to_string(),
             TraversalValueArena::Vector(vector) => uuid::Uuid::from_u128(vector.id).to_string(),
+            TraversalValueArena::VectorNodeWithoutVectorData(vector) => {
+                uuid::Uuid::from_u128(vector.id).to_string()
+            }
             _ => panic!("Invalid traversal value"),
         }
     }

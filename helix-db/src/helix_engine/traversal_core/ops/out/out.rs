@@ -146,6 +146,7 @@ pub trait OutAdapterArena<'a, 'env, T>:
     fn out_vec(
         self,
         edge_label: &'a str,
+        get_vector_data: bool,
     ) -> RoArenaTraversalIterator<
         'a,
         'env,
@@ -203,6 +204,9 @@ pub struct OutVecIteratorArena<'a, 'env, T> {
     pub storage: &'env HelixGraphStorage,
     pub txn: &'a T,
     pub arena: &'a bumpalo::Bump,
+    /// Whether to read vector data from 'vector_db' (if true) table or read from 'vector_properties_db' table (if false).
+    /// If false, it will treat it as a normal node and avoid reading the additional bytes.
+    pub get_vector_data: bool,
 }
 
 impl<'a, 'env> Iterator for OutVecIteratorArena<'a, 'env, RoTxn<'a>> {
@@ -220,8 +224,18 @@ impl<'a, 'env> Iterator for OutVecIteratorArena<'a, 'env, RoTxn<'a>> {
                             return Some(Err(e));
                         }
                     };
-                    if let Ok(node) = self.storage.get_vector_in(self.txn, &item_id, self.arena) {
-                        return Some(Ok(TraversalValueArena::Vector(node)));
+                    if self.get_vector_data {
+                        if let Ok(vec) = self.storage.get_vector_in(self.txn, &item_id, self.arena)
+                        {
+                            return Some(Ok(TraversalValueArena::Vector(vec)));
+                        }
+                    } else {
+                        if let Ok(vec) = self
+                            .storage
+                            .get_vector_without_raw_vector_data_in(self.txn, &item_id, self.arena)
+                        {
+                            return Some(Ok(TraversalValueArena::VectorNodeWithoutVectorData(vec)));
+                        }
                     }
                 }
                 Err(e) => {
@@ -241,6 +255,7 @@ impl<'a, 'env, I: Iterator<Item = Result<TraversalValueArena<'a>, GraphError>>>
     fn out_vec(
         self,
         edge_label: &'a str,
+        get_vector_data: bool,
     ) -> RoArenaTraversalIterator<
         'a,
         'env,
@@ -270,6 +285,7 @@ impl<'a, 'env, I: Iterator<Item = Result<TraversalValueArena<'a>, GraphError>>>
                         storage: self.storage,
                         txn,
                         arena: self.arena,
+                        get_vector_data,
                     }),
                     Ok(None) => None,
                     Err(e) => {

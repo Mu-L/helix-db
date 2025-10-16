@@ -168,6 +168,9 @@ impl ReturnValue {
                     TraversalValueArena::Vector(vector) => {
                         ReturnValue::process_vector_arena_with_mixin(vector, &mut mixin)
                     }
+                    TraversalValueArena::VectorNodeWithoutVectorData(vector) => {
+                        ReturnValue::process_vector_arena_with_mixin(vector, &mut mixin)
+                    }
                     TraversalValueArena::Count(count) => ReturnValue::from(count),
                     TraversalValueArena::Empty => ReturnValue::Empty,
                     TraversalValueArena::Value(value) => ReturnValue::from(value),

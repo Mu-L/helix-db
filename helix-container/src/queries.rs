@@ -63,7 +63,7 @@ use helix_db::{
         vector_core::{vector::HVector, vector_core::VectorCore},
     },
     helix_gateway::{
-        embedding_providers::{get_embedding_model, EmbeddingModel},
+        embedding_providers::{EmbeddingModel, get_embedding_model},
         mcp::mcp::{MCPHandler, MCPHandlerSubmission, MCPToolInput},
         router::router::{HandlerInput, IoContFn},
     },
@@ -74,7 +74,8 @@ use helix_db::{
         response::Response,
         return_values::ReturnValue,
         value::{
-            casting::{cast, CastType}, Value
+            Value,
+            casting::{CastType, cast},
         },
     },
     traversal_remapping,
@@ -88,10 +89,10 @@ use helix_db::{
 };
 use helix_macros::{handler, mcp_handler, migration, tool_call};
 use sonic_rs::{Deserialize, Serialize};
-use tracing::info;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::info;
 
 pub fn config() -> Option<Config> {
     return Some(Config {
@@ -192,7 +193,7 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
 
     let items = G::new_with_arena(&arena, &db, &txn)
         .n_from_id(&data.user_id)
-        .out_vec("Interacted")
+        .out_vec("Interacted", false)
         .filter_ref(|val, txn| {
             if let Ok(val) = val {
                 Ok(val
@@ -226,6 +227,18 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
 pub struct OneHopInput {
     pub user_id: ID,
 }
+
+#[derive(Serialize, Clone)]
+pub struct OneHopOutput {
+    pub id: String,
+    pub category: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ReturnOneHopOutput {
+    pub items: Vec<OneHopOutput>,
+}
+
 #[handler]
 pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
     let db = Arc::clone(&input.graph.storage);
@@ -242,27 +255,20 @@ pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
 
     let items = G::new_with_arena(&arena, &db, &txn)
         .n_from_id(&data.user_id)
-        .out_vec("Interacted")
-        .map_traversal(|item: TraversalValueArena, txn| {
-            field_remapping!(remapping_vals, item, false, "id" => "id")?;
-            field_remapping!(remapping_vals, item, false, "category" => "category")?;
-            Ok(item)
+        .out_vec("Interacted", false)
+        .filter_map(|item| item.ok())
+        .map(|item: TraversalValueArena| OneHopOutput {
+            id: item.uuid(),
+            category: item.check_property("category").unwrap().inner_stringify(),
         })
-        .collect_to::<Vec<_>>();
-    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
-    return_vals.insert(
-        "items".to_string(),
-        ReturnValue::from_traversal_value_array_arena_with_mixin(
-            items,
-            remapping_vals.borrow_mut(),
-        ),
-    );
+        .collect::<Vec<_>>();
+
+    let items: ReturnOneHopOutput = ReturnOneHopOutput { items };
 
     txn.commit()
         .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
-    Ok(input.request.out_fmt.create_response(&return_vals))
+    Ok(input.request.out_fmt.create_response(&items))
 }
-
 
 #[handler]
 pub fn OneHopNoInput(input: HandlerInput) -> Result<Response, GraphError> {
@@ -293,10 +299,7 @@ pub fn OneHopNoInput(input: HandlerInput) -> Result<Response, GraphError> {
     );
     println!("return values: {:?}", items);
     info!("return values: {:?}", items);
-    return_vals.insert(
-        "items".to_string(),
-        items,
-    );
+    return_vals.insert("items".to_string(), items);
 
     println!("completed return values");
 
@@ -304,7 +307,6 @@ pub fn OneHopNoInput(input: HandlerInput) -> Result<Response, GraphError> {
         .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
     Ok(input.request.out_fmt.create_response(&return_vals))
 }
-
 
 #[handler]
 pub fn ConvertAllVectors(input: HandlerInput) -> Result<Response, GraphError> {

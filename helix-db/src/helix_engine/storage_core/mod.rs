@@ -286,6 +286,17 @@ impl HelixGraphStorage {
     ) -> Result<ArenaHVector<'arena>, GraphError> {
         Ok(self.vectors_arena.get_vector(txn, *id, 0, true, arena)?)
     }
+
+    pub fn get_vector_without_raw_vector_data_in<'arena>(
+        &self,
+        txn: &RoTxn,
+        id: &u128,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<ArenaHVector<'arena>, GraphError> {
+        Ok(self
+            .vectors_arena
+            .get_vector_without_raw_vector_data(txn, *id, 0, arena)?)
+    }
 }
 
 impl StorageConfig {

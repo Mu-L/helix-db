@@ -62,7 +62,7 @@ impl HNSWConfig {
 
 pub struct VectorCore {
     pub vectors_db: Database<Bytes, Bytes>,
-    pub vector_data_db: Database<Bytes, Bytes>,
+    pub vector_properties_db: Database<Bytes, Bytes>,
     pub edges_db: Database<Bytes, Unit>,
     pub config: HNSWConfig,
 }
@@ -70,12 +70,12 @@ pub struct VectorCore {
 impl VectorCore {
     pub fn new(env: &Env, txn: &mut RwTxn, config: HNSWConfig) -> Result<Self, VectorError> {
         let vectors_db = env.create_database(txn, Some(DB_VECTORS))?;
-        let vector_data_db = env.create_database(txn, Some(DB_VECTOR_DATA))?;
+        let vector_properties_db = env.create_database(txn, Some(DB_VECTOR_DATA))?;
         let edges_db = env.create_database(txn, Some(DB_HNSW_EDGES))?;
 
         Ok(Self {
             vectors_db,
-            vector_data_db,
+            vector_properties_db,
             edges_db,
             config,
         })
@@ -377,6 +377,25 @@ impl VectorCore {
     pub fn num_inserted_vectors(&self, txn: &RoTxn) -> Result<u64, VectorError> {
         Ok(self.vectors_db.len(txn)?)
     }
+
+    #[inline]
+    pub fn get_vector_without_raw_vector_data<'a>(
+        &self,
+        txn: &RoTxn,
+        id: u128,
+        level: usize,
+        arena: &'a bumpalo::Bump,
+    ) -> Result<HVector<'a>, VectorError> {
+        let properties: Option<HashMap<String, Value>> =
+            match self.vector_properties_db.get(txn, &id.to_be_bytes())? {
+                Some(bytes) => Some(bincode::deserialize(bytes).map_err(VectorError::from)?),
+                None => None,
+            };
+
+        // TODO
+        let vector = HVector::from_properties(id, level, properties, arena);
+        Ok(vector)
+    }
 }
 
 impl HNSW for VectorCore {
@@ -396,7 +415,7 @@ impl HNSW for VectorCore {
                 match with_data {
                     true => {
                         let properties: Option<HashMap<String, Value>> =
-                            match self.vector_data_db.get(txn, &id.to_be_bytes())? {
+                            match self.vector_properties_db.get(txn, &id.to_be_bytes())? {
                                 Some(bytes) => {
                                     Some(bincode::deserialize(bytes).map_err(VectorError::from)?)
                                 }
@@ -472,7 +491,7 @@ impl HNSW for VectorCore {
             filter,
             label,
             txn,
-            self.vector_data_db,
+            self.vector_properties_db,
             arena,
         )?;
 
@@ -508,7 +527,7 @@ impl HNSW for VectorCore {
                 query.set_distance(0.0);
 
                 if let Some(fields) = fields {
-                    self.vector_data_db.put(
+                    self.vector_properties_db.put(
                         txn,
                         &query.get_id().to_be_bytes(),
                         &bincode::serialize(&fields)?,
@@ -567,7 +586,7 @@ impl HNSW for VectorCore {
         }
 
         if let Some(fields) = fields {
-            self.vector_data_db.put(
+            self.vector_properties_db.put(
                 txn,
                 &query.get_id().to_be_bytes(),
                 &bincode::serialize(&fields)?,
@@ -580,7 +599,7 @@ impl HNSW for VectorCore {
 
     fn delete(&self, txn: &mut RwTxn, id: u128) -> Result<(), VectorError> {
         let properties: Option<HashMap<String, Value>> =
-            match self.vector_data_db.get(txn, &id.to_be_bytes())? {
+            match self.vector_properties_db.get(txn, &id.to_be_bytes())? {
                 Some(bytes) => Some(bincode::deserialize(bytes).map_err(VectorError::from)?),
                 None => None,
             };
@@ -596,15 +615,21 @@ impl HNSW for VectorCore {
             properties.insert("is_deleted".to_string(), Value::Boolean(true));
             debug_println!("properties: {properties:?}");
 
-            self.vector_data_db
-                .put(txn, &id.to_be_bytes(), &bincode::serialize(&properties)?)?;
+            self.vector_properties_db.put(
+                txn,
+                &id.to_be_bytes(),
+                &bincode::serialize(&properties)?,
+            )?;
         } else {
             let mut n_properties: HashMap<String, Value> = HashMap::new();
             n_properties.insert("is_deleted".to_string(), Value::Boolean(true));
             debug_println!("properties: {n_properties:?}");
 
-            self.vector_data_db
-                .put(txn, &id.to_be_bytes(), &bincode::serialize(&n_properties)?)?;
+            self.vector_properties_db.put(
+                txn,
+                &id.to_be_bytes(),
+                &bincode::serialize(&n_properties)?,
+            )?;
         }
 
         debug_println!("vector deleted with id {}", &id);
