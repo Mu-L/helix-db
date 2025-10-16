@@ -171,29 +171,29 @@ async fn post_handler(
         Ok(r) => {
             // #[cfg(feature = "metrics")]
             {
-                HELIX_METRICS_CLIENT.send_event(
-                    EventType::QuerySuccess,
-                    QuerySuccessEvent {
-                        cluster_id: state.cluster_id.clone(),
-                        query_name,
-                        time_taken_usec: start_time.elapsed().as_micros() as u32,
-                    },
-                );
+                // HELIX_METRICS_CLIENT.send_event(
+                //     EventType::QuerySuccess,
+                //     QuerySuccessEvent {
+                //         cluster_id: state.cluster_id.clone(),
+                //         query_name,
+                //         time_taken_usec: start_time.elapsed().as_micros() as u32,
+                //     },
+                // );
             }
             r.into_response()
         }
         Err(e) => {
             info!(?e, "Got error");
-            HELIX_METRICS_CLIENT.send_event(
-                EventType::QueryError,
-                QueryErrorEvent {
-                    cluster_id: state.cluster_id.clone(),
-                    query_name,
-                    input_json: sonic_rs::to_string(&body).ok(),
-                    output_json: sonic_rs::to_string(&json!({ "error": e.to_string() })).ok(),
-                    time_taken_usec: start_time.elapsed().as_micros() as u32,
-                },
-            );
+            // HELIX_METRICS_CLIENT.send_event(
+            //     EventType::QueryError,
+            //     QueryErrorEvent {
+            //         cluster_id: state.cluster_id.clone(),
+            //         query_name,
+            //         input_json: sonic_rs::to_string(&body).ok(),
+            //         output_json: sonic_rs::to_string(&json!({ "error": e.to_string() })).ok(),
+            //         time_taken_usec: start_time.elapsed().as_micros() as u32,
+            //     },
+            // );
             e.into_response()
         }
     }
