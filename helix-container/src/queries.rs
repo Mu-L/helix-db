@@ -203,24 +203,18 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
                 Ok(false)
             }
         })
-        .map_traversal(|item: TraversalValueArena, txn| {
-            field_remapping!(remapping_vals, item, false, "id" => "id")?;
-            field_remapping!(remapping_vals, item, false, "category" => "category")?;
-            Ok(item)
+        .filter_map(|item| item.ok())
+        .map(|item: TraversalValueArena| OneHopOutput {
+            id: item.uuid(),
+            category: item.check_property("category").unwrap().inner_stringify(),
         })
-        .collect_to::<Vec<_>>();
-    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
-    return_vals.insert(
-        "items".to_string(),
-        ReturnValue::from_traversal_value_array_arena_with_mixin(
-            items,
-            remapping_vals.borrow_mut(),
-        ),
-    );
+        .collect::<Vec<_>>();
+
+    let items: ReturnOneHopOutput = ReturnOneHopOutput { items };
 
     txn.commit()
         .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
-    Ok(input.request.out_fmt.create_response(&return_vals))
+    Ok(input.request.out_fmt.create_response(&items))
 }
 
 #[derive(Serialize, Deserialize, Clone)]
