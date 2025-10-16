@@ -93,70 +93,37 @@ impl Worker {
             let _io_guard = io_rt.enter();
 
             loop {
-                match cont_rx.try_recv() {
-                    Ok((ret_chan, cfn)) => {
-                        ret_chan.send(cfn().map_err(Into::into)).expect("todo");
-                        continue;
-                    }
-                    Err(flume::TryRecvError::Disconnected) => {
-                        error!("Continuation Channel was dropped")
-                    }
-                    Err(flume::TryRecvError::Empty) => {
-                        // No continuation, try poll normal request
-                    }
+                // Selector::new()
+                //     .recv(&cont_rx, |m| match m {
+                //         Ok((ret_chan, cfn)) => {
+                //             ret_chan.send(cfn().map_err(Into::into)).expect("todo")
+                //         }
+                //         Err(_) => error!("Continuation Channel was dropped"),
+                //     })
+                //     .recv(&rx, |m| match m {
+                //         Ok((req, ret_chan)) => request_mapper(
+                //             req,
+                //             ret_chan,
+                //             graph_access.clone(),
+                //             &router,
+                //             &io_rt,
+                //             &cont_tx,
+                //         ),
+                //         Err(_) => error!("Request Channel was dropped"),
+                //     })
+                //     .wait();
+
+                match rx.recv() {
+                    Ok((req, ret_chan)) => request_mapper(
+                        req,
+                        ret_chan,
+                        graph_access.clone(),
+                        &router,
+                        &io_rt,
+                        &cont_tx,
+                    ),
+                    Err(_) => error!("Request Channel was dropped"),
                 }
-
-                match rx.try_recv() {
-                    Ok((req, ret_chan)) => {
-                        request_mapper(
-                            req,
-                            ret_chan,
-                            graph_access.clone(),
-                            &router,
-                            &io_rt,
-                            &cont_tx,
-                        );
-                        continue;
-                    }
-                    Err(flume::TryRecvError::Disconnected) => {
-                        error!("Request Channel was dropped")
-                    }
-                    Err(flume::TryRecvError::Empty) => {
-                        // No request, fallback to a selector to not busy-loop
-                    }
-                }
-
-                Selector::new()
-                    .recv(&cont_rx, |m| match m {
-                        Ok((ret_chan, cfn)) => {
-                            ret_chan.send(cfn().map_err(Into::into)).expect("todo")
-                        }
-                        Err(_) => error!("Continuation Channel was dropped"),
-                    })
-                    .recv(&rx, |m| match m {
-                        Ok((req, ret_chan)) => request_mapper(
-                            req,
-                            ret_chan,
-                            graph_access.clone(),
-                            &router,
-                            &io_rt,
-                            &cont_tx,
-                        ),
-                        Err(_) => error!("Request Channel was dropped"),
-                    })
-                    .wait();
-
-                // match rx.recv() {
-                //     Ok((req, ret_chan)) => request_mapper(
-                //         req,
-                //         ret_chan,
-                //         graph_access.clone(),
-                //         &router,
-                //         &io_rt,
-                //         &cont_tx,
-                //     ),
-                //     Err(_) => error!("Request Channel was dropped"),
-                // }
             }
             // trace!("thread shutting down");
         });
