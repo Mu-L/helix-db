@@ -2,7 +2,7 @@ use crate::helix_engine::{
     traversal_core::{
         traversal_iter::{RoTraversalIterator, RwTraversalIterator},
         traversal_value::TraversalValue,
-        traversal_value_arena::{RoArenaTraversalIterator, TraversalValueArena},
+        traversal_value::{RoArenaTraversalIterator, TraversalValueArena},
     },
     types::GraphError,
 };

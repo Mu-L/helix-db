@@ -11,44 +11,51 @@ use crate::{
 };
 use itertools::Itertools;
 
-pub struct RoTraversalIterator<'a, I> {
+pub struct RoTraversalIterator<'db, 'arena, 'txn, I>
+where
+    'db: 'arena,
+    'arena: 'txn,
+{
+    pub storage: &'db HelixGraphStorage,
+    pub arena: &'arena bumpalo::Bump,
+    pub txn: &'txn RoTxn<'db>,
     pub inner: I,
-    pub storage: Arc<HelixGraphStorage>,
-    pub txn: &'a RoTxn<'a>,
 }
 
 // implementing iterator for TraversalIterator
-impl<'a, I> Iterator for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, I> Iterator for RoTraversalIterator<'db, 'arena, 'txn, I>
 where
-    I: Iterator<Item = Result<TraversalValue, GraphError>>,
+    I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
 {
-    type Item = Result<TraversalValue, GraphError>;
+    type Item = Result<TraversalValue<'arena>, GraphError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next()
     }
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> RoTraversalIterator<'a, I> {
-    pub fn take_and_collect_to<B: FromIterator<TraversalValue>>(self, n: usize) -> B {
+impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
+    RoTraversalIterator<'db, 'arena, 'txn, I>
+{
+    pub fn take_and_collect_to<B: FromIterator<TraversalValue<'arena>>>(self, n: usize) -> B {
         self.inner
             .filter_map(|item| item.ok())
             .take(n)
             .collect::<B>()
     }
 
-    pub fn collect_to<B: FromIterator<TraversalValue>>(self) -> B {
+    pub fn collect_to<B: FromIterator<TraversalValue<'arena>>>(self) -> B {
         self.inner.filter_map(|item| item.ok()).collect::<B>()
     }
 
-    pub fn collect_dedup<B: FromIterator<TraversalValue>>(self) -> B {
+    pub fn collect_dedup<B: FromIterator<TraversalValue<'arena>>>(self) -> B {
         self.inner
             .filter_map(|item| item.ok())
             .unique()
             .collect::<B>()
     }
 
-    pub fn collect_to_obj(self) -> TraversalValue {
+    pub fn collect_to_obj(self) -> TraversalValue<'arena> {
         match self.inner.filter_map(|item| item.ok()).next() {
             Some(val) => val,
             None => TraversalValue::Empty,
@@ -57,7 +64,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> RoTraversalIter
 
     pub fn collect_to_value(self) -> Value {
         match self.inner.filter_map(|item| item.ok()).next() {
-            Some(TraversalValue::Value(val) ) => val,
+            Some(TraversalValue::Value(val)) => val,
             _ => Value::Empty,
         }
     }
@@ -68,9 +75,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> RoTraversalIter
         f: impl Fn(&Value) -> bool,
     ) -> Result<bool, GraphError> {
         let val = match &self.inner.next() {
-            Some(Ok(TraversalValue::Value(val))) => {
-                Ok(f(val))
-            }
+            Some(Ok(TraversalValue::Value(val))) => Ok(f(val)),
             Some(Ok(_)) => Err(GraphError::ConversionError(
                 "Expected value, got something else".to_string(),
             )),
@@ -90,15 +95,15 @@ pub struct RwTraversalIterator<'scope, 'env, I> {
 // implementing iterator for TraversalIterator
 impl<'scope, 'env, I> Iterator for RwTraversalIterator<'scope, 'env, I>
 where
-    I: Iterator<Item = Result<TraversalValue, GraphError>>,
+    I: Iterator<Item = Result<TraversalValue<'scope>, GraphError>>,
 {
-    type Item = Result<TraversalValue, GraphError>;
+    type Item = Result<TraversalValue<'scope>, GraphError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next()
     }
 }
-impl<'scope, 'env, I: Iterator<Item = Result<TraversalValue, GraphError>>>
+impl<'scope, 'env, I: Iterator<Item = Result<TraversalValue<'scope>, GraphError>>>
     RwTraversalIterator<'scope, 'env, I>
 {
     pub fn new(storage: Arc<HelixGraphStorage>, txn: &'scope mut RwTxn<'env>, inner: I) -> Self {
@@ -109,25 +114,25 @@ impl<'scope, 'env, I: Iterator<Item = Result<TraversalValue, GraphError>>>
         }
     }
 
-    pub fn take_and_collect_to<B: FromIterator<TraversalValue>>(self, n: usize) -> B {
+    pub fn take_and_collect_to<B: FromIterator<TraversalValue<'scope>>>(self, n: usize) -> B {
         self.inner
             .filter_map(|item| item.ok())
             .take(n)
             .collect::<B>()
     }
 
-    pub fn collect_to<B: FromIterator<TraversalValue>>(self) -> B {
+    pub fn collect_to<B: FromIterator<TraversalValue<'scope>>>(self) -> B {
         self.inner.filter_map(|item| item.ok()).collect::<B>()
     }
 
-    pub fn collect_dedup<B: FromIterator<TraversalValue>>(self) -> B {
+    pub fn collect_dedup<B: FromIterator<TraversalValue<'scope>>>(self) -> B {
         self.inner
             .filter_map(|item| item.ok())
             .unique()
             .collect::<B>()
     }
 
-    pub fn collect_to_obj(self) -> TraversalValue {
+    pub fn collect_to_obj(self) -> TraversalValue<'scope> {
         match self.inner.filter_map(|item| item.ok()).next() {
             Some(val) => val,
             None => TraversalValue::Empty,
@@ -140,9 +145,7 @@ impl<'scope, 'env, I: Iterator<Item = Result<TraversalValue, GraphError>>>
         f: impl Fn(&Value) -> bool,
     ) -> Result<bool, GraphError> {
         let val = match &self.inner.next() {
-            Some(Ok(TraversalValue::Value(val))) => {
-                Ok(f(val))
-            }
+            Some(Ok(TraversalValue::Value(val))) => Ok(f(val)),
             Some(Ok(_)) => Err(GraphError::ConversionError(
                 "Expected value, got something else".to_string(),
             )),

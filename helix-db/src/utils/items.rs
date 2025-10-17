@@ -7,19 +7,19 @@
 use crate::helix_engine::types::GraphError;
 use crate::protocol::value::Value;
 use sonic_rs::{Deserialize, Serialize};
-use std::{cmp::Ordering, collections::HashMap};
+use std::{cmp::Ordering, collections::HashMap, marker::PhantomData};
 
 /// A node in the graph containing an ID, label, and property map.
 /// Properties are serialised without enum variant names in JSON format.
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
-pub struct Node {
+pub struct Node<'arena> {
     /// The ID of the node.
     ///
     /// This is not serialized when stored as it is the key.
     #[serde(skip)]
     pub id: u128,
     /// The label of the node.
-    pub label: String,
+    pub label: &'arena str,
     /// The version of the node.
     #[serde(default)]
     pub version: u8,
@@ -29,9 +29,12 @@ pub struct Node {
     /// Properties are serialised without enum variant names in JSON format.
     #[serde(default)]
     pub properties: Option<HashMap<String, Value>>,
+
+    #[serde(skip)]
+    _phantom: PhantomData<&'arena ()>,
 }
 
-impl Node {
+impl<'arena> Node<'arena> {
     /// The number of properties in a node.
     ///
     /// This is used as a constant in the return value mixin methods.
@@ -41,8 +44,12 @@ impl Node {
     ///
     /// Takes ID as the ID is not serialized when stored as it is the key.
     /// Uses the known ID (either from the query or the key in an LMDB iterator) to construct a new node.
-    pub fn decode_node(bytes: &[u8], id: u128) -> Result<Node, GraphError> {
-        match bincode::deserialize::<Node>(bytes) {
+    pub fn decode_node<'s>(
+        bytes: &'s [u8],
+        id: u128,
+        _arena: &'arena bumpalo::Bump,
+    ) -> Result<Node<'arena>, GraphError> {
+        match bincode::deserialize::<Node<'arena>>(bytes) {
             Ok(node) => Ok(Node { id, ..node }),
             Err(e) => Err(GraphError::ConversionError(format!(
                 "Error deserializing node: {e}"
@@ -60,7 +67,7 @@ impl Node {
 }
 
 // Core trait implementations for Node
-impl std::fmt::Display for Node {
+impl std::fmt::Display for Node<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -71,7 +78,7 @@ impl std::fmt::Display for Node {
         )
     }
 }
-impl std::fmt::Debug for Node {
+impl std::fmt::Debug for Node<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -82,13 +89,13 @@ impl std::fmt::Debug for Node {
         )
     }
 }
-impl Eq for Node {}
-impl Ord for Node {
+impl Eq for Node<'_> {}
+impl Ord for Node<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.id.cmp(&other.id)
     }
 }
-impl PartialOrd for Node {
+impl PartialOrd for Node<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -97,7 +104,7 @@ impl PartialOrd for Node {
 /// An edge in the graph connecting two nodes with an ID, label, and property map.
 /// Properties are serialised without enum variant names in JSON format.
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
-pub struct Edge {
+pub struct Edge<'arena> {
     /// The ID of the edge.
     ///
     /// This is not serialized when stored as it is the key.
@@ -118,9 +125,11 @@ pub struct Edge {
     /// Properties are serialised without enum variant names in JSON format.
     #[serde(default)]
     pub properties: Option<HashMap<String, Value>>,
+
+    _phantom: PhantomData<&'arena ()>,
 }
 
-impl Edge {
+impl<'arena> Edge<'arena> {
     /// The number of properties in an edge.
     ///
     /// This is used as a constant in the return value mixin methods.
@@ -130,8 +139,12 @@ impl Edge {
     ///
     /// Takes ID as the ID is not serialized when stored as it is the key.
     /// Uses the known ID (either from the query or the key in an LMDB iterator) to construct a new edge.
-    pub fn decode_edge(bytes: &[u8], id: u128) -> Result<Edge, GraphError> {
-        match bincode::deserialize::<Edge>(bytes) {
+    pub fn decode_edge(
+        bytes: &[u8],
+        id: u128,
+        _arena: &'arena bumpalo::Bump,
+    ) -> Result<Edge<'arena>, GraphError> {
+        match bincode::deserialize::<Edge<'arena>>(bytes) {
             Ok(edge) => Ok(Edge { id, ..edge }),
             Err(e) => Err(GraphError::ConversionError(format!(
                 "Error deserializing edge: {e}"
@@ -149,7 +162,7 @@ impl Edge {
 }
 
 // Core trait implementations for Edge
-impl std::fmt::Display for Edge {
+impl std::fmt::Display for Edge<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -162,7 +175,7 @@ impl std::fmt::Display for Edge {
         )
     }
 }
-impl std::fmt::Debug for Edge {
+impl std::fmt::Debug for Edge<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -175,13 +188,13 @@ impl std::fmt::Debug for Edge {
         )
     }
 }
-impl Eq for Edge {}
-impl Ord for Edge {
+impl Eq for Edge<'_> {}
+impl Ord for Edge<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.id.cmp(&other.id)
     }
 }
-impl PartialOrd for Edge {
+impl PartialOrd for Edge<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -189,15 +202,18 @@ impl PartialOrd for Edge {
 
 #[cfg(test)]
 mod tests {
+    use bumpalo::Bump;
+
     use super::*;
 
     // Helper function to create a test node
     fn create_test_node(id: u128, label: &str, props: Option<HashMap<String, Value>>) -> Node {
         Node {
             id,
-            label: label.to_string(),
+            label,
             version: 0,
             properties: props,
+            _phantom: PhantomData,
         }
     }
 
@@ -216,6 +232,7 @@ mod tests {
             from_node: from,
             to_node: to,
             properties: props,
+            _phantom: PhantomData,
         }
     }
 
@@ -227,10 +244,11 @@ mod tests {
             ("name".to_string(), Value::String("Alice".to_string())),
             ("age".to_string(), Value::I32(30)),
         ]));
+        let arena = Bump::new();
 
         let node = create_test_node(12345, "person", props);
         let encoded = node.encode_node().unwrap();
-        let decoded = Node::decode_node(&encoded, 12345).unwrap();
+        let decoded = Node::decode_node(&encoded, 12345, &arena).unwrap();
 
         assert_eq!(node.id, decoded.id);
         assert_eq!(node.label, decoded.label);
@@ -239,9 +257,10 @@ mod tests {
 
     #[test]
     fn test_node_encode_decode_empty_properties() {
+        let arena = Bump::new();
         let node = create_test_node(123, "empty", None);
         let encoded = node.encode_node().unwrap();
-        let decoded = Node::decode_node(&encoded, 123).unwrap();
+        let decoded = Node::decode_node(&encoded, 123, &arena).unwrap();
 
         assert_eq!(node.id, decoded.id);
         assert_eq!(node.label, decoded.label);
@@ -250,6 +269,7 @@ mod tests {
 
     #[test]
     fn test_node_encode_decode_all_value_types() {
+        let arena = Bump::new();
         let props = Some(HashMap::from([
             ("string".to_string(), Value::String("test".to_string())),
             ("i32".to_string(), Value::I32(42)),
@@ -261,7 +281,7 @@ mod tests {
 
         let node = create_test_node(456, "test_node", props);
         let encoded = node.encode_node().unwrap();
-        let decoded = Node::decode_node(&encoded, 456).unwrap();
+        let decoded = Node::decode_node(&encoded, 456, &arena).unwrap();
 
         assert_eq!(node.properties, decoded.properties);
     }
@@ -269,32 +289,35 @@ mod tests {
     #[test]
     fn test_node_encode_decode_large_properties() {
         // Test with many properties (100+)
+        let arena = Bump::new();
         let mut props_map = HashMap::new();
         for i in 0..150 {
-            props_map.insert(
-                format!("prop_{}", i),
-                Value::String(format!("value_{}", i)),
-            );
+            props_map.insert(format!("prop_{}", i), Value::String(format!("value_{}", i)));
         }
 
         let node = create_test_node(789, "large_node", Some(props_map.clone()));
         let encoded = node.encode_node().unwrap();
-        let decoded = Node::decode_node(&encoded, 789).unwrap();
+        let decoded = Node::decode_node(&encoded, 789, &arena).unwrap();
 
-        assert_eq!(node.properties.unwrap().len(), decoded.properties.unwrap().len());
+        assert_eq!(
+            node.properties.unwrap().len(),
+            decoded.properties.unwrap().len()
+        );
     }
 
     #[test]
     fn test_node_encode_decode_long_strings() {
         // Test with very long property values
         let long_string = "a".repeat(10_000);
-        let props = Some(HashMap::from([
-            ("long_value".to_string(), Value::String(long_string.clone())),
-        ]));
+        let arena = Bump::new();
+        let props = Some(HashMap::from([(
+            "long_value".to_string(),
+            Value::String(long_string.clone()),
+        )]));
 
         let node = create_test_node(999, "long_string_node", props);
         let encoded = node.encode_node().unwrap();
-        let decoded = Node::decode_node(&encoded, 999).unwrap();
+        let decoded = Node::decode_node(&encoded, 999, &arena).unwrap();
 
         match &decoded.properties {
             Some(p) => {
@@ -311,6 +334,7 @@ mod tests {
 
     #[test]
     fn test_node_encode_decode_utf8_strings() {
+        let arena = Bump::new();
         let props = Some(HashMap::from([
             ("chinese".to_string(), Value::String("你好世界".to_string())),
             ("emoji".to_string(), Value::String("🚀🎉🔥".to_string())),
@@ -319,7 +343,7 @@ mod tests {
 
         let node = create_test_node(111, "utf8_node", props);
         let encoded = node.encode_node().unwrap();
-        let decoded = Node::decode_node(&encoded, 111).unwrap();
+        let decoded = Node::decode_node(&encoded, 111, &arena).unwrap();
 
         assert_eq!(node.properties, decoded.properties);
     }
@@ -327,11 +351,12 @@ mod tests {
     #[test]
     fn test_node_decode_with_different_id() {
         // Test that decode properly uses the provided ID
+        let arena = Bump::new();
         let node = create_test_node(100, "person", None);
         let encoded = node.encode_node().unwrap();
 
         // Decode with different ID
-        let decoded = Node::decode_node(&encoded, 200).unwrap();
+        let decoded = Node::decode_node(&encoded, 200, &arena).unwrap();
 
         assert_eq!(decoded.id, 200); // Should use the provided ID
         assert_eq!(decoded.label, node.label);
@@ -340,8 +365,9 @@ mod tests {
     #[test]
     fn test_node_decode_malformed_data() {
         // Test decoding with invalid/malformed data
+        let arena = Bump::new();
         let bad_data = vec![1, 2, 3, 4, 5];
-        let result = Node::decode_node(&bad_data, 123);
+        let result = Node::decode_node(&bad_data, 123, &arena);
 
         assert!(result.is_err(), "Should fail to decode malformed data");
     }
@@ -350,6 +376,7 @@ mod tests {
 
     #[test]
     fn test_edge_encode_decode_roundtrip_basic() {
+        let arena = Bump::new();
         let props = Some(HashMap::from([
             ("weight".to_string(), Value::F64(0.75)),
             ("since".to_string(), Value::String("2020-01-01".to_string())),
@@ -357,7 +384,7 @@ mod tests {
 
         let edge = create_test_edge(1, "knows", 100, 200, props);
         let encoded = edge.encode_edge().unwrap();
-        let decoded = Edge::decode_edge(&encoded, 1).unwrap();
+        let decoded = Edge::decode_edge(&encoded, 1, &arena).unwrap();
 
         assert_eq!(edge.id, decoded.id);
         assert_eq!(edge.label, decoded.label);
@@ -368,9 +395,10 @@ mod tests {
 
     #[test]
     fn test_edge_encode_decode_empty_properties() {
+        let arena = Bump::new();
         let edge = create_test_edge(2, "follows", 300, 400, None);
         let encoded = edge.encode_edge().unwrap();
-        let decoded = Edge::decode_edge(&encoded, 2).unwrap();
+        let decoded = Edge::decode_edge(&encoded, 2, &arena).unwrap();
 
         assert_eq!(edge.id, decoded.id);
         assert_eq!(edge.from_node, decoded.from_node);
@@ -380,6 +408,7 @@ mod tests {
 
     #[test]
     fn test_edge_encode_decode_all_value_types() {
+        let arena = Bump::new();
         let props = Some(HashMap::from([
             ("string".to_string(), Value::String("edge_prop".to_string())),
             ("number".to_string(), Value::I32(99)),
@@ -389,7 +418,7 @@ mod tests {
 
         let edge = create_test_edge(3, "likes", 500, 600, props);
         let encoded = edge.encode_edge().unwrap();
-        let decoded = Edge::decode_edge(&encoded, 3).unwrap();
+        let decoded = Edge::decode_edge(&encoded, 3, &arena).unwrap();
 
         assert_eq!(edge.properties, decoded.properties);
     }
@@ -397,9 +426,10 @@ mod tests {
     #[test]
     fn test_edge_encode_decode_self_loop() {
         // Test edge where from_node == to_node (self-loop)
+        let arena = Bump::new();
         let edge = create_test_edge(4, "self_reference", 700, 700, None);
         let encoded = edge.encode_edge().unwrap();
-        let decoded = Edge::decode_edge(&encoded, 4).unwrap();
+        let decoded = Edge::decode_edge(&encoded, 4, &arena).unwrap();
 
         assert_eq!(decoded.from_node, decoded.to_node);
         assert_eq!(decoded.from_node, 700);
@@ -407,11 +437,12 @@ mod tests {
 
     #[test]
     fn test_edge_decode_with_different_id() {
+        let arena = Bump::new();
         let edge = create_test_edge(5, "works_at", 800, 900, None);
         let encoded = edge.encode_edge().unwrap();
 
         // Decode with different ID
-        let decoded = Edge::decode_edge(&encoded, 50).unwrap();
+        let decoded = Edge::decode_edge(&encoded, 50, &arena).unwrap();
 
         assert_eq!(decoded.id, 50); // Should use the provided ID
         assert_eq!(decoded.label, edge.label);
@@ -421,8 +452,9 @@ mod tests {
 
     #[test]
     fn test_edge_decode_malformed_data() {
+        let arena = Bump::new();
         let bad_data = vec![1, 2, 3, 4, 5];
-        let result = Edge::decode_edge(&bad_data, 123);
+        let result = Edge::decode_edge(&bad_data, 123, &arena);
 
         assert!(result.is_err(), "Should fail to decode malformed data");
     }
@@ -430,10 +462,11 @@ mod tests {
     #[test]
     fn test_edge_encode_decode_large_node_ids() {
         // Test with maximum u128 values
+        let arena = Bump::new();
         let max_id = u128::MAX;
         let edge = create_test_edge(6, "test", max_id - 1, max_id, None);
         let encoded = edge.encode_edge().unwrap();
-        let decoded = Edge::decode_edge(&encoded, 6).unwrap();
+        let decoded = Edge::decode_edge(&encoded, 6, &arena).unwrap();
 
         assert_eq!(decoded.from_node, max_id - 1);
         assert_eq!(decoded.to_node, max_id);
@@ -446,9 +479,10 @@ mod tests {
         let node = create_test_node(
             123456789,
             "test",
-            Some(HashMap::from([
-                ("key".to_string(), Value::String("value".to_string())),
-            ])),
+            Some(HashMap::from([(
+                "key".to_string(),
+                Value::String("value".to_string()),
+            )])),
         );
 
         let display = format!("{}", node);

@@ -1,7 +1,7 @@
 use crate::{
     helix_engine::{
-        traversal_core::{traversal_value::TraversalValue, traversal_iter::RoTraversalIterator},
         storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
+        traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
     },
     protocol::value::Value,
@@ -9,18 +9,24 @@ use crate::{
 use heed3::{RoTxn, byteorder::BE};
 use helix_macros::debug_trace;
 use serde::Serialize;
-use std::sync::Arc;
 
-pub struct NFromIndex<'a> {
-    iter:
-        heed3::RoPrefix<'a, heed3::types::Bytes, heed3::types::LazyDecode<heed3::types::U128<BE>>>,
-    txn: &'a RoTxn<'a>,
-    storage: Arc<HelixGraphStorage>,
-    label: &'a str,
+pub struct NFromIndex<'db, 'arena, 'txn, 's>
+where
+    'db: 'arena,
+    'arena: 'txn,
+{
+    storage: &'db HelixGraphStorage,
+    txn: &'txn RoTxn<'db>,
+    iter: heed3::RoPrefix<
+        'txn,
+        heed3::types::Bytes,
+        heed3::types::LazyDecode<heed3::types::U128<BE>>,
+    >,
+    label: &'s str,
 }
 
-impl<'a> Iterator for NFromIndex<'a> {
-    type Item = Result<TraversalValue, GraphError>;
+impl<'db, 'arena, 'txn, 's> Iterator for NFromIndex<'db, 'arena, 'txn, 's> {
+    type Item = Result<TraversalValue<'arena>, GraphError>;
 
     #[debug_trace("N_FROM_INDEX")]
     fn next(&mut self) -> Option<Self::Item> {
@@ -48,10 +54,10 @@ impl<'a> Iterator for NFromIndex<'a> {
     }
 }
 
-pub trait NFromIndexAdapter<'a, K: Into<Value> + Serialize>:
-    Iterator<Item = Result<TraversalValue, GraphError>>
+pub trait NFromIndexAdapter<'arena, 's, K: Into<Value> + Serialize>:
+    Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
 {
-    type OutputIter: Iterator<Item = Result<TraversalValue, GraphError>>;
+    type OutputIter: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>;
 
     /// Returns a new iterator that will return the node from the secondary index.
     ///
@@ -62,18 +68,24 @@ pub trait NFromIndexAdapter<'a, K: Into<Value> + Serialize>:
     ///
     /// Note that both the `index` and `key` must be provided.
     /// The index must be a valid and existing secondary index and the key should match the type of the index.
-    fn n_from_index(self, label: &'a str, index: &'a str, key: &'a K) -> Self::OutputIter
+    fn n_from_index(self, label: &'s str, index: &'s str, key: &'s K) -> Self::OutputIter
     where
         K: Into<Value> + Serialize + Clone;
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>, K: Into<Value> + Serialize + 'a>
-    NFromIndexAdapter<'a, K> for RoTraversalIterator<'a, I>
+impl<
+    'db,
+    'arena,
+    'txn,
+    's,
+    I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    K: Into<Value> + Serialize,
+> NFromIndexAdapter<'arena, 's, K> for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
-    type OutputIter = RoTraversalIterator<'a, NFromIndex<'a>>;
+    type OutputIter = RoTraversalIterator<'db, 'arena, 'txn, NFromIndex<'db, 'arena, 'txn, 's>>;
 
     #[inline]
-    fn n_from_index(self, label: &'a str, index: &'a str, key: &'a K) -> Self::OutputIter
+    fn n_from_index(self, label: &'s str, index: &'s str, key: &K) -> Self::OutputIter
     where
         K: Into<Value> + Serialize + Clone,
     {
@@ -91,16 +103,17 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>, K: Into<Value> 
             .unwrap();
 
         let n_from_index = NFromIndex {
-            iter: res,
+            storage: self.storage,
             txn: self.txn,
-            storage: Arc::clone(&self.storage),
+            iter: res,
             label,
         };
 
         RoTraversalIterator {
-            inner: n_from_index,
             storage: self.storage,
+            arena: self.arena,
             txn: self.txn,
+            inner: n_from_index,
         }
     }
 }

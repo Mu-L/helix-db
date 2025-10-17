@@ -57,7 +57,7 @@ use helix_db::{
                 },
             },
             traversal_value::{Traversable, TraversalValue},
-            traversal_value_arena::{Traversable as TraversableArena, TraversalValueArena},
+            traversal_value::{Traversable as TraversableArena, TraversalValueArena},
         },
         types::GraphError,
         vector_core::{vector::HVector, vector_core::VectorCore},

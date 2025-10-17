@@ -91,7 +91,6 @@ impl<'arena, K, V> BumpVecMap<'arena, K, V> {
 }
 
 impl<'arena, K: PartialEq, V> BumpVecMap<'arena, K, V> {
-
     /// Gets a mutable reference to the value associated with the key.
     ///
     /// O(n) operation - performs linear search.

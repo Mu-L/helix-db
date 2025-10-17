@@ -2,13 +2,14 @@ pub mod config;
 pub mod ops;
 pub mod traversal_iter;
 pub mod traversal_value;
-pub mod traversal_value_arena;
 
 use crate::helix_engine::storage_core::{HelixGraphStorage, version_info::VersionInfo};
 use crate::helix_engine::traversal_core::config::Config;
 use crate::helix_engine::types::GraphError;
 use crate::helix_gateway::mcp::mcp::{McpBackend, McpConnections};
 use std::sync::{Arc, Mutex};
+
+pub const LMDB_STRING_HEADER_LENGTH: usize = 8;
 
 #[derive(Debug)]
 pub enum QueryInput {
