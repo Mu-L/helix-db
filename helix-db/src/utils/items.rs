@@ -4,14 +4,14 @@
 //!
 //! Nodes and edges are serialised without enum variant names in JSON format.
 
-use crate::helix_engine::types::GraphError;
 use crate::protocol::value::Value;
+use crate::{helix_engine::types::GraphError, utils::properties::ImmutablePropertiesMap};
 use sonic_rs::{Deserialize, Serialize};
-use std::{cmp::Ordering, collections::HashMap, marker::PhantomData};
+use std::{cmp::Ordering, marker::PhantomData};
 
 /// A node in the graph containing an ID, label, and property map.
 /// Properties are serialised without enum variant names in JSON format.
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Serialize, Deserialize, PartialEq)]
 pub struct Node<'arena> {
     /// The ID of the node.
     ///
@@ -19,7 +19,7 @@ pub struct Node<'arena> {
     #[serde(skip)]
     pub id: u128,
     /// The label of the node.
-    pub label: &'arena str,
+    pub label: bumpalo::collections::String<'arena>,
     /// The version of the node.
     #[serde(default)]
     pub version: u8,
@@ -28,7 +28,7 @@ pub struct Node<'arena> {
     /// Properties are optional and can be None.
     /// Properties are serialised without enum variant names in JSON format.
     #[serde(default)]
-    pub properties: Option<HashMap<String, Value>>,
+    pub properties: Option<ImmutablePropertiesMap<'arena>>,
 
     #[serde(skip)]
     pub _phantom: PhantomData<&'arena ()>,
@@ -64,6 +64,11 @@ impl<'arena> Node<'arena> {
         bincode::serialize(&self)
             .map_err(|e| GraphError::ConversionError(format!("Error serializing node: {e}")))
     }
+
+    #[inline(always)]
+    pub fn get_property(&self, prop: &str) -> Option<&Value> {
+        self.properties.as_ref().and_then(|value| value.get(prop))
+    }
 }
 
 // Core trait implementations for Node
@@ -71,10 +76,9 @@ impl std::fmt::Display for Node<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{{ id: {}, label: {}, properties: {:?} }}",
+            "{{ id: {}, label: {} }}",
             uuid::Uuid::from_u128(self.id),
             self.label,
-            self.properties
         )
     }
 }
@@ -82,10 +86,9 @@ impl std::fmt::Debug for Node<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{{ \nid:{},\nlabel:{},\nproperties:{:#?} }}",
+            "{{ \nid:{},\nlabel:{} }}",
             uuid::Uuid::from_u128(self.id),
             self.label,
-            self.properties
         )
     }
 }
@@ -111,7 +114,7 @@ pub struct Edge<'arena> {
     #[serde(skip)]
     pub id: u128,
     /// The label of the edge.
-    pub label: String,
+    pub label: bumpalo::collections::String<'arena>,
     /// The version of the edge.
     #[serde(default)]
     pub version: u8,
@@ -124,7 +127,7 @@ pub struct Edge<'arena> {
     /// Properties are optional and can be None.
     /// Properties are serialised without enum variant names in JSON format.
     #[serde(default)]
-    pub properties: Option<HashMap<String, Value>>,
+    pub properties: Option<ImmutablePropertiesMap<'arena>>,
 
     pub _phantom: PhantomData<&'arena ()>,
 }
@@ -159,6 +162,10 @@ impl<'arena> Edge<'arena> {
         bincode::serialize(self)
             .map_err(|e| GraphError::ConversionError(format!("Error serializing edge: {e}")))
     }
+
+    pub fn get_property(&self, prop: &str) -> Option<&Value> {
+        self.properties.as_ref().and_then(|value| value.get(prop))
+    }
 }
 
 // Core trait implementations for Edge
@@ -166,12 +173,11 @@ impl std::fmt::Display for Edge<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{{ id: {}, label: {}, from_node: {}, to_node: {}, properties: {:?} }}",
+            "{{ id: {}, label: {}, from_node: {}, to_node: {}}}",
             uuid::Uuid::from_u128(self.id),
             self.label,
             uuid::Uuid::from_u128(self.from_node),
             uuid::Uuid::from_u128(self.to_node),
-            self.properties
         )
     }
 }
@@ -179,12 +185,11 @@ impl std::fmt::Debug for Edge<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{{ \nid: {},\nlabel: {},\nfrom_node: {},\nto_node: {},\nproperties: {:#?} }}",
+            "{{ \nid: {},\nlabel: {},\nfrom_node: {},\nto_node: {}}}",
             uuid::Uuid::from_u128(self.id),
             self.label,
             uuid::Uuid::from_u128(self.from_node),
             uuid::Uuid::from_u128(self.to_node),
-            self.properties
         )
     }
 }

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{
     helix_engine::{
         traversal_core::{
@@ -10,14 +8,16 @@ use crate::{
     },
     utils::group_by::{GroupBy, GroupByItem},
 };
+use std::collections::HashMap;
 
-pub trait GroupByAdapter<'a>: Iterator {
+pub trait GroupByAdapter: Iterator {
     fn group_by(self, properties: &[String], should_count: bool) -> Result<GroupBy, GraphError>;
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> GroupByAdapter<'a>
-    for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
+    GroupByAdapter for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
+    // TODO: optimize this
     fn group_by(self, properties: &[String], should_count: bool) -> Result<GroupBy, GraphError> {
         let mut groups: HashMap<String, GroupByItem> = HashMap::new();
 

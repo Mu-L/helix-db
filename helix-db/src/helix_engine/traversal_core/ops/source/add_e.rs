@@ -1,10 +1,10 @@
 use crate::{
     helix_engine::{
-        storage_core::HelixGraphStorage, traversal_core::traversal_iter::RwTraversalIterator,
-        traversal_core::traversal_value::TraversalValue, types::GraphError,
+        storage_core::HelixGraphStorage,
+        traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
+        types::GraphError,
     },
-    protocol::value::Value,
-    utils::{id::v6_uuid, items::Edge, label_hash::hash_label},
+    utils::{id::v6_uuid, items::Edge, label_hash::hash_label, properties::ImmutablePropertiesMap},
 };
 use heed3::{PutFlags, RwTxn};
 use std::marker::PhantomData;
@@ -34,7 +34,7 @@ pub trait AddEAdapter<'db, 'arena, 'txn, 's>:
     fn add_edge(
         self,
         label: &'s str,
-        properties: Option<Vec<(String, Value)>>,
+        properties: Option<ImmutablePropertiesMap<'arena>>,
         from_node: u128,
         to_node: u128,
         should_check: bool,
@@ -54,7 +54,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
     fn add_edge(
         self,
         label: &'s str,
-        properties: Option<Vec<(String, Value)>>,
+        properties: Option<ImmutablePropertiesMap<'arena>>,
         from_node: u128,
         to_node: u128,
         should_check: bool,
@@ -65,11 +65,12 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
         let version = self.storage.version_info.get_latest(label);
+        let label = bumpalo::collections::String::from_str_in(label, self.arena);
         let edge = Edge {
             id: v6_uuid(),
-            label: label.to_string(),
+            label,
             version,
-            properties: properties.map(|props| props.into_iter().collect()), // TODO: change to bump map
+            properties,
             from_node,
             to_node,
             _phantom: PhantomData,

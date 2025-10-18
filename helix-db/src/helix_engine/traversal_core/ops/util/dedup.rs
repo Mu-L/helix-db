@@ -1,21 +1,20 @@
-use std::{collections::HashSet, sync::Arc};
-
 use crate::helix_engine::{
     traversal_core::{
-        traversal_value::{Traversable, TraversalValue},
         traversal_iter::RoTraversalIterator,
+        traversal_value::{Traversable, TraversalValue},
     },
     types::GraphError,
 };
 
-pub struct Dedup<I> {
+pub struct Dedup<'arena, I> {
+    arena: &'arena bumpalo::Bump,
+    seen: bumpalo::collections::Vec<'arena, u128>,
     iter: I,
-    seen: HashSet<String>,
 }
 
-impl<I> Iterator for Dedup<I>
+impl<'arena, I> Iterator for Dedup<'arena, I>
 where
-    I: Iterator<Item = Result<TraversalValue, GraphError>>,
+    I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
 {
     type Item = I::Item;
 
@@ -23,9 +22,10 @@ where
         match self.iter.next() {
             Some(item) => match item {
                 Ok(item) => {
-                    if self.seen.insert(item.id().to_string()) {
+                    if !self.seen.contains(&item.id()) {
                         Some(Ok(item))
                     } else {
+                        self.seen.push(item.id());
                         self.next()
                     }
                 }
@@ -36,31 +36,39 @@ where
     }
 }
 
-pub trait DedupAdapter<'a>: Iterator {
+pub trait DedupAdapter<'db, 'arena, 'txn>: Iterator {
     /// Dedup returns an iterator that will return unique items when collected
     fn dedup(
         self,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>>;
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> DedupAdapter<'a>
-    for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
+    DedupAdapter<'db, 'arena, 'txn> for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
     fn dedup(
         self,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>> {
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
         {
-            let upper_bound = match self.inner.size_hint() {
-                (_, Some(upper_bound)) => upper_bound,
-                (lower, None) => lower,
-            };
             RoTraversalIterator {
-                inner: Dedup {
-                    iter: self.inner,
-                    seen: HashSet::with_capacity(upper_bound),
-                },
-                storage: Arc::clone(&self.storage),
+                arena: self.arena,
+                storage: self.storage,
                 txn: self.txn,
+                inner: Dedup {
+                    arena: self.arena,
+                    iter: self.inner,
+                    seen: bumpalo::collections::Vec::new_in(self.arena),
+                },
             }
         }
     }

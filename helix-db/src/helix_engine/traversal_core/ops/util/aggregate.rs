@@ -11,14 +11,22 @@ use crate::{
     utils::aggregate::{Aggregate, AggregateItem},
 };
 
-pub trait AggregateAdapter<'a>: Iterator {
-    fn aggregate_by(self, properties: &[String], should_count: bool) -> Result<Aggregate, GraphError>;
+pub trait AggregateAdapter: Iterator {
+    fn aggregate_by(
+        self,
+        properties: &[String],
+        should_count: bool,
+    ) -> Result<Aggregate, GraphError>;
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> AggregateAdapter<'a>
-    for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
+    AggregateAdapter for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
-    fn aggregate_by(self, properties: &[String], should_count: bool) -> Result<Aggregate, GraphError> {
+    fn aggregate_by(
+        self,
+        properties: &[String],
+        should_count: bool,
+    ) -> Result<Aggregate, GraphError> {
         let mut groups: HashMap<String, AggregateItem> = HashMap::new();
 
         for item in self.inner {

@@ -1,87 +1,56 @@
-use crate::{helix_engine::{
-    traversal_core::{
-        traversal_value::TraversalValue,
-        traversal_iter::{RoTraversalIterator, RwTraversalIterator},
+use crate::{
+    helix_engine::{
+        traversal_core::{
+            traversal_iter::{RoTraversalIterator, RwTraversalIterator},
+            traversal_value::TraversalValue,
+        },
+        types::GraphError,
     },
-    types::GraphError,
-}, utils::filterable::Filterable};
+    protocol::value::Value,
+    utils::properties::ImmutablePropertiesMap,
+};
 
-pub struct PropsIterator<'a, I> {
+pub struct PropsIterator<'s, I> {
     iter: I,
-    prop: &'a str,
+    prop: &'s str,
 }
 
-impl<'a, I> Iterator for PropsIterator<'a, I>
+impl<'arena, 's, I> Iterator for PropsIterator<'s, I>
 where
-    I: Iterator<Item = Result<TraversalValue, GraphError>>,
+    I: Iterator,
 {
-    type Item = Result<TraversalValue, GraphError>;
-
+    type Item = I::Item;
     fn next(&mut self) -> Option<Self::Item> {
-        match self.iter.next() {
-            Some(Ok(TraversalValue::Node(node))) => match node.check_property(self.prop) {
-                Ok(prop) => Some(Ok(TraversalValue::Value(prop.into_owned()))),
-                Err(e) => Some(Err(e)),
-            },
-            Some(Ok(TraversalValue::Edge(edge))) => match edge.check_property(self.prop) {
-                Ok(prop) => Some(Ok(TraversalValue::Value(prop.into_owned()))),
-                Err(e) => Some(Err(e)),
-            },
-            Some(Ok(TraversalValue::Vector(vec))) => match vec.check_property(self.prop) {
-                Ok(prop) => Some(Ok(TraversalValue::Value(prop.into_owned()))),
-                Err(e) => Some(Err(e)),
-            },
-            _ => None,
-        }
+        self.iter.next()
     }
 }
-pub trait PropsAdapter<'a, I>: Iterator<Item = Result<TraversalValue, GraphError>> {
+pub trait PropsAdapter<'db, 'arena, 'txn, 's, I>:
+    Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
+{
     /// Returns a new iterator which yeilds the value of the property if it exists
-    /// 
+    ///
     /// Given the type checking of the schema there should be no need to return an empty traversal.
-    fn check_property(
-        self,
-        prop: &'a str,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>>;
+    fn get_property(self, prop: &'s str) -> RoTraversalIterator<'db, 'arena, 'txn, impl Iterator>;
 }
 
-impl<'a, I> PropsAdapter<'a, I> for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, 's, I> PropsAdapter<'db, 'arena, 'txn, 's, I>
+    for RoTraversalIterator<'db, 'arena, 'txn, I>
 where
-    I: Iterator<Item = Result<TraversalValue, GraphError>>,
+    I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
 {
     #[inline]
-    fn check_property(
-        self,
-        prop: &'a str,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>> {
+    fn get_property(self, prop: &'s str) -> RoTraversalIterator<'db, 'arena, 'txn, impl Iterator> {
+        let iter = self.inner.filter_map(move |item| match &item {
+            Ok(TraversalValue::Node(node)) => Some(node.get_property(prop)),
+            Ok(TraversalValue::Edge(edge)) => Some(edge.get_property(prop)),
+            Ok(TraversalValue::Vector(vec)) => Some(vec.get_property(prop)),
+            _ => None,
+        });
         RoTraversalIterator {
-            inner: PropsIterator {
-                iter: self.inner,
-                prop,
-            },
             storage: self.storage,
+            arena: self.arena,
             txn: self.txn,
-        }
-    }
-}
-
-impl<'a, 'b, I> PropsAdapter<'a, I> for RwTraversalIterator<'a, 'b, I>
-where
-    I: Iterator<Item = Result<TraversalValue, GraphError>>,
-    'b: 'a,
-{
-    #[inline]
-    fn check_property(
-        self,
-        prop: &'a str,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>> {
-        RoTraversalIterator {
-            inner: PropsIterator {
-                iter: self.inner,
-                prop,
-            },
-            storage: self.storage,
-            txn: self.txn,
+            inner: PropsIterator { iter, prop },
         }
     }
 }

@@ -7,8 +7,7 @@ use crate::{
     },
     protocol::value::Value,
     utils::{
-        filterable::{Filterable, FilterableType},
-        id::v6_uuid,
+        id::v6_uuid, properties::ImmutablePropertiesMap,
     },
 };
 use core::fmt;
@@ -41,8 +40,7 @@ pub struct HVector<'arena> {
     pub data: &'arena [f64],
     /// The properties of the HVector
     #[serde(default)]
-    pub properties: Option<HashMap<String, Value>>,
-
+    pub properties: Option<ImmutablePropertiesMap<'arena>>,
 }
 
 impl Eq for HVector<'_> {}
@@ -202,25 +200,15 @@ impl<'arena> HVector<'arena> {
         }
     }
 
-    pub fn check_property(&self, key: &str) -> Result<Cow<'_, Value>, GraphError> {
+    pub fn get_property(&self, key: &str) -> Option<&Value> {
         match key {
-            "id" => Ok(Cow::Owned(Value::from(self.uuid()))),
-            "label" => Ok(Cow::Owned(Value::from(self.label().to_string()))),
-            "data" => Ok(Cow::Owned(Value::Array(
+            "id" => Some(&Value::from(self.uuid())),
+            "label" => Some(&Value::from(self.label().to_string())),
+            "data" => Some(&Value::Array(
                 self.data.iter().map(|f| Value::F64(*f)).collect(),
-            ))),
-            "score" => Ok(Cow::Owned(Value::F64(self.score()))),
-            _ => match &self.properties {
-                Some(properties) => properties
-                    .get(key)
-                    .ok_or(GraphError::ConversionError(format!(
-                        "Property {key} not found"
-                    )))
-                    .map(Cow::Borrowed),
-                None => Err(GraphError::ConversionError(format!(
-                    "Property {key} not found"
-                ))),
-            },
+            )),
+            "score" => Some(&Value::F64(self.score())),
+            _ => self.properties.as_ref().and_then(|value| value.get(key)),
         }
     }
 

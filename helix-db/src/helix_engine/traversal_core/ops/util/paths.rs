@@ -65,10 +65,10 @@ impl PartialOrd for DijkstraState {
     }
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> Iterator
-    for ShortestPathIterator<'a, I>
+impl<'arena, 's, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>> Iterator
+    for ShortestPathIterator<'s, I>
 {
-    type Item = Result<TraversalValue, GraphError>;
+    type Item = Result<TraversalValue<'arena>, GraphError>;
 
     /// Returns the next outgoing node by decoding the edge id and then getting the edge and node
     fn next(&mut self) -> Option<Self::Item> {

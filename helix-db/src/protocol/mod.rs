@@ -1,7 +1,6 @@
 pub mod date;
 pub mod error;
 pub mod format;
-pub mod remapping;
 pub mod request;
 pub mod response;
 pub mod value;

@@ -5,8 +5,7 @@ use crate::{
         traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
     },
-    protocol::value::Value,
-    utils::{filterable::Filterable, id::v6_uuid, items::Node},
+    utils::{id::v6_uuid, items::Node, properties::ImmutablePropertiesMap},
 };
 use heed3::{PutFlags, RwTxn};
 
@@ -35,7 +34,7 @@ pub trait AddNAdapter<'db, 'arena, 'txn, 's>:
     fn add_n(
         self,
         label: &'s str,
-        properties: Option<Vec<(String, Value)>>,
+        properties: Option<ImmutablePropertiesMap<'arena>>,
         secondary_indices: Option<&'s [&str]>,
     ) -> RwTraversalIterator<
         'db,
@@ -51,7 +50,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
     fn add_n(
         self,
         label: &'s str,
-        properties: Option<Vec<(String, Value)>>,
+        properties: Option<ImmutablePropertiesMap<'arena>>,
         secondary_indices: Option<&'s [&str]>,
     ) -> RwTraversalIterator<
         'db,
@@ -59,11 +58,12 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         'txn,
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
+        let label = bumpalo::collections::String::from_str_in(label, self.arena);
         let node = Node {
             id: v6_uuid(),
-            label: label, // TODO: just &str or Cow<'arena, str>
+            label,
             version: 1,
-            properties: properties.map(|props| props.into_iter().collect()),
+            properties,
             _phantom: std::marker::PhantomData,
         };
         let secondary_indices = secondary_indices.unwrap_or(&[]).to_vec();
@@ -86,12 +86,9 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         for index in secondary_indices {
             match self.storage.secondary_indices.get(index) {
                 Some(db) => {
-                    let key = match node.check_property(index) {
-                        Ok(value) => value,
-                        Err(e) => {
-                            result = Err(e);
-                            continue;
-                        }
+                    let key = match node.get_property(index) {
+                        Some(value) => value,
+                        None => continue,
                     };
                     // look into if there is a way to serialize to a slice
                     match bincode::serialize(&key) {
@@ -129,7 +126,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         }
 
         if result.is_ok() {
-            result = Ok(TraversalValue::Node(node.clone()));
+            result = Ok(TraversalValue::Node(node));
         } else {
             result = Err(GraphError::New(
                 "Failed to add node to secondary indices".to_string(),
