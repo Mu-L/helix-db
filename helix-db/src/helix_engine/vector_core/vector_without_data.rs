@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     helix_engine::types::{GraphError, VectorError},
     protocol::value::Value,
-    utils::bump_vec_map::BumpVecMap,
+    utils::properties::ImmutablePropertiesMap,
 };
 use core::fmt;
 
@@ -30,17 +30,16 @@ pub struct VectorWithoutData<'arena> {
 
     /// The properties of the HVector
     #[serde(default)]
-    pub properties: Option<BumpVecMap<'arena, &'arena str, Value>>,
+    pub properties: Option<ImmutablePropertiesMap<'arena>>,
 }
 
 impl Debug for VectorWithoutData<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{{ \nid: {},\nlevel: {},\nproperties: {:#?} }}",
+            "{{ \nid: {},\nlevel: {} }}",
             uuid::Uuid::from_u128(self.id),
             self.level,
-            self.properties
         )
     }
 }
@@ -51,7 +50,7 @@ impl<'arena> VectorWithoutData<'arena> {
         id: u128,
         label: &'arena str,
         level: usize,
-        properties: BumpVecMap<'arena, &'arena str, Value>,
+        properties: ImmutablePropertiesMap<'arena>,
     ) -> Self {
         VectorWithoutData {
             id,
@@ -66,7 +65,7 @@ impl<'arena> VectorWithoutData<'arena> {
     pub fn decode_vector(
         id: u128,
         label: &'arena str,
-        properties: BumpVecMap<'arena, &'arena str, Value>,
+        properties: ImmutablePropertiesMap<'arena>,
     ) -> Result<Self, VectorError> {
         let vector = VectorWithoutData::from_properties(id, label, 0, properties);
         Ok(vector)
