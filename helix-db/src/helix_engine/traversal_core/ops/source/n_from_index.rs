@@ -16,6 +16,7 @@ where
     'arena: 'txn,
 {
     storage: &'db HelixGraphStorage,
+    arena: &'arena bumpalo::Bump,
     txn: &'txn RoTxn<'db>,
     iter: heed3::RoPrefix<
         'txn,
@@ -104,6 +105,7 @@ impl<
 
         let n_from_index = NFromIndex {
             storage: self.storage,
+            arena: self.arena,
             txn: self.txn,
             iter: res,
             label,

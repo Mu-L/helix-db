@@ -11,14 +11,9 @@ use crate::{
         traversal_core::config::Config,
         types::GraphError,
         vector_core::{
-            arena::{
-                hnsw::HNSW as ArenaHNSW,
-                vector::HVector as ArenaHVector,
-                vector_core::{HNSWConfig as ArenaHNSWConfig, VectorCore as VectorCoreArena},
-            },
             hnsw::HNSW,
             vector::HVector,
-            vector_core::{HNSWConfig, VectorCore},
+            vector_core::{HNSWConfig, VectorCore}, vector_without_data::VectorWithoutData,
         },
     },
     utils::{
@@ -58,7 +53,6 @@ pub struct HelixGraphStorage {
     pub in_edges_db: Database<Bytes, Bytes>,
     pub secondary_indices: HashMap<String, Database<Bytes, U128<BE>>>,
     pub vectors: VectorCore,
-    pub vectors_arena: VectorCoreArena,
     pub bm25: Option<HBM25Config>,
     pub version_info: VersionInfo,
 
@@ -160,10 +154,10 @@ impl HelixGraphStorage {
         )?;
 
         let vector_config = config.get_vector_config();
-        let vectors_arena = VectorCoreArena::new(
+        let vectors = VectorCore::new(
             &graph_env,
             &mut wtxn,
-            ArenaHNSWConfig::new(
+            HNSWConfig::new(
                 vector_config.m,
                 vector_config.ef_construction,
                 vector_config.ef_search,
@@ -190,7 +184,6 @@ impl HelixGraphStorage {
             in_edges_db,
             secondary_indices,
             vectors,
-            vectors_arena,
             bm25,
             storage_config,
             version_info,
@@ -283,19 +276,19 @@ impl HelixGraphStorage {
         txn: &RoTxn,
         id: &u128,
         arena: &'arena bumpalo::Bump,
-    ) -> Result<ArenaHVector<'arena>, GraphError> {
-        Ok(self.vectors_arena.get_vector(txn, *id, 0, true, arena)?)
+    ) -> Result<HVector<'arena>, GraphError> {
+        Ok(self.vectors.get_vector(txn, *id, 0, true, arena)?)
     }
 
-    pub fn get_vector_without_raw_vector_data_in<'arena>(
+    pub fn get_vector_without_raw_vector_data_in<'db: 'arena, 'arena: 'txn, 'txn>(
         &self,
-        txn: &RoTxn,
+        txn: &'txn RoTxn<'db>,
         id: &u128,
         arena: &'arena bumpalo::Bump,
-    ) -> Result<ArenaHVector<'arena>, GraphError> {
+    ) -> Result<Option<VectorWithoutData<'arena>>, GraphError> {
         Ok(self
-            .vectors_arena
-            .get_vector_without_raw_vector_data(txn, *id, 0, arena)?)
+            .vectors
+            .get_vector_without_raw_vector_data(txn, *id, arena)?)
     }
 }
 

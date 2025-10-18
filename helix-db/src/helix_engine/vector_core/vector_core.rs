@@ -16,7 +16,8 @@ use crate::{
 use bincode::{Options, de::read::SliceReader};
 use heed3::{
     Database, Env, RoTxn, RwTxn,
-    types::{Bytes, Unit},
+    byteorder::BE,
+    types::{Bytes, U128, Unit},
 };
 use itertools::Itertools;
 use rand::prelude::Rng;
@@ -69,7 +70,7 @@ impl HNSWConfig {
 
 pub struct VectorCore {
     pub vectors_db: Database<Bytes, Bytes>,
-    pub vector_properties_db: Database<Bytes, Bytes>,
+    pub vector_properties_db: Database<U128<BE>, Bytes>,
     pub edges_db: Database<Bytes, Unit>,
     pub config: HNSWConfig,
 }
@@ -81,7 +82,7 @@ impl VectorCore {
             .database_options()
             .types::<U128<BE>, Bytes>()
             .name(DB_VECTOR_DATA)
-            .create(&mut txn)?;
+            .create(txn)?;
         let edges_db = env.create_database(txn, Some(DB_HNSW_EDGES))?;
 
         Ok(Self {
@@ -390,24 +391,58 @@ impl VectorCore {
     }
 
     #[inline]
-    pub fn get_vector_without_raw_vector_data<'txn, 'arena: 'txn>(
+    pub fn get_vector_without_raw_vector_data<'db: 'arena, 'arena: 'txn, 'txn>(
         &self,
-        txn: &'txn RoTxn,
+        txn: &'txn RoTxn<'db>,
         id: u128,
-        level: usize,
         arena: &'arena bumpalo::Bump,
-    ) -> Result<VectorWithoutData<'arena>, VectorError> {
-        let properties: BumpVecMap<'arena, &'txn str, Value> =
-            match self.vector_properties_db.get(txn, &id.to_be_bytes())? {
-                Some(bytes) => bincode::options()
-                    .deserialize_seed(BumpVecMapSeed::new(arena), bytes)
-                    // .map(|properties| properties.)
-                    .map_err(VectorError::from)?,
-                None => BumpVecMap::new_in(arena),
+    ) -> Result<Option<VectorWithoutData<'arena>>, VectorError> {
+        let vector: Option<VectorWithoutData<'arena>> =
+            match self.vector_properties_db.get(txn, &id)? {
+                Some(bytes) => {
+                    // TODO: use bump map here
+                    Some(bincode::deserialize(bytes).map_err(VectorError::from)?)
+                }
+                None => None,
             };
         // TODO
-        let vector = VectorWithoutData::from_properties(id, level, properties);
+
         Ok(vector)
+    }
+
+    #[inline(always)]
+    fn get_vector_in<'arena>(
+        &self,
+        txn: &RoTxn,
+        id: u128,
+        label: &'txn str,
+        level: usize,
+        with_data: bool,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<HVector<'arena>, VectorError> {
+        let key = Self::vector_key(id, level);
+        match self.vectors_db.get(txn, key.as_ref())? {
+            Some(bytes) => {
+                let mut vector = HVector::from_bytes(id, label, level, bytes, arena)?;
+                match with_data {
+                    true => {
+                        let properties: Option<HVector<'arena>> =
+                            match self.vector_properties_db.get(txn, &id.to_be_bytes())? {
+                                Some(bytes) => {
+                                    // TODO: use bump map here
+                                    Some(bincode::deserialize(bytes).map_err(VectorError::from)?)
+                                }
+                                None => None,
+                            };
+
+                        Ok(vector)
+                    }
+                    false => Ok(vector),
+                }
+            }
+            None if level > 0 => self.get_vector(txn, id, 0, with_data, arena),
+            None => Err(VectorError::VectorNotFound(id.to_string())),
+        }
     }
 }
 

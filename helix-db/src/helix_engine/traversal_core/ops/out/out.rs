@@ -97,7 +97,7 @@ impl<'db, 'arena, 'txn> Iterator for OutVecIterator<'db, 'arena, 'txn> {
                             return Some(Ok(TraversalValue::Vector(vec)));
                         }
                     } else {
-                        if let Ok(vec) = self
+                        if let Ok(Some(vec)) = self
                             .storage
                             .get_vector_without_raw_vector_data_in(self.txn, &item_id, self.arena)
                         {
@@ -160,8 +160,6 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         'txn,
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
-        let txn = self.txn;
-
         let iter = self
             .inner
             .filter_map(move |item| {
@@ -177,12 +175,12 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                     .storage
                     .out_edges_db
                     .lazily_decode_data()
-                    .get_duplicates(txn, &prefix)
+                    .get_duplicates(self.txn, &prefix)
                 {
                     Ok(Some(iter)) => Some(OutVecIterator {
                         iter,
                         storage: self.storage,
-                        txn,
+                        txn: self.txn,
                         arena: self.arena,
                         get_vector_data,
                     }),
@@ -200,7 +198,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
             inner: iter,
             storage: self.storage,
             arena: self.arena,
-            txn,
+            txn: self.txn,
         }
     }
 

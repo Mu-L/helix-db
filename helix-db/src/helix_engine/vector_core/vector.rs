@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     helix_engine::{
@@ -20,7 +20,7 @@ use std::{borrow::Cow, cmp::Ordering, collections::HashMap, fmt::Debug};
 // TODO: set level as u8
 
 #[repr(C, align(16))] // TODO: see performance impact of repr(C) and align(16)
-#[derive(Clone, Serialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct HVector<'arena> {
     /// The id of the HVector
     #[serde(skip)]

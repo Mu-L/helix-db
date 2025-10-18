@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     helix_engine::types::{GraphError, VectorError},
@@ -14,7 +14,7 @@ use std::{borrow::Cow, fmt::Debug};
 // TODO: set level as u8
 
 #[repr(C, align(16))]
-#[derive(Clone, Serialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorWithoutData<'arena> {
     #[serde(skip)]
     /// The id of the HVector

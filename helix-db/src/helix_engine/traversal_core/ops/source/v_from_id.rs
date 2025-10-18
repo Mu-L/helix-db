@@ -1,7 +1,7 @@
 use crate::helix_engine::{
     storage_core::HelixGraphStorage,
     traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
-    types::GraphError,
+    types::{GraphError, VectorError},
     vector_core::{vector::HVector, vector_without_data::VectorWithoutData},
 };
 use heed3::RoTxn;
@@ -37,7 +37,12 @@ impl<'db, 'arena, 'txn> Iterator for VFromId<'db, 'arena, 'txn> {
                     .storage
                     .get_vector_without_raw_vector_data_in(self.txn, &self.id, self.arena)
                 {
-                    Ok(vec) => vec,
+                    Ok(Some(vec)) => vec,
+                    Ok(None) => {
+                        return Err(GraphError::from(VectorError::VectorNotFound(
+                            self.id.to_string(),
+                        )));
+                    }
                     Err(e) => return Err(e),
                 };
                 Ok(TraversalValue::VectorNodeWithoutVectorData(vec))
