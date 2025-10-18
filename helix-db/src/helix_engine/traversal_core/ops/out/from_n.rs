@@ -1,25 +1,27 @@
 use crate::helix_engine::{
-    traversal_core::{traversal_value::TraversalValue, traversal_iter::RoTraversalIterator},
     storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
+    traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
     types::GraphError,
 };
-use helix_macros::debug_trace;
 use heed3::RoTxn;
-use std::sync::Arc;
 
-pub struct FromNIterator<'a, I, T> {
+pub struct FromNIterator<'db, 'arena, 'txn, I>
+where
+    'db: 'arena,
+    'arena: 'txn,
+{
+    storage: &'db HelixGraphStorage,
+    arena: &'arena bumpalo::Bump,
+    txn: &'txn RoTxn<'db>,
     iter: I,
-    storage: Arc<HelixGraphStorage>,
-    txn: &'a T,
 }
 
-impl<'a, I> Iterator for FromNIterator<'a, I, RoTxn<'a>>
+impl<'db, 'arena, 'txn, I> Iterator for FromNIterator<'db, 'arena, 'txn, I>
 where
-    I: Iterator<Item = Result<TraversalValue, GraphError>>,
+    I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
 {
-    type Item = Result<TraversalValue, GraphError>;
+    type Item = Result<TraversalValue<'arena>, GraphError>;
 
-    #[debug_trace("FROM_N")]
     fn next(&mut self) -> Option<Self::Item> {
         match self.iter.next() {
             Some(item) => match item {
@@ -39,29 +41,43 @@ where
     }
 }
 
-pub trait FromNAdapter<'a, T>: Iterator<Item = Result<TraversalValue, GraphError>> {
+pub trait FromNAdapter<'db, 'arena, 'txn, I>:
+    Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
+{
     /// Returns an iterator containing the nodes that the edges in `self.inner` originate from.
     fn from_n(
         self,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>>;
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> FromNAdapter<'a, RoTxn<'a>>
-    for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
+    FromNAdapter<'db, 'arena, 'txn, I> for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
     #[inline(always)]
     fn from_n(
         self,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>> {
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
         let iter = FromNIterator {
-            iter: self.inner,
-            storage: Arc::clone(&self.storage),
+            storage: self.storage,
+            arena: self.arena,
             txn: self.txn,
+            iter: self.inner,
         };
         RoTraversalIterator {
-            inner: iter,
             storage: self.storage,
+            arena: self.arena,
             txn: self.txn,
+            inner: iter,
         }
     }
 }

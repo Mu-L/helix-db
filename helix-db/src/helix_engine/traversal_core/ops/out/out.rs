@@ -212,8 +212,6 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         'txn,
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
-        let txn = self.txn;
-
         let iter = self
             .inner
             .filter_map(move |item| {
@@ -229,17 +227,17 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                     .storage
                     .out_edges_db
                     .lazily_decode_data()
-                    .get_duplicates(txn, &prefix)
+                    .get_duplicates(self.txn, &prefix)
                 {
                     Ok(Some(iter)) => Some(OutNodesIterator {
                         iter,
                         storage: self.storage,
-                        txn,
+                        txn: self.txn,
                         arena: self.arena,
                     }),
                     Ok(None) => None,
                     Err(e) => {
-                        println!("{} Error getting out edges: {:?}", line!(), e);
+                        println!("{} Error getting out nodes: {:?}", line!(), e);
                         // return Err(e);
                         None
                     }
@@ -251,7 +249,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
             inner: iter,
             storage: self.storage,
             arena: self.arena,
-            txn,
+            txn: self.txn,
         }
     }
 }

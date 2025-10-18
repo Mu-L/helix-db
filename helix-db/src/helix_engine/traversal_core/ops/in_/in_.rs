@@ -1,58 +1,107 @@
 use crate::{
     helix_engine::{
-        traversal_core::{
-            ops::{
-                source::add_e::EdgeType,
-            },
-            traversal_value::{Traversable, TraversalValue},
-            traversal_iter::RoTraversalIterator,
-        },
         storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
+        traversal_core::{
+            traversal_iter::RoTraversalIterator,
+            traversal_value::{Traversable, TraversalValue},
+        },
         types::GraphError,
     },
     utils::label_hash::hash_label,
 };
 use heed3::{RoTxn, types::Bytes};
 use helix_macros::debug_trace;
-use std::sync::Arc;
 
-pub struct InNodesIterator<'a, T> {
+pub struct InNodesIterator<'db, 'arena, 'txn>
+where
+    'db: 'arena,
+    'arena: 'txn,
+{
+    pub storage: &'db HelixGraphStorage,
+    pub arena: &'arena bumpalo::Bump,
+    pub txn: &'txn RoTxn<'db>,
     pub iter: heed3::RoIter<
-        'a,
+        'txn,
         Bytes,
         heed3::types::LazyDecode<Bytes>,
         heed3::iteration_method::MoveOnCurrentKeyDuplicates,
     >,
-    pub storage: Arc<HelixGraphStorage>,
-    pub txn: &'a T,
-    pub edge_type: EdgeType,
 }
 
-impl<'a> Iterator for InNodesIterator<'a, RoTxn<'a>> {
-    type Item = Result<TraversalValue, GraphError>;
+pub struct InVecIterator<'db, 'arena, 'txn>
+where
+    'db: 'arena,
+    'arena: 'txn,
+{
+    pub storage: &'db HelixGraphStorage,
+    pub arena: &'arena bumpalo::Bump,
+    pub txn: &'txn RoTxn<'db>,
+    pub iter: heed3::RoIter<
+        'txn,
+        Bytes,
+        heed3::types::LazyDecode<Bytes>,
+        heed3::iteration_method::MoveOnCurrentKeyDuplicates,
+    >,
+    /// Whether to read vector data from 'vector_db' (if true) table or read from 'vector_properties_db' table (if false).
+    /// If false, it will treat it as a normal node and avoid reading the additional bytes.
+    pub get_vector_data: bool,
+}
+
+impl<'db, 'arena, 'txn, 's> Iterator for InNodesIterator<'db, 'arena, 'txn> {
+    type Item = Result<TraversalValue<'arena>, GraphError>;
 
     #[debug_trace("IN_NODES")]
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(Ok((_, data))) = self.iter.next() {
             match data.decode() {
                 Ok(data) => {
-                    let (_, node_id) = match HelixGraphStorage::unpack_adj_edge_data(data) {
+                    let (_, item_id) = match HelixGraphStorage::unpack_adj_edge_data(data) {
                         Ok(data) => data,
                         Err(e) => {
                             println!("Error unpacking edge data: {e:?}");
                             return Some(Err(e));
                         }
                     };
-                    match self.edge_type {
-                        EdgeType::Node => {
-                            if let Ok(node) = self.storage.get_node(self.txn, &node_id) {
-                                return Some(Ok(TraversalValue::Node(node)));
-                            }
+                    if let Ok(node) = self.storage.get_node(self.txn, &item_id) {
+                        return Some(Ok(TraversalValue::Node(node)));
+                    }
+                }
+                Err(e) => {
+                    println!("Error decoding edge data: {e:?}");
+                    return Some(Err(GraphError::DecodeError(e.to_string())));
+                }
+            }
+        }
+        None
+    }
+}
+
+impl<'db, 'arena, 'txn> Iterator for InVecIterator<'db, 'arena, 'txn> {
+    type Item = Result<TraversalValue<'arena>, GraphError>;
+
+    #[debug_trace("IN_VEC")]
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(Ok((_, data))) = self.iter.next() {
+            match data.decode() {
+                Ok(data) => {
+                    let (_, item_id) = match HelixGraphStorage::unpack_adj_edge_data(data) {
+                        Ok(data) => data,
+                        Err(e) => {
+                            println!("Error unpacking edge data: {e:?}");
+                            return Some(Err(e));
                         }
-                        EdgeType::Vec => {
-                            if let Ok(vector) = self.storage.get_vector(self.txn, &node_id) {
-                                return Some(Ok(TraversalValue::Vector(vector)));
-                            }
+                    };
+                    if self.get_vector_data {
+                        if let Ok(vec) = self.storage.get_vector_in(self.txn, &item_id, self.arena)
+                        {
+                            return Some(Ok(TraversalValue::Vector(vec)));
+                        }
+                    } else {
+                        if let Ok(Some(vec)) = self
+                            .storage
+                            .get_vector_without_raw_vector_data_in(self.txn, &item_id, self.arena)
+                        {
+                            return Some(Ok(TraversalValue::VectorNodeWithoutVectorData(vec)));
                         }
                     }
                 }
@@ -66,32 +115,51 @@ impl<'a> Iterator for InNodesIterator<'a, RoTxn<'a>> {
     }
 }
 
-pub trait InAdapter<'a, T>: Iterator<Item = Result<TraversalValue, GraphError>> {
+pub trait InAdapter<'db, 'arena, 'txn, 's>:
+    Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
+{
     /// Returns an iterator containing the nodes that have an incoming edge with the given label.
     ///
     /// Note that the `edge_label` cannot be empty and must be a valid, existing edge label.
     ///
     /// To provide safety, you cannot get all incoming nodes as it would be ambiguous as to what
     /// type that resulting node would be.
-    fn in_(
+    fn in_vec(
         self,
-        edge_label: &'a str,
-        edge_type: &'a EdgeType,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>>;
+        edge_label: &'s str,
+        get_vector_data: bool,
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
+
+    fn in_node(
+        self,
+        edge_label: &'s str,
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> InAdapter<'a, RoTxn<'a>>
-    for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
+    InAdapter<'db, 'arena, 'txn, 's> for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
     #[inline]
-    fn in_(
+    fn in_vec(
         self,
-        edge_label: &'a str,
-        edge_type: &'a EdgeType,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>> {
-        let db = Arc::clone(&self.storage);
-        let storage = Arc::clone(&self.storage);
-        let txn = self.txn;
+        edge_label: &'s str,
+        get_vector_data: bool,
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
         let iter = self
             .inner
             .filter_map(move |item| {
@@ -103,20 +171,22 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> InAdapter<
                     },
                     &edge_label_hash,
                 );
-                match db
+                match self
+                    .storage
                     .in_edges_db
                     .lazily_decode_data()
-                    .get_duplicates(txn, &prefix)
+                    .get_duplicates(self.txn, &prefix)
                 {
-                    Ok(Some(iter)) => Some(InNodesIterator {
+                    Ok(Some(iter)) => Some(InVecIterator {
                         iter,
-                        storage: Arc::clone(&db),
-                        txn,
-                        edge_type: edge_type.clone(),
+                        storage: self.storage,
+                        txn: self.txn,
+                        arena: self.arena,
+                        get_vector_data,
                     }),
                     Ok(None) => None,
                     Err(e) => {
-                        println!("Error getting in edges: {e:?}");
+                        println!("{} Error getting in edges: {:?}", line!(), e);
                         // return Err(e);
                         None
                     }
@@ -126,8 +196,60 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> InAdapter<
 
         RoTraversalIterator {
             inner: iter,
-            storage,
-            txn,
+            storage: self.storage,
+            arena: self.arena,
+            txn: self.txn,
+        }
+    }
+
+    #[inline]
+    fn in_node(
+        self,
+        edge_label: &'s str,
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
+        let iter = self
+            .inner
+            .filter_map(move |item| {
+                let edge_label_hash = hash_label(edge_label, None);
+                let prefix = HelixGraphStorage::in_edge_key(
+                    &match item {
+                        Ok(item) => item.id(),
+                        Err(_) => return None,
+                    },
+                    &edge_label_hash,
+                );
+                match self
+                    .storage
+                    .in_edges_db
+                    .lazily_decode_data()
+                    .get_duplicates(self.txn, &prefix)
+                {
+                    Ok(Some(iter)) => Some(InNodesIterator {
+                        iter,
+                        storage: self.storage,
+                        txn: self.txn,
+                        arena: self.arena,
+                    }),
+                    Ok(None) => None,
+                    Err(e) => {
+                        println!("{} Error getting in edges: {:?}", line!(), e);
+                        // return Err(e);
+                        None
+                    }
+                }
+            })
+            .flatten();
+
+        RoTraversalIterator {
+            inner: iter,
+            storage: self.storage,
+            arena: self.arena,
+            txn: self.txn,
         }
     }
 }

@@ -1,31 +1,35 @@
 use crate::{
     helix_engine::{
-        traversal_core::{
-            traversal_value::{Traversable, TraversalValue},
-            traversal_iter::RoTraversalIterator,
-        },
         storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
+        traversal_core::{
+            traversal_iter::RoTraversalIterator,
+            traversal_value::{Traversable, TraversalValue},
+        },
         types::GraphError,
     },
     utils::label_hash::hash_label,
 };
+use heed3::{RoTxn, types::Bytes};
 use helix_macros::debug_trace;
-use heed3::{types::Bytes, RoTxn};
-use std::sync::Arc;
 
-pub struct InEdgesIterator<'a, T> {
+pub struct InEdgesIterator<'db, 'arena, 'txn>
+where
+    'db: 'arena,
+    'arena: 'txn,
+{
+    pub storage: &'db HelixGraphStorage,
+    pub arena: &'arena bumpalo::Bump,
+    pub txn: &'txn RoTxn<'db>,
     pub iter: heed3::RoIter<
-        'a,
+        'txn,
         Bytes,
         heed3::types::LazyDecode<Bytes>,
         heed3::iteration_method::MoveOnCurrentKeyDuplicates,
     >,
-    pub storage: Arc<HelixGraphStorage>,
-    pub txn: &'a T,
 }
 
-impl<'a> Iterator for InEdgesIterator<'a, RoTxn<'a>> {
-    type Item = Result<TraversalValue, GraphError>;
+impl<'db, 'arena, 'txn> Iterator for InEdgesIterator<'db, 'arena, 'txn> {
+    type Item = Result<TraversalValue<'arena>, GraphError>;
 
     #[debug_trace("IN_EDGES")]
     fn next(&mut self) -> Option<Self::Item> {
@@ -53,7 +57,9 @@ impl<'a> Iterator for InEdgesIterator<'a, RoTxn<'a>> {
     }
 }
 
-pub trait InEdgesAdapter<'a, T>: Iterator<Item = Result<TraversalValue, GraphError>> {
+pub trait InEdgesAdapter<'db, 'arena, 'txn, 's, I>:
+    Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
+{
     /// Returns an iterator containing the edges that have an incoming edge with the given label.
     ///
     /// Note that the `edge_label` cannot be empty and must be a valid, existing edge label.
@@ -62,21 +68,28 @@ pub trait InEdgesAdapter<'a, T>: Iterator<Item = Result<TraversalValue, GraphErr
     /// type that resulting edge would be.
     fn in_e(
         self,
-        edge_label: &'a str,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>>;
+        edge_label: &'s str,
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> InEdgesAdapter<'a, RoTxn<'a>>
-    for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
+    InEdgesAdapter<'db, 'arena, 'txn, 's, I> for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
     #[inline]
     fn in_e(
         self,
-        edge_label: &'a str,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>> {
-        let db = Arc::clone(&self.storage);
-        let storage = Arc::clone(&self.storage);
-        let txn = self.txn;
+        edge_label: &'s str,
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
         let iter = self
             .inner
             .filter_map(move |item| {
@@ -89,15 +102,17 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> InEdgesAdapter<
                     },
                     &edge_label_hash,
                 );
-                match db
+                match self
+                    .storage
                     .in_edges_db
                     .lazily_decode_data()
-                    .get_duplicates(txn, &prefix)
+                    .get_duplicates(self.txn, &prefix)
                 {
                     Ok(Some(iter)) => Some(InEdgesIterator {
                         iter,
-                        storage: Arc::clone(&db),
-                        txn,
+                        storage: self.storage,
+                        arena: self.arena,
+                        txn: self.txn,
                     }),
                     Ok(None) => None,
                     Err(e) => {
@@ -110,9 +125,10 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> InEdgesAdapter<
             .flatten();
 
         RoTraversalIterator {
+            storage: self.storage,
+            arena: self.arena,
+            txn: self.txn,
             inner: iter,
-            storage,
-            txn,
         }
     }
 }

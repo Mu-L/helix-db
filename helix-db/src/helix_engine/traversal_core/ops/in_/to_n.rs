@@ -1,24 +1,28 @@
 use crate::helix_engine::{
-    traversal_core::{traversal_value::TraversalValue, traversal_iter::RoTraversalIterator},
     storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
+    traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
     types::GraphError,
 };
-use helix_macros::debug_trace;
 use heed3::RoTxn;
-use std::sync::Arc;
+use helix_macros::debug_trace;
 
-pub struct ToNIterator<'a, I, T> {
+pub struct ToNIterator<'db, 'arena, 'txn, I>
+where
+    'db: 'arena,
+    'arena: 'txn,
+{
+    storage: &'db HelixGraphStorage,
+    arena: &'arena bumpalo::Bump,
+    txn: &'txn RoTxn<'db>,
     iter: I,
-    storage: Arc<HelixGraphStorage>,
-    txn: &'a T,
 }
 
 // implementing iterator for OutIterator
-impl<'a, I> Iterator for ToNIterator<'a, I, RoTxn<'a>>
+impl<'db, 'arena, 'txn, I> Iterator for ToNIterator<'db, 'arena, 'txn, I>
 where
-    I: Iterator<Item = Result<TraversalValue, GraphError>>,
+    I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
 {
-    type Item = Result<TraversalValue, GraphError>;
+    type Item = Result<TraversalValue<'arena>, GraphError>;
 
     #[debug_trace("TO_N")]
     fn next(&mut self) -> Option<Self::Item> {
@@ -39,28 +43,42 @@ where
         }
     }
 }
-pub trait ToNAdapter<'a, T>: Iterator<Item = Result<TraversalValue, GraphError>> {
+pub trait ToNAdapter<'db, 'arena, 'txn, I>:
+    Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
+{
     fn to_n(
         self,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>>;
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>>> ToNAdapter<'a, RoTxn<'a>>
-    for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
+    ToNAdapter<'db, 'arena, 'txn, I> for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
     #[inline(always)]
     fn to_n(
         self,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>> {
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
         let iter = ToNIterator {
-            iter: self.inner,
-            storage: Arc::clone(&self.storage),
-            txn: self.txn,
-        };
-        RoTraversalIterator {
-            inner: iter,
             storage: self.storage,
             txn: self.txn,
+            iter: self.inner,
+            arena: self.arena,
+        };
+        RoTraversalIterator {
+            storage: self.storage,
+            arena: self.arena,
+            txn: self.txn,
+            inner: iter,
         }
     }
 }
