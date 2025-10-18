@@ -18,7 +18,7 @@ where
     'arena: 'txn,
 {
     pub arena: &'arena bumpalo::Bump,
-    pub iter: heed3::RoIter<'txn, U128<BE>, heed3::types::LazyDecode<Bytes>>,
+    pub iter: heed3::RoIter<'txn, U128<BE>, Bytes>,
     pub label: &'s [u8],
 }
 
@@ -41,41 +41,36 @@ impl<'arena, 'txn, 's> Iterator for NFromType<'arena, 'txn, 's> {
         for value in self.iter.by_ref() {
             let (key, value) = value.unwrap();
 
-            match value.decode() {
-                Ok(value) => {
-                    assert!(
-                        value.len() >= LMDB_STRING_HEADER_LENGTH,
-                        "value length does not contain header which means the `label` field was missing from the node on insertion"
-                    );
-                    let length_of_label_in_lmdb =
-                        u64::from_le_bytes(value[..LMDB_STRING_HEADER_LENGTH].try_into().unwrap())
-                            as usize;
+            assert!(
+                value.len() >= LMDB_STRING_HEADER_LENGTH,
+                "value length does not contain header which means the `label` field was missing from the node on insertion"
+            );
+            let length_of_label_in_lmdb =
+                u64::from_le_bytes(value[..LMDB_STRING_HEADER_LENGTH].try_into().unwrap()) as usize;
 
-                    assert!(
-                        value.len() >= length_of_label_in_lmdb + LMDB_STRING_HEADER_LENGTH,
-                        "value length is not at least the header length plus the label length meaning there has been a corruption on node insertion"
-                    );
-                    let label_in_lmdb = &value[LMDB_STRING_HEADER_LENGTH
-                        ..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb as usize];
+            if length_of_label_in_lmdb != self.label.len() {
+                continue;
+            }
 
-                    if label_in_lmdb == self.label {
-                        match Node::<'arena>::decode_node(value, key, self.arena) {
-                            Ok(node) => {
-                                return Some(Ok(TraversalValue::Node(node)));
-                            }
-                            Err(e) => {
-                                println!("{} Error decoding node: {:?}", line!(), e);
-                                return Some(Err(GraphError::ConversionError(e.to_string())));
-                            }
-                        }
-                    } else {
-                        continue;
+            assert!(
+                value.len() >= length_of_label_in_lmdb + LMDB_STRING_HEADER_LENGTH,
+                "value length is not at least the header length plus the label length meaning there has been a corruption on node insertion"
+            );
+            let label_in_lmdb = &value[LMDB_STRING_HEADER_LENGTH
+                ..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb as usize];
+
+            if label_in_lmdb == self.label {
+                match Node::<'arena>::decode_node(value, key, self.arena) {
+                    Ok(node) => {
+                        return Some(Ok(TraversalValue::Node(node)));
+                    }
+                    Err(e) => {
+                        println!("{} Error decoding node: {:?}", line!(), e);
+                        return Some(Err(GraphError::ConversionError(e.to_string())));
                     }
                 }
-                Err(e) => {
-                    println!("{} Error decoding node: {:?}", line!(), e);
-                    return Some(Err(GraphError::ConversionError(e.to_string())));
-                }
+            } else {
+                continue;
             }
         }
         None
@@ -110,12 +105,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         'txn,
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
-        let iter = self
-            .storage
-            .nodes_db
-            .lazily_decode_data()
-            .iter(self.txn)
-            .unwrap(); // should be handled because label may be variable in the future
+        let iter = self.storage.nodes_db.iter(self.txn).unwrap(); // should be handled because label may be variable in the future
 
         RoTraversalIterator {
             storage: self.storage,

@@ -1,7 +1,3 @@
-use std::sync::Arc;
-
-use heed3::{RoTxn, RwTxn};
-
 use crate::{
     helix_engine::{
         storage_core::HelixGraphStorage, traversal_core::traversal_value::TraversalValue,
@@ -9,6 +5,7 @@ use crate::{
     },
     protocol::value::Value,
 };
+use heed3::{RoTxn, RwTxn};
 use itertools::Itertools;
 
 pub struct RoTraversalIterator<'db, 'arena, 'txn, I>
@@ -86,53 +83,64 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
     }
 }
 
-pub struct RwTraversalIterator<'scope, 'env, I> {
+pub struct RwTraversalIterator<'db, 'arena, 'txn, I>
+where
+    'db: 'arena,
+    'arena: 'txn,
+{
+    pub storage: &'db HelixGraphStorage,
+    pub arena: &'arena bumpalo::Bump,
+    pub txn: &'txn mut RwTxn<'db>,
     pub inner: I,
-    pub storage: Arc<HelixGraphStorage>,
-    pub txn: &'scope mut RwTxn<'env>,
 }
 
 // implementing iterator for TraversalIterator
-impl<'scope, 'env, I> Iterator for RwTraversalIterator<'scope, 'env, I>
+impl<'db, 'arena, 'txn, I> Iterator for RwTraversalIterator<'db, 'arena, 'txn, I>
 where
-    I: Iterator<Item = Result<TraversalValue<'scope>, GraphError>>,
+    I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
 {
-    type Item = Result<TraversalValue<'scope>, GraphError>;
+    type Item = Result<TraversalValue<'arena>, GraphError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next()
     }
 }
-impl<'scope, 'env, I: Iterator<Item = Result<TraversalValue<'scope>, GraphError>>>
-    RwTraversalIterator<'scope, 'env, I>
+impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
+    RwTraversalIterator<'db, 'arena, 'txn, I>
 {
-    pub fn new(storage: Arc<HelixGraphStorage>, txn: &'scope mut RwTxn<'env>, inner: I) -> Self {
+    pub fn new(
+        storage: &'db HelixGraphStorage,
+        txn: &'txn mut RwTxn<'db>,
+        arena: &'arena bumpalo::Bump,
+        inner: I,
+    ) -> Self {
         Self {
-            inner,
             storage,
             txn,
+            arena,
+            inner,
         }
     }
 
-    pub fn take_and_collect_to<B: FromIterator<TraversalValue<'scope>>>(self, n: usize) -> B {
+    pub fn take_and_collect_to<B: FromIterator<TraversalValue<'arena>>>(self, n: usize) -> B {
         self.inner
             .filter_map(|item| item.ok())
             .take(n)
             .collect::<B>()
     }
 
-    pub fn collect_to<B: FromIterator<TraversalValue<'scope>>>(self) -> B {
+    pub fn collect_to<B: FromIterator<TraversalValue<'arena>>>(self) -> B {
         self.inner.filter_map(|item| item.ok()).collect::<B>()
     }
 
-    pub fn collect_dedup<B: FromIterator<TraversalValue<'scope>>>(self) -> B {
+    pub fn collect_dedup<B: FromIterator<TraversalValue<'arena>>>(self) -> B {
         self.inner
             .filter_map(|item| item.ok())
             .unique()
             .collect::<B>()
     }
 
-    pub fn collect_to_obj(self) -> TraversalValue<'scope> {
+    pub fn collect_to_obj(self) -> TraversalValue<'arena> {
         match self.inner.filter_map(|item| item.ok()).next() {
             Some(val) => val,
             None => TraversalValue::Empty,

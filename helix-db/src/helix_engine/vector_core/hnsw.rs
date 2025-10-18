@@ -62,25 +62,4 @@ pub trait HNSW {
     /// * `txn` - The transaction to use
     /// * `id` - The id of the vector
     fn delete(&self, txn: &mut RwTxn, id: u128) -> Result<(), VectorError>;
-
-    /// Get specific vector based on id and level
-    ///
-    /// # Arguments
-    ///
-    /// * `txn` - The transaction to use
-    /// * `id` - The id of the vector
-    /// * `level` - Which level to get the vector from
-    /// * `with_data` - Whether or not to fetch the vector with data
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing a `Vec` of `HVector` if successful
-    fn get_vector<'arena>(
-        &self,
-        txn: &RoTxn,
-        id: u128,
-        level: usize,
-        with_data: bool,
-        arena: &'arena bumpalo::Bump,
-    ) -> Result<HVector<'arena>, VectorError>;
 }

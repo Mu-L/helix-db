@@ -133,8 +133,8 @@ impl Traversable for TraversalValue<'_> {
 
     fn label(&self) -> String {
         match self {
-            TraversalValue::Node(node) => node.label.clone(),
-            TraversalValue::Edge(edge) => edge.label.clone(),
+            TraversalValue::Node(node) => node.label.to_string(),
+            TraversalValue::Edge(edge) => edge.label.to_string(),
             _ => panic!("Invalid traversal value"),
         }
     }

@@ -391,7 +391,7 @@ impl VectorCore {
     }
 
     #[inline]
-    pub fn get_vector_without_raw_vector_data<'db: 'arena, 'arena: 'txn, 'txn>(
+    pub fn get_vector_properties<'db: 'arena, 'arena: 'txn, 'txn>(
         &self,
         txn: &'txn RoTxn<'db>,
         id: u128,
@@ -411,42 +411,26 @@ impl VectorCore {
     }
 
     #[inline(always)]
-    fn get_vector_in<'arena>(
+    pub fn get_raw_vector_data<'db: 'arena, 'arena: 'txn, 'txn>(
         &self,
-        txn: &RoTxn,
+        txn: &'txn RoTxn<'db>,
         id: u128,
-        label: &'txn str,
+        label: &'arena str,
         level: usize,
-        with_data: bool,
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError> {
         let key = Self::vector_key(id, level);
         match self.vectors_db.get(txn, key.as_ref())? {
             Some(bytes) => {
-                let mut vector = HVector::from_bytes(id, label, level, bytes, arena)?;
-                match with_data {
-                    true => {
-                        let properties: Option<HVector<'arena>> =
-                            match self.vector_properties_db.get(txn, &id.to_be_bytes())? {
-                                Some(bytes) => {
-                                    // TODO: use bump map here
-                                    Some(bincode::deserialize(bytes).map_err(VectorError::from)?)
-                                }
-                                None => None,
-                            };
-
-                        Ok(vector)
-                    }
-                    false => Ok(vector),
-                }
+                HVector::from_bytes(id, label, level, bytes, arena)
+               
             }
-            None if level > 0 => self.get_vector(txn, id, 0, with_data, arena),
+            None if level > 0 => self.get_raw_vector_data(txn, id, label, 0, arena),
             None => Err(VectorError::VectorNotFound(id.to_string())),
         }
     }
-}
 
-impl HNSW for VectorCore {
+
     #[inline(always)]
     fn get_vector<'arena>(
         &self,
@@ -480,6 +464,10 @@ impl HNSW for VectorCore {
             None => Err(VectorError::VectorNotFound(id.to_string())),
         }
     }
+}
+
+impl HNSW for VectorCore {
+  
 
     fn search<'db, 'arena, 'txn, F>(
         &self,

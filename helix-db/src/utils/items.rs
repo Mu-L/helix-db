@@ -31,7 +31,7 @@ pub struct Node<'arena> {
     pub properties: Option<HashMap<String, Value>>,
 
     #[serde(skip)]
-    _phantom: PhantomData<&'arena ()>,
+    pub _phantom: PhantomData<&'arena ()>,
 }
 
 impl<'arena> Node<'arena> {
@@ -126,7 +126,7 @@ pub struct Edge<'arena> {
     #[serde(default)]
     pub properties: Option<HashMap<String, Value>>,
 
-    _phantom: PhantomData<&'arena ()>,
+    pub _phantom: PhantomData<&'arena ()>,
 }
 
 impl<'arena> Edge<'arena> {
