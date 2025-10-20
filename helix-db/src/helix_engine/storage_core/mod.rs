@@ -13,11 +13,11 @@ use crate::{
         vector_core::{
             hnsw::HNSW,
             vector::HVector,
-            vector_core::{HNSWConfig, VectorCore}, vector_without_data::VectorWithoutData,
+            vector_core::{HNSWConfig, VectorCore},
+            vector_without_data::VectorWithoutData,
         },
     },
     utils::{
-        filterable::Filterable,
         items::{Edge, Node},
         label_hash::hash_label,
     },
@@ -284,11 +284,12 @@ impl HelixGraphStorage {
         &self,
         txn: &'txn RoTxn<'db>,
         id: &u128,
+        label: &'arena str,
         arena: &'arena bumpalo::Bump,
     ) -> Result<Option<VectorWithoutData<'arena>>, GraphError> {
         Ok(self
             .vectors
-            .get_vector_without_raw_vector_data(txn, *id, arena)?)
+            .get_raw_vector_data(txn, *id, label, 0, arena)?)
     }
 }
 

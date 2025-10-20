@@ -11,7 +11,6 @@ use crate::{
         },
     },
     protocol::value::Value,
-    utils::bump_vec_map::{BumpVecMap, BumpVecMapSeed},
 };
 use bincode::{Options, de::read::SliceReader};
 use heed3::{
@@ -416,20 +415,14 @@ impl VectorCore {
         txn: &'txn RoTxn<'db>,
         id: u128,
         label: &'arena str,
-        level: usize,
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError> {
-        let key = Self::vector_key(id, level);
+        let key = Self::vector_key(id, 0);
         match self.vectors_db.get(txn, key.as_ref())? {
-            Some(bytes) => {
-                HVector::from_bytes(id, label, level, bytes, arena)
-               
-            }
-            None if level > 0 => self.get_raw_vector_data(txn, id, label, 0, arena),
+            Some(bytes) => HVector::from_bytes(id, label, 0, bytes, arena),
             None => Err(VectorError::VectorNotFound(id.to_string())),
         }
     }
-
 
     #[inline(always)]
     fn get_vector<'arena>(
@@ -447,7 +440,7 @@ impl VectorCore {
                 match with_data {
                     true => {
                         let properties: Option<HVector<'arena>> =
-                            match self.vector_properties_db.get(txn, &id.to_be_bytes())? {
+                            match self.vector_properties_db.get(txn, &id)? {
                                 Some(bytes) => {
                                     // TODO: use bump map here
                                     Some(bincode::deserialize(bytes).map_err(VectorError::from)?)
@@ -467,8 +460,6 @@ impl VectorCore {
 }
 
 impl HNSW for VectorCore {
-  
-
     fn search<'db, 'arena, 'txn, F>(
         &self,
         txn: &'txn RoTxn<'db>,
@@ -567,7 +558,7 @@ impl HNSW for VectorCore {
                 if let Some(fields) = fields {
                     self.vector_properties_db.put(
                         txn,
-                        &query.get_id().to_be_bytes(),
+                        &query.get_id(),
                         &bincode::serialize(&fields)?,
                     )?;
                 }
@@ -626,7 +617,7 @@ impl HNSW for VectorCore {
         if let Some(fields) = fields {
             self.vector_properties_db.put(
                 txn,
-                &query.get_id().to_be_bytes(),
+                &query.get_id(),
                 &bincode::serialize(&query)?,
             )?;
         }
@@ -637,7 +628,7 @@ impl HNSW for VectorCore {
 
     fn delete(&self, txn: &mut RwTxn, id: u128) -> Result<(), VectorError> {
         let properties: Option<HashMap<String, Value>> =
-            match self.vector_properties_db.get(txn, &id.to_be_bytes())? {
+            match self.vector_properties_db.get(txn, &id)? {
                 Some(bytes) => Some(bincode::deserialize(bytes).map_err(VectorError::from)?),
                 None => None,
             };
@@ -655,7 +646,7 @@ impl HNSW for VectorCore {
 
             self.vector_properties_db.put(
                 txn,
-                &id.to_be_bytes(),
+                &id,
                 &bincode::serialize(&properties)?,
             )?;
         } else {
@@ -665,7 +656,7 @@ impl HNSW for VectorCore {
 
             self.vector_properties_db.put(
                 txn,
-                &id.to_be_bytes(),
+                &id,
                 &bincode::serialize(&n_properties)?,
             )?;
         }
