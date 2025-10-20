@@ -1,10 +1,10 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
 use crate::helixc::analyzer::utils::type_in_scope;
+use crate::helixc::generator::traversal_steps::EdgeType;
 use crate::helixc::generator::utils::EmbedData;
 use crate::{
     generate_error,
-    helix_engine::traversal_core::ops::source::add_e::EdgeType,
     helixc::{
         analyzer::{
             Ctx,
@@ -149,7 +149,7 @@ pub(crate) fn apply_graph_step<'a>(
             traversal
                 .steps
                 .push(Separator::Period(GeneratedStep::Out(GeneratedOut {
-                    edge_type: GenRef::Ref(edge_type.to_string()),
+                    edge_type: edge_type.clone(),
                     label: GenRef::Literal(label.clone()),
                 })));
             traversal.should_collect = ShouldCollect::ToVec;
@@ -212,7 +212,7 @@ pub(crate) fn apply_graph_step<'a>(
             traversal
                 .steps
                 .push(Separator::Period(GeneratedStep::In(GeneratedIn {
-                    edge_type: GenRef::Ref(edge_type.to_string()),
+                    edge_type: edge_type.clone(),
                     label: GenRef::Literal(label.clone()),
                 })));
             traversal.should_collect = ShouldCollect::ToVec;
@@ -271,7 +271,7 @@ pub(crate) fn apply_graph_step<'a>(
             match cur_ty {
                 Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
                 Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
-                _ => {},
+                _ => {}
             }
             new_ty
         }
@@ -294,7 +294,7 @@ pub(crate) fn apply_graph_step<'a>(
             match cur_ty {
                 Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
                 Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
-                _ => {},
+                _ => {}
             }
             new_ty
         }
@@ -320,7 +320,7 @@ pub(crate) fn apply_graph_step<'a>(
             match cur_ty {
                 Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
                 Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
-                _ => {},
+                _ => {}
             }
             new_ty
         }
@@ -344,7 +344,7 @@ pub(crate) fn apply_graph_step<'a>(
             match cur_ty {
                 Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
                 Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
-                _ => {},
+                _ => {}
             }
             new_ty
         }
@@ -678,7 +678,7 @@ pub(crate) fn apply_graph_step<'a>(
 #[cfg(test)]
 mod tests {
     use crate::helixc::analyzer::error_codes::ErrorCode;
-    use crate::helixc::parser::{write_to_temp_file, HelixParser};
+    use crate::helixc::parser::{HelixParser, write_to_temp_file};
 
     // ============================================================================
     // Edge Direction Validation Tests

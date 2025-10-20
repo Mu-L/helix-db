@@ -1,20 +1,21 @@
-use serde::{Deserialize, Serialize};
-
 use crate::{
     helix_engine::types::{GraphError, VectorError},
-    protocol::value::Value,
+    protocol::{custom_serde::vector_serde::VectoWithoutDataDeSeed, value::Value},
     utils::properties::ImmutablePropertiesMap,
 };
+use bincode::Options;
 use core::fmt;
-
+use serde::Serialize;
 use std::{borrow::Cow, fmt::Debug};
+use uuid::Uuid;
 
+const HYPHENATED_LENGTH: usize = 36;
 // TODO: make this generic over the type of encoding (f32, f64, etc)
 // TODO: use const param to set dimension
 // TODO: set level as u8
 
 #[repr(C, align(16))]
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Serialize)]
 pub struct VectorWithoutData<'arena> {
     #[serde(skip)]
     /// The id of the HVector
@@ -61,15 +62,16 @@ impl<'arena> VectorWithoutData<'arena> {
         }
     }
 
-    #[inline(always)]
-    pub fn decode_vector(
+    pub fn from_bincode_bytes<'txn>(
+        arena: &'arena bumpalo::Bump,
+        properties: &'txn [u8],
         id: u128,
-        label: &'arena str,
-        properties: ImmutablePropertiesMap<'arena>,
     ) -> Result<Self, VectorError> {
-        let vector = VectorWithoutData::from_properties(id, label, 0, properties);
-        Ok(vector)
+        bincode::options()
+            .deserialize_seed(VectoWithoutDataDeSeed { arena, id }, properties)
+            .map_err(|e| VectorError::ConversionError(format!("Error deserializing vector: {e}")))
     }
+
     /// Returns the id of the HVector
     #[inline(always)]
     pub fn get_id(&self) -> u128 {
@@ -87,33 +89,23 @@ impl<'arena> VectorWithoutData<'arena> {
         self.label
     }
 
-    pub fn check_property(&self, key: &str) -> Result<Cow<'_, Value>, GraphError> {
-        match key {
-            "id" => Ok(Cow::Owned(Value::from(self.uuid()))),
-            "label" => Ok(Cow::Owned(Value::from(self.label().to_string()))),
-            _ => match &self.properties {
-                Some(properties) => properties
-                    .get(key)
-                    .ok_or(GraphError::ConversionError(format!(
-                        "Property {key} not found"
-                    )))
-                    .map(Cow::Borrowed),
-                None => Err(GraphError::ConversionError(format!(
-                    "Property {key} not found"
-                ))),
-            },
-        }
+    #[inline(always)]
+    pub fn get_property(&self, key: &str) -> Option<&'arena Value> {
+        self.properties.as_ref().and_then(|value| value.get(key))
     }
 
     pub fn id(&self) -> &u128 {
         &self.id
     }
 
-    pub fn uuid(&self) -> String {
-        uuid::Uuid::from_u128(self.id).to_string()
-    }
-
     pub fn label(&self) -> &'arena str {
         self.label
     }
 }
+
+impl PartialEq for VectorWithoutData<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for VectorWithoutData<'_> {}

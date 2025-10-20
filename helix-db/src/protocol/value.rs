@@ -1631,7 +1631,10 @@ mod tests {
     #[test]
     fn test_value_from_primitives() {
         assert!(matches!(Value::from("test"), Value::String(_)));
-        assert!(matches!(Value::from(String::from("test")), Value::String(_)));
+        assert!(matches!(
+            Value::from(String::from("test")),
+            Value::String(_)
+        ));
         assert!(matches!(Value::from(true), Value::Boolean(true)));
         assert!(matches!(Value::from(42i8), Value::I8(42)));
         assert!(matches!(Value::from(42i16), Value::I16(42)));
@@ -1801,7 +1804,10 @@ mod tests {
     #[test]
     fn test_value_ordering_mixed_types() {
         // Non-comparable types should return Equal
-        assert_eq!(Value::String("test".to_string()).cmp(&Value::I32(42)), Ordering::Equal);
+        assert_eq!(
+            Value::String("test".to_string()).cmp(&Value::I32(42)),
+            Ordering::Equal
+        );
         assert_eq!(Value::Boolean(true).cmp(&Value::F64(3.14)), Ordering::Equal);
     }
 
@@ -1856,7 +1862,10 @@ mod tests {
 
     #[test]
     fn test_to_variant_string() {
-        assert_eq!(Value::String("test".to_string()).to_variant_string(), "String");
+        assert_eq!(
+            Value::String("test".to_string()).to_variant_string(),
+            "String"
+        );
         assert_eq!(Value::I32(42).to_variant_string(), "I32");
         assert_eq!(Value::F64(3.14).to_variant_string(), "F64");
         assert_eq!(Value::Boolean(true).to_variant_string(), "Boolean");
@@ -2086,11 +2095,11 @@ mod tests {
     fn test_value_utf8_strings() {
         let utf8_strings = vec![
             "Hello",
-            "世界",           // Chinese
-            "🚀🌟",           // Emojis
-            "Привет",        // Russian
-            "مرحبا",         // Arabic
-            "Ñoño",          // Spanish with tildes
+            "世界",   // Chinese
+            "🚀🌟",   // Emojis
+            "Привет", // Russian
+            "مرحبا",  // Arabic
+            "Ñoño",   // Spanish with tildes
         ];
 
         for s in utf8_strings {

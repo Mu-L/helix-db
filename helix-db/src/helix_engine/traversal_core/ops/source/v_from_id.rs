@@ -27,7 +27,7 @@ impl<'db, 'arena, 'txn> Iterator for VFromId<'db, 'arena, 'txn> {
         self.iter.next().map(|_| {
             if self.get_vector_data {
                 let vec: HVector<'arena> =
-                    match self.storage.get_vector_in(self.txn, &self.id, self.arena) {
+                    match self.storage.get_full_vector(self.txn, &self.id, self.arena) {
                         Ok(vec) => vec,
                         Err(e) => return Err(e),
                     };
@@ -35,7 +35,7 @@ impl<'db, 'arena, 'txn> Iterator for VFromId<'db, 'arena, 'txn> {
             } else {
                 let vec: VectorWithoutData<'arena> = match self
                     .storage
-                    .get_vector_without_raw_vector_data_in(self.txn, &self.id, self.arena)
+                    .get(self.txn, &self.id, self.arena)
                 {
                     Ok(Some(vec)) => vec,
                     Ok(None) => {

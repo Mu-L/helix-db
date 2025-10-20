@@ -246,25 +246,40 @@ impl Debug for Step {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub enum EdgeType {
+    Node,
+    Vec,
+}
+
+impl Display for EdgeType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EdgeType::Node => write!(f, "node"),
+            EdgeType::Vec => write!(f, "vec"),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Out {
     pub label: GenRef<String>,
-    pub edge_type: GenRef<String>,
+    pub edge_type: EdgeType,
 }
 impl Display for Out {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "out({},{})", self.label, self.edge_type)
+        write!(f, "out_{}({})", self.edge_type, self.label)
     }
 }
 
 #[derive(Clone)]
 pub struct In {
     pub label: GenRef<String>,
-    pub edge_type: GenRef<String>,
+    pub edge_type: EdgeType,
 }
 impl Display for In {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "in_({},{})", self.label, self.edge_type)
+        write!(f, "in_{}({})", self.edge_type, self.label)
     }
 }
 

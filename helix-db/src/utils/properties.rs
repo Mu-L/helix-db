@@ -1,10 +1,9 @@
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::{alloc, fmt, iter, ptr, str};
 use std::{marker, slice};
 
 use bincode::Options;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::protocol::value::Value;
 
@@ -154,8 +153,8 @@ impl<'arena> Serialize for ImmutablePropertiesMap<'arena> {
     }
 }
 
-struct ImmutablePropertiesMapDeSeed<'arena> {
-    arena: &'arena bumpalo::Bump,
+pub struct ImmutablePropertiesMapDeSeed<'arena> {
+    pub arena: &'arena bumpalo::Bump,
 }
 
 impl<'de, 'arena> serde::de::DeserializeSeed<'de> for ImmutablePropertiesMapDeSeed<'arena> {

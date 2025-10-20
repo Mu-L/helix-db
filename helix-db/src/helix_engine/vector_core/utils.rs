@@ -1,9 +1,13 @@
 use super::binary_heap::BinaryHeap;
 use crate::{
     helix_engine::{types::VectorError, vector_core::vector::HVector},
-    protocol::value::Value,
+    utils::properties::ImmutablePropertiesMap,
 };
-use heed3::{byteorder::BE, types::{Bytes, U128}, Database, RoTxn};
+use heed3::{
+    Database, RoTxn,
+    byteorder::BE,
+    types::{Bytes, U128},
+};
 use std::cmp::Ordering;
 
 #[derive(PartialEq)]
@@ -102,8 +106,8 @@ impl<'a, 'q> VectorFilter<'a, 'q> for BinaryHeap<'a, HVector<'a>> {
         for _ in 0..k {
             // while pop check filters and pop until one passes
             while let Some(mut item) = self.pop() {
-                item.properties = match db.get(txn, &item.get_id())? {
-                    Some(bytes) => Some(bincode::deserialize(bytes).map_err(VectorError::from)?),
+                item.properties = match db.get(txn, &item.id)? {
+                    Some(bytes) => Some(ImmutablePropertiesMap::from_bincode_bytes(bytes, arena)?),
                     None => None, // TODO: maybe should be an error?
                 };
 
