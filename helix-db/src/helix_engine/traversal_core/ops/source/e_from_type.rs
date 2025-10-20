@@ -27,7 +27,7 @@ impl<'arena, 'txn, 's> Iterator for EFromType<'arena, 'txn, 's> {
 
     fn next(&mut self) -> Option<Self::Item> {
         for value in self.iter.by_ref() {
-            let (key, value) = value.unwrap();
+            let (id, value) = value.unwrap();
 
             match value.decode() {
                 Ok(value) => {
@@ -47,7 +47,7 @@ impl<'arena, 'txn, 's> Iterator for EFromType<'arena, 'txn, 's> {
                         ..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb as usize];
 
                     if label_in_lmdb == self.label {
-                        match Edge::<'arena>::decode_edge(value, key, self.arena) {
+                        match Edge::<'arena>::from_bincode_bytes(id,value, self.arena) {
                             Ok(edge) => {
                                 return Some(Ok(TraversalValue::Edge(edge)));
                             }

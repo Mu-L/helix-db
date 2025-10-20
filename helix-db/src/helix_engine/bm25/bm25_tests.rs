@@ -12,6 +12,7 @@ mod tests {
         protocol::value::Value,
     };
 
+    use bumpalo::Bump;
     use heed3::{Env, EnvOpenOptions, RoTxn};
     use rand::Rng;
     use std::collections::HashMap;
@@ -1423,10 +1424,13 @@ mod tests {
 
         let mut wtxn = storage.graph_env.write_txn().unwrap();
         let vectors = generate_random_vectors(800, 650);
-        for vec in vectors {
+        let mut arena = Bump::new();
+        for vec in &vectors {
+            let slice = arena.alloc_slice_copy(vec.as_slice());
             let _ = storage
                 .vectors
-                .insert::<fn(&HVector, &RoTxn) -> bool>(&mut wtxn, &vec, None);
+                .insert::<fn(&HVector, &RoTxn) -> bool>(&mut wtxn, "vector", slice, None, &arena);
+            arena.reset();
         }
         wtxn.commit().unwrap();
 
@@ -1465,10 +1469,13 @@ mod tests {
 
         let mut wtxn = storage.graph_env.write_txn().unwrap();
         let vectors = generate_random_vectors(800, 650);
-        for vec in vectors {
+        let mut arena = Bump::new();
+        for vec in &vectors {
+            let slice = arena.alloc_slice_copy(vec.as_slice());
             let _ = storage
                 .vectors
-                .insert::<fn(&HVector, &RoTxn) -> bool>(&mut wtxn, &vec, None);
+                .insert::<fn(&HVector, &RoTxn) -> bool>(&mut wtxn, "vector", slice, None, &arena);
+            arena.reset();
         }
         wtxn.commit().unwrap();
 
@@ -1508,10 +1515,13 @@ mod tests {
 
         let mut wtxn = storage.graph_env.write_txn().unwrap();
         let vectors = generate_random_vectors(800, 650);
-        for vec in vectors {
+        let mut arena = Bump::new();
+        for vec in &vectors {
+            let slice = arena.alloc_slice_copy(vec.as_slice());
             let _ = storage
                 .vectors
-                .insert::<fn(&HVector, &RoTxn) -> bool>(&mut wtxn, &vec, None);
+                .insert::<fn(&HVector, &RoTxn) -> bool>(&mut wtxn, "vector", slice, None, &arena);
+            arena.reset();
         }
         wtxn.commit().unwrap();
 

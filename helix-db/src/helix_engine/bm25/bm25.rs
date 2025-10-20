@@ -9,6 +9,7 @@ use crate::{
     utils::properties::ImmutablePropertiesMap,
 };
 
+use bumpalo::Bump;
 use heed3::{Database, Env, RoTxn, RwTxn, types::*};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -418,19 +419,27 @@ impl HybridSearch for HelixGraphStorage {
             }
         });
 
-        let vector_handle =
-            task::spawn_blocking(move || -> Result<Option<Vec<HVector>>, GraphError> {
+        let vector_handle = task::spawn_blocking(
+            move || -> Result<Option<Vec<(u128, f64)>>, GraphError> {
                 let txn = graph_env_vector.read_txn()?;
+                let mut arena = Bump::new();
+                let query_slice = arena.alloc_slice_copy(query_vector_owned.as_slice());
                 let results = self.vectors.search::<fn(&HVector, &RoTxn) -> bool>(
                     &txn,
-                    &query_vector_owned,
+                    query_slice,
                     limit * 2,
                     "vector",
                     None,
                     false,
+                    &arena,
                 )?;
-                Ok(Some(results))
-            });
+                let scores = results
+                    .into_iter()
+                    .map(|vec| (vec.id, vec.distance.unwrap_or(0.0)))
+                    .collect::<Vec<(u128, f64)>>();
+                Ok(Some(scores))
+            },
+        );
 
         let (bm25_results, vector_results) = match tokio::try_join!(bm25_handle, vector_handle) {
             Ok((a, b)) => (a, b),
@@ -445,9 +454,7 @@ impl HybridSearch for HelixGraphStorage {
 
         // correct_score = alpha * bm25_score + (1.0 - alpha) * vector_score
         if let Some(vector_results) = vector_results? {
-            for doc in vector_results {
-                let doc_id = doc.id;
-                let score = doc.distance.unwrap_or(0.0);
+            for (doc_id, score) in vector_results {
                 let similarity = (1.0 / (1.0 + score)) as f32;
                 combined_scores
                     .entry(doc_id)

@@ -49,7 +49,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
 {
     fn add_n(
         self,
-        label: &'s str,
+        label: &'arena str,
         properties: Option<ImmutablePropertiesMap<'arena>>,
         secondary_indices: Option<&'s [&str]>,
     ) -> RwTraversalIterator<
@@ -58,13 +58,11 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         'txn,
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
-        let label = bumpalo::collections::String::from_str_in(label, self.arena);
         let node = Node {
             id: v6_uuid(),
             label,
             version: 1,
             properties,
-            _phantom: std::marker::PhantomData,
         };
         let secondary_indices = secondary_indices.unwrap_or(&[]).to_vec();
         let mut result: Result<TraversalValue, GraphError> = Ok(TraversalValue::Empty);

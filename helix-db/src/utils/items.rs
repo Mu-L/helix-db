@@ -4,8 +4,11 @@
 //!
 //! Nodes and edges are serialised without enum variant names in JSON format.
 
+use crate::protocol::custom_serde::edge_serde::EdgeDeSeed;
+use crate::protocol::custom_serde::node_serde::NodeDeSeed;
 use crate::protocol::value::Value;
 use crate::utils::properties::ImmutablePropertiesMap;
+use bincode::Options;
 use sonic_rs::Serialize;
 use std::cmp::Ordering;
 
@@ -35,6 +38,15 @@ impl<'arena> Node<'arena> {
     #[inline(always)]
     pub fn get_property(&self, prop: &str) -> Option<&Value> {
         self.properties.as_ref().and_then(|value| value.get(prop))
+    }
+
+    #[inline(always)]
+    pub fn from_bincode_bytes<'txn>(
+        id: u128,
+        bytes: &'txn [u8],
+        arena: &'arena bumpalo::Bump,
+    ) -> bincode::Result<Self> {
+        bincode::options().deserialize_seed(NodeDeSeed { arena, id }, bytes)
     }
 }
 
@@ -107,6 +119,15 @@ impl<'arena> Edge<'arena> {
     #[inline(always)]
     pub fn get_property(&self, prop: &str) -> Option<&Value> {
         self.properties.as_ref().and_then(|value| value.get(prop))
+    }
+
+    #[inline(always)]
+    pub fn from_bincode_bytes<'txn>(
+        id: u128,
+        bytes: &'txn [u8],
+        arena: &'arena bumpalo::Bump,
+    ) -> bincode::Result<Self> {
+        bincode::options().deserialize_seed(EdgeDeSeed { arena, id }, bytes)
     }
 }
 

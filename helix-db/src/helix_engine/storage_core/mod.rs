@@ -267,12 +267,12 @@ impl HelixGraphStorage {
     }
 
     /// Gets a vector from level 0 of HNSW index (because that's where all are stored)
-    pub fn get_full_vector<'arena>(
+    pub fn get_full_vector<'db: 'arena, 'arena, 'txn>(
         &self,
-        txn: &RoTxn,
+        txn: &'txn RoTxn<'db>,
         id: u128,
         arena: &'arena bumpalo::Bump,
-    ) -> Result<HVector, GraphError> {
+    ) -> Result<HVector<'arena>, GraphError> {
         Ok(self.vectors.get_vector(txn, id, 0, true, arena)?)
     }
 
@@ -284,7 +284,7 @@ impl HelixGraphStorage {
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, GraphError> {
         self.vectors
-            .get_raw_vector_data(txn, *id, label, arena)
+            .get_raw_vector_data(txn, *id, label, 0, arena)
             .map_err(GraphError::from)
     }
 
