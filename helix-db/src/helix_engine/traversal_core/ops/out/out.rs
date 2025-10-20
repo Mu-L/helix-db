@@ -9,111 +9,6 @@ use crate::{
     },
     utils::label_hash::hash_label,
 };
-use heed3::{RoTxn, types::Bytes};
-use helix_macros::debug_trace;
-
-pub struct OutNodesIterator<'db, 'arena, 'txn>
-where
-    'db: 'arena,
-    'arena: 'txn,
-{
-    pub storage: &'db HelixGraphStorage,
-    pub arena: &'arena bumpalo::Bump,
-    pub txn: &'txn RoTxn<'db>,
-    pub iter: heed3::RoIter<
-        'txn,
-        Bytes,
-        heed3::types::LazyDecode<Bytes>,
-        heed3::iteration_method::MoveOnCurrentKeyDuplicates,
-    >,
-}
-
-pub struct OutVecIterator<'db, 'arena, 'txn>
-where
-    'db: 'arena,
-    'arena: 'txn,
-{
-    pub storage: &'db HelixGraphStorage,
-    pub arena: &'arena bumpalo::Bump,
-    pub txn: &'txn RoTxn<'db>,
-    pub iter: heed3::RoIter<
-        'txn,
-        Bytes,
-        heed3::types::LazyDecode<Bytes>,
-        heed3::iteration_method::MoveOnCurrentKeyDuplicates,
-    >,
-    /// Whether to read vector data from 'vector_db' (if true) table or read from 'vector_properties_db' table (if false).
-    /// If false, it will treat it as a normal node and avoid reading the additional bytes.
-    pub get_vector_data: bool,
-}
-
-impl<'db, 'arena, 'txn, 's> Iterator for OutNodesIterator<'db, 'arena, 'txn> {
-    type Item = Result<TraversalValue<'arena>, GraphError>;
-
-    #[debug_trace("OUT")]
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(Ok((_, data))) = self.iter.next() {
-            match data.decode() {
-                Ok(data) => {
-                    let (_, item_id) = match HelixGraphStorage::unpack_adj_edge_data(data) {
-                        Ok(data) => data,
-                        Err(e) => {
-                            println!("Error unpacking edge data: {e:?}");
-                            return Some(Err(e));
-                        }
-                    };
-                    if let Ok(node) = self.storage.get_node(self.txn, &item_id) {
-                        return Some(Ok(TraversalValue::Node(node)));
-                    }
-                }
-                Err(e) => {
-                    println!("Error decoding edge data: {e:?}");
-                    return Some(Err(GraphError::DecodeError(e.to_string())));
-                }
-            }
-        }
-        None
-    }
-}
-
-impl<'db, 'arena, 'txn> Iterator for OutVecIterator<'db, 'arena, 'txn> {
-    type Item = Result<TraversalValue<'arena>, GraphError>;
-
-    #[debug_trace("OUT")]
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(Ok((_, data))) = self.iter.next() {
-            match data.decode() {
-                Ok(data) => {
-                    let (_, item_id) = match HelixGraphStorage::unpack_adj_edge_data(data) {
-                        Ok(data) => data,
-                        Err(e) => {
-                            println!("Error unpacking edge data: {e:?}");
-                            return Some(Err(e));
-                        }
-                    };
-                    if self.get_vector_data {
-                        if let Ok(vec) = self.storage.get_vector_in(self.txn, &item_id, self.arena)
-                        {
-                            return Some(Ok(TraversalValue::Vector(vec)));
-                        }
-                    } else {
-                        if let Ok(Some(vec)) = self
-                            .storage
-                            .get_vector_without_raw_vector_data_in(self.txn, &item_id, self.arena)
-                        {
-                            return Some(Ok(TraversalValue::VectorNodeWithoutVectorData(vec)));
-                        }
-                    }
-                }
-                Err(e) => {
-                    println!("Error decoding edge data: {e:?}");
-                    return Some(Err(GraphError::DecodeError(e.to_string())));
-                }
-            }
-        }
-        None
-    }
-}
 
 pub trait OutAdapter<'db, 'arena, 'txn, 's>:
     Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
@@ -171,19 +66,39 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                     },
                     &edge_label_hash,
                 );
-                match self
-                    .storage
-                    .out_edges_db
-                    .lazily_decode_data()
-                    .get_duplicates(self.txn, &prefix)
-                {
-                    Ok(Some(iter)) => Some(OutVecIterator {
-                        iter,
-                        storage: self.storage,
-                        txn: self.txn,
-                        arena: self.arena,
-                        get_vector_data,
-                    }),
+
+                match self.storage.out_edges_db.get_duplicates(self.txn, &prefix) {
+                    Ok(Some(iter)) => Some(iter.filter_map(move |item| {
+                        if let Ok((_, value)) = item {
+                            let (_, item_id) = match HelixGraphStorage::unpack_adj_edge_data(value)
+                            {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    println!("Error unpacking edge data: {e:?}");
+                                    return Some(Err(e));
+                                }
+                            };
+                            if get_vector_data {
+                                if let Ok(vec) =
+                                    self.storage.get_full_vector(self.txn, item_id, self.arena)
+                                {
+                                    return Some(Ok(TraversalValue::Vector(vec)));
+                                }
+                            } else {
+                                if let Ok(Some(vec)) = self
+                                    .storage
+                                    .get_vector_without_raw_data_in(self.txn, item_id, self.arena)
+                                {
+                                    return Some(Ok(TraversalValue::VectorNodeWithoutVectorData(
+                                        vec,
+                                    )));
+                                }
+                            }
+                            return None;
+                        } else {
+                            None
+                        }
+                    })),
                     Ok(None) => None,
                     Err(e) => {
                         println!("{} Error getting out edges: {:?}", line!(), e);
@@ -223,18 +138,22 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                     },
                     &edge_label_hash,
                 );
-                match self
-                    .storage
-                    .out_edges_db
-                    .lazily_decode_data()
-                    .get_duplicates(self.txn, &prefix)
-                {
-                    Ok(Some(iter)) => Some(OutNodesIterator {
-                        iter,
-                        storage: self.storage,
-                        txn: self.txn,
-                        arena: self.arena,
-                    }),
+                match self.storage.out_edges_db.get_duplicates(self.txn, &prefix) {
+                    Ok(Some(iter)) => Some(iter.filter_map(move |item| {
+                        if let Ok((_, data)) = item {
+                            let (_, item_id) = match HelixGraphStorage::unpack_adj_edge_data(data) {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    println!("Error unpacking edge data: {e:?}");
+                                    return Some(Err(e));
+                                }
+                            };
+                            if let Ok(node) = self.storage.get_node(self.txn, &item_id) {
+                                return Some(Ok(TraversalValue::Node(node)));
+                            }
+                        }
+                        return None;
+                    })),
                     Ok(None) => None,
                     Err(e) => {
                         println!("{} Error getting out nodes: {:?}", line!(), e);

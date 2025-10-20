@@ -105,17 +105,50 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         'txn,
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
-        let iter = self.storage.nodes_db.iter(self.txn).unwrap(); // should be handled because label may be variable in the future
+        let label_as_bytes = label.as_bytes();
+        let iter = self.storage.nodes_db.iter(self.txn).unwrap().filter_map(move |item| {
+            if let Ok((key, value)) = item {
+                assert!(
+                    value.len() >= LMDB_STRING_HEADER_LENGTH,
+                    "value length does not contain header which means the `label` field was missing from the node on insertion"
+                );
+                let length_of_label_in_lmdb =
+                    u64::from_le_bytes(value[..LMDB_STRING_HEADER_LENGTH].try_into().unwrap()) as usize;
+    
+                if length_of_label_in_lmdb != label.len() {
+                    return None;
+                }
+    
+                assert!(
+                    value.len() >= length_of_label_in_lmdb + LMDB_STRING_HEADER_LENGTH,
+                    "value length is not at least the header length plus the label length meaning there has been a corruption on node insertion"
+                );
+                let label_in_lmdb = &value[LMDB_STRING_HEADER_LENGTH
+                    ..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb as usize];
+    
+                if label_in_lmdb == label_as_bytes {
+                    match Node::<'arena>::decode_node(value, key, self.arena) {
+                        Ok(node) => {
+                            return Some(Ok(TraversalValue::Node(node)));
+                        }
+                        Err(e) => {
+                            println!("{} Error decoding node: {:?}", line!(), e);
+                            return Some(Err(GraphError::ConversionError(e.to_string())));
+                        }
+                    }
+                } else {
+                    return None;
+                }
+            }
+            None
+
+        }); // should be handled because label may be variable in the future
 
         RoTraversalIterator {
             storage: self.storage,
             arena: self.arena,
             txn: self.txn,
-            inner: NFromType {
-                iter,
-                label: label.as_bytes(),
-                arena: self.arena,
-            },
+            inner: iter,
         }
     }
 }

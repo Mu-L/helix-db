@@ -2,7 +2,6 @@ use super::binary_heap::BinaryHeap;
 use crate::{
     helix_engine::{types::VectorError, vector_core::vector::HVector},
     protocol::value::Value,
-    utils::filterable::Filterable,
 };
 use heed3::{byteorder::BE, types::{Bytes, U128}, Database, RoTxn};
 use std::cmp::Ordering;

@@ -267,29 +267,36 @@ impl HelixGraphStorage {
     }
 
     /// Gets a vector from level 0 of HNSW index (because that's where all are stored)
-    pub fn get_vector(&self, txn: &RoTxn, id: &u128) -> Result<HVector, GraphError> {
-        Ok(self.vectors.get_vector(txn, *id, 0, true)?)
-    }
-
-    pub fn get_vector_in<'arena>(
+    pub fn get_full_vector<'arena>(
         &self,
         txn: &RoTxn,
-        id: &u128,
+        id: u128,
         arena: &'arena bumpalo::Bump,
-    ) -> Result<HVector<'arena>, GraphError> {
-        Ok(self.vectors.get_vector(txn, *id, 0, true, arena)?)
+    ) -> Result<HVector, GraphError> {
+        Ok(self.vectors.get_vector(txn, id, 0, true, arena)?)
     }
 
-    pub fn get_vector_without_raw_vector_data_in<'db: 'arena, 'arena: 'txn, 'txn>(
+    pub fn get_vector_with_raw_data_in<'db: 'arena, 'arena: 'txn, 'txn>(
         &self,
         txn: &'txn RoTxn<'db>,
         id: &u128,
         label: &'arena str,
         arena: &'arena bumpalo::Bump,
+    ) -> Result<HVector<'arena>, GraphError> {
+        self.vectors
+            .get_raw_vector_data(txn, *id, label, arena)
+            .map_err(GraphError::from)
+    }
+
+    pub fn get_vector_without_raw_data_in<'db: 'arena, 'arena: 'txn, 'txn>(
+        &self,
+        txn: &'txn RoTxn<'db>,
+        id: u128,
+        arena: &'arena bumpalo::Bump,
     ) -> Result<Option<VectorWithoutData<'arena>>, GraphError> {
-        Ok(self
-            .vectors
-            .get_raw_vector_data(txn, *id, label, 0, arena)?)
+        self.vectors
+            .get_vector_properties(txn, id, arena)
+            .map_err(GraphError::from)
     }
 }
 

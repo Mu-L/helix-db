@@ -425,7 +425,7 @@ impl VectorCore {
     }
 
     #[inline(always)]
-    fn get_vector<'arena>(
+    pub fn get_vector<'arena>(
         &self,
         txn: &RoTxn,
         id: u128,
