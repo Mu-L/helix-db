@@ -4,7 +4,7 @@ use crate::{
     protocol::value::Value,
     utils::filterable::Filterable,
 };
-use heed3::{Database, RoTxn, types::Bytes};
+use heed3::{byteorder::BE, types::{Bytes, U128}, Database, RoTxn};
 use std::cmp::Ordering;
 
 #[derive(PartialEq)]
@@ -78,7 +78,7 @@ pub trait VectorFilter<'a, 'q> {
         filter: Option<&'q [F]>,
         label: &'q str,
         txn: &'q RoTxn<'q>,
-        db: Database<Bytes, Bytes>,
+        db: Database<U128<BE>, Bytes>,
         arena: &'a bumpalo::Bump,
     ) -> Result<bumpalo::collections::Vec<'a, HVector<'a>>, VectorError>
     where
@@ -93,7 +93,7 @@ impl<'a, 'q> VectorFilter<'a, 'q> for BinaryHeap<'a, HVector<'a>> {
         filter: Option<&'q [F]>,
         label: &'q str,
         txn: &'q RoTxn<'q>,
-        db: Database<Bytes, Bytes>,
+        db: Database<U128<BE>, Bytes>,
         arena: &'a bumpalo::Bump,
     ) -> Result<bumpalo::collections::Vec<'a, HVector<'a>>, VectorError>
     where
@@ -103,15 +103,14 @@ impl<'a, 'q> VectorFilter<'a, 'q> for BinaryHeap<'a, HVector<'a>> {
         for _ in 0..k {
             // while pop check filters and pop until one passes
             while let Some(mut item) = self.pop() {
-                item.properties = match db.get(txn, &item.get_id().to_be_bytes())? {
+                item.properties = match db.get(txn, &item.get_id())? {
                     Some(bytes) => Some(bincode::deserialize(bytes).map_err(VectorError::from)?),
                     None => None, // TODO: maybe should be an error?
                 };
 
                 if SHOULD_CHECK_DELETED
-                    && let Ok(is_deleted) = item.check_property("is_deleted")
-                    && let Value::Boolean(is_deleted) = is_deleted.as_ref()
-                    && *is_deleted
+                    && let Some(is_deleted) = item.get_property("is_deleted")
+                    && *is_deleted == true
                 {
                     continue;
                 }
