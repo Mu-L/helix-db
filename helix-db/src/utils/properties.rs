@@ -1,21 +1,12 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::slice;
 use std::{alloc, fmt, iter, ptr, str};
+use std::{marker, slice};
 
 use bincode::Options;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
-pub struct OldPropertiesMap(HashMap<String, Value>);
-
-#[derive(Serialize, Deserialize)]
-pub enum Value {
-    Type1,
-    Type2,
-    Type3,
-    Type4,
-}
+use crate::protocol::value::Value;
 
 /// For every node stored that we must read, we need to deserialize the Properties map.
 /// Previously, this was a HashMap encoded with bincode.
@@ -33,19 +24,12 @@ pub enum Value {
 ///     - Key lengths are stored packed for SIMD length check on get.
 ///     - Small n means O(n) is faster than O(1)
 pub struct ImmutablePropertiesMap<'arena> {
-    key_lengths: &'arena [usize],
-    /// `&'arena [*const 'arena str]`
-    key_datas: &'arena [*const u8],
-    values: &'arena [Value],
+    len: usize,
+    key_lengths: *const usize,
+    key_datas: *const *const u8,
+    values: *const Value,
+    _phantom: marker::PhantomData<(&'arena str, &'arena Value)>,
 }
-
-// struct Test<'arena> {
-//     len: usize,
-//     key_lengths: *const usize,
-//     key_datas: *const *const u8,
-//     values: *const Value,
-//     _phantom: marker::PhantomData<(&'arena str, &'arena Value)>,
-// }
 
 impl<'arena> ImmutablePropertiesMap<'arena> {
     pub fn new(
@@ -102,22 +86,22 @@ impl<'arena> ImmutablePropertiesMap<'arena> {
             index += 1;
         }
 
-        unsafe {
-            // SAFETY: We assert that the real count is correct.
-            // We could still recover by constructing slices with the real length,
-            // but that means somewhere is potentially messing up and could lead to
-            // data loss.
-            assert_eq!(
-                index, len,
-                "len that was passed in was incorrect, iterator yielded less items"
-            );
+        // SAFETY: We assert that the real count is correct.
+        // We could still recover by constructing slices with the real length,
+        // but that means somewhere is potentially messing up and could lead to
+        // data loss.
+        assert_eq!(
+            index, len,
+            "len that was passed in was incorrect, iterator yielded less items"
+        );
 
-            Ok(ImmutablePropertiesMap {
-                key_lengths: slice::from_raw_parts(key_lengths.as_ptr(), len),
-                key_datas: slice::from_raw_parts(key_datas.as_ptr(), len),
-                values: slice::from_raw_parts(values.as_ptr(), len),
-            })
-        }
+        Ok(ImmutablePropertiesMap {
+            len,
+            key_lengths: key_lengths.as_ptr(),
+            key_datas: key_datas.as_ptr(),
+            values: values.as_ptr(),
+            _phantom: marker::PhantomData,
+        })
     }
 
     pub fn get(&self, q: &str) -> Option<&'arena Value> {
@@ -125,22 +109,24 @@ impl<'arena> ImmutablePropertiesMap<'arena> {
     }
 
     pub fn len(&self) -> usize {
-        self.key_lengths.len()
+        self.len
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.len == 0
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&'arena str, &'arena Value)> {
-        assert!(self.key_lengths.len() == self.key_datas.len());
-        assert!(self.key_lengths.len() == self.values.len());
-        assert!(self.values.len() == self.key_datas.len());
+        // SAFETY: These are all slices but we are optimising storage space by reusing
+        // the same length field.
+        let key_datas = unsafe { slice::from_raw_parts(self.key_datas, self.len) };
+        let key_lengths = unsafe { slice::from_raw_parts(self.key_lengths, self.len) };
+        let values = unsafe { slice::from_raw_parts(self.values, self.len) };
 
-        self.key_datas
+        key_datas
             .iter()
             .copied()
-            .zip(self.key_lengths.iter().copied())
+            .zip(key_lengths.iter().copied())
             .map(|(data, len)| unsafe {
                 // SAFETY: This is an immutable struct and we deconstruct a valid &'arena str
                 // on creation. This is just putting it back together, and it couldn't have
@@ -148,7 +134,7 @@ impl<'arena> ImmutablePropertiesMap<'arena> {
                 let bytes: &'arena [u8] = slice::from_raw_parts(data, len);
                 str::from_utf8_unchecked(bytes)
             })
-            .zip(self.values)
+            .zip(values)
     }
 }
 
@@ -158,7 +144,7 @@ impl<'arena> Serialize for ImmutablePropertiesMap<'arena> {
         S: serde::Serializer,
     {
         use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(self.values.len()))?;
+        let mut map = serializer.serialize_map(Some(self.len))?;
 
         for (key, value) in self.iter() {
             map.serialize_entry(key, value)?;
