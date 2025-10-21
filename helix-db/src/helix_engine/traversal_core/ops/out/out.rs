@@ -1,10 +1,7 @@
 use crate::{
     helix_engine::{
         storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
-        traversal_core::{
-            traversal_iter::RoTraversalIterator,
-            traversal_value::{Traversable, TraversalValue},
-        },
+        traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
     },
     utils::label_hash::hash_label,

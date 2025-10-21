@@ -344,7 +344,7 @@ impl VectorCore {
             id: entry_point.id,
             distance: entry_point.get_distance(),
         });
-        results.push(entry_point);
+        results.push(*entry_point);
         visited.insert(entry_point.id);
 
         while let Some(curr_cand) = candidates.pop() {
@@ -478,7 +478,7 @@ impl HNSW for VectorCore {
         let curr_level = entry_point.level;
 
         for level in (1..=curr_level).rev() {
-            let mut nearest = self.search_level(
+            let nearest = self.search_level(
                 txn,
                 label,
                 &query,
@@ -559,7 +559,7 @@ impl HNSW for VectorCore {
         let l = entry_point.level;
         let mut curr_ep = entry_point;
         for level in (new_level + 1..=l).rev() {
-            let nearest =
+            let mut nearest =
                 self.search_level::<F>(txn, label, &query, &mut curr_ep, 1, level, None, arena)?;
             curr_ep = nearest.pop().ok_or(VectorError::VectorCoreError(
                 "emtpy search result".to_string(),
@@ -577,12 +577,9 @@ impl HNSW for VectorCore {
                 None,
                 arena,
             )?;
-            curr_ep = nearest
-                .peek()
-                .ok_or(VectorError::VectorCoreError(
-                    "emtpy search result".to_string(),
-                ))?
-                .clone();
+            curr_ep = *nearest.peek().ok_or(VectorError::VectorCoreError(
+                "emtpy search result".to_string(),
+            ))?;
 
             let neighbors =
                 self.select_neighbors::<F>(txn, label, &query, nearest, level, true, None, arena)?;

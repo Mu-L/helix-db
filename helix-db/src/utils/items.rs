@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 
 /// A node in the graph containing an ID, label, and property map.
 /// Properties are serialised without enum variant names in JSON format.
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Copy)]
 pub struct Node<'arena> {
     /// The ID of the node.
     ///
@@ -91,7 +91,7 @@ impl PartialOrd for Node<'_> {
 
 /// An edge in the graph connecting two nodes with an ID, label, and property map.
 /// Properties are serialised without enum variant names in JSON format.
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Copy)]
 pub struct Edge<'arena> {
     /// The ID of the edge.
     ///

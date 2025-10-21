@@ -2,31 +2,28 @@ use std::collections::HashMap;
 
 use crate::{
     helix_engine::{
-        traversal_core::{
-            traversal_iter::RoTraversalIterator,
-            traversal_value::{Traversable, TraversalValue},
-        },
+        traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
     },
     utils::aggregate::{Aggregate, AggregateItem},
 };
 
-pub trait AggregateAdapter: Iterator {
+pub trait AggregateAdapter<'arena>: Iterator {
     fn aggregate_by(
         self,
         properties: &[String],
         should_count: bool,
-    ) -> Result<Aggregate, GraphError>;
+    ) -> Result<Aggregate<'arena>, GraphError>;
 }
 
 impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
-    AggregateAdapter for RoTraversalIterator<'db, 'arena, 'txn, I>
+    AggregateAdapter<'arena> for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
     fn aggregate_by(
         self,
         properties: &[String],
         should_count: bool,
-    ) -> Result<Aggregate, GraphError> {
+    ) -> Result<Aggregate<'arena>, GraphError> {
         let mut groups: HashMap<String, AggregateItem> = HashMap::new();
 
         for item in self.inner {
@@ -36,12 +33,12 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             let mut key_parts = Vec::new();
 
             for property in properties {
-                match item.check_property(property) {
-                    Ok(val) => {
+                match item.get_property(property) {
+                    Some(val) => {
                         key_parts.push(val.inner_stringify());
-                        kvs.push((property.to_string(), val.into_owned()));
+                        kvs.push((property.to_string(), val.clone()));
                     }
-                    Err(_) => {
+                    None => {
                         key_parts.push("null".to_string());
                     }
                 }

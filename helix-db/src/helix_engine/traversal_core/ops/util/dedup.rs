@@ -1,8 +1,5 @@
 use crate::helix_engine::{
-    traversal_core::{
-        traversal_iter::RoTraversalIterator,
-        traversal_value::{Traversable, TraversalValue},
-    },
+    traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
     types::GraphError,
 };
 

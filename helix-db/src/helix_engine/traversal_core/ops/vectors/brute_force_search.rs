@@ -8,18 +8,21 @@ use crate::{
         vector_core::vector_distance::cosine_similarity,
     },
     protocol::value::Value,
-    utils::filterable::Filterable,
+    utils,
 };
 use helix_macros::debug_trace;
 use itertools::Itertools;
 
-pub struct BruteForceSearchV<I: Iterator<Item = Result<TraversalValue, GraphError>>> {
+pub struct BruteForceSearchV<'arena, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
+{
     iter: I,
 }
 
 // implementing iterator for OutIterator
-impl<I: Iterator<Item = Result<TraversalValue, GraphError>>> Iterator for BruteForceSearchV<I> {
-    type Item = Result<TraversalValue, GraphError>;
+impl<'arena, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>> Iterator
+    for BruteForceSearchV<'arena, I>
+{
+    type Item = Result<TraversalValue<'arena>, GraphError>;
 
     #[debug_trace("BRUTE_FORCE_SEARCH_V")]
     fn next(&mut self) -> Option<Self::Item> {

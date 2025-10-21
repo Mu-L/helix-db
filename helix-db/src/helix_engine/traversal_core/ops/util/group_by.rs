@@ -1,9 +1,6 @@
 use crate::{
     helix_engine::{
-        traversal_core::{
-            traversal_iter::RoTraversalIterator,
-            traversal_value::{Traversable, TraversalValue},
-        },
+        traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
     },
     utils::group_by::{GroupBy, GroupByItem},
@@ -28,12 +25,12 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             let mut key_parts = Vec::new();
 
             for property in properties {
-                match item.check_property(property) {
-                    Ok(val) => {
+                match item.get_property(property) {
+                    Some(val) => {
                         key_parts.push(val.inner_stringify());
-                        kvs.push((property.to_string(), val.into_owned()));
+                        kvs.push((property.to_string(), val.clone()));
                     }
-                    Err(_) => {
+                    None => {
                         key_parts.push("null".to_string());
                     }
                 }

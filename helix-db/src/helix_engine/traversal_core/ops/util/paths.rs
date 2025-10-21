@@ -11,7 +11,6 @@ use heed3::RoTxn;
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
-    sync::Arc,
 };
 
 #[derive(Debug, Clone)]
@@ -26,12 +25,16 @@ pub enum PathAlgorithm {
     Dijkstra,
 }
 
-pub struct ShortestPathIterator<'a, I> {
+pub struct ShortestPathIterator<'db, 'arena, 'txn, I>
+where
+    'db: 'arena,
+    'arena: 'txn,
+{
     iter: I,
     path_type: PathType,
-    edge_label: Option<&'a str>,
-    storage: Arc<HelixGraphStorage>,
-    txn: &'a RoTxn<'a>,
+    edge_label: Option<&'arena str>,
+    storage: &'db HelixGraphStorage,
+    txn: &'txn RoTxn<'db>,
     algorithm: PathAlgorithm,
 }
 
@@ -65,8 +68,12 @@ impl PartialOrd for DijkstraState {
     }
 }
 
-impl<'arena, 's, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>> Iterator
-    for ShortestPathIterator<'s, I>
+impl<
+    'db: 'arena,
+    'arena: 'txn,
+    'txn,
+    I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+> Iterator for ShortestPathIterator<'db, 'arena, 'txn, I>
 {
     type Item = Result<TraversalValue<'arena>, GraphError>;
 
@@ -90,13 +97,13 @@ impl<'arena, 's, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
     }
 }
 
-impl<'a, I> ShortestPathIterator<'a, I> {
+impl<'db, 'arena, 'txn, I> ShortestPathIterator<'db, 'arena, 'txn, I> {
     fn reconstruct_path(
         &self,
-        parent: &HashMap<u128, (u128, Edge)>,
+        parent: &HashMap<u128, (u128, Edge<'arena>)>,
         start_id: &u128,
         end_id: &u128,
-    ) -> Result<TraversalValue, GraphError> {
+    ) -> Result<TraversalValue<'arena>, GraphError> {
         let mut nodes = Vec::with_capacity(parent.len());
         let mut edges = Vec::with_capacity(parent.len() - 1);
 
@@ -122,7 +129,7 @@ impl<'a, I> ShortestPathIterator<'a, I> {
         &self,
         from: u128,
         to: u128,
-    ) -> Option<Result<TraversalValue, GraphError>> {
+    ) -> Option<Result<TraversalValue<'arena>, GraphError>> {
         let mut queue = VecDeque::with_capacity(32);
         let mut visited = HashSet::with_capacity(64);
         let mut parent: HashMap<u128, (u128, Edge)> = HashMap::with_capacity(32);
@@ -176,10 +183,10 @@ impl<'a, I> ShortestPathIterator<'a, I> {
         &self,
         from: u128,
         to: u128,
-    ) -> Option<Result<TraversalValue, GraphError>> {
+    ) -> Option<Result<TraversalValue<'arena>, GraphError>> {
         let mut heap = BinaryHeap::new();
         let mut distances = HashMap::with_capacity(64);
-        let mut parent: HashMap<u128, (u128, Edge)> = HashMap::with_capacity(32);
+        let mut parent: HashMap<u128, (u128, Edge<'arena>)> = HashMap::with_capacity(32);
 
         distances.insert(from, 0.0);
         heap.push(DijkstraState {
@@ -270,7 +277,9 @@ impl<'a, I> ShortestPathIterator<'a, I> {
     }
 }
 
-pub trait ShortestPathAdapter<'a, I>: Iterator<Item = Result<TraversalValue, GraphError>> {
+pub trait ShortestPathAdapter<'db, 'arena, 'txn, 's, I>:
+    Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
+{
     /// ShortestPath finds the shortest path between two nodes
     ///
     /// # Arguments
@@ -288,55 +297,43 @@ pub trait ShortestPathAdapter<'a, I>: Iterator<Item = Result<TraversalValue, Gra
     /// ```
     fn shortest_path(
         self,
-        edge_label: Option<&'a str>,
-        from: Option<&'a u128>,
-        to: Option<&'a u128>,
-    ) -> RoTraversalIterator<'a, ShortestPathIterator<'a, I>>
-    where
-        I: 'a;
+        edge_label: Option<&'arena str>,
+        from: Option<&'s u128>,
+        to: Option<&'s u128>,
+    ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I>>;
 
     fn shortest_path_with_algorithm(
         self,
-        edge_label: Option<&'a str>,
-        from: Option<&'a u128>,
-        to: Option<&'a u128>,
+        edge_label: Option<&'arena str>,
+        from: Option<&'s u128>,
+        to: Option<&'s u128>,
         algorithm: PathAlgorithm,
-    ) -> RoTraversalIterator<'a, ShortestPathIterator<'a, I>>
-    where
-        I: 'a;
+    ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I>>;
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> ShortestPathAdapter<'a, I>
-    for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>> + 'arena>
+    ShortestPathAdapter<'db, 'arena, 'txn, 's, I> for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
     #[inline]
     fn shortest_path(
         self,
-        edge_label: Option<&'a str>,
-        from: Option<&'a u128>,
-        to: Option<&'a u128>,
-    ) -> RoTraversalIterator<'a, ShortestPathIterator<'a, I>>
-    where
-        I: 'a,
-    {
+        edge_label: Option<&'arena str>,
+        from: Option<&'s u128>,
+        to: Option<&'s u128>,
+    ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I>> {
         self.shortest_path_with_algorithm(edge_label, from, to, PathAlgorithm::BFS)
     }
 
     #[inline]
     fn shortest_path_with_algorithm(
         self,
-        edge_label: Option<&'a str>,
-        from: Option<&'a u128>,
-        to: Option<&'a u128>,
+        edge_label: Option<&'arena str>,
+        from: Option<&'s u128>,
+        to: Option<&'s u128>,
         algorithm: PathAlgorithm,
-    ) -> RoTraversalIterator<'a, ShortestPathIterator<'a, I>>
-    where
-        I: 'a,
-    {
-        let storage = Arc::clone(&self.storage);
-        let txn = self.txn;
-
+    ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I>> {
         RoTraversalIterator {
+            arena: self.arena,
             inner: ShortestPathIterator {
                 iter: self.inner,
                 path_type: match (from, to) {
@@ -345,11 +342,11 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> ShortestPa
                     _ => panic!("Invalid shortest path"),
                 },
                 edge_label,
-                storage,
-                txn,
+                storage: &self.storage,
+                txn: self.txn,
                 algorithm,
             },
-            storage: Arc::clone(&self.storage),
+            storage: &self.storage,
             txn: self.txn,
         }
     }
