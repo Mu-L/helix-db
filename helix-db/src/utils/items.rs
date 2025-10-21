@@ -36,8 +36,8 @@ pub struct Node<'arena> {
 
 impl<'arena> Node<'arena> {
     #[inline(always)]
-    pub fn get_property(&self, prop: &str) -> Option<&Value> {
-        self.properties.as_ref().and_then(|value| value.get(prop))
+    pub fn get_property(&self, prop: &str) -> Option<&'arena Value> {
+        self.properties.and_then(|value| value.get(prop))
     }
 
     #[inline(always)]
