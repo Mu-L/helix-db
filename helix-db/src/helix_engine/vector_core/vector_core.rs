@@ -330,14 +330,14 @@ impl VectorCore {
         level: usize,
         filter: Option<&[F]>,
         arena: &'arena bumpalo::Bump,
-    ) -> Result<BinaryHeap<'arena, HVector<'arena>>, VectorError>
+    ) -> Result<BinaryHeap<'arena, &'arena HVector<'arena>>, VectorError>
     where
         F: Fn(&HVector, &RoTxn) -> bool,
     {
         let mut visited: HashSet<u128> = HashSet::new();
         let mut candidates: BinaryHeap<'arena, Candidate> =
             BinaryHeap::with_capacity(arena, self.config.ef_construct);
-        let mut results: BinaryHeap<'arena, HVector<'arena>> = BinaryHeap::new(arena);
+        let mut results: BinaryHeap<'arena, &'arena HVector<'arena>> = BinaryHeap::new(arena);
 
         entry_point.set_distance(entry_point.distance_to(query)?);
         candidates.push(Candidate {
@@ -381,7 +381,7 @@ impl VectorCore {
                         distance,
                     });
 
-                    results.push(neighbor);
+                    results.push(arena.alloc(neighbor));
 
                     if results.len() > ef {
                         results = results.take_inord(ef);
@@ -527,7 +527,7 @@ impl HNSW for VectorCore {
         data: &'arena [f64],
         fields: Option<Vec<(String, Value)>>,
         arena: &'arena bumpalo::Bump,
-    ) -> Result<HVector<'arena>, VectorError>
+    ) -> Result<&'arena HVector<'arena>, VectorError>
     where
         F: Fn(&HVector, &RoTxn) -> bool,
         'db: 'arena,

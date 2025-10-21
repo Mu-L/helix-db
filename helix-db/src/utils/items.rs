@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 
 /// A node in the graph containing an ID, label, and property map.
 /// Properties are serialised without enum variant names in JSON format.
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Copy)]
 pub struct Node<'arena> {
     /// The ID of the node.
     ///
@@ -31,13 +31,13 @@ pub struct Node<'arena> {
     /// Properties are optional and can be None.
     /// Properties are serialised without enum variant names in JSON format.
     #[serde(default)]
-    pub properties: Option<ImmutablePropertiesMap<'arena>>,
+    pub properties: Option<&'arena ImmutablePropertiesMap<'arena>>,
 }
 
 impl<'arena> Node<'arena> {
     #[inline(always)]
-    pub fn get_property(&self, prop: &str) -> Option<&Value> {
-        self.properties.as_ref().and_then(|value| value.get(prop))
+    pub fn get_property(&self, prop: &str) -> Option<&'arena Value> {
+        self.properties.and_then(|value| value.get(prop))
     }
 
     #[inline(always)]
@@ -91,7 +91,7 @@ impl PartialOrd for Node<'_> {
 
 /// An edge in the graph connecting two nodes with an ID, label, and property map.
 /// Properties are serialised without enum variant names in JSON format.
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Copy)]
 pub struct Edge<'arena> {
     /// The ID of the edge.
     ///
@@ -112,7 +112,7 @@ pub struct Edge<'arena> {
     /// Properties are optional and can be None.
     /// Properties are serialised without enum variant names in JSON format.
     #[serde(default)]
-    pub properties: Option<ImmutablePropertiesMap<'arena>>,
+    pub properties: Option<&'arena ImmutablePropertiesMap<'arena>>,
 }
 
 impl<'arena> Edge<'arena> {

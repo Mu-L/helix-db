@@ -15,7 +15,7 @@ const HYPHENATED_LENGTH: usize = 36;
 // TODO: set level as u8
 
 #[repr(C, align(16))]
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Copy)]
 pub struct VectorWithoutData<'arena> {
     #[serde(skip)]
     /// The id of the HVector
@@ -31,7 +31,7 @@ pub struct VectorWithoutData<'arena> {
 
     /// The properties of the HVector
     #[serde(default)]
-    pub properties: Option<ImmutablePropertiesMap<'arena>>,
+    pub properties: Option<&'arena ImmutablePropertiesMap<'arena>>,
 }
 
 impl Debug for VectorWithoutData<'_> {

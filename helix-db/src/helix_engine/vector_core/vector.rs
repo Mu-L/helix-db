@@ -18,7 +18,7 @@ use std::{borrow::Cow, cmp::Ordering, collections::HashMap, fmt::Debug};
 // TODO: set level as u8
 
 #[repr(C, align(16))] // TODO: see performance impact of repr(C) and align(16)
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Copy)]
 pub struct HVector<'arena> {
     /// The id of the HVector
     #[serde(skip)]
@@ -39,7 +39,7 @@ pub struct HVector<'arena> {
     pub data: &'arena [f64],
     /// The properties of the HVector
     #[serde(default)]
-    pub properties: Option<ImmutablePropertiesMap<'arena>>,
+    pub properties: Option<&'arena ImmutablePropertiesMap<'arena>>,
 }
 
 impl PartialEq for HVector<'_> {
