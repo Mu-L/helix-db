@@ -42,6 +42,8 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectorDeSeed<'txn, '
 
                 let version: u8 = seq.next_element()?.unwrap_or(0);
 
+                let deleted: bool = seq.next_element()?.unwrap_or(false);
+
                 let properties: Option<ImmutablePropertiesMap<'arena>> =
                     seq.next_element_seed(ImmutablePropertiesMapDeSeed { arena: self.arena })?;
 
@@ -52,6 +54,7 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectorDeSeed<'txn, '
                 Ok(HVector {
                     id: self.id,
                     label,
+                    deleted,
                     version,
                     level: 0,
                     distance: None,
@@ -63,14 +66,7 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectorDeSeed<'txn, '
 
         deserializer.deserialize_struct(
             "HVector",
-            &[
-                "label",
-                "version",
-                "level",
-                "distance",
-                "data",
-                "properties",
-            ],
+            &["label", "version", "deleted", "properties"],
             VectorVisitor {
                 arena: self.arena,
                 raw_vector_data: self.raw_vector_data,
@@ -116,6 +112,8 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectoWithoutDataDeSe
 
                 let version: u8 = seq.next_element()?.unwrap_or(0);
 
+                let deleted: bool = seq.next_element()?.unwrap_or(false);
+
                 let properties: Option<ImmutablePropertiesMap<'arena>> =
                     seq.next_element_seed(ImmutablePropertiesMapDeSeed { arena: self.arena })?;
 
@@ -123,6 +121,7 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectoWithoutDataDeSe
                     id: self.id,
                     label,
                     version,
+                    deleted,
                     level: 0,
                     properties,
                 })
@@ -131,7 +130,7 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectoWithoutDataDeSe
 
         deserializer.deserialize_struct(
             "VectorWithoutData",
-            &["label", "version", "properties"],
+            &["label", "version", "deleted", "properties"],
             VectorVisitor {
                 arena: self.arena,
                 id: self.id,

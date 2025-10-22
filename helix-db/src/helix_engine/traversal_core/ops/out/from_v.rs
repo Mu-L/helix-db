@@ -41,13 +41,14 @@ where
                 let vector = if get_vector_data {
                     match self
                         .storage
+                        .vectors
                         .get_full_vector(self.txn, item.from_node, self.arena)
                     {
                         Ok(vector) => TraversalValue::Vector(vector),
-                        Err(e) => return Some(Err(e)),
+                        Err(e) => return Some(Err(GraphError::from(e))),
                     }
                 } else {
-                    match self.storage.get_vector_without_raw_data_in(
+                    match self.storage.vectors.get_vector_properties(
                         self.txn,
                         item.from_node,
                         self.arena,
@@ -58,7 +59,7 @@ where
                                 item.from_node.to_string(),
                             ))));
                         }
-                        Err(e) => return Some(Err(e)),
+                        Err(e) => return Some(Err(GraphError::from(e))),
                     }
                 };
 

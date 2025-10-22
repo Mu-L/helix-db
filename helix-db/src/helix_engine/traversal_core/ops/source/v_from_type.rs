@@ -67,6 +67,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         if get_vector_data {
                             let vector = match self.storage.vectors.get_full_vector(self.txn, id,  self.arena) {
                                 Ok(bytes) => bytes,
+                                Err(VectorError::VectorDeleted) => return None,
                                 Err(e) => return Some(Err(GraphError::from(e))),
                             };
 

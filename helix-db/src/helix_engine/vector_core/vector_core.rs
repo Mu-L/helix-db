@@ -19,7 +19,7 @@ use heed3::{
 };
 use rand::prelude::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 const DB_VECTORS: &str = "vectors"; // for vector data (v:)
 const DB_VECTOR_DATA: &str = "vector_data"; // for vector data (v:)
@@ -408,7 +408,12 @@ impl VectorCore {
                 }
                 None => None,
             };
-        // TODO
+
+        if let Some(vector) = vector {
+            if vector.deleted {
+                return Err(VectorError::VectorDeleted);
+            }
+        }
 
         Ok(vector)
     }
@@ -431,7 +436,11 @@ impl VectorCore {
             .get(txn, &id)?
             .ok_or(VectorError::VectorNotFound(id.to_string()))?;
 
-        HVector::from_bincode_bytes(arena, properties_bytes, vector_data_bytes, id)
+        let vector = HVector::from_bincode_bytes(arena, properties_bytes, vector_data_bytes, id)?;
+        if vector.deleted {
+            return Err(VectorError::VectorDeleted);
+        }
+        Ok(vector)
     }
 
     #[inline(always)]

@@ -55,7 +55,8 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             .filter_map(move |mut item| {
                 match self
                     .storage
-                    .get_vector_without_raw_data_in(self.txn, *item.id(), self.arena)
+                    .vectors
+                    .get_vector_properties(self.txn, *item.id(), self.arena)
                 {
                     Ok(Some(vector_without_data)) => {
                         item.expand_from_vector_without_data(vector_without_data);

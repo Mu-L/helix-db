@@ -76,15 +76,18 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                                 }
                             };
                             if get_vector_data {
-                                if let Ok(vec) =
-                                    self.storage.get_full_vector(self.txn, item_id, self.arena)
+                                if let Ok(vec) = self
+                                    .storage
+                                    .vectors
+                                    .get_full_vector(self.txn, item_id, self.arena)
                                 {
                                     return Some(Ok(TraversalValue::Vector(vec)));
                                 }
                             } else {
                                 if let Ok(Some(vec)) = self
                                     .storage
-                                    .get_vector_without_raw_data_in(self.txn, item_id, self.arena)
+                                    .vectors
+                                    .get_vector_properties(self.txn, item_id, self.arena)
                                 {
                                     return Some(Ok(TraversalValue::VectorNodeWithoutVectorData(
                                         vec,

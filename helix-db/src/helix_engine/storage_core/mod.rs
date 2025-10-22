@@ -265,39 +265,6 @@ impl HelixGraphStorage {
         );
         Ok((edge_id, node_id))
     }
-
-    /// Gets a vector from level 0 of HNSW index (because that's where all are stored)
-    pub fn get_full_vector<'db: 'arena, 'arena, 'txn>(
-        &self,
-        txn: &'txn RoTxn<'db>,
-        id: u128,
-        arena: &'arena bumpalo::Bump,
-    ) -> Result<HVector<'arena>, GraphError> {
-        Ok(self.vectors.get_vector(txn, id, 0, true, arena)?)
-    }
-
-    pub fn get_vector_with_raw_data_in<'db: 'arena, 'arena: 'txn, 'txn>(
-        &self,
-        txn: &'txn RoTxn<'db>,
-        id: &u128,
-        label: &'arena str,
-        arena: &'arena bumpalo::Bump,
-    ) -> Result<HVector<'arena>, GraphError> {
-        self.vectors
-            .get_raw_vector_data(txn, *id, label, 0, arena)
-            .map_err(GraphError::from)
-    }
-
-    pub fn get_vector_without_raw_data_in<'db: 'arena, 'arena: 'txn, 'txn>(
-        &self,
-        txn: &'txn RoTxn<'db>,
-        id: u128,
-        arena: &'arena bumpalo::Bump,
-    ) -> Result<Option<VectorWithoutData<'arena>>, GraphError> {
-        self.vectors
-            .get_vector_properties(txn, id, arena)
-            .map_err(GraphError::from)
-    }
 }
 
 impl StorageConfig {

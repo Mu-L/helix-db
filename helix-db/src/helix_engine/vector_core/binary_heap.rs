@@ -1,7 +1,7 @@
-use core::mem::{self, ManuallyDrop, swap};
-use core::{fmt, ptr, slice};
+use core::mem::{ManuallyDrop, swap};
+use core::ptr;
+use core::slice;
 use std::iter::FusedIterator;
-use std::vec;
 pub struct BinaryHeap<'arena, T> {
     pub arena: &'arena bumpalo::Bump,
     data: bumpalo::collections::Vec<'arena, T>,

@@ -26,7 +26,6 @@ pub struct HVector<'arena> {
     /// the version of the vector
     #[serde(default)]
     pub version: u8,
-
     /// whether the vector is deleted
     #[serde(default)]
     pub deleted: bool,

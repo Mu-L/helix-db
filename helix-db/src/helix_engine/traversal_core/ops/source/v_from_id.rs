@@ -42,20 +42,25 @@ where
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
         let vec = if get_vector_data {
-            match self.storage.get_full_vector(self.txn, id, self.arena) {
+            match self
+                .storage
+                .vectors
+                .get_full_vector(self.txn, id, self.arena)
+            {
                 Ok(vec) => Ok(TraversalValue::Vector(vec)),
-                Err(e) => Err(e),
+                Err(e) => Err(GraphError::from(e)),
             }
         } else {
             match self
                 .storage
-                .get_vector_without_raw_data_in(self.txn, id, self.arena)
+                .vectors
+                .get_vector_properties(self.txn, id, self.arena)
             {
                 Ok(Some(vec)) => Ok(TraversalValue::VectorNodeWithoutVectorData(vec)),
                 Ok(None) => Err(GraphError::from(VectorError::VectorNotFound(
                     id.to_string(),
                 ))),
-                Err(e) => Err(e),
+                Err(e) => Err(GraphError::from(e)),
             }
         };
 

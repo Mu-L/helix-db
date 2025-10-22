@@ -35,13 +35,14 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                 if get_vector_data {
                     match self
                         .storage
+                        .vectors
                         .get_full_vector(self.txn, item.to_node, self.arena)
                     {
                         Ok(vector) => Some(Ok(TraversalValue::Vector(vector))),
-                        Err(e) => Some(Err(e)),
+                        Err(e) => Some(Err(GraphError::from(e))),
                     }
                 } else {
-                    match self.storage.get_vector_without_raw_data_in(
+                    match self.storage.vectors.get_vector_properties(
                         self.txn,
                         item.to_node,
                         self.arena,
@@ -50,7 +51,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                             Some(Ok(TraversalValue::VectorNodeWithoutVectorData(vector)))
                         }
                         Ok(None) => None,
-                        Err(e) => Some(Err(e)),
+                        Err(e) => Some(Err(GraphError::from(e))),
                     }
                 }
             } else {

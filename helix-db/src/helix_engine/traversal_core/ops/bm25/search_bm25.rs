@@ -2,10 +2,12 @@ use crate::{
     helix_engine::{
         bm25::bm25::BM25,
         traversal_core::{
-            traversal_iter::RoTraversalIterator, traversal_value::TraversalValue, LMDB_STRING_HEADER_LENGTH
+            LMDB_STRING_HEADER_LENGTH, traversal_iter::RoTraversalIterator,
+            traversal_value::TraversalValue,
         },
         types::GraphError,
-    }, protocol::value::Value, utils::items::Node
+    },
+    utils::items::Node,
 };
 
 pub trait SearchBM25Adapter<'db, 'arena, 'txn>:
