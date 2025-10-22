@@ -62,7 +62,8 @@ fn test_worker_pool_new() {
 
     let cores =
         core_affinity::get_core_ids().unwrap_or_else(|| vec![core_affinity::CoreId { id: 0 }]);
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: use 2 threads per core to ensure num_workers = cores.len() * 2 >= 2
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let _pool = WorkerPool::new(core_setter, graph, router, rt);
     // If we reach here, pool was created successfully
@@ -81,7 +82,8 @@ fn test_worker_pool_with_single_core() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let _pool = WorkerPool::new(core_setter, graph, router, rt);
 }
@@ -138,7 +140,8 @@ fn test_worker_pool_channel_capacity() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     // WorkerPool uses bounded(1000) for channels
     let _pool = WorkerPool::new(core_setter, graph, router, rt);
@@ -165,7 +168,8 @@ async fn test_process_request_success() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -193,7 +197,8 @@ async fn test_process_request_handler_error() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -217,7 +222,8 @@ async fn test_process_request_not_found() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -250,7 +256,8 @@ async fn test_process_multiple_requests_sequentially() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -320,7 +327,8 @@ async fn test_route_query_request() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -344,7 +352,8 @@ async fn test_route_query_not_found() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -373,7 +382,8 @@ async fn test_multiple_query_routes() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -407,7 +417,8 @@ async fn test_route_with_special_characters() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -438,7 +449,8 @@ async fn test_handler_error_propagation() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -462,7 +474,8 @@ async fn test_not_found_error_contains_request_name() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -491,7 +504,8 @@ async fn test_not_found_error_contains_request_type() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -523,7 +537,8 @@ async fn test_mixed_success_and_error_requests() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -557,7 +572,8 @@ async fn test_request_with_body_data() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -589,7 +605,8 @@ async fn test_request_with_empty_body() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -614,7 +631,8 @@ async fn test_request_format_json() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -648,7 +666,8 @@ fn test_worker_thread_creation() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     // This creates workers internally
     let _pool = WorkerPool::new(core_setter, graph, router, rt);
@@ -701,7 +720,8 @@ async fn test_channel_communication() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -787,7 +807,8 @@ async fn test_handler_receives_correct_request() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -824,7 +845,8 @@ async fn test_handler_receives_graph_access() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -854,7 +876,8 @@ async fn test_response_body_content() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -883,7 +906,8 @@ async fn test_response_format_preserved() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -914,7 +938,8 @@ async fn test_empty_route_name() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -941,7 +966,8 @@ async fn test_very_long_route_name() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -950,10 +976,6 @@ async fn test_very_long_route_name() {
 
     assert!(result.is_ok());
 }
-
-// ============================================================================
-// Additional Coverage Tests (19 more tests to reach 50 total)
-// ============================================================================
 
 #[tokio::test]
 async fn test_concurrent_different_routes() {
@@ -1014,7 +1036,8 @@ async fn test_sequential_different_routes() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1040,7 +1063,8 @@ async fn test_repeated_requests_same_route() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1067,7 +1091,8 @@ async fn test_alternating_success_error() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1099,7 +1124,8 @@ async fn test_request_with_large_body() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1173,7 +1199,8 @@ async fn test_worker_pool_no_routes() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1200,7 +1227,8 @@ async fn test_request_type_query_explicit() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1217,6 +1245,7 @@ async fn test_request_type_query_explicit() {
 }
 
 #[test]
+#[should_panic(expected = "The number of workers must be at least 2")]
 fn test_worker_pool_with_empty_cores() {
     let (graph, _temp_dir) = create_test_graph();
     let router = Arc::new(HelixRouter::new(None, None));
@@ -1231,7 +1260,47 @@ fn test_worker_pool_with_empty_cores() {
     let cores = vec![];
     let core_setter = Arc::new(CoreSetter::new(cores, 1));
 
-    // Should create pool with 0 workers (0 cores × 1 thread per core)
+    // Should panic: 0 cores × 1 thread per core = 0 workers (< 2)
+    let _pool = WorkerPool::new(core_setter, graph, router, rt);
+}
+
+#[test]
+#[should_panic(expected = "The number of workers should be a multiple of 2")]
+fn test_worker_pool_with_odd_workers() {
+    let (graph, _temp_dir) = create_test_graph();
+    let router = Arc::new(HelixRouter::new(None, None));
+    let rt = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap(),
+    );
+
+    let cores = vec![core_affinity::CoreId { id: 0 }];
+    let core_setter = Arc::new(CoreSetter::new(cores, 3));
+
+    // Should panic: 1 core × 3 threads = 3 workers (odd number)
+    let _pool = WorkerPool::new(core_setter, graph, router, rt);
+}
+
+#[test]
+#[should_panic(expected = "The number of workers must be at least 2")]
+fn test_worker_pool_with_single_worker() {
+    let (graph, _temp_dir) = create_test_graph();
+    let router = Arc::new(HelixRouter::new(None, None));
+    let rt = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap(),
+    );
+
+    let cores = vec![core_affinity::CoreId { id: 0 }];
+    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+
+    // Should panic: 1 core × 1 thread = 1 worker (< 2)
     let _pool = WorkerPool::new(core_setter, graph, router, rt);
 }
 
@@ -1258,7 +1327,8 @@ async fn test_response_with_custom_body() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1287,7 +1357,8 @@ async fn test_error_then_success() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1316,7 +1387,8 @@ async fn test_success_then_not_found() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1345,7 +1417,8 @@ async fn test_multiple_errors_in_sequence() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1413,7 +1486,8 @@ async fn test_route_case_sensitive() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1443,7 +1517,8 @@ async fn test_route_with_numbers() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
@@ -1509,7 +1584,8 @@ async fn test_request_name_with_unicode() {
     );
 
     let cores = vec![core_affinity::CoreId { id: 0 }];
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    // Need at least 2 workers: 1 core × 2 threads = 2 workers
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
 
     let pool = WorkerPool::new(core_setter, graph, router, rt);
 
