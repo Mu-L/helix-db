@@ -3,6 +3,51 @@ use crate::{
     utils::properties::{ImmutablePropertiesMap, ImmutablePropertiesMapDeSeed},
 };
 use std::fmt;
+use serde::de::{DeserializeSeed, Visitor};
+
+/// Helper DeserializeSeed for Option<ImmutablePropertiesMap>
+struct OptionPropertiesMapDeSeed<'arena> {
+    arena: &'arena bumpalo::Bump,
+}
+
+impl<'de, 'arena> DeserializeSeed<'de> for OptionPropertiesMapDeSeed<'arena> {
+    type Value = Option<ImmutablePropertiesMap<'arena>>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct OptVisitor<'arena> {
+            arena: &'arena bumpalo::Bump,
+        }
+
+        impl<'de, 'arena> Visitor<'de> for OptVisitor<'arena> {
+            type Value = Option<ImmutablePropertiesMap<'arena>>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("Option<ImmutablePropertiesMap>")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(None)
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                ImmutablePropertiesMapDeSeed { arena: self.arena }
+                    .deserialize(deserializer)
+                    .map(Some)
+            }
+        }
+
+        deserializer.deserialize_option(OptVisitor { arena: self.arena })
+    }
+}
 
 /// DeserializeSeed for Node that allocates label and properties into the arena
 pub struct VectorDeSeed<'txn, 'arena> {
@@ -44,8 +89,10 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectorDeSeed<'txn, '
 
                 let deleted: bool = seq.next_element()?.unwrap_or(false);
 
-                let properties: Option<ImmutablePropertiesMap<'arena>> =
-                    seq.next_element_seed(ImmutablePropertiesMapDeSeed { arena: self.arena })?;
+                // Use our custom DeserializeSeed that handles the Option wrapper
+                let properties: Option<ImmutablePropertiesMap<'arena>> = seq
+                    .next_element_seed(OptionPropertiesMapDeSeed { arena: self.arena })?
+                    .ok_or_else(|| serde::de::Error::custom("Expected properties field"))?;
 
                 let data = bytemuck::try_cast_slice::<u8, f64>(self.raw_vector_data)
                     .map_err(|_| serde::de::Error::custom("Invalid vector data"))?;
@@ -114,8 +161,10 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectoWithoutDataDeSe
 
                 let deleted: bool = seq.next_element()?.unwrap_or(false);
 
-                let properties: Option<ImmutablePropertiesMap<'arena>> =
-                    seq.next_element_seed(ImmutablePropertiesMapDeSeed { arena: self.arena })?;
+                // Use our custom DeserializeSeed that handles the Option wrapper
+                let properties: Option<ImmutablePropertiesMap<'arena>> = seq
+                    .next_element_seed(OptionPropertiesMapDeSeed { arena: self.arena })?
+                    .ok_or_else(|| serde::de::Error::custom("Expected properties field"))?;
 
                 Ok(VectorWithoutData {
                     id: self.id,
