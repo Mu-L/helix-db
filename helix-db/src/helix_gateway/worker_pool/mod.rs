@@ -9,7 +9,7 @@ use crate::protocol::{
     request::{ReqMsg, RequestType, RetChan},
     response::Response,
 };
-use flume::{Receiver, Selector, Sender};
+use flume::{Receiver, Sender};
 use std::iter;
 use std::sync::Arc;
 use std::thread::JoinHandle;

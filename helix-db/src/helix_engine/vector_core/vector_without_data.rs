@@ -7,8 +7,6 @@ use bincode::Options;
 use core::fmt;
 use serde::Serialize;
 use std::fmt::Debug;
-
-const HYPHENATED_LENGTH: usize = 36;
 // TODO: make this generic over the type of encoding (f32, f64, etc)
 // TODO: use const param to set dimension
 // TODO: set level as u8

@@ -4,7 +4,6 @@ use crate::helix_engine::{
 };
 
 pub struct Dedup<'arena, I> {
-    arena: &'arena bumpalo::Bump,
     seen: bumpalo::collections::Vec<'arena, u128>,
     iter: I,
 }
@@ -62,7 +61,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                 storage: self.storage,
                 txn: self.txn,
                 inner: Dedup {
-                    arena: self.arena,
                     iter: self.inner,
                     seen: bumpalo::collections::Vec::new_in(self.arena),
                 },

@@ -342,7 +342,7 @@ impl<'arena, T: Ord> BinaryHeap<'arena, T> {
     /// assert!(heap.is_empty());
     /// ```
     #[inline]
-    pub fn drain(&'arena mut self) -> Drain<'_, 'arena, T> {
+    pub fn drain(&'arena mut self) -> Drain<'arena, 'arena, T> {
         Drain {
             iter: self.data.drain(..),
         }

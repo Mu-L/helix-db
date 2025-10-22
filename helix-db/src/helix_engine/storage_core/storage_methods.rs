@@ -30,30 +30,21 @@ pub trait StorageMethods {
     fn check_exists(&self, txn: &RoTxn, id: &u128) -> Result<bool, GraphError>;
 
     /// Gets a node object for a given node id
-    fn get_node<'arena>(&self, txn: &RoTxn, id: &u128, arena: &'arena bumpalo::Bump) -> Result<Node<'arena>, GraphError>;
+    fn get_node<'arena>(
+        &self,
+        txn: &RoTxn,
+        id: &u128,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<Node<'arena>, GraphError>;
     /// Gets a edge object for a given edge id
-    fn get_edge<'arena>(&self, txn: &RoTxn, id: &u128, arena: &'arena bumpalo::Bump) -> Result<Edge<'arena>, GraphError>;
+    fn get_edge<'arena>(
+        &self,
+        txn: &RoTxn,
+        id: &u128,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<Edge<'arena>, GraphError>;
 
     fn drop_node(&self, txn: &mut RwTxn, id: &u128) -> Result<(), GraphError>;
     fn drop_edge(&self, txn: &mut RwTxn, id: &u128) -> Result<(), GraphError>;
     fn drop_vector(&self, txn: &mut RwTxn, id: &u128) -> Result<(), GraphError>;
-}
-
-pub trait SearchMethods {
-    /// Find shortest path between two nodes
-    fn shortest_path(
-        &self,
-        txn: &RoTxn<'_>,
-        edge_label: &str,
-        from_id: &u128,
-        to_id: &u128,
-    ) -> Result<(Vec<Node>, Vec<Edge>), GraphError>;
-
-    fn shortest_mutual_path(
-        &self,
-        txn: &RoTxn<'_>,
-        edge_label: &str,
-        from_id: &u128,
-        to_id: &u128,
-    ) -> Result<(Vec<Node>, Vec<Edge>), GraphError>;
 }
