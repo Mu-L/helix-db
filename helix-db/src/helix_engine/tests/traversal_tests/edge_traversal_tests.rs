@@ -3,14 +3,15 @@ use std::sync::Arc;
 use bumpalo::Bump;
 use tempfile::TempDir;
 
-use super::test_utils::{g_new, g_new_mut, props_option};
 use crate::{
     helix_engine::{
         storage_core::HelixGraphStorage,
+        tests::traversal_tests::test_utils::props_option,
         traversal_core::{
             ops::{
-                in_::{in_e::InEdgesAdapter, to_n::ToNAdapter},
-                out::{from_v::FromVAdapter, out::OutAdapter, out_e::OutEdgesAdapter},
+                g::G,
+                in_::in_e::InEdgesAdapter,
+                out::{out::OutAdapter, out_e::OutEdgesAdapter},
                 source::{
                     add_e::AddEAdapter, add_n::AddNAdapter, e_from_id::EFromIdAdapter,
                     e_from_type::EFromTypeAdapter, n_from_id::NFromIdAdapter,
@@ -21,8 +22,8 @@ use crate::{
         },
         vector_core::vector::HVector,
     },
-    protocol::value::Value,
     props,
+    protocol::value::Value,
 };
 use heed3::RoTxn;
 
@@ -53,23 +54,23 @@ fn test_add_edge_creates_relationship() {
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let source_id = g_new_mut(&storage, &arena, &mut txn)
+    let source_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    let target_id = g_new_mut(&storage, &arena, &mut txn)
+    let target_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
 
-    let edge = g_new_mut(&storage, &arena, &mut txn)
+    let edge = G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, source_id, target_id, false)
         .collect_to_obj();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let fetched = g_new(&storage, &txn, &arena)
+    let fetched = G::new(&storage, &txn, &arena)
         .e_from_id(&edge.id())
         .collect_to::<Vec<_>>();
     assert_eq!(fetched.len(), 1);
@@ -82,22 +83,22 @@ fn test_out_e_returns_edge() {
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let source_id = g_new_mut(&storage, &arena, &mut txn)
+    let source_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    let target_id = g_new_mut(&storage, &arena, &mut txn)
+    let target_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    g_new_mut(&storage, &arena, &mut txn)
+    G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, source_id, target_id, false)
         .collect_to_obj();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let edges = g_new(&storage, &txn, &arena)
+    let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&source_id)
         .out_e("knows")
         .collect_to::<Vec<_>>();
@@ -111,22 +112,22 @@ fn test_in_e_returns_edge() {
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let source_id = g_new_mut(&storage, &arena, &mut txn)
+    let source_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    let target_id = g_new_mut(&storage, &arena, &mut txn)
+    let target_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    g_new_mut(&storage, &arena, &mut txn)
+    G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, source_id, target_id, false)
         .collect_to_obj();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let edges = g_new(&storage, &txn, &arena)
+    let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&target_id)
         .in_e("knows")
         .collect_to::<Vec<_>>();
@@ -140,22 +141,22 @@ fn test_out_node_returns_neighbor() {
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let source_id = g_new_mut(&storage, &arena, &mut txn)
+    let source_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    let neighbor_id = g_new_mut(&storage, &arena, &mut txn)
+    let neighbor_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    g_new_mut(&storage, &arena, &mut txn)
+    G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, source_id, neighbor_id, false)
         .collect_to_obj();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let neighbors = g_new(&storage, &txn, &arena)
+    let neighbors = G::new(&storage, &txn, &arena)
         .n_from_id(&source_id)
         .out_node("knows")
         .collect_to::<Vec<_>>();
@@ -169,15 +170,15 @@ fn test_edge_properties_can_be_read() {
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let source_id = g_new_mut(&storage, &arena, &mut txn)
+    let source_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    let target_id = g_new_mut(&storage, &arena, &mut txn)
+    let target_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    g_new_mut(&storage, &arena, &mut txn)
+    G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
             "knows",
             props_option(&arena, props! { "since" => 2024 }),
@@ -190,7 +191,7 @@ fn test_edge_properties_can_be_read() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let edge = g_new(&storage, &txn, &arena)
+    let edge = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
         .collect_to::<Vec<_>>();
     assert_eq!(edge.len(), 1);
@@ -211,11 +212,11 @@ fn test_vector_edges_roundtrip() {
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let node_id = g_new_mut(&storage, &arena, &mut txn)
+    let node_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("doc", None, None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    let vector_id = match g_new_mut(&storage, &arena, &mut txn)
+    let vector_id = match G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<Filter>(&[1.0, 0.0, 0.0], "embedding", None)
         .collect_to_obj()
     {
@@ -223,14 +224,14 @@ fn test_vector_edges_roundtrip() {
         TraversalValue::VectorNodeWithoutVectorData(vector) => *vector.id(),
         other => panic!("unexpected traversal value: {other:?}"),
     };
-    g_new_mut(&storage, &arena, &mut txn)
+    G::new_mut(&storage, &arena, &mut txn)
         .add_edge("has_vector", None, node_id, vector_id, false)
         .collect_to_obj();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let vectors = g_new(&storage, &txn, &arena)
+    let vectors = G::new(&storage, &txn, &arena)
         .n_from_id(&node_id)
         .out_vec("has_vector", true)
         .collect_to::<Vec<_>>();

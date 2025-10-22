@@ -6,7 +6,6 @@ use crate::{
     },
     utils::{id::v6_uuid, items::Edge, label_hash::hash_label, properties::ImmutablePropertiesMap},
 };
-use bincode::Options;
 use heed3::{PutFlags, RwTxn};
 
 pub struct AddE<'db, 'arena, 'txn>

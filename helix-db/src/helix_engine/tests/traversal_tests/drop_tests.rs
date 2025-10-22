@@ -5,21 +5,17 @@ use heed3::RoTxn;
 use rand::Rng;
 use tempfile::TempDir;
 
-use super::test_utils::{g_new, g_new_mut, props_option};
+use super::test_utils::props_option;
 use crate::{
     helix_engine::{
         storage_core::HelixGraphStorage,
         traversal_core::{
             ops::{
-                in_::{in_::InAdapter, in_e::InEdgesAdapter},
-                out::{out::OutAdapter, out_e::OutEdgesAdapter},
-                source::{
+                g::G, in_::{in_::InAdapter, in_e::InEdgesAdapter}, out::{out::OutAdapter, out_e::OutEdgesAdapter}, source::{
                     add_e::AddEAdapter, add_n::AddNAdapter, e_from_id::EFromIdAdapter,
                     e_from_type::EFromTypeAdapter, n_from_id::NFromIdAdapter,
                     n_from_type::NFromTypeAdapter,
-                },
-                util::{dedup::DedupAdapter, drop::Drop, filter_ref::FilterRefAdapter},
-                vectors::insert::InsertVAdapter,
+                }, util::{dedup::DedupAdapter, drop::Drop, filter_ref::FilterRefAdapter}, vectors::insert::InsertVAdapter
             },
             traversal_value::TraversalValue,
         },
@@ -70,17 +66,17 @@ fn test_drop_edge() {
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let node1_id = node_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj(),
     );
     let node2_id = node_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj(),
     );
     let edge_id = edge_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_edge("knows", None, node1_id, node2_id, false)
             .collect_to_obj(),
     );
@@ -88,7 +84,7 @@ fn test_drop_edge() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let traversal = g_new(&storage, &txn, &arena)
+    let traversal = G::new(&storage, &txn, &arena)
         .e_from_id(&edge_id)
         .collect_to::<Vec<_>>();
     drop(txn);
@@ -99,18 +95,18 @@ fn test_drop_edge() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let traversal = g_new(&storage, &txn, &arena)
+    let traversal = G::new(&storage, &txn, &arena)
         .e_from_id(&edge_id)
         .collect_to_obj();
     assert_eq!(traversal, TraversalValue::Empty);
 
-    let edges = g_new(&storage, &txn, &arena)
+    let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node1_id)
         .out_e("knows")
         .collect_to::<Vec<_>>();
     assert!(edges.is_empty());
 
-    let edges = g_new(&storage, &txn, &arena)
+    let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node2_id)
         .in_e("knows")
         .collect_to::<Vec<_>>();
@@ -124,23 +120,23 @@ fn test_drop_node() {
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let node1_id = node_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_n("person", props_option(&arena, props!("name" => "n1")), None)
             .collect_to_obj(),
     );
     let node2_id = node_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_n("person", props_option(&arena, props!("name" => "n2")), None)
             .collect_to_obj(),
     );
-    g_new_mut(&storage, &arena, &mut txn)
+    G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, node1_id, node2_id, false)
         .collect_to_obj();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let traversal = g_new(&storage, &txn, &arena)
+    let traversal = G::new(&storage, &txn, &arena)
         .n_from_id(&node1_id)
         .collect_to::<Vec<_>>();
     drop(txn);
@@ -151,12 +147,12 @@ fn test_drop_node() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let node_val = g_new(&storage, &txn, &arena)
+    let node_val = G::new(&storage, &txn, &arena)
         .n_from_id(&node1_id)
         .collect_to_obj();
     assert_eq!(node_val, TraversalValue::Empty);
 
-    let edges = g_new(&storage, &txn, &arena)
+    let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node2_id)
         .in_e("knows")
         .collect_to::<Vec<_>>();
@@ -170,7 +166,7 @@ fn test_drop_traversal() {
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let origin_id = node_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj(),
     );
@@ -178,11 +174,11 @@ fn test_drop_traversal() {
     let mut neighbor_ids = Vec::new();
     for _ in 0..10 {
         let neighbor_id = node_id(
-            g_new_mut(&storage, &arena, &mut txn)
+            G::new_mut(&storage, &arena, &mut txn)
                 .add_n("person", None, None)
                 .collect_to_obj(),
         );
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_edge("knows", None, origin_id, neighbor_id, false)
             .collect_to_obj();
         neighbor_ids.push(neighbor_id);
@@ -191,11 +187,11 @@ fn test_drop_traversal() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let neighbors = g_new(&storage, &txn, &arena)
+    let neighbors = G::new(&storage, &txn, &arena)
         .n_from_id(&origin_id)
         .out_node("knows")
         .collect_to::<Vec<_>>();
-    let origin = g_new(&storage, &txn, &arena)
+    let origin = G::new(&storage, &txn, &arena)
         .n_from_id(&origin_id)
         .collect_to::<Vec<_>>();
     drop(txn);
@@ -207,7 +203,7 @@ fn test_drop_traversal() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let remaining = g_new(&storage, &txn, &arena)
+    let remaining = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .collect_to::<Vec<_>>();
     assert!(remaining.is_empty());
@@ -224,7 +220,7 @@ fn test_node_deletion_in_existing_graph() {
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let source_id = node_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj(),
     );
@@ -232,7 +228,7 @@ fn test_node_deletion_in_existing_graph() {
     let mut others = Vec::new();
     for _ in 0..10 {
         let id = node_id(
-            g_new_mut(&storage, &arena, &mut txn)
+            G::new_mut(&storage, &arena, &mut txn)
                 .add_n("person", None, None)
                 .collect_to_obj(),
         );
@@ -241,13 +237,13 @@ fn test_node_deletion_in_existing_graph() {
 
     for &other in &others {
         let random = others[rand::rng().random_range(0..others.len())];
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_edge("knows", None, random, other, false)
             .collect_to_obj();
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_edge("knows", None, source_id, other, false)
             .collect_to_obj();
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_edge("knows", None, other, source_id, false)
             .collect_to_obj();
     }
@@ -255,7 +251,7 @@ fn test_node_deletion_in_existing_graph() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let source = g_new(&storage, &txn, &arena)
+    let source = G::new(&storage, &txn, &arena)
         .n_from_id(&source_id)
         .collect_to::<Vec<_>>();
     drop(txn);
@@ -266,12 +262,12 @@ fn test_node_deletion_in_existing_graph() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let out_edges = g_new(&storage, &txn, &arena)
+    let out_edges = G::new(&storage, &txn, &arena)
         .n_from_id(&source_id)
         .out_node("knows")
         .collect_to::<Vec<_>>();
     let arena = Bump::new();
-    let in_edges = g_new(&storage, &txn, &arena)
+    let in_edges = G::new(&storage, &txn, &arena)
         .n_from_id(&source_id)
         .in_node("knows")
         .collect_to::<Vec<_>>();
@@ -279,7 +275,7 @@ fn test_node_deletion_in_existing_graph() {
     assert!(in_edges.is_empty());
 
     let arena = Bump::new();
-    let remaining_edges = g_new(&storage, &txn, &arena)
+    let remaining_edges = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
         .collect_to::<Vec<_>>();
     assert_eq!(remaining_edges.len(), others.len());
@@ -299,23 +295,23 @@ fn test_edge_deletion_in_existing_graph() {
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let node1_id = node_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj(),
     );
     let node2_id = node_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj(),
     );
 
     let edge1_id = edge_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_edge("knows", None, node1_id, node2_id, false)
             .collect_to_obj(),
     );
     let edge2_id = edge_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_edge("knows", None, node2_id, node1_id, false)
             .collect_to_obj(),
     );
@@ -323,7 +319,7 @@ fn test_edge_deletion_in_existing_graph() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let edges = g_new(&storage, &txn, &arena)
+    let edges = G::new(&storage, &txn, &arena)
         .e_from_id(&edge1_id)
         .collect_to::<Vec<_>>();
     drop(txn);
@@ -334,7 +330,7 @@ fn test_edge_deletion_in_existing_graph() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let edges = g_new(&storage, &txn, &arena)
+    let edges = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
         .collect_to::<Vec<_>>();
     assert_eq!(edges.len(), 1);
@@ -348,14 +344,14 @@ fn test_vector_deletion_in_existing_graph() {
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let node_id = node_id(
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj(),
     );
 
     let mut vector_ids = Vec::new();
     for _ in 0..10 {
-        let id = match g_new_mut(&storage, &arena, &mut txn)
+        let id = match G::new_mut(&storage, &arena, &mut txn)
             .insert_v::<Filter>(&[1.0, 1.0, 1.0, 1.0], "vector", None)
             .collect_to_obj()
         {
@@ -366,7 +362,7 @@ fn test_vector_deletion_in_existing_graph() {
         vector_ids.push(id);
     }
 
-    let target_vector_id = match g_new_mut(&storage, &arena, &mut txn)
+    let target_vector_id = match G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<Filter>(&[1.0, 1.0, 1.0, 1.0], "vector", None)
         .collect_to_obj()
     {
@@ -377,13 +373,13 @@ fn test_vector_deletion_in_existing_graph() {
 
     for &other in &vector_ids {
         let random = vector_ids[rand::rng().random_range(0..vector_ids.len())];
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_edge("knows", None, other, random, false)
             .collect_to_obj();
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_edge("knows", None, node_id, target_vector_id, false)
             .collect_to_obj();
-        g_new_mut(&storage, &arena, &mut txn)
+        G::new_mut(&storage, &arena, &mut txn)
             .add_edge("knows", None, target_vector_id, node_id, false)
             .collect_to_obj();
     }
@@ -391,7 +387,7 @@ fn test_vector_deletion_in_existing_graph() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let edges = g_new(&storage, &txn, &arena)
+    let edges = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
         .collect_to::<Vec<_>>();
     assert_eq!(edges.len(), 30);
@@ -399,7 +395,7 @@ fn test_vector_deletion_in_existing_graph() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let traversal = g_new(&storage, &txn, &arena)
+    let traversal = G::new(&storage, &txn, &arena)
         .n_from_id(&node_id)
         .out_vec("knows", false)
         .filter_ref(|val, _| match val {
@@ -420,12 +416,12 @@ fn test_vector_deletion_in_existing_graph() {
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let out_edges = g_new(&storage, &txn, &arena)
+    let out_edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node_id)
         .out_vec("knows", false)
         .collect_to::<Vec<_>>();
     let arena = Bump::new();
-    let in_edges = g_new(&storage, &txn, &arena)
+    let in_edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node_id)
         .in_vec("knows", false)
         .collect_to::<Vec<_>>();
@@ -433,7 +429,7 @@ fn test_vector_deletion_in_existing_graph() {
     assert!(in_edges.is_empty());
 
     let arena = Bump::new();
-    let other_edges = g_new(&storage, &txn, &arena)
+    let other_edges = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
         .collect_to::<Vec<_>>();
     assert_eq!(other_edges.len(), vector_ids.len());

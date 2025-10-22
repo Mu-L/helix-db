@@ -3,12 +3,13 @@ use std::sync::Arc;
 use bumpalo::Bump;
 use tempfile::TempDir;
 
-use super::test_utils::{g_new, g_new_mut, g_new_mut_from_iter, props_option};
+use super::test_utils::props_option;
 use crate::{
     helix_engine::{
         storage_core::HelixGraphStorage,
         traversal_core::{
             ops::{
+                g::G,
                 source::{add_n::AddNAdapter, n_from_id::NFromIdAdapter},
                 util::update::UpdateAdapter,
             },
@@ -37,31 +38,31 @@ fn test_update_node() {
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let node = g_new_mut(&storage, &arena, &mut txn)
+    let node = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props!("name" => "test")), None)
         .collect_to_obj();
-    g_new_mut(&storage, &arena, &mut txn)
+    G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props!("name" => "test2")), None)
         .collect_to_obj();
     txn.commit().unwrap();
 
     let arena_read = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let traversal = g_new(&storage, &txn, &arena_read)
+    let traversal = G::new(&storage, &txn, &arena_read)
         .n_from_id(&node.id())
         .collect_to::<Vec<_>>();
     drop(txn);
 
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
-    g_new_mut_from_iter(&storage, &arena, &mut txn, traversal.into_iter())
+    G::new_mut_from_iter(&storage, &mut txn, traversal.into_iter(), &arena)
         .update(&[("name", Value::from("john"))])
         .collect_to::<Vec<_>>();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let updated = g_new(&storage, &txn, &arena)
+    let updated = G::new(&storage, &txn, &arena)
         .n_from_id(&node.id())
         .collect_to::<Vec<_>>();
     assert_eq!(updated.len(), 1);

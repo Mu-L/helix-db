@@ -3,7 +3,6 @@ use itertools::Itertools;
 
 use crate::{
     helix_engine::{
-        storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
         traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
     },
@@ -103,16 +102,19 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
 
                                     match bincode::serialize(old_value) {
                                         Ok(old_serialized) => {
-                                            let Err(e) = db.delete_one_duplicate(
+                                            if let Err(e) = db.delete_one_duplicate(
                                                 self.txn,
                                                 &old_serialized,
                                                 &node.id,
-                                            ) else {
+                                            ) {
+                                                results.push(Err(GraphError::from(e)));
                                                 continue;
-                                            };
-                                            results.push(Err(GraphError::from(e)));
+                                            }
                                         }
-                                        Err(e) => results.push(Err(GraphError::from(e))),
+                                        Err(e) => {
+                                            results.push(Err(GraphError::from(e)));
+                                            continue;
+                                        }
                                     }
 
                                     // create new secondary indexes for the props changed

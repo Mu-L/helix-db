@@ -1,9 +1,8 @@
 use super::binary_heap::BinaryHeap;
 use crate::{
     helix_engine::{
-        traversal_core::LMDB_STRING_HEADER_LENGTH, types::VectorError, vector_core::vector::HVector,
+        traversal_core::LMDB_STRING_HEADER_LENGTH, types::VectorError, vector_core::{vector::HVector, vector_without_data::VectorWithoutData},
     },
-    utils::properties::ImmutablePropertiesMap,
 };
 use heed3::{
     Database, RoTxn,
@@ -110,21 +109,27 @@ impl<'db, 'arena, 'txn, 'q> VectorFilter<'db, 'arena, 'txn, 'q>
         for _ in 0..k {
             // while pop check filters and pop until one passes
             while let Some(mut item) = self.pop() {
-                item.properties = match db.get(txn, &item.id)? {
-                    Some(bytes) => Some(ImmutablePropertiesMap::from_bincode_bytes(bytes, arena)?),
+                let properties = match db.get(txn, &item.id)? {
+                    Some(bytes) => {
+                        println!("decoding");
+                        let res = Some(VectorWithoutData::from_bincode_bytes(arena, bytes, item.id)?);
+                        println!("decoded: {res:?}");
+                        res
+                    },
                     None => None, // TODO: maybe should be an error?
                 };
 
-                if SHOULD_CHECK_DELETED
-                    && let Some(is_deleted) = item.get_property("is_deleted")
-                    && *is_deleted == true
-                {
+
+                if let Some(properties) = properties && SHOULD_CHECK_DELETED && properties.deleted {
                     continue;
                 }
 
+                
                 if item.label() == label
-                    && (filter.is_none() || filter.unwrap().iter().all(|f| f(&item, txn)))
+                && (filter.is_none() || filter.unwrap().iter().all(|f| f(&item, txn)))
                 {
+                    assert!(properties.is_some(), "properties should be some, otherwise there has been an error on vector insertion as properties are always inserted");
+                    item.expand_from_vector_without_data(properties.unwrap());
                     result.push(item);
                     break;
                 }

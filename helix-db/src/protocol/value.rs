@@ -9,12 +9,12 @@ use serde::{
     de::{DeserializeSeed, VariantAccess, Visitor},
 };
 use sonic_rs::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::{
     cmp::Ordering,
     collections::HashMap,
     fmt::{self},
 };
-
 /// A flexible value type that can represent various property values in nodes and edges.
 /// Handles both JSON and binary serialisation formats via custom implementaions of the Serialize and Deserialize traits.
 #[derive(Clone, Debug)]
@@ -67,6 +67,27 @@ impl Value {
                 .map(|(k, v)| format!("{k} {}", v.inner_stringify()))
                 .collect::<Vec<String>>()
                 .join(" "),
+            _ => panic!("Not primitive"),
+        }
+    }
+
+    pub fn inner_str(&self) -> Cow<'_, str> {
+        match self {
+            Value::String(s) => Cow::Borrowed(s.as_str()),
+            Value::F32(f) => Cow::Owned(f.to_string()),
+            Value::F64(f) => Cow::Owned(f.to_string()),
+            Value::I8(i) => Cow::Owned(i.to_string()),
+            Value::I16(i) => Cow::Owned(i.to_string()),
+            Value::I32(i) => Cow::Owned(i.to_string()),
+            Value::I64(i) => Cow::Owned(i.to_string()),
+            Value::U8(u) => Cow::Owned(u.to_string()),
+            Value::U16(u) => Cow::Owned(u.to_string()),
+            Value::U32(u) => Cow::Owned(u.to_string()),
+            Value::U64(u) => Cow::Owned(u.to_string()),
+            Value::U128(u) => Cow::Owned(u.to_string()),
+            Value::Date(d) => Cow::Owned(d.to_string()),
+            Value::Id(id) => Cow::Owned(id.stringify()),
+            Value::Boolean(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
             _ => panic!("Not primitive"),
         }
     }

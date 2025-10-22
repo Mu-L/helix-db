@@ -19,9 +19,9 @@ where
             Some(item) => match item {
                 Ok(item) => {
                     if !self.seen.contains(&item.id()) {
+                        self.seen.push(item.id());
                         Some(Ok(item))
                     } else {
-                        self.seen.push(item.id());
                         self.next()
                     }
                 }

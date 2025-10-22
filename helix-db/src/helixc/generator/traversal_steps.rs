@@ -197,7 +197,7 @@ impl Display for Step {
             Step::FromV => write!(f, "from_v()"),
             Step::ToN => write!(f, "to_n()"),
             Step::ToV => write!(f, "to_v()"),
-            Step::PropertyFetch(property) => write!(f, "check_property({property})"),
+            Step::PropertyFetch(property) => write!(f, "get_property({property})"),
 
             Step::Out(out) => write!(f, "{out}"),
             Step::In(in_) => write!(f, "{in_}"),
@@ -224,7 +224,7 @@ impl Debug for Step {
             Step::Dedup => write!(f, "Dedup"),
             Step::FromN => write!(f, "FromN"),
             Step::ToN => write!(f, "ToN"),
-            Step::PropertyFetch(property) => write!(f, "check_property({property})"),
+            Step::PropertyFetch(property) => write!(f, "get_property({property})"),
             Step::FromV => write!(f, "FromV"),
             Step::ToV => write!(f, "ToV"),
             Step::Out(_) => write!(f, "Out"),
@@ -360,7 +360,7 @@ impl Display for WhereRef {
                             "filter_ref(|val, txn|{{
                 if let Ok(val) = val {{
                     Ok(val
-                    .check_property({})
+                    .get_property({})
                     .map_or(false, |v| {}))
                 }} else {{
                     Ok(false)

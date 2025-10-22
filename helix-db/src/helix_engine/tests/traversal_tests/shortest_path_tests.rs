@@ -3,12 +3,13 @@ use std::sync::Arc;
 use bumpalo::Bump;
 use tempfile::TempDir;
 
-use super::test_utils::{g_new, g_new_mut, props_option};
+use super::test_utils::props_option;
 use crate::{
     helix_engine::{
         storage_core::HelixGraphStorage,
         traversal_core::{
             ops::{
+                g::G,
                 source::{add_e::AddEAdapter, add_n::AddNAdapter, n_from_id::NFromIdAdapter},
                 util::paths::{PathAlgorithm, ShortestPathAdapter},
             },
@@ -39,27 +40,27 @@ fn test_shortest_path_simple_chain() {
     let node_ids: Vec<_> = ["A", "B", "C", "D"]
         .into_iter()
         .map(|name| {
-            g_new_mut(&storage, &arena, &mut txn)
+            G::new_mut(&storage, &arena, &mut txn)
                 .add_n("person", props_option(&arena, props!("name" => name)), None)
                 .collect_to::<Vec<_>>()[0]
                 .id()
         })
         .collect();
 
-    g_new_mut(&storage, &arena, &mut txn)
+    G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, node_ids[0], node_ids[1], false)
         .collect_to_obj();
-    g_new_mut(&storage, &arena, &mut txn)
+    G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, node_ids[1], node_ids[2], false)
         .collect_to_obj();
-    g_new_mut(&storage, &arena, &mut txn)
+    G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, node_ids[2], node_ids[3], false)
         .collect_to_obj();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let path = g_new(&storage, &txn, &arena)
+    let path = G::new(&storage, &txn, &arena)
         .n_from_id(&node_ids[0])
         .shortest_path(Some("knows"), None, Some(&node_ids[3]))
         .collect_to::<Vec<_>>();
@@ -78,40 +79,68 @@ fn test_dijkstra_shortest_path_weighted_graph() {
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let start = g_new_mut(&storage, &arena, &mut txn)
-        .add_n("city", props_option(&arena, props!("name" => "start")), None)
+    let start = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "city",
+            props_option(&arena, props!("name" => "start")),
+            None,
+        )
         .collect_to::<Vec<_>>()[0]
         .id();
-    let mid1 = g_new_mut(&storage, &arena, &mut txn)
+    let mid1 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("city", props_option(&arena, props!("name" => "mid1")), None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    let mid2 = g_new_mut(&storage, &arena, &mut txn)
+    let mid2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("city", props_option(&arena, props!("name" => "mid2")), None)
         .collect_to::<Vec<_>>()[0]
         .id();
-    let end = g_new_mut(&storage, &arena, &mut txn)
+    let end = G::new_mut(&storage, &arena, &mut txn)
         .add_n("city", props_option(&arena, props!("name" => "end")), None)
         .collect_to::<Vec<_>>()[0]
         .id();
 
-    g_new_mut(&storage, &arena, &mut txn)
-        .add_edge("road", props_option(&arena, props!("weight" => 100.0)), start, end, false)
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("weight" => 100.0)),
+            start,
+            end,
+            false,
+        )
         .collect_to_obj();
-    g_new_mut(&storage, &arena, &mut txn)
-        .add_edge("road", props_option(&arena, props!("weight" => 3.0)), start, mid1, false)
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("weight" => 3.0)),
+            start,
+            mid1,
+            false,
+        )
         .collect_to_obj();
-    g_new_mut(&storage, &arena, &mut txn)
-        .add_edge("road", props_option(&arena, props!("weight" => 3.0)), mid1, mid2, false)
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("weight" => 3.0)),
+            mid1,
+            mid2,
+            false,
+        )
         .collect_to_obj();
-    g_new_mut(&storage, &arena, &mut txn)
-        .add_edge("road", props_option(&arena, props!("weight" => 4.0)), mid2, end, false)
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("weight" => 4.0)),
+            mid2,
+            end,
+            false,
+        )
         .collect_to_obj();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
-    let bfs = g_new(&storage, &txn, &arena)
+    let bfs = G::new(&storage, &txn, &arena)
         .n_from_id(&start)
         .shortest_path_with_algorithm(Some("road"), None, Some(&end), PathAlgorithm::BFS)
         .collect_to::<Vec<_>>();
@@ -121,7 +150,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
         panic!("expected path");
     }
 
-    let dijkstra = g_new(&storage, &txn, &arena)
+    let dijkstra = G::new(&storage, &txn, &arena)
         .n_from_id(&start)
         .shortest_path_with_algorithm(Some("road"), None, Some(&end), PathAlgorithm::Dijkstra)
         .collect_to::<Vec<_>>();

@@ -19,21 +19,14 @@ use helix_db::{
                 g::G,
                 in_::{in_::InAdapter, in_e::InEdgesAdapter, to_n::ToNAdapter, to_v::ToVAdapter},
                 out::{
-                    from_n::FromNAdapter,
-                    from_v::FromVAdapter,
-                    out::{OutAdapter, OutAdapterArena},
+                    from_n::FromNAdapter, from_v::FromVAdapter, out::OutAdapter,
                     out_e::OutEdgesAdapter,
                 },
                 source::{
-                    add_e::{AddEAdapter, EdgeType},
-                    add_n::AddNAdapter,
-                    e_from_id::EFromIdAdapter,
-                    e_from_type::EFromTypeAdapter,
-                    n_from_id::{NFromIdAdapter, NFromIdAdapterArena},
-                    n_from_index::NFromIndexAdapter,
-                    n_from_type::{NFromTypeAdapter, NFromTypeAdapterArena},
-                    v_from_id::VFromIdAdapter,
-                    v_from_type::VFromTypeAdapter,
+                    add_e::AddEAdapter, add_n::AddNAdapter, e_from_id::EFromIdAdapter,
+                    e_from_type::EFromTypeAdapter, n_from_id::NFromIdAdapter,
+                    n_from_index::NFromIndexAdapter, n_from_type::NFromTypeAdapter,
+                    v_from_id::VFromIdAdapter, v_from_type::VFromTypeAdapter,
                 },
                 util::{
                     aggregate::AggregateAdapter,
@@ -42,13 +35,12 @@ use helix_db::{
                     drop::Drop,
                     exist::Exist,
                     filter_mut::FilterMut,
-                    filter_ref::{FilterRefAdapter, FilterRefAdapterArena},
+                    filter_ref::FilterRefAdapter,
                     group_by::GroupByAdapter,
-                    map::{MapAdapter, MapAdapterArena},
+                    map::MapAdapter,
                     order::OrderByAdapter,
                     paths::{PathAlgorithm, ShortestPathAdapter},
-                    props::PropsAdapter,
-                    range::{RangeAdapter, RangeAdapterArena},
+                    range::RangeAdapter,
                     update::UpdateAdapter,
                 },
                 vectors::{
@@ -56,8 +48,7 @@ use helix_db::{
                     search::SearchVAdapter,
                 },
             },
-            traversal_value::{Traversable, TraversalValue},
-            traversal_value::{Traversable as TraversableArena, TraversalValueArena},
+            traversal_value::TraversalValue,
         },
         types::GraphError,
         vector_core::{vector::HVector, vector_core::VectorCore},
@@ -70,9 +61,7 @@ use helix_db::{
     identifier_remapping, node_matches, props,
     protocol::{
         format::Format,
-        remapping::{Remapping, RemappingMap, ResponseRemapping},
         response::Response,
-        return_values::ReturnValue,
         value::{
             Value,
             casting::{CastType, cast},
@@ -81,17 +70,20 @@ use helix_db::{
     traversal_remapping,
     utils::{
         count::Count,
-        filterable::Filterable,
-        id::ID,
+        id::{ID, uuid_str},
         items::{self, Edge, Node},
+        properties::ImmutablePropertiesMap,
     },
     value_remapping,
 };
 use helix_macros::{handler, mcp_handler, migration, tool_call};
-use sonic_rs::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use sonic_rs::{Deserialize, Serialize, json};
 use std::sync::Arc;
 use std::time::Instant;
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 use tracing::info;
 
 pub fn config() -> Option<Config> {
@@ -190,21 +182,21 @@ pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
         .read_txn()
         .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
 
-    let items = G::new_with_arena(&arena, &db, &txn)
+    let items = G::new(&db, &txn, &arena)
         .n_from_id(&data.user_id)
         .out_vec("Interacted", false)
         .filter(|val| {
             if let Ok(val) = val {
-                val.check_property("category")
+                val.get_property("category")
                     .map_or(false, |v| *v == data.category.clone())
             } else {
                 false
             }
         })
         .filter_map(|item| item.ok())
-        .map(|item: TraversalValueArena| OneHopOutput {
-            id: item.uuid(),
-            category: item.check_property("category").unwrap().inner_stringify(),
+        .map(|item: TraversalValue| OneHopOutput {
+            id: uuid_str(item.id(), &arena),
+            category: item.get_property("category").unwrap().inner_stringify(),
         })
         .collect::<Vec<_>>();
 
@@ -221,14 +213,14 @@ pub struct OneHopInput {
 }
 
 #[derive(Serialize, Clone)]
-pub struct OneHopOutput {
-    pub id: String,
+pub struct OneHopOutput<'arena> {
+    pub id: &'arena str,
     pub category: String,
 }
 
 #[derive(Serialize, Clone)]
-pub struct ReturnOneHopOutput {
-    pub items: Vec<OneHopOutput>,
+pub struct ReturnOneHopOutput<'arena> {
+    pub items: Vec<OneHopOutput<'arena>>,
 }
 
 #[handler]
@@ -244,13 +236,13 @@ pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
         .read_txn()
         .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
 
-    let items = G::new_with_arena(&arena, &db, &txn)
+    let items = G::new(&db, &txn, &arena)
         .n_from_id(&data.user_id)
         .out_vec("Interacted", false)
         .filter_map(|item| item.ok())
-        .map(|item: TraversalValueArena| OneHopOutput {
-            id: item.uuid(),
-            category: item.check_property("category").unwrap().inner_stringify(),
+        .map(|item: TraversalValue| OneHopOutput {
+            id: uuid_str(item.id(), &arena),
+            category: item.get_property("category").unwrap().inner_stringify(),
         })
         .collect::<Vec<_>>();
 
@@ -259,85 +251,6 @@ pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
     txn.commit()
         .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
     Ok(input.request.out_fmt.create_response(&items))
-}
-
-#[handler]
-pub fn OneHopNoInput(input: HandlerInput) -> Result<Response, GraphError> {
-    let db = Arc::clone(&input.graph.storage);
-    let arena = Bump::new();
-    info!("got to arena");
-    let mut remapping_vals = RemappingMap::new();
-    info!("got to remapping vals");
-    let txn = db
-        .graph_env
-        .read_txn()
-        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
-
-    info!("got to new with arena");
-    let items = G::new_with_arena(&arena, &db, &txn)
-        .n_from_type("User")
-        .range(0, 1)
-        .collect_to::<Vec<_>>();
-    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
-    println!("completed traversal");
-
-    println!("got to return value");
-    println!("items: {:?}", items);
-    info!("items: {:?}", items);
-    let items = ReturnValue::from_traversal_value_array_arena_with_mixin(
-        items,
-        remapping_vals.borrow_mut(),
-    );
-    println!("return values: {:?}", items);
-    info!("return values: {:?}", items);
-    return_vals.insert("items".to_string(), items);
-
-    println!("completed return values");
-
-    txn.commit()
-        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
-    Ok(input.request.out_fmt.create_response(&return_vals))
-}
-
-#[handler]
-pub fn ConvertAllVectors(input: HandlerInput) -> Result<Response, GraphError> {
-    let db = Arc::clone(&input.graph.storage);
-    let arena = Bump::new();
-
-    let mut txn = db
-        .graph_env
-        .write_txn()
-        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
-
-    let mut vectors = Vec::with_capacity(5000);
-
-    let vectors_iter = db.vectors.vectors_db.iter(&txn)?;
-    for vector in vectors_iter {
-        let (key, value) = vector?;
-        if key == b"entry_point" {
-            continue;
-        }
-
-        let id = u128::from_be_bytes(key[1..17].try_into().unwrap());
-        let level = usize::from_be_bytes(key[17..25].try_into().unwrap());
-
-        let vector = HVector::from_bytes(id, level, &value)?;
-        vectors.push(vector);
-    }
-
-    for vector in vectors {
-        db.vectors.vectors_db.put(
-            &mut txn,
-            &VectorCore::vector_key(vector.get_id(), vector.get_level()),
-            &vector.to_le_bytes(),
-        )?;
-    }
-    txn.commit()?;
-
-    Ok(input
-        .request
-        .out_fmt
-        .create_response(&ReturnValue::from("Success")))
 }
 
 pub struct Metadata {
@@ -352,31 +265,33 @@ pub struct CreateDatasetIdInput {
 #[handler]
 pub fn CreateDatasetId(input: HandlerInput) -> Result<Response, GraphError> {
     let db = Arc::clone(&input.graph.storage);
+    let arena = Bump::new();
     let data = input
         .request
         .in_fmt
         .deserialize::<CreateDatasetIdInput>(&input.request.body)?;
-    let mut remapping_vals = RemappingMap::new();
     let mut txn = db
         .graph_env
         .write_txn()
         .map_err(|e| GraphError::New(format!("Failed to start write transaction: {:?}", e)))?;
-    let metadata = G::new_mut(Arc::clone(&db), &mut txn)
+    let metadata = G::new_mut(&db, &arena, &mut txn)
         .add_n(
             "Metadata",
-            Some(props! { "value" => &data.dataset_id, "key" => "dataset_id" }),
+            //Some(props_option(&arena, vec![("value", Value::String(data.dataset_id))])),
+            Some(ImmutablePropertiesMap::new(
+                1,
+                vec![("value", Value::String(data.dataset_id.clone()))].into_iter(),
+                &arena,
+            )),
             Some(&["key"]),
         )
         .collect_to_obj();
-    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
-    return_vals.insert(
-        "metadata".to_string(),
-        ReturnValue::from_traversal_value_with_mixin(metadata.clone(), remapping_vals.borrow_mut()),
-    );
-
+    let response = json!({
+        "metadata": metadata,
+    });
     txn.commit()
         .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
-    Ok(input.request.out_fmt.create_response(&return_vals))
+    Ok(input.request.out_fmt.create_response(&response))
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -386,62 +301,60 @@ pub struct UpdateDatasetIdInput {
 #[handler]
 pub fn UpdateDatasetId(input: HandlerInput) -> Result<Response, GraphError> {
     let db = Arc::clone(&input.graph.storage);
+    let arena = Bump::new();
     let data = input
         .request
         .in_fmt
         .deserialize::<UpdateDatasetIdInput>(&input.request.body)?;
-    let mut remapping_vals = RemappingMap::new();
     let mut txn = db
         .graph_env
         .write_txn()
         .map_err(|e| GraphError::New(format!("Failed to start write transaction: {:?}", e)))?;
-    Drop::<Vec<_>>::drop_traversal(
-        G::new(Arc::clone(&db), &txn)
+    Drop::drop_traversal(
+        G::new(&db, &txn, &arena)
             .n_from_index("Metadata", "key", &"dataset_id")
-            .collect_to_obj(),
-        Arc::clone(&db),
+            .collect_to::<Vec<_>>()
+            .into_iter()
+            .map(Ok),
+        &db,
         &mut txn,
     )?;
-    let metadata = G::new_mut(Arc::clone(&db), &mut txn)
+    let metadata = G::new_mut(&db, &arena, &mut txn)
         .add_n(
             "Metadata",
-            Some(props! { "value" => &data.dataset_id, "key" => "dataset_id" }),
+            Some(ImmutablePropertiesMap::new(
+                1,
+                vec![("value", Value::String(data.dataset_id.clone()))].into_iter(),
+                &arena,
+            )),
             Some(&["key"]),
         )
         .collect_to_obj();
-    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
-    return_vals.insert(
-        "metadata".to_string(),
-        ReturnValue::from_traversal_value_with_mixin(metadata.clone(), remapping_vals.borrow_mut()),
-    );
+    let response = json!({
+        "metadata": metadata,
+    });
 
     txn.commit()
         .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
-    Ok(input.request.out_fmt.create_response(&return_vals))
+    Ok(input.request.out_fmt.create_response(&response))
 }
 #[handler]
 pub fn GetDatasetId(input: HandlerInput) -> Result<Response, GraphError> {
     let db = Arc::clone(&input.graph.storage);
-    let mut remapping_vals = RemappingMap::new();
+    let arena = Bump::new();
     let txn = db
         .graph_env
         .read_txn()
         .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
-    let dataset_id = G::new(Arc::clone(&db), &txn)
+    let dataset_id = G::new(&db, &txn, &arena)
         .n_from_index("Metadata", "key", &"dataset_id")
         .collect_to_obj();
-    let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();
-    return_vals.insert(
-        "dataset_id".to_string(),
-        ReturnValue::from_traversal_value_with_mixin(
-            G::new_from(Arc::clone(&db), &txn, dataset_id.clone())
-                .check_property("value")
-                .collect_to_obj(),
-            remapping_vals.borrow_mut(),
-        ),
-    );
+
+    let response = json!({
+        "dataset_id": dataset_id.get_property("value").unwrap().inner_stringify(),
+    });
 
     txn.commit()
         .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
-    Ok(input.request.out_fmt.create_response(&return_vals))
+    Ok(input.request.out_fmt.create_response(&response))
 }

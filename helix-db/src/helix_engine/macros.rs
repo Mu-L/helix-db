@@ -91,7 +91,7 @@ pub mod macros {
     macro_rules! node_matches {
         ($key:expr, $value:expr) => {
             |node: &helix_db::protocol::items::Node| {
-                if let Some(val) = node.check_property($key) {
+                if let Some(val) = node.get_property($key) {
                     if let helix_db::protocol::value::Value::String(val) = &val {
                         Ok(*val == $value)
                     } else {
@@ -112,7 +112,7 @@ pub mod macros {
     macro_rules! edge_matches {
         ($key:expr, $value:expr) => {
             |edge: &helix_db::protocol::items::Edge| {
-                if let Some(val) = edge.check_property($key) {
+                if let Some(val) = edge.get_property($key) {
                     if let helix_db::protocol::value::Value::String(val) = &val {
                         Ok(*val == $value)
                     } else {
@@ -141,7 +141,7 @@ pub mod macros {
     /// - `new_name`: String - the new name of the field
     macro_rules! field_remapping {
         ($remapping_vals:expr, $item:expr, $should_spread:expr, $old_name:expr => $new_name:expr) => {{
-            let old_value = match (&$item).check_property($old_name) {
+            let old_value = match (&$item).get_property($old_name) {
                 Ok(val) => val.into_owned(),
                 Err(e) => {
                     return Err(GraphError::ConversionError(format!(

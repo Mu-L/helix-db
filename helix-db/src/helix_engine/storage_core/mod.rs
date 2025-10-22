@@ -402,7 +402,7 @@ impl StorageMethods for HelixGraphStorage {
         // delete secondary indices
         let node = self.get_node(txn, id, &arena)?;
         for (index_name, db) in &self.secondary_indices {
-            // Use check_property like we do when adding, to handle id, label, and regular properties consistently
+            // Use get_property like we do when adding, to handle id, label, and regular properties consistently
             match node.get_property(index_name) {
                 Some(value) => match bincode::serialize(&*value) {
                     Ok(serialized) => {

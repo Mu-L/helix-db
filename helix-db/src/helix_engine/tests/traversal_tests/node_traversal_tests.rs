@@ -1,4 +1,4 @@
-use super::test_utils::{NodeTestExt, TraversalValueTestExt, props_option};
+use super::test_utils::props_option;
 use std::sync::Arc;
 
 use crate::{
@@ -53,7 +53,7 @@ fn test_add_n() {
         )
         .filter_map(|node| node.ok())
         .collect::<Vec<_>>();
-println!("nodes {:?}", nodes);
+    println!("nodes {:?}", nodes);
     let node = &nodes.first().unwrap();
     println!("node {:?}", node);
     let node_results: Vec<_> = G::new(&storage, &txn, &arena)
@@ -69,7 +69,7 @@ println!("nodes {:?}", nodes);
 
     assert_eq!(node.first().unwrap().id(), nodes.first().unwrap().id());
     assert_eq!(
-        *node.first().unwrap().check_property("name").unwrap(),
+        *node.first().unwrap().get_property("name").unwrap(),
         Value::String("John".to_string())
     );
     println!("node: {:?}", node.first().unwrap());

@@ -69,6 +69,7 @@ impl<'arena> VectorWithoutData<'arena> {
         id: u128,
     ) -> Result<Self, VectorError> {
         bincode::options()
+            .with_fixint_encoding()
             .deserialize_seed(VectoWithoutDataDeSeed { arena, id }, properties)
             .map_err(|e| VectorError::ConversionError(format!("Error deserializing vector: {e}")))
     }

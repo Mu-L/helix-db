@@ -10,7 +10,6 @@ use crate::{
             vector_without_data::VectorWithoutData,
         },
     },
-    protocol::value::Value,
     utils::properties::ImmutablePropertiesMap,
 };
 use heed3::{
@@ -160,9 +159,11 @@ impl VectorCore {
             .put(
                 txn,
                 &Self::vector_key(vector.id, vector.level),
-                vector.vector_data_to_bytes(),
+                vector.vector_data_to_bytes()?,
             )
             .map_err(VectorError::from)?;
+        self.vector_properties_db
+            .put(txn, &vector.id, &bincode::serialize(&vector)?)?;
         Ok(())
     }
 
@@ -203,7 +204,6 @@ impl VectorCore {
             if neighbor_id == id {
                 continue;
             }
-
             let vector = self.get_raw_vector_data(txn, neighbor_id, label, arena)?;
 
             let passes_filters = match filter {
@@ -403,10 +403,7 @@ impl VectorCore {
     ) -> Result<Option<VectorWithoutData<'arena>>, VectorError> {
         let vector: Option<VectorWithoutData<'arena>> =
             match self.vector_properties_db.get(txn, &id)? {
-                Some(bytes) => {
-                    // TODO: use bump map here
-                    Some(VectorWithoutData::from_bincode_bytes(arena, bytes, id)?)
-                }
+                Some(bytes) => Some(VectorWithoutData::from_bincode_bytes(arena, bytes, id)?),
                 None => None,
             };
 
@@ -432,10 +429,7 @@ impl VectorCore {
             .get(txn, key.as_ref())?
             .ok_or(VectorError::VectorNotFound(id.to_string()))?;
 
-        let properties_bytes = self
-            .vector_properties_db
-            .get(txn, &id)?
-            .ok_or(VectorError::VectorNotFound(id.to_string()))?;
+        let properties_bytes = self.vector_properties_db.get(txn, &id)?;
 
         let vector = HVector::from_bincode_bytes(arena, properties_bytes, vector_data_bytes, id)?;
         if vector.deleted {
@@ -484,7 +478,7 @@ impl HNSW for VectorCore {
 
         let ef = self.config.ef;
         let curr_level = entry_point.level;
-
+        println!("curr_level: {curr_level}");
         for level in (1..=curr_level).rev() {
             let mut nearest = self.search_level(
                 txn,
@@ -503,7 +497,7 @@ impl HNSW for VectorCore {
                 entry_point = closest;
             }
         }
-
+        println!("entry_point: {entry_point:?}");
         let candidates = self.search_level(
             txn,
             label,
@@ -517,7 +511,7 @@ impl HNSW for VectorCore {
             },
             arena,
         )?;
-
+        println!("candidates");
         let results = candidates.to_vec_with_filter::<F, true>(
             k,
             filter,
@@ -549,21 +543,16 @@ impl HNSW for VectorCore {
         let mut query = HVector::from_slice(label, 0, data);
         query.properties = properties;
         self.put_vector(txn, &query)?;
+
         query.level = new_level;
-        if new_level > 0 {
-            self.put_vector(txn, &query)?;
-        }
 
         let entry_point = match self.get_entry_point(txn, label, arena) {
             Ok(ep) => ep,
             Err(_) => {
+                // TODO: use proper error handling
                 self.set_entry_point(txn, &query)?;
                 query.set_distance(0.0);
 
-                if query.properties.is_some() {
-                    self.vector_properties_db
-                        .put(txn, &query.id, &bincode::serialize(&query)?)?;
-                }
                 return Ok(query);
             }
         };
@@ -611,11 +600,6 @@ impl HNSW for VectorCore {
 
         if new_level > l {
             self.set_entry_point(txn, &query)?;
-        }
-
-        if query.properties.is_some() {
-            self.vector_properties_db
-                .put(txn, &query.id, &bincode::serialize(&query)?)?;
         }
 
         debug_println!("vector inserted with id {}", query.id);

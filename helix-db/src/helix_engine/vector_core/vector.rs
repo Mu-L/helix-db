@@ -8,39 +8,47 @@ use crate::{
 };
 use bincode::Options;
 use core::fmt;
-use serde::Serialize;
-use std::{cmp::Ordering, fmt::Debug};
+use serde::{Serialize, Serializer};
+use std::{alloc, cmp::Ordering, fmt::Debug, mem, ptr, slice};
 
 // TODO: make this generic over the type of encoding (f32, f64, etc)
 // TODO: use const param to set dimension
 // TODO: set level as u8
 
 #[repr(C, align(16))] // TODO: see performance impact of repr(C) and align(16)
-#[derive(Serialize, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct HVector<'arena> {
     /// The id of the HVector
-    #[serde(skip)]
     pub id: u128,
     /// The label of the HVector
     pub label: &'arena str,
     /// the version of the vector
-    #[serde(default)]
     pub version: u8,
     /// whether the vector is deleted
-    #[serde(default)]
     pub deleted: bool,
     /// The level of the HVector
-    #[serde(skip)]
     pub level: usize,
     /// The distance of the HVector
-    #[serde(skip)]
     pub distance: Option<f64>,
     /// The actual vector
-    #[serde(skip)]
     pub data: &'arena [f64],
     /// The properties of the HVector
-    #[serde(default)]
     pub properties: Option<ImmutablePropertiesMap<'arena>>,
+}
+
+impl<'arena> Serialize for HVector<'arena> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("HVector", 6)?;
+        state.serialize_field("label", &self.label)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("deleted", &self.deleted)?;
+        state.serialize_field("properties", &self.properties)?;
+        state.end()
+    }
 }
 
 impl PartialEq for HVector<'_> {
@@ -96,26 +104,32 @@ impl<'arena> HVector<'arena> {
 
     /// Converts the HVector to an vec of bytes by accessing the data field directly
     /// and converting each f64 to a byte slice
-    pub fn vector_data_to_bytes(&self) -> &[u8] {
-        bytemuck::cast_slice(&self.data)
+    pub fn vector_data_to_bytes(&self) -> Result<&[u8], VectorError> {
+        // ensure data is aligned to 8 bytes
+        let data = bytemuck::try_cast_slice(&self.data).map_err(|_| {
+            VectorError::ConversionError("Invalid vector data: vector data".to_string())
+        })?;
+        // println!("bytemuck data: {data:?}");
+        Ok(data)
     }
 
     // will make to use const param for type of encoding (f32, f64, etc)
     /// Converts a byte array into a HVector by chunking the bytes into f64 values
     pub fn from_bincode_bytes<'txn>(
         arena: &'arena bumpalo::Bump,
-        properties: &'txn [u8],
+        properties: Option<&'txn [u8]>,
         raw_vector_data: &'txn [u8],
         id: u128,
     ) -> Result<Self, VectorError> {
         bincode::options()
+            .with_fixint_encoding()
             .deserialize_seed(
                 VectorDeSeed {
                     arena,
                     id,
                     raw_vector_data,
                 },
-                properties,
+                properties.unwrap_or(&[]),
             )
             .map_err(|e| VectorError::ConversionError(format!("Error deserializing vector: {e}")))
     }
@@ -126,9 +140,32 @@ impl<'arena> HVector<'arena> {
         label: &'arena str,
         id: u128,
     ) -> Result<Self, VectorError> {
-        let data = bytemuck::try_cast_slice::<u8, f64>(raw_vector_data)
-            .map_err(|_| VectorError::ConversionError("Invalid from raw vector data: vector data".to_string()))?;
-        let data = arena.alloc_slice_copy(data);
+        assert!(raw_vector_data.len() > 0, "raw_vector_data.len() == 0");
+        assert!(
+            raw_vector_data.len() % mem::size_of::<f64>() == 0,
+            "raw_vector_data bytes len is not a multiple of size_of::<f64>()"
+        );
+        let dimensions = raw_vector_data.len() / mem::size_of::<f64>();
+
+        let layout = alloc::Layout::array::<f64>(dimensions)
+            .expect("vector_data array arithmetic overflow or total size exceeds isize::MAX");
+
+        let vector_data: ptr::NonNull<u8> = arena.alloc_layout(layout);
+
+        // 'arena because the destination pointer is allocated in the arena
+        let data: &'arena [f64] = unsafe {
+            ptr::copy_nonoverlapping(
+                raw_vector_data.as_ptr(),
+                vector_data.as_ptr(),
+                raw_vector_data.len(),
+            );
+
+            // We allocated with the layout of an f64 array
+            let vector_data: ptr::NonNull<f64> = vector_data.cast();
+
+            slice::from_raw_parts(vector_data.as_ptr(), dimensions)
+        };
+
         Ok(HVector {
             id,
             label,
@@ -208,7 +245,7 @@ impl<'arena> From<VectorWithoutData<'arena>> for HVector<'arena> {
             level: value.level,
             distance: None,
             data: &[],
-            properties: None,
+            properties: value.properties,
             deleted: value.deleted,
         }
     }

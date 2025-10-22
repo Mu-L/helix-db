@@ -194,7 +194,7 @@ impl Display for BoExp {
                         // If we found exactly one PropertyFetch and one BoolOp, and no other steps, optimize
                         if let (Some(prop), Some(bool_op)) = (prop_info, bool_op_info) {
                             if other_steps == 0 {
-                                // Generate optimized code: val.check_property("prop").map_or(false, |v| ...)
+                                // Generate optimized code: val.get_property("prop").map_or(false, |v| ...)
                                 let bool_expr = match bool_op {
                                     BoolOp::Gt(gt) => format!("*v{gt}"),
                                     BoolOp::Gte(gte) => format!("*v{gte}"),
@@ -205,7 +205,7 @@ impl Display for BoExp {
                                     BoolOp::Contains(contains) => format!("v{contains}"),
                                     BoolOp::IsIn(is_in) => format!("v{is_in}"),
                                 };
-                                return write!(f, "val\n                    .check_property({})\n                    .map_or(false, |v| {})", prop, bool_expr);
+                                return write!(f, "val\n                    .get_property({})\n                    .map_or(false, |v| {})", prop, bool_expr);
                             }
                         }
                     }
