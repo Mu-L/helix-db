@@ -53,10 +53,20 @@ impl<'arena> ImmutablePropertiesMap<'arena> {
         items: impl Iterator<Item = Result<(&'arena str, Value), Error>>,
         arena: &'arena bumpalo::Bump,
     ) -> Result<Self, Error> {
+        if len == 0 {
+            return Ok(Self {
+                len: 0,
+                key_lengths: ptr::null(),
+                key_datas: ptr::null(),
+                values: ptr::null(),
+                _phantom: marker::PhantomData,
+            });
+        }
+
         let key_length_layout = alloc::Layout::array::<usize>(len)
-            .expect("LayoutError for key_length_layout: arithmetic overflow or total size exceeds isize::MAX");
+                .expect("LayoutError for key_length_layout: arithmetic overflow or total size exceeds isize::MAX");
         let key_datas_layout = alloc::Layout::array::<*const u8>(len)
-            .expect("LayoutError for key_datas_layout: arithmetic overflow or total size exceeds isize::MAX");
+                .expect("LayoutError for key_datas_layout: arithmetic overflow or total size exceeds isize::MAX");
         let values_layout = alloc::Layout::array::<Value>(len).expect(
             "LayoutError for values_layout: arithmetic overflow or total size exceeds isize::MAX",
         );
@@ -117,11 +127,19 @@ impl<'arena> ImmutablePropertiesMap<'arena> {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&'arena str, &'arena Value)> {
-        // SAFETY: These are all slices but we are optimising storage space by reusing
-        // the same length field.
-        let key_datas = unsafe { slice::from_raw_parts(self.key_datas, self.len) };
-        let key_lengths = unsafe { slice::from_raw_parts(self.key_lengths, self.len) };
-        let values = unsafe { slice::from_raw_parts(self.values, self.len) };
+        let (key_datas, key_lengths, values) = match self.len {
+            0 => ([].as_slice(), [].as_slice(), [].as_slice()),
+            _ => unsafe {
+                // SAFETY: These are all slices but we are optimising storage space by reusing
+                // the same length field. We never construct a slice from a null pointer, even
+                // when len is zero as we check
+                (
+                    slice::from_raw_parts(self.key_datas, self.len),
+                    slice::from_raw_parts(self.key_lengths, self.len),
+                    slice::from_raw_parts(self.values, self.len),
+                )
+            },
+        };
 
         key_datas
             .iter()
