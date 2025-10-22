@@ -58,8 +58,41 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
         for item in self.inner {
             match item {
                 Ok(value) => match value {
-                    TraversalValue::Node(node) => {
+                    TraversalValue::Node(mut node) => {
                         match (props, node.properties) {
+                            (None, _) => {
+                                continue;
+                            }
+                            (Some(new), None) => {
+                                // Insert secondary indices
+                                for (k, v) in new.iter() {
+                                    let Some(db) = self.storage.secondary_indices.get(*k) else {
+                                        continue;
+                                    };
+
+                                    match bincode::serialize(v) {
+                                        Ok(v_serialized) => {
+                                            if let Err(e) = db.put_with_flags(
+                                                self.txn,
+                                                PutFlags::APPEND_DUP,
+                                                &v_serialized,
+                                                &node.id,
+                                            ) {
+                                                results.push(Err(GraphError::from(e)));
+                                            }
+                                        }
+                                        Err(e) => results.push(Err(GraphError::from(e))),
+                                    }
+                                }
+
+                                let map = ImmutablePropertiesMap::new(
+                                    new.len(),
+                                    new.iter().map(|(k, v)| (*k, v.clone())),
+                                    self.arena,
+                                );
+
+                                node.properties = Some(map);
+                            }
                             (Some(new), Some(old)) => {
                                 // delete secondary indexes for the props changed
                                 for (k, _) in new.iter() {
