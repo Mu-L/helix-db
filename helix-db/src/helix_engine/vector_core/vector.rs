@@ -192,15 +192,11 @@ impl<'arena> HVector<'arena> {
     }
 
     pub fn expand_from_vector_without_data(&mut self, vector: VectorWithoutData<'arena>) {
-        self.id = vector.id;
         self.label = vector.label;
         self.version = vector.version;
         self.level = vector.level;
-        self.distance = self.distance;
-        self.data = self.data;
         self.properties = vector.properties;
     }
-
 }
 
 impl<'arena> From<VectorWithoutData<'arena>> for HVector<'arena> {

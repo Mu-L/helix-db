@@ -6,6 +6,7 @@ use crate::{
     },
     utils::{id::v6_uuid, items::Edge, label_hash::hash_label, properties::ImmutablePropertiesMap},
 };
+use bincode::Options;
 use heed3::{PutFlags, RwTxn};
 
 pub struct AddE<'db, 'arena, 'txn>
@@ -75,7 +76,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
 
         let mut result: Result<TraversalValue, GraphError> = Ok(TraversalValue::Empty);
 
-        match bincode::serialize(&edge) {
+        match bincode::options().serialize(&edge) {
             Ok(bytes) => {
                 if let Err(e) = self.storage.edges_db.put_with_flags(
                     self.txn,

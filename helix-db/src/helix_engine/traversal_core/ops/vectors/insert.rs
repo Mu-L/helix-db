@@ -4,7 +4,7 @@ use crate::{
         types::GraphError,
         vector_core::{hnsw::HNSW, vector::HVector},
     },
-    protocol::value::Value,
+    utils::properties::ImmutablePropertiesMap,
 };
 use heed3::RoTxn;
 
@@ -15,7 +15,7 @@ pub trait InsertVAdapter<'db, 'arena, 'txn>:
         self,
         query: &'arena [f64],
         label: &'arena str,
-        fields: Option<Vec<(String, Value)>>,
+        properties: Option<ImmutablePropertiesMap<'arena>>,
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -33,7 +33,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
         self,
         query: &'arena [f64],
         label: &'arena str,
-        fields: Option<Vec<(String, Value)>>,
+        properties: Option<ImmutablePropertiesMap<'arena>>,
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -46,7 +46,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
         let vector: Result<HVector<'arena>, crate::helix_engine::types::VectorError> = self
             .storage
             .vectors
-            .insert::<F>(self.txn, label, query, fields, self.arena);
+            .insert::<F>(self.txn, label, query, properties, self.arena);
 
         let result = match vector {
             Ok(vector) => Ok(TraversalValue::Vector(vector)),

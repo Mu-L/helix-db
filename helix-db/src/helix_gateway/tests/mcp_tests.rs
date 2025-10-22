@@ -4,8 +4,6 @@ mod mcp_tests {
 
     use axum::body::Bytes;
     use bumpalo::Bump;
-    use serde::{Deserialize, Serialize};
-    use sonic_rs;
     use tempfile::TempDir;
 
     use crate::{
@@ -44,15 +42,15 @@ mod mcp_tests {
         let (engine, _temp_dir) = setup_engine();
         let mut txn = engine.storage.graph_env.write_txn().unwrap();
         let arena = Bump::new();
-        let person1 = G::new_mut(&engine.storage, &arena, &mut txn)
+        let person1 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj();
 
-        let person2 = G::new_mut(&engine.storage, &arena, &mut txn)
+        let person2 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj();
 
-        G::new_mut(&engine.storage, &arena, &mut txn)
+        G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, person1.id(), person2.id(), false)
             .collect_to_obj();
 
@@ -93,7 +91,7 @@ mod mcp_tests {
         let TraversalValue::Node(node) = &results[0] else {
             panic!("expected node result");
         };
-        assert_eq!(node.id(), person2.id());
+        assert_eq!(node.id, person2.id());
     }
 
     #[test]
@@ -102,10 +100,10 @@ mod mcp_tests {
         let mut txn = engine.storage.graph_env.write_txn().unwrap();
         let arena = Bump::new();
 
-        let _ = G::new_mut(&engine.storage, &arena, &mut txn)
+        let _ = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj();
-        let _ = G::new_mut(&engine.storage, &arena, &mut txn)
+        let _ = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
             .collect_to_obj();
 
@@ -142,7 +140,7 @@ mod mcp_tests {
         let mut txn = engine.storage.graph_env.write_txn().unwrap();
         let arena = Bump::new();
         for _ in 0..5 {
-            let _ = G::new_mut(&engine.storage, &arena, &mut txn)
+            let _ = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
                 .add_n("person", None, None)
                 .collect_to_obj();
         }
@@ -177,13 +175,8 @@ mod mcp_tests {
         };
 
         let response = collect(&mut input).unwrap();
-        let values: WrappedValue<Vec<TraversalValue>> =
-            sonic_rs::from_slice(&response.body().unwrap().to_bytes()).unwrap();
-        assert_eq!(values.value.len(), 2);
-    }
-
-    #[derive(Deserialize, Serialize)]
-    struct WrappedValue<T> {
-        value: T,
+        let body = String::from_utf8(response.body.clone()).unwrap();
+        let id_count = body.matches("\"id\"").count();
+        assert_eq!(id_count, 2);
     }
 }

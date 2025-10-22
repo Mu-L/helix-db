@@ -11,7 +11,6 @@ use crate::helix_engine::types::GraphError;
 use crate::helix_gateway::gateway::AppState;
 use crate::helix_gateway::router::router::{Handler, HandlerInput, HandlerSubmission};
 use crate::protocol::{self, request::RequestType};
-use crate::utils::filterable::Filterable;
 use crate::utils::id::ID;
 use crate::utils::items::Node;
 

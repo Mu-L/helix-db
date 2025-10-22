@@ -10,6 +10,7 @@ mod tests {
             vector_core::{hnsw::HNSW, vector::HVector},
         },
         protocol::value::Value,
+        utils::properties::ImmutablePropertiesMap,
     };
 
     use bumpalo::Bump;
@@ -161,6 +162,7 @@ mod tests {
     fn test_search_single_term() {
         let (bm25, _temp_dir) = setup_bm25_config();
         let mut wtxn = bm25.graph_env.write_txn().unwrap();
+        let arena = Bump::new();
 
         // model properties list stored in nodes
         let props1: HashMap<String, Value> = HashMap::from([
@@ -199,7 +201,12 @@ mod tests {
         let nodes = [props1, props2, props3];
 
         for (i, props) in nodes.iter().enumerate() {
-            let data = props.flatten_bm25();
+            let props_map = ImmutablePropertiesMap::new(
+                props.len(),
+                props.iter().map(|(k, v)| (arena.alloc_str(k) as &str, v.clone())),
+                &arena,
+            );
+            let data = props_map.flatten_bm25();
             bm25.insert_doc(&mut wtxn, i as u128, &data).unwrap();
         }
         wtxn.commit().unwrap();
@@ -227,6 +234,7 @@ mod tests {
     fn test_search_multiple_terms() {
         let (bm25, _temp_dir) = setup_bm25_config();
         let mut wtxn = bm25.graph_env.write_txn().unwrap();
+        let arena = Bump::new();
 
         let props1: HashMap<String, Value> = HashMap::from([
             (
@@ -261,7 +269,12 @@ mod tests {
         let nodes = [props1, props2, props3];
 
         for (i, props) in nodes.iter().enumerate() {
-            let data = props.flatten_bm25();
+            let props_map = ImmutablePropertiesMap::new(
+                props.len(),
+                props.iter().map(|(k, v)| (arena.alloc_str(k) as &str, v.clone())),
+                &arena,
+            );
+            let data = props_map.flatten_bm25();
             bm25.insert_doc(&mut wtxn, i as u128, &data).unwrap();
         }
         wtxn.commit().unwrap();
@@ -284,6 +297,7 @@ mod tests {
     fn test_search_many_terms() {
         let (bm25, _temp_dir) = setup_bm25_config();
         let mut wtxn = bm25.graph_env.write_txn().unwrap();
+        let arena = Bump::new();
 
         let props1: HashMap<String, Value> = HashMap::from([
             (
@@ -1242,7 +1256,12 @@ mod tests {
         ];
 
         for (i, props) in nodes.iter().enumerate() {
-            let data = props.flatten_bm25();
+            let props_map = ImmutablePropertiesMap::new(
+                props.len(),
+                props.iter().map(|(k, v)| (arena.alloc_str(k) as &str, v.clone())),
+                &arena,
+            );
+            let data = props_map.flatten_bm25();
             bm25.insert_doc(&mut wtxn, i as u128, &data).unwrap();
             println!("{data:?}");
         }

@@ -129,7 +129,6 @@ fn get_all_nodes_edges_json(
     txn: &RoTxn,
     node_label: Option<String>,
 ) -> Result<String, GraphError> {
-    use crate::utils::filterable::Filterable;
     use sonic_rs::json;
 
     let nodes_length = db.nodes_db.len(txn)?;

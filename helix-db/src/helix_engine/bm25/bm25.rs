@@ -5,7 +5,6 @@ use crate::{
         types::GraphError,
         vector_core::{hnsw::HNSW, vector::HVector},
     },
-    protocol::value::Value,
     utils::properties::ImmutablePropertiesMap,
 };
 
@@ -422,7 +421,7 @@ impl HybridSearch for HelixGraphStorage {
         let vector_handle = task::spawn_blocking(
             move || -> Result<Option<Vec<(u128, f64)>>, GraphError> {
                 let txn = graph_env_vector.read_txn()?;
-                let mut arena = Bump::new();
+                let arena = Bump::new(); // MOVE 
                 let query_slice = arena.alloc_slice_copy(query_vector_owned.as_slice());
                 let results = self.vectors.search::<fn(&HVector, &RoTxn) -> bool>(
                     &txn,

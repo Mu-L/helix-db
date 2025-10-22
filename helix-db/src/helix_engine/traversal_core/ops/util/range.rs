@@ -67,7 +67,6 @@ pub trait RangeAdapter<'db, 'arena, 'txn>: Iterator {
     >
     where
         Self: Sized + Iterator,
-        Self::Item: Send,
         N: TryInto<usize>,
         K: TryInto<usize>,
         N::Error: std::fmt::Debug,
@@ -90,7 +89,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
     >
     where
         Self: Sized + Iterator,
-        Self::Item: Send,
         N: TryInto<usize>,
         K: TryInto<usize>,
         N::Error: std::fmt::Debug,

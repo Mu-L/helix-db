@@ -4,7 +4,7 @@ use crate::helix_engine::{
     types::GraphError,
 };
 
-pub trait NFromIdAdapter<'arena>:
+pub trait NFromIdAdapter<'db, 'arena, 'txn, I>:
     Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
 {
     /// Returns an iterator containing the node with the given id.
@@ -13,17 +13,17 @@ pub trait NFromIdAdapter<'arena>:
     fn n_from_id(
         self,
         id: &u128,
-    ) -> impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>;
+    ) -> RoTraversalIterator<'db, 'arena, 'txn, impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>;
 }
 
 impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
-    NFromIdAdapter<'arena> for RoTraversalIterator<'db, 'arena, 'txn, I>
+    NFromIdAdapter<'db, 'arena, 'txn, I> for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
     #[inline]
     fn n_from_id(
         self,
         id: &u128,
-    ) -> impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>> {
+    ) -> RoTraversalIterator<'db, 'arena, 'txn, impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>> {
         let n_from_id = std::iter::once({
             match self.storage.get_node(self.txn, id, self.arena) {
                 Ok(node) => Ok(TraversalValue::Node(node)),

@@ -11,6 +11,7 @@ use crate::{
         },
     },
     protocol::value::Value,
+    utils::properties::ImmutablePropertiesMap,
 };
 use heed3::{
     Database, Env, RoTxn, RwTxn,
@@ -535,7 +536,7 @@ impl HNSW for VectorCore {
         txn: &'txn mut RwTxn<'db>,
         label: &'arena str,
         data: &'arena [f64],
-        fields: Option<Vec<(String, Value)>>,
+        properties: Option<ImmutablePropertiesMap<'arena>>,
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError>
     where
@@ -546,6 +547,7 @@ impl HNSW for VectorCore {
         let new_level = self.get_new_level();
 
         let mut query = HVector::from_slice(label, 0, data);
+        query.properties = properties;
         self.put_vector(txn, &query)?;
         query.level = new_level;
         if new_level > 0 {
@@ -558,9 +560,9 @@ impl HNSW for VectorCore {
                 self.set_entry_point(txn, &query)?;
                 query.set_distance(0.0);
 
-                if let Some(fields) = fields {
+                if query.properties.is_some() {
                     self.vector_properties_db
-                        .put(txn, &query.id, &bincode::serialize(&fields)?)?;
+                        .put(txn, &query.id, &bincode::serialize(&query)?)?;
                 }
                 return Ok(query);
             }
@@ -611,7 +613,7 @@ impl HNSW for VectorCore {
             self.set_entry_point(txn, &query)?;
         }
 
-        if fields.is_some() {
+        if query.properties.is_some() {
             self.vector_properties_db
                 .put(txn, &query.id, &bincode::serialize(&query)?)?;
         }

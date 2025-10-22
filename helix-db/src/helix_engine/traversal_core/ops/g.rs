@@ -116,4 +116,23 @@ impl G {
             inner: std::iter::once(Ok(TraversalValue::Empty)),
         }
     }
+
+    pub fn new_mut_from_iter<'db, 'arena, 'txn>(
+        storage: &'db HelixGraphStorage,
+        txn: &'txn mut RwTxn<'db>,
+        items: impl Iterator<Item = TraversalValue<'arena>>,
+        arena: &'arena bumpalo::Bump,
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
+        RwTraversalIterator {
+            inner: items.map(Ok),
+            storage,
+            txn,
+            arena,
+        }
+    }
 }

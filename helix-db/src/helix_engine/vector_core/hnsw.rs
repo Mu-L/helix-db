@@ -1,5 +1,5 @@
 use crate::helix_engine::vector_core::vector::HVector;
-use crate::{helix_engine::types::VectorError, protocol::value::Value};
+use crate::{helix_engine::types::VectorError, utils::properties::ImmutablePropertiesMap};
 
 use heed3::{RoTxn, RwTxn};
 
@@ -45,7 +45,7 @@ pub trait HNSW {
         txn: &'txn mut RwTxn<'db>,
         label: &'arena str,
         data: &'arena [f64],
-        fields: Option<Vec<(String, Value)>>,
+        properties: Option<ImmutablePropertiesMap<'arena>>,
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError>
     where

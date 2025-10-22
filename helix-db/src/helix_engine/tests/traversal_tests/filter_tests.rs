@@ -1,21 +1,22 @@
+use super::test_utils::props_option;
 use std::sync::Arc;
 
+use crate::helix_engine::traversal_core::ops::source::add_e::AddEAdapter;
 use crate::helix_engine::{
     storage_core::HelixGraphStorage,
     traversal_core::{
         ops::{g::G, source::add_n::AddNAdapter, util::filter_ref::FilterRefAdapter},
-        traversal_value::{Traversable, TraversalValue},
+        traversal_value::TraversalValue,
     },
     types::GraphError,
 };
 use crate::{helix_engine::traversal_core::ops::source::e_from_type::EFromTypeAdapter, props};
 use crate::{
     helix_engine::traversal_core::ops::source::n_from_type::NFromTypeAdapter,
-    protocol::value::Value, utils::filterable::Filterable,
+    protocol::value::Value,
 };
+use bumpalo::Bump;
 use tempfile::TempDir;
-
-use crate::helix_engine::traversal_core::ops::source::add_e::{AddEAdapter, EdgeType};
 
 fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
@@ -32,28 +33,29 @@ fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
 #[test]
 fn test_filter_nodes() {
     let (storage, _temp_dir) = setup_test_db();
+    let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     // Create nodes with different properties
-    let _ = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props! { "age" => 25 }), None)
-        .collect_to::<Vec<_>>();
-    let _ = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props! { "age" => 30 }), None)
-        .collect_to::<Vec<_>>();
-    let person3 = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props! { "age" => 35 }), None)
-        .collect_to::<Vec<_>>();
+    let _ = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", props_option(&arena, props! { "age" => 25 }), None)
+        .collect_to_obj();
+    let _ = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
+        .collect_to_obj();
+    let person3 = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", props_option(&arena, props! { "age" => 35 }), None)
+        .collect_to_obj();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
 
-    let traversal = G::new(Arc::clone(&storage), &txn)
+    let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .filter_ref(|val, _| {
             if let Ok(TraversalValue::Node(node)) = val {
-                if let Ok(value) = node.check_property("age") {
-                    match value.as_ref() {
+                if let Some(value) = node.get_property("age") {
+                    match value {
                         Value::F64(age) => Ok(*age > 30.0),
                         Value::I32(age) => Ok(*age > 30),
                         _ => Ok(false),
@@ -73,18 +75,27 @@ fn test_filter_nodes() {
 #[test]
 fn test_filter_macro_single_argument() {
     let (storage, _temp_dir) = setup_test_db();
+    let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let _ = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props! { "name" => "Alice" }), None)
+    let _ = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "person",
+            props_option(&arena, props! { "name" => "Alice" }),
+            None,
+        )
         .collect_to::<Vec<_>>();
-    let _ = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props! { "name" => "Bob" }), None)
+    let _ = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "person",
+            props_option(&arena, props! { "name" => "Bob" }),
+            None,
+        )
         .collect_to::<Vec<_>>();
 
     fn has_name(val: &Result<TraversalValue, GraphError>) -> Result<bool, GraphError> {
         if let Ok(TraversalValue::Node(node)) = val {
-            node.check_property("name").map_or(Ok(false), |_| Ok(true))
+            Ok(node.get_property("name").is_some())
         } else {
             Ok(false)
         }
@@ -92,7 +103,7 @@ fn test_filter_macro_single_argument() {
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
-    let traversal = G::new(Arc::clone(&storage), &txn)
+    let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .filter_ref(|val, _| has_name(val))
         .collect_to::<Vec<_>>();
@@ -101,9 +112,11 @@ fn test_filter_macro_single_argument() {
         traversal
             .iter()
             .any(|val| if let TraversalValue::Node(node) = val {
-                let name = node.check_property("name").unwrap();
-                name.as_ref() == &Value::String("Alice".to_string())
-                    || name.as_ref() == &Value::String("Bob".to_string())
+                let name = node.get_property("name").unwrap();
+                match name {
+                    Value::String(name) => name == "Alice" || name == "Bob",
+                    _ => false,
+                }
             } else {
                 false
             })
@@ -113,14 +126,15 @@ fn test_filter_macro_single_argument() {
 #[test]
 fn test_filter_macro_multiple_arguments() {
     let (storage, _temp_dir) = setup_test_db();
+    let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let _ = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props! { "age" => 25 }), None)
+    let _ = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", props_option(&arena, props! { "age" => 25 }), None)
         .collect_to::<Vec<_>>();
-    let person2 = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props! { "age" => 30 }), None)
-        .collect_to::<Vec<_>>();
+    let person2 = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
+        .collect_to_obj();
     txn.commit().unwrap();
 
     fn age_greater_than(
@@ -128,8 +142,8 @@ fn test_filter_macro_multiple_arguments() {
         min_age: i32,
     ) -> Result<bool, GraphError> {
         if let Ok(TraversalValue::Node(node)) = val {
-            if let Ok(value) = node.check_property("age") {
-                match value.as_ref() {
+            if let Some(value) = node.get_property("age") {
+                match value {
                     Value::F64(age) => Ok(*age > min_age as f64),
                     Value::I32(age) => Ok(*age > min_age),
                     _ => Ok(false),
@@ -143,7 +157,7 @@ fn test_filter_macro_multiple_arguments() {
     }
 
     let txn = storage.graph_env.read_txn().unwrap();
-    let traversal = G::new(Arc::clone(&storage), &txn)
+    let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .filter_ref(|val, _| age_greater_than(val, 27))
         .collect_to::<Vec<_>>();
@@ -155,35 +169,34 @@ fn test_filter_macro_multiple_arguments() {
 #[test]
 fn test_filter_edges() {
     let (storage, _temp_dir) = setup_test_db();
+    let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let person1 = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props!()), None)
-        .collect_to::<Vec<_>>();
-    let person2 = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props!()), None)
-        .collect_to::<Vec<_>>();
+    let person1 = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", None, None)
+        .collect_to_obj();
+    let person2 = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", None, None)
+        .collect_to_obj();
 
-    let _ = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_e(
+    let _ = G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
             "knows",
-            Some(props! { "since" => 2020 }),
+            props_option(&arena, props! { "since" => 2020 }),
             person1.id(),
             person2.id(),
             false,
-            EdgeType::Node,
         )
         .collect_to::<Vec<_>>();
-    let edge2 = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_e(
+    let edge2 = G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
             "knows",
-            Some(props! { "since" => 2022 }),
+            props_option(&arena, props! { "since" => 2022 }),
             person2.id(),
             person1.id(),
             false,
-            EdgeType::Node,
         )
-        .collect_to::<Vec<_>>();
+        .collect_to_obj();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -193,8 +206,8 @@ fn test_filter_edges() {
         year: i32,
     ) -> Result<bool, GraphError> {
         if let Ok(TraversalValue::Edge(edge)) = val {
-            if let Ok(value) = edge.check_property("since") {
-                match value.as_ref() {
+            if let Some(value) = edge.get_property("since") {
+                match value {
                     Value::I32(since) => Ok(*since > year),
                     Value::F64(since) => Ok(*since > year as f64),
                     _ => Ok(false),
@@ -207,7 +220,7 @@ fn test_filter_edges() {
         }
     }
 
-    let traversal = G::new(Arc::clone(&storage), &txn)
+    let traversal = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
         .filter_ref(|val, _| recent_edge(val, 2021))
         .collect_to::<Vec<_>>();
@@ -219,20 +232,21 @@ fn test_filter_edges() {
 #[test]
 fn test_filter_empty_result() {
     let (storage, _temp_dir) = setup_test_db();
+    let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let _ = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props! { "age" => 25 }), None)
+    let _ = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", props_option(&arena, props! { "age" => 25 }), None)
         .collect_to::<Vec<_>>();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
-    let traversal = G::new(Arc::clone(&storage), &txn)
+    let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .filter_ref(|val, _| {
             if let Ok(TraversalValue::Node(node)) = val {
-                if let Ok(value) = node.check_property("age") {
-                    match value.as_ref() {
+                if let Some(value) = node.get_property("age") {
+                    match value {
                         Value::I32(age) => Ok(*age > 100),
                         Value::F64(age) => Ok(*age > 100.0),
                         _ => Ok(false),
@@ -251,24 +265,25 @@ fn test_filter_empty_result() {
 #[test]
 fn test_filter_chain() {
     let (storage, _temp_dir) = setup_test_db();
+    let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    let _ = G::new_mut(Arc::clone(&storage), &mut txn)
+    let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n(
             "person",
-            Some(props! { "age" => 25, "name" => "Alice" }),
+            props_option(&arena, props! { "age" => 25, "name" => "Alice" }),
             None,
         )
         .collect_to_obj();
-    let person2 = G::new_mut(Arc::clone(&storage), &mut txn)
+    let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n(
             "person",
-            Some(props! { "age" => 30, "name" => "Bob" }),
+            props_option(&arena, props! { "age" => 30, "name" => "Bob" }),
             None,
         )
         .collect_to_obj();
-    let _ = G::new_mut(Arc::clone(&storage), &mut txn)
-        .add_n("person", Some(props! { "age" => 35 }), None)
+    let _ = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", props_option(&arena, props! { "age" => 35 }), None)
         .collect_to_obj();
 
     txn.commit().unwrap();
@@ -276,7 +291,7 @@ fn test_filter_chain() {
 
     fn has_name(val: &Result<TraversalValue, GraphError>) -> Result<bool, GraphError> {
         if let Ok(TraversalValue::Node(node)) = val {
-            node.check_property("name").map_or(Ok(false), |_| Ok(true))
+            node.get_property("name").map_or(Ok(false), |_| Ok(true))
         } else {
             Ok(false)
         }
@@ -287,8 +302,8 @@ fn test_filter_chain() {
         min_age: i32,
     ) -> Result<bool, GraphError> {
         if let Ok(TraversalValue::Node(node)) = val {
-            if let Ok(value) = node.check_property("age") {
-                match value.as_ref() {
+            if let Some(value) = node.get_property("age") {
+                match value {
                     Value::F64(age) => Ok(*age > min_age as f64),
                     Value::I32(age) => Ok(*age > min_age),
                     _ => Ok(false),
@@ -301,7 +316,7 @@ fn test_filter_chain() {
         }
     }
 
-    let traversal = G::new(Arc::clone(&storage), &txn)
+    let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .filter_ref(|val, _| has_name(val))
         .filter_ref(|val, _| age_greater_than(val, 27))

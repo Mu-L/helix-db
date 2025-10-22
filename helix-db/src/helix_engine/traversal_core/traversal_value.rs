@@ -47,6 +47,17 @@ impl<'arena> TraversalValue<'arena> {
         }
     }
 
+    pub fn label(&self) -> &str {
+        match self {
+            TraversalValue::Node(node) => node.label,
+            TraversalValue::Edge(edge) => edge.label,
+            TraversalValue::Vector(vector) => vector.label,
+            TraversalValue::VectorNodeWithoutVectorData(vector) => vector.label,
+            TraversalValue::Empty => "",
+            _ => "",
+        }
+    }
+
     pub fn get_property(&self, property: &str) -> Option<&Value> {
         match self {
             TraversalValue::Node(node) => node.get_property(property),
