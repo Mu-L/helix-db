@@ -2,12 +2,11 @@ use crate::helix_engine::{
     storage_core::HelixGraphStorage,
     traversal_core::{
         traversal_iter::{RoTraversalIterator, RwTraversalIterator},
-        traversal_value::{TraversalValue, Variable},
+        traversal_value::TraversalValue,
     },
     types::GraphError,
 };
 use heed3::{RoTxn, RwTxn};
-use std::borrow::Cow;
 
 pub struct G {}
 
