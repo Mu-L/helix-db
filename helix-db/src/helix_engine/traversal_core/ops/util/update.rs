@@ -1,4 +1,5 @@
 use heed3::PutFlags;
+use itertools::Itertools;
 
 use crate::{
     helix_engine::{
@@ -28,7 +29,7 @@ where
 pub trait UpdateAdapter<'db, 'arena, 'txn>: Iterator {
     fn update(
         self,
-        props: Option<&[(&'static str, Value)]>,
+        props: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -42,7 +43,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
 {
     fn update(
         self,
-        props: Option<&[(&'static str, Value)]>,
+        props: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -59,13 +60,10 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             match item {
                 Ok(value) => match value {
                     TraversalValue::Node(mut node) => {
-                        match (props, node.properties) {
-                            (None, _) => {
-                                continue;
-                            }
-                            (Some(new), None) => {
+                        match node.properties {
+                            None => {
                                 // Insert secondary indices
-                                for (k, v) in new.iter() {
+                                for (k, v) in props.iter() {
                                     let Some(db) = self.storage.secondary_indices.get(*k) else {
                                         continue;
                                     };
@@ -85,21 +83,36 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                     }
                                 }
 
+                                // Create properties map and insert node
                                 let map = ImmutablePropertiesMap::new(
-                                    new.len(),
-                                    new.iter().map(|(k, v)| (*k, v.clone())),
+                                    props.len(),
+                                    props.iter().map(|(k, v)| (*k, v.clone())),
                                     self.arena,
                                 );
 
                                 node.properties = Some(map);
+
+                                match bincode::serialize(&node) {
+                                    Ok(serialized_node) => {
+                                        match self.storage.nodes_db.put(
+                                            self.txn,
+                                            &node.id,
+                                            &serialized_node,
+                                        ) {
+                                            Ok(_) => results.push(Ok(TraversalValue::Node(node))),
+                                            Err(e) => results.push(Err(GraphError::from(e))),
+                                        }
+                                    }
+                                    Err(e) => results.push(Err(GraphError::from(e))),
+                                }
                             }
-                            (Some(new), Some(old)) => {
-                                // delete secondary indexes for the props changed
-                                for (k, _) in new.iter() {
+                            Some(old) => {
+                                for (k, v) in props.iter() {
                                     let Some(db) = self.storage.secondary_indices.get(*k) else {
                                         continue;
                                     };
 
+                                    // delete secondary indexes for the props changed
                                     let Some(old_value) = old.get(k) else {
                                         continue;
                                     };
@@ -117,12 +130,65 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                         }
                                         Err(e) => results.push(Err(GraphError::from(e))),
                                     }
+
+                                    // create new secondary indexes for the props changed
+                                    match bincode::serialize(v) {
+                                        Ok(v_serialized) => {
+                                            if let Err(e) = db.put_with_flags(
+                                                self.txn,
+                                                PutFlags::APPEND_DUP,
+                                                &v_serialized,
+                                                &node.id,
+                                            ) {
+                                                results.push(Err(GraphError::from(e)));
+                                            }
+                                        }
+                                        Err(e) => results.push(Err(GraphError::from(e))),
+                                    }
                                 }
 
-                                // make new props, updated by current props
-                                // let new_map = ImmutablePropertiesMap::new(old.len(), old.iter().map)
+                                let diff = props.iter().filter(|(k, _)| {
+                                    !old.iter().map(|(old_k, _)| old_k).contains(k)
+                                });
 
-                                // insert new secondary indexes
+                                // find out how many new properties we'll need space for
+                                let len_diff = diff.clone().count();
+
+                                let merged = old
+                                    .iter()
+                                    .map(|(old_k, old_v)| {
+                                        match props
+                                            .iter()
+                                            .find_map(|(k, v)| old_k.eq(*k).then_some(v))
+                                        {
+                                            Some(new_v) => (old_k, new_v.clone()),
+                                            None => (old_k, old_v.clone()),
+                                        }
+                                    })
+                                    .chain(diff.cloned());
+
+                                // make new props, updated by current props
+                                let new_map = ImmutablePropertiesMap::new(
+                                    old.len() + len_diff,
+                                    merged,
+                                    self.arena,
+                                );
+
+                                node.properties = Some(new_map);
+
+                                match bincode::serialize(&node) {
+                                    Ok(serialized_node) => {
+                                        match self.storage.nodes_db.put(
+                                            self.txn,
+                                            &node.id,
+                                            &serialized_node,
+                                        ) {
+                                            Ok(_) => results.push(Ok(TraversalValue::Node(node))),
+                                            Err(e) => results.push(Err(GraphError::from(e))),
+                                        }
+                                    }
+                                    Err(e) => results.push(Err(GraphError::from(e))),
+                                }
                             }
                         }
                     }
