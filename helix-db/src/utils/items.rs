@@ -9,29 +9,42 @@ use crate::protocol::custom_serde::node_serde::NodeDeSeed;
 use crate::protocol::value::Value;
 use crate::utils::properties::ImmutablePropertiesMap;
 use bincode::Options;
-use sonic_rs::Serialize;
 use std::cmp::Ordering;
 
 /// A node in the graph containing an ID, label, and property map.
 /// Properties are serialised without enum variant names in JSON format.
-#[derive(Serialize, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Node<'arena> {
     /// The ID of the node.
     ///
     /// This is not serialized when stored as it is the key.
-    #[serde(skip)]
     pub id: u128,
     /// The label of the node.
     pub label: &'arena str,
     /// The version of the node.
-    #[serde(default)]
     pub version: u8,
     /// The properties of the node.
     ///
     /// Properties are optional and can be None.
     /// Properties are serialised without enum variant names in JSON format.
-    #[serde(default)]
     pub properties: Option<ImmutablePropertiesMap<'arena>>,
+}
+
+// Custom Serialize implementation to match old #[derive(Serialize)] behavior
+// Bincode serializes #[derive(Serialize)] structs using serialize_struct internally
+// which produces a compact format without length prefixes
+impl<'arena> serde::Serialize for Node<'arena> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Node", 3)?;
+        state.serialize_field("label", self.label)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("properties", &self.properties)?;
+        state.end()
+    }
 }
 
 impl<'arena> Node<'arena> {
@@ -46,7 +59,12 @@ impl<'arena> Node<'arena> {
         bytes: &'txn [u8],
         arena: &'arena bumpalo::Bump,
     ) -> bincode::Result<Self> {
-        bincode::options().deserialize_seed(NodeDeSeed { arena, id }, bytes)
+        // Use fixint encoding to match bincode::serialize() behavior (8-byte lengths)
+        // Allow trailing bytes since we manually control Option reading
+        bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .allow_trailing_bytes()
+            .deserialize_seed(NodeDeSeed { arena, id }, bytes)
     }
 }
 
@@ -91,17 +109,15 @@ impl PartialOrd for Node<'_> {
 
 /// An edge in the graph connecting two nodes with an ID, label, and property map.
 /// Properties are serialised without enum variant names in JSON format.
-#[derive(Serialize, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Edge<'arena> {
     /// The ID of the edge.
     ///
     /// This is not serialized when stored as it is the key.
-    #[serde(skip)]
     pub id: u128,
     /// The label of the edge.
     pub label: &'arena str,
     /// The version of the edge.
-    #[serde(default)]
     pub version: u8,
     /// The ID of the from node.
     pub from_node: u128,
@@ -111,8 +127,26 @@ pub struct Edge<'arena> {
     ///
     /// Properties are optional and can be None.
     /// Properties are serialised without enum variant names in JSON format.
-    #[serde(default)]
     pub properties: Option<ImmutablePropertiesMap<'arena>>,
+}
+
+// Custom Serialize implementation to match old #[derive(Serialize)] behavior
+// Bincode serializes #[derive(Serialize)] structs using serialize_struct internally
+// which produces a compact format without length prefixes
+impl<'arena> serde::Serialize for Edge<'arena> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Edge", 5)?;
+        state.serialize_field("label", self.label)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("from_node", &self.from_node)?;
+        state.serialize_field("to_node", &self.to_node)?;
+        state.serialize_field("properties", &self.properties)?;
+        state.end()
+    }
 }
 
 impl<'arena> Edge<'arena> {

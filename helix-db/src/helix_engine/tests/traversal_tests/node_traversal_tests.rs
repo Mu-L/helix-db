@@ -53,10 +53,17 @@ fn test_add_n() {
         )
         .filter_map(|node| node.ok())
         .collect::<Vec<_>>();
+println!("nodes {:?}", nodes);
+    let node = &nodes.first().unwrap();
+    println!("node {:?}", node);
+    let node_results: Vec<_> = G::new(&storage, &txn, &arena)
+        .n_from_id(&node.id())
+        .collect();
 
-    let node = G::new(&storage, &txn, &arena)
-        .n_from_id(&nodes.first().unwrap().id())
-        .collect_to::<Vec<_>>();
+    let node = node_results
+        .into_iter()
+        .filter_map(|res| res.ok())
+        .collect::<Vec<_>>();
     assert_eq!(node.first().unwrap().label(), "person");
     println!("node: {:?}", node.first().unwrap());
 
