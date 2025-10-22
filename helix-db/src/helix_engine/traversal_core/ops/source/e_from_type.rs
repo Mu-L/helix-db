@@ -39,6 +39,8 @@ impl<'arena, 'txn, 's> Iterator for EFromType<'arena, 'txn, 's> {
                         u64::from_le_bytes(value[..LMDB_STRING_HEADER_LENGTH].try_into().unwrap())
                             as usize;
 
+                    println!("{:?}", value);
+
                     assert!(
                         value.len() >= length_of_label_in_lmdb + LMDB_STRING_HEADER_LENGTH,
                         "value length is not at least the header length plus the label length meaning there has been a corruption on node insertion"

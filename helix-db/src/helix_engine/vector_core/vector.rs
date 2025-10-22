@@ -127,7 +127,7 @@ impl<'arena> HVector<'arena> {
         id: u128,
     ) -> Result<Self, VectorError> {
         let data = bytemuck::try_cast_slice::<u8, f64>(raw_vector_data)
-            .map_err(|_| VectorError::ConversionError("Invalid vector data".to_string()))?;
+            .map_err(|_| VectorError::ConversionError("Invalid from raw vector data: vector data".to_string()))?;
         let data = arena.alloc_slice_copy(data);
         Ok(HVector {
             id,

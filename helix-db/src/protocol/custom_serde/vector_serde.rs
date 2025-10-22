@@ -95,7 +95,7 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectorDeSeed<'txn, '
                     .ok_or_else(|| serde::de::Error::custom("Expected properties field"))?;
 
                 let data = bytemuck::try_cast_slice::<u8, f64>(self.raw_vector_data)
-                    .map_err(|_| serde::de::Error::custom("Invalid vector data"))?;
+                    .map_err(|_| serde::de::Error::custom("Invalid deserialize vector data"))?;
                 let data = self.arena.alloc_slice_copy(data);
 
                 Ok(HVector {

@@ -63,7 +63,13 @@ impl<'arena> Node<'arena> {
         // Allow trailing bytes since we manually control Option reading
         bincode::DefaultOptions::new()
             .with_fixint_encoding()
+            .allow_trailing_bytes()
             .deserialize_seed(NodeDeSeed { arena, id }, bytes)
+    }
+
+    #[inline(always)]
+    pub fn to_bincode_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(self)
     }
 }
 
@@ -163,7 +169,13 @@ impl<'arena> Edge<'arena> {
         // Use fixint encoding to match bincode::serialize() behavior (8-byte lengths)
         bincode::DefaultOptions::new()
             .with_fixint_encoding()
+            .allow_trailing_bytes()
             .deserialize_seed(EdgeDeSeed { arena, id }, bytes)
+    }
+
+    #[inline(always)]
+    pub fn to_bincode_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(self)
     }
 }
 

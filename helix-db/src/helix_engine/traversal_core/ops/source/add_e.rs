@@ -76,7 +76,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
 
         let mut result: Result<TraversalValue, GraphError> = Ok(TraversalValue::Empty);
 
-        match bincode::options().serialize(&edge) {
+        match edge.to_bincode_bytes() {
             Ok(bytes) => {
                 if let Err(e) = self.storage.edges_db.put_with_flags(
                     self.txn,
