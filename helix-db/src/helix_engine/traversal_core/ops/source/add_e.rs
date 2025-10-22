@@ -7,7 +7,6 @@ use crate::{
     utils::{id::v6_uuid, items::Edge, label_hash::hash_label, properties::ImmutablePropertiesMap},
 };
 use heed3::{PutFlags, RwTxn};
-use std::marker::PhantomData;
 
 pub struct AddE<'db, 'arena, 'txn>
 where
@@ -33,7 +32,7 @@ pub trait AddEAdapter<'db, 'arena, 'txn, 's>:
 {
     fn add_edge(
         self,
-        label: &'s str,
+        label: &'arena str,
         properties: Option<ImmutablePropertiesMap<'arena>>,
         from_node: u128,
         to_node: u128,
@@ -53,7 +52,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
     #[allow(unused_variables)]
     fn add_edge(
         self,
-        label: &'s str,
+        label: &'arena str,
         properties: Option<ImmutablePropertiesMap<'arena>>,
         from_node: u128,
         to_node: u128,
@@ -65,7 +64,6 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
         let version = self.storage.version_info.get_latest(label);
-        let label = bumpalo::collections::String::from_str_in(label, self.arena);
         let edge = Edge {
             id: v6_uuid(),
             label,
@@ -73,12 +71,11 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
             properties,
             from_node,
             to_node,
-            _phantom: PhantomData,
         };
 
         let mut result: Result<TraversalValue, GraphError> = Ok(TraversalValue::Empty);
 
-        match edge.encode_edge() {
+        match bincode::serialize(&edge) {
             Ok(bytes) => {
                 if let Err(e) = self.storage.edges_db.put_with_flags(
                     self.txn,
@@ -89,10 +86,10 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                     result = Err(GraphError::from(e));
                 }
             }
-            Err(e) => result = Err(e),
+            Err(e) => result = Err(GraphError::from(e)),
         }
 
-        let label_hash = hash_label(edge.label.as_str(), None);
+        let label_hash = hash_label(edge.label, None);
 
         match self.storage.out_edges_db.put_with_flags(
             self.txn,

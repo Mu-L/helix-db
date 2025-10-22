@@ -28,6 +28,9 @@ pub enum TraversalValue<'arena> {
     Path((Vec<Node<'arena>>, Vec<Edge<'arena>>)),
     /// A value in the graph
     Value(Value),
+
+    /// Item With Score
+    NodeWithScore { node: Node<'arena>, score: f64 },
     /// An empty traversal value
     Empty,
 }

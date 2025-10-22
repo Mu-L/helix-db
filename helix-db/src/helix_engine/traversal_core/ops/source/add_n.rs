@@ -33,7 +33,7 @@ pub trait AddNAdapter<'db, 'arena, 'txn, 's>:
 {
     fn add_n(
         self,
-        label: &'s str,
+        label: &'arena str,
         properties: Option<ImmutablePropertiesMap<'arena>>,
         secondary_indices: Option<&'s [&str]>,
     ) -> RwTraversalIterator<
@@ -67,7 +67,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         let secondary_indices = secondary_indices.unwrap_or(&[]).to_vec();
         let mut result: Result<TraversalValue, GraphError> = Ok(TraversalValue::Empty);
 
-        match node.encode_node() {
+        match bincode::serialize(&node) {
             Ok(bytes) => {
                 if let Err(e) = self.storage.nodes_db.put_with_flags(
                     self.txn,
@@ -78,7 +78,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                     result = Err(GraphError::from(e));
                 }
             }
-            Err(e) => result = Err(e),
+            Err(e) => result = Err(GraphError::from(e)),
         }
 
         for index in secondary_indices {
