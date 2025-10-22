@@ -141,13 +141,13 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 let merged = old
                                     .iter()
                                     .map(|(old_k, old_v)| {
-                                        match props
+                                        props
                                             .iter()
                                             .find_map(|(k, v)| old_k.eq(*k).then_some(v))
-                                        {
-                                            Some(new_v) => (old_k, new_v.clone()),
-                                            None => (old_k, old_v.clone()),
-                                        }
+                                            .map_or_else(
+                                                || (old_k, old_v.clone()),
+                                                |v| (old_k, v.clone()),
+                                            )
                                     })
                                     .chain(diff.cloned());
 
@@ -199,13 +199,13 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 let merged = old
                                     .iter()
                                     .map(|(old_k, old_v)| {
-                                        match props
+                                        props
                                             .iter()
                                             .find_map(|(k, v)| old_k.eq(*k).then_some(v))
-                                        {
-                                            Some(new_v) => (old_k, new_v.clone()),
-                                            None => (old_k, old_v.clone()),
-                                        }
+                                            .map_or_else(
+                                                || (old_k, old_v.clone()),
+                                                |v| (old_k, v.clone()),
+                                            )
                                     })
                                     .chain(diff.cloned());
 
