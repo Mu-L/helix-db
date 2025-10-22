@@ -35,7 +35,7 @@ impl WorkerPool {
 
         let num_workers = workers_core_setter.num_threads();
         if num_workers < 2 {
-            panic!("The number of workers must be 2 for parity to act as a select.");
+            panic!("The number of workers must be at least 2 for parity to act as a select.");
         }
         if num_workers % 2 != 0 {
             panic!("The number of workers should be a multiple of 2 for fairness.");
