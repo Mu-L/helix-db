@@ -7,7 +7,6 @@ use crate::{
     utils::label_hash::hash_label,
 };
 use heed3::{RoTxn, types::Bytes};
-use helix_macros::debug_trace;
 
 pub struct InEdgesIterator<'db, 'arena, 'txn>
 where
@@ -28,7 +27,6 @@ where
 impl<'db, 'arena, 'txn> Iterator for InEdgesIterator<'db, 'arena, 'txn> {
     type Item = Result<TraversalValue<'arena>, GraphError>;
 
-    #[debug_trace("IN_EDGES")]
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(Ok((_, data))) = self.iter.next() {
             match data.decode() {
