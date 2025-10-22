@@ -148,7 +148,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                                     return Some(Err(e));
                                 }
                             };
-                            if let Ok(node) = self.storage.get_node(self.txn, &item_id) {
+                            if let Ok(node) = self.storage.get_node(self.txn, &item_id, self.arena) {
                                 return Some(Ok(TraversalValue::Node(node)));
                             }
                         }

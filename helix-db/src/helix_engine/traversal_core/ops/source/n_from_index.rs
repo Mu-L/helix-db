@@ -72,7 +72,7 @@ impl<
             .unwrap()
             .filter_map(move |item| {
                 if let Ok((_, value)) = item {
-                    match self.storage.get_node(self.txn, &value) {
+                    match self.storage.get_node(self.txn, &value, self.arena) {
                         Ok(node) => {
                             if node.label == label {
                                 return Some(Ok(TraversalValue::Node(node)));

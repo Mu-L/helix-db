@@ -12,9 +12,7 @@ use crate::{
         types::GraphError,
         vector_core::{
             hnsw::HNSW,
-            vector::HVector,
             vector_core::{HNSWConfig, VectorCore},
-            vector_without_data::VectorWithoutData,
         },
     },
     utils::{
@@ -141,18 +139,6 @@ impl HelixGraphStorage {
                 );
             }
         }
-
-        let vector_config = config.get_vector_config();
-        let vectors = VectorCore::new(
-            &graph_env,
-            &mut wtxn,
-            HNSWConfig::new(
-                vector_config.m,
-                vector_config.ef_construction,
-                vector_config.ef_search,
-            ),
-        )?;
-
         let vector_config = config.get_vector_config();
         let vectors = VectorCore::new(
             &graph_env,
@@ -312,27 +298,38 @@ impl StorageMethods for HelixGraphStorage {
     }
 
     #[inline(always)]
-    fn get_node(&self, txn: &RoTxn, id: &u128) -> Result<Node, GraphError> {
+    fn get_node<'arena>(
+        &self,
+        txn: &RoTxn,
+        id: &u128,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<Node<'arena>, GraphError> {
         let node = match self.nodes_db.get(txn, Self::node_key(id))? {
             Some(data) => data,
             None => return Err(GraphError::NodeNotFound),
         };
-        let node: Node = Node::decode_node(node, *id)?;
+        let node: Node = Node::from_bincode_bytes(*id, node, arena)?;
         let node = self.version_info.upgrade_to_node_latest(node);
         Ok(node)
     }
 
     #[inline(always)]
-    fn get_edge(&self, txn: &RoTxn, id: &u128) -> Result<Edge, GraphError> {
+    fn get_edge<'arena>(
+        &self,
+        txn: &RoTxn,
+        id: &u128,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<Edge<'arena>, GraphError> {
         let edge = match self.edges_db.get(txn, Self::edge_key(id))? {
             Some(data) => data,
             None => return Err(GraphError::EdgeNotFound),
         };
-        let edge: Edge = Edge::decode_edge(edge, *id)?;
+        let edge: Edge = Edge::from_bincode_bytes(*id, edge, arena)?;
         Ok(self.version_info.upgrade_to_edge_latest(edge))
     }
 
     fn drop_node(&self, txn: &mut RwTxn, id: &u128) -> Result<(), GraphError> {
+        let arena = bumpalo::Bump::new();
         // Get node to get its label
         //let node = self.get_node(txn, id)?;
         let mut edges = HashSet::new();
@@ -403,11 +400,11 @@ impl StorageMethods for HelixGraphStorage {
         }
 
         // delete secondary indices
-        let node = self.get_node(txn, id)?;
+        let node = self.get_node(txn, id, &arena)?;
         for (index_name, db) in &self.secondary_indices {
             // Use check_property like we do when adding, to handle id, label, and regular properties consistently
-            match node.check_property(index_name) {
-                Ok(value) => match bincode::serialize(&*value) {
+            match node.get_property(index_name) {
+                Some(value) => match bincode::serialize(&*value) {
                     Ok(serialized) => {
                         if let Err(e) = db.delete_one_duplicate(txn, &serialized, &node.id) {
                             return Err(GraphError::from(e));
@@ -415,7 +412,7 @@ impl StorageMethods for HelixGraphStorage {
                     }
                     Err(e) => return Err(GraphError::from(e)),
                 },
-                Err(_) => {
+                None => {
                     // Property not found - this is expected for some indices
                     // Continue to next index
                 }
@@ -429,12 +426,13 @@ impl StorageMethods for HelixGraphStorage {
     }
 
     fn drop_edge(&self, txn: &mut RwTxn, edge_id: &u128) -> Result<(), GraphError> {
+        let arena = bumpalo::Bump::new();
         // Get edge data first
         let edge_data = match self.edges_db.get(txn, Self::edge_key(edge_id))? {
             Some(data) => data,
             None => return Err(GraphError::EdgeNotFound),
         };
-        let edge: Edge = bincode::deserialize(edge_data)?;
+        let edge: Edge = Edge::from_bincode_bytes(*edge_id, edge_data, &arena)?;
         let label_hash = hash_label(&edge.label, None);
         let out_edge_value = Self::pack_edge_data(edge_id, &edge.to_node);
         let in_edge_value = Self::pack_edge_data(edge_id, &edge.from_node);
@@ -455,6 +453,7 @@ impl StorageMethods for HelixGraphStorage {
     }
 
     fn drop_vector(&self, txn: &mut RwTxn, id: &u128) -> Result<(), GraphError> {
+        let arena = bumpalo::Bump::new();
         let mut edges = HashSet::new();
         let mut out_edges = HashSet::new();
         let mut in_edges = HashSet::new();
@@ -523,7 +522,7 @@ impl StorageMethods for HelixGraphStorage {
         }
 
         // Delete vector data
-        self.vectors.delete(txn, *id)?;
+        self.vectors.delete(txn, *id, &arena)?;
 
         Ok(())
     }

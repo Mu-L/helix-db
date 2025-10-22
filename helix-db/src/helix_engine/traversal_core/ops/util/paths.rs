@@ -30,7 +30,8 @@ where
     'db: 'arena,
     'arena: 'txn,
 {
-    iter: I,
+    pub arena: &'arena bumpalo::Bump,
+    pub iter: I,
     path_type: PathType,
     edge_label: Option<&'arena str>,
     storage: &'db HelixGraphStorage,
@@ -110,14 +111,14 @@ impl<'db, 'arena, 'txn, I> ShortestPathIterator<'db, 'arena, 'txn, I> {
         let mut current = end_id;
 
         while current != start_id {
-            nodes.push(self.storage.get_node(self.txn, current)?);
+            nodes.push(self.storage.get_node(self.txn, current, self.arena)?);
 
             let (prev_node, edge) = &parent[current];
             edges.push(edge.clone());
             current = prev_node;
         }
 
-        nodes.push(self.storage.get_node(self.txn, start_id)?);
+        nodes.push(self.storage.get_node(self.txn, start_id, self.arena)?);
 
         nodes.reverse();
         edges.reverse();
@@ -162,7 +163,7 @@ impl<'db, 'arena, 'txn, I> ShortestPathIterator<'db, 'arena, 'txn, I> {
 
                 if !visited.contains(&to_node) {
                     visited.insert(to_node);
-                    let edge = match self.storage.get_edge(self.txn, &edge_id) {
+                    let edge = match self.storage.get_edge(self.txn, &edge_id, self.arena) {
                         Ok(edge) => edge,
                         Err(e) => return Some(Err(e)),
                     };
@@ -228,7 +229,10 @@ impl<'db, 'arena, 'txn, I> ShortestPathIterator<'db, 'arena, 'txn, I> {
                 let (_, value) = result.unwrap(); // TODO: handle error
                 let (edge_id, to_node) = HelixGraphStorage::unpack_adj_edge_data(value).unwrap(); // TODO: handle error
 
-                let edge = self.storage.get_edge(self.txn, &edge_id).unwrap(); // TODO: handle error
+                let edge = self
+                    .storage
+                    .get_edge(self.txn, &edge_id, self.arena)
+                    .unwrap(); // TODO: handle error
 
                 // Extract weight from edge properties, default to 1.0 if not present
                 let weight = edge
@@ -335,6 +339,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         RoTraversalIterator {
             arena: self.arena,
             inner: ShortestPathIterator {
+                arena: self.arena,
                 iter: self.inner,
                 path_type: match (from, to) {
                     (Some(from), None) => PathType::From(*from),

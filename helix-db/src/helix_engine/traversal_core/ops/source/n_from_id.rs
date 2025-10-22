@@ -25,7 +25,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
         id: &u128,
     ) -> impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>> {
         let n_from_id = std::iter::once({
-            match self.storage.get_node(self.txn, id) {
+            match self.storage.get_node(self.txn, id, self.arena) {
                 Ok(node) => Ok(TraversalValue::Node(node)),
                 Err(e) => Err(e),
             }

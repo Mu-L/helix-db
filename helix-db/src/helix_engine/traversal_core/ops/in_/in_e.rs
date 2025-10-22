@@ -38,7 +38,7 @@ impl<'db, 'arena, 'txn> Iterator for InEdgesIterator<'db, 'arena, 'txn> {
                             return Some(Err(e));
                         }
                     };
-                    if let Ok(edge) = self.storage.get_edge(self.txn, &edge_id) {
+                    if let Ok(edge) = self.storage.get_edge(self.txn, &edge_id, self.arena) {
                         return Some(Ok(TraversalValue::Edge(edge)));
                     }
                 }
