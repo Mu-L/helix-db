@@ -45,7 +45,10 @@ impl<'arena> ImmutablePropertiesMap<'arena> {
         bytes: &'txn [u8],
         arena: &'arena bumpalo::Bump,
     ) -> bincode::Result<Self> {
-        bincode::options().deserialize_seed(ImmutablePropertiesMapDeSeed { arena }, bytes)
+        bincode::options()
+            .with_fixint_encoding()
+            .allow_trailing_bytes()
+            .deserialize_seed(ImmutablePropertiesMapDeSeed { arena }, bytes)
     }
 
     pub fn new_from_try<Error>(
