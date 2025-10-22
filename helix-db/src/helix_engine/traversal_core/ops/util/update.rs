@@ -91,20 +91,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 );
 
                                 node.properties = Some(map);
-
-                                match bincode::serialize(&node) {
-                                    Ok(serialized_node) => {
-                                        match self.storage.nodes_db.put(
-                                            self.txn,
-                                            &node.id,
-                                            &serialized_node,
-                                        ) {
-                                            Ok(_) => results.push(Ok(TraversalValue::Node(node))),
-                                            Err(e) => results.push(Err(GraphError::from(e))),
-                                        }
-                                    }
-                                    Err(e) => results.push(Err(GraphError::from(e))),
-                                }
                             }
                             Some(old) => {
                                 for (k, v) in props.iter() {
@@ -175,26 +161,84 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 );
 
                                 node.properties = Some(new_map);
+                            }
+                        }
 
-                                match bincode::serialize(&node) {
-                                    Ok(serialized_node) => {
-                                        match self.storage.nodes_db.put(
-                                            self.txn,
-                                            &node.id,
-                                            &serialized_node,
-                                        ) {
-                                            Ok(_) => results.push(Ok(TraversalValue::Node(node))),
-                                            Err(e) => results.push(Err(GraphError::from(e))),
-                                        }
-                                    }
+                        match bincode::serialize(&node) {
+                            Ok(serialized_node) => {
+                                match self.storage.nodes_db.put(
+                                    self.txn,
+                                    &node.id,
+                                    &serialized_node,
+                                ) {
+                                    Ok(_) => results.push(Ok(TraversalValue::Node(node))),
                                     Err(e) => results.push(Err(GraphError::from(e))),
                                 }
                             }
+                            Err(e) => results.push(Err(GraphError::from(e))),
                         }
                     }
-                    TraversalValue::Edge(edge) => todo!(),
-                    TraversalValue::Vector(hvector) => todo!(),
-                    TraversalValue::VectorNodeWithoutVectorData(vector_without_data) => todo!(),
+                    TraversalValue::Edge(mut edge) => {
+                        match edge.properties {
+                            None => {
+                                // Create properties map and insert edge
+                                let map = ImmutablePropertiesMap::new(
+                                    props.len(),
+                                    props.iter().map(|(k, v)| (*k, v.clone())),
+                                    self.arena,
+                                );
+
+                                edge.properties = Some(map);
+                            }
+                            Some(old) => {
+                                let diff = props.iter().filter(|(k, _)| {
+                                    !old.iter().map(|(old_k, _)| old_k).contains(k)
+                                });
+
+                                // find out how many new properties we'll need space for
+                                let len_diff = diff.clone().count();
+
+                                let merged = old
+                                    .iter()
+                                    .map(|(old_k, old_v)| {
+                                        match props
+                                            .iter()
+                                            .find_map(|(k, v)| old_k.eq(*k).then_some(v))
+                                        {
+                                            Some(new_v) => (old_k, new_v.clone()),
+                                            None => (old_k, old_v.clone()),
+                                        }
+                                    })
+                                    .chain(diff.cloned());
+
+                                // make new props, updated by current props
+                                let new_map = ImmutablePropertiesMap::new(
+                                    old.len() + len_diff,
+                                    merged,
+                                    self.arena,
+                                );
+
+                                edge.properties = Some(new_map);
+                            }
+                        }
+
+                        match bincode::serialize(&edge) {
+                            Ok(serialized_edge) => {
+                                match self.storage.edges_db.put(
+                                    self.txn,
+                                    &edge.id,
+                                    &serialized_edge,
+                                ) {
+                                    Ok(_) => results.push(Ok(TraversalValue::Edge(edge))),
+                                    Err(e) => results.push(Err(GraphError::from(e))),
+                                }
+                            }
+                            Err(e) => results.push(Err(GraphError::from(e))),
+                        }
+                    }
+                    // TODO: Implement update properties for Vectors:
+                    // TraversalValue::Vector(hvector) => todo!(),
+                    // TraversalValue::VectorNodeWithoutVectorData(vector_without_data) => todo!(),
                     _ => results.push(Err(GraphError::New("Unsupported value type".to_string()))),
                 },
                 Err(e) => results.push(Err(e)),
