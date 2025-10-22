@@ -12,20 +12,14 @@ use crate::{
     },
     protocol::value::Value,
 };
-use bincode::{Options, de::read::SliceReader};
 use heed3::{
     Database, Env, RoTxn, RwTxn,
     byteorder::BE,
     types::{Bytes, U128, Unit},
 };
-use itertools::Itertools;
 use rand::prelude::Rng;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{HashMap, HashSet},
-    io::Read as _,
-};
-use tokio_util::bytes::Buf;
+use std::collections::{HashMap, HashSet};
 
 const DB_VECTORS: &str = "vectors"; // for vector data (v:)
 const DB_VECTOR_DATA: &str = "vector_data"; // for vector data (v:)
@@ -182,7 +176,7 @@ impl VectorCore {
         arena: &'arena bumpalo::Bump,
     ) -> Result<bumpalo::collections::Vec<'arena, HVector<'arena>>, VectorError>
     where
-        F: Fn(&HVector, &RoTxn) -> bool,
+        F: Fn(&HVector<'arena>, &RoTxn<'db>) -> bool,
     {
         let out_key = Self::out_edges_key(id, level, None);
         let mut neighbors = bumpalo::collections::Vec::with_capacity_in(
@@ -226,13 +220,17 @@ impl VectorCore {
     }
 
     #[inline(always)]
-    fn set_neighbours(
-        &self,
-        txn: &mut RwTxn,
+    fn set_neighbours<'db: 'arena, 'arena: 'txn, 'txn, 's>(
+        &'db self,
+        txn: &'txn mut RwTxn<'db>,
         id: u128,
-        neighbors: &BinaryHeap<HVector>,
+        neighbors: &BinaryHeap<'arena, HVector<'arena>>,
         level: usize,
-    ) -> Result<(), VectorError> {
+    ) -> Result<(), VectorError>
+    where
+        'db: 'arena,
+        'arena: 'txn,
+    {
         let prefix = Self::out_edges_key(id, level, None);
 
         let mut keys_to_delete: HashSet<Vec<u8>> = self
@@ -267,11 +265,11 @@ impl VectorCore {
         Ok(())
     }
 
-    fn select_neighbors<'db: 'arena, 'arena: 'txn, 'txn, F>(
+    fn select_neighbors<'db: 'arena, 'arena: 'txn, 'txn, 's, F>(
         &'db self,
         txn: &'txn RoTxn<'db>,
         label: &'arena str,
-        query: &'arena HVector<'arena>,
+        query: &'s HVector<'arena>,
         mut cands: BinaryHeap<'arena, HVector<'arena>>,
         level: usize,
         should_extend: bool,
@@ -279,7 +277,7 @@ impl VectorCore {
         arena: &'arena bumpalo::Bump,
     ) -> Result<BinaryHeap<'arena, HVector<'arena>>, VectorError>
     where
-        F: Fn(&HVector, &RoTxn) -> bool,
+        F: Fn(&HVector<'arena>, &RoTxn<'db>) -> bool,
     {
         let m = self.config.m;
 
@@ -332,7 +330,7 @@ impl VectorCore {
         arena: &'arena bumpalo::Bump,
     ) -> Result<BinaryHeap<'arena, HVector<'arena>>, VectorError>
     where
-        F: Fn(&HVector, &RoTxn) -> bool,
+        F: Fn(&HVector<'arena>, &RoTxn<'db>) -> bool,
     {
         let mut visited: HashSet<u128> = HashSet::new();
         let mut candidates: BinaryHeap<'arena, Candidate> =
@@ -465,7 +463,7 @@ impl HNSW for VectorCore {
         arena: &'arena bumpalo::Bump,
     ) -> Result<bumpalo::collections::Vec<'arena, HVector<'arena>>, VectorError>
     where
-        F: Fn(&HVector, &RoTxn) -> bool,
+        F: Fn(&HVector<'arena>, &RoTxn<'db>) -> bool,
         'db: 'arena,
         'arena: 'txn,
     {
@@ -478,7 +476,7 @@ impl HNSW for VectorCore {
         let curr_level = entry_point.level;
 
         for level in (1..=curr_level).rev() {
-            let nearest = self.search_level(
+            let mut nearest = self.search_level(
                 txn,
                 label,
                 &query,
@@ -491,6 +489,9 @@ impl HNSW for VectorCore {
                 },
                 arena,
             )?;
+            if let Some(closest) = nearest.pop() {
+                entry_point = closest;
+            }
         }
 
         let candidates = self.search_level(
@@ -521,7 +522,7 @@ impl HNSW for VectorCore {
     }
 
     fn insert<'db, 'arena, 'txn, F>(
-        &self,
+        &'db self,
         txn: &'txn mut RwTxn<'db>,
         label: &'arena str,
         data: &'arena [f64],
@@ -529,7 +530,7 @@ impl HNSW for VectorCore {
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError>
     where
-        F: Fn(&HVector, &RoTxn) -> bool,
+        F: Fn(&HVector<'arena>, &RoTxn<'db>) -> bool,
         'db: 'arena,
         'arena: 'txn,
     {
@@ -601,7 +602,7 @@ impl HNSW for VectorCore {
             self.set_entry_point(txn, &query)?;
         }
 
-        if let Some(fields) = fields {
+        if fields.is_some() {
             self.vector_properties_db
                 .put(txn, &query.id, &bincode::serialize(&query)?)?;
         }
@@ -610,36 +611,26 @@ impl HNSW for VectorCore {
         Ok(query)
     }
 
-    fn delete(&self, txn: &mut RwTxn, id: u128) -> Result<(), VectorError> {
-        let properties: Option<HashMap<String, Value>> =
-            match self.vector_properties_db.get(txn, &id)? {
-                Some(bytes) => Some(bincode::deserialize(bytes).map_err(VectorError::from)?),
-                None => None,
-            };
+    fn delete<'arena>(
+        &self,
+        txn: &mut RwTxn,
+        id: u128,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<(), VectorError> {
+        match self.get_vector_properties(txn, id, arena)? {
+            Some(mut properties) => {
+                debug_println!("properties: {properties:?}");
+                if properties.deleted {
+                    return Err(VectorError::VectorAlreadyDeleted(id.to_string()));
+                }
 
-        debug_println!("properties: {properties:?}");
-        if let Some(mut properties) = properties {
-            if let Some(Value::Boolean(is_deleted)) = properties.get("is_deleted")
-                && *is_deleted
-            {
-                return Err(VectorError::VectorAlreadyDeleted(id.to_string()));
+                properties.deleted = true;
+                self.vector_properties_db
+                    .put(txn, &id, &bincode::serialize(&properties)?)?;
+                debug_println!("vector deleted with id {}", &id);
+                Ok(())
             }
-
-            properties.insert("is_deleted".to_string(), Value::Boolean(true));
-            debug_println!("properties: {properties:?}");
-
-            self.vector_properties_db
-                .put(txn, &id, &bincode::serialize(&properties)?)?;
-        } else {
-            let mut n_properties: HashMap<String, Value> = HashMap::new();
-            n_properties.insert("is_deleted".to_string(), Value::Boolean(true));
-            debug_println!("properties: {n_properties:?}");
-
-            self.vector_properties_db
-                .put(txn, &id, &bincode::serialize(&n_properties)?)?;
+            None => Err(VectorError::VectorNotFound(id.to_string())),
         }
-
-        debug_println!("vector deleted with id {}", &id);
-        Ok(())
     }
 }

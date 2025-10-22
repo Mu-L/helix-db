@@ -3,7 +3,6 @@ use crate::helix_engine::{
     types::GraphError,
 };
 use heed3::RoTxn;
-use helix_macros::debug_trace;
 
 pub struct FilterRef<'db, 'txn, I, F> {
     iter: I,
@@ -17,7 +16,6 @@ where
     F: Fn(&I::Item, &RoTxn) -> Result<bool, GraphError>,
 {
     type Item = I::Item;
-    #[debug_trace("FILTER_REF")]
     fn next(&mut self) -> Option<Self::Item> {
         for item in self.iter.by_ref() {
             match (self.f)(&item, self.txn) {

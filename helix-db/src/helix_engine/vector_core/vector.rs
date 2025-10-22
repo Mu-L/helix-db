@@ -1,17 +1,15 @@
-use bincode::Options;
-use serde::{Deserialize, Serialize};
-
 use crate::{
     helix_engine::{
-        types::{GraphError, VectorError},
+        types::VectorError,
         vector_core::{vector_distance::DistanceCalc, vector_without_data::VectorWithoutData},
     },
     protocol::{custom_serde::vector_serde::VectorDeSeed, value::Value},
     utils::{id::v6_uuid, properties::ImmutablePropertiesMap},
 };
+use bincode::Options;
 use core::fmt;
-
-use std::{borrow::Cow, cmp::Ordering, collections::HashMap, fmt::Debug};
+use serde::Serialize;
+use std::{cmp::Ordering, fmt::Debug};
 
 // TODO: make this generic over the type of encoding (f32, f64, etc)
 // TODO: use const param to set dimension
@@ -28,6 +26,10 @@ pub struct HVector<'arena> {
     /// the version of the vector
     #[serde(default)]
     pub version: u8,
+
+    /// whether the vector is deleted
+    #[serde(default)]
+    pub deleted: bool,
     /// The level of the HVector
     #[serde(skip)]
     pub level: usize,
@@ -89,6 +91,7 @@ impl<'arena> HVector<'arena> {
             data,
             distance: None,
             properties: None,
+            deleted: false,
         }
     }
 
@@ -135,6 +138,7 @@ impl<'arena> HVector<'arena> {
             level: 0,
             distance: None,
             properties: None,
+            deleted: false,
         })
     }
 
@@ -186,5 +190,31 @@ impl<'arena> HVector<'arena> {
 
     pub fn score(&self) -> f64 {
         self.distance.unwrap_or(2.0)
+    }
+
+    pub fn expand_from_vector_without_data(&mut self, vector: VectorWithoutData<'arena>) {
+        self.id = vector.id;
+        self.label = vector.label;
+        self.version = vector.version;
+        self.level = vector.level;
+        self.distance = self.distance;
+        self.data = self.data;
+        self.properties = vector.properties;
+    }
+
+}
+
+impl<'arena> From<VectorWithoutData<'arena>> for HVector<'arena> {
+    fn from(value: VectorWithoutData<'arena>) -> Self {
+        HVector {
+            id: value.id,
+            label: value.label,
+            version: value.version,
+            level: value.level,
+            distance: None,
+            data: &[],
+            properties: None,
+            deleted: value.deleted,
+        }
     }
 }

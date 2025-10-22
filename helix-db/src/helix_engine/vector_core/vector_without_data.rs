@@ -1,13 +1,12 @@
 use crate::{
-    helix_engine::types::{GraphError, VectorError},
+    helix_engine::types::VectorError,
     protocol::{custom_serde::vector_serde::VectoWithoutDataDeSeed, value::Value},
     utils::properties::ImmutablePropertiesMap,
 };
 use bincode::Options;
 use core::fmt;
 use serde::Serialize;
-use std::{borrow::Cow, fmt::Debug};
-use uuid::Uuid;
+use std::fmt::Debug;
 
 const HYPHENATED_LENGTH: usize = 36;
 // TODO: make this generic over the type of encoding (f32, f64, etc)
@@ -25,6 +24,9 @@ pub struct VectorWithoutData<'arena> {
     /// the version of the vector
     #[serde(default)]
     pub version: u8,
+    /// whether the vector is deleted
+    #[serde(default)]
+    pub deleted: bool,
     /// The level of the HVector
     #[serde(skip)]
     pub level: usize,
@@ -59,6 +61,7 @@ impl<'arena> VectorWithoutData<'arena> {
             version: 1,
             level,
             properties: Some(properties),
+            deleted: false,
         }
     }
 

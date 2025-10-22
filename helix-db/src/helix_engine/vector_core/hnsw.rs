@@ -16,7 +16,7 @@ pub trait HNSW {
     ///
     /// A vector of tuples containing the id and distance of the nearest neighbors
     fn search<'db, 'arena, 'txn, F>(
-        &self,
+        &'db self,
         txn: &'txn RoTxn<'db>,
         query: &'arena [f64],
         k: usize,
@@ -26,10 +26,9 @@ pub trait HNSW {
         arena: &'arena bumpalo::Bump,
     ) -> Result<bumpalo::collections::Vec<'arena, HVector<'arena>>, VectorError>
     where
-        F: Fn(&HVector, &RoTxn) -> bool,
+        F: Fn(&HVector<'arena>, &RoTxn<'db>) -> bool,
         'db: 'arena,
-        'arena: 'txn,
-    ;
+        'arena: 'txn;
 
     /// Insert a new vector into the index
     ///
@@ -42,7 +41,7 @@ pub trait HNSW {
     ///
     /// An HVector of the data inserted
     fn insert<'db, 'arena, 'txn, F>(
-        &self,
+        &'db self,
         txn: &'txn mut RwTxn<'db>,
         label: &'arena str,
         data: &'arena [f64],
@@ -50,10 +49,9 @@ pub trait HNSW {
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError>
     where
-        F: Fn(&HVector, &RoTxn) -> bool,
+        F: Fn(&HVector<'arena>, &RoTxn<'db>) -> bool,
         'db: 'arena,
-        'arena: 'txn,
-    ;
+        'arena: 'txn;
 
     /// Delete a vector from the index
     ///
@@ -61,5 +59,10 @@ pub trait HNSW {
     ///
     /// * `txn` - The transaction to use
     /// * `id` - The id of the vector
-    fn delete(&self, txn: &mut RwTxn, id: u128) -> Result<(), VectorError>;
+    fn delete<'arena>(
+        &self,
+        txn: &mut RwTxn,
+        id: u128,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<(), VectorError>;
 }

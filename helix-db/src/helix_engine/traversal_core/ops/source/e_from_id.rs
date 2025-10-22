@@ -7,7 +7,6 @@ use crate::{
     utils::items::Edge,
 };
 use heed3::RoTxn;
-use helix_macros::debug_trace;
 use std::iter::Once;
 
 pub struct EFromId<'db, 'arena, 'txn>
@@ -25,7 +24,6 @@ where
 impl<'db, 'arena, 'txn> Iterator for EFromId<'db, 'arena, 'txn> {
     type Item = Result<TraversalValue<'arena>, GraphError>;
 
-    #[debug_trace("E_FROM_ID")]
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|_| {
             let edge: Edge = match self.storage.get_edge(self.txn, &self.id) {

@@ -1,6 +1,8 @@
 use super::binary_heap::BinaryHeap;
 use crate::{
-    helix_engine::{types::VectorError, vector_core::vector::HVector},
+    helix_engine::{
+        traversal_core::LMDB_STRING_HEADER_LENGTH, types::VectorError, vector_core::vector::HVector,
+    },
     utils::properties::ImmutablePropertiesMap,
 };
 use heed3::{
@@ -74,33 +76,35 @@ impl<'a, T> HeapOps<'a, T> for BinaryHeap<'a, T> {
     }
 }
 
-pub trait VectorFilter<'a, 'q> {
+pub trait VectorFilter<'db, 'arena, 'txn, 'q> {
     fn to_vec_with_filter<F, const SHOULD_CHECK_DELETED: bool>(
         self,
         k: usize,
-        filter: Option<&'q [F]>,
-        label: &'q str,
-        txn: &'q RoTxn<'q>,
+        filter: Option<&'arena [F]>,
+        label: &'arena str,
+        txn: &'txn RoTxn<'db>,
         db: Database<U128<BE>, Bytes>,
-        arena: &'a bumpalo::Bump,
-    ) -> Result<bumpalo::collections::Vec<'a, HVector<'a>>, VectorError>
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<bumpalo::collections::Vec<'arena, HVector<'arena>>, VectorError>
     where
-        F: Fn(&HVector, &RoTxn) -> bool;
+        F: Fn(&HVector<'arena>, &'txn RoTxn<'db>) -> bool;
 }
 
-impl<'a, 'q> VectorFilter<'a, 'q> for BinaryHeap<'a, HVector<'a>> {
+impl<'db, 'arena, 'txn, 'q> VectorFilter<'db, 'arena, 'txn, 'q>
+    for BinaryHeap<'arena, HVector<'arena>>
+{
     #[inline(always)]
     fn to_vec_with_filter<F, const SHOULD_CHECK_DELETED: bool>(
         mut self,
         k: usize,
-        filter: Option<&'q [F]>,
-        label: &'q str,
-        txn: &'q RoTxn<'q>,
+        filter: Option<&'arena [F]>,
+        label: &'arena str,
+        txn: &'txn RoTxn<'db>,
         db: Database<U128<BE>, Bytes>,
-        arena: &'a bumpalo::Bump,
-    ) -> Result<bumpalo::collections::Vec<'a, HVector<'a>>, VectorError>
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<bumpalo::collections::Vec<'arena, HVector<'arena>>, VectorError>
     where
-        F: Fn(&HVector, &RoTxn) -> bool,
+        F: Fn(&HVector<'arena>, &'txn RoTxn<'db>) -> bool,
     {
         let mut result = bumpalo::collections::Vec::with_capacity_in(k, arena);
         for _ in 0..k {
@@ -129,4 +133,24 @@ impl<'a, 'q> VectorFilter<'a, 'q> for BinaryHeap<'a, HVector<'a>> {
 
         Ok(result)
     }
+}
+
+pub fn check_deleted<'txn>(data: &'txn [u8]) -> bool {
+    assert!(
+        data.len() >= LMDB_STRING_HEADER_LENGTH,
+        "value length does not contain header which means the `label` field was missing from the node on insertion"
+    );
+    let length_of_label_in_lmdb =
+        u64::from_le_bytes(data[..LMDB_STRING_HEADER_LENGTH].try_into().unwrap()) as usize;
+
+    let length_of_version_in_lmdb = 1;
+
+    let deleted_index =
+        LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb + length_of_version_in_lmdb;
+
+    assert!(
+        data.len() >= deleted_index,
+        "data length is not at least the deleted index plus the length of the deleted field meaning there has been a corruption on node insertion"
+    );
+    data[deleted_index] == 1
 }
