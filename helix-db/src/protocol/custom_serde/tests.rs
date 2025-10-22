@@ -730,3 +730,452 @@ mod node_serialization_tests {
         assert_eq!(props.get("normal_val"), Some(&Value::I32(42)));
     }
 }
+
+#[cfg(test)]
+mod edge_serialization_tests {
+    use crate::protocol::value::Value;
+    use crate::utils::items::Edge;
+    use crate::utils::properties::ImmutablePropertiesMap;
+    use bumpalo::Bump;
+    use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
+
+    /// Old Edge implementation for comparison testing
+    #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+    struct OldEdge {
+        #[serde(skip)]
+        pub id: u128,
+        pub label: String,
+        #[serde(default)]
+        pub version: u8,
+        pub from_node: u128,
+        pub to_node: u128,
+        #[serde(default)]
+        pub properties: Option<HashMap<String, Value>>,
+    }
+
+    /// Helper to create a test arena edge with properties
+    fn create_arena_edge_with_props<'arena>(
+        arena: &'arena Bump,
+        id: u128,
+        label: &str,
+        from_node: u128,
+        to_node: u128,
+        props: Vec<(&str, Value)>,
+    ) -> Edge<'arena> {
+        let label_ref = arena.alloc_str(label);
+
+        if props.is_empty() {
+            Edge {
+                id,
+                label: label_ref,
+                version: 0,
+                from_node,
+                to_node,
+                properties: None,
+            }
+        } else {
+            let len = props.len();
+            let props_iter = props.into_iter().map(|(k, v)| {
+                let key: &'arena str = arena.alloc_str(k);
+                (key, v)
+            });
+
+            let props_map = ImmutablePropertiesMap::new(len, props_iter, arena);
+
+            Edge {
+                id,
+                label: label_ref,
+                version: 0,
+                from_node,
+                to_node,
+                properties: Some(props_map),
+            }
+        }
+    }
+
+    /// Helper to create old edge with properties
+    fn create_old_edge_with_props(
+        id: u128,
+        label: &str,
+        from_node: u128,
+        to_node: u128,
+        props: Vec<(&str, Value)>,
+    ) -> OldEdge {
+        let properties = if props.is_empty() {
+            None
+        } else {
+            let mut map = HashMap::new();
+            for (k, v) in props {
+                map.insert(k.to_string(), v);
+            }
+            Some(map)
+        };
+
+        OldEdge {
+            id,
+            label: label.to_string(),
+            version: 0,
+            from_node,
+            to_node,
+            properties,
+        }
+    }
+
+    // Helper function to compare Values recursively, ignoring HashMap order
+    fn values_equal(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Empty, Value::Empty) => true,
+            (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::I8(a), Value::I8(b)) => a == b,
+            (Value::I16(a), Value::I16(b)) => a == b,
+            (Value::I32(a), Value::I32(b)) => a == b,
+            (Value::I64(a), Value::I64(b)) => a == b,
+            (Value::U8(a), Value::U8(b)) => a == b,
+            (Value::U16(a), Value::U16(b)) => a == b,
+            (Value::U32(a), Value::U32(b)) => a == b,
+            (Value::U64(a), Value::U64(b)) => a == b,
+            (Value::U128(a), Value::U128(b)) => a == b,
+            (Value::F32(a), Value::F32(b)) => (a.is_nan() && b.is_nan()) || a == b,
+            (Value::F64(a), Value::F64(b)) => (a.is_nan() && b.is_nan()) || a == b,
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| values_equal(x, y))
+            }
+            (Value::Object(a), Value::Object(b)) => {
+                a.len() == b.len() && a.iter().all(|(k, v)| b.get(k).map_or(false, |bv| values_equal(v, bv)))
+            }
+            (Value::Date(a), Value::Date(b)) => a == b,
+            (Value::Id(a), Value::Id(b)) => a == b,
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn test_edge_serialization_empty_properties() {
+        let arena = Bump::new();
+        let id = 1000u128;
+        let from_node = 100u128;
+        let to_node = 200u128;
+
+        let old_edge = OldEdge {
+            id,
+            label: "KNOWS".to_string(),
+            version: 0,
+            from_node,
+            to_node,
+            properties: None,
+        };
+
+        let new_edge = Edge {
+            id,
+            label: arena.alloc_str("KNOWS"),
+            version: 0,
+            from_node,
+            to_node,
+            properties: None,
+        };
+
+        let old_bytes = bincode::serialize(&old_edge).unwrap();
+        let new_bytes = bincode::serialize(&new_edge).unwrap();
+
+        // Bytes should be IDENTICAL
+        assert_eq!(
+            old_bytes, new_bytes,
+            "Serialized bytes differ for empty properties!"
+        );
+
+        // Test that new format can deserialize its own output
+        let arena2 = Bump::new();
+        let deserialized = Edge::from_bincode_bytes(id, &new_bytes, &arena2).unwrap();
+
+        assert_eq!(deserialized.id, id);
+        assert_eq!(deserialized.label, "KNOWS");
+        assert_eq!(deserialized.version, 0);
+        assert_eq!(deserialized.from_node, from_node);
+        assert_eq!(deserialized.to_node, to_node);
+        assert!(deserialized.properties.is_none());
+    }
+
+    #[test]
+    fn test_edge_serialization_with_properties() {
+        let arena = Bump::new();
+        let id = 2000u128;
+        let from_node = 100u128;
+        let to_node = 200u128;
+
+        let props = vec![
+            ("weight", Value::F64(0.8)),
+            ("type", Value::String("friend".to_string())),
+            ("since", Value::I32(2020)),
+        ];
+
+        let old_edge = create_old_edge_with_props(id, "KNOWS", from_node, to_node, props.clone());
+        let new_edge = create_arena_edge_with_props(&arena, id, "KNOWS", from_node, to_node, props);
+
+        let old_bytes = bincode::serialize(&old_edge).unwrap();
+        let new_bytes = bincode::serialize(&new_edge).unwrap();
+
+        // Deserialize both and compare semantically
+        let arena2 = Bump::new();
+        let arena3 = Bump::new();
+
+        let deserialized_old = Edge::from_bincode_bytes(id, &old_bytes, &arena2).unwrap();
+        let deserialized_new = Edge::from_bincode_bytes(id, &new_bytes, &arena3).unwrap();
+
+        assert_eq!(deserialized_old.id, id);
+        assert_eq!(deserialized_new.id, id);
+        assert_eq!(deserialized_old.label, "KNOWS");
+        assert_eq!(deserialized_new.label, "KNOWS");
+        assert_eq!(deserialized_old.from_node, from_node);
+        assert_eq!(deserialized_new.from_node, from_node);
+        assert_eq!(deserialized_old.to_node, to_node);
+        assert_eq!(deserialized_new.to_node, to_node);
+
+        let old_props = deserialized_old.properties.unwrap();
+        let new_props = deserialized_new.properties.unwrap();
+        assert_eq!(old_props.len(), new_props.len());
+
+        // Check semantic equality (order may differ)
+        for (key, old_value) in old_props.iter() {
+            let new_value = new_props.get(key).expect(&format!("Missing key: {}", key));
+            assert!(values_equal(old_value, new_value), "Value mismatch for key {}", key);
+        }
+    }
+
+    #[test]
+    fn test_edge_roundtrip_serialization() {
+        let arena = Bump::new();
+        let id = 3000u128;
+        let from_node = 100u128;
+        let to_node = 200u128;
+
+        let props = vec![
+            ("confidence", Value::F64(0.95)),
+            ("verified", Value::Boolean(true)),
+        ];
+
+        let original = create_arena_edge_with_props(&arena, id, "RELATED_TO", from_node, to_node, props);
+        let bytes = bincode::serialize(&original).unwrap();
+
+        let arena2 = Bump::new();
+        let deserialized = Edge::from_bincode_bytes(id, &bytes, &arena2).unwrap();
+
+        assert_eq!(deserialized.id, original.id);
+        assert_eq!(deserialized.label, original.label);
+        assert_eq!(deserialized.version, original.version);
+        assert_eq!(deserialized.from_node, original.from_node);
+        assert_eq!(deserialized.to_node, original.to_node);
+
+        let original_props = original.properties.unwrap();
+        let deserialized_props = deserialized.properties.unwrap();
+
+        assert_eq!(original_props.len(), deserialized_props.len());
+        for (key, value) in original_props.iter() {
+            assert_eq!(deserialized_props.get(key), Some(value));
+        }
+    }
+
+    #[test]
+    fn test_edge_deserialization_from_old_format() {
+        let id = 4000u128;
+        let from_node = 100u128;
+        let to_node = 200u128;
+
+        let props = vec![
+            ("strength", Value::I32(5)),
+            ("label_text", Value::String("connection".to_string())),
+        ];
+
+        let old_edge = create_old_edge_with_props(id, "CONNECTS", from_node, to_node, props);
+        let old_bytes = bincode::serialize(&old_edge).unwrap();
+
+        // New format should deserialize old format
+        let arena = Bump::new();
+        let deserialized = Edge::from_bincode_bytes(id, &old_bytes, &arena).unwrap();
+
+        assert_eq!(deserialized.id, id);
+        assert_eq!(deserialized.label, "CONNECTS");
+        assert_eq!(deserialized.version, 0);
+        assert_eq!(deserialized.from_node, from_node);
+        assert_eq!(deserialized.to_node, to_node);
+
+        let props = deserialized.properties.unwrap();
+        assert_eq!(props.len(), 2);
+        assert_eq!(props.get("strength"), Some(&Value::I32(5)));
+        assert_eq!(props.get("label_text"), Some(&Value::String("connection".to_string())));
+    }
+
+    #[test]
+    fn test_edge_with_nested_values() {
+        let arena = Bump::new();
+        let id = 5000u128;
+        let from_node = 100u128;
+        let to_node = 200u128;
+
+        let props = vec![
+            ("metadata", {
+                let mut map = HashMap::new();
+                map.insert("created_by".to_string(), Value::String("system".to_string()));
+                map.insert("timestamp".to_string(), Value::I64(1234567890));
+                Value::Object(map)
+            }),
+            ("tags", Value::Array(vec![
+                Value::String("important".to_string()),
+                Value::String("verified".to_string()),
+            ])),
+        ];
+
+        let old_edge = create_old_edge_with_props(id, "HAS_TAG", from_node, to_node, props.clone());
+        let new_edge = create_arena_edge_with_props(&arena, id, "HAS_TAG", from_node, to_node, props);
+
+        let old_bytes = bincode::serialize(&old_edge).unwrap();
+        let new_bytes = bincode::serialize(&new_edge).unwrap();
+
+        // Deserialize and compare semantically
+        let arena2 = Bump::new();
+        let arena3 = Bump::new();
+
+        let deserialized_old = Edge::from_bincode_bytes(id, &old_bytes, &arena2).unwrap();
+        let deserialized_new = Edge::from_bincode_bytes(id, &new_bytes, &arena3).unwrap();
+
+        let old_props = deserialized_old.properties.unwrap();
+        let new_props = deserialized_new.properties.unwrap();
+        assert_eq!(old_props.len(), new_props.len());
+
+        // Compare nested values
+        for (key, old_value) in old_props.iter() {
+            let new_value = new_props.get(key).expect(&format!("Missing key: {}", key));
+            assert!(values_equal(old_value, new_value), "Value mismatch for key {}: {:?} != {:?}", key, old_value, new_value);
+        }
+    }
+
+    #[test]
+    fn test_edge_with_many_properties() {
+        let arena = Bump::new();
+        let id = 6000u128;
+        let from_node = 100u128;
+        let to_node = 200u128;
+
+        // Create edge with 20 properties
+        let props: Vec<(&str, Value)> = (0..20)
+            .map(|i| {
+                (
+                    Box::leak(format!("prop_{}", i).into_boxed_str()) as &str,
+                    Value::I32(i),
+                )
+            })
+            .collect();
+
+        let new_edge = create_arena_edge_with_props(&arena, id, "BULK", from_node, to_node, props);
+        let bytes = bincode::serialize(&new_edge).unwrap();
+
+        let arena2 = Bump::new();
+        let deserialized = Edge::from_bincode_bytes(id, &bytes, &arena2).unwrap();
+
+        let props = deserialized.properties.unwrap();
+        assert_eq!(props.len(), 20);
+
+        // Verify all properties are present
+        for i in 0..20 {
+            let key = format!("prop_{}", i);
+            assert_eq!(props.get(&key), Some(&Value::I32(i)), "Property {} mismatch", key);
+        }
+    }
+
+    #[test]
+    fn test_edge_byte_level_comparison_empty() {
+        let arena = Bump::new();
+        let id = 7000u128;
+        let from_node = 100u128;
+        let to_node = 200u128;
+
+        let old_edge = OldEdge {
+            id,
+            label: "LINKS".to_string(),
+            version: 0,
+            from_node,
+            to_node,
+            properties: None,
+        };
+
+        let new_edge = Edge {
+            id,
+            label: arena.alloc_str("LINKS"),
+            version: 0,
+            from_node,
+            to_node,
+            properties: None,
+        };
+
+        let old_bytes = bincode::serialize(&old_edge).unwrap();
+        let new_bytes = bincode::serialize(&new_edge).unwrap();
+
+        println!("\n=== EDGE EMPTY PROPERTIES COMPARISON ===");
+        println!("Old bytes ({} total): {:02x?}", old_bytes.len(), old_bytes);
+        println!("New bytes ({} total): {:02x?}", new_bytes.len(), new_bytes);
+
+        // Detailed analysis
+        println!("\nByte-by-byte comparison:");
+        for (i, (old_byte, new_byte)) in old_bytes.iter().zip(new_bytes.iter()).enumerate() {
+            if old_byte != new_byte {
+                println!("  Index {}: old={:02x} ({}), new={:02x} ({})",
+                    i, old_byte, old_byte, new_byte, new_byte);
+            }
+        }
+
+        // Bytes should be IDENTICAL
+        assert_eq!(
+            old_bytes, new_bytes,
+            "Serialized bytes differ for empty properties!"
+        );
+    }
+
+    #[test]
+    fn test_edge_with_utf8_labels_and_properties() {
+        let arena = Bump::new();
+        let id = 8000u128;
+        let from_node = 100u128;
+        let to_node = 200u128;
+
+        let props = vec![
+            ("名前", Value::String("太郎".to_string())),
+            ("emoji", Value::String("🔗".to_string())),
+        ];
+
+        let new_edge = create_arena_edge_with_props(&arena, id, "繋がり", from_node, to_node, props);
+        let bytes = bincode::serialize(&new_edge).unwrap();
+
+        let arena2 = Bump::new();
+        let deserialized = Edge::from_bincode_bytes(id, &bytes, &arena2).unwrap();
+
+        assert_eq!(deserialized.label, "繋がり");
+        let props = deserialized.properties.unwrap();
+        assert_eq!(props.get("名前"), Some(&Value::String("太郎".to_string())));
+        assert_eq!(props.get("emoji"), Some(&Value::String("🔗".to_string())));
+    }
+
+    #[test]
+    fn test_edge_with_version() {
+        let arena = Bump::new();
+        let id = 9000u128;
+        let from_node = 100u128;
+        let to_node = 200u128;
+
+        let edge = Edge {
+            id,
+            label: arena.alloc_str("VERSIONED"),
+            version: 42,
+            from_node,
+            to_node,
+            properties: None,
+        };
+
+        let bytes = bincode::serialize(&edge).unwrap();
+
+        let arena2 = Bump::new();
+        let deserialized = Edge::from_bincode_bytes(id, &bytes, &arena2).unwrap();
+
+        assert_eq!(deserialized.version, 42);
+    }
+}
