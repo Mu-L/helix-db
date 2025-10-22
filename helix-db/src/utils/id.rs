@@ -330,12 +330,14 @@ mod tests {
     #[test]
     fn test_uuid_str_basic() {
         let arena = bumpalo::Bump::new();
-        let id: u128 = 41952608301383512591196716612430495561;
+
+        let expected_uuid = "1f07ae4b-e354-6660-b5f0-fd3ce8bc4b49";
+        let id: u128 = uuid::Uuid::parse_str(expected_uuid).unwrap().as_u128();
 
         let uuid_string = uuid_str(id, &arena);
 
         // Verify it returns the correct UUID string
-        assert_eq!(uuid_string, "1f07ae4b-e354-6660-b5f0-fd3ce8bc4b49");
+        assert_eq!(uuid_string, expected_uuid);
         // Verify it's exactly 36 characters (standard UUID format)
         assert_eq!(uuid_string.len(), 36);
     }
@@ -470,10 +472,7 @@ mod tests {
 
         // Verify the hex digits are lowercase
         for c in uuid_string.chars().filter(|&c| c != '-') {
-            assert!(
-                !c.is_uppercase(),
-                "UUID should use lowercase hex digits"
-            );
+            assert!(!c.is_uppercase(), "UUID should use lowercase hex digits");
         }
     }
 
