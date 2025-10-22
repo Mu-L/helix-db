@@ -2,34 +2,27 @@ use crate::{
     helix_engine::{
         storage_core::HelixGraphStorage,
         traversal_core::{
-            ops::{
-                g::G,
-                util::{aggregate::AggregateAdapter, group_by::GroupByAdapter},
-            },
+            ops::util::{aggregate::AggregateAdapter, group_by::GroupByAdapter},
             traversal_value::TraversalValue,
         },
         types::GraphError,
     },
-    helix_gateway::mcp::tools::ToolArgs,
-    protocol::{Format, Request, Response, return_values::ReturnValue},
+    helix_gateway::mcp::tools::{execute_query_chain, ToolArgs},
+    protocol::{Format, Request, Response},
     utils::id::v6_uuid,
 };
+use bumpalo::Bump;
 use helix_macros::mcp_handler;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
-    vec::IntoIter,
 };
+
+pub type QueryStep = ToolArgs;
 
 pub struct McpConnections {
     pub connections: HashMap<String, MCPConnection>,
-}
-
-impl Default for McpConnections {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl McpConnections {
@@ -38,11 +31,13 @@ impl McpConnections {
             connections: HashMap::new(),
         }
     }
+
     pub fn new_with_max_connections(max_connections: usize) -> Self {
         Self {
             connections: HashMap::with_capacity(max_connections),
         }
     }
+
     pub fn add_connection(&mut self, connection: MCPConnection) {
         self.connections
             .insert(connection.connection_id.clone(), connection);
@@ -59,13 +54,22 @@ impl McpConnections {
     pub fn get_connection_mut(&mut self, connection_id: &str) -> Option<&mut MCPConnection> {
         self.connections.get_mut(connection_id)
     }
+}
 
-    pub fn get_connection_owned(&mut self, connection_id: &str) -> Option<MCPConnection> {
-        self.connections.remove(connection_id)
+impl Default for McpConnections {
+    fn default() -> Self {
+        Self::new()
     }
 }
+
 pub struct McpBackend {
     pub db: Arc<HelixGraphStorage>,
+}
+
+impl McpBackend {
+    pub fn new(db: Arc<HelixGraphStorage>) -> Self {
+        Self { db }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,22 +85,51 @@ pub struct ResourceCallRequest {
     pub connection_id: String,
 }
 
-impl McpBackend {
-    pub fn new(db: Arc<HelixGraphStorage>) -> Self {
-        Self { db }
-    }
-}
-
 pub struct MCPConnection {
     pub connection_id: String,
-    pub iter: IntoIter<TraversalValue>,
+    pub query_chain: Vec<QueryStep>,
+    pub current_position: usize,
 }
 
 impl MCPConnection {
-    pub fn new(connection_id: String, iter: IntoIter<TraversalValue>) -> Self {
+    pub fn new(connection_id: String) -> Self {
         Self {
             connection_id,
-            iter,
+            query_chain: Vec::new(),
+            current_position: 0,
+        }
+    }
+
+    pub fn add_query_step(&mut self, step: QueryStep) {
+        self.query_chain.push(step);
+        self.current_position = 0;
+    }
+
+    pub fn reset_position(&mut self) {
+        self.current_position = 0;
+    }
+
+    pub fn clear_chain(&mut self) {
+        self.query_chain.clear();
+        self.reset_position();
+    }
+
+    pub fn next_item<'db, 'arena>(
+        &mut self,
+        db: &'db HelixGraphStorage,
+        arena: &'arena Bump,
+    ) -> Result<TraversalValue<'arena>, GraphError>
+    where
+        'db: 'arena,
+    {
+        let txn = db.graph_env.read_txn()?;
+        let stream = execute_query_chain(&self.query_chain, db, &txn, arena)?;
+        match stream.nth(self.current_position)? {
+            Some(value) => {
+                self.current_position += 1;
+                Ok(value)
+            }
+            None => Ok(TraversalValue::Empty),
         }
     }
 }
@@ -108,10 +141,8 @@ pub struct MCPToolInput {
     pub schema: Option<String>,
 }
 
-// basic type for function pointer
 pub type BasicMCPHandlerFn = for<'a> fn(&'a mut MCPToolInput) -> Result<Response, GraphError>;
 
-// thread safe type for multi threaded use
 pub type MCPHandlerFn =
     Arc<dyn for<'a> Fn(&'a mut MCPToolInput) -> Result<Response, GraphError> + Send + Sync>;
 
@@ -142,12 +173,44 @@ pub struct InitRequest {
 pub fn init(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let connection_id = uuid::Uuid::from_u128(v6_uuid()).to_string();
     let mut connections = input.mcp_connections.lock().unwrap();
-    connections.add_connection(MCPConnection::new(
-        connection_id.clone(),
-        vec![].into_iter(),
-    ));
+    connections.add_connection(MCPConnection::new(connection_id.clone()));
     drop(connections);
-    Ok(Format::Json.create_response(&ReturnValue::from(connection_id)))
+    Ok(Format::Json.create_response(&connection_id))
+}
+
+#[mcp_handler]
+pub fn tool_call(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+    let data: ToolCallRequest = match sonic_rs::from_slice(&input.request.body) {
+        Ok(data) => data,
+        Err(err) => return Err(GraphError::from(err)),
+    };
+
+    let mut connections = input.mcp_connections.lock().unwrap();
+    let mut connection = connections
+        .remove_connection(&data.connection_id)
+        .ok_or_else(|| GraphError::StorageError("Connection not found".to_string()))?;
+    drop(connections);
+
+    connection.add_query_step(data.tool);
+
+    let arena = Bump::new();
+    let storage = input.mcp_backend.db.as_ref();
+    let txn = storage.graph_env.read_txn()?;
+    let stream = execute_query_chain(&connection.query_chain, storage, &txn, &arena)?;
+    let mut iter = stream.into_iter();
+
+    let (first, consumed_one) = match iter.next() {
+        Some(value) => (value?, true),
+        None => (TraversalValue::Empty, false),
+    };
+
+    connection.current_position = if consumed_one { 1 } else { 0 };
+
+    let mut connections = input.mcp_connections.lock().unwrap();
+    connections.add_connection(connection);
+    drop(connections);
+
+    Ok(Format::Json.create_response(&first))
 }
 
 #[derive(Deserialize)]
@@ -159,23 +222,24 @@ pub struct NextRequest {
 pub fn next(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let data: NextRequest = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
-        Err(e) => return Err(GraphError::from(e)),
+        Err(err) => return Err(GraphError::from(err)),
     };
 
     let mut connections = input.mcp_connections.lock().unwrap();
-    let connection = match connections.get_connection_mut(&data.connection_id) {
-        Some(conn) => conn,
-        None => return Err(GraphError::StorageError("Connection not found".to_string())),
-    };
-
-    let next = connection
-        .iter
-        .next()
-        .unwrap_or(TraversalValue::Empty)
-        .clone();
+    let mut connection = connections
+        .remove_connection(&data.connection_id)
+        .ok_or_else(|| GraphError::StorageError("Connection not found".to_string()))?;
     drop(connections);
 
-    Ok(Format::Json.create_response(&ReturnValue::from(next)))
+    let arena = Bump::new();
+    let storage = input.mcp_backend.db.as_ref();
+    let next = connection.next_item(storage, &arena)?;
+
+    let mut connections = input.mcp_connections.lock().unwrap();
+    connections.add_connection(connection);
+    drop(connections);
+
+    Ok(Format::Json.create_response(&next))
 }
 
 #[derive(Deserialize)]
@@ -195,40 +259,51 @@ pub struct CollectRequest {
 pub fn collect(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let data: CollectRequest = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
-        Err(e) => return Err(GraphError::from(e)),
+        Err(err) => return Err(GraphError::from(err)),
     };
 
     let mut connections = input.mcp_connections.lock().unwrap();
-    let connection = match connections.get_connection_owned(&data.connection_id) {
-        Some(conn) => conn,
-        None => return Err(GraphError::StorageError("Connection not found".to_string())),
-    };
+    let connection = connections
+        .remove_connection(&data.connection_id)
+        .ok_or_else(|| GraphError::StorageError("Connection not found".to_string()))?;
     drop(connections);
 
-    let values = match data.range {
-        Some(range) => connection
-            .iter
-            .clone()
-            .skip(range.start)
-            .take(range.end - range.start)
-            .collect::<Vec<TraversalValue>>(),
-        None => connection.iter.clone().collect::<Vec<TraversalValue>>(),
-    };
+    let arena = Bump::new();
+    let storage = input.mcp_backend.db.as_ref();
+    let txn = storage.graph_env.read_txn()?;
+    let stream = execute_query_chain(&connection.query_chain, storage, &txn, &arena)?;
+    let mut iter = stream.into_iter();
+
+    let mut index = 0usize;
+    let range = data.range;
+    let start = range.as_ref().map(|r| r.start).unwrap_or(0);
+    let end = range.as_ref().map(|r| r.end);
+
+    let mut values = Vec::new();
+    while let Some(item) = iter.next() {
+        let item = item?;
+        if index >= start {
+            if let Some(end) = end {
+                if index >= end {
+                    break;
+                }
+            }
+            values.push(item);
+        }
+        index += 1;
+    }
 
     let mut connections = input.mcp_connections.lock().unwrap();
 
     if data.drop.unwrap_or(true) {
-        connections.add_connection(MCPConnection::new(
-            connection.connection_id.clone(),
-            vec![].into_iter(),
-        ));
+        connections.add_connection(MCPConnection::new(connection.connection_id.clone()));
     } else {
         connections.add_connection(connection);
     }
 
     drop(connections);
 
-    Ok(Format::Json.create_response(&ReturnValue::from(values)))
+    Ok(Format::Json.create_response(&values))
 }
 
 #[derive(Deserialize)]
@@ -237,79 +312,73 @@ pub struct AggregateRequest {
     properties: Vec<String>,
     pub drop: Option<bool>,
 }
+
 #[mcp_handler]
 pub fn aggregate_by(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let data: AggregateRequest = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
-        Err(e) => return Err(GraphError::from(e)),
+        Err(err) => return Err(GraphError::from(err)),
     };
 
     let mut connections = input.mcp_connections.lock().unwrap();
-    let connection = match connections.get_connection_owned(&data.connection_id) {
-        Some(conn) => conn,
-        None => return Err(GraphError::StorageError("Connection not found".to_string())),
-    };
+    let connection = connections
+        .remove_connection(&data.connection_id)
+        .ok_or_else(|| GraphError::StorageError("Connection not found".to_string()))?;
     drop(connections);
 
-    let iter = connection.iter.clone().collect::<Vec<_>>();
-    let db = Arc::clone(&input.mcp_backend.db);
-    let txn = input.mcp_backend.db.graph_env.read_txn()?;
+    let arena = Bump::new();
+    let storage = input.mcp_backend.db.as_ref();
+    let txn = storage.graph_env.read_txn()?;
+    let stream = execute_query_chain(&connection.query_chain, storage, &txn, &arena)?;
 
-    let values = G::new_from(db, &txn, iter)
+    let aggregation = stream
+        .into_ro()
         .aggregate_by(&data.properties, true)?
         .into_count();
 
     let mut connections = input.mcp_connections.lock().unwrap();
-
     if data.drop.unwrap_or(true) {
-        connections.add_connection(MCPConnection::new(
-            connection.connection_id.clone(),
-            vec![].into_iter(),
-        ));
+        connections.add_connection(MCPConnection::new(connection.connection_id.clone()));
     } else {
         connections.add_connection(connection);
     }
-
     drop(connections);
 
-    Ok(Format::Json.create_response(&ReturnValue::from(values)))
+    Ok(Format::Json.create_response(&aggregation))
 }
+
 #[mcp_handler]
 pub fn group_by(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let data: AggregateRequest = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
-        Err(e) => return Err(GraphError::from(e)),
+        Err(err) => return Err(GraphError::from(err)),
     };
 
     let mut connections = input.mcp_connections.lock().unwrap();
-    let connection = match connections.get_connection_owned(&data.connection_id) {
-        Some(conn) => conn,
-        None => return Err(GraphError::StorageError("Connection not found".to_string())),
-    };
+    let connection = connections
+        .remove_connection(&data.connection_id)
+        .ok_or_else(|| GraphError::StorageError("Connection not found".to_string()))?;
     drop(connections);
 
-    let iter = connection.iter.clone().collect::<Vec<_>>();
-    let db = Arc::clone(&input.mcp_backend.db);
-    let txn = input.mcp_backend.db.graph_env.read_txn()?;
+    let arena = Bump::new();
+    let storage = input.mcp_backend.db.as_ref();
+    let txn = storage.graph_env.read_txn()?;
+    let stream = execute_query_chain(&connection.query_chain, storage, &txn, &arena)?;
 
-    let values = G::new_from(db, &txn, iter)
+    let aggregation = stream
+        .into_ro()
         .group_by(&data.properties, true)?
         .into_count();
 
     let mut connections = input.mcp_connections.lock().unwrap();
-
     if data.drop.unwrap_or(true) {
-        connections.add_connection(MCPConnection::new(
-            connection.connection_id.clone(),
-            vec![].into_iter(),
-        ));
+        connections.add_connection(MCPConnection::new(connection.connection_id.clone()));
     } else {
         connections.add_connection(connection);
     }
-
     drop(connections);
 
-    Ok(Format::Json.create_response(&ReturnValue::from(values)))
+    Ok(Format::Json.create_response(&aggregation))
 }
 
 #[derive(Deserialize)]
@@ -321,48 +390,37 @@ pub struct ResetRequest {
 pub fn reset(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let data: ResetRequest = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
-        Err(e) => return Err(GraphError::from(e)),
+        Err(err) => return Err(GraphError::from(err)),
     };
 
     let mut connections = input.mcp_connections.lock().unwrap();
-    let connection = match connections.get_connection_owned(&data.connection_id) {
-        Some(conn) => conn,
-        None => return Err(GraphError::StorageError("Connection not found".to_string())),
-    };
-    let connection_id = connection.connection_id.to_string();
+    let connection = connections
+        .remove_connection(&data.connection_id)
+        .ok_or_else(|| GraphError::StorageError("Connection not found".to_string()))?;
+    let connection_id = connection.connection_id.clone();
 
-    connections.add_connection(MCPConnection::new(
-        connection.connection_id.clone(),
-        vec![].into_iter(),
-    ));
-
+    connections.add_connection(MCPConnection::new(connection_id.clone()));
     drop(connections);
 
-    Ok(Format::Json.create_response(&ReturnValue::from(connection_id)))
+    Ok(Format::Json.create_response(&connection_id))
 }
 
 #[mcp_handler]
 pub fn schema_resource(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let data: ResourceCallRequest = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
-        Err(e) => return Err(GraphError::from(e)),
+        Err(err) => return Err(GraphError::from(err)),
     };
 
-    let _ = match input
-        .mcp_connections
-        .lock()
-        .unwrap()
-        .get_connection(&data.connection_id)
-    {
-        Some(conn) => conn,
-        None => return Err(GraphError::StorageError("Connection not found".to_string())),
-    };
+    let connections = input.mcp_connections.lock().unwrap();
+    if !connections.connections.contains_key(&data.connection_id) {
+        return Err(GraphError::StorageError("Connection not found".to_string()));
+    }
+    drop(connections);
 
-    if input.schema.is_some() {
-        Ok(Format::Json.create_response(&ReturnValue::from(
-            input.schema.as_ref().expect("Schema not found").to_string(),
-        )))
+    if let Some(schema) = &input.schema {
+        Ok(Format::Json.create_response(&schema.clone()))
     } else {
-        Ok(Format::Json.create_response(&ReturnValue::from("no schema".to_string())))
+        Ok(Format::Json.create_response(&"no schema".to_string()))
     }
 }

@@ -35,7 +35,7 @@ impl G {
         'db,
         'arena,
         'txn,
-        impl Iterator<Item = Result<Variable<'arena>, GraphError>>,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     >
     where
         Self: Sized,
@@ -44,7 +44,7 @@ impl G {
             storage,
             txn,
             arena,
-            inner: std::iter::once(Ok(Cow::Owned(TraversalValue::Empty))),
+            inner: std::iter::once(Ok(TraversalValue::Empty)),
         }
     }
 
@@ -66,13 +66,13 @@ impl G {
     pub fn from_iter<'db, 'arena, 'txn>(
         storage: &'db HelixGraphStorage,
         txn: &'txn RoTxn<'db>,
-        items: impl Iterator<Item = Cow<'arena, TraversalValue<'arena>>>,
+        items: impl Iterator<Item = TraversalValue<'arena>>,
         arena: &'arena bumpalo::Bump,
     ) -> RoTraversalIterator<
         'db,
         'arena,
         'txn,
-        impl Iterator<Item = Result<Variable<'arena>, GraphError>>,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
         RoTraversalIterator {
             inner: items.map(Ok),

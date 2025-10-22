@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::{
     helix_engine::vector_core::{vector::HVector, vector_without_data::VectorWithoutData},
     protocol::value::Value,
@@ -10,7 +12,7 @@ use std::{borrow::Cow, hash::Hash};
 
 pub type Variable<'arena> = Cow<'arena, TraversalValue<'arena>>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum TraversalValue<'arena> {
     /// A node in the graph
     Node(Node<'arena>),

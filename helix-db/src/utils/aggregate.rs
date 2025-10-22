@@ -1,14 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
+use serde::Serialize;
+
 use crate::helix_engine::traversal_core::traversal_value::TraversalValue;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize)]
 pub struct AggregateItem<'arena> {
     pub values: HashSet<TraversalValue<'arena>>,
     pub count: i32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub enum Aggregate<'arena> {
     Group(HashMap<String, AggregateItem<'arena>>),
     Count(HashMap<String, AggregateItem<'arena>>),
