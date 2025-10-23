@@ -1,6 +1,6 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
-use crate::helixc::analyzer::utils::{DEFAULT_VAR_NAME, is_in_scope};
+use crate::helixc::analyzer::utils::{DEFAULT_VAR_NAME, is_in_scope, VariableInfo};
 use crate::helixc::generator::utils::EmbedData;
 use crate::{
     generate_error,
@@ -53,7 +53,7 @@ use std::collections::HashMap;
 pub(crate) fn infer_expr_type<'a>(
     ctx: &mut Ctx<'a>,
     expression: &'a Expression,
-    scope: &mut HashMap<&'a str, Type>,
+    scope: &mut HashMap<&'a str, VariableInfo>,
     original_query: &'a Query,
     parent_ty: Option<Type>,
     gen_query: &mut GeneratedQuery,
@@ -64,8 +64,8 @@ pub(crate) fn infer_expr_type<'a>(
         Identifier(name) => {
             is_valid_identifier(ctx, original_query, expression.loc.clone(), name.as_str());
             match scope.get(name.as_str()) {
-                Some(t) => (
-                    t.clone(),
+                Some(var_info) => (
+                    var_info.ty.clone(),
                     Some(GeneratedStatement::Identifier(GenRef::Std(name.clone()))),
                 ),
 
@@ -212,7 +212,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 value.as_str()
                                             );
                                         } else {
-                                            let variable_type = scope.get(value.as_str()).unwrap();
+                                            let variable_type = &scope.get(value.as_str()).unwrap().ty;
                                             if variable_type
                                                 != &Type::from(
                                                     field_set
@@ -428,7 +428,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 value.as_str()
                                             );
                                         } else {
-                                            let variable_type = scope.get(value.as_str()).unwrap();
+                                            let variable_type = &scope.get(value.as_str()).unwrap().ty;
                                             if variable_type
                                                 != &Type::from(
                                                     field_set
@@ -650,7 +650,7 @@ pub(crate) fn infer_expr_type<'a>(
                                                 value.as_str()
                                             );
                                         } else {
-                                            let variable_type = scope.get(value.as_str()).unwrap();
+                                            let variable_type = &scope.get(value.as_str()).unwrap().ty;
                                             if variable_type
                                                 != &Type::from(
                                                     field_set
@@ -972,7 +972,7 @@ pub(crate) fn infer_expr_type<'a>(
                     }
                     let stmt = stmt.unwrap();
                     let mut gen_traversal = GeneratedTraversal {
-                        traversal_type: TraversalType::NestedFrom(GenRef::Std("v".to_string())),
+                        traversal_type: TraversalType::FromIter(GenRef::Std("v".to_string())),
                         steps: vec![],
                         should_collect: ShouldCollect::ToVec,
                         source_step: Separator::Empty(SourceStep::Anonymous),
@@ -1149,7 +1149,7 @@ pub(crate) fn infer_expr_type<'a>(
                         SourceStep::Identifier(id) => id.inner().clone(),
                         _ => DEFAULT_VAR_NAME.to_string(),
                     };
-                    tr.traversal_type = TraversalType::FromVar(GenRef::Std(source_variable));
+                    tr.traversal_type = TraversalType::FromIter(GenRef::Std(source_variable));
                     tr.should_collect = ShouldCollect::No;
                     tr
                 }

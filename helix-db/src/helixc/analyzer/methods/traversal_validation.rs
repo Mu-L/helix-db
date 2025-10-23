@@ -1,5 +1,7 @@
 use crate::helixc::analyzer::error_codes::*;
-use crate::helixc::analyzer::utils::{check_identifier_is_fieldtype, DEFAULT_VAR_NAME};
+use crate::helixc::analyzer::utils::{
+    DEFAULT_VAR_NAME, VariableInfo, check_identifier_is_fieldtype,
+};
 use crate::helixc::generator::bool_ops::{Contains, IsIn};
 use crate::helixc::generator::source_steps::{SearchVector, VFromID, VFromType};
 use crate::helixc::generator::traversal_steps::{AggregateBy, GroupBy};
@@ -22,7 +24,6 @@ use crate::{
         },
         generator::{
             bool_ops::{BoExp, BoolOp, Eq, Gt, Gte, Lt, Lte, Neq},
-            object_remappings::{ExcludeField, Remapping, RemappingType},
             queries::Query as GeneratedQuery,
             source_steps::{EFromID, EFromType, NFromID, NFromIndex, NFromType, SourceStep},
             statements::Statement as GeneratedStatement,
@@ -50,7 +51,7 @@ use std::collections::HashMap;
 pub(crate) fn validate_traversal<'a>(
     ctx: &mut Ctx<'a>,
     tr: &'a Traversal,
-    scope: &mut HashMap<&'a str, Type>,
+    scope: &mut HashMap<&'a str, VariableInfo>,
     original_query: &'a Query,
     parent_ty: Option<Type>,
     gen_traversal: &mut GeneratedTraversal,
@@ -313,6 +314,7 @@ pub(crate) fn validate_traversal<'a>(
             if let Some(ids) = ids {
                 assert!(ids.len() == 1, "multiple ids not supported yet");
                 gen_traversal.source_step = Separator::Period(SourceStep::VFromID(VFromID {
+                    get_vector_data: false,
                     id: match ids.first().cloned() {
                         Some(id) => match id {
                             IdType::Identifier { value: i, loc } => {
@@ -354,6 +356,7 @@ pub(crate) fn validate_traversal<'a>(
             } else {
                 gen_traversal.source_step = Separator::Period(SourceStep::VFromType(VFromType {
                     label: GenRef::Literal(vector_type.clone()),
+                    get_vector_data: false,
                 }));
                 gen_traversal.traversal_type = TraversalType::Ref;
                 Type::Vectors(Some(vector_type.to_string()))
@@ -373,13 +376,16 @@ pub(crate) fn validate_traversal<'a>(
                         );
                         Type::Unknown
                     },
-                    |var_type| {
-                        gen_traversal.traversal_type =
-                            TraversalType::FromVar(GenRef::Std(identifier.clone()));
+                    |var_info| {
+                        gen_traversal.traversal_type = if var_info.is_single {
+                            TraversalType::FromSingle(GenRef::Std(identifier.clone()))
+                        } else {
+                            TraversalType::FromIter(GenRef::Std(identifier.clone()))
+                        };
                         gen_traversal.source_step = Separator::Empty(SourceStep::Identifier(
                             GenRef::Std(identifier.clone()),
                         ));
-                        var_type.clone()
+                        var_info.ty.clone()
                     },
                 ),
                 false => Type::Unknown,
@@ -389,7 +395,7 @@ pub(crate) fn validate_traversal<'a>(
         StartNode::Anonymous => {
             let parent = parent_ty.clone().unwrap();
             gen_traversal.traversal_type =
-                TraversalType::FromVar(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
+                TraversalType::FromSingle(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
             gen_traversal.source_step = Separator::Empty(SourceStep::Anonymous);
             parent
         }
@@ -620,35 +626,21 @@ pub(crate) fn validate_traversal<'a>(
                 for (_, key) in &ex.fields {
                     excluded.insert(key.as_str(), ex.loc.clone());
                 }
-                gen_traversal
-                    .steps
-                    .push(Separator::Period(GeneratedStep::Remapping(Remapping {
-                        variable_name: DEFAULT_VAR_NAME.to_string(),
-                        is_inner: false,
-                        should_spread: false,
-                        remappings: vec![RemappingType::ExcludeField(ExcludeField {
-                            variable_name: DEFAULT_VAR_NAME.to_string(),
-                            fields_to_exclude: ex
-                                .fields
-                                .iter()
-                                .map(|(_, field)| GenRef::Literal(field.clone()))
-                                .collect(),
-                        })],
-                    })));
+                // Note: Exclude functionality is no longer supported in the new architecture
+                // Fields are explicitly selected rather than excluded
             }
 
             StepType::Object(obj) => {
+                // For intermediate object steps, we don't track fields for return values
+                // Fields are only tracked when this traversal is used in a RETURN statement
+                let mut fields_out = vec![];
                 cur_ty = validate_object(
                     ctx,
                     &cur_ty,
-                    tr,
                     obj,
-                    &excluded,
                     original_query,
                     gen_traversal,
-                    gen_query,
-                    scope,
-                    None,
+                    &mut fields_out,
                 );
             }
 
@@ -1483,32 +1475,22 @@ pub(crate) fn validate_traversal<'a>(
                     generate_error!(ctx, original_query, cl.loc.clone(), E641);
                 }
                 // Add identifier to a temporary scope so inner uses pass
-                scope.insert(cl.identifier.as_str(), cur_ty.clone()); // If true then already exists so return error
+                scope.insert(
+                    cl.identifier.as_str(),
+                    VariableInfo::new(cur_ty.clone(), false),
+                ); // If true then already exists so return error
                 let obj = &cl.object;
+                let mut fields_out = vec![];
                 cur_ty = validate_object(
                     ctx,
                     &cur_ty,
-                    tr,
                     obj,
-                    &excluded,
                     original_query,
                     gen_traversal,
-                    gen_query,
-                    scope,
-                    Some(Variable::new(cl.identifier.clone(), cur_ty.clone())),
+                    &mut fields_out,
                 );
 
-                // gen_traversal
-                //     .steps
-                //     .push(Separator::Period(GeneratedStep::Remapping(Remapping {
-                //         is_inner: false,
-                //         should_spread: false,
-                //         variable_name: cl.identifier.clone(),
-                //         remappings: (),
-                //     })));
                 scope.remove(cl.identifier.as_str());
-                // gen_traversal.traversal_type =
-                //     TraversalType::Nested(GenRef::Std(var));
             }
         }
         previous_step = Some(step.clone());
@@ -1525,7 +1507,7 @@ pub(crate) fn validate_traversal<'a>(
 #[cfg(test)]
 mod tests {
     use crate::helixc::analyzer::error_codes::ErrorCode;
-    use crate::helixc::parser::{write_to_temp_file, HelixParser};
+    use crate::helixc::parser::{HelixParser, write_to_temp_file};
 
     // ============================================================================
     // Start Node Validation Tests

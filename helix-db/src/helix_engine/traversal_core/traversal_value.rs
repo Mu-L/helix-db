@@ -12,7 +12,7 @@ use std::{borrow::Cow, hash::Hash};
 
 pub type Variable<'arena> = Cow<'arena, TraversalValue<'arena>>;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Debug, Serialize)]
 pub enum TraversalValue<'arena> {
     /// A node in the graph
     Node(Node<'arena>),
@@ -33,6 +33,27 @@ pub enum TraversalValue<'arena> {
     NodeWithScore { node: Node<'arena>, score: f64 },
     /// An empty traversal value
     Empty,
+}
+
+impl<'arena> Clone for TraversalValue<'arena> {
+    fn clone(&self) -> Self {
+        match self {
+            TraversalValue::Node(node) => TraversalValue::Node(*node),
+            TraversalValue::Edge(edge) => TraversalValue::Edge(*edge),
+            TraversalValue::Vector(vector) => TraversalValue::Vector(*vector),
+            TraversalValue::VectorNodeWithoutVectorData(vector) => {
+                TraversalValue::VectorNodeWithoutVectorData(*vector)
+            }
+            TraversalValue::Count(count) => TraversalValue::Count(count.clone()),
+            TraversalValue::Path((nodes, edges)) => TraversalValue::Path((nodes.clone(), edges.clone())),
+            TraversalValue::Value(value) => TraversalValue::Value(value.clone()),
+            TraversalValue::NodeWithScore { node, score } => TraversalValue::NodeWithScore {
+                node: *node,
+                score: *score,
+            },
+            TraversalValue::Empty => TraversalValue::Empty,
+        }
+    }
 }
 
 impl<'arena> TraversalValue<'arena> {
@@ -68,6 +89,7 @@ impl<'arena> TraversalValue<'arena> {
             _ => None,
         }
     }
+
 }
 
 impl Hash for TraversalValue<'_> {

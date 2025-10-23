@@ -17,7 +17,7 @@ use std::{
 };
 /// A flexible value type that can represent various property values in nodes and edges.
 /// Handles both JSON and binary serialisation formats via custom implementaions of the Serialize and Deserialize traits.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum Value {
     String(String),
     F32(f32),
@@ -36,6 +36,7 @@ pub enum Value {
     Id(ID),
     Array(Vec<Value>),
     Object(HashMap<String, Value>),
+    #[default]
     Empty,
 }
 
@@ -1495,6 +1496,15 @@ pub mod casting {
 
 pub trait IntoPrimitive<T> {
     fn into_primitive(&self) -> &T;
+}
+
+impl IntoPrimitive<String> for Value {
+    fn into_primitive(&self) -> &String {
+        match self {
+            Value::String(s) => s,
+            _ => panic!("Value is not a string"),
+        }
+    }
 }
 
 impl IntoPrimitive<i8> for Value {

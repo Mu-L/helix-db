@@ -8,20 +8,121 @@ use crate::helixc::{
         errors::{push_query_err, push_query_warn},
         methods::{infer_expr_type::infer_expr_type, statement_validation::validate_statements},
         types::Type,
-        utils::{gen_identifier_or_param, is_valid_identifier},
+        utils::{is_valid_identifier, VariableInfo},
     },
     generator::{
         queries::{Parameter as GeneratedParameter, Query as GeneratedQuery},
-        return_values::{ReturnValue, ReturnValueExpr},
+        return_values::ReturnValue,
         source_steps::SourceStep,
         statements::Statement as GeneratedStatement,
         traversal_steps::ShouldCollect,
-        utils::{GenRef, GeneratedValue},
     },
     parser::{location::Loc, types::*},
 };
 use paste::paste;
 use std::collections::HashMap;
+
+/// Helper function to get Rust type string from analyzer Type and populate return value fields
+fn type_to_rust_string_and_fields(
+    ty: &Type,
+    should_collect: &ShouldCollect,
+    ctx: &Ctx,
+    field_name: &str,
+) -> (String, Vec<crate::helixc::generator::return_values::ReturnValueField>) {
+    match (ty, should_collect) {
+        // For single nodes/vectors/edges, generate a proper struct based on schema
+        (Type::Node(Some(label)), ShouldCollect::ToObj | ShouldCollect::No) => {
+            let type_name = format!("{}ReturnType", label);
+            let mut fields = vec![
+                crate::helixc::generator::return_values::ReturnValueField {
+                    name: "id".to_string(),
+                    field_type: "ID".to_string(),
+                },
+                crate::helixc::generator::return_values::ReturnValueField {
+                    name: "label".to_string(),
+                    field_type: "String".to_string(),
+                },
+            ];
+
+            // Add properties from schema (skip id and label as they're already added)
+            if let Some(node_fields) = ctx.node_fields.get(label.as_str()) {
+                for (prop_name, field) in node_fields {
+                    if *prop_name != "id" && *prop_name != "label" {
+                        fields.push(crate::helixc::generator::return_values::ReturnValueField {
+                            name: prop_name.to_string(),
+                            field_type: format!("{}", field.field_type),
+                        });
+                    }
+                }
+            }
+            (type_name, fields)
+        }
+        (Type::Edge(Some(label)), ShouldCollect::ToObj | ShouldCollect::No) => {
+            let type_name = format!("{}ReturnType", label);
+            let mut fields = vec![
+                crate::helixc::generator::return_values::ReturnValueField {
+                    name: "id".to_string(),
+                    field_type: "ID".to_string(),
+                },
+                crate::helixc::generator::return_values::ReturnValueField {
+                    name: "label".to_string(),
+                    field_type: "String".to_string(),
+                },
+            ];
+
+            if let Some(edge_fields) = ctx.edge_fields.get(label.as_str()) {
+                for (prop_name, field) in edge_fields {
+                    if *prop_name != "id" && *prop_name != "label" {
+                        fields.push(crate::helixc::generator::return_values::ReturnValueField {
+                            name: prop_name.to_string(),
+                            field_type: format!("{}", field.field_type),
+                        });
+                    }
+                }
+            }
+            (type_name, fields)
+        }
+        (Type::Vector(Some(label)), ShouldCollect::ToObj | ShouldCollect::No) => {
+            let type_name = format!("{}ReturnType", label);
+            let mut fields = vec![
+                crate::helixc::generator::return_values::ReturnValueField {
+                    name: "id".to_string(),
+                    field_type: "ID".to_string(),
+                },
+                crate::helixc::generator::return_values::ReturnValueField {
+                    name: "label".to_string(),
+                    field_type: "String".to_string(),
+                },
+            ];
+
+            if let Some(vector_fields) = ctx.vector_fields.get(label.as_str()) {
+                for (prop_name, field) in vector_fields {
+                    if *prop_name != "id" && *prop_name != "label" {
+                        fields.push(crate::helixc::generator::return_values::ReturnValueField {
+                            name: prop_name.to_string(),
+                            field_type: format!("{}", field.field_type),
+                        });
+                    }
+                }
+            }
+            (type_name, fields)
+        }
+        // For Vec types, we still need Vec<TypeName>
+        (Type::Node(Some(label)), ShouldCollect::ToVec) => (format!("Vec<{}ReturnType>", label), vec![]),
+        (Type::Edge(Some(label)), ShouldCollect::ToVec) => (format!("Vec<{}ReturnType>", label), vec![]),
+        (Type::Vector(Some(label)), ShouldCollect::ToVec) => (format!("Vec<{}ReturnType>", label), vec![]),
+        // Fallbacks for None labels
+        (Type::Node(None), _) | (Type::Edge(None), _) | (Type::Vector(None), _) => ("DynamicValue".to_string(), vec![]),
+        (Type::Scalar(s), _) => (format!("{}", s), vec![]),
+        (Type::Boolean, _) => ("bool".to_string(), vec![]),
+        (Type::Array(inner), _) => {
+            let (inner_type, _) = type_to_rust_string_and_fields(inner, &ShouldCollect::No, ctx, field_name);
+            (format!("Vec<{}>", inner_type), vec![])
+        }
+        (Type::Aggregate, _) => ("DynamicValue".to_string(), vec![]),
+        _ => ("DynamicValue".to_string(), vec![]),
+    }
+}
 
 pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
     let mut query = GeneratedQuery {
@@ -64,11 +165,11 @@ pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
     // -------------------------------------------------
     // Statement‑by‑statement walk
     // -------------------------------------------------
-    let mut scope: HashMap<&str, Type> = HashMap::new();
+    let mut scope: HashMap<&str, VariableInfo> = HashMap::new();
     for param in &original_query.parameters {
         scope.insert(
             param.name.1.as_str(),
-            Type::from(param.param_type.1.clone()),
+            VariableInfo::new(Type::from(param.param_type.1.clone()), false),
         );
     }
     for stmt in &original_query.statements {
@@ -115,7 +216,7 @@ pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
                 &query.return_values.len().to_string()
             );
         }
-        let return_name = query.return_values.first().unwrap().get_name();
+        let return_name = query.return_values.first().unwrap().0.clone();
         query.mcp_handler = Some(return_name);
     }
 
@@ -125,13 +226,13 @@ pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
 fn analyze_return_expr<'a>(
     ctx: &mut Ctx<'a>,
     original_query: &'a Query,
-    scope: &mut HashMap<&'a str, Type>,
+    scope: &mut HashMap<&'a str, VariableInfo>,
     query: &mut GeneratedQuery,
     ret: &'a ReturnType,
 ) {
     match ret {
         ReturnType::Expression(expr) => {
-            let (_, stmt) = infer_expr_type(ctx, expr, scope, original_query, None, query);
+            let (inferred_type, stmt) = infer_expr_type(ctx, expr, scope, original_query, None, query);
 
             if stmt.is_none() {
                 return;
@@ -148,35 +249,29 @@ fn analyze_return_expr<'a>(
                                 v.inner().as_str(),
                             );
 
-                            // if is single object, need to handle it as a single object
-                            // if is array, need to handle it as an array
-                            match traversal.should_collect {
-                                ShouldCollect::ToVec => {
-                                    query.return_values.push(ReturnValue::new_named(
-                                        GeneratedValue::Literal(GenRef::Literal(v.inner().clone())),
-                                        ReturnValueExpr::Traversal(traversal.clone()),
-                                    ));
+                            let field_name = v.inner().clone();
+                            let (rust_type, fields) = type_to_rust_string_and_fields(&inferred_type, &traversal.should_collect, ctx, &field_name);
+
+                            query.return_values.push((
+                                field_name,
+                                ReturnValue {
+                                    name: rust_type,
+                                    fields,
+                                    literal_value: None,
                                 }
-                                ShouldCollect::ToObj => {
-                                    query.return_values.push(ReturnValue::new_single_named(
-                                        GeneratedValue::Literal(GenRef::Literal(v.inner().clone())),
-                                        ReturnValueExpr::Traversal(traversal.clone()),
-                                    ));
-                                }
-                                ShouldCollect::Try => {
-                                    query.return_values.push(ReturnValue::new_aggregate_traversal(
-                                        GeneratedValue::Literal(GenRef::Literal(v.inner().clone())),
-                                        ReturnValueExpr::Traversal(traversal.clone()),
-                                    ));
-                                }
-                                _ => {
-                                    unreachable!()
-                                }
-                            }
+                            ));
                         }
                         _ => {
-                            query.return_values.push(ReturnValue::new_unnamed(
-                                ReturnValueExpr::Traversal(traversal.clone()),
+                            let field_name = "data".to_string();
+                            let (rust_type, fields) = type_to_rust_string_and_fields(&inferred_type, &traversal.should_collect, ctx, &field_name);
+
+                            query.return_values.push((
+                                field_name,
+                                ReturnValue {
+                                    name: rust_type,
+                                    fields,
+                                    literal_value: None,
+                                }
                             ));
                         }
                     }
@@ -184,7 +279,7 @@ fn analyze_return_expr<'a>(
                 GeneratedStatement::Identifier(id) => {
                     is_valid_identifier(ctx, original_query, expr.loc.clone(), id.inner().as_str());
                     let identifier_end_type = match scope.get(id.inner().as_str()) {
-                        Some(t) => t.clone(),
+                        Some(var_info) => var_info.ty.clone(),
                         None => {
                             generate_error!(
                                 ctx,
@@ -196,40 +291,30 @@ fn analyze_return_expr<'a>(
                             Type::Unknown
                         }
                     };
-                    let value =
-                        gen_identifier_or_param(original_query, id.inner().as_str(), false, true);
 
-                    match identifier_end_type {
-                        Type::Aggregate => {
-                            query.return_values.push(ReturnValue::new_aggregate(
-                                GeneratedValue::Aggregate(GenRef::Literal(id.inner().clone())),
-                                value,
-                            ));
+                    let field_name = id.inner().clone();
+                    let (rust_type, fields) = type_to_rust_string_and_fields(&identifier_end_type, &ShouldCollect::No, ctx, &field_name);
+
+                    query.return_values.push((
+                        field_name,
+                        ReturnValue {
+                            name: rust_type,
+                            fields,
+                            literal_value: None,
                         }
-                        Type::Scalar(_) | Type::Boolean  => {
-                            query.return_values.push(ReturnValue::new_named_literal(
-                                GeneratedValue::Literal(GenRef::Literal(id.inner().clone())),
-                                value,
-                            ));
-                        }
-                        Type::Node(_) | Type::Vector(_) | Type::Edge(_) => {
-                            query.return_values.push(ReturnValue::new_single_named(
-                                GeneratedValue::Literal(GenRef::Literal(id.inner().clone())),
-                                ReturnValueExpr::Identifier(value),
-                            ));
-                        }
-                        _ => {
-                            query.return_values.push(ReturnValue::new_named(
-                                GeneratedValue::Literal(GenRef::Literal(id.inner().clone())),
-                                ReturnValueExpr::Identifier(value),
-                            ));
-                        }
-                    }
+                    ));
                 }
                 GeneratedStatement::Literal(l) => {
-                    query.return_values.push(ReturnValue::new_literal(
-                        GeneratedValue::Literal(l.clone()),
-                        GeneratedValue::Literal(l.clone()),
+                    let field_name = "data".to_string();
+                    let rust_type = "Value".to_string();
+
+                    query.return_values.push((
+                        field_name,
+                        ReturnValue {
+                            name: rust_type,
+                            fields: vec![],
+                            literal_value: Some(l.clone()),
+                        }
                     ));
                 }
                 GeneratedStatement::Empty => query.return_values = vec![],
@@ -240,120 +325,41 @@ fn analyze_return_expr<'a>(
             }
         }
         ReturnType::Array(values) => {
-            let values = values
-                .iter()
-                .map(|object| process_return_object(ctx, original_query, scope, object, query))
-                .collect::<Vec<ReturnValueExpr>>();
-            query.return_values.push(ReturnValue::new_array(values));
+            // For arrays, check if they contain simple expressions (identifiers/traversals)
+            // or complex nested structures
+            let is_simple_array = values.iter().all(|v| matches!(v, ReturnType::Expression(_)));
+
+            if is_simple_array {
+                // Process each element as a separate return value
+                for return_expr in values {
+                    analyze_return_expr(ctx, original_query, scope, query, return_expr);
+                }
+            } else {
+                // Complex nested array/object structure - not yet supported
+                // TODO: Implement proper nested structure serialization
+                // For now, this will result in an empty return which the user needs to handle manually
+            }
         }
         ReturnType::Object(values) => {
-            let values = values
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        key.clone(),
-                        process_return_object(ctx, original_query, scope, value, query),
-                    )
-                })
-                .collect::<HashMap<String, ReturnValueExpr>>();
-            query.return_values.push(ReturnValue::new_object(values));
+            // Check if this is a simple object with only expression values
+            let is_simple_object = values.values().all(|v| matches!(v, ReturnType::Expression(_)));
+
+            if is_simple_object {
+                // Process each field in the object
+                for (_field_name, return_expr) in values {
+                    // Recursively analyze each field's return expression
+                    analyze_return_expr(ctx, original_query, scope, query, return_expr);
+                }
+            } else {
+                // Complex nested object - not yet supported
+                // TODO: Implement proper nested structure serialization
+                // For now, this will result in an empty return which the user needs to handle manually
+            }
         }
         ReturnType::Empty => {}
     }
 }
 
-fn process_return_object<'a>(
-    ctx: &mut Ctx<'a>,
-    original_query: &'a Query,
-    scope: &mut HashMap<&'a str, Type>,
-    return_type: &'a ReturnType,
-    query: &mut GeneratedQuery,
-) -> ReturnValueExpr {
-    match return_type {
-        ReturnType::Expression(expr) => {
-            let (_, stmt) = infer_expr_type(ctx, expr, scope, original_query, None, query);
-            match stmt.unwrap() {
-                GeneratedStatement::Traversal(traversal) => {
-                    match &traversal.source_step.inner() {
-                        SourceStep::Identifier(v) => {
-                            is_valid_identifier(
-                                ctx,
-                                original_query,
-                                expr.loc.clone(),
-                                v.inner().as_str(),
-                            );
-
-                            // if is single object, need to handle it as a single object
-                            // if is array, need to handle it as an array
-                            match traversal.should_collect {
-                                ShouldCollect::ToVec => {
-                                    ReturnValueExpr::Traversal(traversal.clone())
-                                }
-                                ShouldCollect::ToObj => {
-                                    ReturnValueExpr::Traversal(traversal.clone())
-                                }
-                                _ => {
-                                    unreachable!()
-                                }
-                            }
-                        }
-                        _ => ReturnValueExpr::Traversal(traversal.clone()),
-                    }
-                }
-                GeneratedStatement::Identifier(id) => {
-                    is_valid_identifier(ctx, original_query, expr.loc.clone(), id.inner().as_str());
-                    let identifier_end_type = match scope.get(id.inner().as_str()) {
-                        Some(t) => t.clone(),
-                        None => {
-                            generate_error!(
-                                ctx,
-                                original_query,
-                                expr.loc.clone(),
-                                E301,
-                                id.inner().as_str()
-                            );
-                            Type::Unknown
-                        }
-                    };
-                    let value =
-                        gen_identifier_or_param(original_query, id.inner().as_str(), false, true);
-
-                    match identifier_end_type {
-                        Type::Scalar(_) | Type::Boolean => ReturnValueExpr::Identifier(value),
-                        Type::Node(_) | Type::Vector(_) | Type::Edge(_) => {
-                            ReturnValueExpr::Identifier(value)
-                        }
-                        _ => ReturnValueExpr::Identifier(value),
-                    }
-                }
-                GeneratedStatement::Literal(l) => {
-                    ReturnValueExpr::Value(GeneratedValue::Literal(l.clone()))
-                }
-                _ => unreachable!(),
-            }
-        }
-        ReturnType::Array(values) => {
-            let values = values
-                .iter()
-                .map(|value| process_return_object(ctx, original_query, scope, value, query))
-                .collect::<Vec<ReturnValueExpr>>();
-            ReturnValueExpr::Array(values)
-        }
-        ReturnType::Object(values) => {
-            let values = values
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        key.clone(),
-                        process_return_object(ctx, original_query, scope, value, query),
-                    )
-                })
-                .collect::<HashMap<String, ReturnValueExpr>>();
-            ReturnValueExpr::Object(values)
-        }
-        _ => unreachable!(),
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -13,7 +13,7 @@ pub struct Query {
     pub statements: Vec<Statement>,
     pub parameters: Vec<Parameter>, // iterate through and print each one
     pub sub_parameters: Vec<(String, Vec<Parameter>)>,
-    pub return_values: Vec<ReturnValue>,
+    pub return_values: Vec<(String, ReturnValue)>,
     pub is_mut: bool,
     pub hoisted_embedding_calls: Vec<EmbedData>,
 }
@@ -32,6 +32,11 @@ impl Query {
             }
             writeln!(f, "}}")?;
         }
+        Ok(())
+    }
+
+    fn print_return_values(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // No struct generation needed when using json! macro
         Ok(())
     }
 
@@ -79,7 +84,10 @@ impl Query {
     }
 
     fn print_txn_commit(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "txn.commit().map_err(|e| GraphError::New(format!(\"Failed to commit transaction: {{:?}}\", e)))?;")
+        writeln!(
+            f,
+            "txn.commit().map_err(|e| GraphError::New(format!(\"Failed to commit transaction: {{:?}}\", e)))?;"
+        )
     }
 
     fn print_query(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -88,6 +96,10 @@ impl Query {
             self.print_input_struct(f)?;
             self.print_parameters(f)?;
         }
+        if !self.return_values.is_empty() {
+            self.print_return_values(f)?;
+        }
+
         self.print_handler(f)?;
         writeln!(
             f,
@@ -97,6 +109,7 @@ impl Query {
 
         // print the db boilerplate
         writeln!(f, "let db = Arc::clone(&input.graph.storage);")?;
+        writeln!(f, "let arena = Bump::new();")?;
         if !self.parameters.is_empty() {
             match self.hoisted_embedding_calls.is_empty() {
                 true => writeln!(
@@ -115,10 +128,15 @@ impl Query {
         // print embedding calls
         self.print_hoisted_embedding_calls(f)?;
 
-        writeln!(f, "let mut remapping_vals = RemappingMap::new();")?;
         match self.is_mut {
-            true => writeln!(f, "let mut txn = db.graph_env.write_txn().map_err(|e| GraphError::New(format!(\"Failed to start write transaction: {{:?}}\", e)))?;")?,
-            false => writeln!(f, "let txn = db.graph_env.read_txn().map_err(|e| GraphError::New(format!(\"Failed to start read transaction: {{:?}}\", e)))?;")?,
+            true => writeln!(
+                f,
+                "let mut txn = db.graph_env.write_txn().map_err(|e| GraphError::New(format!(\"Failed to start write transaction: {{:?}}\", e)))?;"
+            )?,
+            false => writeln!(
+                f,
+                "let txn = db.graph_env.read_txn().map_err(|e| GraphError::New(format!(\"Failed to start read transaction: {{:?}}\", e)))?;"
+            )?,
         }
 
         // prints each statement
@@ -126,22 +144,52 @@ impl Query {
             writeln!(f, "    {statement};")?;
         }
 
-        // commit the transaction
-        // writeln!(f, "    txn.commit().unwrap();")?;
-
-        // create the return values
-        writeln!(
-            f,
-            "let mut return_vals: HashMap<String, ReturnValue> = HashMap::new();"
-        )?;
-        if !self.return_values.is_empty() {
-            for return_value in &self.return_values {
-                writeln!(f, "    {return_value}")?;
-            }
-        }
-
         self.print_txn_commit(f)?;
-        writeln!(f, "Ok(input.request.out_fmt.create_response(&return_vals))")?;
+
+        // Generate return value using json! macro with field extraction
+        if !self.return_values.is_empty() {
+            write!(f, "let response = json!({{")?;
+            for (i, (field_name, ret_val)) in self.return_values.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                writeln!(f)?;
+
+                // If this return value has schema fields, extract them into json
+                if !ret_val.fields.is_empty() {
+                    write!(f, "    \"{}\": json!({{", field_name)?;
+                    for (j, field) in ret_val.fields.iter().enumerate() {
+                        if j > 0 {
+                            write!(f, ",")?;
+                        }
+                        writeln!(f)?;
+                        if field.name == "id" {
+                            write!(f, "        \"{}\": uuid_str({}.id(), &arena)", field.name, field_name)?;
+                        } else if field.name == "label" {
+                            write!(f, "        \"{}\": {}.label()", field.name, field_name)?;
+                        } else {
+                            write!(f, "        \"{}\": {}.get_property(\"{}\").unwrap()",
+                                field.name, field_name, field.name)?;
+                        }
+                    }
+                    writeln!(f)?;
+                    write!(f, "    }})")?;
+                } else {
+                    // For scalar or other types, serialize directly
+                    // If there's a literal value, use it directly
+                    if let Some(ref lit) = ret_val.literal_value {
+                        write!(f, "    \"{}\": {}", field_name, lit)?;
+                    } else {
+                        write!(f, "    \"{}\": {}", field_name, field_name)?;
+                    }
+                }
+            }
+            writeln!(f)?;
+            writeln!(f, "}});")?;
+            writeln!(f, "Ok(input.request.out_fmt.create_response(&response))")?;
+        } else {
+            writeln!(f, "Ok(input.request.out_fmt.create_response(&()))")?;
+        }
 
         if !self.hoisted_embedding_calls.is_empty() {
             writeln!(f, r#"}}))).await.expect("Cont Channel should be alive")"#)?;
@@ -201,6 +249,7 @@ impl Query {
         writeln!(f, "drop(connections);")?;
         // print the db boilerplate
         writeln!(f, "let db = Arc::clone(&input.mcp_backend.db);")?;
+        writeln!(f, "let arena = Bump::new();")?;
         match self.hoisted_embedding_calls.is_empty() {
             true => writeln!(f, "let data = &data.data;")?,
             false => writeln!(f, "let data = data.data;")?,
@@ -212,8 +261,14 @@ impl Query {
         writeln!(f, "let mut remapping_vals = RemappingMap::new();")?;
 
         match self.is_mut {
-            true => writeln!(f, "let mut txn = db.graph_env.write_txn().map_err(|e| GraphError::New(format!(\"Failed to start write transaction: {{:?}}\", e)))?;")?,
-            false => writeln!(f, "let txn = db.graph_env.read_txn().map_err(|e| GraphError::New(format!(\"Failed to start read transaction: {{:?}}\", e)))?;")?,
+            true => writeln!(
+                f,
+                "let mut txn = db.graph_env.write_txn().map_err(|e| GraphError::New(format!(\"Failed to start write transaction: {{:?}}\", e)))?;"
+            )?,
+            false => writeln!(
+                f,
+                "let txn = db.graph_env.read_txn().map_err(|e| GraphError::New(format!(\"Failed to start read transaction: {{:?}}\", e)))?;"
+            )?,
         }
 
         for statement in &self.statements {

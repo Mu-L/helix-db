@@ -14,7 +14,7 @@ where
     /// Note that the `id` cannot be empty and must be a valid, existing vector id.
     fn v_from_id(
         self,
-        id: u128,
+        id: &u128,
         get_vector_data: bool,
     ) -> RoTraversalIterator<
         'db,
@@ -33,7 +33,7 @@ where
     #[inline]
     fn v_from_id(
         self,
-        id: u128,
+        id: &u128,
         get_vector_data: bool,
     ) -> RoTraversalIterator<
         'db,
@@ -45,7 +45,7 @@ where
             match self
                 .storage
                 .vectors
-                .get_full_vector(self.txn, id, self.arena)
+                .get_full_vector(self.txn, *id, self.arena)
             {
                 Ok(vec) => Ok(TraversalValue::Vector(vec)),
                 Err(e) => Err(GraphError::from(e)),
@@ -54,7 +54,7 @@ where
             match self
                 .storage
                 .vectors
-                .get_vector_properties(self.txn, id, self.arena)
+                .get_vector_properties(self.txn, *id, self.arena)
             {
                 Ok(Some(vec)) => Ok(TraversalValue::VectorNodeWithoutVectorData(vec)),
                 Ok(None) => Err(GraphError::from(VectorError::VectorNotFound(

@@ -40,12 +40,12 @@ pub(super) fn check_identifier_is_fieldtype(
     ctx: &mut Ctx,
     original_query: &Query,
     loc: Loc,
-    scope: &HashMap<&str, Type>,
+    scope: &HashMap<&str, VariableInfo>,
     identifier_name: &str,
     field_type: FieldType,
 ) -> Option<()> {
-    if let Some(scope_type) = scope.get(identifier_name)
-        && scope_type != &Type::from(&field_type)
+    if let Some(var_info) = scope.get(identifier_name)
+        && &var_info.ty != &Type::from(&field_type)
     {
         generate_error!(
             ctx,
@@ -101,7 +101,7 @@ pub(super) fn gen_id_access_or_param(original_query: &Query, name: &str) -> Gene
     }
 }
 
-pub(super) fn is_in_scope(scope: &HashMap<&str, Type>, name: &str) -> bool {
+pub(super) fn is_in_scope(scope: &HashMap<&str, VariableInfo>, name: &str) -> bool {
     scope.contains_key(name)
 }
 
@@ -109,11 +109,11 @@ pub(super) fn type_in_scope(
     ctx: &mut Ctx,
     original_query: &Query,
     loc: Loc,
-    scope: &HashMap<&str, Type>,
+    scope: &HashMap<&str, VariableInfo>,
     name: &str,
 ) -> Option<Type> {
     match scope.get(name) {
-        Some(ty) => Some(ty.clone()),
+        Some(var_info) => Some(var_info.ty.clone()),
         None => {
             generate_error!(ctx, original_query, loc.clone(), E301, name);
             None
@@ -201,6 +201,19 @@ pub(super) struct Variable {
 impl Variable {
     pub fn new(name: String, ty: Type) -> Self {
         Self { name, ty }
+    }
+}
+
+// Helper struct to track both type and cardinality of variables
+#[derive(Clone)]
+pub(super) struct VariableInfo {
+    pub ty: Type,
+    pub is_single: bool, // true if ToObj, false if ToVec
+}
+
+impl VariableInfo {
+    pub fn new(ty: Type, is_single: bool) -> Self {
+        Self { ty, is_single }
     }
 }
 

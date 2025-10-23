@@ -5,7 +5,7 @@ pub enum ShouldCount {
     No,
 }
 
-#[derive(PartialEq, Deserialize, Clone)]
+#[derive(PartialEq, Deserialize, Clone, Copy)]
 pub struct Count {
     value: usize,
 }

@@ -77,7 +77,7 @@ impl Display for AddE {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "add_e({}, {}, {}, {}, true, EdgeType::Node)",
+            "add_edge({}, {}, {}, {}, false)",
             self.label,
             write_properties(&self.properties),
             self.from,
@@ -165,11 +165,14 @@ pub struct VFromID {
     pub id: GenRef<String>,
     /// Label of vector
     pub label: GenRef<String>,
+
+    /// Whether to get the vector data
+    pub get_vector_data: bool,
 }
 
 impl Display for VFromID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "v_from_id({})", self.id)
+        write!(f, "v_from_id({}, {})", self.id, self.get_vector_data)
     }
 }
 
@@ -178,12 +181,14 @@ impl Display for VFromID {
 pub struct VFromType {
     /// Label of vectors to lookup
     pub label: GenRef<String>,
+    /// Whether to get the vector data
+    pub get_vector_data: bool,
 }
 
 
 impl Display for VFromType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "v_from_type({})", self.label)
+        write!(f, "v_from_type({}, {})", self.label, self.get_vector_data)
     }
 }
 

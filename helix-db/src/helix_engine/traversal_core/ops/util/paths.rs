@@ -315,7 +315,7 @@ pub trait ShortestPathAdapter<'db, 'arena, 'txn, 's, I>:
     ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I>>;
 }
 
-impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>> + 'arena>
+impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
     ShortestPathAdapter<'db, 'arena, 'txn, 's, I> for RoTraversalIterator<'db, 'arena, 'txn, I>
 {
     #[inline]

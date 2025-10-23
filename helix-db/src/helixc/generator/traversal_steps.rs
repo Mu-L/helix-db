@@ -1,8 +1,7 @@
-use crate::helixc::generator::utils::{VecData, write_properties};
+use crate::helixc::generator::utils::{write_properties, write_properties_slice, VecData};
 
 use super::{
     bool_ops::{BoExp, BoolOp},
-    object_remappings::Remapping,
     source_steps::SourceStep,
     utils::{GenRef, GeneratedValue, Order, Separator},
 };
@@ -11,20 +10,19 @@ use std::fmt::{Debug, Display};
 
 #[derive(Clone)]
 pub enum TraversalType {
-    FromVar(GenRef<String>),
+    FromSingle(GenRef<String>),
+    FromIter(GenRef<String>),
     Ref,
     Mut,
-    Nested(GenRef<String>), // Should contain `.clone()` if necessary (probably is)
-    NestedFrom(GenRef<String>),
     Empty,
     Update(Option<Vec<(String, GeneratedValue)>>),
 }
 impl Debug for TraversalType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TraversalType::FromVar(_) => write!(f, "FromVar"),
+            TraversalType::FromSingle(_) => write!(f, "FromSingle"),
+            TraversalType::FromIter(_) => write!(f, "FromIter"),
             TraversalType::Ref => write!(f, "Ref"),
-            TraversalType::Nested(_) => write!(f, "Nested"),
             _ => write!(f, "other"),
         }
     }
@@ -52,7 +50,7 @@ pub enum ShouldCollect {
     ToObj,
     No,
     Try,
-    ToValue
+    ToValue,
 }
 impl Display for ShouldCollect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -77,15 +75,22 @@ pub struct Traversal {
 impl Display for Traversal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.traversal_type {
-            TraversalType::FromVar(var) => {
-                write!(f, "G::new_from(Arc::clone(&db), &txn, {var}.clone())")?;
+            TraversalType::FromSingle(var) => {
+                write!(f, "G::from_iter(&db, &txn, std::iter::once({var}.clone()), &arena)")?;
+                write!(f, "{}", self.source_step)?;
+                for step in &self.steps {
+                    write!(f, "\n{step}")?;
+                }
+            }
+            TraversalType::FromIter(var) => {
+                write!(f, "G::from_iter(&db, &txn, {var}.iter().cloned(), &arena)")?;
                 write!(f, "{}", self.source_step)?;
                 for step in &self.steps {
                     write!(f, "\n{step}")?;
                 }
             }
             TraversalType::Ref => {
-                write!(f, "G::new(Arc::clone(&db), &txn)")?;
+                write!(f, "G::new(&db, &txn, &arena)")?;
                 write!(f, "{}", self.source_step)?;
                 for step in &self.steps {
                     write!(f, "\n{step}")?;
@@ -93,40 +98,27 @@ impl Display for Traversal {
             }
 
             TraversalType::Mut => {
-                write!(f, "G::new_mut(Arc::clone(&db), &mut txn)")?;
+                write!(f, "G::new_mut(&db, &arena, &mut txn)")?;
                 write!(f, "{}", self.source_step)?;
                 for step in &self.steps {
                     write!(f, "\n{step}")?;
                 }
             }
-            TraversalType::Nested(nested) => {
-                assert!(!nested.inner().is_empty(), "Empty nested traversal name");
-                write!(f, "{nested}")?; // this should be var name default val
-                for step in &self.steps {
-                    write!(f, "\n{step}")?;
-                }
-            }
-            TraversalType::NestedFrom(nested) => {
-                assert!(!nested.inner().is_empty(), "Empty nested traversal name");
-                write!(
-                    f,
-                    "G::new_from(Arc::clone(&db), &txn, vec![{nested}.clone()])"
-                )?;
-                for step in &self.steps {
-                    write!(f, "\n{step}")?;
-                }
-            }
+
             TraversalType::Empty => panic!("Should not be empty"),
             TraversalType::Update(properties) => {
                 write!(f, "{{")?;
-                write!(f, "let update_tr = G::new(Arc::clone(&db), &txn)")?;
+                write!(f, "let update_tr = G::new(&db, &txn, &arena)")?;
                 write!(f, "{}", self.source_step)?;
                 for step in &self.steps {
                     write!(f, "\n{step}")?;
                 }
                 write!(f, "\n    .collect_to::<Vec<_>>();")?;
-                write!(f, "G::new_mut_from(Arc::clone(&db), &mut txn, update_tr)",)?;
-                write!(f, "\n    .update({})", write_properties(properties))?;
+                write!(
+                    f,
+                    "G::new_mut_from_iter(&db, &mut txn, update_tr.iter().cloned(), &arena)",
+                )?;
+                write!(f, "\n    .update({})", write_properties_slice(properties))?;
                 write!(f, "\n    .collect_to_obj()")?;
                 write!(f, "}}")?;
             }
@@ -153,8 +145,8 @@ pub enum Step {
     InE(InE),
     FromN,
     ToN,
-    FromV,
-    ToV,
+    FromV(FromV),
+    ToV(ToV),
 
     // utils
     Count,
@@ -169,9 +161,6 @@ pub enum Step {
 
     // property
     PropertyFetch(GenRef<String>),
-
-    // object
-    Remapping(Remapping),
 
     // closure
     // Closure(ClosureRemapping),
@@ -194,9 +183,9 @@ impl Display for Step {
             Step::Count => write!(f, "count_to_val()"),
             Step::Dedup => write!(f, "dedup()"),
             Step::FromN => write!(f, "from_n()"),
-            Step::FromV => write!(f, "from_v()"),
+            Step::FromV(from_v) => write!(f, "{from_v}"),
             Step::ToN => write!(f, "to_n()"),
-            Step::ToV => write!(f, "to_v()"),
+            Step::ToV(to_v) => write!(f, "{to_v}"),
             Step::PropertyFetch(property) => write!(f, "get_property({property})"),
 
             Step::Out(out) => write!(f, "{out}"),
@@ -207,9 +196,10 @@ impl Display for Step {
             Step::Range(range) => write!(f, "{range}"),
             Step::OrderBy(order_by) => write!(f, "{order_by}"),
             Step::BoolOp(bool_op) => write!(f, "{bool_op}"),
-            Step::Remapping(remapping) => write!(f, "{remapping}"),
             Step::ShortestPath(shortest_path) => write!(f, "{shortest_path}"),
-            Step::ShortestPathDijkstras(shortest_path_dijkstras) => write!(f, "{shortest_path_dijkstras}"),
+            Step::ShortestPathDijkstras(shortest_path_dijkstras) => {
+                write!(f, "{shortest_path_dijkstras}")
+            }
             Step::ShortestPathBFS(shortest_path_bfs) => write!(f, "{shortest_path_bfs}"),
             Step::SearchVector(search_vector) => write!(f, "{search_vector}"),
             Step::GroupBy(group_by) => write!(f, "{group_by}"),
@@ -225,8 +215,8 @@ impl Debug for Step {
             Step::FromN => write!(f, "FromN"),
             Step::ToN => write!(f, "ToN"),
             Step::PropertyFetch(property) => write!(f, "get_property({property})"),
-            Step::FromV => write!(f, "FromV"),
-            Step::ToV => write!(f, "ToV"),
+            Step::FromV(_) => write!(f, "FromV"),
+            Step::ToV(_) => write!(f, "ToV"),
             Step::Out(_) => write!(f, "Out"),
             Step::In(_) => write!(f, "In"),
             Step::OutE(_) => write!(f, "OutE"),
@@ -235,7 +225,6 @@ impl Debug for Step {
             Step::Range(_) => write!(f, "Range"),
             Step::OrderBy(_) => write!(f, "OrderBy"),
             Step::BoolOp(_) => write!(f, "Bool"),
-            Step::Remapping(_) => write!(f, "Remapping"),
             Step::ShortestPath(_) => write!(f, "ShortestPath"),
             Step::ShortestPathDijkstras(_) => write!(f, "ShortestPathDijkstras"),
             Step::ShortestPathBFS(_) => write!(f, "ShortestPathBFS"),
@@ -243,6 +232,26 @@ impl Debug for Step {
             Step::GroupBy(_) => write!(f, "GroupBy"),
             Step::AggregateBy(_) => write!(f, "AggregateBy"),
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct FromV {
+    pub get_vector_data: bool,
+}
+impl Display for FromV {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "from_v({})", self.get_vector_data)
+    }
+}
+
+#[derive(Clone)]
+pub struct ToV {
+    pub get_vector_data: bool,
+}
+impl Display for ToV {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "to_v({})", self.get_vector_data)
     }
 }
 
@@ -265,10 +274,14 @@ impl Display for EdgeType {
 pub struct Out {
     pub label: GenRef<String>,
     pub edge_type: EdgeType,
+    pub get_vector_data: bool,
 }
 impl Display for Out {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "out_{}({})", self.edge_type, self.label)
+        match self.edge_type {
+            EdgeType::Node => write!(f, "out_node({})", self.label),
+            EdgeType::Vec => write!(f, "out_vec({}, {})", self.label, self.get_vector_data),
+        }
     }
 }
 
@@ -276,10 +289,14 @@ impl Display for Out {
 pub struct In {
     pub label: GenRef<String>,
     pub edge_type: EdgeType,
+    pub get_vector_data: bool,
 }
 impl Display for In {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "in_{}({})", self.edge_type, self.label)
+        match self.edge_type {
+            EdgeType::Node => write!(f, "in_node({})", self.label),
+            EdgeType::Vec => write!(f, "in_vec({}, {})", self.label, self.get_vector_data),
+        }
     }
 }
 
@@ -322,7 +339,7 @@ impl Display for WhereRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Check if this is a simple property check that can be optimized
         if let BoExp::Expr(traversal) = &self.expr {
-            if let TraversalType::FromVar(var) = &traversal.traversal_type {
+            if let TraversalType::FromSingle(var) = &traversal.traversal_type {
                 // Check if the variable is "val"
                 let is_val = matches!(var, GenRef::Std(s) | GenRef::Literal(s) if s == "val");
 
@@ -333,12 +350,12 @@ impl Display for WhereRef {
 
                     for step in &traversal.steps {
                         match step {
-                            Separator::Period(Step::PropertyFetch(p)) |
-                            Separator::Newline(Step::PropertyFetch(p)) |
-                            Separator::Empty(Step::PropertyFetch(p)) => prop = Some(p),
-                            Separator::Period(Step::BoolOp(op)) |
-                            Separator::Newline(Step::BoolOp(op)) |
-                            Separator::Empty(Step::BoolOp(op)) => bool_op = Some(op),
+                            Separator::Period(Step::PropertyFetch(p))
+                            | Separator::Newline(Step::PropertyFetch(p))
+                            | Separator::Empty(Step::PropertyFetch(p)) => prop = Some(p),
+                            Separator::Period(Step::BoolOp(op))
+                            | Separator::Newline(Step::BoolOp(op))
+                            | Separator::Empty(Step::BoolOp(op)) => bool_op = Some(op),
                             _ => {}
                         }
                     }
@@ -420,7 +437,16 @@ pub struct GroupBy {
 }
 impl Display for GroupBy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "group_by(&[{}], {})", self.properties.iter().map(|s|s.to_string()).collect::<Vec<_>>().join(","), self.should_count)
+        write!(
+            f,
+            "group_by(&[{}], {})",
+            self.properties
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            self.should_count
+        )
     }
 }
 
@@ -431,10 +457,18 @@ pub struct AggregateBy {
 }
 impl Display for AggregateBy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "aggregate_by(&[{}], {})", self.properties.iter().map(|s|s.to_string()).collect::<Vec<_>>().join(","), self.should_count)
+        write!(
+            f,
+            "aggregate_by(&[{}], {})",
+            self.properties
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            self.should_count
+        )
     }
 }
-
 
 #[derive(Clone)]
 pub struct ShortestPath {
