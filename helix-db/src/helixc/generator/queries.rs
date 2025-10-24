@@ -109,7 +109,6 @@ impl Query {
 
         // print the db boilerplate
         writeln!(f, "let db = Arc::clone(&input.graph.storage);")?;
-        writeln!(f, "let arena = Bump::new();")?;
         if !self.parameters.is_empty() {
             match self.hoisted_embedding_calls.is_empty() {
                 true => writeln!(
@@ -124,10 +123,11 @@ impl Query {
                 )?,
             }
         }
-
+        
         // print embedding calls
         self.print_hoisted_embedding_calls(f)?;
-
+        writeln!(f, "let arena = Bump::new();")?;
+        
         match self.is_mut {
             true => writeln!(
                 f,
@@ -257,8 +257,7 @@ impl Query {
         writeln!(f, "let connections = Arc::clone(&input.mcp_connections);")?;
 
         self.print_hoisted_embedding_calls(f)?;
-        writeln!(f, "let mut result = {{")?;
-        writeln!(f, "let mut remapping_vals = RemappingMap::new();")?;
+        writeln!(f, "let arena = Bump::new();")?;
 
         match self.is_mut {
             true => writeln!(
@@ -275,22 +274,57 @@ impl Query {
             writeln!(f, "    {statement};")?;
         }
         self.print_txn_commit(f)?;
-        writeln!(f, "{}.into_iter()", self.mcp_handler.as_ref().unwrap())?;
-        writeln!(f, "}};")?;
 
-        writeln!(
-            f,
-            "let first = result.next().unwrap_or(TraversalValue::Empty);"
-        )?;
+        // Generate return value using json! macro - same as regular handler
+        if !self.return_values.is_empty() {
+            write!(f, "let response = json!({{")?;
+            for (i, (field_name, ret_val)) in self.return_values.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                writeln!(f)?;
 
-        writeln!(f, "connection.iter = result.into_iter();")?;
-        writeln!(f, "let mut connections = connections.lock().unwrap();")?;
-        writeln!(f, "connections.add_connection(connection);")?;
-        writeln!(f, "drop(connections);")?;
-        writeln!(
-            f,
-            "Ok(helix_db::protocol::format::Format::Json.create_response(&ReturnValue::from(first)))"
-        )?;
+                // If this return value has schema fields, extract them into json
+                if !ret_val.fields.is_empty() {
+                    write!(f, "    \"{}\": json!({{", field_name)?;
+                    for (j, field) in ret_val.fields.iter().enumerate() {
+                        if j > 0 {
+                            write!(f, ",")?;
+                        }
+                        writeln!(f)?;
+                        if field.name == "id" {
+                            write!(f, "        \"{}\": uuid_str({}.id(), &arena)", field.name, field_name)?;
+                        } else if field.name == "label" {
+                            write!(f, "        \"{}\": {}.label()", field.name, field_name)?;
+                        } else {
+                            write!(f, "        \"{}\": {}.get_property(\"{}\").unwrap()",
+                                field.name, field_name, field.name)?;
+                        }
+                    }
+                    writeln!(f)?;
+                    write!(f, "    }})")?;
+                } else {
+                    // For scalar or other types, serialize directly
+                    // If there's a literal value, use it directly
+                    if let Some(ref lit) = ret_val.literal_value {
+                        write!(f, "    \"{}\": {}", field_name, lit)?;
+                    } else {
+                        write!(f, "    \"{}\": {}", field_name, field_name)?;
+                    }
+                }
+            }
+            writeln!(f)?;
+            writeln!(f, "}});")?;
+            writeln!(f, "let mut connections = connections.lock().unwrap();")?;
+            writeln!(f, "connections.add_connection(connection);")?;
+            writeln!(f, "drop(connections);")?;
+            writeln!(f, "Ok(helix_db::protocol::format::Format::Json.create_response(&response))")?;
+        } else {
+            writeln!(f, "let mut connections = connections.lock().unwrap();")?;
+            writeln!(f, "connections.add_connection(connection);")?;
+            writeln!(f, "drop(connections);")?;
+            writeln!(f, "Ok(helix_db::protocol::format::Format::Json.create_response(&()))")?;
+        }
         if !self.hoisted_embedding_calls.is_empty() {
             writeln!(f, r#"}}))).await.expect("Cont Channel should be alive")"#)?;
             writeln!(f, "}})))")?;

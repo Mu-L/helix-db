@@ -16,6 +16,8 @@ pub enum TraversalType {
     Mut,
     Empty,
     Update(Option<Vec<(String, GeneratedValue)>>),
+    /// Standalone - no G::new wrapper, just the source step (used for plural AddE)
+    Standalone,
 }
 impl Debug for TraversalType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -23,6 +25,7 @@ impl Debug for TraversalType {
             TraversalType::FromSingle(_) => write!(f, "FromSingle"),
             TraversalType::FromIter(_) => write!(f, "FromIter"),
             TraversalType::Ref => write!(f, "Ref"),
+            TraversalType::Standalone => write!(f, "Standalone"),
             _ => write!(f, "other"),
         }
     }
@@ -99,6 +102,14 @@ impl Display for Traversal {
 
             TraversalType::Mut => {
                 write!(f, "G::new_mut(&db, &arena, &mut txn)")?;
+                write!(f, "{}", self.source_step)?;
+                for step in &self.steps {
+                    write!(f, "\n{step}")?;
+                }
+            }
+
+            TraversalType::Standalone => {
+                // No wrapper - just output the source step directly
                 write!(f, "{}", self.source_step)?;
                 for step in &self.steps {
                     write!(f, "\n{step}")?;

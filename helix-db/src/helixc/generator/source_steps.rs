@@ -72,17 +72,60 @@ pub struct AddE {
     pub from: GeneratedValue,
     /// To node ID
     pub to: GeneratedValue,
+    /// Whether from is a plural variable (needs iteration)
+    pub from_is_plural: bool,
+    /// Whether to is a plural variable (needs iteration)
+    pub to_is_plural: bool,
 }
 impl Display for AddE {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "add_edge({}, {}, {}, {}, false)",
-            self.label,
-            write_properties(&self.properties),
-            self.from,
-            self.to
-        )
+        // If either from or to is plural, we need to generate iteration code
+        match (self.from_is_plural, self.to_is_plural) {
+            (false, false) => {
+                // Both singular - from and to already have .id() appended
+                write!(
+                    f,
+                    "add_edge({}, {}, {}, {}, false)",
+                    self.label,
+                    write_properties(&self.properties),
+                    self.from,
+                    self.to
+                )
+            }
+            (true, false) => {
+                // From is plural - iterate over from, to already has .id()
+                write!(
+                    f,
+                    "{}.iter().map(|from_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .add_edge({}, {}, from_val.id(), {}, false)\n        .collect_to_obj()\n    }}).collect::<Vec<_>>()",
+                    self.from,
+                    self.label,
+                    write_properties(&self.properties),
+                    self.to
+                )
+            }
+            (false, true) => {
+                // To is plural - iterate over to, from already has .id()
+                write!(
+                    f,
+                    "{}.iter().map(|to_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .add_edge({}, {}, {}, to_val.id(), false)\n        .collect_to_obj()\n    }}).collect::<Vec<_>>()",
+                    self.to,
+                    self.label,
+                    write_properties(&self.properties),
+                    self.from
+                )
+            }
+            (true, true) => {
+                // Both plural - nested iteration
+                write!(
+                    f,
+                    "{}.iter().flat_map(|from_val| {{\n        {}.iter().map(move |to_val| {{\n            G::new_mut(&db, &arena, &mut txn)\n            .add_edge({}, {}, from_val.id(), to_val.id(), false)\n            .collect_to_obj()\n        }})\n    }}).collect::<Vec<_>>()",
+                    self.from,
+                    self.to,
+                    self.label,
+                    write_properties(&self.properties)
+                )
+            }
+        }
     }
 }
 #[derive(Clone)]
