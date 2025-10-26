@@ -1,10 +1,10 @@
 use crate::{
     helix_engine::{
         storage_core::storage_methods::StorageMethods,
-        traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
+        traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue, LMDB_STRING_HEADER_LENGTH},
         types::GraphError,
     },
-    protocol::value::Value,
+    protocol::value::Value, utils::items::Node,
 };
 use serde::Serialize;
 
@@ -67,26 +67,50 @@ impl<
                 "Secondary Index {index} not found"
             )))
             .unwrap();
+        let label_as_bytes = label.as_bytes();
         let res = db
             .prefix_iter(self.txn, &bincode::serialize(&Value::from(key)).unwrap())
             .unwrap()
             .filter_map(move |item| {
-                if let Ok((_, value)) = item {
-                    match self.storage.get_node(self.txn, &value, self.arena) {
-                        Ok(node) => {
-                            if node.label == label {
+                if let Ok((_, node_id)) = item {
+                    
+                if let Some(value) = self.storage.nodes_db.get(self.txn, &node_id).ok()? {
+                    assert!(
+                        value.len() >= LMDB_STRING_HEADER_LENGTH,
+                        "value length does not contain header which means the `label` field was missing from the node on insertion"
+                    );
+                    let length_of_label_in_lmdb =
+                        u64::from_le_bytes(value[..LMDB_STRING_HEADER_LENGTH].try_into().unwrap()) as usize;
+        
+                    if length_of_label_in_lmdb != label.len() {
+                        return None;
+                    }
+        
+                    assert!(
+                        value.len() >= length_of_label_in_lmdb + LMDB_STRING_HEADER_LENGTH,
+                        "value length is not at least the header length plus the label length meaning there has been a corruption on node insertion"
+                    );
+                    let label_in_lmdb = &value[LMDB_STRING_HEADER_LENGTH
+                        ..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb as usize];
+        
+                    if label_in_lmdb == label_as_bytes {
+                        match Node::<'arena>::from_bincode_bytes(node_id, value, self.arena) {
+                            Ok(node) => {
                                 return Some(Ok(TraversalValue::Node(node)));
-                            } else {
-                                return None;
+                            }
+                            Err(e) => {
+                                println!("{} Error decoding node: {:?}", line!(), e);
+                                return Some(Err(GraphError::ConversionError(e.to_string())));
                             }
                         }
-                        Err(e) => {
-                            println!("{} Error getting node: {:?}", line!(), e);
-                            return Some(Err(GraphError::ConversionError(e.to_string())));
-                        }
+                    } else {
+                        return None;
                     }
                 }
-                return None;
+                }
+                None
+            
+
             });
 
         RoTraversalIterator {
