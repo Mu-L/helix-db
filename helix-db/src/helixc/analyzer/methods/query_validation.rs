@@ -112,15 +112,15 @@ fn type_to_rust_string_and_fields(
         (Type::Edge(Some(label)), ShouldCollect::ToVec) => (format!("Vec<{}ReturnType>", label), vec![]),
         (Type::Vector(Some(label)), ShouldCollect::ToVec) => (format!("Vec<{}ReturnType>", label), vec![]),
         // Fallbacks for None labels
-        (Type::Node(None), _) | (Type::Edge(None), _) | (Type::Vector(None), _) => ("DynamicValue".to_string(), vec![]),
+        (Type::Node(None), _) | (Type::Edge(None), _) | (Type::Vector(None), _) => ("".to_string(), vec![]),
         (Type::Scalar(s), _) => (format!("{}", s), vec![]),
         (Type::Boolean, _) => ("bool".to_string(), vec![]),
         (Type::Array(inner), _) => {
             let (inner_type, _) = type_to_rust_string_and_fields(inner, &ShouldCollect::No, ctx, field_name);
             (format!("Vec<{}>", inner_type), vec![])
         }
-        (Type::Aggregate, _) => ("DynamicValue".to_string(), vec![]),
-        _ => ("DynamicValue".to_string(), vec![]),
+        (Type::Aggregate, _) => ("".to_string(), vec![]),
+        _ => ("".to_string(), vec![]),
     }
 }
 
