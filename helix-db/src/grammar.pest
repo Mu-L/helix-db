@@ -134,7 +134,7 @@ return_stmt = { "RETURN" ~ (evaluates_to_anything ~ ("," ~ evaluates_to_anything
 // Creation steps
 // ---------------------------------------------------------------------
 create_field  = { "{" ~ new_field ~ ("," ~ new_field)* ~ ","? ~ "}" }
-new_field     = { identifier ~ ":" ~ (anonymous_traversal | evaluates_to_anything | create_field) }
+new_field     = { identifier ~ ":" ~ (id_traversal | anonymous_traversal | evaluates_to_anything | create_field) }
 to_from       = { to ~ from? | from ~ to? }
 to            = { "::" ~ "To" ~ "(" ~ id_arg ~ ")" }
 from          = { "::" ~ "From" ~ "(" ~ id_arg ~ ")" }
@@ -237,7 +237,7 @@ object_step   = { "{" ~ ((mapping_field ~ ("," ~ mapping_field)* ~ "," ~ spread_
 exclude_field = { "!" ~ "{" ~ identifier ~ ("," ~ identifier)* ~ "}" }
 closure_step  = { "|" ~ identifier ~ "|" ~ object_step }
 spread_object = { ".." ~ ","?}
-mapping_field = { (identifier ~ (":" ~ (anonymous_traversal | evaluates_to_anything | object_step))) | identifier }
+mapping_field = { (identifier ~ ":" ~ (id_traversal | anonymous_traversal | evaluates_to_anything | object_step)) | identifier }
 array_creation = { "[" ~ (identifier | object_creation ) ~ ("," ~ (identifier | object_creation))* ~ ","? ~ "]" }
 object_creation = {  "{" ~ object_inner ~ ("," ~ object_inner)* ~ ","? ~ "}" }
 object_inner = { identifier ~ ":" ~ object_field }

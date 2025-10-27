@@ -1,11 +1,11 @@
 use core::fmt;
 use std::fmt::Display;
 
-use crate::helixc::generator::traversal_steps::{Traversal, TraversalType, Step};
+use crate::helixc::generator::traversal_steps::{Step, Traversal, TraversalType};
 
-use super::utils::{GeneratedValue, Separator, GenRef};
+use super::utils::{GenRef, GeneratedValue, Separator};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BoolOp {
     Gt(Gt),
     Gte(Gte),
@@ -31,7 +31,7 @@ impl Display for BoolOp {
         write!(f, "map_value_or(false, |v| {s})?")
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Gt {
     pub value: GeneratedValue,
 }
@@ -41,7 +41,7 @@ impl Display for Gt {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Gte {
     pub value: GeneratedValue,
 }
@@ -51,7 +51,7 @@ impl Display for Gte {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Lt {
     pub value: GeneratedValue,
 }
@@ -61,7 +61,7 @@ impl Display for Lt {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Lte {
     pub value: GeneratedValue,
 }
@@ -71,7 +71,7 @@ impl Display for Lte {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Eq {
     pub value: GeneratedValue,
 }
@@ -81,7 +81,7 @@ impl Display for Eq {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Neq {
     pub value: GeneratedValue,
 }
@@ -91,7 +91,7 @@ impl Display for Neq {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Contains {
     pub value: GeneratedValue,
 }
@@ -101,7 +101,7 @@ impl Display for Contains {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IsIn {
     pub value: GeneratedValue,
 }
@@ -113,7 +113,7 @@ impl Display for IsIn {
 
 /// Boolean expression is used for a traversal or set of traversals wrapped in AND/OR
 /// that resolve to a boolean value
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BoExp {
     Not(Box<BoExp>),
     And(Vec<BoExp>),
@@ -150,12 +150,10 @@ impl Display for BoExp {
             BoExp::Exists(traversal) => {
                 // Optimize Exists expressions in filter context to use std::iter::once for single values
                 let is_val_traversal = match &traversal.traversal_type {
-                    TraversalType::FromIter(var) | TraversalType::FromSingle(var) => {
-                        match var {
-                            GenRef::Std(s) | GenRef::Literal(s) => s == "val",
-                            _ => false,
-                        }
-                    }
+                    TraversalType::FromIter(var) | TraversalType::FromSingle(var) => match var {
+                        GenRef::Std(s) | GenRef::Literal(s) => s == "val",
+                        _ => false,
+                    },
                     _ => false,
                 };
 
@@ -170,17 +168,15 @@ impl Display for BoExp {
                 } else {
                     write!(f, "Exist::exists(&mut {traversal})")
                 }
-            },
+            }
             BoExp::Expr(traversal) => {
                 // Optimize simple property checks in filters to avoid unnecessary cloning and traversal creation
                 // Check if this is a FromVar("val") or FromSingle("val") traversal with just property fetch + bool op
                 let is_val_traversal = match &traversal.traversal_type {
-                    TraversalType::FromIter(var) | TraversalType::FromSingle(var) => {
-                        match var {
-                            GenRef::Std(s) | GenRef::Literal(s) => s == "val",
-                            _ => false,
-                        }
-                    }
+                    TraversalType::FromIter(var) | TraversalType::FromSingle(var) => match var {
+                        GenRef::Std(s) | GenRef::Literal(s) => s == "val",
+                        _ => false,
+                    },
                     _ => false,
                 };
 
@@ -192,20 +188,20 @@ impl Display for BoExp {
 
                     for step in traversal.steps.iter() {
                         match step {
-                            Separator::Period(Step::PropertyFetch(prop)) |
-                            Separator::Newline(Step::PropertyFetch(prop)) |
-                            Separator::Empty(Step::PropertyFetch(prop)) |
-                            Separator::Comma(Step::PropertyFetch(prop)) |
-                            Separator::Semicolon(Step::PropertyFetch(prop)) => {
+                            Separator::Period(Step::PropertyFetch(prop))
+                            | Separator::Newline(Step::PropertyFetch(prop))
+                            | Separator::Empty(Step::PropertyFetch(prop))
+                            | Separator::Comma(Step::PropertyFetch(prop))
+                            | Separator::Semicolon(Step::PropertyFetch(prop)) => {
                                 if prop_info.is_none() {
                                     prop_info = Some(prop);
                                 }
                             }
-                            Separator::Period(Step::BoolOp(op)) |
-                            Separator::Newline(Step::BoolOp(op)) |
-                            Separator::Empty(Step::BoolOp(op)) |
-                            Separator::Comma(Step::BoolOp(op)) |
-                            Separator::Semicolon(Step::BoolOp(op)) => {
+                            Separator::Period(Step::BoolOp(op))
+                            | Separator::Newline(Step::BoolOp(op))
+                            | Separator::Empty(Step::BoolOp(op))
+                            | Separator::Comma(Step::BoolOp(op))
+                            | Separator::Semicolon(Step::BoolOp(op)) => {
                                 if bool_op_info.is_none() {
                                     bool_op_info = Some(op);
                                 }
@@ -230,13 +226,17 @@ impl Display for BoExp {
                                 BoolOp::Contains(contains) => format!("v{contains}"),
                                 BoolOp::IsIn(is_in) => format!("v{is_in}"),
                             };
-                            return write!(f, "val\n                    .get_property({})\n                    .map_or(false, |v| {})", prop, bool_expr);
+                            return write!(
+                                f,
+                                "val\n                    .get_property({})\n                    .map_or(false, |v| {})",
+                                prop, bool_expr
+                            );
                         }
                     }
                 }
                 // Fall back to full traversal for complex expressions
                 write!(f, "{traversal}")
-            },
+            }
             BoExp::Empty => write!(f, ""),
         }
     }

@@ -1,7 +1,7 @@
 use std::fmt::{self, Display};
 
 use crate::helixc::generator::{
-    return_values::ReturnValue,
+    return_values::{ReturnValue, ReturnValueStruct},
     statements::Statement,
     utils::{EmbedData, GeneratedType},
 };
@@ -13,7 +13,9 @@ pub struct Query {
     pub statements: Vec<Statement>,
     pub parameters: Vec<Parameter>, // iterate through and print each one
     pub sub_parameters: Vec<(String, Vec<Parameter>)>,
-    pub return_values: Vec<(String, ReturnValue)>,
+    pub return_values: Vec<(String, ReturnValue)>, // Legacy approach
+    pub return_structs: Vec<ReturnValueStruct>,    // New struct-based approach
+    pub use_struct_returns: bool,                  // Flag to use new vs old approach
     pub is_mut: bool,
     pub hoisted_embedding_calls: Vec<EmbedData>,
 }
@@ -36,7 +38,14 @@ impl Query {
     }
 
     fn print_return_values(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // No struct generation needed when using json! macro
+        if self.use_struct_returns {
+            // Generate struct definitions for new approach (including nested structs)
+            for struct_def in &self.return_structs {
+                write!(f, "{}", struct_def.generate_all_struct_defs())?;
+                writeln!(f)?;
+            }
+        }
+        // Legacy approach doesn't need struct generation (uses json! macro)
         Ok(())
     }
 
@@ -123,11 +132,11 @@ impl Query {
                 )?,
             }
         }
-        
+
         // print embedding calls
         self.print_hoisted_embedding_calls(f)?;
         writeln!(f, "let arena = Bump::new();")?;
-        
+
         match self.is_mut {
             true => writeln!(
                 f,
@@ -144,10 +153,184 @@ impl Query {
             writeln!(f, "    {statement};")?;
         }
 
-        self.print_txn_commit(f)?;
+        // Generate return value
+        if self.use_struct_returns && !self.return_structs.is_empty() {
+            // New struct-based approach - map during response construction
+            write!(f, "let response = json!({{")?;
+            for (i, struct_def) in self.return_structs.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                writeln!(f)?;
 
-        // Generate return value using json! macro with field extraction
-        if !self.return_values.is_empty() {
+                if struct_def.is_collection {
+                    // Collection - generate mapping code
+                    let singular_var = struct_def.source_variable.trim_end_matches('s');
+                    // Check if any field is a nested traversal (needs Result handling)
+                    let has_nested = struct_def.fields.iter().any(|f| f.is_nested_traversal);
+
+                    if has_nested {
+                        writeln!(
+                            f,
+                            "    \"{}\": {}.iter().map(|{}| Ok::<_, GraphError>({} {{",
+                            struct_def.source_variable,
+                            struct_def.source_variable,
+                            singular_var,
+                            struct_def.name
+                        )?;
+                    } else {
+                        writeln!(
+                            f,
+                            "    \"{}\": {}.iter().map(|{}| {} {{",
+                            struct_def.source_variable,
+                            struct_def.source_variable,
+                            singular_var,
+                            struct_def.name
+                        )?;
+                    }
+
+                    // Generate field assignments
+                    for (field_idx, field) in struct_def.fields.iter().enumerate() {
+                        let field_value = if field.is_nested_traversal {
+                            // Get the nested traversal info from field_infos
+                            let field_info = &struct_def.field_infos[field_idx];
+                            if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                traversal_code: Some(trav_code),
+                                nested_struct_name: Some(nested_name),
+                                ..
+                            } = &field_info.source {
+                                // Generate nested traversal code
+                                let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
+                                    fields
+                                } else {
+                                    panic!("Nested traversal must have Nested field type");
+                                };
+
+                                // Generate field assignments for nested struct
+                                let mut nested_field_assigns = String::new();
+                                for nested_field in nested_fields {
+                                    let nested_val = if nested_field.name == "id" {
+                                        "uuid_str(item.id(), &arena)".to_string()
+                                    } else if nested_field.name == "label" {
+                                        "item.label()".to_string()
+                                    } else if nested_field.name == "from_node" {
+                                        "uuid_str(item.from_node(), &arena)".to_string()
+                                    } else if nested_field.name == "to_node" {
+                                        "uuid_str(item.to_node(), &arena)".to_string()
+                                    } else {
+                                        format!("item.get_property(\"{}\")", nested_field.name)
+                                    };
+                                    nested_field_assigns.push_str(&format!("\n                        {}: {},", nested_field.name, nested_val));
+                                }
+
+                                format!("G::from_iter(&db, &txn, std::iter::once({}.clone()), &arena){}.map(|item| item.map(|item| {} {{{}\n                    }})).collect::<Result<Vec<_>, _>>()?",
+                                    singular_var, trav_code, nested_name, nested_field_assigns)
+                            } else {
+                                "Vec::new()".to_string()
+                            }
+                        } else if field.name == "id" {
+                            format!("uuid_str({}.id(), &arena)", singular_var)
+                        } else if field.name == "label" {
+                            format!("{}.label()", singular_var)
+                        } else if field.name == "from_node" {
+                            format!("uuid_str({}.from_node(), &arena)", singular_var)
+                        } else if field.name == "to_node" {
+                            format!("uuid_str({}.to_node(), &arena)", singular_var)
+                        } else if field.name == "data" {
+                            format!("{}.data()", singular_var)
+                        } else if field.name == "score" {
+                            format!("{}.score()", singular_var)
+                        } else {
+                            // Regular schema field
+                            format!("{}.get_property(\"{}\")", singular_var, field.name)
+                        };
+                        writeln!(f, "        {}: {},", field.name, field_value)?;
+                    }
+
+                    // Check if any field is a nested traversal (needs Result handling)
+                    let has_nested = struct_def.fields.iter().any(|f| f.is_nested_traversal);
+                    if has_nested {
+                        write!(f, "    }})).collect::<Result<Vec<_>, GraphError>>()?")
+                    } else {
+                        write!(f, "    }}).collect::<Vec<_>>()")
+                    }?;
+                } else {
+                    // Single item - direct struct construction
+                    writeln!(
+                        f,
+                        "    \"{}\": {} {{",
+                        struct_def.source_variable, struct_def.name
+                    )?;
+
+                    for (field_idx, field) in struct_def.fields.iter().enumerate() {
+                        let field_value = if field.is_nested_traversal {
+                            // Same nested traversal logic as collection case
+                            let field_info = &struct_def.field_infos[field_idx];
+                            if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                traversal_code: Some(trav_code),
+                                nested_struct_name: Some(nested_name),
+                                ..
+                            } = &field_info.source {
+                                let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
+                                    fields
+                                } else {
+                                    panic!("Nested traversal must have Nested field type");
+                                };
+
+                                let mut nested_field_assigns = String::new();
+                                for nested_field in nested_fields {
+                                    let nested_val = if nested_field.name == "id" {
+                                        "uuid_str(item.id(), &arena)".to_string()
+                                    } else if nested_field.name == "label" {
+                                        "item.label()".to_string()
+                                    } else if nested_field.name == "from_node" {
+                                        "uuid_str(item.from_node(), &arena)".to_string()
+                                    } else if nested_field.name == "to_node" {
+                                        "uuid_str(item.to_node(), &arena)".to_string()
+                                    } else {
+                                        format!("item.get_property(\"{}\")", nested_field.name)
+                                    };
+                                    nested_field_assigns.push_str(&format!("\n                        {}: {},", nested_field.name, nested_val));
+                                }
+
+                                format!("G::from_iter(&db, &txn, std::iter::once({}.clone()), &arena){}.map(|item| item.map(|item| {} {{{}\n                    }})).collect::<Result<Vec<_>, _>>()?",
+                                    struct_def.source_variable, trav_code, nested_name, nested_field_assigns)
+                            } else {
+                                "Vec::new()".to_string()
+                            }
+                        } else if field.name == "id" {
+                            format!("uuid_str({}.id(), &arena)", struct_def.source_variable)
+                        } else if field.name == "label" {
+                            format!("{}.label()", struct_def.source_variable)
+                        } else if field.name == "from_node" {
+                            format!(
+                                "uuid_str({}.from_node(), &arena)",
+                                struct_def.source_variable
+                            )
+                        } else if field.name == "to_node" {
+                            format!("uuid_str({}.to_node(), &arena)", struct_def.source_variable)
+                        } else if field.name == "data" {
+                            format!("{}.data()", struct_def.source_variable)
+                        } else if field.name == "score" {
+                            format!("{}.score()", struct_def.source_variable)
+                        } else {
+                            format!(
+                                "{}.get_property(\"{}\")",
+                                struct_def.source_variable, field.name
+                            )
+                        };
+                        writeln!(f, "        {}: {},", field.name, field_value)?;
+                    }
+
+                    write!(f, "    }}")?;
+                }
+            }
+            writeln!(f)?;
+            writeln!(f, "}});")?;
+            self.print_txn_commit(f)?;
+            writeln!(f, "Ok(input.request.out_fmt.create_response(&response))")?;
+        } else if !self.return_values.is_empty() {
+            // Legacy json! macro approach
             write!(f, "let response = json!({{")?;
             for (i, (field_name, ret_val)) in self.return_values.iter().enumerate() {
                 if i > 0 {
@@ -164,12 +347,19 @@ impl Query {
                         }
                         writeln!(f)?;
                         if field.name == "id" {
-                            write!(f, "        \"{}\": uuid_str({}.id(), &arena)", field.name, field_name)?;
+                            write!(
+                                f,
+                                "        \"{}\": uuid_str({}.id(), &arena)",
+                                field.name, field_name
+                            )?;
                         } else if field.name == "label" {
                             write!(f, "        \"{}\": {}.label()", field.name, field_name)?;
                         } else {
-                            write!(f, "        \"{}\": {}.get_property(\"{}\").unwrap()",
-                                field.name, field_name, field.name)?;
+                            write!(
+                                f,
+                                "        \"{}\": {}.get_property(\"{}\").unwrap()",
+                                field.name, field_name, field.name
+                            )?;
                         }
                     }
                     writeln!(f)?;
@@ -186,8 +376,10 @@ impl Query {
             }
             writeln!(f)?;
             writeln!(f, "}});")?;
+            self.print_txn_commit(f)?;
             writeln!(f, "Ok(input.request.out_fmt.create_response(&response))")?;
         } else {
+            self.print_txn_commit(f)?;
             writeln!(f, "Ok(input.request.out_fmt.create_response(&()))")?;
         }
 
@@ -273,10 +465,191 @@ impl Query {
         for statement in &self.statements {
             writeln!(f, "    {statement};")?;
         }
-        self.print_txn_commit(f)?;
 
-        // Generate return value using json! macro - same as regular handler
-        if !self.return_values.is_empty() {
+        // Generate return value - same logic as regular handler
+        if self.use_struct_returns && !self.return_structs.is_empty() {
+            // New struct-based approach - map during response construction
+            write!(f, "let response = json!({{")?;
+            for (i, struct_def) in self.return_structs.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                writeln!(f)?;
+
+                if struct_def.is_collection {
+                    // Collection - generate mapping code
+                    let singular_var = struct_def.source_variable.trim_end_matches('s');
+                    // Check if any field is a nested traversal (needs Result handling)
+                    let has_nested = struct_def.fields.iter().any(|f| f.is_nested_traversal);
+
+                    if has_nested {
+                        writeln!(
+                            f,
+                            "    \"{}\": {}.iter().map(|{}| Ok::<_, GraphError>({} {{",
+                            struct_def.source_variable,
+                            struct_def.source_variable,
+                            singular_var,
+                            struct_def.name
+                        )?;
+                    } else {
+                        writeln!(
+                            f,
+                            "    \"{}\": {}.iter().map(|{}| {} {{",
+                            struct_def.source_variable,
+                            struct_def.source_variable,
+                            singular_var,
+                            struct_def.name
+                        )?;
+                    }
+
+                    // Generate field assignments
+                    for (field_idx, field) in struct_def.fields.iter().enumerate() {
+                        let field_value = if field.is_nested_traversal {
+                            // Get the nested traversal info from field_infos
+                            let field_info = &struct_def.field_infos[field_idx];
+                            if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                traversal_code: Some(trav_code),
+                                nested_struct_name: Some(nested_name),
+                                ..
+                            } = &field_info.source {
+                                // Generate nested traversal code
+                                let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
+                                    fields
+                                } else {
+                                    panic!("Nested traversal must have Nested field type");
+                                };
+
+                                // Generate field assignments for nested struct
+                                let mut nested_field_assigns = String::new();
+                                for nested_field in nested_fields {
+                                    let nested_val = if nested_field.name == "id" {
+                                        "uuid_str(item.id(), &arena)".to_string()
+                                    } else if nested_field.name == "label" {
+                                        "item.label()".to_string()
+                                    } else if nested_field.name == "from_node" {
+                                        "uuid_str(item.from_node(), &arena)".to_string()
+                                    } else if nested_field.name == "to_node" {
+                                        "uuid_str(item.to_node(), &arena)".to_string()
+                                    } else {
+                                        format!("item.get_property(\"{}\")", nested_field.name)
+                                    };
+                                    nested_field_assigns.push_str(&format!("\n                        {}: {},", nested_field.name, nested_val));
+                                }
+
+                                format!("G::from_iter(&db, &txn, std::iter::once({}.clone()), &arena){}.map(|item| item.map(|item| {} {{{}\n                    }})).collect::<Result<Vec<_>, _>>()?",
+                                    singular_var, trav_code, nested_name, nested_field_assigns)
+                            } else {
+                                "Vec::new()".to_string()
+                            }
+                        } else if field.name == "id" {
+                            format!("uuid_str({}.id(), &arena)", singular_var)
+                        } else if field.name == "label" {
+                            format!("{}.label()", singular_var)
+                        } else if field.name == "from_node" {
+                            format!("uuid_str({}.from_node(), &arena)", singular_var)
+                        } else if field.name == "to_node" {
+                            format!("uuid_str({}.to_node(), &arena)", singular_var)
+                        } else if field.name == "data" {
+                            format!("{}.data()", singular_var)
+                        } else if field.name == "score" {
+                            format!("{}.score()", singular_var)
+                        } else {
+                            // Regular schema field
+                            format!("{}.get_property(\"{}\")", singular_var, field.name)
+                        };
+                        writeln!(f, "        {}: {},", field.name, field_value)?;
+                    }
+
+                    // Check if any field is a nested traversal (needs Result handling)
+                    let has_nested = struct_def.fields.iter().any(|f| f.is_nested_traversal);
+                    if has_nested {
+                        write!(f, "    }})).collect::<Result<Vec<_>, GraphError>>()?")
+                    } else {
+                        write!(f, "    }}).collect::<Vec<_>>()")
+                    }?;
+                } else {
+                    // Single item - direct struct construction
+                    writeln!(
+                        f,
+                        "    \"{}\": {} {{",
+                        struct_def.source_variable, struct_def.name
+                    )?;
+
+                    for (field_idx, field) in struct_def.fields.iter().enumerate() {
+                        let field_value = if field.is_nested_traversal {
+                            // Same nested traversal logic as collection case
+                            let field_info = &struct_def.field_infos[field_idx];
+                            if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                traversal_code: Some(trav_code),
+                                nested_struct_name: Some(nested_name),
+                                ..
+                            } = &field_info.source {
+                                let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
+                                    fields
+                                } else {
+                                    panic!("Nested traversal must have Nested field type");
+                                };
+
+                                let mut nested_field_assigns = String::new();
+                                for nested_field in nested_fields {
+                                    let nested_val = if nested_field.name == "id" {
+                                        "uuid_str(item.id(), &arena)".to_string()
+                                    } else if nested_field.name == "label" {
+                                        "item.label()".to_string()
+                                    } else if nested_field.name == "from_node" {
+                                        "uuid_str(item.from_node(), &arena)".to_string()
+                                    } else if nested_field.name == "to_node" {
+                                        "uuid_str(item.to_node(), &arena)".to_string()
+                                    } else {
+                                        format!("item.get_property(\"{}\")", nested_field.name)
+                                    };
+                                    nested_field_assigns.push_str(&format!("\n                        {}: {},", nested_field.name, nested_val));
+                                }
+
+                                format!("G::from_iter(&db, &txn, std::iter::once({}.clone()), &arena){}.map(|item| item.map(|item| {} {{{}\n                    }})).collect::<Result<Vec<_>, _>>()?",
+                                    struct_def.source_variable, trav_code, nested_name, nested_field_assigns)
+                            } else {
+                                "Vec::new()".to_string()
+                            }
+                        } else if field.name == "id" {
+                            format!("uuid_str({}.id(), &arena)", struct_def.source_variable)
+                        } else if field.name == "label" {
+                            format!("{}.label()", struct_def.source_variable)
+                        } else if field.name == "from_node" {
+                            format!(
+                                "uuid_str({}.from_node(), &arena)",
+                                struct_def.source_variable
+                            )
+                        } else if field.name == "to_node" {
+                            format!("uuid_str({}.to_node(), &arena)", struct_def.source_variable)
+                        } else if field.name == "data" {
+                            format!("{}.data()", struct_def.source_variable)
+                        } else if field.name == "score" {
+                            format!("{}.score()", struct_def.source_variable)
+                        } else {
+                            format!(
+                                "{}.get_property(\"{}\")",
+                                struct_def.source_variable, field.name
+                            )
+                        };
+                        writeln!(f, "        {}: {},", field.name, field_value)?;
+                    }
+
+                    write!(f, "    }}")?;
+                }
+            }
+            writeln!(f)?;
+            writeln!(f, "}});")?;
+            self.print_txn_commit(f)?;
+            writeln!(f, "let mut connections = connections.lock().unwrap();")?;
+            writeln!(f, "connections.add_connection(connection);")?;
+            writeln!(f, "drop(connections);")?;
+            writeln!(
+                f,
+                "Ok(helix_db::protocol::format::Format::Json.create_response(&response))"
+            )?;
+        } else if !self.return_values.is_empty() {
+            // Legacy json! macro approach
             write!(f, "let response = json!({{")?;
             for (i, (field_name, ret_val)) in self.return_values.iter().enumerate() {
                 if i > 0 {
@@ -293,12 +666,19 @@ impl Query {
                         }
                         writeln!(f)?;
                         if field.name == "id" {
-                            write!(f, "        \"{}\": uuid_str({}.id(), &arena)", field.name, field_name)?;
+                            write!(
+                                f,
+                                "        \"{}\": uuid_str({}.id(), &arena)",
+                                field.name, field_name
+                            )?;
                         } else if field.name == "label" {
                             write!(f, "        \"{}\": {}.label()", field.name, field_name)?;
                         } else {
-                            write!(f, "        \"{}\": {}.get_property(\"{}\").unwrap()",
-                                field.name, field_name, field.name)?;
+                            write!(
+                                f,
+                                "        \"{}\": {}.get_property(\"{}\").unwrap()",
+                                field.name, field_name, field.name
+                            )?;
                         }
                     }
                     writeln!(f)?;
@@ -315,15 +695,23 @@ impl Query {
             }
             writeln!(f)?;
             writeln!(f, "}});")?;
+            self.print_txn_commit(f)?;
             writeln!(f, "let mut connections = connections.lock().unwrap();")?;
             writeln!(f, "connections.add_connection(connection);")?;
             writeln!(f, "drop(connections);")?;
-            writeln!(f, "Ok(helix_db::protocol::format::Format::Json.create_response(&response))")?;
+            writeln!(
+                f,
+                "Ok(helix_db::protocol::format::Format::Json.create_response(&response))"
+            )?;
         } else {
+            self.print_txn_commit(f)?;
             writeln!(f, "let mut connections = connections.lock().unwrap();")?;
             writeln!(f, "connections.add_connection(connection);")?;
             writeln!(f, "drop(connections);")?;
-            writeln!(f, "Ok(helix_db::protocol::format::Format::Json.create_response(&()))")?;
+            writeln!(
+                f,
+                "Ok(helix_db::protocol::format::Format::Json.create_response(&()))"
+            )?;
         }
         if !self.hoisted_embedding_calls.is_empty() {
             writeln!(f, r#"}}))).await.expect("Cont Channel should be alive")"#)?;
@@ -350,6 +738,8 @@ impl Default for Query {
             parameters: vec![],
             sub_parameters: vec![],
             return_values: vec![],
+            return_structs: vec![],
+            use_struct_returns: true, // Enable new struct-based returns
             is_mut: false,
             hoisted_embedding_calls: vec![],
         }

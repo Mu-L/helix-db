@@ -12,7 +12,7 @@ use std::{borrow::Cow, hash::Hash};
 
 pub type Variable<'arena> = Cow<'arena, TraversalValue<'arena>>;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub enum TraversalValue<'arena> {
     /// A node in the graph
     Node(Node<'arena>),
@@ -35,27 +35,6 @@ pub enum TraversalValue<'arena> {
     Empty,
 }
 
-impl<'arena> Clone for TraversalValue<'arena> {
-    fn clone(&self) -> Self {
-        match self {
-            TraversalValue::Node(node) => TraversalValue::Node(*node),
-            TraversalValue::Edge(edge) => TraversalValue::Edge(*edge),
-            TraversalValue::Vector(vector) => TraversalValue::Vector(*vector),
-            TraversalValue::VectorNodeWithoutVectorData(vector) => {
-                TraversalValue::VectorNodeWithoutVectorData(*vector)
-            }
-            TraversalValue::Count(count) => TraversalValue::Count(count.clone()),
-            TraversalValue::Path((nodes, edges)) => TraversalValue::Path((nodes.clone(), edges.clone())),
-            TraversalValue::Value(value) => TraversalValue::Value(value.clone()),
-            TraversalValue::NodeWithScore { node, score } => TraversalValue::NodeWithScore {
-                node: *node,
-                score: *score,
-            },
-            TraversalValue::Empty => TraversalValue::Empty,
-        }
-    }
-}
-
 impl<'arena> TraversalValue<'arena> {
     pub fn id(&self) -> u128 {
         match self {
@@ -68,7 +47,7 @@ impl<'arena> TraversalValue<'arena> {
         }
     }
 
-    pub fn label(&self) -> &str {
+    pub fn label(&self) -> &'arena str {
         match self {
             TraversalValue::Node(node) => node.label,
             TraversalValue::Edge(edge) => edge.label,
@@ -79,7 +58,18 @@ impl<'arena> TraversalValue<'arena> {
         }
     }
 
-    pub fn get_property(&self, property: &str) -> Option<&Value> {
+    pub fn label_arena(&self) -> &'arena str {
+        match self {
+            TraversalValue::Node(node) => node.label,
+            TraversalValue::Edge(edge) => edge.label,
+            TraversalValue::Vector(vector) => vector.label,
+            TraversalValue::VectorNodeWithoutVectorData(vector) => vector.label,
+            TraversalValue::Empty => "",
+            _ => "",
+        }
+    }
+
+    pub fn get_property(&self, property: &str) -> Option<&'arena Value> {
         match self {
             TraversalValue::Node(node) => node.get_property(property),
             TraversalValue::Edge(edge) => edge.get_property(property),
@@ -89,7 +79,6 @@ impl<'arena> TraversalValue<'arena> {
             _ => None,
         }
     }
-
 }
 
 impl Hash for TraversalValue<'_> {

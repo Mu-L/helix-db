@@ -148,6 +148,10 @@ impl HelixParser {
                         loc: p.loc(),
                         value: FieldValueType::Traversal(Box::new(self.parse_anon_traversal(p)?)),
                     },
+                    Rule::id_traversal => FieldValue {
+                        loc: p.loc(),
+                        value: FieldValueType::Traversal(Box::new(self.parse_traversal(p)?)),
+                    },
                     Rule::mapping_field => FieldValue {
                         loc: p.loc(),
                         value: FieldValueType::Fields(self.parse_object_fields(p)?),

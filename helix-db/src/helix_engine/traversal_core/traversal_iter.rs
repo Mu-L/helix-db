@@ -45,6 +45,13 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
         self.inner.filter_map(|item| item.ok()).collect::<B>()
     }
 
+    // pub fn collect_in<'arena, B: FromIterator<TraversalValue<'arena>>>(
+    //     self,
+    //     arena: &'arena Arena,
+    // ) -> B {
+    //     //
+    // }
+
     pub fn collect_dedup<B: FromIterator<TraversalValue<'arena>>>(self) -> B {
         self.inner
             .filter_map(|item| item.ok())

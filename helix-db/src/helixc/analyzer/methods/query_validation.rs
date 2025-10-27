@@ -8,19 +8,210 @@ use crate::helixc::{
         errors::{push_query_err, push_query_warn},
         methods::{infer_expr_type::infer_expr_type, statement_validation::validate_statements},
         types::Type,
-        utils::{is_valid_identifier, VariableInfo},
+        utils::{VariableInfo, is_valid_identifier},
     },
     generator::{
         queries::{Parameter as GeneratedParameter, Query as GeneratedQuery},
-        return_values::ReturnValue,
+        return_values::{
+            ReturnFieldInfo, ReturnFieldSource, ReturnFieldType, ReturnValue, ReturnValueStruct,
+        },
         source_steps::SourceStep,
         statements::Statement as GeneratedStatement,
-        traversal_steps::ShouldCollect,
+        traversal_steps::{ShouldCollect, Traversal as GeneratedTraversal},
     },
     parser::{location::Loc, types::*},
 };
 use paste::paste;
 use std::collections::HashMap;
+
+/// Helper to capitalize first letter of a string
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
+/// Build unified field list for return types
+/// This handles all cases: simple schema, projections, spread, nested traversals
+fn build_return_fields(
+    ctx: &Ctx,
+    inferred_type: &Type,
+    traversal: &GeneratedTraversal,
+) -> Vec<ReturnFieldInfo> {
+    let mut fields = Vec::new();
+
+    // Get schema type name if this is a schema type
+    let schema_type = match inferred_type {
+        Type::Node(Some(label)) | Type::Nodes(Some(label)) => Some((label.as_str(), "node")),
+        Type::Edge(Some(label)) | Type::Edges(Some(label)) => Some((label.as_str(), "edge")),
+        Type::Vector(Some(label)) | Type::Vectors(Some(label)) => Some((label.as_str(), "vector")),
+        _ => None,
+    };
+
+    // Step 1: Add implicit fields if this is a schema type
+    if let Some((label, item_type)) = schema_type {
+        // If has_object_step, only add implicit fields if they're explicitly selected
+        // Otherwise, add all implicit fields (default behavior)
+        let should_add_field = |field_name: &str| {
+            // Exclude if field is in excluded_fields
+            if traversal.excluded_fields.contains(&field_name.to_string()) {
+                return false;
+            }
+            // If has object step, only include if explicitly selected
+            !traversal.has_object_step || traversal.object_fields.contains(&field_name.to_string())
+        };
+
+        // Add id and label if no object step OR if explicitly selected
+        if should_add_field("id") {
+            fields.push(ReturnFieldInfo::new_implicit(
+                "id".to_string(),
+                "&'a str".to_string(),
+            ));
+        }
+        if should_add_field("label") {
+            fields.push(ReturnFieldInfo::new_implicit(
+                "label".to_string(),
+                "&'a str".to_string(),
+            ));
+        }
+
+        // Add type-specific implicit fields
+        if item_type == "edge" {
+            if should_add_field("from_node") {
+                fields.push(ReturnFieldInfo::new_implicit(
+                    "from_node".to_string(),
+                    "&'a str".to_string(),
+                ));
+            }
+            if should_add_field("to_node") {
+                fields.push(ReturnFieldInfo::new_implicit(
+                    "to_node".to_string(),
+                    "&'a str".to_string(),
+                ));
+            }
+        } else if item_type == "vector" {
+            if should_add_field("data") {
+                fields.push(ReturnFieldInfo::new_implicit(
+                    "data".to_string(),
+                    "Option<&'a Value>".to_string(),
+                ));
+            }
+            if should_add_field("score") {
+                fields.push(ReturnFieldInfo::new_implicit(
+                    "score".to_string(),
+                    "Option<f32>".to_string(),
+                ));
+            }
+        }
+
+        // Step 2: Add schema fields based on projection mode
+        let schema_fields = match item_type {
+            "node" => ctx.node_fields.get(label),
+            "edge" => ctx.edge_fields.get(label),
+            "vector" => ctx.vector_fields.get(label),
+            _ => None,
+        };
+
+        if let Some(schema_fields) = schema_fields {
+            if traversal.has_object_step {
+                // Projection mode - only include selected fields
+                for field_name in &traversal.object_fields {
+                    // Skip if it's a nested traversal (handled separately)
+                    if traversal.nested_traversals.contains_key(field_name) {
+                        continue;
+                    }
+
+                    // Skip implicit fields (already added)
+                    if field_name == "id"
+                        || field_name == "label"
+                        || field_name == "from_node"
+                        || field_name == "to_node"
+                        || field_name == "data"
+                        || field_name == "score"
+                    {
+                        continue;
+                    }
+
+                    if let Some(field) = schema_fields.get(field_name.as_str()) {
+                        fields.push(ReturnFieldInfo::new_schema(
+                            field_name.clone(),
+                            format!("Option<&'a Value>"),
+                        ));
+                    }
+                }
+
+                // If has_spread, add all remaining schema fields
+                if traversal.has_spread {
+                    for (field_name, _field) in schema_fields.iter() {
+                        // Skip if already added
+                        if fields.iter().any(|f| f.name == *field_name) {
+                            continue;
+                        }
+                        // Skip if excluded
+                        if traversal.excluded_fields.contains(&field_name.to_string()) {
+                            continue;
+                        }
+                        fields.push(ReturnFieldInfo::new_schema(
+                            field_name.to_string(),
+                            format!("Option<&'a Value>"),
+                        ));
+                    }
+                }
+            } else {
+                // No projection - include all schema fields except excluded ones
+                for (field_name, _field) in schema_fields.iter() {
+                    // Skip implicit fields (already added)
+                    if *field_name == "id" || *field_name == "label" {
+                        continue;
+                    }
+                    // Skip if excluded
+                    if traversal.excluded_fields.contains(&field_name.to_string()) {
+                        continue;
+                    }
+                    fields.push(ReturnFieldInfo::new_schema(
+                        field_name.to_string(),
+                        format!("Option<&'a Value>"),
+                    ));
+                }
+            }
+        }
+    }
+
+    // Step 3: Add nested traversals
+    for (field_name, nested_info) in &traversal.nested_traversals {
+        // For nested traversals, extract the return type and build nested fields
+        if let Some(ref return_type) = nested_info.return_type {
+            // Recursively build fields for the nested type
+            let nested_fields = build_return_fields(ctx, return_type, &nested_info.traversal);
+            let nested_struct_name = format!("{}ReturnType", capitalize_first(field_name));
+            fields.push(ReturnFieldInfo {
+                name: field_name.clone(),
+                field_type: ReturnFieldType::Nested(nested_fields),
+                source: ReturnFieldSource::NestedTraversal {
+                    traversal_expr: format!("nested_traversal_{}", field_name),
+                    traversal_code: Some(nested_info.traversal.format_steps_only()), // Store only the steps
+                    nested_struct_name: Some(nested_struct_name),
+                },
+            });
+        } else {
+            // Type not yet determined - create placeholder
+            // This will be filled in during a later pass
+            fields.push(ReturnFieldInfo {
+                name: field_name.clone(),
+                field_type: ReturnFieldType::Simple("Value".to_string()),
+                source: ReturnFieldSource::NestedTraversal {
+                    traversal_expr: format!("nested_traversal_{}", field_name),
+                    traversal_code: None,
+                    nested_struct_name: None,
+                },
+            });
+        }
+    }
+
+    fields
+}
 
 /// Helper function to get Rust type string from analyzer Type and populate return value fields
 fn type_to_rust_string_and_fields(
@@ -28,30 +219,37 @@ fn type_to_rust_string_and_fields(
     should_collect: &ShouldCollect,
     ctx: &Ctx,
     field_name: &str,
-) -> (String, Vec<crate::helixc::generator::return_values::ReturnValueField>) {
+) -> (
+    String,
+    Vec<crate::helixc::generator::return_values::ReturnValueField>,
+) {
     match (ty, should_collect) {
         // For single nodes/vectors/edges, generate a proper struct based on schema
         (Type::Node(Some(label)), ShouldCollect::ToObj | ShouldCollect::No) => {
             let type_name = format!("{}ReturnType", label);
             let mut fields = vec![
-                crate::helixc::generator::return_values::ReturnValueField {
-                    name: "id".to_string(),
-                    field_type: "ID".to_string(),
-                },
-                crate::helixc::generator::return_values::ReturnValueField {
-                    name: "label".to_string(),
-                    field_type: "String".to_string(),
-                },
+                crate::helixc::generator::return_values::ReturnValueField::new(
+                    "id".to_string(),
+                    "ID".to_string(),
+                )
+                .with_implicit(true),
+                crate::helixc::generator::return_values::ReturnValueField::new(
+                    "label".to_string(),
+                    "String".to_string(),
+                )
+                .with_implicit(true),
             ];
 
             // Add properties from schema (skip id and label as they're already added)
             if let Some(node_fields) = ctx.node_fields.get(label.as_str()) {
                 for (prop_name, field) in node_fields {
                     if *prop_name != "id" && *prop_name != "label" {
-                        fields.push(crate::helixc::generator::return_values::ReturnValueField {
-                            name: prop_name.to_string(),
-                            field_type: format!("{}", field.field_type),
-                        });
+                        fields.push(
+                            crate::helixc::generator::return_values::ReturnValueField::new(
+                                prop_name.to_string(),
+                                format!("{}", field.field_type),
+                            ),
+                        );
                     }
                 }
             }
@@ -60,23 +258,27 @@ fn type_to_rust_string_and_fields(
         (Type::Edge(Some(label)), ShouldCollect::ToObj | ShouldCollect::No) => {
             let type_name = format!("{}ReturnType", label);
             let mut fields = vec![
-                crate::helixc::generator::return_values::ReturnValueField {
-                    name: "id".to_string(),
-                    field_type: "ID".to_string(),
-                },
-                crate::helixc::generator::return_values::ReturnValueField {
-                    name: "label".to_string(),
-                    field_type: "String".to_string(),
-                },
+                crate::helixc::generator::return_values::ReturnValueField::new(
+                    "id".to_string(),
+                    "ID".to_string(),
+                )
+                .with_implicit(true),
+                crate::helixc::generator::return_values::ReturnValueField::new(
+                    "label".to_string(),
+                    "String".to_string(),
+                )
+                .with_implicit(true),
             ];
 
             if let Some(edge_fields) = ctx.edge_fields.get(label.as_str()) {
                 for (prop_name, field) in edge_fields {
                     if *prop_name != "id" && *prop_name != "label" {
-                        fields.push(crate::helixc::generator::return_values::ReturnValueField {
-                            name: prop_name.to_string(),
-                            field_type: format!("{}", field.field_type),
-                        });
+                        fields.push(
+                            crate::helixc::generator::return_values::ReturnValueField::new(
+                                prop_name.to_string(),
+                                format!("{}", field.field_type),
+                            ),
+                        );
                     }
                 }
             }
@@ -85,38 +287,51 @@ fn type_to_rust_string_and_fields(
         (Type::Vector(Some(label)), ShouldCollect::ToObj | ShouldCollect::No) => {
             let type_name = format!("{}ReturnType", label);
             let mut fields = vec![
-                crate::helixc::generator::return_values::ReturnValueField {
-                    name: "id".to_string(),
-                    field_type: "ID".to_string(),
-                },
-                crate::helixc::generator::return_values::ReturnValueField {
-                    name: "label".to_string(),
-                    field_type: "String".to_string(),
-                },
+                crate::helixc::generator::return_values::ReturnValueField::new(
+                    "id".to_string(),
+                    "ID".to_string(),
+                )
+                .with_implicit(true),
+                crate::helixc::generator::return_values::ReturnValueField::new(
+                    "label".to_string(),
+                    "String".to_string(),
+                )
+                .with_implicit(true),
             ];
 
             if let Some(vector_fields) = ctx.vector_fields.get(label.as_str()) {
                 for (prop_name, field) in vector_fields {
                     if *prop_name != "id" && *prop_name != "label" {
-                        fields.push(crate::helixc::generator::return_values::ReturnValueField {
-                            name: prop_name.to_string(),
-                            field_type: format!("{}", field.field_type),
-                        });
+                        fields.push(
+                            crate::helixc::generator::return_values::ReturnValueField::new(
+                                prop_name.to_string(),
+                                format!("{}", field.field_type),
+                            ),
+                        );
                     }
                 }
             }
             (type_name, fields)
         }
         // For Vec types, we still need Vec<TypeName>
-        (Type::Node(Some(label)), ShouldCollect::ToVec) => (format!("Vec<{}ReturnType>", label), vec![]),
-        (Type::Edge(Some(label)), ShouldCollect::ToVec) => (format!("Vec<{}ReturnType>", label), vec![]),
-        (Type::Vector(Some(label)), ShouldCollect::ToVec) => (format!("Vec<{}ReturnType>", label), vec![]),
+        (Type::Node(Some(label)), ShouldCollect::ToVec) => {
+            (format!("Vec<{}ReturnType>", label), vec![])
+        }
+        (Type::Edge(Some(label)), ShouldCollect::ToVec) => {
+            (format!("Vec<{}ReturnType>", label), vec![])
+        }
+        (Type::Vector(Some(label)), ShouldCollect::ToVec) => {
+            (format!("Vec<{}ReturnType>", label), vec![])
+        }
         // Fallbacks for None labels
-        (Type::Node(None), _) | (Type::Edge(None), _) | (Type::Vector(None), _) => ("".to_string(), vec![]),
+        (Type::Node(None), _) | (Type::Edge(None), _) | (Type::Vector(None), _) => {
+            ("".to_string(), vec![])
+        }
         (Type::Scalar(s), _) => (format!("{}", s), vec![]),
         (Type::Boolean, _) => ("bool".to_string(), vec![]),
         (Type::Array(inner), _) => {
-            let (inner_type, _) = type_to_rust_string_and_fields(inner, &ShouldCollect::No, ctx, field_name);
+            let (inner_type, _) =
+                type_to_rust_string_and_fields(inner, &ShouldCollect::No, ctx, field_name);
             (format!("Vec<{}>", inner_type), vec![])
         }
         (Type::Aggregate, _) => ("".to_string(), vec![]),
@@ -232,7 +447,8 @@ fn analyze_return_expr<'a>(
 ) {
     match ret {
         ReturnType::Expression(expr) => {
-            let (inferred_type, stmt) = infer_expr_type(ctx, expr, scope, original_query, None, query);
+            let (inferred_type, stmt) =
+                infer_expr_type(ctx, expr, scope, original_query, None, query);
 
             if stmt.is_none() {
                 return;
@@ -250,29 +466,81 @@ fn analyze_return_expr<'a>(
                             );
 
                             let field_name = v.inner().clone();
-                            let (rust_type, fields) = type_to_rust_string_and_fields(&inferred_type, &traversal.should_collect, ctx, &field_name);
 
+                            // Legacy approach
+                            let (rust_type, fields) = type_to_rust_string_and_fields(
+                                &inferred_type,
+                                &traversal.should_collect,
+                                ctx,
+                                &field_name,
+                            );
                             query.return_values.push((
-                                field_name,
+                                field_name.clone(),
                                 ReturnValue {
                                     name: rust_type,
                                     fields,
                                     literal_value: None,
-                                }
+                                },
                             ));
+
+                            // New unified approach
+                            let return_fields =
+                                build_return_fields(ctx, &inferred_type, &traversal);
+                            let struct_name =
+                                format!("{}ReturnType", capitalize_first(&field_name));
+                            let is_collection =
+                                matches!(traversal.should_collect, ShouldCollect::ToVec);
+                            query
+                                .return_structs
+                                .push(ReturnValueStruct::from_return_fields(
+                                    struct_name.clone(),
+                                    return_fields.clone(),
+                                    field_name.clone(),
+                                    is_collection,
+                                    traversal.is_reused_variable,
+                                ));
+
+                            // Note: Map closures are no longer injected here.
+                            // Mapping will happen at response construction time instead.
                         }
                         _ => {
                             let field_name = "data".to_string();
-                            let (rust_type, fields) = type_to_rust_string_and_fields(&inferred_type, &traversal.should_collect, ctx, &field_name);
 
+                            // Legacy approach
+                            let (rust_type, fields) = type_to_rust_string_and_fields(
+                                &inferred_type,
+                                &traversal.should_collect,
+                                ctx,
+                                &field_name,
+                            );
                             query.return_values.push((
-                                field_name,
+                                field_name.clone(),
                                 ReturnValue {
                                     name: rust_type,
                                     fields,
                                     literal_value: None,
-                                }
+                                },
                             ));
+
+                            // New unified approach
+                            let return_fields =
+                                build_return_fields(ctx, &inferred_type, &traversal);
+                            let struct_name =
+                                format!("{}ReturnType", capitalize_first(&field_name));
+                            let is_collection =
+                                matches!(traversal.should_collect, ShouldCollect::ToVec);
+                            query
+                                .return_structs
+                                .push(ReturnValueStruct::from_return_fields(
+                                    struct_name.clone(),
+                                    return_fields.clone(),
+                                    field_name.clone(),
+                                    is_collection,
+                                    traversal.is_reused_variable,
+                                ));
+
+                            // Generate map closure (direct return, no variable assignment to update)
+                            // Map closure will be used during return generation phase
                         }
                     }
                 }
@@ -293,16 +561,46 @@ fn analyze_return_expr<'a>(
                     };
 
                     let field_name = id.inner().clone();
-                    let (rust_type, fields) = type_to_rust_string_and_fields(&identifier_end_type, &ShouldCollect::No, ctx, &field_name);
 
+                    // Legacy approach
+                    let (rust_type, fields) = type_to_rust_string_and_fields(
+                        &identifier_end_type,
+                        &ShouldCollect::No,
+                        ctx,
+                        &field_name,
+                    );
                     query.return_values.push((
-                        field_name,
+                        field_name.clone(),
                         ReturnValue {
                             name: rust_type,
                             fields,
                             literal_value: None,
-                        }
+                        },
                     ));
+
+                    // New unified approach
+                    // For identifier returns, we need to create a traversal to build fields from
+                    let var_info = scope.get(id.inner().as_str());
+                    let is_reused = var_info.map_or(false, |v| v.reference_count > 1);
+                    let is_collection = var_info.map_or(false, |v| !v.is_single);
+                    let traversal = GeneratedTraversal {
+                        is_reused_variable: is_reused,
+                        ..Default::default()
+                    };
+                    let return_fields = build_return_fields(ctx, &identifier_end_type, &traversal);
+                    let struct_name = format!("{}ReturnType", capitalize_first(&field_name));
+                    query
+                        .return_structs
+                        .push(ReturnValueStruct::from_return_fields(
+                            struct_name.clone(),
+                            return_fields.clone(),
+                            field_name.clone(),
+                            is_collection,
+                            is_reused,
+                        ));
+
+                    // Note: Map closures are no longer injected here.
+                    // Mapping will happen at response construction time instead.
                 }
                 GeneratedStatement::Literal(l) => {
                     let field_name = "data".to_string();
@@ -314,7 +612,7 @@ fn analyze_return_expr<'a>(
                             name: rust_type,
                             fields: vec![],
                             literal_value: Some(l.clone()),
-                        }
+                        },
                     ));
                 }
                 GeneratedStatement::Empty => query.return_values = vec![],
@@ -327,7 +625,9 @@ fn analyze_return_expr<'a>(
         ReturnType::Array(values) => {
             // For arrays, check if they contain simple expressions (identifiers/traversals)
             // or complex nested structures
-            let is_simple_array = values.iter().all(|v| matches!(v, ReturnType::Expression(_)));
+            let is_simple_array = values
+                .iter()
+                .all(|v| matches!(v, ReturnType::Expression(_)));
 
             if is_simple_array {
                 // Process each element as a separate return value
@@ -342,7 +642,9 @@ fn analyze_return_expr<'a>(
         }
         ReturnType::Object(values) => {
             // Check if this is a simple object with only expression values
-            let is_simple_object = values.values().all(|v| matches!(v, ReturnType::Expression(_)));
+            let is_simple_object = values
+                .values()
+                .all(|v| matches!(v, ReturnType::Expression(_)));
 
             if is_simple_object {
                 // Process each field in the object
@@ -360,11 +662,10 @@ fn analyze_return_expr<'a>(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::helixc::parser::{write_to_temp_file, HelixParser};
+    use crate::helixc::parser::{HelixParser, write_to_temp_file};
 
     // ============================================================================
     // Parameter Validation Tests
@@ -387,7 +688,11 @@ mod tests {
         assert!(result.is_ok());
         let (diagnostics, _) = result.unwrap();
         assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E209));
-        assert!(diagnostics.iter().any(|d| d.message.contains("unknown type") && d.message.contains("UnknownType")));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("unknown type") && d.message.contains("UnknownType"))
+        );
     }
 
     #[test]
@@ -431,7 +736,11 @@ mod tests {
         assert!(result.is_ok());
         let (diagnostics, _) = result.unwrap();
         assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
-        assert!(diagnostics.iter().any(|d| d.message.contains("not in scope") && d.message.contains("unknownVar")));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("not in scope") && d.message.contains("unknownVar"))
+        );
     }
 
     #[test]
@@ -516,7 +825,11 @@ mod tests {
         assert!(result.is_ok());
         let (diagnostics, _) = result.unwrap();
         assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E401));
-        assert!(diagnostics.iter().any(|d| d.message.contains("MCP query must return a single value")));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("MCP query must return a single value"))
+        );
     }
 
     #[test]
@@ -625,12 +938,17 @@ mod tests {
         assert!(result.is_ok());
         let (diagnostics, generated) = result.unwrap();
         // Model macro should be processed without errors
-        assert!(diagnostics.is_empty() || !diagnostics.iter().any(|d| d.error_code == ErrorCode::E301));
+        assert!(
+            diagnostics.is_empty() || !diagnostics.iter().any(|d| d.error_code == ErrorCode::E301)
+        );
 
         // Check that the generated query has the embedding model set
         assert_eq!(generated.queries.len(), 1);
         // Model name includes quotes from parsing
-        assert_eq!(generated.queries[0].embedding_model_to_use, Some("\"gpt-4\"".to_string()));
+        assert_eq!(
+            generated.queries[0].embedding_model_to_use,
+            Some("\"gpt-4\"".to_string())
+        );
     }
 
     // ============================================================================

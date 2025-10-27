@@ -3,10 +3,416 @@ use std::fmt::Display;
 
 use super::utils::GenRef;
 
+/// Represents a return value field with enhanced metadata
+#[derive(Clone, Debug)]
+pub struct ReturnValueField {
+    pub name: String,
+    pub field_type: String,
+    pub is_implicit: bool,         // id, label, from_node, to_node, data, score
+    pub is_nested_traversal: bool, // Whether this field contains a nested traversal
+    pub nested_struct_name: Option<String>, // Name of nested struct type if applicable
+}
+
+impl ReturnValueField {
+    pub fn new(name: String, field_type: String) -> Self {
+        Self {
+            name,
+            field_type,
+            is_implicit: false,
+            is_nested_traversal: false,
+            nested_struct_name: None,
+        }
+    }
+
+    pub fn with_implicit(mut self, is_implicit: bool) -> Self {
+        self.is_implicit = is_implicit;
+        self
+    }
+
+    pub fn with_nested_traversal(mut self, nested_struct_name: String) -> Self {
+        self.is_nested_traversal = true;
+        self.nested_struct_name = Some(nested_struct_name);
+        self
+    }
+}
+
+/// Represents a generated struct for return types
+#[derive(Clone, Debug)]
+pub struct ReturnValueStruct {
+    pub name: String,
+    pub fields: Vec<ReturnValueField>,
+    pub has_lifetime: bool,         // Whether to add 'a lifetime parameter
+    pub is_query_return_type: bool, // True for the main QueryReturnType
+    pub is_collection: bool,        // True if this returns Vec<T>, false for single T
+    pub source_variable: String,    // Variable name this struct is built from
+    pub is_reused_variable: bool,   // True if source variable is referenced multiple times
+    pub field_infos: Vec<ReturnFieldInfo>, // Original field info for nested struct generation
+}
+
+impl ReturnValueStruct {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            fields: Vec::new(),
+            has_lifetime: true,
+            is_query_return_type: false,
+            is_collection: false,
+            source_variable: String::new(),
+            is_reused_variable: false,
+            field_infos: Vec::new(),
+        }
+    }
+
+    pub fn with_fields(mut self, fields: Vec<ReturnValueField>) -> Self {
+        self.fields = fields;
+        self
+    }
+
+    pub fn with_lifetime(mut self, has_lifetime: bool) -> Self {
+        self.has_lifetime = has_lifetime;
+        self
+    }
+
+    pub fn as_query_return_type(mut self) -> Self {
+        self.is_query_return_type = true;
+        self
+    }
+
+    pub fn with_collection(mut self, is_collection: bool) -> Self {
+        self.is_collection = is_collection;
+        self
+    }
+
+    pub fn with_source_variable(mut self, source_variable: String) -> Self {
+        self.source_variable = source_variable;
+        self
+    }
+
+    pub fn with_reused_variable(mut self, is_reused: bool) -> Self {
+        self.is_reused_variable = is_reused;
+        self
+    }
+
+    /// Generate the struct definition as a string
+    pub fn generate_struct_def(&self) -> String {
+        let mut output = String::new();
+
+        // Generate derive attributes
+        output.push_str("#[derive(Serialize)]\n");
+
+        // Generate struct declaration
+        if self.has_lifetime {
+            output.push_str(&format!("pub struct {}<'a> {{\n", self.name));
+        } else {
+            output.push_str(&format!("pub struct {} {{\n", self.name));
+        }
+
+        // Generate fields
+        for field in &self.fields {
+            if self.has_lifetime {
+                output.push_str(&format!("    pub {}: {},\n", field.name, field.field_type));
+            } else {
+                // Remove lifetime parameters if not needed
+                let field_type = field.field_type.replace("<'a>", "");
+                output.push_str(&format!("    pub {}: {},\n", field.name, field_type));
+            }
+        }
+
+        output.push_str("}\n");
+        output
+    }
+
+    /// Generate code to construct an instance of this struct from the source variable
+    pub fn generate_struct_construction(&self) -> String {
+        let singular_var = self.source_variable.trim_end_matches('s');
+
+        // Generate the struct construction body
+        let mut body = format!("{} {{\n", self.name);
+
+        for field in &self.fields {
+            let field_value = if field.name == "id" {
+                format!("uuid_str({}.id(), &arena)", singular_var)
+            } else if field.name == "label" {
+                format!("{}.label()", singular_var)
+            } else if field.name == "from_node" {
+                format!("uuid_str({}.from_node(), &arena)", singular_var)
+            } else if field.name == "to_node" {
+                format!("uuid_str({}.to_node(), &arena)", singular_var)
+            } else if field.name == "data" {
+                format!("{}.data()", singular_var)
+            } else if field.name == "score" {
+                format!("{}.score()", singular_var)
+            } else if field.is_nested_traversal {
+                // Nested traversal - will be populated by nested G::new() call
+                format!("/* nested traversal */")
+            } else {
+                // Regular schema field
+                format!("{}.get_property(\"{}\").unwrap()", singular_var, field.name)
+            };
+
+            body.push_str(&format!("        {}: {},\n", field.name, field_value));
+        }
+
+        body.push_str("    }");
+
+        // Wrap in .map() for collections
+        if self.is_collection {
+            let iter_method = if self.is_reused_variable {
+                "iter().cloned()"
+            } else {
+                "into_iter()"
+            };
+
+            format!(
+                "{}.{}.map(|{}| {}).collect::<Vec<_>>()",
+                self.source_variable, iter_method, singular_var, body
+            )
+        } else {
+            // Single item - just construct the struct directly
+            body.replace(singular_var, &self.source_variable)
+        }
+    }
+
+    /// Create a ReturnValueStruct from unified field information
+    pub fn from_return_fields(
+        name: String,
+        field_infos: Vec<ReturnFieldInfo>,
+        source_variable: String,
+        is_collection: bool,
+        is_reused: bool,
+    ) -> Self {
+        let fields = field_infos
+            .iter()
+            .map(|field_info| {
+                let (field_type, is_nested, nested_name) = match &field_info.field_type {
+                    ReturnFieldType::Simple(ty) => (ty.clone(), false, None),
+                    ReturnFieldType::Nested(_) => {
+                        // Nested fields become Vec<NestedTypeName<'a>>
+                        let nested_type_name =
+                            format!("{}ReturnType", capitalize_first(&field_info.name));
+                        (
+                            format!("Vec<{}<'a>>", nested_type_name),
+                            true,
+                            Some(nested_type_name),
+                        )
+                    }
+                };
+
+                ReturnValueField {
+                    name: field_info.name.clone(),
+                    field_type,
+                    is_implicit: matches!(field_info.source, ReturnFieldSource::ImplicitField),
+                    is_nested_traversal: matches!(
+                        field_info.source,
+                        ReturnFieldSource::NestedTraversal { .. }
+                    ),
+                    nested_struct_name: nested_name,
+                }
+            })
+            .collect();
+
+        let mut struct_def = ReturnValueStruct::new(name);
+        struct_def.fields = fields;
+        struct_def.has_lifetime = true;
+        struct_def.source_variable = source_variable;
+        struct_def.is_collection = is_collection;
+        struct_def.is_reused_variable = is_reused;
+        struct_def.field_infos = field_infos; // Store for nested generation
+        struct_def
+    }
+
+    /// Recursively generate all struct definitions (including nested ones)
+    pub fn generate_all_struct_defs(&self) -> String {
+        let mut output = String::new();
+
+        // First, generate nested struct definitions
+        for field_info in &self.field_infos {
+            if let ReturnFieldType::Nested(nested_fields) = &field_info.field_type {
+                let nested_name = format!("{}ReturnType", capitalize_first(&field_info.name));
+                let nested_struct = ReturnValueStruct::from_return_fields(
+                    nested_name,
+                    nested_fields.clone(),
+                    "item".to_string(), // Placeholder - actual value comes from traversal
+                    false,              // Nested items are not collections themselves
+                    false,
+                );
+                // Recursively generate nested struct defs
+                output.push_str(&nested_struct.generate_all_struct_defs());
+                output.push_str("\n\n");
+            }
+        }
+
+        // Then generate this struct's definition
+        output.push_str(&self.generate_struct_def());
+        output
+    }
+}
+
+/// Helper function to capitalize the first letter of a string
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
+/// Generate the body of a map closure for struct construction
+/// Returns: "StructName { id: uuid_str(val.id(), &arena), ... }"
+/// Note: Always uses "val" as the variable name to match closure parameter
+pub fn generate_map_closure_body(
+    struct_name: &str,
+    fields: &[ReturnValueField],
+    _singular_var: &str,
+) -> String {
+    let mut body = format!("{} {{\n", struct_name);
+
+    for field in fields {
+        let field_value = if field.name == "id" {
+            "uuid_str(val.id(), &arena)".to_string()
+        } else if field.name == "label" {
+            "val.label()".to_string()
+        } else if field.name == "from_node" {
+            "uuid_str(val.from_node(), &arena)".to_string()
+        } else if field.name == "to_node" {
+            "uuid_str(val.to_node(), &arena)".to_string()
+        } else if field.name == "data" {
+            "val.data()".to_string()
+        } else if field.name == "score" {
+            "val.score()".to_string()
+        } else if field.is_nested_traversal {
+            // Nested traversal - will be populated by nested G::new() call
+            "/* TODO: nested traversal */".to_string()
+        } else {
+            // Regular schema field - return Option directly, no unwrap
+            format!("val.get_property(\"{}\")", field.name)
+        };
+
+        body.push_str(&format!("            {}: {},\n", field.name, field_value));
+    }
+
+    body.push_str("        }");
+    body
+}
+
+/// Represents how a return value should be constructed
+#[derive(Clone, Debug)]
+pub enum ReturnValueConstruction {
+    /// Map a traversal result to a struct
+    MapTraversal {
+        variable_name: String,
+        struct_name: String,
+        field_mappings: Vec<FieldMapping>,
+    },
+    /// Construct a struct from existing variables
+    DirectConstruction {
+        struct_name: String,
+        field_assignments: Vec<(String, String)>, // field_name -> expression
+    },
+    /// A literal value (for backwards compatibility)
+    Literal { value: GenRef<String> },
+}
+
+#[derive(Clone, Debug)]
+pub struct FieldMapping {
+    pub field_name: String,
+    pub source: FieldSource,
+}
+
+#[derive(Clone, Debug)]
+pub enum FieldSource {
+    /// Call .id() on the value
+    Id,
+    /// Call .label() on the value
+    Label,
+    /// Call .get_property(name) on the value
+    Property(String),
+    /// Nested traversal that needs to be executed
+    NestedTraversal {
+        traversal_expr: String,
+        inner_mapping: Box<ReturnValueConstruction>,
+    },
+    /// Reference to another variable
+    Variable(String),
+    /// A literal value
+    Literal(String),
+}
+
+/// Unified field information for return types
+#[derive(Clone, Debug)]
+pub struct ReturnFieldInfo {
+    pub name: String,
+    pub field_type: ReturnFieldType,
+    pub source: ReturnFieldSource,
+}
+
+#[derive(Clone, Debug)]
+pub enum ReturnFieldType {
+    /// Simple type like "&'a str", "Option<&'a Value>", etc.
+    Simple(String),
+    /// Nested object with its own fields (for nested traversals)
+    Nested(Vec<ReturnFieldInfo>),
+}
+
+#[derive(Clone, Debug)]
+pub enum ReturnFieldSource {
+    /// Field from the schema (node/edge/vector properties)
+    SchemaField,
+    /// Implicit field (id, label, from_node, to_node, data, score)
+    ImplicitField,
+    /// User-defined field in custom object
+    UserDefined,
+    /// Result of a nested traversal expression
+    NestedTraversal {
+        traversal_expr: String,
+        traversal_code: Option<String>, // Generated traversal code for response
+        nested_struct_name: Option<String>, // Name of the nested struct type
+    },
+}
+
+impl ReturnFieldInfo {
+    pub fn new_implicit(name: String, field_type: String) -> Self {
+        Self {
+            name,
+            field_type: ReturnFieldType::Simple(field_type),
+            source: ReturnFieldSource::ImplicitField,
+        }
+    }
+
+    pub fn new_schema(name: String, field_type: String) -> Self {
+        Self {
+            name,
+            field_type: ReturnFieldType::Simple(field_type),
+            source: ReturnFieldSource::SchemaField,
+        }
+    }
+
+    pub fn new_nested(name: String, fields: Vec<ReturnFieldInfo>, traversal_expr: String) -> Self {
+        Self {
+            name,
+            field_type: ReturnFieldType::Nested(fields),
+            source: ReturnFieldSource::NestedTraversal {
+                traversal_expr,
+                traversal_code: None,
+                nested_struct_name: None,
+            },
+        }
+    }
+
+    pub fn new_user_defined(name: String, field_type: String) -> Self {
+        Self {
+            name,
+            field_type: ReturnFieldType::Simple(field_type),
+            source: ReturnFieldSource::UserDefined,
+        }
+    }
+}
+
+/// Legacy ReturnValue structure for backwards compatibility
 pub struct ReturnValue {
     pub name: String,
     pub fields: Vec<ReturnValueField>,
-    pub literal_value: Option<GenRef<String>>, // For literal return values like RETURN "Success"
+    pub literal_value: Option<GenRef<String>>,
 }
 
 impl Display for ReturnValue {
@@ -19,9 +425,4 @@ impl Display for ReturnValue {
         writeln!(f, "}}")?;
         Ok(())
     }
-}
-
-pub struct ReturnValueField {
-    pub name: String,
-    pub field_type: String,
 }

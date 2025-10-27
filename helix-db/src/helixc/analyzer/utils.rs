@@ -209,11 +209,20 @@ impl Variable {
 pub(super) struct VariableInfo {
     pub ty: Type,
     pub is_single: bool, // true if ToObj, false if ToVec
+    pub reference_count: usize, // How many times this variable is referenced
 }
 
 impl VariableInfo {
     pub fn new(ty: Type, is_single: bool) -> Self {
-        Self { ty, is_single }
+        Self {
+            ty,
+            is_single,
+            reference_count: 0,
+        }
+    }
+
+    pub fn increment_reference(&mut self) {
+        self.reference_count += 1;
     }
 }
 

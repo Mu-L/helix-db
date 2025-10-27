@@ -127,7 +127,7 @@ impl From<IdType> for GenRef<String> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum VecData {
     Standard(GeneratedValue),
     // Embed {

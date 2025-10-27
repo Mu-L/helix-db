@@ -156,7 +156,7 @@ impl<'arena> serde::Serialize for Edge<'arena> {
 
 impl<'arena> Edge<'arena> {
     #[inline(always)]
-    pub fn get_property(&self, prop: &str) -> Option<&Value> {
+    pub fn get_property(&self, prop: &str) -> Option<&'arena Value> {
         self.properties.as_ref().and_then(|value| value.get(prop))
     }
 

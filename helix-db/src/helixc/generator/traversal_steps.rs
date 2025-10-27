@@ -1,4 +1,7 @@
-use crate::helixc::generator::utils::{write_properties, write_properties_slice, VecData};
+use crate::helixc::{
+    analyzer::types::Type,
+    generator::utils::{VecData, write_properties, write_properties_slice},
+};
 
 use super::{
     bool_ops::{BoExp, BoolOp},
@@ -7,6 +10,15 @@ use super::{
 };
 use core::fmt;
 use std::fmt::{Debug, Display};
+
+/// Information about a nested traversal in an object selection
+#[derive(Clone, Debug)]
+pub(crate) struct NestedTraversalInfo {
+    pub traversal: Box<Traversal>, // The generated traversal after validation
+    pub return_type: Option<Type>, // The type this traversal returns
+    pub field_name: String,        // The field name in the parent object
+    pub parsed_traversal: Option<Box<crate::helixc::parser::types::Traversal>>, // Original parsed traversal for validation
+}
 
 #[derive(Clone)]
 pub enum TraversalType {
@@ -47,7 +59,7 @@ impl Debug for TraversalType {
 //         }
 //     }
 // }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ShouldCollect {
     ToVec,
     ToObj,
@@ -58,7 +70,7 @@ pub enum ShouldCollect {
 impl Display for ShouldCollect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ShouldCollect::ToVec => write!(f, ".collect_to::<Vec<_>>()"),
+            ShouldCollect::ToVec => write!(f, ".collect::<Result<Vec<_>, _>>()?"),
             ShouldCollect::ToObj => write!(f, ".collect_to_obj()"),
             ShouldCollect::Try => write!(f, "?"),
             ShouldCollect::No => write!(f, ""),
@@ -67,19 +79,29 @@ impl Display for ShouldCollect {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Traversal {
     pub traversal_type: TraversalType,
     pub source_step: Separator<SourceStep>,
     pub steps: Vec<Separator<Step>>,
     pub should_collect: ShouldCollect,
+    // Projection tracking
+    pub has_object_step: bool,
+    pub object_fields: Vec<String>,
+    pub has_spread: bool,
+    pub excluded_fields: Vec<String>,
+    pub nested_traversals: std::collections::HashMap<String, NestedTraversalInfo>,
+    pub is_reused_variable: bool,
 }
 
 impl Display for Traversal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.traversal_type {
             TraversalType::FromSingle(var) => {
-                write!(f, "G::from_iter(&db, &txn, std::iter::once({var}.clone()), &arena)")?;
+                write!(
+                    f,
+                    "G::from_iter(&db, &txn, std::iter::once({var}.clone()), &arena)"
+                )?;
                 write!(f, "{}", self.source_step)?;
                 for step in &self.steps {
                     write!(f, "\n{step}")?;
@@ -124,7 +146,7 @@ impl Display for Traversal {
                 for step in &self.steps {
                     write!(f, "\n{step}")?;
                 }
-                write!(f, "\n    .collect_to::<Vec<_>>();")?;
+                write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
                 write!(
                     f,
                     "G::new_mut_from_iter(&db, &mut txn, update_tr.iter().cloned(), &arena)",
@@ -134,6 +156,8 @@ impl Display for Traversal {
                 write!(f, "}}")?;
             }
         }
+
+        // Just collect the results - no mapping injected here
         write!(f, "{}", self.should_collect)
     }
 }
@@ -144,7 +168,26 @@ impl Default for Traversal {
             source_step: Separator::Empty(SourceStep::Empty),
             steps: vec![],
             should_collect: ShouldCollect::ToVec,
+            has_object_step: false,
+            object_fields: vec![],
+            has_spread: false,
+            excluded_fields: vec![],
+            nested_traversals: std::collections::HashMap::new(),
+            is_reused_variable: false,
         }
+    }
+}
+
+impl Traversal {
+    /// Format only the steps (source_step + steps), without the G::from_iter/G::new prefix and without should_collect
+    /// This is used for nested traversals where we want to map before collecting
+    pub fn format_steps_only(&self) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("{}", self.source_step));
+        for step in &self.steps {
+            result.push_str(&format!("\n{}", step));
+        }
+        result
     }
 }
 #[derive(Clone)]

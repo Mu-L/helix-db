@@ -365,18 +365,16 @@ pub(crate) fn validate_traversal<'a>(
 
         StartNode::Identifier(identifier) => {
             match is_valid_identifier(ctx, original_query, tr.loc.clone(), identifier.as_str()) {
-                true => scope.get(identifier.as_str()).cloned().map_or_else(
-                    || {
-                        generate_error!(
-                            ctx,
-                            original_query,
-                            tr.loc.clone(),
-                            E301,
-                            identifier.as_str()
-                        );
-                        Type::Unknown
-                    },
-                    |var_info| {
+                true => {
+                    // Increment reference count for this variable
+                    if let Some(var_info) = scope.get_mut(identifier.as_str()) {
+                        var_info.increment_reference();
+
+                        // Mark traversal as reused if referenced more than once
+                        if var_info.reference_count > 1 {
+                            gen_traversal.is_reused_variable = true;
+                        }
+
                         gen_traversal.traversal_type = if var_info.is_single {
                             TraversalType::FromSingle(GenRef::Std(identifier.clone()))
                         } else {
@@ -386,8 +384,17 @@ pub(crate) fn validate_traversal<'a>(
                             GenRef::Std(identifier.clone()),
                         ));
                         var_info.ty.clone()
-                    },
-                ),
+                    } else {
+                        generate_error!(
+                            ctx,
+                            original_query,
+                            tr.loc.clone(),
+                            E301,
+                            identifier.as_str()
+                        );
+                        Type::Unknown
+                    }
+                }
                 false => Type::Unknown,
             }
         }
@@ -625,9 +632,8 @@ pub(crate) fn validate_traversal<'a>(
                 validate_exclude(ctx, &cur_ty, tr, ex, &excluded, original_query);
                 for (_, key) in &ex.fields {
                     excluded.insert(key.as_str(), ex.loc.clone());
+                    gen_traversal.excluded_fields.push(key.clone());
                 }
-                // Note: Exclude functionality is no longer supported in the new architecture
-                // Fields are explicitly selected rather than excluded
             }
 
             StepType::Object(obj) => {
@@ -641,6 +647,8 @@ pub(crate) fn validate_traversal<'a>(
                     original_query,
                     gen_traversal,
                     &mut fields_out,
+                    scope,
+                    gen_query,
                 );
             }
 
@@ -1475,20 +1483,37 @@ pub(crate) fn validate_traversal<'a>(
                     generate_error!(ctx, original_query, cl.loc.clone(), E641);
                 }
                 // Add identifier to a temporary scope so inner uses pass
+                // For closures iterating over collections, singularize the type
+                let was_collection = matches!(cur_ty, Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_));
+                let closure_param_type = match &cur_ty {
+                    Type::Nodes(label) => Type::Node(label.clone()),
+                    Type::Edges(label) => Type::Edge(label.clone()),
+                    Type::Vectors(label) => Type::Vector(label.clone()),
+                    other => other.clone(),
+                };
                 scope.insert(
                     cl.identifier.as_str(),
-                    VariableInfo::new(cur_ty.clone(), false),
-                ); // If true then already exists so return error
+                    VariableInfo::new(closure_param_type.clone(), false),
+                );
                 let obj = &cl.object;
                 let mut fields_out = vec![];
+                // Pass the singular type to validate_object so nested traversals use the correct type
                 cur_ty = validate_object(
                     ctx,
-                    &cur_ty,
+                    &closure_param_type,
                     obj,
                     original_query,
                     gen_traversal,
                     &mut fields_out,
+                    scope,
+                    gen_query,
                 );
+
+                // If we were iterating over a collection, ensure should_collect stays as ToVec
+                // validate_object may have set it to ToObj because we passed a singular type
+                if was_collection {
+                    gen_traversal.should_collect = ShouldCollect::ToVec;
+                }
 
                 scope.remove(cl.identifier.as_str());
             }

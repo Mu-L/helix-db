@@ -1,8 +1,6 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::{
-    error_codes::ErrorCode,
-    errors::push_query_err,
-    utils::get_field_type_from_item_fields,
+    error_codes::ErrorCode, errors::push_query_err, utils::get_field_type_from_item_fields,
 };
 use crate::helixc::generator::source_steps::SourceStep;
 use crate::{
@@ -18,12 +16,10 @@ use crate::{
         },
         generator::{
             return_values::ReturnValueField,
-            traversal_steps::{
-                ShouldCollect, Traversal as GeneratedTraversal,
-            },
+            traversal_steps::{ShouldCollect, Traversal as GeneratedTraversal},
             utils::Separator,
         },
-        parser::{types::*},
+        parser::types::*,
     },
 };
 use paste::paste;
@@ -40,46 +36,39 @@ fn mark_vector_steps_for_data_fetch(gen_traversal: &mut GeneratedTraversal) {
         | Separator::Semicolon(step)
         | Separator::Empty(step)
         | Separator::Comma(step)
-        | Separator::Newline(step) => {
-            match step {
-                SourceStep::VFromID(v_from_id) => {
-                    v_from_id.get_vector_data = true;
-                }
-                SourceStep::VFromType(v_from_type) => {
-                    v_from_type.get_vector_data = true;
-                }
-                _ => {}
+        | Separator::Newline(step) => match step {
+            SourceStep::VFromID(v_from_id) => {
+                v_from_id.get_vector_data = true;
             }
-        }
+            SourceStep::VFromType(v_from_type) => {
+                v_from_type.get_vector_data = true;
+            }
+            _ => {}
+        },
     }
 
     for step_sep in &mut gen_traversal.steps {
-
-        
-
         match step_sep {
             Separator::Period(step)
             | Separator::Semicolon(step)
             | Separator::Empty(step)
             | Separator::Comma(step)
-            | Separator::Newline(step) => {
-                match step {
-                    Step::Out(out) if matches!(out.edge_type, EdgeType::Vec) => {
-                        out.get_vector_data = true;
-                    }
-                    Step::In(in_step) if matches!(in_step.edge_type, EdgeType::Vec) => {
-                        in_step.get_vector_data = true;
-                    }
-                    Step::ToV(to_v) => {
-                        to_v.get_vector_data = true;
-                    }
-                    Step::FromV(from_v) => {
-                        from_v.get_vector_data = true;
-                    }
-                    
-                    _ => {}
+            | Separator::Newline(step) => match step {
+                Step::Out(out) if matches!(out.edge_type, EdgeType::Vec) => {
+                    out.get_vector_data = true;
                 }
-            }
+                Step::In(in_step) if matches!(in_step.edge_type, EdgeType::Vec) => {
+                    in_step.get_vector_data = true;
+                }
+                Step::ToV(to_v) => {
+                    to_v.get_vector_data = true;
+                }
+                Step::FromV(from_v) => {
+                    from_v.get_vector_data = true;
+                }
+
+                _ => {}
+            },
         }
     }
 }
@@ -94,6 +83,8 @@ fn mark_vector_steps_for_data_fetch(gen_traversal: &mut GeneratedTraversal) {
 /// * `original_query` - The original query
 /// * `gen_traversal` - The generated traversal
 /// * `fields_out` - Output parameter to collect the fields being selected
+/// * `scope` - The scope for variable lookups (needed for nested traversals)
+/// * `gen_query` - The generated query (needed for nested traversals)
 pub(crate) fn validate_object<'a>(
     ctx: &mut Ctx<'a>,
     cur_ty: &Type,
@@ -101,51 +92,53 @@ pub(crate) fn validate_object<'a>(
     original_query: &'a Query,
     gen_traversal: &mut GeneratedTraversal,
     fields_out: &mut Vec<ReturnValueField>,
+    scope: &mut std::collections::HashMap<&'a str, crate::helixc::analyzer::utils::VariableInfo>,
+    gen_query: &mut crate::helixc::generator::queries::Query,
 ) -> Type {
     match &cur_ty {
-        Type::Node(Some(node_ty)) | Type::Nodes(Some(node_ty)) => {
-            validate_property_access(
-                ctx,
-                obj,
-                original_query,
-                gen_traversal,
-                cur_ty,
-                ctx.node_fields.get(node_ty.as_str()).cloned(),
-                fields_out,
-            )
-        }
-        Type::Edge(Some(edge_ty)) | Type::Edges(Some(edge_ty)) => {
-            validate_property_access(
-                ctx,
-                obj,
-                original_query,
-                gen_traversal,
-                cur_ty,
-                ctx.edge_fields.get(edge_ty.as_str()).cloned(),
-                fields_out,
-            )
-        }
-        Type::Vector(Some(vector_ty)) | Type::Vectors(Some(vector_ty)) => {
-            validate_property_access(
-                ctx,
-                obj,
-                original_query,
-                gen_traversal,
-                cur_ty,
-                ctx.vector_fields.get(vector_ty.as_str()).cloned(),
-                fields_out,
-            )
-        }
-        Type::Anonymous(ty) => {
-            validate_object(
-                ctx,
-                ty,
-                obj,
-                original_query,
-                gen_traversal,
-                fields_out,
-            )
-        }
+        Type::Node(Some(node_ty)) | Type::Nodes(Some(node_ty)) => validate_property_access(
+            ctx,
+            obj,
+            original_query,
+            gen_traversal,
+            cur_ty,
+            ctx.node_fields.get(node_ty.as_str()).cloned(),
+            fields_out,
+            scope,
+            gen_query,
+        ),
+        Type::Edge(Some(edge_ty)) | Type::Edges(Some(edge_ty)) => validate_property_access(
+            ctx,
+            obj,
+            original_query,
+            gen_traversal,
+            cur_ty,
+            ctx.edge_fields.get(edge_ty.as_str()).cloned(),
+            fields_out,
+            scope,
+            gen_query,
+        ),
+        Type::Vector(Some(vector_ty)) | Type::Vectors(Some(vector_ty)) => validate_property_access(
+            ctx,
+            obj,
+            original_query,
+            gen_traversal,
+            cur_ty,
+            ctx.vector_fields.get(vector_ty.as_str()).cloned(),
+            fields_out,
+            scope,
+            gen_query,
+        ),
+        Type::Anonymous(ty) => validate_object(
+            ctx,
+            ty,
+            obj,
+            original_query,
+            gen_traversal,
+            fields_out,
+            scope,
+            gen_query,
+        ),
         _ => {
             generate_error!(
                 ctx,
@@ -183,11 +176,13 @@ fn extract_fields_from_object<'a>(
                 is_valid_identifier(ctx, original_query, value.loc.clone(), identifier.as_str());
 
                 // Get the field type from the schema
-                if let Some(field_type) = get_field_type_from_item_fields(ctx, parent_ty, identifier.as_str()) {
-                    fields_out.push(ReturnValueField {
-                        name: key.clone(),
-                        field_type: format!("{}", field_type),
-                    });
+                if let Some(field_type) =
+                    get_field_type_from_item_fields(ctx, parent_ty, identifier.as_str())
+                {
+                    fields_out.push(ReturnValueField::new(
+                        key.clone(),
+                        format!("{}", field_type),
+                    ));
                 }
             }
             // For other field value types, we just track that the field was selected
@@ -195,10 +190,7 @@ fn extract_fields_from_object<'a>(
             _ => {
                 // For now, we'll just track these as dynamic values
                 // The code generator will handle extracting the actual values
-                fields_out.push(ReturnValueField {
-                    name: key.clone(),
-                    field_type: "Value".to_string(),
-                });
+                fields_out.push(ReturnValueField::new(key.clone(), "Value".to_string()));
             }
         }
     }
@@ -225,6 +217,8 @@ fn validate_property_access<'a>(
     cur_ty: &Type,
     fields: Option<HashMap<&'a str, Cow<'a, Field>>>,
     fields_out: &mut Vec<ReturnValueField>,
+    scope: &mut std::collections::HashMap<&'a str, crate::helixc::analyzer::utils::VariableInfo>,
+    gen_query: &mut crate::helixc::generator::queries::Query,
 ) -> Type {
     match fields {
         Some(_) => {
@@ -250,7 +244,9 @@ fn validate_property_access<'a>(
                         );
                         // Check if we're accessing the 'data' field on a Vector type
                         // If so, we need to mark vector traversal steps to fetch the data
-                        if lit.as_str() == "data" && matches!(cur_ty, Type::Vector(_) | Type::Vectors(_)) {
+                        if lit.as_str() == "data"
+                            && matches!(cur_ty, Type::Vector(_) | Type::Vectors(_))
+                        {
                             mark_vector_steps_for_data_fetch(gen_traversal);
                         }
 
@@ -289,6 +285,87 @@ fn validate_property_access<'a>(
                     mark_vector_steps_for_data_fetch(gen_traversal);
                 }
 
+                // Populate projection metadata for new struct-based return generation
+                gen_traversal.has_object_step = true;
+                gen_traversal.has_spread = obj.should_spread;
+
+                // Collect field names and nested traversals
+                for field_addition in &obj.fields {
+                    match &field_addition.value.value {
+                        FieldValueType::Identifier(id) => {
+                            gen_traversal.object_fields.push(id.clone());
+                        }
+                        FieldValueType::Traversal(tr) => {
+                            // Nested traversal - validate it now to get the type
+                            use crate::helixc::analyzer::methods::traversal_validation::validate_traversal;
+                            use crate::helixc::generator::traversal_steps::NestedTraversalInfo;
+
+                            // Validate the nested traversal
+                            let mut nested_gen_traversal =
+                                crate::helixc::generator::traversal_steps::Traversal::default();
+                            let nested_type = validate_traversal(
+                                ctx,
+                                tr.as_ref(),
+                                scope,
+                                original_query,
+                                Some(cur_ty.clone()),
+                                &mut nested_gen_traversal,
+                                gen_query,
+                            );
+
+                            let nested_info = NestedTraversalInfo {
+                                traversal: Box::new(nested_gen_traversal),
+                                return_type: nested_type,
+                                field_name: field_addition.key.clone(),
+                                parsed_traversal: Some(tr.clone()),
+                            };
+                            gen_traversal
+                                .nested_traversals
+                                .insert(field_addition.key.clone(), nested_info);
+                            gen_traversal.object_fields.push(field_addition.key.clone());
+                        }
+                        FieldValueType::Expression(expr) => {
+                            // Check if this expression contains a traversal
+                            use crate::helixc::analyzer::methods::traversal_validation::validate_traversal;
+                            use crate::helixc::generator::traversal_steps::NestedTraversalInfo;
+                            use crate::helixc::parser::types::ExpressionType;
+
+                            if let ExpressionType::Traversal(tr) = &expr.expr {
+                                // Nested traversal within expression - validate it
+                                let mut nested_gen_traversal =
+                                    crate::helixc::generator::traversal_steps::Traversal::default();
+                                let nested_type = validate_traversal(
+                                    ctx,
+                                    tr.as_ref(),
+                                    scope,
+                                    original_query,
+                                    Some(cur_ty.clone()),
+                                    &mut nested_gen_traversal,
+                                    gen_query,
+                                );
+
+                                let nested_info = NestedTraversalInfo {
+                                    traversal: Box::new(nested_gen_traversal),
+                                    return_type: nested_type,
+                                    field_name: field_addition.key.clone(),
+                                    parsed_traversal: Some(tr.clone()),
+                                };
+                                gen_traversal
+                                    .nested_traversals
+                                    .insert(field_addition.key.clone(), nested_info);
+                                gen_traversal.object_fields.push(field_addition.key.clone());
+                            } else {
+                                // Other expression types (identifiers, literals, etc.)
+                                gen_traversal.object_fields.push(field_addition.key.clone());
+                            }
+                        }
+                        _ => {
+                            // Other field types (literals, etc.)
+                            gen_traversal.object_fields.push(field_addition.key.clone());
+                        }
+                    }
+                }
+
                 // Set collection behavior based on current type
                 match cur_ty {
                     Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_) => {
@@ -323,7 +400,7 @@ fn validate_property_access<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::helixc::parser::{write_to_temp_file, HelixParser};
+    use crate::helixc::parser::{HelixParser, write_to_temp_file};
 
     // ============================================================================
     // Property Access Tests

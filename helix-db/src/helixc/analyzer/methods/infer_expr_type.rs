@@ -373,6 +373,7 @@ pub(crate) fn infer_expr_type<'a>(
                     steps: vec![],
                     traversal_type: TraversalType::Mut,
                     should_collect: ShouldCollect::ToObj,
+                    ..Default::default()
                 });
                 gen_query.is_mut = true;
                 return (Type::Node(Some(ty.to_string())), Some(stmt));
@@ -663,6 +664,7 @@ pub(crate) fn infer_expr_type<'a>(
                     steps: vec![],
                     traversal_type,
                     should_collect,
+                    ..Default::default()
                 });
                 gen_query.is_mut = true;
                 return (final_traversal_result_type, Some(stmt));
@@ -889,6 +891,7 @@ pub(crate) fn infer_expr_type<'a>(
                         steps: vec![],
                         traversal_type: TraversalType::Mut,
                         should_collect: ShouldCollect::ToObj,
+                        ..Default::default()
                     });
                     gen_query.is_mut = true;
                     return (Type::Vector(Some(ty.to_string())), Some(stmt));
@@ -1043,6 +1046,7 @@ pub(crate) fn infer_expr_type<'a>(
                         steps: vec![],
                         should_collect: ShouldCollect::ToVec,
                         source_step: Separator::Empty(SourceStep::Anonymous),
+                        ..Default::default()
                     };
                     match stmt {
                         GeneratedStatement::Traversal(tr) => {
@@ -1089,6 +1093,7 @@ pub(crate) fn infer_expr_type<'a>(
                             pre_filter,
                         },
                     )),
+                    ..Default::default()
                 })),
             )
         }
@@ -1357,6 +1362,7 @@ pub(crate) fn infer_expr_type<'a>(
                     steps: vec![],
                     should_collect: ShouldCollect::ToVec,
                     source_step: Separator::Period(SourceStep::SearchBM25(search_bm25)),
+                    ..Default::default()
                 })),
             )
         }
