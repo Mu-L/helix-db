@@ -33,17 +33,31 @@ pub struct Node<'arena> {
 // Custom Serialize implementation to match old #[derive(Serialize)] behavior
 // Bincode serializes #[derive(Serialize)] structs using serialize_struct internally
 // which produces a compact format without length prefixes
+// For JSON serialization, the id field is included, but for bincode it is skipped
 impl<'arena> serde::Serialize for Node<'arena> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Node", 3)?;
-        state.serialize_field("label", self.label)?;
-        state.serialize_field("version", &self.version)?;
-        state.serialize_field("properties", &self.properties)?;
-        state.end()
+
+        // Check if this is a human-readable format (like JSON)
+        if serializer.is_human_readable() {
+            // Include id for JSON serialization
+            let mut state = serializer.serialize_struct("Node", 4)?;
+            state.serialize_field("id", &self.id)?;
+            state.serialize_field("label", self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        } else {
+            // Skip id for bincode serialization
+            let mut state = serializer.serialize_struct("Node", 3)?;
+            state.serialize_field("label", self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        }
     }
 }
 
@@ -138,19 +152,35 @@ pub struct Edge<'arena> {
 // Custom Serialize implementation to match old #[derive(Serialize)] behavior
 // Bincode serializes #[derive(Serialize)] structs using serialize_struct internally
 // which produces a compact format without length prefixes
+// For JSON serialization, the id field is included, but for bincode it is skipped
 impl<'arena> serde::Serialize for Edge<'arena> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Edge", 5)?;
-        state.serialize_field("label", self.label)?;
-        state.serialize_field("version", &self.version)?;
-        state.serialize_field("from_node", &self.from_node)?;
-        state.serialize_field("to_node", &self.to_node)?;
-        state.serialize_field("properties", &self.properties)?;
-        state.end()
+
+        // Check if this is a human-readable format (like JSON)
+        if serializer.is_human_readable() {
+            // Include id for JSON serialization
+            let mut state = serializer.serialize_struct("Edge", 6)?;
+            state.serialize_field("id", &self.id)?;
+            state.serialize_field("label", self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("from_node", &self.from_node)?;
+            state.serialize_field("to_node", &self.to_node)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        } else {
+            // Skip id for bincode serialization
+            let mut state = serializer.serialize_struct("Edge", 5)?;
+            state.serialize_field("label", self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("from_node", &self.from_node)?;
+            state.serialize_field("to_node", &self.to_node)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        }
     }
 }
 

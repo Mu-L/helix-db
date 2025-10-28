@@ -714,8 +714,8 @@ mod tests {
         ]);
         let output = write_properties(&props);
         assert!(output.contains("Some(ImmutablePropertiesMap::new("));
-        assert!(output.contains("(\"name\", \"Alice\")"));
-        assert!(output.contains("(\"age\", 30)"));
+        assert!(output.contains("(\"name\", Value::from(\"Alice\"))"));
+        assert!(output.contains("(\"age\", Value::from(30))"));
     }
 
     #[test]

@@ -42,12 +42,26 @@ impl<'arena> Serialize for HVector<'arena> {
         S: Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("HVector", 6)?;
-        state.serialize_field("label", &self.label)?;
-        state.serialize_field("version", &self.version)?;
-        state.serialize_field("deleted", &self.deleted)?;
-        state.serialize_field("properties", &self.properties)?;
-        state.end()
+
+        // Check if this is a human-readable format (like JSON)
+        if serializer.is_human_readable() {
+            // Include id for JSON serialization
+            let mut state = serializer.serialize_struct("HVector", 5)?;
+            state.serialize_field("id", &self.id)?;
+            state.serialize_field("label", &self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("deleted", &self.deleted)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        } else {
+            // Skip id, level, distance, and data for bincode serialization
+            let mut state = serializer.serialize_struct("HVector", 4)?;
+            state.serialize_field("label", &self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("deleted", &self.deleted)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        }
     }
 }
 

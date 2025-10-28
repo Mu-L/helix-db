@@ -1,3 +1,4 @@
+use bincode::serialize;
 use serde::Serialize;
 
 use crate::{
@@ -36,6 +37,7 @@ pub enum TraversalValue<'arena> {
     /// An empty traversal value
     Empty,
 }
+
 
 impl<'arena> TraversalValue<'arena> {
     pub fn id(&self) -> u128 {
