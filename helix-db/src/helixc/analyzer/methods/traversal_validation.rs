@@ -16,7 +16,7 @@ use crate::{
                 exclude_validation::validate_exclude, graph_step_validation::apply_graph_step,
                 infer_expr_type::infer_expr_type, object_validation::validate_object,
             },
-            types::Type,
+            types::{AggregateInfo, Type},
             utils::{
                 Variable, field_exists_on_item_type, gen_identifier_or_param, is_valid_identifier,
                 type_in_scope,
@@ -1163,7 +1163,16 @@ pub(crate) fn validate_traversal<'a>(
                     .collect::<Vec<_>>();
                 let should_count = matches!(previous_step, Some(StepType::Count));
                 let _ = gen_traversal.steps.pop();
-                cur_ty = Type::Aggregate;
+
+                // Capture aggregate metadata before replacing cur_ty
+                let property_names = aggr.properties.iter().map(|p| p.clone()).collect();
+                cur_ty = Type::Aggregate(AggregateInfo {
+                    source_type: Box::new(cur_ty.clone()),
+                    properties: property_names,
+                    is_count: should_count,
+                    is_group_by: false,  // This is AGGREGATE_BY
+                });
+
                 gen_traversal.should_collect = ShouldCollect::Try;
                 gen_traversal
                     .steps
@@ -1180,7 +1189,16 @@ pub(crate) fn validate_traversal<'a>(
                     .collect::<Vec<_>>();
                 let should_count = matches!(previous_step, Some(StepType::Count));
                 let _ = gen_traversal.steps.pop();
-                cur_ty = Type::Aggregate;
+
+                // Capture aggregate metadata before replacing cur_ty
+                let property_names = gb.properties.iter().map(|p| p.clone()).collect();
+                cur_ty = Type::Aggregate(AggregateInfo {
+                    source_type: Box::new(cur_ty.clone()),
+                    properties: property_names,
+                    is_count: should_count,
+                    is_group_by: true,  // This is GROUP_BY
+                });
+
                 gen_traversal.should_collect = ShouldCollect::Try;
                 gen_traversal
                     .steps
@@ -1491,9 +1509,29 @@ pub(crate) fn validate_traversal<'a>(
                     Type::Vectors(label) => Type::Vector(label.clone()),
                     other => other.clone(),
                 };
+
+                // Extract the source variable name from the current traversal
+                let closure_source_var = match &gen_traversal.source_step {
+                    Separator::Empty(SourceStep::Identifier(var)) |
+                    Separator::Period(SourceStep::Identifier(var)) |
+                    Separator::Newline(SourceStep::Identifier(var)) => {
+                        var.inner().clone()
+                    }
+                    _ => {
+                        // For other source types, try to extract from traversal_type
+                        match &gen_traversal.traversal_type {
+                            TraversalType::FromSingle(var) | TraversalType::FromIter(var) => {
+                                var.inner().clone()
+                            }
+                            _ => String::new()
+                        }
+                    }
+                };
+
+                // Closure parameters are always singular (they represent individual items during iteration)
                 scope.insert(
                     cl.identifier.as_str(),
-                    VariableInfo::new(closure_param_type.clone(), false),
+                    VariableInfo::new_with_source(closure_param_type.clone(), true, closure_source_var.clone()),
                 );
                 let obj = &cl.object;
                 let mut fields_out = vec![];
@@ -1509,10 +1547,24 @@ pub(crate) fn validate_traversal<'a>(
                     gen_query,
                 );
 
+                // Tag all nested traversals with closure context
+                for (_field_name, nested_info) in gen_traversal.nested_traversals.iter_mut() {
+                    nested_info.closure_param_name = Some(cl.identifier.clone());
+                    nested_info.closure_source_var = Some(closure_source_var.clone());
+                }
+
                 // If we were iterating over a collection, ensure should_collect stays as ToVec
                 // validate_object may have set it to ToObj because we passed a singular type
                 if was_collection {
                     gen_traversal.should_collect = ShouldCollect::ToVec;
+                    // Also convert the return type back to collection type
+                    // This ensures is_collection flag is set correctly in query_validation.rs
+                    cur_ty = match cur_ty {
+                        Type::Node(label) => Type::Nodes(label),
+                        Type::Edge(label) => Type::Edges(label),
+                        Type::Vector(label) => Type::Vectors(label),
+                        other => other,
+                    };
                 }
 
                 scope.remove(cl.identifier.as_str());

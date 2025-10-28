@@ -253,6 +253,10 @@ fn validate_property_access<'a>(
                         gen_traversal
                             .steps
                             .push(Separator::Period(gen_property_access(lit.as_str())));
+
+                        // Store the field name so nested traversal code generation can access it
+                        gen_traversal.object_fields.push(lit.as_str().to_string());
+
                         match cur_ty {
                             Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_) => {
                                 gen_traversal.should_collect = ShouldCollect::ToVec;
@@ -299,8 +303,41 @@ fn validate_property_access<'a>(
                             // Nested traversal - validate it now to get the type
                             use crate::helixc::analyzer::methods::traversal_validation::validate_traversal;
                             use crate::helixc::generator::traversal_steps::NestedTraversalInfo;
+                            use crate::helixc::parser::types::StartNode;
+
+                            // Check if this traversal starts with a closure parameter or anonymous identifier
+                            // For example: usr::ID where usr is in scope, or _::In<Created>::ID
+                            let (closure_param, closure_source) = match &tr.start {
+                                StartNode::Identifier(ident) => {
+                                    if let Some(var_info) = scope.get(ident.as_str()) {
+                                        // Found a closure parameter - capture its name and the actual source variable
+                                        let source_var = var_info.source_var.clone().unwrap_or_else(|| ident.clone());
+                                        eprintln!("DEBUG object_validation: traversal '{}' starts with closure param '{}', source_var='{}'",
+                                            field_addition.key, ident, source_var);
+                                        (Some(ident.clone()), Some(source_var))
+                                    } else {
+                                        (None, None)
+                                    }
+                                }
+                                StartNode::Anonymous => {
+                                    // Anonymous traversal (_::...) - map to current iteration variable
+                                    // For collection context like posts::{ field: _::traversal },
+                                    // the _ refers to the current post being iterated
+                                    // The iteration variable name is the singular form of the parent variable
+                                    // (e.g., "posts" -> "post")
+
+                                    // We need to look at the parent context to find what variable we're iterating over
+                                    // For now, we'll use a placeholder that will be resolved during code generation
+                                    // based on the source_variable name
+                                    eprintln!("DEBUG object_validation: traversal '{}' starts with anonymous '_'", field_addition.key);
+                                    (Some("_".to_string()), Some("_".to_string()))
+                                }
+                                _ => (None, None)
+                            };
 
                             // Validate the nested traversal
+                            eprintln!("DEBUG object_validation: validating '{}', parsed traversal has {} steps, first_step={:?}",
+                                field_addition.key, tr.steps.len(), tr.steps.first().map(|s| &s.step));
                             let mut nested_gen_traversal =
                                 crate::helixc::generator::traversal_steps::Traversal::default();
                             let nested_type = validate_traversal(
@@ -313,12 +350,19 @@ fn validate_property_access<'a>(
                                 gen_query,
                             );
 
+                            eprintln!("DEBUG object_validation: after validation, object_fields={:?}, has_object_step={}",
+                                nested_gen_traversal.object_fields, nested_gen_traversal.has_object_step);
+
                             let nested_info = NestedTraversalInfo {
                                 traversal: Box::new(nested_gen_traversal),
-                                return_type: nested_type,
+                                return_type: nested_type.clone(),
                                 field_name: field_addition.key.clone(),
                                 parsed_traversal: Some(tr.clone()),
+                                closure_param_name: closure_param,
+                                closure_source_var: closure_source,
                             };
+                            eprintln!("DEBUG object_validation: adding nested traversal '{}' with type {:?}, closure_source={:?}",
+                                field_addition.key, nested_type, nested_info.closure_source_var);
                             gen_traversal
                                 .nested_traversals
                                 .insert(field_addition.key.clone(), nested_info);
@@ -349,6 +393,8 @@ fn validate_property_access<'a>(
                                     return_type: nested_type,
                                     field_name: field_addition.key.clone(),
                                     parsed_traversal: Some(tr.clone()),
+                                    closure_param_name: None,  // Will be set by closure handling code
+                                    closure_source_var: None,  // Will be set by closure handling code
                                 };
                                 gen_traversal
                                     .nested_traversals

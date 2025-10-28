@@ -5,6 +5,7 @@ use crate::{
     protocol::value::Value,
     utils::{
         count::Count,
+        id::uuid_str,
         items::{Edge, Node},
     },
 };
@@ -13,6 +14,7 @@ use std::{borrow::Cow, hash::Hash};
 pub type Variable<'arena> = Cow<'arena, TraversalValue<'arena>>;
 
 #[derive(Debug, Serialize, Clone)]
+#[serde(untagged)]
 pub enum TraversalValue<'arena> {
     /// A node in the graph
     Node(Node<'arena>),
@@ -55,6 +57,34 @@ impl<'arena> TraversalValue<'arena> {
             TraversalValue::VectorNodeWithoutVectorData(vector) => vector.label,
             TraversalValue::Empty => "",
             _ => "",
+        }
+    }
+
+    pub fn from_node(&self) -> u128 {
+        match self {
+            TraversalValue::Edge(edge) => edge.from_node,
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn to_node(&self) -> u128 {
+        match self {
+            TraversalValue::Edge(edge) => edge.to_node,
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn data(&self) -> &'arena [f64] {
+        match self {
+            TraversalValue::Vector(vector) => vector.data,
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn score(&self) -> f64 {
+        match self {
+            TraversalValue::Vector(vector) => vector.score(),
+            _ => unimplemented!(),
         }
     }
 

@@ -44,9 +44,13 @@ pub struct ReturnValueStruct {
     pub has_lifetime: bool,         // Whether to add 'a lifetime parameter
     pub is_query_return_type: bool, // True for the main QueryReturnType
     pub is_collection: bool,        // True if this returns Vec<T>, false for single T
+    pub is_aggregate: bool,         // True for aggregate/group_by returns
+    pub is_group_by: bool,          // True for GROUP_BY, false for AGGREGATE_BY
     pub source_variable: String,    // Variable name this struct is built from
     pub is_reused_variable: bool,   // True if source variable is referenced multiple times
     pub field_infos: Vec<ReturnFieldInfo>, // Original field info for nested struct generation
+    pub aggregate_properties: Vec<String>, // Properties to group by (for closure-style aggregates)
+    pub is_count_aggregate: bool,   // True for COUNT mode aggregates
 }
 
 impl ReturnValueStruct {
@@ -57,9 +61,13 @@ impl ReturnValueStruct {
             has_lifetime: true,
             is_query_return_type: false,
             is_collection: false,
+            is_aggregate: false,
+            is_group_by: false,
             source_variable: String::new(),
             is_reused_variable: false,
             field_infos: Vec::new(),
+            aggregate_properties: Vec::new(),
+            is_count_aggregate: false,
         }
     }
 
@@ -180,18 +188,57 @@ impl ReturnValueStruct {
         source_variable: String,
         is_collection: bool,
         is_reused: bool,
+        is_aggregate: bool,
+        is_group_by: bool,
+        aggregate_properties: Vec<String>,
+        is_count_aggregate: bool,
     ) -> Self {
+        // First, recursively build nested structs to determine if they have lifetimes
+        let mut nested_has_lifetime = std::collections::HashMap::new();
+        for field_info in &field_infos {
+            if let ReturnFieldType::Nested(nested_fields) = &field_info.field_type {
+                // Use the nested_struct_name from the source if available, otherwise fall back to field name
+                let nested_name = if let ReturnFieldSource::NestedTraversal { nested_struct_name: Some(name), .. } = &field_info.source {
+                    name.clone()
+                } else {
+                    format!("{}ReturnType", capitalize_first(&field_info.name))
+                };
+                let nested_struct = Self::from_return_fields(
+                    nested_name.clone(),
+                    nested_fields.clone(),
+                    "item".to_string(),
+                    false,
+                    false,
+                    false, // Nested structs are not aggregates
+                    false, // Not group_by
+                    Vec::new(), // No aggregate properties for nested structs
+                    false, // Not count aggregate
+                );
+                nested_has_lifetime.insert(nested_name, nested_struct.has_lifetime);
+            }
+        }
+
         let fields = field_infos
             .iter()
             .map(|field_info| {
-                let (field_type, is_nested, nested_name) = match &field_info.field_type {
+                let (field_type, _is_nested, nested_name) = match &field_info.field_type {
                     ReturnFieldType::Simple(ty) => (ty.clone(), false, None),
                     ReturnFieldType::Nested(_) => {
-                        // Nested fields become Vec<NestedTypeName<'a>>
-                        let nested_type_name =
-                            format!("{}ReturnType", capitalize_first(&field_info.name));
+                        // Nested fields become Vec<NestedTypeName> or Vec<NestedTypeName<'a>>
+                        // Use the nested_struct_name from the source if available, otherwise fall back to field name
+                        let nested_type_name = if let ReturnFieldSource::NestedTraversal { nested_struct_name: Some(name), .. } = &field_info.source {
+                            name.clone()
+                        } else {
+                            format!("{}ReturnType", capitalize_first(&field_info.name))
+                        };
+                        let has_lt = nested_has_lifetime.get(&nested_type_name).copied().unwrap_or(false);
+                        let type_ref = if has_lt {
+                            format!("Vec<{}<'a>>", nested_type_name)
+                        } else {
+                            format!("Vec<{}>", nested_type_name)
+                        };
                         (
-                            format!("Vec<{}<'a>>", nested_type_name),
+                            type_ref,
                             true,
                             Some(nested_type_name),
                         )
@@ -209,15 +256,22 @@ impl ReturnValueStruct {
                     nested_struct_name: nested_name,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        // Check if any field contains a lifetime parameter
+        let has_lifetime = fields.iter().any(|f| f.field_type.contains("'a"));
 
         let mut struct_def = ReturnValueStruct::new(name);
+        struct_def.has_lifetime = has_lifetime;
         struct_def.fields = fields;
-        struct_def.has_lifetime = true;
         struct_def.source_variable = source_variable;
         struct_def.is_collection = is_collection;
+        struct_def.is_aggregate = is_aggregate;
+        struct_def.is_group_by = is_group_by;
         struct_def.is_reused_variable = is_reused;
         struct_def.field_infos = field_infos; // Store for nested generation
+        struct_def.aggregate_properties = aggregate_properties;
+        struct_def.is_count_aggregate = is_count_aggregate;
         struct_def
     }
 
@@ -228,13 +282,22 @@ impl ReturnValueStruct {
         // First, generate nested struct definitions
         for field_info in &self.field_infos {
             if let ReturnFieldType::Nested(nested_fields) = &field_info.field_type {
-                let nested_name = format!("{}ReturnType", capitalize_first(&field_info.name));
+                // Use the nested_struct_name from the source if available, otherwise fall back to field name
+                let nested_name = if let ReturnFieldSource::NestedTraversal { nested_struct_name: Some(name), .. } = &field_info.source {
+                    name.clone()
+                } else {
+                    format!("{}ReturnType", capitalize_first(&field_info.name))
+                };
                 let nested_struct = ReturnValueStruct::from_return_fields(
                     nested_name,
                     nested_fields.clone(),
                     "item".to_string(), // Placeholder - actual value comes from traversal
                     false,              // Nested items are not collections themselves
-                    false,
+                    false,              // Not reused
+                    false,              // Nested structs are not aggregates
+                    false,              // Not group_by
+                    Vec::new(),         // No aggregate properties for nested structs
+                    false,              // Not count aggregate
                 );
                 // Recursively generate nested struct defs
                 output.push_str(&nested_struct.generate_all_struct_defs());
@@ -367,6 +430,10 @@ pub enum ReturnFieldSource {
         traversal_expr: String,
         traversal_code: Option<String>, // Generated traversal code for response
         nested_struct_name: Option<String>, // Name of the nested struct type
+        traversal_type: Option<super::traversal_steps::TraversalType>, // The actual traversal type for source extraction
+        closure_param_name: Option<String>,  // Closure parameter if in closure context
+        closure_source_var: Option<String>,  // Actual variable for the closure parameter
+        accessed_field_name: Option<String>, // For simple property access, the field being accessed (e.g., "name" for usr::{name})
     },
 }
 
@@ -395,6 +462,10 @@ impl ReturnFieldInfo {
                 traversal_expr,
                 traversal_code: None,
                 nested_struct_name: None,
+                traversal_type: None,
+                closure_param_name: None,
+                closure_source_var: None,
+                accessed_field_name: None,
             },
         }
     }

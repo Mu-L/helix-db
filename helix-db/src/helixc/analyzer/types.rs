@@ -230,10 +230,19 @@ impl From<DefaultValue> for GeneratedValue {
     }
 }
 
+/// Metadata for GROUPBY and AGGREGATE_BY operations
+#[derive(Debug, Clone)]
+pub struct AggregateInfo {
+    pub source_type: Box<Type>,   // Original type being aggregated (Node, Edge, Vector)
+    pub properties: Vec<String>,  // Properties being grouped by
+    pub is_count: bool,           // true for COUNT mode
+    pub is_group_by: bool,        // true for GROUP_BY, false for AGGREGATE_BY
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub(crate) enum Type {
-    Aggregate,
+pub enum Type {
+    Aggregate(AggregateInfo),
     Node(Option<String>),
     Nodes(Option<String>),
     Edge(Option<String>),
@@ -251,7 +260,7 @@ pub(crate) enum Type {
 impl Type {
     pub fn kind_str(&self) -> &'static str {
         match self {
-            Type::Aggregate => "aggregate",
+            Type::Aggregate(_) => "aggregate",
             Type::Node(_) => "node",
             Type::Nodes(_) => "nodes",
             Type::Edge(_) => "edge",
@@ -269,7 +278,7 @@ impl Type {
 
     pub fn get_type_name(&self) -> String {
         match self {
-            Type::Aggregate => "aggregate".to_string(),
+            Type::Aggregate(_) => "aggregate".to_string(),
             Type::Node(Some(name)) => name.clone(),
             Type::Nodes(Some(name)) => name.clone(),
             Type::Edge(Some(name)) => name.clone(),
@@ -350,7 +359,7 @@ impl Type {
             Type::Boolean => Type::Boolean,
             Type::Unknown => Type::Unknown,
             Type::Anonymous(inner) => Type::Anonymous(Box::new(inner.into_single())),
-            Type::Aggregate => Type::Aggregate,
+            Type::Aggregate(info) => Type::Aggregate(info),
             Type::Node(name) => Type::Node(name),
             Type::Nodes(name) => Type::Node(name),
             Type::Edge(name) => Type::Edge(name),

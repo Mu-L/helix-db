@@ -212,8 +212,9 @@ pub(crate) fn infer_expr_type<'a>(
                                                 value.as_str()
                                             );
                                         } else {
+                                            
                                             let variable_type =
-                                                &scope.get(value.as_str()).unwrap().ty;
+                                            &scope.get(value.as_str()).unwrap().ty;
                                             if variable_type
                                                 != &Type::from(
                                                     field_set

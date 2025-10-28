@@ -60,11 +60,14 @@ pub(crate) fn validate_statements<'a>(
             let (rhs_ty, stmt) =
                 infer_expr_type(ctx, &assign.value, scope, original_query, None, query);
 
-            // Determine if the variable is single or collection based on should_collect
+            // Determine if the variable is single or collection based on type
             let is_single = if let Some(GeneratedStatement::Traversal(ref tr)) = stmt {
-                matches!(tr.should_collect, ShouldCollect::ToObj)
+                // Check if should_collect is ToObj, or if the type is a single value
+                matches!(tr.should_collect, ShouldCollect::ToObj) ||
+                matches!(rhs_ty, Type::Node(_) | Type::Edge(_) | Type::Vector(_))
             } else {
-                false // Non-traversal assignments default to collection
+                // Non-traversal: check if type is single
+                matches!(rhs_ty, Type::Node(_) | Type::Edge(_) | Type::Vector(_))
             };
 
             scope.insert(assign.variable.as_str(), VariableInfo::new(rhs_ty, is_single));

@@ -7,7 +7,7 @@ use crate::helixc::{
         Ctx,
         errors::{push_query_err, push_query_warn},
         methods::{infer_expr_type::infer_expr_type, statement_validation::validate_statements},
-        types::Type,
+        types::{AggregateInfo, Type},
         utils::{VariableInfo, is_valid_identifier},
     },
     generator::{
@@ -39,8 +39,74 @@ fn build_return_fields(
     ctx: &Ctx,
     inferred_type: &Type,
     traversal: &GeneratedTraversal,
+    struct_name_prefix: &str,
 ) -> Vec<ReturnFieldInfo> {
     let mut fields = Vec::new();
+
+    // Handle aggregate types specially
+    if let Type::Aggregate(info) = inferred_type {
+        eprintln!("DEBUG build_return_fields: processing aggregate type, is_count={}, is_group_by={}", info.is_count, info.is_group_by);
+
+        // All aggregates have a key field (the grouping key from HashMap)
+        fields.push(ReturnFieldInfo::new_implicit(
+            "key".to_string(),
+            "String".to_string(),
+        ));
+
+        // Add fields for each grouped property
+        // We need to get the source type's schema to determine property types
+        let (schema_fields, item_type) = match info.source_type.as_ref() {
+            Type::Node(Some(label)) | Type::Nodes(Some(label)) => {
+                (ctx.node_fields.get(label.as_str()), "node")
+            }
+            Type::Edge(Some(label)) | Type::Edges(Some(label)) => {
+                (ctx.edge_fields.get(label.as_str()), "edge")
+            }
+            Type::Vector(Some(label)) | Type::Vectors(Some(label)) => {
+                (ctx.vector_fields.get(label.as_str()), "vector")
+            }
+            _ => (None, "unknown"),
+        };
+
+        // Add each grouped property as a field
+        for prop_name in &info.properties {
+            fields.push(ReturnFieldInfo::new_schema(
+                prop_name.clone(),
+                "Option<&'a Value>".to_string(),
+            ));
+        }
+
+        // Add count field
+        fields.push(ReturnFieldInfo::new_implicit(
+            "count".to_string(),
+            "i32".to_string(),
+        ));
+
+        // For non-COUNT aggregates, add items field with nested struct
+        if !info.is_count {
+            // Build nested struct for the items
+            let items_struct_name = format!("{}Items", struct_name_prefix);
+            // Recursively build fields for the source type
+            let item_fields = build_return_fields(ctx, info.source_type.as_ref(), traversal, &items_struct_name);
+
+            // Create field with proper nested_struct_name to avoid conflicts
+            fields.push(ReturnFieldInfo {
+                name: "items".to_string(),
+                field_type: ReturnFieldType::Nested(item_fields),
+                source: ReturnFieldSource::NestedTraversal {
+                    traversal_expr: String::new(),
+                    traversal_code: None,
+                    nested_struct_name: Some(format!("{}ReturnType", items_struct_name)),
+                    traversal_type: None,
+                    closure_param_name: None,
+                    closure_source_var: None,
+                    accessed_field_name: None,
+                },
+            });
+        }
+
+        return fields;
+    }
 
     // Get schema type name if this is a schema type
     let schema_type = match inferred_type {
@@ -49,6 +115,8 @@ fn build_return_fields(
         Type::Vector(Some(label)) | Type::Vectors(Some(label)) => Some((label.as_str(), "vector")),
         _ => None,
     };
+    eprintln!("DEBUG build_return_fields: inferred_type={:?}, schema_type={:?}, has_object_step={}, has_spread={}, object_fields={:?}",
+        inferred_type, schema_type, traversal.has_object_step, traversal.has_spread, traversal.object_fields);
 
     // Step 1: Add implicit fields if this is a schema type
     if let Some((label, item_type)) = schema_type {
@@ -65,12 +133,14 @@ fn build_return_fields(
 
         // Add id and label if no object step OR if explicitly selected
         if should_add_field("id") {
+            eprintln!("DEBUG: Adding implicit 'id' field with type &'a str");
             fields.push(ReturnFieldInfo::new_implicit(
                 "id".to_string(),
                 "&'a str".to_string(),
             ));
         }
         if should_add_field("label") {
+            eprintln!("DEBUG: Adding implicit 'label' field with type &'a str");
             fields.push(ReturnFieldInfo::new_implicit(
                 "label".to_string(),
                 "&'a str".to_string(),
@@ -95,13 +165,13 @@ fn build_return_fields(
             if should_add_field("data") {
                 fields.push(ReturnFieldInfo::new_implicit(
                     "data".to_string(),
-                    "Option<&'a Value>".to_string(),
+                    "&'a [f64]".to_string(),
                 ));
             }
             if should_add_field("score") {
                 fields.push(ReturnFieldInfo::new_implicit(
                     "score".to_string(),
-                    "Option<f32>".to_string(),
+                    "f64".to_string(),
                 ));
             }
         }
@@ -144,26 +214,57 @@ fn build_return_fields(
 
                 // If has_spread, add all remaining schema fields
                 if traversal.has_spread {
+                    eprintln!("DEBUG: Processing spread, current fields: {:?}", fields.iter().map(|f| &f.name).collect::<Vec<_>>());
                     for (field_name, _field) in schema_fields.iter() {
                         // Skip if already added
-                        if fields.iter().any(|f| f.name == *field_name) {
+                        let already_exists = fields.iter().any(|f| f.name == *field_name);
+                        eprintln!("DEBUG: Checking field '{}', already_exists={}", field_name, already_exists);
+                        if already_exists {
+                            eprintln!("DEBUG: Skipping '{}' from spread - already added", field_name);
                             continue;
                         }
                         // Skip if excluded
                         if traversal.excluded_fields.contains(&field_name.to_string()) {
                             continue;
                         }
-                        fields.push(ReturnFieldInfo::new_schema(
-                            field_name.to_string(),
-                            format!("Option<&'a Value>"),
-                        ));
+
+                        // Check if this is an implicit field - if so, use the correct type
+                        let is_implicit_field = matches!(
+                            *field_name,
+                            "id" | "label" | "from_node" | "to_node" | "data" | "score"
+                        );
+
+                        if is_implicit_field {
+                            let rust_type = match *field_name {
+                                "data" => "&'a [f64]".to_string(),
+                                "score" => "f64".to_string(),
+                                _ => "&'a str".to_string(),
+                            };
+                            eprintln!("DEBUG: Adding implicit field '{}' from spread with type {}", field_name, rust_type);
+                            fields.push(ReturnFieldInfo::new_implicit(
+                                field_name.to_string(),
+                                rust_type,
+                            ));
+                        } else {
+                            eprintln!("DEBUG: Adding schema field '{}' from spread with type Option<&'a Value>", field_name);
+                            fields.push(ReturnFieldInfo::new_schema(
+                                field_name.to_string(),
+                                format!("Option<&'a Value>"),
+                            ));
+                        }
                     }
                 }
             } else {
                 // No projection - include all schema fields except excluded ones
                 for (field_name, _field) in schema_fields.iter() {
                     // Skip implicit fields (already added)
-                    if *field_name == "id" || *field_name == "label" {
+                    if *field_name == "id"
+                        || *field_name == "label"
+                        || *field_name == "from_node"
+                        || *field_name == "to_node"
+                        || *field_name == "data"
+                        || *field_name == "score"
+                    {
                         continue;
                     }
                     // Skip if excluded
@@ -180,21 +281,110 @@ fn build_return_fields(
     }
 
     // Step 3: Add nested traversals
+    eprintln!("DEBUG build_return_fields: processing {} nested traversals", traversal.nested_traversals.len());
     for (field_name, nested_info) in &traversal.nested_traversals {
+        eprintln!("DEBUG build_return_fields: nested traversal field_name = {}", field_name);
         // For nested traversals, extract the return type and build nested fields
         if let Some(ref return_type) = nested_info.return_type {
-            // Recursively build fields for the nested type
-            let nested_fields = build_return_fields(ctx, return_type, &nested_info.traversal);
-            let nested_struct_name = format!("{}ReturnType", capitalize_first(field_name));
-            fields.push(ReturnFieldInfo {
-                name: field_name.clone(),
-                field_type: ReturnFieldType::Nested(nested_fields),
-                source: ReturnFieldSource::NestedTraversal {
-                    traversal_expr: format!("nested_traversal_{}", field_name),
-                    traversal_code: Some(nested_info.traversal.format_steps_only()), // Store only the steps
-                    nested_struct_name: Some(nested_struct_name),
-                },
-            });
+            // Check if this is a scalar type or needs a struct
+            match return_type {
+                Type::Scalar(_scalar_ty) => {
+                    // Check if the traversal is accessing an implicit field
+                    // For nested traversals like usr::ID, we need to check what field is actually accessed
+                    let accessed_field = nested_info
+                        .traversal
+                        .object_fields
+                        .first(); // Get the first (and usually only) field being accessed
+                    let is_implicit = accessed_field
+                        .map(|f| {
+                            matches!(
+                                f.as_str(),
+                                "id" | "label" | "from_node" | "to_node" | "data" | "score" |
+                                "ID" | "Label"  // Also check capitalized versions
+                            )
+                        })
+                        .unwrap_or(!nested_info.traversal.has_object_step);
+
+                    let rust_type = if is_implicit {
+                        // Use the appropriate type based on the implicit field
+                        match accessed_field.map(|s| s.as_str()) {
+                            Some("data") => "&'a [f64]".to_string(),
+                            Some("score") => "f64".to_string(),
+                            Some("id") | Some("ID") | Some("label") | Some("Label") |
+                            Some("from_node") | Some("to_node") | None => "&'a str".to_string(),
+                            _ => "Option<&'a Value>".to_string(),
+                        }
+                    } else {
+                        "Option<&'a Value>".to_string()
+                    };
+
+                    let trav_code = nested_info.traversal.format_steps_only();
+                    // Extract the accessed field name from object_fields
+                    let accessed_field_name = nested_info.traversal.object_fields.first().map(|s| s.clone());
+                    eprintln!("DEBUG: Scalar nested field '{}', accessed_field={:?}, has_object_step={}, trav_code='{}', closure_source_var={:?}",
+                        field_name, accessed_field, nested_info.traversal.has_object_step, trav_code, nested_info.closure_source_var);
+                    fields.push(ReturnFieldInfo {
+                        name: field_name.clone(),
+                        field_type: ReturnFieldType::Simple(rust_type),
+                        source: ReturnFieldSource::NestedTraversal {
+                            traversal_expr: format!("nested_traversal_{}", field_name),
+                            traversal_code: Some(trav_code),
+                            nested_struct_name: None,
+                            traversal_type: Some(nested_info.traversal.traversal_type.clone()),
+                            closure_param_name: nested_info.closure_param_name.clone(),
+                            closure_source_var: nested_info.closure_source_var.clone(),
+                            accessed_field_name,
+                        },
+                    });
+                }
+                Type::Node(_)
+                | Type::Edge(_)
+                | Type::Vector(_)
+                | Type::Nodes(_)
+                | Type::Edges(_)
+                | Type::Vectors(_) => {
+                    // Complex types need nested structs
+                    let nested_prefix =
+                        format!("{}{}", struct_name_prefix, capitalize_first(field_name));
+                    let nested_fields = build_return_fields(
+                        ctx,
+                        return_type,
+                        &nested_info.traversal,
+                        &nested_prefix,
+                    );
+                    let nested_struct_name = format!("{}ReturnType", nested_prefix);
+
+                    fields.push(ReturnFieldInfo {
+                        name: field_name.clone(),
+                        field_type: ReturnFieldType::Nested(nested_fields),
+                        source: ReturnFieldSource::NestedTraversal {
+                            traversal_expr: format!("nested_traversal_{}", field_name),
+                            traversal_code: Some(nested_info.traversal.format_steps_only()),
+                            nested_struct_name: Some(nested_struct_name),
+                            traversal_type: Some(nested_info.traversal.traversal_type.clone()),
+                            closure_param_name: nested_info.closure_param_name.clone(),
+                            closure_source_var: nested_info.closure_source_var.clone(),
+                            accessed_field_name: None,
+                        },
+                    });
+                }
+                _ => {
+                    // Other types - use placeholder
+                    fields.push(ReturnFieldInfo {
+                        name: field_name.clone(),
+                        field_type: ReturnFieldType::Simple("Value".to_string()),
+                        source: ReturnFieldSource::NestedTraversal {
+                            traversal_expr: format!("nested_traversal_{}", field_name),
+                            traversal_code: Some(nested_info.traversal.format_steps_only()),
+                            nested_struct_name: None,
+                            traversal_type: Some(nested_info.traversal.traversal_type.clone()),
+                            closure_param_name: nested_info.closure_param_name.clone(),
+                            closure_source_var: nested_info.closure_source_var.clone(),
+                            accessed_field_name: None,
+                        },
+                    });
+                }
+            }
         } else {
             // Type not yet determined - create placeholder
             // This will be filled in during a later pass
@@ -205,6 +395,10 @@ fn build_return_fields(
                     traversal_expr: format!("nested_traversal_{}", field_name),
                     traversal_code: None,
                     nested_struct_name: None,
+                    traversal_type: None,
+                    closure_param_name: None,
+                    closure_source_var: None,
+                    accessed_field_name: None,
                 },
             });
         }
@@ -334,7 +528,11 @@ fn type_to_rust_string_and_fields(
                 type_to_rust_string_and_fields(inner, &ShouldCollect::No, ctx, field_name);
             (format!("Vec<{}>", inner_type), vec![])
         }
-        (Type::Aggregate, _) => ("".to_string(), vec![]),
+        (Type::Aggregate(info), _) => {
+            // For aggregates, return HashMap type since that's what group_by/aggregate_by returns
+            // The actual struct fields will be generated later in build_return_fields
+            ("HashMap<String, AggregateItem>".to_string(), vec![])
+        }
         _ => ("".to_string(), vec![]),
     }
 }
@@ -382,9 +580,15 @@ pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
     // -------------------------------------------------
     let mut scope: HashMap<&str, VariableInfo> = HashMap::new();
     for param in &original_query.parameters {
+        let param_type = Type::from(param.param_type.1.clone());
+        // Parameters are singular unless they're array types (Nodes, Edges, Vectors, etc.)
+        let is_single = !matches!(
+            param_type,
+            Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_)
+        );
         scope.insert(
             param.name.1.as_str(),
-            VariableInfo::new(Type::from(param.param_type.1.clone()), false),
+            VariableInfo::new(param_type, is_single),
         );
     }
     for stmt in &original_query.statements {
@@ -484,21 +688,42 @@ fn analyze_return_expr<'a>(
                             ));
 
                             // New unified approach
-                            let return_fields =
-                                build_return_fields(ctx, &inferred_type, &traversal);
-                            let struct_name =
-                                format!("{}ReturnType", capitalize_first(&field_name));
-                            let is_collection =
-                                matches!(traversal.should_collect, ShouldCollect::ToVec);
-                            query
-                                .return_structs
-                                .push(ReturnValueStruct::from_return_fields(
-                                    struct_name.clone(),
-                                    return_fields.clone(),
-                                    field_name.clone(),
-                                    is_collection,
-                                    traversal.is_reused_variable,
-                                ));
+                            // Skip struct generation for primitive types (Boolean, Scalar) - they use legacy path only
+                            if !matches!(inferred_type, Type::Boolean | Type::Scalar(_)) {
+                                let struct_name_prefix = format!(
+                                    "{}{}",
+                                    capitalize_first(&query.name),
+                                    capitalize_first(&field_name)
+                                );
+                                let return_fields = build_return_fields(
+                                    ctx,
+                                    &inferred_type,
+                                    &traversal,
+                                    &struct_name_prefix,
+                                );
+                                let struct_name = format!("{}ReturnType", struct_name_prefix);
+                                let is_collection = matches!(
+                                    inferred_type,
+                                    Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_)
+                                );
+                                let (is_aggregate, is_group_by, aggregate_properties, is_count_aggregate) = match inferred_type {
+                                    Type::Aggregate(info) => (true, info.is_group_by, info.properties.clone(), info.is_count),
+                                    _ => (false, false, Vec::new(), false),
+                                };
+                                query
+                                    .return_structs
+                                    .push(ReturnValueStruct::from_return_fields(
+                                        struct_name.clone(),
+                                        return_fields.clone(),
+                                        field_name.clone(),
+                                        is_collection,
+                                        traversal.is_reused_variable,
+                                        is_aggregate,
+                                        is_group_by,
+                                        aggregate_properties,
+                                        is_count_aggregate,
+                                    ));
+                            }
 
                             // Note: Map closures are no longer injected here.
                             // Mapping will happen at response construction time instead.
@@ -523,12 +748,26 @@ fn analyze_return_expr<'a>(
                             ));
 
                             // New unified approach
-                            let return_fields =
-                                build_return_fields(ctx, &inferred_type, &traversal);
-                            let struct_name =
-                                format!("{}ReturnType", capitalize_first(&field_name));
-                            let is_collection =
-                                matches!(traversal.should_collect, ShouldCollect::ToVec);
+                            let struct_name_prefix = format!(
+                                "{}{}",
+                                capitalize_first(&query.name),
+                                capitalize_first(&field_name)
+                            );
+                            let return_fields = build_return_fields(
+                                ctx,
+                                &inferred_type,
+                                &traversal,
+                                &struct_name_prefix,
+                            );
+                            let struct_name = format!("{}ReturnType", struct_name_prefix);
+                            let is_collection = matches!(
+                                inferred_type,
+                                Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_)
+                            );
+                            let (is_aggregate, is_group_by, aggregate_properties, is_count_aggregate) = match inferred_type {
+                                Type::Aggregate(info) => (true, info.is_group_by, info.properties.clone(), info.is_count),
+                                _ => (false, false, Vec::new(), false),
+                            };
                             query
                                 .return_structs
                                 .push(ReturnValueStruct::from_return_fields(
@@ -537,6 +776,10 @@ fn analyze_return_expr<'a>(
                                     field_name.clone(),
                                     is_collection,
                                     traversal.is_reused_variable,
+                                    is_aggregate,
+                                    is_group_by,
+                                    aggregate_properties,
+                                    is_count_aggregate,
                                 ));
 
                             // Generate map closure (direct return, no variable assignment to update)
@@ -579,25 +822,51 @@ fn analyze_return_expr<'a>(
                     ));
 
                     // New unified approach
-                    // For identifier returns, we need to create a traversal to build fields from
-                    let var_info = scope.get(id.inner().as_str());
-                    let is_reused = var_info.map_or(false, |v| v.reference_count > 1);
-                    let is_collection = var_info.map_or(false, |v| !v.is_single);
-                    let traversal = GeneratedTraversal {
-                        is_reused_variable: is_reused,
-                        ..Default::default()
-                    };
-                    let return_fields = build_return_fields(ctx, &identifier_end_type, &traversal);
-                    let struct_name = format!("{}ReturnType", capitalize_first(&field_name));
-                    query
-                        .return_structs
-                        .push(ReturnValueStruct::from_return_fields(
-                            struct_name.clone(),
-                            return_fields.clone(),
-                            field_name.clone(),
-                            is_collection,
-                            is_reused,
-                        ));
+                    // Skip struct generation for primitive types (Boolean, Scalar) - they use legacy path only
+                    if !matches!(identifier_end_type, Type::Boolean | Type::Scalar(_)) {
+                        // For identifier returns, we need to create a traversal to build fields from
+                        let var_info = scope.get(id.inner().as_str());
+                        let is_reused = var_info.map_or(false, |v| v.reference_count > 1);
+                        let is_collection = var_info.map_or(false, |v| !v.is_single);
+                        let traversal = GeneratedTraversal {
+                            is_reused_variable: is_reused,
+                            ..Default::default()
+                        };
+                        let struct_name_prefix = format!(
+                            "{}{}",
+                            capitalize_first(&query.name),
+                            capitalize_first(&field_name)
+                        );
+                        let return_fields = build_return_fields(
+                            ctx,
+                            &identifier_end_type,
+                            &traversal,
+                            &struct_name_prefix,
+                        );
+                        let struct_name = format!("{}ReturnType", struct_name_prefix);
+                        let (is_aggregate, is_group_by) = match identifier_end_type {
+                            Type::Aggregate(info) => (true, info.is_group_by),
+                            _ => (false, false),
+                        };
+                        // For GeneratedStatement::Identifier, the variable is already transformed
+                        // (no transformation code needed)
+                        let aggregate_properties = Vec::new();
+                        let is_count_aggregate = false;
+
+                        query
+                            .return_structs
+                            .push(ReturnValueStruct::from_return_fields(
+                                struct_name.clone(),
+                                return_fields.clone(),
+                                field_name.clone(),
+                                is_collection,
+                                is_reused,
+                                is_aggregate,
+                                is_group_by,
+                                aggregate_properties,
+                                is_count_aggregate,
+                            ));
+                    }
 
                     // Note: Map closures are no longer injected here.
                     // Mapping will happen at response construction time instead.

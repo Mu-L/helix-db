@@ -5,7 +5,7 @@ N::Story_Cluster1 {
     text: String,
     created_at: Date,
     url: String,
-    story_score: I64,
+    score: I64,
     klive: I64
 }
 

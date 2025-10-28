@@ -205,11 +205,12 @@ impl Variable {
 }
 
 // Helper struct to track both type and cardinality of variables
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct VariableInfo {
     pub ty: Type,
     pub is_single: bool, // true if ToObj, false if ToVec
     pub reference_count: usize, // How many times this variable is referenced
+    pub source_var: Option<String>, // For closure parameters, the actual variable they refer to
 }
 
 impl VariableInfo {
@@ -218,6 +219,16 @@ impl VariableInfo {
             ty,
             is_single,
             reference_count: 0,
+            source_var: None,
+        }
+    }
+
+    pub fn new_with_source(ty: Type, is_single: bool, source_var: String) -> Self {
+        Self {
+            ty,
+            is_single,
+            reference_count: 0,
+            source_var: Some(source_var),
         }
     }
 

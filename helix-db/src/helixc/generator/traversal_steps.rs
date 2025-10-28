@@ -13,11 +13,13 @@ use std::fmt::{Debug, Display};
 
 /// Information about a nested traversal in an object selection
 #[derive(Clone, Debug)]
-pub(crate) struct NestedTraversalInfo {
+pub struct NestedTraversalInfo {
     pub traversal: Box<Traversal>, // The generated traversal after validation
     pub return_type: Option<Type>, // The type this traversal returns
     pub field_name: String,        // The field name in the parent object
     pub parsed_traversal: Option<Box<crate::helixc::parser::types::Traversal>>, // Original parsed traversal for validation
+    pub closure_param_name: Option<String>,  // The closure parameter name if in closure context (e.g., "usr")
+    pub closure_source_var: Option<String>,  // The actual source variable for the closure parameter (e.g., "user")
 }
 
 #[derive(Clone)]
