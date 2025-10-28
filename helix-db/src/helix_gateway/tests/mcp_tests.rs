@@ -24,6 +24,7 @@ mod mcp_tests {
             tools::{EdgeType, FilterProperties, FilterTraversal, Operator, ToolArgs},
         },
         protocol::{Format, Request, request::RequestType, value::Value},
+        utils::properties::ImmutablePropertiesMap,
     };
 
     fn setup_engine() -> (HelixGraphEngine, TempDir) {
@@ -43,7 +44,15 @@ mod mcp_tests {
         let mut txn = engine.storage.graph_env.write_txn().unwrap();
         let arena = Bump::new();
         let person1 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
-            .add_n("person", None, None)
+            .add_n(
+                "person",
+                Some(ImmutablePropertiesMap::new(
+                    1,
+                    [("name", Value::from("John"))].into_iter(),
+                    &arena,
+                )),
+                None,
+            )
             .collect_to_obj();
 
         let person2 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
@@ -67,8 +76,8 @@ mod mcp_tests {
             ToolArgs::FilterItems {
                 filter: FilterTraversal {
                     properties: Some(vec![vec![FilterProperties {
-                        key: "id".to_string(),
-                        value: Value::U128(person1.id()),
+                        key: "name".to_string(),
+                        value: Value::from("John"),
                         operator: Some(Operator::Eq),
                     }]]),
                     filter_traversals: None,
@@ -110,8 +119,6 @@ mod mcp_tests {
         txn.commit().unwrap();
 
         let storage = engine.storage.as_ref();
-        let txn = storage.graph_env.read_txn().unwrap();
-        let arena = Bump::new();
 
         let mut connection = MCPConnection::new("test".to_string());
         connection.add_query_step(ToolArgs::NFromType {
@@ -131,7 +138,6 @@ mod mcp_tests {
         ));
 
         assert_eq!(connection.current_position, 2);
-        drop(txn);
     }
 
     #[test]
@@ -176,7 +182,10 @@ mod mcp_tests {
 
         let response = collect(&mut input).unwrap();
         let body = String::from_utf8(response.body.clone()).unwrap();
+        println!("{:?}", body);
         let id_count = body.matches("\"id\"").count();
+        let label_count = body.matches("\"label\"").count();
         assert_eq!(id_count, 2);
+        assert_eq!(label_count, 2);
     }
 }
