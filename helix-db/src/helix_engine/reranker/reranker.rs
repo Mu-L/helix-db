@@ -8,7 +8,6 @@ use crate::{
         reranker::errors::{RerankerError, RerankerResult},
         traversal_core::traversal_value::TraversalValue,
     },
-    utils::filterable::Filterable,
 };
 
 /// Represents a scored item for reranking.
@@ -42,9 +41,9 @@ pub trait Reranker: Send + Sync {
     ///
     /// # Returns
     /// A vector of reranked items with updated scores
-    fn rerank<I>(&self, items: I, query: Option<&str>) -> RerankerResult<Vec<TraversalValue>>
+    fn rerank<'arena, I>(&self, items: I, query: Option<&str>) -> RerankerResult<Vec<TraversalValue<'arena>>>
     where
-        I: Iterator<Item = TraversalValue>;
+        I: Iterator<Item = TraversalValue<'arena>>;
 
     /// Get the name of this reranker for debugging/logging
     fn name(&self) -> &str;
@@ -56,12 +55,13 @@ pub trait Reranker: Send + Sync {
 /// their associated score/distance value.
 pub fn extract_score(item: &TraversalValue) -> RerankerResult<f64> {
     match item {
-        TraversalValue::Vector(v) => Ok(v.distance.unwrap_or(0.0)),
-        TraversalValue::Node(n) => Ok(n.score()),
-        TraversalValue::Edge(e) => Ok(e.score()),
-        _ => Err(RerankerError::ScoreExtractionError(
-            "Cannot extract score from this traversal value type".to_string(),
-        )),
+        TraversalValue::Vector(v) => Ok(v.score()),
+        TraversalValue::NodeWithScore { score, .. } => Ok(*score),
+        _ => {
+            // For nodes and edges without explicit scores, try to extract from properties
+            // or return a default score of 0.0
+            Ok(0.0)
+        }
     }
 }
 
@@ -75,34 +75,15 @@ pub fn update_score(item: &mut TraversalValue, new_score: f64) -> RerankerResult
             v.distance = Some(new_score);
             Ok(())
         }
-        TraversalValue::Node(n) => {
-            // Store in properties
-            if n.properties.is_none() {
-                n.properties = Some(std::collections::HashMap::new());
-            }
-            if let Some(props) = &mut n.properties {
-                props.insert(
-                    "rerank_score".to_string(),
-                    crate::protocol::value::Value::F64(new_score),
-                );
-            }
+        TraversalValue::NodeWithScore { score, .. } => {
+            *score = new_score;
             Ok(())
         }
-        TraversalValue::Edge(e) => {
-            // Store in properties
-            if e.properties.is_none() {
-                e.properties = Some(std::collections::HashMap::new());
-            }
-            if let Some(props) = &mut e.properties {
-                props.insert(
-                    "rerank_score".to_string(),
-                    crate::protocol::value::Value::F64(new_score),
-                );
-            }
-            Ok(())
-        }
+        // Note: Node and Edge have ImmutablePropertiesMap which cannot be modified
+        // For now, we cannot update scores on plain Node/Edge items
+        // They would need to be wrapped in NodeWithScore variant
         _ => Err(RerankerError::ScoreExtractionError(
-            "Cannot update score for this traversal value type".to_string(),
+            "Cannot update score for this traversal value type (only Vector and NodeWithScore supported)".to_string(),
         )),
     }
 }

@@ -14,7 +14,7 @@ use crate::helix_engine::reranker::{
     errors::{RerankerError, RerankerResult},
     reranker::{Reranker, update_score},
 };
-use crate::helix_engine::traversal_core::traversal_value::{Traversable, TraversalValue};
+use crate::helix_engine::traversal_core::traversal_value::TraversalValue;
 
 /// Configuration for cross-encoder reranking.
 #[derive(Debug, Clone)]
@@ -84,7 +84,14 @@ impl CrossEncoderReranker {
     /// This tries to extract meaningful text from the item's properties.
     /// Common property names like "text", "content", "description" are checked.
     fn extract_text(&self, item: &TraversalValue) -> RerankerResult<String> {
-        let properties = item.get_properties();
+        let properties = match item {
+            TraversalValue::Node(n) => n.properties,
+            TraversalValue::Edge(e) => e.properties,
+            TraversalValue::Vector(v) => v.properties,
+            TraversalValue::VectorNodeWithoutVectorData(v) => v.properties,
+            TraversalValue::NodeWithScore { node, .. } => node.properties,
+            _ => None,
+        };
 
         if let Some(props) = properties {
             // Try common text field names
@@ -92,7 +99,7 @@ impl CrossEncoderReranker {
                 if let Some(value) = props.get(*field)
                     && let crate::protocol::value::Value::String(text) = value
                 {
-                    return Ok(text.clone());
+                    return Ok(text.to_string());
                 }
             }
 
@@ -124,9 +131,9 @@ impl CrossEncoderReranker {
 }
 
 impl Reranker for CrossEncoderReranker {
-    fn rerank<I>(&self, items: I, query: Option<&str>) -> RerankerResult<Vec<TraversalValue>>
+    fn rerank<'arena, I>(&self, items: I, query: Option<&str>) -> RerankerResult<Vec<TraversalValue<'arena>>>
     where
-        I: Iterator<Item = TraversalValue>,
+        I: Iterator<Item = TraversalValue<'arena>>,
     {
         let query_text = query.ok_or_else(|| {
             RerankerError::InvalidParameter("Cross-encoder reranking requires a query".to_string())

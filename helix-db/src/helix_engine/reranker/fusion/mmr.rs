@@ -18,7 +18,6 @@ use crate::{
         },
         traversal_core::traversal_value::TraversalValue,
     },
-    utils::filterable::Filterable,
 };
 use std::collections::HashMap;
 
@@ -85,13 +84,12 @@ impl MMRReranker {
     }
 
     /// Extract vector data from a TraversalValue.
-    fn extract_vector_data<'a>(&self, item: &'a TraversalValue) -> RerankerResult<&'a [f64]> {
+    /// Note: This requires an arena to convert VectorPrecisionData to f64 slice
+    fn extract_vector_data<'a>(&self, item: &'a TraversalValue<'a>, arena: &'a bumpalo::Bump) -> RerankerResult<&'a [f64]> {
         match item {
-            TraversalValue::Vector(v) => Ok(&v.data),
-            TraversalValue::Node(n) => Ok(n.vector_data()),
-            TraversalValue::Edge(e) => Ok(e.vector_data()),
+            TraversalValue::Vector(v) => Ok(v.get_data_f64(arena)),
             _ => Err(RerankerError::TextExtractionError(
-                "Cannot extract vector from this item type".to_string(),
+                "Cannot extract vector from this item type (only Vector supported for MMR)".to_string(),
             )),
         }
     }
@@ -136,14 +134,16 @@ impl MMRReranker {
     }
 
     /// Perform MMR selection on the given items.
-    fn mmr_select(&self, items: Vec<TraversalValue>) -> RerankerResult<Vec<TraversalValue>> {
+    fn mmr_select<'arena>(&self, items: Vec<TraversalValue<'arena>>) -> RerankerResult<Vec<TraversalValue<'arena>>> {
+        // Create a temporary arena for vector conversions
+        let arena = bumpalo::Bump::new();
         if items.is_empty() {
             return Err(RerankerError::EmptyInput);
         }
 
         let n = items.len();
-        let mut selected: Vec<TraversalValue> = Vec::with_capacity(n);
-        let mut remaining: Vec<(TraversalValue, f64)> = Vec::with_capacity(n);
+        let mut selected: Vec<TraversalValue<'arena>> = Vec::with_capacity(n);
+        let mut remaining: Vec<(TraversalValue<'arena>, f64)> = Vec::with_capacity(n);
 
         // Extract original scores and prepare remaining items
         for item in items {
@@ -165,7 +165,7 @@ impl MMRReranker {
             let mut best_mmr_score = f64::NEG_INFINITY;
 
             for (idx, (item, relevance_score)) in remaining.iter().enumerate() {
-                let item_vec = self.extract_vector_data(item)?;
+                let item_vec = self.extract_vector_data(item, &arena)?;
 
                 // Calculate relevance term
                 let relevance = if let Some(query) = &self.query_vector {
@@ -182,7 +182,7 @@ impl MMRReranker {
                     let similarity = if let Some(&cached) = similarity_cache.get(&cache_key) {
                         cached
                     } else {
-                        let sel_vec = self.extract_vector_data(selected_item)?;
+                        let sel_vec = self.extract_vector_data(selected_item, &arena)?;
                         let sim = self.calculate_similarity(item_vec, sel_vec)?;
                         similarity_cache.insert(cache_key, sim);
                         sim
@@ -211,9 +211,9 @@ impl MMRReranker {
 }
 
 impl Reranker for MMRReranker {
-    fn rerank<I>(&self, items: I, _query: Option<&str>) -> RerankerResult<Vec<TraversalValue>>
+    fn rerank<'arena, I>(&self, items: I, _query: Option<&str>) -> RerankerResult<Vec<TraversalValue<'arena>>>
     where
-        I: Iterator<Item = TraversalValue>,
+        I: Iterator<Item = TraversalValue<'arena>>,
     {
         let items_vec: Vec<_> = items.collect();
         self.mmr_select(items_vec)

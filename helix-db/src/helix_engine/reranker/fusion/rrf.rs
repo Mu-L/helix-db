@@ -55,16 +55,16 @@ impl RRFReranker {
     ///
     /// # Returns
     /// A vector of items reranked by RRF scores
-    pub fn fuse_lists<I>(lists: Vec<I>, k: f64) -> RerankerResult<Vec<TraversalValue>>
+    pub fn fuse_lists<'arena, I>(lists: Vec<I>, k: f64) -> RerankerResult<Vec<TraversalValue<'arena>>>
     where
-        I: Iterator<Item = TraversalValue>,
+        I: Iterator<Item = TraversalValue<'arena>>,
     {
         if lists.is_empty() {
             return Err(RerankerError::EmptyInput);
         }
 
         let mut rrf_scores: HashMap<u128, f64> = HashMap::new();
-        let mut items_map: HashMap<u128, TraversalValue> = HashMap::new();
+        let mut items_map: HashMap<u128, TraversalValue<'arena>> = HashMap::new();
 
         // Process each ranked list
         for list in lists {
@@ -112,9 +112,9 @@ impl Default for RRFReranker {
 }
 
 impl Reranker for RRFReranker {
-    fn rerank<I>(&self, items: I, _query: Option<&str>) -> RerankerResult<Vec<TraversalValue>>
+    fn rerank<'arena, I>(&self, items: I, _query: Option<&str>) -> RerankerResult<Vec<TraversalValue<'arena>>>
     where
-        I: Iterator<Item = TraversalValue>,
+        I: Iterator<Item = TraversalValue<'arena>>,
     {
         // For a single list, RRF just converts ranks to RRF scores
         let items_vec: Vec<_> = items.collect();

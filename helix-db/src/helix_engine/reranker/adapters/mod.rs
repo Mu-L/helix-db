@@ -18,25 +18,27 @@ use crate::helix_engine::{
     traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
     types::GraphError,
 };
-use helix_macros::debug_trace;
 use std::iter::once;
 
 /// Iterator wrapper that performs reranking.
-pub struct RerankIterator<I: Iterator<Item = Result<TraversalValue, GraphError>>> {
+pub struct RerankIterator<'arena, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>> {
     iter: I,
 }
 
-impl<I: Iterator<Item = Result<TraversalValue, GraphError>>> Iterator for RerankIterator<I> {
-    type Item = Result<TraversalValue, GraphError>;
+impl<'arena, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>> Iterator for RerankIterator<'arena, I> {
+    type Item = Result<TraversalValue<'arena>, GraphError>;
 
-    #[debug_trace("RERANK")]
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()
     }
 }
 
 /// Trait that adds reranking capability to traversal iterators.
-pub trait RerankAdapter<'a>: Iterator<Item = Result<TraversalValue, GraphError>> {
+pub trait RerankAdapter<'arena, 'db, 'txn>: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
+where
+    'db: 'arena,
+    'arena: 'txn,
+{
     /// Apply a reranker to the current traversal results.
     ///
     /// # Arguments
@@ -60,17 +62,21 @@ pub trait RerankAdapter<'a>: Iterator<Item = Result<TraversalValue, GraphError>>
         self,
         reranker: &R,
         query: Option<&str>,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>>;
+    ) -> RoTraversalIterator<'db, 'arena, 'txn, impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>;
 }
 
-impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> RerankAdapter<'a>
-    for RoTraversalIterator<'a, I>
+impl<'db, 'arena, 'txn, I> RerankAdapter<'arena, 'db, 'txn>
+    for RoTraversalIterator<'db, 'arena, 'txn, I>
+where
+    'db: 'arena,
+    'arena: 'txn,
+    I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>> + 'arena,
 {
     fn rerank<R: Reranker>(
         self,
         reranker: &R,
         query: Option<&str>,
-    ) -> RoTraversalIterator<'a, impl Iterator<Item = Result<TraversalValue, GraphError>>> {
+    ) -> RoTraversalIterator<'db, 'arena, 'txn, impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>> {
         // Collect all items from the iterator
         let items = self.inner.filter_map(|item| item.ok());
 
@@ -78,7 +84,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> RerankAdap
         let reranked = match reranker.rerank(items, query) {
             Ok(results) => results
                 .into_iter()
-                .map(Ok::<TraversalValue, GraphError>)
+                .map(Ok::<TraversalValue<'arena>, GraphError>)
                 .collect::<Vec<_>>()
                 .into_iter(),
             Err(e) => {
@@ -92,6 +98,7 @@ impl<'a, I: Iterator<Item = Result<TraversalValue, GraphError>> + 'a> RerankAdap
         RoTraversalIterator {
             inner: iter,
             storage: self.storage,
+            arena: self.arena,
             txn: self.txn,
         }
     }
@@ -112,9 +119,12 @@ mod tests {
 
     #[test]
     fn test_rerank_iterator() {
+        let arena = bumpalo::Bump::new();
+        let data1 = arena.alloc_slice_copy(&[1.0]);
+        let data2 = arena.alloc_slice_copy(&[2.0]);
         let items = vec![
-            Ok(TraversalValue::Vector(HVector::new(vec![1.0]))),
-            Ok(TraversalValue::Vector(HVector::new(vec![2.0]))),
+            Ok(TraversalValue::Vector(HVector::from_slice("test", 0, data1))),
+            Ok(TraversalValue::Vector(HVector::from_slice("test", 0, data2))),
         ];
 
         let mut iter = RerankIterator {
