@@ -48,6 +48,7 @@ where
                             Err(e) => Err(e),
                         }
                     }
+                    TraversalValue::Empty => Ok(()),
                     _ => Err(GraphError::ConversionError(format!(
                         "Incorrect Type: {item:?}"
                     ))),
