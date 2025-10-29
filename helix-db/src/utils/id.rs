@@ -25,6 +25,10 @@ impl ID {
         self.0
     }
 
+    pub fn id(&self) -> u128 {
+        self.0
+    }
+
     pub fn stringify(&self) -> String {
         uuid::Uuid::from_u128(self.0).to_string()
     }
