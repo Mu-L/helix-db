@@ -81,7 +81,7 @@ impl<'de, 'arena> serde::de::DeserializeSeed<'de> for EdgeDeSeed<'arena> {
                 let label_string: &'de str = seq
                     .next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
-                let label = self.arena.alloc_str(&label_string);
+                let label = self.arena.alloc_str(label_string);
 
                 let version: u8 = seq.next_element()?.unwrap_or(0);
 

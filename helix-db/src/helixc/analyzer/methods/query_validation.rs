@@ -7,7 +7,7 @@ use crate::helixc::{
         Ctx,
         errors::{push_query_err, push_query_warn},
         methods::{infer_expr_type::infer_expr_type, statement_validation::validate_statements},
-        types::{AggregateInfo, Type},
+        types::Type,
         utils::{VariableInfo, is_valid_identifier},
     },
     generator::{
@@ -45,7 +45,10 @@ fn build_return_fields(
 
     // Handle aggregate types specially
     if let Type::Aggregate(info) = inferred_type {
-        eprintln!("DEBUG build_return_fields: processing aggregate type, is_count={}, is_group_by={}", info.is_count, info.is_group_by);
+        eprintln!(
+            "DEBUG build_return_fields: processing aggregate type, is_count={}, is_group_by={}",
+            info.is_count, info.is_group_by
+        );
 
         // All aggregates have a key field (the grouping key from HashMap)
         fields.push(ReturnFieldInfo::new_implicit(
@@ -55,7 +58,7 @@ fn build_return_fields(
 
         // Add fields for each grouped property
         // We need to get the source type's schema to determine property types
-        let (schema_fields, item_type) = match info.source_type.as_ref() {
+        let (_schema_fields, _item_type) = match info.source_type.as_ref() {
             Type::Node(Some(label)) | Type::Nodes(Some(label)) => {
                 (ctx.node_fields.get(label.as_str()), "node")
             }
@@ -87,7 +90,12 @@ fn build_return_fields(
             // Build nested struct for the items
             let items_struct_name = format!("{}Items", struct_name_prefix);
             // Recursively build fields for the source type
-            let item_fields = build_return_fields(ctx, info.source_type.as_ref(), traversal, &items_struct_name);
+            let item_fields = build_return_fields(
+                ctx,
+                info.source_type.as_ref(),
+                traversal,
+                &items_struct_name,
+            );
 
             // Create field with proper nested_struct_name to avoid conflicts
             fields.push(ReturnFieldInfo {
@@ -115,8 +123,14 @@ fn build_return_fields(
         Type::Vector(Some(label)) | Type::Vectors(Some(label)) => Some((label.as_str(), "vector")),
         _ => None,
     };
-    eprintln!("DEBUG build_return_fields: inferred_type={:?}, schema_type={:?}, has_object_step={}, has_spread={}, object_fields={:?}",
-        inferred_type, schema_type, traversal.has_object_step, traversal.has_spread, traversal.object_fields);
+    eprintln!(
+        "DEBUG build_return_fields: inferred_type={:?}, schema_type={:?}, has_object_step={}, has_spread={}, object_fields={:?}",
+        inferred_type,
+        schema_type,
+        traversal.has_object_step,
+        traversal.has_spread,
+        traversal.object_fields
+    );
 
     // Step 1: Add implicit fields if this is a schema type
     if let Some((label, item_type)) = schema_type {
@@ -204,23 +218,32 @@ fn build_return_fields(
                         continue;
                     }
 
-                    if let Some(field) = schema_fields.get(field_name.as_str()) {
+                    if let Some(_field) = schema_fields.get(field_name.as_str()) {
                         fields.push(ReturnFieldInfo::new_schema(
                             field_name.clone(),
-                            format!("Option<&'a Value>"),
+                            "Option<&'a Value>".to_string(),
                         ));
                     }
                 }
 
                 // If has_spread, add all remaining schema fields
                 if traversal.has_spread {
-                    eprintln!("DEBUG: Processing spread, current fields: {:?}", fields.iter().map(|f| &f.name).collect::<Vec<_>>());
+                    eprintln!(
+                        "DEBUG: Processing spread, current fields: {:?}",
+                        fields.iter().map(|f| &f.name).collect::<Vec<_>>()
+                    );
                     for (field_name, _field) in schema_fields.iter() {
                         // Skip if already added
                         let already_exists = fields.iter().any(|f| f.name == *field_name);
-                        eprintln!("DEBUG: Checking field '{}', already_exists={}", field_name, already_exists);
+                        eprintln!(
+                            "DEBUG: Checking field '{}', already_exists={}",
+                            field_name, already_exists
+                        );
                         if already_exists {
-                            eprintln!("DEBUG: Skipping '{}' from spread - already added", field_name);
+                            eprintln!(
+                                "DEBUG: Skipping '{}' from spread - already added",
+                                field_name
+                            );
                             continue;
                         }
                         // Skip if excluded
@@ -240,16 +263,22 @@ fn build_return_fields(
                                 "score" => "f64".to_string(),
                                 _ => "&'a str".to_string(),
                             };
-                            eprintln!("DEBUG: Adding implicit field '{}' from spread with type {}", field_name, rust_type);
+                            eprintln!(
+                                "DEBUG: Adding implicit field '{}' from spread with type {}",
+                                field_name, rust_type
+                            );
                             fields.push(ReturnFieldInfo::new_implicit(
                                 field_name.to_string(),
                                 rust_type,
                             ));
                         } else {
-                            eprintln!("DEBUG: Adding schema field '{}' from spread with type Option<&'a Value>", field_name);
+                            eprintln!(
+                                "DEBUG: Adding schema field '{}' from spread with type Option<&'a Value>",
+                                field_name
+                            );
                             fields.push(ReturnFieldInfo::new_schema(
                                 field_name.to_string(),
-                                format!("Option<&'a Value>"),
+                                "Option<&'a Value>".to_string(),
                             ));
                         }
                     }
@@ -273,7 +302,7 @@ fn build_return_fields(
                     }
                     fields.push(ReturnFieldInfo::new_schema(
                         field_name.to_string(),
-                        format!("Option<&'a Value>"),
+                        "Option<&'a Value>".to_string(),
                     ));
                 }
             }
@@ -281,9 +310,15 @@ fn build_return_fields(
     }
 
     // Step 3: Add nested traversals
-    eprintln!("DEBUG build_return_fields: processing {} nested traversals", traversal.nested_traversals.len());
+    eprintln!(
+        "DEBUG build_return_fields: processing {} nested traversals",
+        traversal.nested_traversals.len()
+    );
     for (field_name, nested_info) in &traversal.nested_traversals {
-        eprintln!("DEBUG build_return_fields: nested traversal field_name = {}", field_name);
+        eprintln!(
+            "DEBUG build_return_fields: nested traversal field_name = {}",
+            field_name
+        );
         // For nested traversals, extract the return type and build nested fields
         if let Some(ref return_type) = nested_info.return_type {
             // Check if this is a scalar type or needs a struct
@@ -291,16 +326,18 @@ fn build_return_fields(
                 Type::Scalar(_scalar_ty) => {
                     // Check if the traversal is accessing an implicit field
                     // For nested traversals like usr::ID, we need to check what field is actually accessed
-                    let accessed_field = nested_info
-                        .traversal
-                        .object_fields
-                        .first(); // Get the first (and usually only) field being accessed
+                    let accessed_field = nested_info.traversal.object_fields.first(); // Get the first (and usually only) field being accessed
                     let is_implicit = accessed_field
                         .map(|f| {
                             matches!(
                                 f.as_str(),
-                                "id" | "label" | "from_node" | "to_node" | "data" | "score" |
-                                "ID" | "Label"  // Also check capitalized versions
+                                "id" | "label"
+                                    | "from_node"
+                                    | "to_node"
+                                    | "data"
+                                    | "score"
+                                    | "ID"
+                                    | "Label" // Also check capitalized versions
                             )
                         })
                         .unwrap_or(!nested_info.traversal.has_object_step);
@@ -310,8 +347,8 @@ fn build_return_fields(
                         match accessed_field.map(|s| s.as_str()) {
                             Some("data") => "&'a [f64]".to_string(),
                             Some("score") => "f64".to_string(),
-                            Some("id") | Some("ID") | Some("label") | Some("Label") |
-                            Some("from_node") | Some("to_node") | None => "&'a str".to_string(),
+                            Some("id") | Some("ID") | Some("label") | Some("Label")
+                            | Some("from_node") | Some("to_node") | None => "&'a str".to_string(),
                             _ => "Option<&'a Value>".to_string(),
                         }
                     } else {
@@ -320,9 +357,15 @@ fn build_return_fields(
 
                     let trav_code = nested_info.traversal.format_steps_only();
                     // Extract the accessed field name from object_fields
-                    let accessed_field_name = nested_info.traversal.object_fields.first().map(|s| s.clone());
-                    eprintln!("DEBUG: Scalar nested field '{}', accessed_field={:?}, has_object_step={}, trav_code='{}', closure_source_var={:?}",
-                        field_name, accessed_field, nested_info.traversal.has_object_step, trav_code, nested_info.closure_source_var);
+                    let accessed_field_name = nested_info.traversal.object_fields.first().cloned();
+                    eprintln!(
+                        "DEBUG: Scalar nested field '{}', accessed_field={:?}, has_object_step={}, trav_code='{}', closure_source_var={:?}",
+                        field_name,
+                        accessed_field,
+                        nested_info.traversal.has_object_step,
+                        trav_code,
+                        nested_info.closure_source_var
+                    );
                     fields.push(ReturnFieldInfo {
                         name: field_name.clone(),
                         field_type: ReturnFieldType::Simple(rust_type),
@@ -412,7 +455,7 @@ fn type_to_rust_string_and_fields(
     ty: &Type,
     should_collect: &ShouldCollect,
     ctx: &Ctx,
-    field_name: &str,
+    _field_name: &str,
 ) -> (
     String,
     Vec<crate::helixc::generator::return_values::ReturnValueField>,
@@ -525,10 +568,10 @@ fn type_to_rust_string_and_fields(
         (Type::Boolean, _) => ("bool".to_string(), vec![]),
         (Type::Array(inner), _) => {
             let (inner_type, _) =
-                type_to_rust_string_and_fields(inner, &ShouldCollect::No, ctx, field_name);
+                type_to_rust_string_and_fields(inner, &ShouldCollect::No, ctx, _field_name);
             (format!("Vec<{}>", inner_type), vec![])
         }
-        (Type::Aggregate(info), _) => {
+        (Type::Aggregate(_info), _) => {
             // For aggregates, return HashMap type since that's what group_by/aggregate_by returns
             // The actual struct fields will be generated later in build_return_fields
             ("HashMap<String, AggregateItem>".to_string(), vec![])
@@ -706,8 +749,18 @@ fn analyze_return_expr<'a>(
                                     inferred_type,
                                     Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_)
                                 );
-                                let (is_aggregate, is_group_by, aggregate_properties, is_count_aggregate) = match inferred_type {
-                                    Type::Aggregate(info) => (true, info.is_group_by, info.properties.clone(), info.is_count),
+                                let (
+                                    is_aggregate,
+                                    is_group_by,
+                                    aggregate_properties,
+                                    is_count_aggregate,
+                                ) = match inferred_type {
+                                    Type::Aggregate(info) => (
+                                        true,
+                                        info.is_group_by,
+                                        info.properties.clone(),
+                                        info.is_count,
+                                    ),
                                     _ => (false, false, Vec::new(), false),
                                 };
                                 query
@@ -764,8 +817,18 @@ fn analyze_return_expr<'a>(
                                 inferred_type,
                                 Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_)
                             );
-                            let (is_aggregate, is_group_by, aggregate_properties, is_count_aggregate) = match inferred_type {
-                                Type::Aggregate(info) => (true, info.is_group_by, info.properties.clone(), info.is_count),
+                            let (
+                                is_aggregate,
+                                is_group_by,
+                                aggregate_properties,
+                                is_count_aggregate,
+                            ) = match inferred_type {
+                                Type::Aggregate(info) => (
+                                    true,
+                                    info.is_group_by,
+                                    info.properties.clone(),
+                                    info.is_count,
+                                ),
                                 _ => (false, false, Vec::new(), false),
                             };
                             query
@@ -826,8 +889,8 @@ fn analyze_return_expr<'a>(
                     if !matches!(identifier_end_type, Type::Boolean | Type::Scalar(_)) {
                         // For identifier returns, we need to create a traversal to build fields from
                         let var_info = scope.get(id.inner().as_str());
-                        let is_reused = var_info.map_or(false, |v| v.reference_count > 1);
-                        let is_collection = var_info.map_or(false, |v| !v.is_single);
+                        let is_reused = var_info.is_some_and(|v| v.reference_count > 1);
+                        let is_collection = var_info.is_some_and(|v| !v.is_single);
                         let traversal = GeneratedTraversal {
                             is_reused_variable: is_reused,
                             ..Default::default()
@@ -917,7 +980,7 @@ fn analyze_return_expr<'a>(
 
             if is_simple_object {
                 // Process each field in the object
-                for (_field_name, return_expr) in values {
+                for return_expr in values.values() {
                     // Recursively analyze each field's return expression
                     analyze_return_expr(ctx, original_query, scope, query, return_expr);
                 }

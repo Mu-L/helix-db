@@ -227,11 +227,7 @@ impl VectorCore {
         id: u128,
         neighbors: &BinaryHeap<'arena, HVector<'arena>>,
         level: usize,
-    ) -> Result<(), VectorError>
-    where
-        'db: 'arena,
-        'arena: 'txn,
-    {
+    ) -> Result<(), VectorError> {
         let prefix = Self::out_edges_key(id, level, None);
 
         let mut keys_to_delete: HashSet<Vec<u8>> = self
@@ -315,7 +311,7 @@ impl VectorCore {
             }
         }
 
-        result.extend(cands.into_iter());
+        result.extend(cands);
         Ok(result.take_inord(m))
     }
 
@@ -407,10 +403,10 @@ impl VectorCore {
                 None => None,
             };
 
-        if let Some(vector) = vector {
-            if vector.deleted {
-                return Err(VectorError::VectorDeleted);
-            }
+        if let Some(vector) = vector
+            && vector.deleted
+        {
+            return Err(VectorError::VectorDeleted);
         }
 
         Ok(vector)
@@ -606,12 +602,7 @@ impl HNSW for VectorCore {
         Ok(query)
     }
 
-    fn delete<'arena>(
-        &self,
-        txn: &mut RwTxn,
-        id: u128,
-        arena: &'arena bumpalo::Bump,
-    ) -> Result<(), VectorError> {
+    fn delete(&self, txn: &mut RwTxn, id: u128, arena: &bumpalo::Bump) -> Result<(), VectorError> {
         match self.get_vector_properties(txn, id, arena)? {
             Some(mut properties) => {
                 debug_println!("properties: {properties:?}");

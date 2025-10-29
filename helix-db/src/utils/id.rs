@@ -123,7 +123,7 @@ pub fn v6_uuid() -> u128 {
 }
 
 #[inline]
-pub fn uuid_str<'arena>(id: u128, arena: &'arena bumpalo::Bump) -> &'arena str {
+pub fn uuid_str(id: u128, arena: &bumpalo::Bump) -> &str {
     let uuid = uuid::Uuid::from_u128(id);
     let buffer = arena.alloc_slice_fill_default(36);
     uuid.as_hyphenated().encode_lower(buffer)

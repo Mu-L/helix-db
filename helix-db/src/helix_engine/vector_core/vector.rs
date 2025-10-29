@@ -120,7 +120,7 @@ impl<'arena> HVector<'arena> {
     /// and converting each f64 to a byte slice
     pub fn vector_data_to_bytes(&self) -> Result<&[u8], VectorError> {
         // ensure data is aligned to 8 bytes
-        let data = bytemuck::try_cast_slice(&self.data).map_err(|_| {
+        let data = bytemuck::try_cast_slice(self.data).map_err(|_| {
             VectorError::ConversionError("Invalid vector data: vector data".to_string())
         })?;
         // println!("bytemuck data: {data:?}");
@@ -154,9 +154,9 @@ impl<'arena> HVector<'arena> {
         label: &'arena str,
         id: u128,
     ) -> Result<Self, VectorError> {
-        assert!(raw_vector_data.len() > 0, "raw_vector_data.len() == 0");
+        assert!(!raw_vector_data.is_empty(), "raw_vector_data.len() == 0");
         assert!(
-            raw_vector_data.len() % mem::size_of::<f64>() == 0,
+            raw_vector_data.len().is_multiple_of(mem::size_of::<f64>()),
             "raw_vector_data bytes len is not a multiple of size_of::<f64>()"
         );
         let dimensions = raw_vector_data.len() / mem::size_of::<f64>();

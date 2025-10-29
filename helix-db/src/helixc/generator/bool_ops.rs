@@ -213,25 +213,25 @@ impl Display for BoExp {
                     }
 
                     // If we found exactly one PropertyFetch and one BoolOp, and no other steps, optimize
-                    if let (Some(prop), Some(bool_op)) = (prop_info, bool_op_info) {
-                        if other_steps == 0 {
-                            // Generate optimized code: val.get_property("prop").map_or(false, |v| ...)
-                            let bool_expr = match bool_op {
-                                BoolOp::Gt(gt) => format!("*v{gt}"),
-                                BoolOp::Gte(gte) => format!("*v{gte}"),
-                                BoolOp::Lt(lt) => format!("*v{lt}"),
-                                BoolOp::Lte(lte) => format!("*v{lte}"),
-                                BoolOp::Eq(eq) => format!("*v{eq}"),
-                                BoolOp::Neq(neq) => format!("*v{neq}"),
-                                BoolOp::Contains(contains) => format!("v{contains}"),
-                                BoolOp::IsIn(is_in) => format!("v{is_in}"),
-                            };
-                            return write!(
-                                f,
-                                "val\n                    .get_property({})\n                    .map_or(false, |v| {})",
-                                prop, bool_expr
-                            );
-                        }
+                    if let (Some(prop), Some(bool_op)) = (prop_info, bool_op_info)
+                        && other_steps == 0
+                    {
+                        // Generate optimized code: val.get_property("prop").map_or(false, |v| ...)
+                        let bool_expr = match bool_op {
+                            BoolOp::Gt(gt) => format!("*v{gt}"),
+                            BoolOp::Gte(gte) => format!("*v{gte}"),
+                            BoolOp::Lt(lt) => format!("*v{lt}"),
+                            BoolOp::Lte(lte) => format!("*v{lte}"),
+                            BoolOp::Eq(eq) => format!("*v{eq}"),
+                            BoolOp::Neq(neq) => format!("*v{neq}"),
+                            BoolOp::Contains(contains) => format!("v{contains}"),
+                            BoolOp::IsIn(is_in) => format!("v{is_in}"),
+                        };
+                        return write!(
+                            f,
+                            "val\n                    .get_property({})\n                    .map_or(false, |v| {})",
+                            prop, bool_expr
+                        );
                     }
                 }
                 // Fall back to full traversal for complex expressions

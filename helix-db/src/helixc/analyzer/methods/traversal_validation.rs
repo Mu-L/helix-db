@@ -18,7 +18,7 @@ use crate::{
             },
             types::{AggregateInfo, Type},
             utils::{
-                Variable, field_exists_on_item_type, gen_identifier_or_param, is_valid_identifier,
+                field_exists_on_item_type, gen_identifier_or_param, is_valid_identifier,
                 type_in_scope,
             },
         },
@@ -1165,12 +1165,12 @@ pub(crate) fn validate_traversal<'a>(
                 let _ = gen_traversal.steps.pop();
 
                 // Capture aggregate metadata before replacing cur_ty
-                let property_names = aggr.properties.iter().map(|p| p.clone()).collect();
+                let property_names = aggr.properties.clone();
                 cur_ty = Type::Aggregate(AggregateInfo {
                     source_type: Box::new(cur_ty.clone()),
                     properties: property_names,
                     is_count: should_count,
-                    is_group_by: false,  // This is AGGREGATE_BY
+                    is_group_by: false, // This is AGGREGATE_BY
                 });
 
                 gen_traversal.should_collect = ShouldCollect::Try;
@@ -1191,12 +1191,12 @@ pub(crate) fn validate_traversal<'a>(
                 let _ = gen_traversal.steps.pop();
 
                 // Capture aggregate metadata before replacing cur_ty
-                let property_names = gb.properties.iter().map(|p| p.clone()).collect();
+                let property_names = gb.properties.clone();
                 cur_ty = Type::Aggregate(AggregateInfo {
                     source_type: Box::new(cur_ty.clone()),
                     properties: property_names,
                     is_count: should_count,
-                    is_group_by: true,  // This is GROUP_BY
+                    is_group_by: true, // This is GROUP_BY
                 });
 
                 gen_traversal.should_collect = ShouldCollect::Try;
@@ -1502,7 +1502,8 @@ pub(crate) fn validate_traversal<'a>(
                 }
                 // Add identifier to a temporary scope so inner uses pass
                 // For closures iterating over collections, singularize the type
-                let was_collection = matches!(cur_ty, Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_));
+                let was_collection =
+                    matches!(cur_ty, Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_));
                 let closure_param_type = match &cur_ty {
                     Type::Nodes(label) => Type::Node(label.clone()),
                     Type::Edges(label) => Type::Edge(label.clone()),
@@ -1512,18 +1513,16 @@ pub(crate) fn validate_traversal<'a>(
 
                 // Extract the source variable name from the current traversal
                 let closure_source_var = match &gen_traversal.source_step {
-                    Separator::Empty(SourceStep::Identifier(var)) |
-                    Separator::Period(SourceStep::Identifier(var)) |
-                    Separator::Newline(SourceStep::Identifier(var)) => {
-                        var.inner().clone()
-                    }
+                    Separator::Empty(SourceStep::Identifier(var))
+                    | Separator::Period(SourceStep::Identifier(var))
+                    | Separator::Newline(SourceStep::Identifier(var)) => var.inner().clone(),
                     _ => {
                         // For other source types, try to extract from traversal_type
                         match &gen_traversal.traversal_type {
                             TraversalType::FromSingle(var) | TraversalType::FromIter(var) => {
                                 var.inner().clone()
                             }
-                            _ => String::new()
+                            _ => String::new(),
                         }
                     }
                 };
@@ -1531,7 +1530,11 @@ pub(crate) fn validate_traversal<'a>(
                 // Closure parameters are always singular (they represent individual items during iteration)
                 scope.insert(
                     cl.identifier.as_str(),
-                    VariableInfo::new_with_source(closure_param_type.clone(), true, closure_source_var.clone()),
+                    VariableInfo::new_with_source(
+                        closure_param_type.clone(),
+                        true,
+                        closure_source_var.clone(),
+                    ),
                 );
                 let obj = &cl.object;
                 let mut fields_out = vec![];

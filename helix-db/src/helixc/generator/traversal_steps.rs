@@ -1,6 +1,6 @@
 use crate::helixc::{
     analyzer::types::Type,
-    generator::utils::{VecData, write_properties, write_properties_slice},
+    generator::utils::{VecData, write_properties_slice},
 };
 
 use super::{
@@ -18,8 +18,8 @@ pub struct NestedTraversalInfo {
     pub return_type: Option<Type>, // The type this traversal returns
     pub field_name: String,        // The field name in the parent object
     pub parsed_traversal: Option<Box<crate::helixc::parser::types::Traversal>>, // Original parsed traversal for validation
-    pub closure_param_name: Option<String>,  // The closure parameter name if in closure context (e.g., "usr")
-    pub closure_source_var: Option<String>,  // The actual source variable for the closure parameter (e.g., "user")
+    pub closure_param_name: Option<String>, // The closure parameter name if in closure context (e.g., "usr")
+    pub closure_source_var: Option<String>, // The actual source variable for the closure parameter (e.g., "user")
 }
 
 #[derive(Clone)]
@@ -394,43 +394,44 @@ pub struct WhereRef {
 impl Display for WhereRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Check if this is a simple property check that can be optimized
-        if let BoExp::Expr(traversal) = &self.expr {
-            if let TraversalType::FromSingle(var) = &traversal.traversal_type {
-                // Check if the variable is "val"
-                let is_val = matches!(var, GenRef::Std(s) | GenRef::Literal(s) if s == "val");
+        if let BoExp::Expr(traversal) = &self.expr
+            && let TraversalType::FromSingle(var) = &traversal.traversal_type
+        {
+            // Check if the variable is "val"
+            let is_val = matches!(var, GenRef::Std(s) | GenRef::Literal(s) if s == "val");
 
-                if is_val && traversal.steps.len() == 2 {
-                    // Check if we have PropertyFetch followed by BoolOp
-                    let mut prop: Option<&GenRef<String>> = None;
-                    let mut bool_op: Option<&BoolOp> = None;
+            if is_val && traversal.steps.len() == 2 {
+                // Check if we have PropertyFetch followed by BoolOp
+                let mut prop: Option<&GenRef<String>> = None;
+                let mut bool_op: Option<&BoolOp> = None;
 
-                    for step in &traversal.steps {
-                        match step {
-                            Separator::Period(Step::PropertyFetch(p))
-                            | Separator::Newline(Step::PropertyFetch(p))
-                            | Separator::Empty(Step::PropertyFetch(p)) => prop = Some(p),
-                            Separator::Period(Step::BoolOp(op))
-                            | Separator::Newline(Step::BoolOp(op))
-                            | Separator::Empty(Step::BoolOp(op)) => bool_op = Some(op),
-                            _ => {}
-                        }
+                for step in &traversal.steps {
+                    match step {
+                        Separator::Period(Step::PropertyFetch(p))
+                        | Separator::Newline(Step::PropertyFetch(p))
+                        | Separator::Empty(Step::PropertyFetch(p)) => prop = Some(p),
+                        Separator::Period(Step::BoolOp(op))
+                        | Separator::Newline(Step::BoolOp(op))
+                        | Separator::Empty(Step::BoolOp(op)) => bool_op = Some(op),
+                        _ => {}
                     }
+                }
 
-                    // If we found both PropertyFetch and BoolOp, generate optimized code
-                    if let (Some(prop), Some(bool_op)) = (prop, bool_op) {
-                        let bool_expr = match bool_op {
-                            BoolOp::Gt(gt) => format!("*v{gt}"),
-                            BoolOp::Gte(gte) => format!("*v{gte}"),
-                            BoolOp::Lt(lt) => format!("*v{lt}"),
-                            BoolOp::Lte(lte) => format!("*v{lte}"),
-                            BoolOp::Eq(eq) => format!("*v{eq}"),
-                            BoolOp::Neq(neq) => format!("*v{neq}"),
-                            BoolOp::Contains(contains) => format!("v{contains}"),
-                            BoolOp::IsIn(is_in) => format!("v{is_in}"),
-                        };
-                        return write!(
-                            f,
-                            "filter_ref(|val, txn|{{
+                // If we found both PropertyFetch and BoolOp, generate optimized code
+                if let (Some(prop), Some(bool_op)) = (prop, bool_op) {
+                    let bool_expr = match bool_op {
+                        BoolOp::Gt(gt) => format!("*v{gt}"),
+                        BoolOp::Gte(gte) => format!("*v{gte}"),
+                        BoolOp::Lt(lt) => format!("*v{lt}"),
+                        BoolOp::Lte(lte) => format!("*v{lte}"),
+                        BoolOp::Eq(eq) => format!("*v{eq}"),
+                        BoolOp::Neq(neq) => format!("*v{neq}"),
+                        BoolOp::Contains(contains) => format!("v{contains}"),
+                        BoolOp::IsIn(is_in) => format!("v{is_in}"),
+                    };
+                    return write!(
+                        f,
+                        "filter_ref(|val, txn|{{
                 if let Ok(val) = val {{
                     Ok(val
                     .get_property({})
@@ -439,9 +440,8 @@ impl Display for WhereRef {
                     Ok(false)
                 }}
             }})",
-                            prop, bool_expr
-                        );
-                    }
+                        prop, bool_expr
+                    );
                 }
             }
         }

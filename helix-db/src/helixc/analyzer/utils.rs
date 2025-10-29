@@ -45,7 +45,7 @@ pub(super) fn check_identifier_is_fieldtype(
     field_type: FieldType,
 ) -> Option<()> {
     if let Some(var_info) = scope.get(identifier_name)
-        && &var_info.ty != &Type::from(&field_type)
+        && var_info.ty != Type::from(&field_type)
     {
         generate_error!(
             ctx,
@@ -199,6 +199,7 @@ pub(super) struct Variable {
 }
 
 impl Variable {
+    #[allow(dead_code)]
     pub fn new(name: String, ty: Type) -> Self {
         Self { name, ty }
     }
@@ -208,8 +209,8 @@ impl Variable {
 #[derive(Clone, Debug)]
 pub(super) struct VariableInfo {
     pub ty: Type,
-    pub is_single: bool, // true if ToObj, false if ToVec
-    pub reference_count: usize, // How many times this variable is referenced
+    pub is_single: bool,            // true if ToObj, false if ToVec
+    pub reference_count: usize,     // How many times this variable is referenced
     pub source_var: Option<String>, // For closure parameters, the actual variable they refer to
 }
 
@@ -261,6 +262,7 @@ impl VariableAccess for Option<Variable> {
 
 pub(super) trait FieldLookup {
     fn item_fields_contains_key(&self, ctx: &Ctx, key: &str) -> bool;
+    #[allow(dead_code)]
     fn item_fields_contains_key_with_type(&self, ctx: &Ctx, key: &str) -> (bool, String);
     fn get_field_type_from_item_fields(&self, ctx: &Ctx, key: &str) -> Option<FieldType>;
 }

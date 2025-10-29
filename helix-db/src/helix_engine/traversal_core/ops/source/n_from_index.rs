@@ -1,6 +1,5 @@
 use crate::{
     helix_engine::{
-        storage_core::storage_methods::StorageMethods,
         traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue, LMDB_STRING_HEADER_LENGTH},
         types::GraphError,
     },
@@ -72,9 +71,8 @@ impl<
             .prefix_iter(self.txn, &bincode::serialize(&Value::from(key)).unwrap())
             .unwrap()
             .filter_map(move |item| {
-                if let Ok((_, node_id)) = item {
-                    
-                if let Some(value) = self.storage.nodes_db.get(self.txn, &node_id).ok()? {
+                if let Ok((_, node_id)) = item &&
+                 let Some(value) = self.storage.nodes_db.get(self.txn, &node_id).ok()? {
                     assert!(
                         value.len() >= LMDB_STRING_HEADER_LENGTH,
                         "value length does not contain header which means the `label` field was missing from the node on insertion"
@@ -91,7 +89,7 @@ impl<
                         "value length is not at least the header length plus the label length meaning there has been a corruption on node insertion"
                     );
                     let label_in_lmdb = &value[LMDB_STRING_HEADER_LENGTH
-                        ..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb as usize];
+                        ..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb];
         
                     if label_in_lmdb == label_as_bytes {
                         match Node::<'arena>::from_bincode_bytes(node_id, value, self.arena) {
@@ -106,7 +104,7 @@ impl<
                     } else {
                         return None;
                     }
-                }
+                
                 }
                 None
             

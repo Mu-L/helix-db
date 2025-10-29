@@ -1,7 +1,7 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
 use crate::helixc::analyzer::utils::{VariableInfo, type_in_scope};
-use crate::helixc::generator::traversal_steps::{EdgeType, ToV};
+use crate::helixc::generator::traversal_steps::EdgeType;
 use crate::helixc::generator::utils::EmbedData;
 use crate::{
     generate_error,

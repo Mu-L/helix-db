@@ -1108,11 +1108,11 @@ impl FilterValues for Value {
         let comparison = match (self, value) {
             (Value::Array(a1), Value::Array(a2)) => a1.iter().any(|a1_item| {
                 a2.iter()
-                    .any(|a2_item| a1_item.compare(a2_item, operator.clone()))
+                    .any(|a2_item| a1_item.compare(a2_item, operator))
             }),
             (value, Value::Array(a)) => a
                 .iter()
-                .any(|a_item| value.compare(a_item, operator.clone())),
+                .any(|a_item| value.compare(a_item, operator)),
             (value1, value2) => match operator {
                 Some(op) => op.execute(value1, value2),
                 None => value1 == value2,

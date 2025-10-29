@@ -1,4 +1,3 @@
-use bincode::serialize;
 use serde::Serialize;
 
 use crate::{
@@ -6,7 +5,6 @@ use crate::{
     protocol::value::Value,
     utils::{
         count::Count,
-        id::uuid_str,
         items::{Edge, Node},
     },
 };

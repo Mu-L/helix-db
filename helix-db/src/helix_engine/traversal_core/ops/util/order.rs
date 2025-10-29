@@ -80,7 +80,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     (Ok(a), Ok(b)) => match (a, b) {
                         (TraversalValue::Node(a), TraversalValue::Node(b)) => {
                             match (a.get_property(property), b.get_property(property)) {
-                                (Some(val_a), Some(val_b)) => val_a.cmp(&val_b),
+                                (Some(val_a), Some(val_b)) => val_a.cmp(val_b),
                                 (Some(_), None) => Ordering::Less,
                                 (None, Some(_)) => Ordering::Greater,
                                 (None, None) => Ordering::Equal,
@@ -88,7 +88,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         }
                         (TraversalValue::Edge(a), TraversalValue::Edge(b)) => {
                             match (a.get_property(property), b.get_property(property)) {
-                                (Some(val_a), Some(val_b)) => val_a.cmp(&val_b),
+                                (Some(val_a), Some(val_b)) => val_a.cmp(val_b),
                                 (Some(_), None) => Ordering::Less,
                                 (None, Some(_)) => Ordering::Greater,
                                 (None, None) => Ordering::Equal,
@@ -96,7 +96,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         }
                         (TraversalValue::Vector(a), TraversalValue::Vector(b)) => {
                             match (a.get_property(property), b.get_property(property)) {
-                                (Some(val_a), Some(val_b)) => val_a.cmp(&val_b),
+                                (Some(val_a), Some(val_b)) => val_a.cmp(val_b),
                                 (Some(_), None) => Ordering::Less,
                                 (None, Some(_)) => Ordering::Greater,
                                 (None, None) => Ordering::Equal,
@@ -135,7 +135,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     (Ok(a), Ok(b)) => match (a, b) {
                         (TraversalValue::Node(a), TraversalValue::Node(b)) => {
                             match (a.get_property(property), b.get_property(property)) {
-                                (Some(val_a), Some(val_b)) => val_b.cmp(&val_a),
+                                (Some(val_a), Some(val_b)) => val_b.cmp(val_a),
                                 (Some(_), None) => Ordering::Less,
                                 (None, Some(_)) => Ordering::Greater,
                                 (None, None) => Ordering::Equal,
@@ -143,7 +143,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         }
                         (TraversalValue::Edge(a), TraversalValue::Edge(b)) => {
                             match (a.get_property(property), b.get_property(property)) {
-                                (Some(val_a), Some(val_b)) => val_b.cmp(&val_a),
+                                (Some(val_a), Some(val_b)) => val_b.cmp(val_a),
                                 (Some(_), None) => Ordering::Less,
                                 (None, Some(_)) => Ordering::Greater,
                                 (None, None) => Ordering::Equal,
@@ -151,7 +151,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         }
                         (TraversalValue::Vector(a), TraversalValue::Vector(b)) => {
                             match (a.get_property(property), b.get_property(property)) {
-                                (Some(val_a), Some(val_b)) => val_b.cmp(&val_a),
+                                (Some(val_a), Some(val_b)) => val_b.cmp(val_a),
                                 (Some(_), None) => Ordering::Less,
                                 (None, Some(_)) => Ordering::Greater,
                                 (None, None) => Ordering::Equal,

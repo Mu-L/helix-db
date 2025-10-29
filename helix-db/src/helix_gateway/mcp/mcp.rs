@@ -197,7 +197,7 @@ pub fn tool_call(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let storage = input.mcp_backend.db.as_ref();
     let txn = storage.graph_env.read_txn()?;
     let stream = execute_query_chain(&connection.query_chain, storage, &txn, &arena)?;
-    let mut iter = stream.into_iter();
+    let mut iter = stream.into_inner_iter();
 
     let (first, consumed_one) = match iter.next() {
         Some(value) => (value?, true),
@@ -272,25 +272,22 @@ pub fn collect(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     let storage = input.mcp_backend.db.as_ref();
     let txn = storage.graph_env.read_txn()?;
     let stream = execute_query_chain(&connection.query_chain, storage, &txn, &arena)?;
-    let mut iter = stream.into_iter();
+    let iter = stream.into_inner_iter();
 
-    let mut index = 0usize;
     let range = data.range;
     let start = range.as_ref().map(|r| r.start).unwrap_or(0);
     let end = range.as_ref().map(|r| r.end);
 
     let mut values = Vec::new();
-    while let Some(item) = iter.next() {
+    for (index, item) in iter.enumerate() {
         let item = item?;
         if index >= start {
-            if let Some(end) = end {
-                if index >= end {
+            if let Some(end) = end
+                && index >= end {
                     break;
                 }
-            }
             values.push(item);
         }
-        index += 1;
     }
 
     let mut connections = input.mcp_connections.lock().unwrap();

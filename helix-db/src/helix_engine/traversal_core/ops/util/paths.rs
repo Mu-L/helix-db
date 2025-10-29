@@ -347,11 +347,11 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                     _ => panic!("Invalid shortest path"),
                 },
                 edge_label,
-                storage: &self.storage,
+                storage: self.storage,
                 txn: self.txn,
                 algorithm,
             },
-            storage: &self.storage,
+            storage: self.storage,
             txn: self.txn,
         }
     }

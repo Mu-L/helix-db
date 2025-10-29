@@ -276,7 +276,7 @@ impl Query {
 
                                 // Generate field assignments for nested struct
                                 // Check if we're in a closure context, resolve "_" placeholder
-                                let closure_context_var = closure_source_var.as_ref()
+                                let _closure_context_var = closure_source_var.as_ref()
                                     .map(|s| if s == "_" { singular_var } else { s.as_str() })
                                     .unwrap_or(singular_var);
 
@@ -836,7 +836,7 @@ impl Query {
 
                                 // Generate field assignments for nested struct
                                 // Check if we're in a closure context, resolve "_" placeholder
-                                let closure_context_var = closure_source_var.as_ref()
+                                let _closure_context_var = closure_source_var.as_ref()
                                     .map(|s| if s == "_" { singular_var } else { s.as_str() })
                                     .unwrap_or(singular_var);
 

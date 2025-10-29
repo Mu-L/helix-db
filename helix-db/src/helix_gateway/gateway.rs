@@ -8,8 +8,6 @@ use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use core_affinity::CoreId;
-use helix_metrics::events::{EventType, QueryErrorEvent, QuerySuccessEvent};
-use sonic_rs::json;
 use tracing::{info, trace, warn};
 
 use super::router::router::{HandlerFn, HelixRouter};
@@ -162,9 +160,9 @@ async fn post_handler(
     req: protocol::request::Request,
 ) -> axum::http::Response<Body> {
     // #[cfg(feature = "metrics")]
-    let start_time = Instant::now();
-    let body = req.body.to_vec();
-    let query_name = req.name.clone();
+    let _start_time = Instant::now();
+    let _body = req.body.to_vec();
+    let _query_name = req.name.clone();
     let res = state.worker_pool.process(req).await;
 
     match res {

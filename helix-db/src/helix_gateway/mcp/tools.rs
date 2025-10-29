@@ -190,20 +190,20 @@ where
         self.iter
     }
 
-    pub fn into_iter(self) -> DynIter<'arena, 'txn> {
+    pub fn into_inner_iter(self) -> DynIter<'arena, 'txn> {
         self.iter.inner
     }
 
     pub fn collect(self) -> Result<Vec<TraversalValue<'arena>>, GraphError> {
         let mut values = Vec::new();
-        for item in self.into_iter() {
+        for item in self.into_inner_iter() {
             values.push(item?);
         }
         Ok(values)
     }
 
     pub fn nth(self, index: usize) -> Result<Option<TraversalValue<'arena>>, GraphError> {
-        let mut iter = self.into_iter();
+        let mut iter = self.into_inner_iter();
         for _ in 0..index {
             if let Some(res) = iter.next() {
                 res?;
@@ -454,7 +454,7 @@ where
     let seed = std::iter::once(item.clone());
     let stream =
         execute_query_chain_from_seed(std::slice::from_ref(step), storage, txn, arena, seed)?;
-    let mut iter = stream.into_iter();
+    let mut iter = stream.into_inner_iter();
     match iter.next() {
         Some(Ok(_)) => Ok(true),
         Some(Err(err)) => Err(err),
