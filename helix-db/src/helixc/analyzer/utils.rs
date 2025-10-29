@@ -5,7 +5,7 @@ use crate::{
     helixc::{
         analyzer::{Ctx, errors::push_query_err, types::Type},
         generator::{
-            traversal_steps::Step,
+            traversal_steps::{Step, ReservedProp},
             utils::{GenRef, GeneratedValue},
         },
         parser::{location::Loc, types::*},
@@ -185,8 +185,15 @@ pub(super) fn get_field_type_from_item_fields(
 
 pub(super) fn gen_property_access(name: &str) -> Step {
     match name {
-        "id" => Step::PropertyFetch(GenRef::Literal("id".to_string())),
-        "ID" => Step::PropertyFetch(GenRef::Literal("id".to_string())),
+        "id" | "ID" | "Id" => Step::ReservedPropertyAccess(ReservedProp::Id),
+        "label" | "Label" => Step::ReservedPropertyAccess(ReservedProp::Label),
+        "version" | "Version" => Step::ReservedPropertyAccess(ReservedProp::Version),
+        "from_node" | "fromNode" | "FromNode" => Step::ReservedPropertyAccess(ReservedProp::FromNode),
+        "to_node" | "toNode" | "ToNode" => Step::ReservedPropertyAccess(ReservedProp::ToNode),
+        "deleted" | "Deleted" => Step::ReservedPropertyAccess(ReservedProp::Deleted),
+        "level" | "Level" => Step::ReservedPropertyAccess(ReservedProp::Level),
+        "distance" | "Distance" => Step::ReservedPropertyAccess(ReservedProp::Distance),
+        "data" | "Data" => Step::ReservedPropertyAccess(ReservedProp::Data),
         n => Step::PropertyFetch(GenRef::Literal(n.to_string())),
     }
 }

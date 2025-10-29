@@ -192,6 +192,21 @@ impl Traversal {
         result
     }
 }
+
+/// Reserved properties that are accessed directly from struct fields
+#[derive(Clone, Debug)]
+pub enum ReservedProp {
+    Id,
+    Label,
+    Version,
+    FromNode,
+    ToNode,
+    Deleted,
+    Level,
+    Distance,
+    Data,
+}
+
 #[derive(Clone)]
 pub enum Step {
     // graph steps
@@ -217,6 +232,7 @@ pub enum Step {
 
     // property
     PropertyFetch(GenRef<String>),
+    ReservedPropertyAccess(ReservedProp),
 
     // closure
     // Closure(ClosureRemapping),
@@ -243,6 +259,17 @@ impl Display for Step {
             Step::ToN => write!(f, "to_n()"),
             Step::ToV(to_v) => write!(f, "{to_v}"),
             Step::PropertyFetch(property) => write!(f, "get_property({property})"),
+            Step::ReservedPropertyAccess(prop) => match prop {
+                ReservedProp::Id => write!(f, "map(|item| Ok(Value::from(uuid_str(item.id, &arena))))"),
+                ReservedProp::Label => write!(f, "map(|item| Ok(Value::from(item.label)))"),
+                ReservedProp::Version => write!(f, "map(|item| Ok(Value::from(item.version)))"),
+                ReservedProp::FromNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.from_node, &arena))))"),
+                ReservedProp::ToNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.to_node, &arena))))"),
+                ReservedProp::Deleted => write!(f, "map(|item| Ok(Value::from(item.deleted)))"),
+                ReservedProp::Level => write!(f, "map(|item| Ok(Value::from(item.level)))"),
+                ReservedProp::Distance => write!(f, "map(|item| Ok(item.distance.map(Value::from).unwrap_or(Value::Empty)))"),
+                ReservedProp::Data => write!(f, "map(|item| Ok(Value::from(item.data)))"),
+            },
 
             Step::Out(out) => write!(f, "{out}"),
             Step::In(in_) => write!(f, "{in_}"),
@@ -271,6 +298,7 @@ impl Debug for Step {
             Step::FromN => write!(f, "FromN"),
             Step::ToN => write!(f, "ToN"),
             Step::PropertyFetch(property) => write!(f, "get_property({property})"),
+            Step::ReservedPropertyAccess(prop) => write!(f, "ReservedProperty({:?})", prop),
             Step::FromV(_) => write!(f, "FromV"),
             Step::ToV(_) => write!(f, "ToV"),
             Step::Out(_) => write!(f, "Out"),
@@ -401,8 +429,9 @@ impl Display for WhereRef {
             let is_val = matches!(var, GenRef::Std(s) | GenRef::Literal(s) if s == "val");
 
             if is_val && traversal.steps.len() == 2 {
-                // Check if we have PropertyFetch followed by BoolOp
+                // Check if we have PropertyFetch or ReservedPropertyAccess followed by BoolOp
                 let mut prop: Option<&GenRef<String>> = None;
+                let mut reserved_prop: Option<&ReservedProp> = None;
                 let mut bool_op: Option<&BoolOp> = None;
 
                 for step in &traversal.steps {
@@ -410,6 +439,9 @@ impl Display for WhereRef {
                         Separator::Period(Step::PropertyFetch(p))
                         | Separator::Newline(Step::PropertyFetch(p))
                         | Separator::Empty(Step::PropertyFetch(p)) => prop = Some(p),
+                        Separator::Period(Step::ReservedPropertyAccess(rp))
+                        | Separator::Newline(Step::ReservedPropertyAccess(rp))
+                        | Separator::Empty(Step::ReservedPropertyAccess(rp)) => reserved_prop = Some(rp),
                         Separator::Period(Step::BoolOp(op))
                         | Separator::Newline(Step::BoolOp(op))
                         | Separator::Empty(Step::BoolOp(op)) => bool_op = Some(op),
@@ -417,7 +449,43 @@ impl Display for WhereRef {
                     }
                 }
 
-                // If we found both PropertyFetch and BoolOp, generate optimized code
+                // Handle ReservedPropertyAccess with BoolOp - generate direct field access
+                if let (Some(reserved_prop), Some(bool_op)) = (reserved_prop, bool_op) {
+                    let value_expr = match reserved_prop {
+                        ReservedProp::Id => "Value::Id(ID::from(val.id))".to_string(),
+                        ReservedProp::Label => "Value::from(val.label)".to_string(),
+                        ReservedProp::Version => "Value::from(val.version)".to_string(),
+                        ReservedProp::FromNode => "Value::Id(ID::from(val.from_node))".to_string(),
+                        ReservedProp::ToNode => "Value::Id(ID::from(val.to_node))".to_string(),
+                        ReservedProp::Deleted => "Value::from(val.deleted)".to_string(),
+                        ReservedProp::Level => "Value::from(val.level)".to_string(),
+                        ReservedProp::Distance => "val.distance.map(Value::from).unwrap_or(Value::Empty)".to_string(),
+                        ReservedProp::Data => "Value::from(val.data)".to_string(),
+                    };
+                    let bool_expr = match bool_op {
+                        BoolOp::Gt(gt) => format!("{}{}", value_expr, gt),
+                        BoolOp::Gte(gte) => format!("{}{}", value_expr, gte),
+                        BoolOp::Lt(lt) => format!("{}{}", value_expr, lt),
+                        BoolOp::Lte(lte) => format!("{}{}", value_expr, lte),
+                        BoolOp::Eq(eq) => format!("{}{}", value_expr, eq),
+                        BoolOp::Neq(neq) => format!("{}{}", value_expr, neq),
+                        BoolOp::Contains(contains) => format!("{}{}", value_expr, contains),
+                        BoolOp::IsIn(is_in) => format!("{}{}", value_expr, is_in),
+                    };
+                    return write!(
+                        f,
+                        "filter_ref(|val, txn|{{
+                if let Ok(val) = val {{
+                    Ok({})
+                }} else {{
+                    Ok(false)
+                }}
+            }})",
+                        bool_expr
+                    );
+                }
+
+                // Handle PropertyFetch with BoolOp - use get_property
                 if let (Some(prop), Some(bool_op)) = (prop, bool_op) {
                     let bool_expr = match bool_op {
                         BoolOp::Gt(gt) => format!("*v{gt}"),

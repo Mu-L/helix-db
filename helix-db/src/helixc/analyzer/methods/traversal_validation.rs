@@ -40,6 +40,58 @@ use crate::{
 use paste::paste;
 use std::collections::HashMap;
 
+/// Check if a property name is a reserved property and return its expected type
+fn get_reserved_property_type(prop_name: &str, item_type: &Type) -> Option<FieldType> {
+    match prop_name {
+        "id" | "ID" | "Id" => Some(FieldType::Uuid),
+        "label" | "Label" => Some(FieldType::String),
+        "version" | "Version" => Some(FieldType::I8),
+        "from_node" | "fromNode" | "FromNode" => {
+            // Only valid for edges
+            match item_type {
+                Type::Edge(_) | Type::Edges(_) => Some(FieldType::Uuid),
+                _ => None,
+            }
+        }
+        "to_node" | "toNode" | "ToNode" => {
+            // Only valid for edges
+            match item_type {
+                Type::Edge(_) | Type::Edges(_) => Some(FieldType::Uuid),
+                _ => None,
+            }
+        }
+        "deleted" | "Deleted" => {
+            // Only valid for vectors
+            match item_type {
+                Type::Vector(_) | Type::Vectors(_) => Some(FieldType::Boolean),
+                _ => None,
+            }
+        }
+        "level" | "Level" => {
+            // Only valid for vectors
+            match item_type {
+                Type::Vector(_) | Type::Vectors(_) => Some(FieldType::U64),
+                _ => None,
+            }
+        }
+        "distance" | "Distance" => {
+            // Only valid for vectors
+            match item_type {
+                Type::Vector(_) | Type::Vectors(_) => Some(FieldType::F64),
+                _ => None,
+            }
+        }
+        "data" | "Data" => {
+            // Only valid for vectors
+            match item_type {
+                Type::Vector(_) | Type::Vectors(_) => Some(FieldType::Array(Box::new(FieldType::F64))),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Validates the traversal and returns the end type of the traversal
 ///
 /// This method also builds the generated traversal (`gen_traversal`) as it analyzes the traversal
@@ -719,8 +771,7 @@ pub(crate) fn validate_traversal<'a>(
                     | BooleanOpType::GreaterThan(expr)
                     | BooleanOpType::Equal(expr)
                     | BooleanOpType::NotEqual(expr)
-                    | BooleanOpType::Contains(expr)
-                    | BooleanOpType::IsIn(expr) => {
+                    | BooleanOpType::Contains(expr) => {
                         match infer_expr_type(
                             ctx,
                             expr,
@@ -731,6 +782,43 @@ pub(crate) fn validate_traversal<'a>(
                         ) {
                             (Type::Scalar(ft), _) => ft.clone(),
                             (Type::Boolean, _) => FieldType::Boolean,
+                            (field_type, _) => {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    b_op.loc.clone(),
+                                    E621,
+                                    &b_op.loc.span,
+                                    field_type.kind_str()
+                                );
+                                return Some(field_type);
+                            }
+                        }
+                    }
+                    BooleanOpType::IsIn(expr) => {
+                        // IS_IN expects an array argument
+                        match infer_expr_type(
+                            ctx,
+                            expr,
+                            scope,
+                            original_query,
+                            Some(cur_ty.clone()),
+                            gen_query,
+                        ) {
+                            (Type::Array(boxed_ty), _) => match *boxed_ty {
+                                Type::Scalar(ft) => ft,
+                                _ => {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        b_op.loc.clone(),
+                                        E621,
+                                        &b_op.loc.span,
+                                        "non-scalar array elements"
+                                    );
+                                    return Some(Type::Unknown);
+                                }
+                            },
                             (field_type, _) => {
                                 generate_error!(
                                     ctx,
@@ -775,12 +863,57 @@ pub(crate) fn validate_traversal<'a>(
                             }
                         }
                         Type::Nodes(Some(node_ty)) | Type::Node(Some(node_ty)) => {
-                            let field_set = ctx.node_fields.get(node_ty.as_str()).cloned();
-                            if let Some(field_set) = field_set {
-                                match field_set.get(field_name.as_str()) {
-                                    Some(field) => {
-                                        if let FieldType::Array(inner_type) = &property_type {
-                                            if field.field_type != **inner_type {
+                            // Check if this is a reserved property first
+                            if let Some(reserved_type) = get_reserved_property_type(field_name.as_str(), &cur_ty) {
+                                // Validate the type matches
+                                if let FieldType::Array(inner_type) = &property_type {
+                                    if reserved_type != **inner_type {
+                                        generate_error!(
+                                            ctx,
+                                            original_query,
+                                            b_op.loc.clone(),
+                                            E622,
+                                            field_name,
+                                            cur_ty.kind_str(),
+                                            &cur_ty.get_type_name(),
+                                            &reserved_type.to_string(),
+                                            &property_type.to_string()
+                                        );
+                                    }
+                                } else if reserved_type != property_type {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        b_op.loc.clone(),
+                                        E622,
+                                        field_name,
+                                        cur_ty.kind_str(),
+                                        &cur_ty.get_type_name(),
+                                        &reserved_type.to_string(),
+                                        &property_type.to_string()
+                                    );
+                                }
+                            } else {
+                                // Not a reserved property, check schema fields
+                                let field_set = ctx.node_fields.get(node_ty.as_str()).cloned();
+                                if let Some(field_set) = field_set {
+                                    match field_set.get(field_name.as_str()) {
+                                        Some(field) => {
+                                            if let FieldType::Array(inner_type) = &property_type {
+                                                if field.field_type != **inner_type {
+                                                    generate_error!(
+                                                        ctx,
+                                                        original_query,
+                                                        b_op.loc.clone(),
+                                                        E622,
+                                                        field_name,
+                                                        cur_ty.kind_str(),
+                                                        &cur_ty.get_type_name(),
+                                                        &field.field_type.to_string(),
+                                                        &property_type.to_string()
+                                                    );
+                                                }
+                                            } else if field.field_type != property_type {
                                                 generate_error!(
                                                     ctx,
                                                     original_query,
@@ -793,96 +926,122 @@ pub(crate) fn validate_traversal<'a>(
                                                     &property_type.to_string()
                                                 );
                                             }
-                                        } else if field.field_type != property_type {
+                                        }
+                                        None => {
                                             generate_error!(
                                                 ctx,
                                                 original_query,
                                                 b_op.loc.clone(),
-                                                E622,
+                                                E202,
                                                 field_name,
                                                 cur_ty.kind_str(),
-                                                &cur_ty.get_type_name(),
-                                                &field.field_type.to_string(),
-                                                &property_type.to_string()
+                                                node_ty
                                             );
                                         }
-                                    }
-                                    None => {
-                                        generate_error!(
-                                            ctx,
-                                            original_query,
-                                            b_op.loc.clone(),
-                                            E202,
-                                            field_name,
-                                            cur_ty.kind_str(),
-                                            node_ty
-                                        );
                                     }
                                 }
                             }
                         }
                         Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty)) => {
-                            let field_set = ctx.edge_fields.get(edge_ty.as_str()).cloned();
-                            if let Some(field_set) = field_set {
-                                match field_set.get(field_name.as_str()) {
-                                    Some(field) => {
-                                        if field.field_type != property_type {
+                            // Check if this is a reserved property first
+                            if let Some(reserved_type) = get_reserved_property_type(field_name.as_str(), &cur_ty) {
+                                // Validate the type matches
+                                if reserved_type != property_type {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        b_op.loc.clone(),
+                                        E622,
+                                        field_name,
+                                        cur_ty.kind_str(),
+                                        &cur_ty.get_type_name(),
+                                        &reserved_type.to_string(),
+                                        &property_type.to_string()
+                                    );
+                                }
+                            } else {
+                                // Not a reserved property, check schema fields
+                                let field_set = ctx.edge_fields.get(edge_ty.as_str()).cloned();
+                                if let Some(field_set) = field_set {
+                                    match field_set.get(field_name.as_str()) {
+                                        Some(field) => {
+                                            if field.field_type != property_type {
+                                                generate_error!(
+                                                    ctx,
+                                                    original_query,
+                                                    b_op.loc.clone(),
+                                                    E622,
+                                                    field_name,
+                                                    cur_ty.kind_str(),
+                                                    &cur_ty.get_type_name(),
+                                                    &field.field_type.to_string(),
+                                                    &property_type.to_string()
+                                                );
+                                            }
+                                        }
+                                        None => {
                                             generate_error!(
                                                 ctx,
                                                 original_query,
                                                 b_op.loc.clone(),
-                                                E622,
+                                                E202,
                                                 field_name,
                                                 cur_ty.kind_str(),
-                                                &cur_ty.get_type_name(),
-                                                &field.field_type.to_string(),
-                                                &property_type.to_string()
+                                                edge_ty
                                             );
                                         }
-                                    }
-                                    None => {
-                                        generate_error!(
-                                            ctx,
-                                            original_query,
-                                            b_op.loc.clone(),
-                                            E202,
-                                            field_name,
-                                            cur_ty.kind_str(),
-                                            edge_ty
-                                        );
                                     }
                                 }
                             }
                         }
                         Type::Vectors(Some(sv)) | Type::Vector(Some(sv)) => {
-                            let field_set = ctx.vector_fields.get(sv.as_str()).cloned();
-                            if let Some(field_set) = field_set {
-                                match field_set.get(field_name.as_str()) {
-                                    Some(field) => {
-                                        if field.field_type != property_type {
+                            // Check if this is a reserved property first
+                            if let Some(reserved_type) = get_reserved_property_type(field_name.as_str(), &cur_ty) {
+                                // Validate the type matches
+                                if reserved_type != property_type {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        b_op.loc.clone(),
+                                        E622,
+                                        field_name,
+                                        cur_ty.kind_str(),
+                                        &cur_ty.get_type_name(),
+                                        &reserved_type.to_string(),
+                                        &property_type.to_string()
+                                    );
+                                }
+                            } else {
+                                // Not a reserved property, check schema fields
+                                let field_set = ctx.vector_fields.get(sv.as_str()).cloned();
+                                if let Some(field_set) = field_set {
+                                    match field_set.get(field_name.as_str()) {
+                                        Some(field) => {
+                                            if field.field_type != property_type {
+                                                generate_error!(
+                                                    ctx,
+                                                    original_query,
+                                                    b_op.loc.clone(),
+                                                    E622,
+                                                    field_name,
+                                                    cur_ty.kind_str(),
+                                                    &cur_ty.get_type_name(),
+                                                    &field.field_type.to_string(),
+                                                    &property_type.to_string()
+                                                );
+                                            }
+                                        }
+                                        None => {
                                             generate_error!(
                                                 ctx,
                                                 original_query,
                                                 b_op.loc.clone(),
-                                                E622,
+                                                E202,
                                                 field_name,
                                                 cur_ty.kind_str(),
-                                                &cur_ty.get_type_name(),
-                                                &field.field_type.to_string(),
-                                                &property_type.to_string()
+                                                sv
                                             );
                                         }
-                                    }
-                                    None => {
-                                        generate_error!(
-                                            ctx,
-                                            original_query,
-                                            b_op.loc.clone(),
-                                            E202,
-                                            field_name,
-                                            cur_ty.kind_str(),
-                                            sv
-                                        );
                                     }
                                 }
                             }
