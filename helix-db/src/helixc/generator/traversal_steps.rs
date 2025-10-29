@@ -198,13 +198,13 @@ impl Traversal {
 pub enum ReservedProp {
     Id,
     Label,
-    Version,
-    FromNode,
-    ToNode,
-    Deleted,
-    Level,
-    Distance,
-    Data,
+    // Version,
+    // FromNode,
+    // ToNode,
+    // Deleted,
+    // Level,
+    // Distance,
+    // Data,
 }
 
 #[derive(Clone)]
@@ -261,14 +261,14 @@ impl Display for Step {
             Step::PropertyFetch(property) => write!(f, "get_property({property})"),
             Step::ReservedPropertyAccess(prop) => match prop {
                 ReservedProp::Id => write!(f, "map(|item| Ok(Value::from(uuid_str(item.id, &arena))))"),
-                ReservedProp::Label => write!(f, "map(|item| Ok(Value::from(item.label)))"),
-                ReservedProp::Version => write!(f, "map(|item| Ok(Value::from(item.version)))"),
-                ReservedProp::FromNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.from_node, &arena))))"),
-                ReservedProp::ToNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.to_node, &arena))))"),
-                ReservedProp::Deleted => write!(f, "map(|item| Ok(Value::from(item.deleted)))"),
-                ReservedProp::Level => write!(f, "map(|item| Ok(Value::from(item.level)))"),
-                ReservedProp::Distance => write!(f, "map(|item| Ok(item.distance.map(Value::from).unwrap_or(Value::Empty)))"),
-                ReservedProp::Data => write!(f, "map(|item| Ok(Value::from(item.data)))"),
+                ReservedProp::Label => write!(f, "map(|item| Ok(Value::from(item.label())))"),
+                // ReservedProp::Version => write!(f, "map(|item| Ok(Value::from(item.version)))"),
+                // ReservedProp::FromNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.from_node, &arena))))"),
+                // ReservedProp::ToNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.to_node, &arena))))"),
+                // ReservedProp::Deleted => write!(f, "map(|item| Ok(Value::from(item.deleted)))"),
+                // ReservedProp::Level => write!(f, "map(|item| Ok(Value::from(item.level)))"),
+                // ReservedProp::Distance => write!(f, "map(|item| Ok(item.distance.map(Value::from).unwrap_or(Value::Empty)))"),
+                // ReservedProp::Data => write!(f, "map(|item| Ok(Value::from(item.data)))"),
             },
 
             Step::Out(out) => write!(f, "{out}"),
@@ -452,15 +452,8 @@ impl Display for WhereRef {
                 // Handle ReservedPropertyAccess with BoolOp - generate direct field access
                 if let (Some(reserved_prop), Some(bool_op)) = (reserved_prop, bool_op) {
                     let value_expr = match reserved_prop {
-                        ReservedProp::Id => "Value::Id(ID::from(val.id))".to_string(),
-                        ReservedProp::Label => "Value::from(val.label)".to_string(),
-                        ReservedProp::Version => "Value::from(val.version)".to_string(),
-                        ReservedProp::FromNode => "Value::Id(ID::from(val.from_node))".to_string(),
-                        ReservedProp::ToNode => "Value::Id(ID::from(val.to_node))".to_string(),
-                        ReservedProp::Deleted => "Value::from(val.deleted)".to_string(),
-                        ReservedProp::Level => "Value::from(val.level)".to_string(),
-                        ReservedProp::Distance => "val.distance.map(Value::from).unwrap_or(Value::Empty)".to_string(),
-                        ReservedProp::Data => "Value::from(val.data)".to_string(),
+                        ReservedProp::Id => "Value::Id(ID::from(val.id()))".to_string(),
+                        ReservedProp::Label => "Value::from(val.label())".to_string(),
                     };
                     let bool_expr = match bool_op {
                         BoolOp::Gt(gt) => format!("{}{}", value_expr, gt),
