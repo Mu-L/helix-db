@@ -85,9 +85,9 @@ impl MMRReranker {
 
     /// Extract vector data from a TraversalValue.
     /// Note: This requires an arena to convert VectorPrecisionData to f64 slice
-    fn extract_vector_data<'a>(&self, item: &'a TraversalValue<'a>, arena: &'a bumpalo::Bump) -> RerankerResult<&'a [f64]> {
+    fn extract_vector_data<'a>(&self, item: &'a TraversalValue<'a>, _arena: &'a bumpalo::Bump) -> RerankerResult<&'a [f64]> {
         match item {
-            TraversalValue::Vector(v) => Ok(v.get_data_f64(arena)),
+            TraversalValue::Vector(v) => Ok(v.data),
             _ => Err(RerankerError::TextExtractionError(
                 "Cannot extract vector from this item type (only Vector supported for MMR)".to_string(),
             )),
@@ -228,6 +228,12 @@ impl Reranker for MMRReranker {
 mod tests {
     use super::*;
     use crate::helix_engine::vector_core::vector::HVector;
+    use bumpalo::Bump;
+
+    fn alloc_vector<'a>(arena: &'a Bump, data: &[f64]) -> HVector<'a> {
+        let slice = arena.alloc_slice_copy(data);
+        HVector::from_slice("test_vector", 0, slice)
+    }
 
     #[test]
     fn test_mmr_creation() {
@@ -243,24 +249,25 @@ mod tests {
 
     #[test]
     fn test_mmr_diversity() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.5).unwrap(); // Equal weight to relevance and diversity
 
         // Create vectors: two very similar, one different
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![1.0, 0.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0, 0.0, 0.0]);
                 v.distance = Some(0.9);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.99, 0.01, 0.0]); // Very similar to first
+                let mut v = alloc_vector(&arena, &[0.99, 0.01, 0.0]); // Very similar to first
                 v.distance = Some(0.85);
                 v.id = 2;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 1.0, 0.0]); // Different
+                let mut v = alloc_vector(&arena, &[0.0, 1.0, 0.0]); // Different
                 v.distance = Some(0.7);
                 v.id = 3;
                 TraversalValue::Vector(v)
@@ -285,23 +292,24 @@ mod tests {
 
     #[test]
     fn test_mmr_high_lambda_favors_relevance() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.99).unwrap(); // Strongly favor relevance
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![1.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0, 0.0]);
                 v.distance = Some(1.0);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.99, 0.01]); // Similar but lower score
+                let mut v = alloc_vector(&arena, &[0.99, 0.01]); // Similar but lower score
                 v.distance = Some(0.9);
                 v.id = 2;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 1.0]); // Different but much lower score
+                let mut v = alloc_vector(&arena, &[0.0, 1.0]); // Different but much lower score
                 v.distance = Some(0.5);
                 v.id = 3;
                 TraversalValue::Vector(v)
@@ -329,6 +337,7 @@ mod tests {
 
     #[test]
     fn test_mmr_with_query_vector() {
+        let arena = Bump::new();
         let query = vec![1.0, 0.0, 0.0];
         let mmr = MMRReranker::new(0.7)
             .unwrap()
@@ -336,13 +345,13 @@ mod tests {
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![0.9, 0.1, 0.0]);
+                let mut v = alloc_vector(&arena, &[0.9, 0.1, 0.0]);
                 v.distance = Some(0.9); // Higher original score
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.1, 0.9, 0.0]);
+                let mut v = alloc_vector(&arena, &[0.1, 0.9, 0.0]);
                 v.distance = Some(0.5); // Lower original score
                 v.id = 2;
                 TraversalValue::Vector(v)
@@ -363,29 +372,30 @@ mod tests {
 
     #[test]
     fn test_mmr_low_lambda_favors_diversity() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.1).unwrap(); // Strongly favor diversity
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![1.0, 0.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0, 0.0, 0.0]);
                 v.distance = Some(1.0);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.99, 0.01, 0.0]); // Very similar to first
+                let mut v = alloc_vector(&arena, &[0.99, 0.01, 0.0]); // Very similar to first
                 v.distance = Some(0.95);
                 v.id = 2;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 1.0, 0.0]); // Orthogonal
+                let mut v = alloc_vector(&arena, &[0.0, 1.0, 0.0]); // Orthogonal
                 v.distance = Some(0.8);
                 v.id = 3;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 0.0, 1.0]); // Also orthogonal
+                let mut v = alloc_vector(&arena, &[0.0, 0.0, 1.0]); // Also orthogonal
                 v.distance = Some(0.75);
                 v.id = 4;
                 TraversalValue::Vector(v)
@@ -417,23 +427,24 @@ mod tests {
 
     #[test]
     fn test_mmr_boundary_lambda_zero() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.0).unwrap(); // Pure diversity
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![1.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0, 0.0]);
                 v.distance = Some(1.0);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.9, 0.1]);
+                let mut v = alloc_vector(&arena, &[0.9, 0.1]);
                 v.distance = Some(0.5);
                 v.id = 2;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 1.0]);
+                let mut v = alloc_vector(&arena, &[0.0, 1.0]);
                 v.distance = Some(0.3);
                 v.id = 3;
                 TraversalValue::Vector(v)
@@ -448,23 +459,24 @@ mod tests {
 
     #[test]
     fn test_mmr_boundary_lambda_one() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(1.0).unwrap(); // Pure relevance
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![1.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0, 0.0]);
                 v.distance = Some(1.0);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.99, 0.01]); // Very similar
+                let mut v = alloc_vector(&arena, &[0.99, 0.01]); // Very similar
                 v.distance = Some(0.9);
                 v.id = 2;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 1.0]); // Different
+                let mut v = alloc_vector(&arena, &[0.0, 1.0]); // Different
                 v.distance = Some(0.5);
                 v.id = 3;
                 TraversalValue::Vector(v)
@@ -487,23 +499,24 @@ mod tests {
 
     #[test]
     fn test_mmr_with_euclidean_distance() {
+        let arena = Bump::new();
         let mmr = MMRReranker::with_distance(0.5, DistanceMethod::Euclidean).unwrap();
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![1.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0, 0.0]);
                 v.distance = Some(1.0);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![1.1, 0.0]); // Close in Euclidean space
+                let mut v = alloc_vector(&arena, &[1.1, 0.0]); // Close in Euclidean space
                 v.distance = Some(0.9);
                 v.id = 2;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 1.0]); // Far
+                let mut v = alloc_vector(&arena, &[0.0, 1.0]); // Far
                 v.distance = Some(0.8);
                 v.id = 3;
                 TraversalValue::Vector(v)
@@ -521,23 +534,24 @@ mod tests {
 
     #[test]
     fn test_mmr_with_dot_product() {
+        let arena = Bump::new();
         let mmr = MMRReranker::with_distance(0.5, DistanceMethod::DotProduct).unwrap();
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![1.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0, 0.0]);
                 v.distance = Some(1.0);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.9, 0.0]);
+                let mut v = alloc_vector(&arena, &[0.9, 0.0]);
                 v.distance = Some(0.9);
                 v.id = 2;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 1.0]);
+                let mut v = alloc_vector(&arena, &[0.0, 1.0]);
                 v.distance = Some(0.8);
                 v.id = 3;
                 TraversalValue::Vector(v)
@@ -552,10 +566,11 @@ mod tests {
 
     #[test]
     fn test_mmr_single_item() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.5).unwrap();
 
         let vectors: Vec<TraversalValue> = vec![{
-            let mut v = HVector::new(vec![1.0, 0.0]);
+            let mut v = alloc_vector(&arena, &[1.0, 0.0]);
             v.distance = Some(1.0);
             v.id = 1;
             TraversalValue::Vector(v)
@@ -572,12 +587,13 @@ mod tests {
 
     #[test]
     fn test_mmr_identical_vectors() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.5).unwrap();
 
         // All identical vectors
         let vectors: Vec<TraversalValue> = (0..3)
             .map(|i| {
-                let mut v = HVector::new(vec![1.0, 0.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0, 0.0, 0.0]);
                 v.distance = Some(1.0);
                 v.id = i as u128;
                 TraversalValue::Vector(v)
@@ -592,17 +608,18 @@ mod tests {
 
     #[test]
     fn test_mmr_zero_vectors() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.5).unwrap();
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![0.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[0.0, 0.0]);
                 v.distance = Some(1.0);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[0.0, 0.0]);
                 v.distance = Some(0.9);
                 v.id = 2;
                 TraversalValue::Vector(v)
@@ -617,13 +634,14 @@ mod tests {
 
     #[test]
     fn test_mmr_large_dataset() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.5).unwrap();
 
         // Create 100 vectors
         let vectors: Vec<TraversalValue> = (0..100)
             .map(|i| {
                 let angle = (i as f64) * 0.1;
-                let mut v = HVector::new(vec![angle.cos(), angle.sin()]);
+                let mut v = alloc_vector(&arena, &[angle.cos(), angle.sin()]);
                 v.distance = Some(1.0 - i as f64 / 100.0);
                 v.id = i as u128;
                 TraversalValue::Vector(v)
@@ -643,17 +661,18 @@ mod tests {
 
     #[test]
     fn test_mmr_preserves_vector_data() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.5).unwrap();
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![1.5, 2.5, 3.5]);
+                let mut v = alloc_vector(&arena, &[1.5, 2.5, 3.5]);
                 v.distance = Some(1.0);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![4.5, 5.5, 6.5]);
+                let mut v = alloc_vector(&arena, &[4.5, 5.5, 6.5]);
                 v.distance = Some(0.9);
                 v.id = 2;
                 TraversalValue::Vector(v)
@@ -664,20 +683,21 @@ mod tests {
 
         // Verify vector data is preserved
         if let TraversalValue::Vector(v) = &results[0] {
-            assert_eq!(v.data, vec![1.5, 2.5, 3.5]);
+            assert_eq!(v.data, &[1.5, 2.5, 3.5]);
         }
         if let TraversalValue::Vector(v) = &results[1] {
-            assert_eq!(v.data, vec![4.5, 5.5, 6.5]);
+            assert_eq!(v.data, &[4.5, 5.5, 6.5]);
         }
     }
 
     #[test]
     fn test_mmr_score_updates() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.7).unwrap();
 
         let vectors: Vec<TraversalValue> = (0..3)
             .map(|i| {
-                let mut v = HVector::new(vec![1.0 * i as f64, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0 * i as f64, 0.0]);
                 v.distance = Some(1.0 - i as f64 * 0.1);
                 v.id = i as u128;
                 TraversalValue::Vector(v)
@@ -697,6 +717,7 @@ mod tests {
 
     #[test]
     fn test_mmr_with_query_vector_relevance() {
+        let arena = Bump::new();
         let query = vec![1.0, 0.0];
         let mmr = MMRReranker::new(0.9)
             .unwrap()
@@ -704,19 +725,19 @@ mod tests {
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![0.5, 0.0]); // Less similar to query
+                let mut v = alloc_vector(&arena, &[0.5, 0.0]); // Less similar to query
                 v.distance = Some(1.0); // But highest original score
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.95, 0.0]); // More similar to query
+                let mut v = alloc_vector(&arena, &[0.95, 0.0]); // More similar to query
                 v.distance = Some(0.5); // Lower original score
                 v.id = 2;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 1.0]); // Orthogonal to query
+                let mut v = alloc_vector(&arena, &[0.0, 1.0]); // Orthogonal to query
                 v.distance = Some(0.7);
                 v.id = 3;
                 TraversalValue::Vector(v)
@@ -736,12 +757,13 @@ mod tests {
 
     #[test]
     fn test_mmr_high_dimensional_vectors() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.5).unwrap();
 
         let vectors: Vec<TraversalValue> = (0..5)
             .map(|i| {
                 let data: Vec<f64> = (0..100).map(|j| if j == i { 1.0 } else { 0.0 }).collect();
-                let mut v = HVector::new(data);
+                let mut v = alloc_vector(&arena, &data);
                 v.distance = Some(1.0 - i as f64 * 0.1);
                 v.id = i as u128;
                 TraversalValue::Vector(v)
@@ -763,23 +785,24 @@ mod tests {
 
     #[test]
     fn test_mmr_mixed_positive_negative_scores() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.5).unwrap();
 
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![1.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0, 0.0]);
                 v.distance = Some(1.0);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.5, 0.5]);
+                let mut v = alloc_vector(&arena, &[0.5, 0.5]);
                 v.distance = Some(-0.5); // Negative score
                 v.id = 2;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 1.0]);
+                let mut v = alloc_vector(&arena, &[0.0, 1.0]);
                 v.distance = Some(0.0); // Zero score
                 v.id = 3;
                 TraversalValue::Vector(v)
@@ -794,30 +817,31 @@ mod tests {
 
     #[test]
     fn test_mmr_cosine_similarity_properties() {
+        let arena = Bump::new();
         let mmr = MMRReranker::new(0.5).unwrap();
 
         // Create vectors with known cosine similarities
         let vectors: Vec<TraversalValue> = vec![
             {
-                let mut v = HVector::new(vec![1.0, 0.0, 0.0]);
+                let mut v = alloc_vector(&arena, &[1.0, 0.0, 0.0]);
                 v.distance = Some(1.0);
                 v.id = 1;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![1.0, 0.0, 0.0]); // Identical (cos=1.0)
+                let mut v = alloc_vector(&arena, &[1.0, 0.0, 0.0]); // Identical (cos=1.0)
                 v.distance = Some(0.9);
                 v.id = 2;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![0.0, 1.0, 0.0]); // Orthogonal (cos=0.0)
+                let mut v = alloc_vector(&arena, &[0.0, 1.0, 0.0]); // Orthogonal (cos=0.0)
                 v.distance = Some(0.8);
                 v.id = 3;
                 TraversalValue::Vector(v)
             },
             {
-                let mut v = HVector::new(vec![-1.0, 0.0, 0.0]); // Opposite (cos=-1.0)
+                let mut v = alloc_vector(&arena, &[-1.0, 0.0, 0.0]); // Opposite (cos=-1.0)
                 v.distance = Some(0.7);
                 v.id = 4;
                 TraversalValue::Vector(v)
