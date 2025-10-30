@@ -7,7 +7,7 @@ use crate::{
         },
         types::GraphError,
     },
-    helix_gateway::mcp::tools::{execute_query_chain, ToolArgs},
+    helix_gateway::mcp::tools::{execute_query_chain, EdgeType, FilterTraversal, Order, ToolArgs},
     protocol::{Format, Request, Response},
     utils::id::v6_uuid,
 };
@@ -163,6 +163,40 @@ impl MCPHandler {
 
 inventory::collect!(MCPHandlerSubmission);
 
+/// Helper function to execute a tool step on a connection
+fn execute_tool_step(
+    input: &mut MCPToolInput,
+    connection_id: &str,
+    tool: ToolArgs,
+) -> Result<Response, GraphError> {
+    let mut connections = input.mcp_connections.lock().unwrap();
+    let mut connection = connections
+        .remove_connection(connection_id)
+        .ok_or_else(|| GraphError::StorageError("Connection not found".to_string()))?;
+    drop(connections);
+
+    connection.add_query_step(tool);
+
+    let arena = Bump::new();
+    let storage = input.mcp_backend.db.as_ref();
+    let txn = storage.graph_env.read_txn()?;
+    let stream = execute_query_chain(&connection.query_chain, storage, &txn, &arena)?;
+    let mut iter = stream.into_inner_iter();
+
+    let (first, consumed_one) = match iter.next() {
+        Some(value) => (value?, true),
+        None => (TraversalValue::Empty, false),
+    };
+
+    connection.current_position = if consumed_one { 1 } else { 0 };
+
+    let mut connections = input.mcp_connections.lock().unwrap();
+    connections.add_connection(connection);
+    drop(connections);
+
+    Ok(Format::Json.create_response(&first))
+}
+
 #[derive(Deserialize)]
 pub struct InitRequest {
     pub connection_addr: String,
@@ -185,32 +219,7 @@ pub fn tool_call(input: &mut MCPToolInput) -> Result<Response, GraphError> {
         Err(err) => return Err(GraphError::from(err)),
     };
 
-    let mut connections = input.mcp_connections.lock().unwrap();
-    let mut connection = connections
-        .remove_connection(&data.connection_id)
-        .ok_or_else(|| GraphError::StorageError("Connection not found".to_string()))?;
-    drop(connections);
-
-    connection.add_query_step(data.tool);
-
-    let arena = Bump::new();
-    let storage = input.mcp_backend.db.as_ref();
-    let txn = storage.graph_env.read_txn()?;
-    let stream = execute_query_chain(&connection.query_chain, storage, &txn, &arena)?;
-    let mut iter = stream.into_inner_iter();
-
-    let (first, consumed_one) = match iter.next() {
-        Some(value) => (value?, true),
-        None => (TraversalValue::Empty, false),
-    };
-
-    connection.current_position = if consumed_one { 1 } else { 0 };
-
-    let mut connections = input.mcp_connections.lock().unwrap();
-    connections.add_connection(connection);
-    drop(connections);
-
-    Ok(Format::Json.create_response(&first))
+    execute_tool_step(input, &data.connection_id, data.tool)
 }
 
 #[derive(Deserialize)]
@@ -420,4 +429,181 @@ pub fn schema_resource(input: &mut MCPToolInput) -> Result<Response, GraphError>
     } else {
         Ok(Format::Json.create_response(&"no schema".to_string()))
     }
+}
+
+// Individual tool endpoint handlers
+
+#[derive(Debug, Deserialize)]
+pub struct OutStepInput {
+    pub connection_id: String,
+    pub edge_label: String,
+    pub edge_type: EdgeType,
+    pub filter: Option<FilterTraversal>,
+}
+
+#[mcp_handler]
+pub fn out_step(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+    let data: OutStepInput = match sonic_rs::from_slice(&input.request.body) {
+        Ok(data) => data,
+        Err(err) => return Err(GraphError::from(err)),
+    };
+
+    let tool = ToolArgs::OutStep {
+        edge_label: data.edge_label,
+        edge_type: data.edge_type,
+        filter: data.filter,
+    };
+
+    execute_tool_step(input, &data.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InStepInput {
+    pub connection_id: String,
+    pub edge_label: String,
+    pub edge_type: EdgeType,
+    pub filter: Option<FilterTraversal>,
+}
+
+#[mcp_handler]
+pub fn in_step(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+    let data: InStepInput = match sonic_rs::from_slice(&input.request.body) {
+        Ok(data) => data,
+        Err(err) => return Err(GraphError::from(err)),
+    };
+
+    let tool = ToolArgs::InStep {
+        edge_label: data.edge_label,
+        edge_type: data.edge_type,
+        filter: data.filter,
+    };
+
+    execute_tool_step(input, &data.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OutEStepInput {
+    pub connection_id: String,
+    pub edge_label: String,
+    pub filter: Option<FilterTraversal>,
+}
+
+#[mcp_handler]
+pub fn out_e_step(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+    let data: OutEStepInput = match sonic_rs::from_slice(&input.request.body) {
+        Ok(data) => data,
+        Err(err) => return Err(GraphError::from(err)),
+    };
+
+    let tool = ToolArgs::OutEStep {
+        edge_label: data.edge_label,
+        filter: data.filter,
+    };
+
+    execute_tool_step(input, &data.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InEStepInput {
+    pub connection_id: String,
+    pub edge_label: String,
+    pub filter: Option<FilterTraversal>,
+}
+
+#[mcp_handler]
+pub fn in_e_step(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+    let data: InEStepInput = match sonic_rs::from_slice(&input.request.body) {
+        Ok(data) => data,
+        Err(err) => return Err(GraphError::from(err)),
+    };
+
+    let tool = ToolArgs::InEStep {
+        edge_label: data.edge_label,
+        filter: data.filter,
+    };
+
+    execute_tool_step(input, &data.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NFromTypeInput {
+    pub connection_id: String,
+    pub node_type: String,
+}
+
+#[mcp_handler]
+pub fn n_from_type(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+    let data: NFromTypeInput = match sonic_rs::from_slice(&input.request.body) {
+        Ok(data) => data,
+        Err(err) => return Err(GraphError::from(err)),
+    };
+
+    let tool = ToolArgs::NFromType {
+        node_type: data.node_type,
+    };
+
+    execute_tool_step(input, &data.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EFromTypeInput {
+    pub connection_id: String,
+    pub edge_type: String,
+}
+
+#[mcp_handler]
+pub fn e_from_type(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+    let data: EFromTypeInput = match sonic_rs::from_slice(&input.request.body) {
+        Ok(data) => data,
+        Err(err) => return Err(GraphError::from(err)),
+    };
+
+    let tool = ToolArgs::EFromType {
+        edge_type: data.edge_type,
+    };
+
+    execute_tool_step(input, &data.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FilterItemsInput {
+    pub connection_id: String,
+    #[serde(default)]
+    pub filter: FilterTraversal,
+}
+
+#[mcp_handler]
+pub fn filter_items(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+    let data: FilterItemsInput = match sonic_rs::from_slice(&input.request.body) {
+        Ok(data) => data,
+        Err(err) => return Err(GraphError::from(err)),
+    };
+
+    let tool = ToolArgs::FilterItems {
+        filter: data.filter,
+    };
+
+    execute_tool_step(input, &data.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OrderByInput {
+    pub connection_id: String,
+    pub properties: String,
+    pub order: Order,
+}
+
+#[mcp_handler]
+pub fn order_by(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+    let data: OrderByInput = match sonic_rs::from_slice(&input.request.body) {
+        Ok(data) => data,
+        Err(err) => return Err(GraphError::from(err)),
+    };
+
+    let tool = ToolArgs::OrderBy {
+        properties: data.properties,
+        order: data.order,
+    };
+
+    execute_tool_step(input, &data.connection_id, tool)
 }
