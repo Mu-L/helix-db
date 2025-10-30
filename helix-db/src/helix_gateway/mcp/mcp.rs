@@ -434,186 +434,231 @@ pub fn schema_resource(input: &mut MCPToolInput) -> Result<Response, GraphError>
 // Individual tool endpoint handlers
 
 #[derive(Debug, Deserialize)]
-pub struct OutStepInput {
-    pub connection_id: String,
+pub struct OutStepData {
     pub edge_label: String,
     pub edge_type: EdgeType,
     pub filter: Option<FilterTraversal>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct OutStepInput {
+    pub connection_id: String,
+    pub data: OutStepData,
+}
+
 #[mcp_handler]
 pub fn out_step(input: &mut MCPToolInput) -> Result<Response, GraphError> {
-    let data: OutStepInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: OutStepInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let tool = ToolArgs::OutStep {
-        edge_label: data.edge_label,
-        edge_type: data.edge_type,
-        filter: data.filter,
+        edge_label: req.data.edge_label,
+        edge_type: req.data.edge_type,
+        filter: req.data.filter,
     };
 
-    execute_tool_step(input, &data.connection_id, tool)
+    execute_tool_step(input, &req.connection_id, tool)
 }
 
 #[derive(Debug, Deserialize)]
-pub struct InStepInput {
-    pub connection_id: String,
+pub struct InStepData {
     pub edge_label: String,
     pub edge_type: EdgeType,
     pub filter: Option<FilterTraversal>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct InStepInput {
+    pub connection_id: String,
+    pub data: InStepData,
+}
+
 #[mcp_handler]
 pub fn in_step(input: &mut MCPToolInput) -> Result<Response, GraphError> {
-    let data: InStepInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: InStepInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let tool = ToolArgs::InStep {
-        edge_label: data.edge_label,
-        edge_type: data.edge_type,
-        filter: data.filter,
+        edge_label: req.data.edge_label,
+        edge_type: req.data.edge_type,
+        filter: req.data.filter,
     };
 
-    execute_tool_step(input, &data.connection_id, tool)
+    execute_tool_step(input, &req.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OutEStepData {
+    pub edge_label: String,
+    pub filter: Option<FilterTraversal>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct OutEStepInput {
     pub connection_id: String,
-    pub edge_label: String,
-    pub filter: Option<FilterTraversal>,
+    pub data: OutEStepData,
 }
 
 #[mcp_handler]
 pub fn out_e_step(input: &mut MCPToolInput) -> Result<Response, GraphError> {
-    let data: OutEStepInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: OutEStepInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let tool = ToolArgs::OutEStep {
-        edge_label: data.edge_label,
-        filter: data.filter,
+        edge_label: req.data.edge_label,
+        filter: req.data.filter,
     };
 
-    execute_tool_step(input, &data.connection_id, tool)
+    execute_tool_step(input, &req.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InEStepData {
+    pub edge_label: String,
+    pub filter: Option<FilterTraversal>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct InEStepInput {
     pub connection_id: String,
-    pub edge_label: String,
-    pub filter: Option<FilterTraversal>,
+    pub data: InEStepData,
 }
 
 #[mcp_handler]
 pub fn in_e_step(input: &mut MCPToolInput) -> Result<Response, GraphError> {
-    let data: InEStepInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: InEStepInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let tool = ToolArgs::InEStep {
-        edge_label: data.edge_label,
-        filter: data.filter,
+        edge_label: req.data.edge_label,
+        filter: req.data.filter,
     };
 
-    execute_tool_step(input, &data.connection_id, tool)
+    execute_tool_step(input, &req.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NFromTypeData {
+    pub node_type: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct NFromTypeInput {
     pub connection_id: String,
-    pub node_type: String,
+    pub data: NFromTypeData,
 }
 
 #[mcp_handler]
 pub fn n_from_type(input: &mut MCPToolInput) -> Result<Response, GraphError> {
-    let data: NFromTypeInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: NFromTypeInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let tool = ToolArgs::NFromType {
-        node_type: data.node_type,
+        node_type: req.data.node_type,
     };
 
-    execute_tool_step(input, &data.connection_id, tool)
+    execute_tool_step(input, &req.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EFromTypeData {
+    pub edge_type: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct EFromTypeInput {
     pub connection_id: String,
-    pub edge_type: String,
+    pub data: EFromTypeData,
 }
 
 #[mcp_handler]
 pub fn e_from_type(input: &mut MCPToolInput) -> Result<Response, GraphError> {
-    let data: EFromTypeInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: EFromTypeInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let tool = ToolArgs::EFromType {
-        edge_type: data.edge_type,
+        edge_type: req.data.edge_type,
     };
 
-    execute_tool_step(input, &data.connection_id, tool)
+    execute_tool_step(input, &req.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FilterItemsData {
+    #[serde(default)]
+    pub filter: FilterTraversal,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct FilterItemsInput {
     pub connection_id: String,
-    #[serde(default)]
-    pub filter: FilterTraversal,
+    pub data: FilterItemsData,
 }
 
 #[mcp_handler]
 pub fn filter_items(input: &mut MCPToolInput) -> Result<Response, GraphError> {
-    let data: FilterItemsInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: FilterItemsInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let tool = ToolArgs::FilterItems {
-        filter: data.filter,
+        filter: req.data.filter,
     };
 
-    execute_tool_step(input, &data.connection_id, tool)
+    execute_tool_step(input, &req.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OrderByData {
+    pub properties: String,
+    pub order: Order,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct OrderByInput {
     pub connection_id: String,
-    pub properties: String,
-    pub order: Order,
+    pub data: OrderByData,
 }
 
 #[mcp_handler]
 pub fn order_by(input: &mut MCPToolInput) -> Result<Response, GraphError> {
-    let data: OrderByInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: OrderByInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let tool = ToolArgs::OrderBy {
-        properties: data.properties,
-        order: data.order,
+        properties: req.data.properties,
+        order: req.data.order,
     };
 
-    execute_tool_step(input, &data.connection_id, tool)
+    execute_tool_step(input, &req.connection_id, tool)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchKeywordData {
+    pub query: String,
+    pub limit: usize,
+    pub label: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SearchKeywordInput {
     pub connection_id: String,
-    pub query: String,
-    pub limit: usize,
-    pub label: String,
+    pub data: SearchKeywordData,
 }
 
 #[mcp_handler]
@@ -623,14 +668,14 @@ pub fn search_keyword(input: &mut MCPToolInput) -> Result<Response, GraphError> 
         g::G,
     };
 
-    let data: SearchKeywordInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: SearchKeywordInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let mut connections = input.mcp_connections.lock().unwrap();
     let mut connection = connections
-        .remove_connection(&data.connection_id)
+        .remove_connection(&req.connection_id)
         .ok_or_else(|| GraphError::StorageError("Connection not found".to_string()))?;
     drop(connections);
 
@@ -640,7 +685,7 @@ pub fn search_keyword(input: &mut MCPToolInput) -> Result<Response, GraphError> 
 
     // Perform BM25 search using the existing index
     let results = G::new(storage, &txn, &arena)
-        .search_bm25(&data.label, &data.query, data.limit)?
+        .search_bm25(&req.data.label, &req.data.query, req.data.limit)?
         .collect_to::<Vec<_>>();
 
     let (first, consumed_one) = match results.first() {
@@ -660,11 +705,16 @@ pub fn search_keyword(input: &mut MCPToolInput) -> Result<Response, GraphError> 
 }
 
 #[derive(Debug, Deserialize)]
-pub struct SearchVecTextInput {
-    pub connection_id: String,
+pub struct SearchVecTextData {
     pub query: String,
     pub label: String,
     pub k: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchVecTextInput {
+    pub connection_id: String,
+    pub data: SearchVecTextData,
 }
 
 #[mcp_handler]
@@ -675,14 +725,14 @@ pub fn search_vec_text(input: &mut MCPToolInput) -> Result<Response, GraphError>
     };
     use crate::helix_gateway::embedding_providers::{get_embedding_model, EmbeddingModel};
 
-    let data: SearchVecTextInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: SearchVecTextInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let mut connections = input.mcp_connections.lock().unwrap();
     let mut connection = connections
-        .remove_connection(&data.connection_id)
+        .remove_connection(&req.connection_id)
         .ok_or_else(|| GraphError::StorageError("Connection not found".to_string()))?;
     drop(connections);
 
@@ -692,12 +742,12 @@ pub fn search_vec_text(input: &mut MCPToolInput) -> Result<Response, GraphError>
 
     // Get embedding model and convert query text to vector
     let embedding_model = get_embedding_model(None, None, None)?;
-    let query_embedding = embedding_model.fetch_embedding(&data.query)?;
+    let query_embedding = embedding_model.fetch_embedding(&req.data.query)?;
     let query_vec_arena = arena.alloc_slice_copy(&query_embedding);
 
     // Perform vector search
-    let k_value = data.k.unwrap_or(10);
-    let label_arena = arena.alloc_str(&data.label);
+    let k_value = req.data.k.unwrap_or(10);
+    let label_arena = arena.alloc_str(&req.data.label);
     let results = G::new(storage, &txn, &arena)
         .search_v::<fn(&crate::helix_engine::vector_core::vector::HVector, &heed3::RoTxn) -> bool, _>(
             query_vec_arena,
@@ -722,25 +772,30 @@ pub fn search_vec_text(input: &mut MCPToolInput) -> Result<Response, GraphError>
 }
 
 #[derive(Debug, Deserialize)]
-pub struct SearchVecInput {
-    pub connection_id: String,
+pub struct SearchVecData {
     pub vector: Vec<f64>,
     pub k: usize,
     pub min_score: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SearchVecInput {
+    pub connection_id: String,
+    pub data: SearchVecData,
+}
+
 #[mcp_handler]
 pub fn search_vec(input: &mut MCPToolInput) -> Result<Response, GraphError> {
-    let data: SearchVecInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: SearchVecInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
 
     let tool = ToolArgs::SearchVec {
-        vector: data.vector,
-        k: data.k,
-        min_score: data.min_score,
+        vector: req.data.vector,
+        k: req.data.k,
+        min_score: req.data.min_score,
     };
 
-    execute_tool_step(input, &data.connection_id, tool)
+    execute_tool_step(input, &req.connection_id, tool)
 }

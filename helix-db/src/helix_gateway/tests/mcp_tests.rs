@@ -308,7 +308,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn1","edge_label":"knows","edge_type":"node","filter":null}"#
+            r#"{"connection_id":"conn1","data":{"edge_label":"knows","edge_type":"node","filter":null}}"#
                 .to_string(),
         );
 
@@ -364,7 +364,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn2","edge_label":"knows","edge_type":"node","filter":null}"#
+            r#"{"connection_id":"conn2","data":{"edge_label":"knows","edge_type":"node","filter":null}}"#
                 .to_string(),
         );
 
@@ -419,7 +419,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn3","edge_label":"knows","filter":null}"#.to_string(),
+            r#"{"connection_id":"conn3","data":{"edge_label":"knows","filter":null}}"#.to_string(),
         );
 
         let request = Request {
@@ -474,7 +474,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body =
-            Bytes::from(r#"{"connection_id":"conn4","edge_label":"knows","filter":null}"#.to_string());
+            Bytes::from(r#"{"connection_id":"conn4","data":{"edge_label":"knows","filter":null}}"#.to_string());
 
         let request = Request {
             name: "in_e_step".to_string(),
@@ -518,7 +518,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body =
-            Bytes::from(r#"{"connection_id":"conn5","node_type":"person"}"#.to_string());
+            Bytes::from(r#"{"connection_id":"conn5","data":{"node_type":"person"}}"#.to_string());
 
         let request = Request {
             name: "n_from_type".to_string(),
@@ -569,7 +569,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body =
-            Bytes::from(r#"{"connection_id":"conn6","edge_type":"knows"}"#.to_string());
+            Bytes::from(r#"{"connection_id":"conn6","data":{"edge_type":"knows"}}"#.to_string());
 
         let request = Request {
             name: "e_from_type".to_string(),
@@ -635,7 +635,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn7","filter":{"properties":[[{"key":"age","value":30,"operator":"=="}]],"filter_traversals":null}}"#
+            r#"{"connection_id":"conn7","data":{"filter":{"properties":[[{"key":"age","value":30,"operator":"=="}]],"filter_traversals":null}}}"#
                 .to_string(),
         );
 
@@ -703,7 +703,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn8","properties":"age","order":"asc"}"#.to_string(),
+            r#"{"connection_id":"conn8","data":{"properties":"age","order":"asc"}}"#.to_string(),
         );
 
         let request = Request {
@@ -1194,7 +1194,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn_search","query":"rust programming","limit":10,"label":"document"}"#
+            r#"{"connection_id":"conn_search","data":{"query":"rust programming","limit":10,"label":"document"}}"#
                 .to_string(),
         );
 
@@ -1231,7 +1231,7 @@ mod mcp_tests {
         // Don't create a connection
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"nonexistent","query":"test","limit":10,"label":"document"}"#
+            r#"{"connection_id":"nonexistent","data":{"query":"test","limit":10,"label":"document"}}"#
                 .to_string(),
         );
 
@@ -1339,7 +1339,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn_vec","vector":[0.1,0.2,0.3],"k":5,"min_score":0.5}"#
+            r#"{"connection_id":"conn_vec","data":{"vector":[0.1,0.2,0.3],"k":5,"min_score":0.5}}"#
                 .to_string(),
         );
 
@@ -1375,7 +1375,7 @@ mod mcp_tests {
         // Don't create a connection
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"nonexistent","vector":[0.1,0.2,0.3],"k":5}"#.to_string(),
+            r#"{"connection_id":"nonexistent","data":{"vector":[0.1,0.2,0.3],"k":5}}"#.to_string(),
         );
 
         let request = Request {
@@ -1415,7 +1415,7 @@ mod mcp_tests {
 
         // Test with invalid JSON (missing required k field)
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn_vec_validate","vector":[0.1,0.2,0.3]}"#.to_string(),
+            r#"{"connection_id":"conn_vec_validate","data":{"vector":[0.1,0.2,0.3]}}"#.to_string(),
         );
 
         let request = Request {
@@ -1450,7 +1450,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn_vec_text","query":"test query","label":"document","k":10}"#
+            r#"{"connection_id":"conn_vec_text","data":{"query":"test query","label":"document","k":10}}"#
                 .to_string(),
         );
 
@@ -1486,7 +1486,7 @@ mod mcp_tests {
         // Don't create a connection
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"nonexistent","query":"test","label":"document","k":5}"#
+            r#"{"connection_id":"nonexistent","data":{"query":"test","label":"document","k":5}}"#
                 .to_string(),
         );
 
@@ -1527,7 +1527,7 @@ mod mcp_tests {
 
         // Test with invalid JSON (missing required query field)
         let request_body =
-            Bytes::from(r#"{"connection_id":"conn_vec_text_validate","label":"document"}"#.to_string());
+            Bytes::from(r#"{"connection_id":"conn_vec_text_validate","data":{"label":"document"}}"#.to_string());
 
         let request = Request {
             name: "search_vec_text".to_string(),
