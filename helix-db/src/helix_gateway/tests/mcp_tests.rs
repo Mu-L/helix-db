@@ -1297,7 +1297,7 @@ mod mcp_tests {
     // ============================================================================
 
     #[test]
-    fn test_search_vec_handler_registered() {
+    fn test_search_vector_handler_registered() {
         use crate::helix_gateway::mcp::mcp::MCPHandlerSubmission;
 
         let handler_names: Vec<&str> = inventory::iter::<MCPHandlerSubmission>
@@ -1306,13 +1306,13 @@ mod mcp_tests {
             .collect();
 
         assert!(
-            handler_names.contains(&"search_vec"),
-            "search_vec handler should be registered"
+            handler_names.contains(&"search_vector"),
+            "search_vector handler should be registered"
         );
     }
 
     #[test]
-    fn test_search_vec_text_handler_registered() {
+    fn test_search_vector_text_handler_registered() {
         use crate::helix_gateway::mcp::mcp::MCPHandlerSubmission;
 
         let handler_names: Vec<&str> = inventory::iter::<MCPHandlerSubmission>
@@ -1321,14 +1321,14 @@ mod mcp_tests {
             .collect();
 
         assert!(
-            handler_names.contains(&"search_vec_text"),
-            "search_vec_text handler should be registered"
+            handler_names.contains(&"search_vector_text"),
+            "search_vector_text handler should be registered"
         );
     }
 
     #[test]
-    fn test_search_vec_handler_http() {
-        use crate::helix_gateway::mcp::mcp::search_vec;
+    fn test_search_vector_handler_http() {
+        use crate::helix_gateway::mcp::mcp::search_vector;
 
         let (engine, _temp_dir) = setup_engine();
 
@@ -1344,7 +1344,7 @@ mod mcp_tests {
         );
 
         let request = Request {
-            name: "search_vec".to_string(),
+            name: "search_vector".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
             in_fmt: Format::Json,
@@ -1358,14 +1358,14 @@ mod mcp_tests {
             schema: None,
         };
 
-        let response = search_vec(&mut input);
+        let response = search_vector(&mut input);
         // May return empty if no vectors indexed, but should not error
         assert!(response.is_ok() || response.is_err());
     }
 
     #[test]
-    fn test_search_vec_requires_connection() {
-        use crate::helix_gateway::mcp::mcp::search_vec;
+    fn test_search_vector_requires_connection() {
+        use crate::helix_gateway::mcp::mcp::search_vector;
 
         let (engine, _temp_dir) = setup_engine();
 
@@ -1379,7 +1379,7 @@ mod mcp_tests {
         );
 
         let request = Request {
-            name: "search_vec".to_string(),
+            name: "search_vector".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
             in_fmt: Format::Json,
@@ -1393,7 +1393,7 @@ mod mcp_tests {
             schema: None,
         };
 
-        let response = search_vec(&mut input);
+        let response = search_vector(&mut input);
         assert!(response.is_err());
         assert!(response
             .unwrap_err()
@@ -1402,8 +1402,8 @@ mod mcp_tests {
     }
 
     #[test]
-    fn test_search_vec_input_validation() {
-        use crate::helix_gateway::mcp::mcp::search_vec;
+    fn test_search_vector_input_validation() {
+        use crate::helix_gateway::mcp::mcp::search_vector;
 
         let (engine, _temp_dir) = setup_engine();
 
@@ -1419,7 +1419,7 @@ mod mcp_tests {
         );
 
         let request = Request {
-            name: "search_vec".to_string(),
+            name: "search_vector".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
             in_fmt: Format::Json,
@@ -1433,13 +1433,13 @@ mod mcp_tests {
             schema: None,
         };
 
-        let response = search_vec(&mut input);
+        let response = search_vector(&mut input);
         assert!(response.is_err());
     }
 
     #[test]
-    fn test_search_vec_text_handler_http() {
-        use crate::helix_gateway::mcp::mcp::search_vec_text;
+    fn test_search_vector_text_handler_http() {
+        use crate::helix_gateway::mcp::mcp::search_vector_text;
 
         let (engine, _temp_dir) = setup_engine();
 
@@ -1455,7 +1455,7 @@ mod mcp_tests {
         );
 
         let request = Request {
-            name: "search_vec_text".to_string(),
+            name: "search_vector_text".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
             in_fmt: Format::Json,
@@ -1469,14 +1469,14 @@ mod mcp_tests {
             schema: None,
         };
 
-        let response = search_vec_text(&mut input);
+        let response = search_vector_text(&mut input);
         // May fail if embedding model is not available, but endpoint should exist
         assert!(response.is_ok() || response.is_err());
     }
 
     #[test]
-    fn test_search_vec_text_requires_connection() {
-        use crate::helix_gateway::mcp::mcp::search_vec_text;
+    fn test_search_vector_text_requires_connection() {
+        use crate::helix_gateway::mcp::mcp::search_vector_text;
 
         let (engine, _temp_dir) = setup_engine();
 
@@ -1491,7 +1491,7 @@ mod mcp_tests {
         );
 
         let request = Request {
-            name: "search_vec_text".to_string(),
+            name: "search_vector_text".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
             in_fmt: Format::Json,
@@ -1505,7 +1505,7 @@ mod mcp_tests {
             schema: None,
         };
 
-        let response = search_vec_text(&mut input);
+        let response = search_vector_text(&mut input);
         assert!(response.is_err());
         assert!(response
             .unwrap_err()
@@ -1514,8 +1514,8 @@ mod mcp_tests {
     }
 
     #[test]
-    fn test_search_vec_text_input_validation() {
-        use crate::helix_gateway::mcp::mcp::search_vec_text;
+    fn test_search_vector_text_input_validation() {
+        use crate::helix_gateway::mcp::mcp::search_vector_text;
 
         let (engine, _temp_dir) = setup_engine();
 
@@ -1530,7 +1530,7 @@ mod mcp_tests {
             Bytes::from(r#"{"connection_id":"conn_vec_text_validate","data":{"label":"document"}}"#.to_string());
 
         let request = Request {
-            name: "search_vec_text".to_string(),
+            name: "search_vector_text".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
             in_fmt: Format::Json,
@@ -1544,7 +1544,7 @@ mod mcp_tests {
             schema: None,
         };
 
-        let response = search_vec_text(&mut input);
+        let response = search_vector_text(&mut input);
         assert!(response.is_err());
     }
 }

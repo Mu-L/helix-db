@@ -705,27 +705,27 @@ pub fn search_keyword(input: &mut MCPToolInput) -> Result<Response, GraphError> 
 }
 
 #[derive(Debug, Deserialize)]
-pub struct SearchVecTextData {
+pub struct SearchVectorTextData {
     pub query: String,
     pub label: String,
     pub k: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct SearchVecTextInput {
+pub struct SearchVectorTextInput {
     pub connection_id: String,
-    pub data: SearchVecTextData,
+    pub data: SearchVectorTextData,
 }
 
 #[mcp_handler]
-pub fn search_vec_text(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+pub fn search_vector_text(input: &mut MCPToolInput) -> Result<Response, GraphError> {
     use crate::helix_engine::traversal_core::ops::{
         g::G,
         vectors::search::SearchVAdapter,
     };
     use crate::helix_gateway::embedding_providers::{get_embedding_model, EmbeddingModel};
 
-    let req: SearchVecTextInput = match sonic_rs::from_slice(&input.request.body) {
+    let req: SearchVectorTextInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
@@ -772,21 +772,21 @@ pub fn search_vec_text(input: &mut MCPToolInput) -> Result<Response, GraphError>
 }
 
 #[derive(Debug, Deserialize)]
-pub struct SearchVecData {
+pub struct SearchVectorData {
     pub vector: Vec<f64>,
     pub k: usize,
     pub min_score: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct SearchVecInput {
+pub struct SearchVectorInput {
     pub connection_id: String,
-    pub data: SearchVecData,
+    pub data: SearchVectorData,
 }
 
 #[mcp_handler]
-pub fn search_vec(input: &mut MCPToolInput) -> Result<Response, GraphError> {
-    let req: SearchVecInput = match sonic_rs::from_slice(&input.request.body) {
+pub fn search_vector(input: &mut MCPToolInput) -> Result<Response, GraphError> {
+    let req: SearchVectorInput = match sonic_rs::from_slice(&input.request.body) {
         Ok(data) => data,
         Err(err) => return Err(GraphError::from(err)),
     };
