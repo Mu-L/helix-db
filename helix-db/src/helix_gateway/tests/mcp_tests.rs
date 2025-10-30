@@ -306,7 +306,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn1","edge_label":"knows","edge_type":"node","filter":null}"#
+            r#"{"connection_id":"conn1","data":{"edge_label":"knows","edge_type":"node","filter":null}}"#
                 .to_string(),
         );
 
@@ -362,7 +362,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn2","edge_label":"knows","edge_type":"node","filter":null}"#
+            r#"{"connection_id":"conn2","data":{"edge_label":"knows","edge_type":"node","filter":null}}"#
                 .to_string(),
         );
 
@@ -417,7 +417,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn3","edge_label":"knows","filter":null}"#.to_string(),
+            r#"{"connection_id":"conn3","data":{"edge_label":"knows","filter":null}}"#.to_string(),
         );
 
         let request = Request {
@@ -472,7 +472,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body =
-            Bytes::from(r#"{"connection_id":"conn4","edge_label":"knows","filter":null}"#.to_string());
+            Bytes::from(r#"{"connection_id":"conn4","data":{"edge_label":"knows","filter":null}}"#.to_string());
 
         let request = Request {
             name: "in_e_step".to_string(),
@@ -516,7 +516,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body =
-            Bytes::from(r#"{"connection_id":"conn5","node_type":"person"}"#.to_string());
+            Bytes::from(r#"{"connection_id":"conn5","data":{"node_type":"person"}}"#.to_string());
 
         let request = Request {
             name: "n_from_type".to_string(),
@@ -567,7 +567,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body =
-            Bytes::from(r#"{"connection_id":"conn6","edge_type":"knows"}"#.to_string());
+            Bytes::from(r#"{"connection_id":"conn6","data":{"edge_type":"knows"}}"#.to_string());
 
         let request = Request {
             name: "e_from_type".to_string(),
@@ -633,7 +633,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn7","filter":{"properties":[[{"key":"age","value":30,"operator":"=="}]],"filter_traversals":null}}"#
+            r#"{"connection_id":"conn7","data":{"filter":{"properties":[[{"key":"age","value":30,"operator":"=="}]],"filter_traversals":null}}}"#
                 .to_string(),
         );
 
@@ -701,7 +701,7 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         let request_body = Bytes::from(
-            r#"{"connection_id":"conn8","properties":"age","order":"asc"}"#.to_string(),
+            r#"{"connection_id":"conn8","data":{"properties":"age","order":"asc"}}"#.to_string(),
         );
 
         let request = Request {
