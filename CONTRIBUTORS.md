@@ -126,6 +126,8 @@ The heart of HelixDB containing all database functionality.
   - `analyzer/` - Type checking, validation, and diagnostics
   - `generator/` - Rust code generation from parsed queries
 
+- **`grammar.pest`** - 295-line Pest grammar defining HQL syntax
+
 - **`protocol/`** - Wire protocol and data types
 
 - **`utils/`** - Shared utilities across the codebase
@@ -136,6 +138,8 @@ The server process that hosts compiled queries and handles requests.
 **Files:**
 - `main.rs` - Initializes graph engine and HTTP gateway
 - `queries.rs` - Generated code placeholder (populated during build)
+- `docker-compose.yml` - Container orchestration configuration
+- `Dockerfile` - Development container image
 
 **Architecture:**
 - Loads compiled queries via inventory crate route discovery
@@ -148,33 +152,80 @@ The server process that hosts compiled queries and handles requests.
 - `HELIX_PORT` - Server port
 
 #### `/helix-cli/` - Command-Line Interface
-User-facing CLI for managing HelixDB instances.
+User-facing CLI for managing HelixDB instances and deployments.
 
-**Files:**
-- `main.rs` - Command implementations
-- `args.rs` - CLI argument definitions (clap)
-- `instance_manager.rs` - Instance lifecycle management
-- `types.rs` - Error types and version handling
-- `utils.rs` - File handling, port management, templates
+**Directory Structure:**
+```
+helix-cli/
+├── src/
+│   ├── commands/           # CLI command implementations
+│   │   ├── integrations/   # Cloud deployment integrations
+│   │   │   ├── docker_hub.rs
+│   │   │   ├── ecr.rs      # AWS ECR
+│   │   │   ├── fly.rs      # Fly.io
+│   │   │   ├── ghcr.rs     # GitHub Container Registry
+│   │   │   └── helix.rs    # Helix Cloud
+│   │   ├── add.rs         # Add dependencies
+│   │   ├── auth.rs        # Authentication (login/logout/create-key)
+│   │   ├── build.rs       # Build queries
+│   │   ├── check.rs       # Validate schema and queries
+│   │   ├── compile.rs     # Compile queries
+│   │   ├── delete.rs      # Delete instances
+│   │   ├── init.rs        # Initialize new projects
+│   │   ├── metrics.rs     # Metrics configuration
+│   │   ├── migrate.rs     # Database migrations
+│   │   ├── prune.rs       # Cleanup unused resources
+│   │   ├── pull.rs        # Pull from cloud deployments
+│   │   ├── push.rs        # Push to cloud deployments
+│   │   ├── start.rs       # Start instances
+│   │   ├── status.rs      # Instance status
+│   │   ├── stop.rs        # Stop instances
+│   │   └── update.rs      # Update CLI
+│   ├── tests/             # CLI tests
+│   ├── config.rs          # Configuration management
+│   ├── docker.rs          # Docker integration
+│   ├── errors.rs          # Error handling
+│   ├── lib.rs             # Library interface
+│   ├── main.rs            # Entry point
+│   ├── metrics_sender.rs  # Metrics collection
+│   ├── project.rs         # Project management
+│   ├── update.rs          # Self-update functionality
+│   └── utils.rs           # Utilities
+```
 
-**Commands:**
-- `helix install` - Clone and setup HelixDB repository
-- `helix init` - Create new project with template files
+**Available Commands:**
+- `helix add` - Add dependencies to project
+- `helix auth` - Authentication management (login/logout/create-key)
+- `helix build` - Build queries without deploying
 - `helix check` - Validate schema and query syntax
-- `helix deploy` - Compile queries and start new instance
-- `helix redeploy` - Update existing instance (local/remote)
-- `helix instances` - List all running instances
-- `helix start/stop` - Control instance lifecycle
+- `helix compile` - Compile queries to Rust code
 - `helix delete` - Remove instance and data
-- `helix save` - Export instance data
+- `helix init` - Create new project with template files
+- `helix metrics` - Configure metrics collection (full/basic/off/status)
+- `helix migrate` - Run database migrations
+- `helix prune` - Clean up unused resources
+- `helix pull` - Pull deployment from cloud
+- `helix push` - Push deployment to cloud (dev/staging/prod)
+- `helix start` - Start stopped instances
+- `helix status` - Show instance status
+- `helix stop` - Stop running instances
+- `helix update` - Update CLI to latest version
 
-**Deploy Flow:**
+**Deployment Integrations:**
+- Helix Cloud (managed hosting)
+- AWS ECR (Elastic Container Registry)
+- Fly.io
+- Docker Hub
+- GitHub Container Registry (GHCR)
+- Local deployment
+
+**Build & Deploy Flow:**
 1. Read `.hx` files (schema.hx, queries.hx)
 2. Parse and analyze using helixc
 3. Generate Rust code with handler functions
 4. Write to container/src/queries.rs
 5. Build release binary with optimizations
-6. Start instance with unique ID and port
+6. Push to target deployment (cloud or local)
 
 ### Supporting Components
 
@@ -183,9 +234,6 @@ Procedural macros for HelixDB including route registration and code generation u
 
 #### `/hql-tests/` - HQL Test Suite
 Test files for the Helix Query Language (HQL).
-
-#### `/docs/` - Documentation
-Additional documentation and guides.
 
 #### `/metrics/` - Performance Metrics
 Performance benchmarking and metrics collection.
@@ -227,8 +275,78 @@ QUERY addUser(name: String, age: I64) =>
 - Minimize dependencies
 - Use asserts liberally in production code
 
+### Linting
+
+Run Clippy to check code quality:
+```bash
+./clippy_check.sh
+```
+
+The `clippy_check.sh` script at the repository root runs clippy with project-specific rules:
+- Treats warnings as errors
+- Excludes `hql-tests` crate
+- Can run in dashboard mode with additional features
+
 ### Testing
-- Write benchmarks before optimizing
+
+HelixDB has a comprehensive test suite organized across multiple levels:
+
+#### Test Structure
+
+**Unit Tests** (within `src/` directories)
+- `/helix-db/src/helix_engine/tests/` - Engine unit tests
+- `/helix-db/src/helix_gateway/tests/` - Gateway unit tests
+- Inline `#[cfg(test)]` modules throughout the codebase
+
+**Integration Tests**
+- `/helix-db/tests/` - Database integration tests
+
+**CLI Tests**
+- `/helix-cli/src/tests/` - Command-line interface tests
+  - `check_tests.rs` - Validation testing
+  - `compile_tests.rs` - Compilation testing
+  - `init_tests.rs` - Project initialization
+  - `project_tests.rs` - Project management
+
+**HQL End-to-End Tests**
+- `/hql-tests/tests/` - 54+ test directories covering:
+  - Graph operations (add_n, add_e, traversals)
+  - Vector search (search_v_with_embed)
+  - Text search (search_bm25)
+  - Aggregations and counting
+  - Migrations
+  - Cloud queries
+  - Rerankers
+  - Knowledge graphs
+  - Benchmarks
+
+**Benchmark Tests**
+- `/helix-db/benches/bm25_benches.rs` - Full-text search performance
+- `/helix-db/benches/hnsw_benches.rs` - Vector search performance
+
+#### Running Tests
+
+```bash
+# Run all tests
+cargo test --workspace
+
+# Run specific crate tests
+cargo test -p helix-db
+cargo test -p helix-cli
+
+# Run HQL tests
+cd hql-tests
+./test.sh
+
+# Run benchmarks
+cargo test --benches
+```
+
+#### Testing Guidelines
+- Write tests for all new features
+- Include both positive and negative test cases
+- Add benchmarks before optimizing performance-critical code
+- Ensure tests pass locally before opening PR
 - DST (Deterministic Simulation Testing) coming soon
 
 ### Performance
@@ -300,5 +418,3 @@ QUERY addUser(name: String, age: I64) =>
 AGPL (Affero General Public License)
 
 For commercial support: founders@helix-db.com
-message.txt
-5 KB
