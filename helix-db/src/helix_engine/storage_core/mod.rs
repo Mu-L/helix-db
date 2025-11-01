@@ -1,10 +1,13 @@
+pub mod metadata;
 pub mod storage_methods;
+pub mod storage_migration;
 pub mod version_info;
 
 use crate::{
     helix_engine::{
         bm25::bm25::HBM25Config,
         storage_core::{
+            metadata::StorageMetadata,
             storage_methods::{DBMethods, StorageMethods},
             version_info::VersionInfo,
         },
@@ -32,6 +35,7 @@ const DB_NODES: &str = "nodes"; // for node data (n:)
 const DB_EDGES: &str = "edges"; // for edge data (e:)
 const DB_OUT_EDGES: &str = "out_edges"; // for outgoing edge indices (o:)
 const DB_IN_EDGES: &str = "in_edges"; // for incoming edge indices (i:)
+const DB_STORAGE_METADATA: &str = "storage_metadata"; // for storage metadata key/value pairs
 
 pub type NodeId = u128;
 pub type EdgeId = u128;
@@ -52,6 +56,7 @@ pub struct HelixGraphStorage {
     pub secondary_indices: HashMap<String, Database<Bytes, U128<BE>>>,
     pub vectors: VectorCore,
     pub bm25: Option<HBM25Config>,
+    pub metadata_db: Database<Bytes, Bytes>,
     pub version_info: VersionInfo,
 
     pub storage_config: StorageConfig,
@@ -125,6 +130,12 @@ impl HelixGraphStorage {
             .name(DB_IN_EDGES)
             .create(&mut wtxn)?;
 
+        let metadata_db: Database<Bytes, Bytes> = graph_env
+            .database_options()
+            .types::<Bytes, Bytes>()
+            .name(DB_STORAGE_METADATA)
+            .create(&mut wtxn)?;
+
         let mut secondary_indices = HashMap::new();
         if let Some(indexes) = config.get_graph_config().secondary_indices {
             for index in indexes {
@@ -162,7 +173,8 @@ impl HelixGraphStorage {
         );
 
         wtxn.commit()?;
-        Ok(Self {
+
+        let mut storage = Self {
             graph_env,
             nodes_db,
             edges_db,
@@ -171,9 +183,14 @@ impl HelixGraphStorage {
             secondary_indices,
             vectors,
             bm25,
+            metadata_db,
             storage_config,
             version_info,
-        })
+        };
+
+        storage_migration::migrate(&mut storage)?;
+
+        Ok(storage)
     }
 
     /// Used because in the case the key changes in the future.
