@@ -604,11 +604,21 @@ pub struct ShortestPath {
 }
 
 #[derive(Clone)]
+pub enum WeightCalculation {
+    /// Simple property access: edge.get_property("weight")
+    Property(GenRef<String>),
+    /// Mathematical expression: calculated from edge/source/dest properties
+    Expression(String),
+    /// Default weight of 1.0
+    Default,
+}
+
+#[derive(Clone)]
 pub struct ShortestPathDijkstras {
     pub label: Option<GenRef<String>>,
     pub from: Option<GenRef<String>>,
     pub to: Option<GenRef<String>>,
-    pub weight_property: Option<GenRef<String>>,
+    pub weight_calculation: WeightCalculation,
 }
 
 #[derive(Clone)]
@@ -680,7 +690,7 @@ impl Display for ShortestPathDijkstras {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "shortest_path_with_algorithm({}, {}, {}, PathAlgorithm::Dijkstra)",
+            "shortest_path_with_algorithm({}, {}, {}, PathAlgorithm::Dijkstra, ",
             self.label
                 .as_ref()
                 .map_or("None".to_string(), |label| format!("Some({label})")),
@@ -690,7 +700,30 @@ impl Display for ShortestPathDijkstras {
             self.to
                 .as_ref()
                 .map_or("None".to_string(), |to| format!("Some(&{to})"))
-        )
+        )?;
+
+        // Generate the weight calculation closure
+        match &self.weight_calculation {
+            WeightCalculation::Property(prop) => {
+                write!(
+                    f,
+                    "|edge, _src_node, _dst_node| -> Result<f64, GraphError> {{ Ok(edge.get_property({})?.as_f64()?) }}",
+                    prop
+                )?;
+            }
+            WeightCalculation::Expression(expr) => {
+                write!(
+                    f,
+                    "|edge, src_node, dst_node| -> Result<f64, GraphError> {{ Ok({}) }}",
+                    expr
+                )?;
+            }
+            WeightCalculation::Default => {
+                write!(f, "helix_db::helix_engine::traversal_core::ops::util::paths::default_weight_fn")?;
+            }
+        }
+
+        write!(f, ")")
     }
 }
 
@@ -698,7 +731,7 @@ impl Display for ShortestPathBFS {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "shortest_path_with_algorithm({}, {}, {}, PathAlgorithm::BFS)",
+            "shortest_path_with_algorithm({}, {}, {}, PathAlgorithm::BFS, helix_db::helix_engine::traversal_core::ops::util::paths::default_weight_fn)",
             self.label
                 .as_ref()
                 .map_or("None".to_string(), |label| format!("Some({label})")),

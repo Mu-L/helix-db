@@ -466,6 +466,111 @@ pub struct ExistsExpression {
     pub expr: Box<Expression>,
 }
 
+/// Mathematical function types
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MathFunction {
+    // Arithmetic (binary operations)
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Pow,
+    Mod,
+
+    // Unary math functions
+    Abs,
+    Sqrt,
+    Ln,
+    Log10,
+    Log,    // Binary: LOG(x, base)
+    Exp,
+    Ceil,
+    Floor,
+    Round,
+
+    // Trigonometry
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Atan2,  // Binary: ATAN2(y, x)
+
+    // Constants (nullary)
+    Pi,
+    E,
+
+    // Aggregates (unary, operates on collections)
+    Min,
+    Max,
+    Sum,
+    Avg,
+    Count,
+}
+
+impl MathFunction {
+    /// Returns the expected number of arguments for this function
+    pub fn arity(&self) -> usize {
+        match self {
+            MathFunction::Pi | MathFunction::E => 0,
+            MathFunction::Abs | MathFunction::Sqrt | MathFunction::Ln |
+            MathFunction::Log10 | MathFunction::Exp | MathFunction::Ceil |
+            MathFunction::Floor | MathFunction::Round | MathFunction::Sin |
+            MathFunction::Cos | MathFunction::Tan | MathFunction::Asin |
+            MathFunction::Acos | MathFunction::Atan | MathFunction::Min |
+            MathFunction::Max | MathFunction::Sum | MathFunction::Avg |
+            MathFunction::Count => 1,
+            MathFunction::Add | MathFunction::Sub | MathFunction::Mul |
+            MathFunction::Div | MathFunction::Pow | MathFunction::Mod |
+            MathFunction::Atan2 | MathFunction::Log => 2,
+        }
+    }
+
+    /// Returns the function name as a string
+    pub fn name(&self) -> &'static str {
+        match self {
+            MathFunction::Add => "ADD",
+            MathFunction::Sub => "SUB",
+            MathFunction::Mul => "MUL",
+            MathFunction::Div => "DIV",
+            MathFunction::Pow => "POW",
+            MathFunction::Mod => "MOD",
+            MathFunction::Abs => "ABS",
+            MathFunction::Sqrt => "SQRT",
+            MathFunction::Ln => "LN",
+            MathFunction::Log10 => "LOG10",
+            MathFunction::Log => "LOG",
+            MathFunction::Exp => "EXP",
+            MathFunction::Ceil => "CEIL",
+            MathFunction::Floor => "FLOOR",
+            MathFunction::Round => "ROUND",
+            MathFunction::Sin => "SIN",
+            MathFunction::Cos => "COS",
+            MathFunction::Tan => "TAN",
+            MathFunction::Asin => "ASIN",
+            MathFunction::Acos => "ACOS",
+            MathFunction::Atan => "ATAN",
+            MathFunction::Atan2 => "ATAN2",
+            MathFunction::Pi => "PI",
+            MathFunction::E => "E",
+            MathFunction::Min => "MIN",
+            MathFunction::Max => "MAX",
+            MathFunction::Sum => "SUM",
+            MathFunction::Avg => "AVG",
+            MathFunction::Count => "COUNT",
+        }
+    }
+}
+
+/// Function call AST node
+#[derive(Debug, Clone)]
+pub struct MathFunctionCall {
+    pub function: MathFunction,
+    pub args: Vec<Expression>,
+    pub loc: Loc,
+}
+
 #[derive(Clone)]
 pub enum ExpressionType {
     Traversal(Box<Traversal>),
@@ -484,6 +589,7 @@ pub enum ExpressionType {
     Or(Vec<Expression>),
     SearchVector(SearchVector),
     BM25Search(BM25Search),
+    MathFunctionCall(MathFunctionCall),
     Empty,
 }
 
@@ -514,6 +620,7 @@ impl Debug for ExpressionType {
             ExpressionType::Or(exprs) => write!(f, "Or({exprs:?})"),
             ExpressionType::SearchVector(sv) => write!(f, "SearchVector({sv:?})"),
             ExpressionType::BM25Search(bm25) => write!(f, "BM25Search({bm25:?})"),
+            ExpressionType::MathFunctionCall(mfc) => write!(f, "MathFunctionCall({mfc:?})"),
             ExpressionType::Empty => write!(f, "Empty"),
         }
     }
@@ -537,6 +644,7 @@ impl Display for ExpressionType {
             ExpressionType::Or(exprs) => write!(f, "Or({exprs:?})"),
             ExpressionType::SearchVector(sv) => write!(f, "SearchVector({sv:?})"),
             ExpressionType::BM25Search(bm25) => write!(f, "BM25Search({bm25:?})"),
+            ExpressionType::MathFunctionCall(mfc) => write!(f, "{}({:?})", mfc.function.name(), mfc.args),
             ExpressionType::Empty => write!(f, "Empty"),
         }
     }
@@ -742,6 +850,17 @@ pub struct ShortestPath {
     pub type_arg: Option<String>,
 }
 
+/// Weight calculation expression for shortest path
+#[derive(Debug, Clone)]
+pub enum WeightExpression {
+    /// Simple property access: _::{weight}
+    Property(String),
+    /// Mathematical expression (can include function calls)
+    Expression(Box<Expression>),
+    /// Default weight (constant 1.0)
+    Default,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShortestPathDijkstras {
     pub loc: Loc,
@@ -749,6 +868,8 @@ pub struct ShortestPathDijkstras {
     pub to: Option<IdType>,
     pub type_arg: Option<String>,
     pub inner_traversal: Option<Traversal>,
+    // New field for better weight expression handling
+    pub weight_expr: Option<WeightExpression>,
 }
 
 #[derive(Debug, Clone)]

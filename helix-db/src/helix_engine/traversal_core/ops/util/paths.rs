@@ -5,13 +5,41 @@ use crate::{
         types::GraphError,
     },
     protocol::value::Value,
-    utils::label_hash::hash_label,
+    utils::{items::{Edge, Node}, label_hash::hash_label},
 };
 use heed3::RoTxn;
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
 };
+
+/// Default weight function for backward compatibility
+/// Looks for "weight" property on edge, defaults to 1.0
+pub fn default_weight_fn<'arena>(
+    edge: &Edge<'arena>,
+    _src_node: &Node<'arena>,
+    _dst_node: &Node<'arena>,
+) -> Result<f64, GraphError> {
+    Ok(edge
+        .properties
+        .as_ref()
+        .and_then(|props| props.get("weight"))
+        .and_then(|w| match w {
+            Value::F32(f) => Some(*f as f64),
+            Value::F64(f) => Some(*f),
+            Value::I8(i) => Some(*i as f64),
+            Value::I16(i) => Some(*i as f64),
+            Value::I32(i) => Some(*i as f64),
+            Value::I64(i) => Some(*i as f64),
+            Value::U8(i) => Some(*i as f64),
+            Value::U16(i) => Some(*i as f64),
+            Value::U32(i) => Some(*i as f64),
+            Value::U64(i) => Some(*i as f64),
+            Value::U128(i) => Some(*i as f64),
+            _ => None,
+        })
+        .unwrap_or(1.0))
+}
 
 #[derive(Debug, Clone)]
 pub enum PathType {
@@ -25,10 +53,11 @@ pub enum PathAlgorithm {
     Dijkstra,
 }
 
-pub struct ShortestPathIterator<'db, 'arena, 'txn, I>
+pub struct ShortestPathIterator<'db, 'arena, 'txn, I, F>
 where
     'db: 'arena,
     'arena: 'txn,
+    F: Fn(&Edge<'arena>, &Node<'arena>, &Node<'arena>) -> Result<f64, GraphError>,
 {
     pub arena: &'arena bumpalo::Bump,
     pub iter: I,
@@ -37,6 +66,7 @@ where
     storage: &'db HelixGraphStorage,
     txn: &'txn RoTxn<'db>,
     algorithm: PathAlgorithm,
+    weight_fn: F,
 }
 
 #[derive(Debug, Clone)]
@@ -74,7 +104,8 @@ impl<
     'arena: 'txn,
     'txn,
     I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
-> Iterator for ShortestPathIterator<'db, 'arena, 'txn, I>
+    F: Fn(&Edge<'arena>, &Node<'arena>, &Node<'arena>) -> Result<f64, GraphError>,
+> Iterator for ShortestPathIterator<'db, 'arena, 'txn, I, F>
 {
     type Item = Result<TraversalValue<'arena>, GraphError>;
 
@@ -98,7 +129,10 @@ impl<
     }
 }
 
-impl<'db, 'arena, 'txn, I> ShortestPathIterator<'db, 'arena, 'txn, I> {
+impl<'db, 'arena, 'txn, I, F> ShortestPathIterator<'db, 'arena, 'txn, I, F>
+where
+    F: Fn(&Edge<'arena>, &Node<'arena>, &Node<'arena>) -> Result<f64, GraphError>,
+{
     fn reconstruct_path(
         &self,
         parent: &HashMap<u128, (u128, u128)>,
@@ -231,28 +265,26 @@ impl<'db, 'arena, 'txn, I> ShortestPathIterator<'db, 'arena, 'txn, I> {
                 let (_, value) = result.unwrap(); // TODO: handle error
                 let (edge_id, to_node) = HelixGraphStorage::unpack_adj_edge_data(value).unwrap(); // TODO: handle error
 
-                let edge = self.storage.get_edge(self.txn, &edge_id, self.arena).unwrap(); // TODO: handle error
+                let edge = match self.storage.get_edge(self.txn, &edge_id, self.arena) {
+                    Ok(e) => e,
+                    Err(e) => return Some(Err(e)),
+                };
 
-                // Extract weight from edge properties, default to 1.0 if not present
-                let weight = edge
-                    .properties
-                    .as_ref()
-                    .and_then(|props| props.get("weight"))
-                    .and_then(|w| match w {
-                        Value::F32(f) => Some(*f as f64),
-                        Value::F64(f) => Some(*f),
-                        Value::I8(i) => Some(*i as f64),
-                        Value::I16(i) => Some(*i as f64),
-                        Value::I32(i) => Some(*i as f64),
-                        Value::I64(i) => Some(*i as f64),
-                        Value::U8(i) => Some(*i as f64),
-                        Value::U16(i) => Some(*i as f64),
-                        Value::U32(i) => Some(*i as f64),
-                        Value::U64(i) => Some(*i as f64),
-                        Value::Boolean(i) => Some(*i as i8 as f64),
-                        _ => None,
-                    })
-                    .unwrap_or(1.0);
+                // Fetch nodes for full context in weight calculation
+                let src_node = match self.storage.get_node(self.txn, &current_id, self.arena) {
+                    Ok(n) => n,
+                    Err(e) => return Some(Err(e)),
+                };
+                let dst_node = match self.storage.get_node(self.txn, &to_node, self.arena) {
+                    Ok(n) => n,
+                    Err(e) => return Some(Err(e)),
+                };
+
+                // Call custom weight function with full context
+                let weight = match (self.weight_fn)(&edge, &src_node, &dst_node) {
+                    Ok(w) => w,
+                    Err(e) => return Some(Err(e)),
+                };
 
                 if weight < 0.0 {
                     return Some(Err(GraphError::TraversalError(
@@ -304,15 +336,29 @@ pub trait ShortestPathAdapter<'db, 'arena, 'txn, 's, I>:
         edge_label: Option<&'arena str>,
         from: Option<&'s u128>,
         to: Option<&'s u128>,
-    ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I>>;
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        ShortestPathIterator<
+            'db,
+            'arena,
+            'txn,
+            I,
+            fn(&Edge<'arena>, &Node<'arena>, &Node<'arena>) -> Result<f64, GraphError>,
+        >,
+    >;
 
-    fn shortest_path_with_algorithm(
+    fn shortest_path_with_algorithm<F>(
         self,
         edge_label: Option<&'arena str>,
         from: Option<&'s u128>,
         to: Option<&'s u128>,
         algorithm: PathAlgorithm,
-    ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I>>;
+        weight_fn: F,
+    ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I, F>>
+    where
+        F: Fn(&Edge<'arena>, &Node<'arena>, &Node<'arena>) -> Result<f64, GraphError>;
 }
 
 impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
@@ -324,18 +370,33 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         edge_label: Option<&'arena str>,
         from: Option<&'s u128>,
         to: Option<&'s u128>,
-    ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I>> {
-        self.shortest_path_with_algorithm(edge_label, from, to, PathAlgorithm::BFS)
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        ShortestPathIterator<
+            'db,
+            'arena,
+            'txn,
+            I,
+            fn(&Edge<'arena>, &Node<'arena>, &Node<'arena>) -> Result<f64, GraphError>,
+        >,
+    > {
+        self.shortest_path_with_algorithm(edge_label, from, to, PathAlgorithm::BFS, default_weight_fn)
     }
 
     #[inline]
-    fn shortest_path_with_algorithm(
+    fn shortest_path_with_algorithm<F>(
         self,
         edge_label: Option<&'arena str>,
         from: Option<&'s u128>,
         to: Option<&'s u128>,
         algorithm: PathAlgorithm,
-    ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I>> {
+        weight_fn: F,
+    ) -> RoTraversalIterator<'db, 'arena, 'txn, ShortestPathIterator<'db, 'arena, 'txn, I, F>>
+    where
+        F: Fn(&Edge<'arena>, &Node<'arena>, &Node<'arena>) -> Result<f64, GraphError>,
+    {
         RoTraversalIterator {
             arena: self.arena,
             inner: ShortestPathIterator {
@@ -350,6 +411,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                 storage: self.storage,
                 txn: self.txn,
                 algorithm,
+                weight_fn,
             },
             storage: self.storage,
             txn: self.txn,

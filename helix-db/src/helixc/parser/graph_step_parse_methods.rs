@@ -2,7 +2,7 @@ use crate::helixc::parser::{
     HelixParser, ParserError, Rule,
     location::HasLoc,
     types::{
-        Aggregate, BooleanOp, BooleanOpType, Closure, Exclude, Expression, FieldAddition,
+        Aggregate, BooleanOp, BooleanOpType, Closure, Exclude, Expression, ExpressionType, FieldAddition,
         FieldValue, FieldValueType, GraphStep, GraphStepType, GroupBy, IdType, MMRDistance, Object, OrderBy,
         OrderByType, RerankMMR, RerankRRF, ShortestPath, ShortestPathBFS, ShortestPathDijkstras, Step, StepType, Update,
     },
@@ -434,48 +434,74 @@ impl HelixParser {
                 }
             }
             Rule::shortest_path_dijkstras => {
-                let (type_arg, inner_traversal, from, to) =
+                let (type_arg, weight_expression, from, to) =
                     match pair.clone().into_inner().try_fold(
                         (None, None, None, None),
-                        |(type_arg, inner_traversal, from, to), p| match p.as_rule() {
+                        |(type_arg, weight_expr, from, to), p| match p.as_rule() {
                             Rule::type_args => Ok((
                                 Some(p.try_inner_next()?.as_str().to_string()),
-                                inner_traversal,
+                                weight_expr,
                                 from,
                                 to,
                             )),
-                            Rule::anonymous_traversal => Ok((
-                                type_arg,
-                                Some(self.parse_anon_traversal(p).unwrap()),
-                                from,
-                                to,
-                            )),
+                            Rule::math_expression => {
+                                // Parse the math_expression into an Expression
+                                let expr = self.parse_math_expression(p)?;
+                                Ok((
+                                    type_arg,
+                                    Some(expr),
+                                    from,
+                                    to,
+                                ))
+                            },
                             Rule::to_from => match p.into_inner().next() {
                                 Some(p) => match p.as_rule() {
                                     Rule::to => Ok((
                                         type_arg,
-                                        inner_traversal,
+                                        weight_expr,
                                         from,
                                         Some(p.into_inner().next().unwrap().as_str().to_string()),
                                     )),
                                     Rule::from => Ok((
                                         type_arg,
-                                        inner_traversal,
+                                        weight_expr,
                                         Some(p.into_inner().next().unwrap().as_str().to_string()),
                                         to,
                                     )),
                                     _ => unreachable!(),
                                 },
-                                None => Ok((type_arg, inner_traversal, from, to)),
+                                None => Ok((type_arg, weight_expr, from, to)),
                             },
-                            _ => Ok((type_arg, inner_traversal, from, to)),
+                            _ => Ok((type_arg, weight_expr, from, to)),
                         },
                     ) {
-                        Ok((type_arg, inner_traversal, from, to)) => {
-                            (type_arg, inner_traversal, from, to)
+                        Ok((type_arg, weight_expr, from, to)) => {
+                            (type_arg, weight_expr, from, to)
                         }
                         Err(e) => return Err(e),
                     };
+
+                // Determine weight expression type
+                let (inner_traversal, weight_expr_typed) = if let Some(expr) = weight_expression {
+                    // Check if it's a simple property access or a complex expression
+                    let weight_type = match &expr.expr {
+                        ExpressionType::Traversal(_trav) => {
+                            // For now, keep the traversal and create a Property weight expression
+                            // TODO: Extract property name from traversal for simple cases
+                            Some(crate::helixc::parser::types::WeightExpression::Expression(Box::new(expr.clone())))
+                        }
+                        ExpressionType::MathFunctionCall(_) => {
+                            Some(crate::helixc::parser::types::WeightExpression::Expression(Box::new(expr.clone())))
+                        }
+                        _ => {
+                            Some(crate::helixc::parser::types::WeightExpression::Expression(Box::new(expr.clone())))
+                        }
+                    };
+                    (None, weight_type)
+                } else {
+                    (None, Some(crate::helixc::parser::types::WeightExpression::Default))
+                };
+
                 GraphStep {
                     loc: pair.loc(),
                     step: GraphStepType::ShortestPathDijkstras(ShortestPathDijkstras {
@@ -490,6 +516,7 @@ impl HelixParser {
                         }),
                         type_arg,
                         inner_traversal,
+                        weight_expr: weight_expr_typed,
                     }),
                 }
             }
