@@ -163,10 +163,6 @@ impl MCPHandler {
 
 inventory::collect!(MCPHandlerSubmission);
 
-// Maximum number of items to iterate through when looking for the first result
-// This prevents unbounded memory growth if the iterator needs to traverse many items
-const MAX_ITERATION_ATTEMPTS: usize = 10000;
-
 /// Helper function to execute a tool step on a connection
 fn execute_tool_step(
     input: &mut MCPToolInput,
