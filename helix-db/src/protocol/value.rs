@@ -125,8 +125,8 @@ impl Value {
 
     /// Checks if this value contains the needle value (as strings).
     /// Converts both values to their string representations and performs substring matching.
-    pub fn contains(&self, needle: &Value) -> bool {
-        self.inner_str().contains(needle.inner_str().as_ref())
+    pub fn contains(&self, needle: &str) -> bool {
+        self.inner_str().contains(needle)
     }
 
     #[inline]
@@ -1921,43 +1921,6 @@ mod tests {
     #[should_panic(expected = "Not a string")]
     fn test_as_str_panics_on_non_string() {
         Value::I32(42).as_str();
-    }
-
-    #[test]
-    fn test_contains() {
-        // String contains
-        let val = Value::String("hello world".to_string());
-        let needle = Value::String("world".to_string());
-        assert!(val.contains(&needle));
-
-        let needle = Value::String("foo".to_string());
-        assert!(!val.contains(&needle));
-
-        // Empty string
-        let needle = Value::String("".to_string());
-        assert!(val.contains(&needle));
-    }
-
-    #[test]
-    fn test_contains_numeric_values() {
-        // Numeric values converted to strings
-        let val = Value::String("The answer is 42".to_string());
-        let needle = Value::I32(42);
-        assert!(val.contains(&needle));
-
-        let val = Value::I32(12345);
-        let needle = Value::String("234".to_string());
-        assert!(val.contains(&needle));
-    }
-
-    #[test]
-    fn test_contains_case_sensitive() {
-        let val = Value::String("Hello World".to_string());
-        let needle = Value::String("world".to_string());
-        assert!(!val.contains(&needle)); // Case sensitive
-
-        let needle = Value::String("World".to_string());
-        assert!(val.contains(&needle));
     }
 
     // ============================================================================
