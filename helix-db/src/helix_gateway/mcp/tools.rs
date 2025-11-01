@@ -4,12 +4,10 @@ use crate::{
         traversal_core::{
             ops::{
                 g::G,
-                in_::in_::InAdapter,
-                in_::in_e::InEdgesAdapter,
-                out::out::OutAdapter,
-                out::out_e::OutEdgesAdapter,
+                in_::{in_::InAdapter, in_e::InEdgesAdapter},
+                out::{out::OutAdapter, out_e::OutEdgesAdapter},
                 source::{e_from_type::EFromTypeAdapter, n_from_type::NFromTypeAdapter},
-                util::order::OrderByAdapter,
+                util::{order::OrderByAdapter, range::RangeAdapter},
             },
             traversal_iter::RoTraversalIterator,
             traversal_value::TraversalValue,
@@ -312,7 +310,7 @@ where
             let edge_kind = *edge_type;
             let transformed = match edge_kind {
                 EdgeType::Node => stream.map(|iter| iter.out_node(label)),
-                EdgeType::Vec => stream.map(|iter| iter.out_vec(label, false)),
+                EdgeType::Vec => stream.map(|iter| iter.out_vec(label, true)),
             };
 
             if let Some(filter) = filter.clone() {
@@ -340,7 +338,7 @@ where
             let edge_kind = *edge_type;
             let transformed = match edge_kind {
                 EdgeType::Node => stream.map(|iter| iter.in_node(label)),
-                EdgeType::Vec => stream.map(|iter| iter.in_vec(label, false)),
+                EdgeType::Vec => stream.map(|iter| iter.in_vec(label, true)),
             };
 
             if let Some(filter) = filter.clone() {
@@ -390,7 +388,7 @@ where
             use crate::helix_engine::traversal_core::ops::vectors::brute_force_search::BruteForceSearchVAdapter;
 
             let query_vec = arena.alloc_slice_copy(vector);
-            let mut results = stream.map(|iter| iter.brute_force_search_v(query_vec, *k));
+            let mut results = stream.map(|iter| iter.range(0, *k*3).brute_force_search_v(query_vec, *k));
 
             // Apply min_score filter if specified
             if let Some(min_score_val) = min_score {
