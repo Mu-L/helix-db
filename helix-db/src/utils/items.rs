@@ -64,11 +64,17 @@ impl<'arena> serde::Serialize for Node<'arena> {
 }
 
 impl<'arena> Node<'arena> {
+    /// Gets property from node
+    ///
+    /// NOTE: the `'arena` lifetime which comes from the fact the node's ImmutablePropertiesMap
     #[inline(always)]
     pub fn get_property(&self, prop: &str) -> Option<&'arena Value> {
         self.properties.and_then(|value| value.get(prop))
     }
 
+    /// Deserializes bytes into a node using a custom deserializer that allocates into the provided arena
+    ///
+    /// NOTE: in this method, fixint encoding is used
     #[inline(always)]
     pub fn from_bincode_bytes<'txn>(
         id: u128,
@@ -188,11 +194,17 @@ impl<'arena> serde::Serialize for Edge<'arena> {
 }
 
 impl<'arena> Edge<'arena> {
+    /// Gets property from node
+    ///
+    /// NOTE: the `'arena` lifetime which comes from the fact the node's ImmutablePropertiesMap
     #[inline(always)]
     pub fn get_property(&self, prop: &str) -> Option<&'arena Value> {
         self.properties.as_ref().and_then(|value| value.get(prop))
     }
 
+    // Deserializes bytes into an edge using a custom deserializer that allocates into the provided arena
+    ///
+    /// NOTE: in this method, fixint encoding is used
     #[inline(always)]
     pub fn from_bincode_bytes<'txn>(
         id: u128,
