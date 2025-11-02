@@ -7,6 +7,7 @@
 use crate::protocol::custom_serde::edge_serde::EdgeDeSeed;
 use crate::protocol::custom_serde::node_serde::NodeDeSeed;
 use crate::protocol::value::Value;
+use crate::utils::id::uuid_str_from_buf;
 use crate::utils::properties::ImmutablePropertiesMap;
 use bincode::Options;
 use std::cmp::Ordering;
@@ -44,8 +45,9 @@ impl<'arena> serde::Serialize for Node<'arena> {
         // Check if this is a human-readable format (like JSON)
         if serializer.is_human_readable() {
             // Include id for JSON serialization
+            let mut buffer = [0u8, 36];
             let mut state = serializer.serialize_struct("Node", 4)?;
-            state.serialize_field("id", &self.id)?;
+            state.serialize_field("id", uuid_str_from_buf(self.id, &mut buffer))?;
             state.serialize_field("label", self.label)?;
             state.serialize_field("version", &self.version)?;
             state.serialize_field("properties", &self.properties)?;
@@ -163,8 +165,9 @@ impl<'arena> serde::Serialize for Edge<'arena> {
         // Check if this is a human-readable format (like JSON)
         if serializer.is_human_readable() {
             // Include id for JSON serialization
+            let mut buffer = [0u8; 36];
             let mut state = serializer.serialize_struct("Edge", 6)?;
-            state.serialize_field("id", &self.id)?;
+            state.serialize_field("id", uuid_str_from_buf(self.id, &mut buffer))?;
             state.serialize_field("label", self.label)?;
             state.serialize_field("version", &self.version)?;
             state.serialize_field("from_node", &self.from_node)?;

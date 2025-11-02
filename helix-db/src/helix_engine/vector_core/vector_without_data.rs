@@ -1,7 +1,7 @@
 use crate::{
     helix_engine::types::VectorError,
     protocol::{custom_serde::vector_serde::VectoWithoutDataDeSeed, value::Value},
-    utils::properties::ImmutablePropertiesMap,
+    utils::{id::uuid_str_from_buf, properties::ImmutablePropertiesMap},
 };
 use bincode::Options;
 use core::fmt;
@@ -41,8 +41,9 @@ impl<'arena> Serialize for VectorWithoutData<'arena> {
         // Check if this is a human-readable format (like JSON)
         if serializer.is_human_readable() {
             // Include id for JSON serialization
+            let mut buffer = [0u8; 36];
             let mut state = serializer.serialize_struct("VectorWithoutData", 6)?;
-            state.serialize_field("id", &self.id)?;
+            state.serialize_field("id", uuid_str_from_buf(self.id, &mut buffer))?;
             state.serialize_field("label", self.label)?;
             state.serialize_field("version", &self.version)?;
             state.serialize_field("deleted", &self.deleted)?;

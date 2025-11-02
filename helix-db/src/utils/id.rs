@@ -133,6 +133,13 @@ pub fn uuid_str(id: u128, arena: &bumpalo::Bump) -> &str {
     uuid.as_hyphenated().encode_lower(buffer)
 }
 
+#[inline]
+pub fn uuid_str_from_buf(id: u128, buffer: &mut [u8]) -> &str {
+    assert!(buffer.len() == 36, "length of hyphenated buffer is 36 characters long");
+    let uuid = uuid::Uuid::from_u128(id);
+    uuid.as_hyphenated().encode_lower(buffer)
+}
+
 #[cfg(test)]
 mod tests {
     use sonic_rs::json;

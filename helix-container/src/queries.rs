@@ -1,6 +1,428 @@
 // DEFAULT CODE
-use helix_db::helix_engine::traversal_core::config::Config;
+// use helix_db::helix_engine::traversal_core::config::Config;
+
+// pub fn config() -> Option<Config> {
+//     None
+// }
+
+use bumpalo::Bump;
+use chrono::{DateTime, Utc};
+use heed3::RoTxn;
+use helix_db::{
+    embed, embed_async, field_addition_from_old_field, field_addition_from_value, field_type_cast,
+    helix_engine::{
+        reranker::{
+            RerankAdapter,
+            fusion::{DistanceMethod, MMRReranker, RRFReranker},
+        },
+        traversal_core::{
+            config::{Config, GraphConfig, VectorConfig},
+            ops::{
+                bm25::search_bm25::SearchBM25Adapter,
+                g::G,
+                in_::{in_::InAdapter, in_e::InEdgesAdapter, to_n::ToNAdapter, to_v::ToVAdapter},
+                out::{
+                    from_n::FromNAdapter, from_v::FromVAdapter, out::OutAdapter,
+                    out_e::OutEdgesAdapter,
+                },
+                source::{
+                    add_e::AddEAdapter, add_n::AddNAdapter, e_from_id::EFromIdAdapter,
+                    e_from_type::EFromTypeAdapter, n_from_id::NFromIdAdapter,
+                    n_from_index::NFromIndexAdapter, n_from_type::NFromTypeAdapter,
+                    v_from_id::VFromIdAdapter, v_from_type::VFromTypeAdapter,
+                },
+                util::{
+                    aggregate::AggregateAdapter,
+                    count::CountAdapter,
+                    dedup::DedupAdapter,
+                    drop::Drop,
+                    exist::Exist,
+                    filter_mut::FilterMut,
+                    filter_ref::FilterRefAdapter,
+                    group_by::GroupByAdapter,
+                    map::MapAdapter,
+                    order::OrderByAdapter,
+                    paths::{PathAlgorithm, ShortestPathAdapter},
+                    range::RangeAdapter,
+                    update::UpdateAdapter,
+                },
+                vectors::{
+                    brute_force_search::BruteForceSearchVAdapter, insert::InsertVAdapter,
+                    search::SearchVAdapter,
+                },
+            },
+            traversal_value::TraversalValue,
+        },
+        types::GraphError,
+        vector_core::vector::HVector,
+    },
+    helix_gateway::{
+        embedding_providers::{EmbeddingModel, get_embedding_model},
+        mcp::mcp::{MCPHandler, MCPHandlerSubmission, MCPToolInput},
+        router::router::{HandlerInput, IoContFn},
+    },
+    node_matches, props,
+    protocol::{
+        format::Format,
+        response::Response,
+        value::{
+            Value,
+            casting::{CastType, cast},
+        },
+    },
+    utils::{
+        count::Count,
+        id::{ID, uuid_str},
+        items::{Edge, Node},
+        properties::ImmutablePropertiesMap,
+    },
+};
+use helix_macros::{handler, mcp_handler, migration, tool_call};
+use sonic_rs::{Deserialize, Serialize, json};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::time::Instant;
+
+// Re-export scalar types for generated code
+type I8 = i8;
+type I16 = i16;
+type I32 = i32;
+type I64 = i64;
+type U8 = u8;
+type U16 = u16;
+type U32 = u32;
+type U64 = u64;
+type U128 = u128;
+type F32 = f32;
+type F64 = f64;
 
 pub fn config() -> Option<Config> {
-    None
+    return Some(Config {
+        vector_config: Some(VectorConfig {
+            m: Some(16),
+            ef_construction: Some(128),
+            ef_search: Some(768),
+        }),
+        graph_config: Some(GraphConfig {
+            secondary_indices: Some(vec![]),
+        }),
+        db_max_size_gb: Some(10),
+        mcp: Some(true),
+        bm25: Some(true),
+        schema: Some(
+            r#"{
+  "schema": {
+    "nodes": [
+      {
+        "name": "User",
+        "properties": {
+          "label": "String",
+          "id": "ID",
+          "country": "U8"
+        }
+      }
+    ],
+    "vectors": [
+      {
+        "name": "Item",
+        "properties": {
+          "label": "String",
+          "category": "U16",
+          "score": "F64",
+          "id": "ID",
+          "data": "Array(F64)"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "name": "Interacted",
+        "from": "User",
+        "to": "Item",
+        "properties": {}
+      }
+    ]
+  },
+  "queries": [
+    {
+      "name": "Vector",
+      "parameters": {
+        "vector": "Array(F64)",
+        "top_k": "I64"
+      },
+      "returns": []
+    },
+    {
+      "name": "VectorHopFilter",
+      "parameters": {
+        "vector": "Array(F64)",
+        "country": "U8",
+        "top_k": "I64"
+      },
+      "returns": []
+    },
+    {
+      "name": "OneHopFilter",
+      "parameters": {
+        "user_id": "ID",
+        "category": "U16"
+      },
+      "returns": []
+    },
+    {
+      "name": "OneHop",
+      "parameters": {
+        "user_id": "ID"
+      },
+      "returns": []
+    },
+    {
+      "name": "PointGet",
+      "parameters": {
+        "item_id": "ID"
+      },
+      "returns": []
+    }
+  ]
+}"#
+            .to_string(),
+        ),
+        embedding_model: Some("text-embedding-ada-002".to_string()),
+        graphvis_node_label: None,
+    });
+}
+
+pub struct User {
+    pub country: u8,
+}
+
+pub struct Interacted {
+    pub from: User,
+    pub to: Item,
+}
+
+pub struct Item {
+    pub category: u16,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct VectorInput {
+    pub vector: Vec<f64>,
+    pub top_k: i64,
+}
+#[derive(Serialize)]
+pub struct VectorItemsReturnType<'a> {
+    pub id: &'a str,
+    pub score: f64,
+    pub category: Option<&'a Value>,
+}
+
+#[handler]
+pub fn Vector(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let data = input
+        .request
+        .in_fmt
+        .deserialize::<VectorInput>(&input.request.body)?;
+    let arena = Bump::new();
+    let txn = db
+        .graph_env
+        .read_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
+    let items = G::new(&db, &txn, &arena)
+        .search_v::<fn(&HVector, &RoTxn) -> bool, _>(&data.vector, data.top_k.clone(), "Item", None)
+        .collect::<Result<Vec<_>, _>>()?;
+    let response = json!({
+        "items": items.iter().map(|item| VectorItemsReturnType {
+            id: uuid_str(item.id(), &arena),
+            score: item.score(),
+            category: item.get_property("category"),
+        }).collect::<Vec<_>>()
+    });
+    txn.commit()
+        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
+    Ok(input.request.out_fmt.create_response(&response))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct VectorHopFilterInput {
+    pub vector: Vec<f64>,
+    pub top_k: i64,
+    pub country: u8,
+}
+#[derive(Serialize)]
+pub struct VectorHopFilterItemsReturnType<'a> {
+    pub id: &'a str,
+    pub category: Option<&'a Value>,
+}
+
+#[handler]
+pub fn VectorHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let data = input
+        .request
+        .in_fmt
+        .deserialize::<VectorHopFilterInput>(&input.request.body)?;
+    let arena = Bump::new();
+    let txn = db
+        .graph_env
+        .read_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
+    let similar_items = G::new(&db, &txn, &arena)
+        .search_v::<fn(&HVector, &RoTxn) -> bool, _>(&data.vector, data.top_k.clone(), "Item", None)
+        .collect::<Result<Vec<_>, _>>()?;
+    let items = G::from_iter(&db, &txn, similar_items.iter().cloned(), &arena)
+        .filter_ref(|val, txn| {
+            if let Ok(val) = val {
+                Ok(Exist::exists(
+                    &mut G::from_iter(&db, &txn, std::iter::once(val.clone()), &arena)
+                        .in_node("Interacted")
+                        .filter_ref(|val, txn| {
+                            if let Ok(val) = val {
+                                Ok(val
+                                    .get_property("country")
+                                    .map_or(false, |v| *v == data.country.clone()))
+                            } else {
+                                Ok(false)
+                            }
+                        }),
+                ))
+            } else {
+                Ok(false)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let response = json!({
+        "items": items.iter().map(|item| VectorHopFilterItemsReturnType {
+            id: uuid_str(item.id(), &arena),
+            category: item.get_property("category"),
+        }).collect::<Vec<_>>()
+    });
+    txn.commit()
+        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
+    Ok(input.request.out_fmt.create_response(&response))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OneHopFilterInput {
+    pub user_id: ID,
+    pub category: u16,
+}
+#[derive(Serialize)]
+pub struct OneHopFilterItemsReturnType<'a> {
+    pub id: &'a str,
+    pub category: Option<&'a Value>,
+}
+
+#[handler]
+pub fn OneHopFilter(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let data = input
+        .request
+        .in_fmt
+        .deserialize::<OneHopFilterInput>(&input.request.body)?;
+    let arena = Bump::new();
+    let txn = db
+        .graph_env
+        .read_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
+    let user = G::new(&db, &txn, &arena)
+        .n_from_id(&data.user_id)
+        .collect_to_obj();
+    let items = G::from_iter(&db, &txn, std::iter::once(user.clone()), &arena)
+        .out_vec("Interacted", false)
+        .filter_ref(|val, txn| {
+            if let Ok(val) = val {
+                Ok(val
+                    .get_property("category")
+                    .map_or(false, |v| *v == data.category.clone()))
+            } else {
+                Ok(false)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let response = json!({
+        "items": items.iter().map(|item| OneHopFilterItemsReturnType {
+            id: uuid_str(item.id(), &arena),
+            category: item.get_property("category"),
+        }).collect::<Vec<_>>()
+    });
+    txn.commit()
+        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
+    Ok(input.request.out_fmt.create_response(&response))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OneHopInput {
+    pub user_id: ID,
+}
+#[derive(Serialize)]
+pub struct OneHopItemsReturnType<'a> {
+    pub id: &'a str,
+    pub category: Option<&'a Value>,
+}
+
+#[handler]
+pub fn OneHop(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let data = input
+        .request
+        .in_fmt
+        .deserialize::<OneHopInput>(&input.request.body)?;
+    let arena = Bump::new();
+    let txn = db
+        .graph_env
+        .read_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
+    let user = G::new(&db, &txn, &arena)
+        .n_from_id(&data.user_id)
+        .collect_to_obj();
+    let items = G::from_iter(&db, &txn, std::iter::once(user.clone()), &arena)
+        .out_vec("Interacted", false)
+        .collect::<Result<Vec<_>, _>>()?;
+    let response = json!({
+        "items": items.iter().map(|item| OneHopItemsReturnType {
+            id: uuid_str(item.id(), &arena),
+            category: item.get_property("category"),
+        }).collect::<Vec<_>>()
+    });
+    txn.commit()
+        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
+    Ok(input.request.out_fmt.create_response(&response))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PointGetInput {
+    pub item_id: ID,
+}
+#[derive(Serialize)]
+pub struct PointGetItemReturnType<'a> {
+    pub id: &'a str,
+    pub category: Option<&'a Value>,
+}
+
+#[handler]
+pub fn PointGet(input: HandlerInput) -> Result<Response, GraphError> {
+    let db = Arc::clone(&input.graph.storage);
+    let data = input
+        .request
+        .in_fmt
+        .deserialize::<PointGetInput>(&input.request.body)?;
+    let arena = Bump::new();
+    let txn = db
+        .graph_env
+        .read_txn()
+        .map_err(|e| GraphError::New(format!("Failed to start read transaction: {:?}", e)))?;
+    let item = G::new(&db, &txn, &arena)
+        .v_from_id(&data.item_id, false)
+        .collect_to_obj();
+    let response = json!({
+        "item": PointGetItemReturnType {
+            id: uuid_str(item.id(), &arena),
+            category: item.get_property("category"),
+        }
+    });
+    txn.commit()
+        .map_err(|e| GraphError::New(format!("Failed to commit transaction: {:?}", e)))?;
+    Ok(input.request.out_fmt.create_response(&response))
 }
