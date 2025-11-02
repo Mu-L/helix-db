@@ -1,4 +1,4 @@
-use heed3::{Database, Env, RoTxn, RwTxn, WithTls, types::Bytes};
+use heed3::{Database, RoTxn, RwTxn, WithTls, types::Bytes};
 
 use crate::helix_engine::types::GraphError;
 

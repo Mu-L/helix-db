@@ -7,7 +7,6 @@ use crate::{
     helix_engine::{
         bm25::bm25::HBM25Config,
         storage_core::{
-            metadata::StorageMetadata,
             storage_methods::{DBMethods, StorageMethods},
             version_info::VersionInfo,
         },

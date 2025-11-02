@@ -1,8 +1,12 @@
-use std::ops::Bound;
-
+use crate::{
+    helix_engine::{
+        storage_core::HelixGraphStorage, types::GraphError, vector_core::vector::HVector,
+    },
+    protocol::value::Value,
+    utils::properties::ImmutablePropertiesMap,
+};
 use itertools::Itertools;
-
-use crate::helix_engine::{storage_core::HelixGraphStorage, types::GraphError};
+use std::{collections::HashMap, ops::Bound};
 
 use super::metadata::{NATIVE_VECTOR_ENDIANNESS, StorageMetadata, VectorEndianness};
 
@@ -48,6 +52,8 @@ fn migrate_pre_metadata_to_native_vector_endianness(
         // On little-endian machines, we need to convert from big-endian to little-endian
         convert_all_vectors(VectorEndianness::BigEndian, storage)?;
     }
+
+    convert_all_vector_properties(storage)?;
 
     // Save the metadata
     let mut txn = storage.graph_env.write_txn()?;
@@ -193,4 +199,99 @@ fn convert_vector_endianness<'arena>(
     let result_bytes: &[u8] = bytemuck::cast_slice(converted_floats);
 
     Ok(result_bytes)
+}
+
+fn convert_all_vector_properties(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
+    const BATCH_SIZE: usize = 1024;
+
+    let batch_bounds = {
+        let txn = storage.graph_env.read_txn()?;
+        let len = storage.vectors.vector_properties_db.len(&txn)? as usize;
+        let mut keys = Vec::with_capacity(len);
+
+        for (i, kv) in storage
+            .vectors
+            .vector_properties_db
+            .lazily_decode_data()
+            .iter(&txn)?
+            .enumerate()
+        {
+            let (key, _) = kv?;
+
+            if i % BATCH_SIZE == 0 {
+                keys.push(key);
+            }
+        }
+
+        let mut ranges = Vec::with_capacity(len / BATCH_SIZE);
+        for (start, end) in keys.iter().copied().tuple_windows() {
+            ranges.push((Bound::Included(start), Bound::Excluded(end)));
+        }
+        ranges.extend(
+            keys.last()
+                .copied()
+                .map(|last_batch_end| (Bound::Included(last_batch_end), Bound::Unbounded)),
+        );
+
+        ranges
+    };
+
+    for bounds in batch_bounds {
+        let arena = bumpalo::Bump::new();
+
+        let mut txn = storage.graph_env.write_txn()?;
+        let mut cursor = storage
+            .vectors
+            .vector_properties_db
+            .range_mut(&mut txn, &bounds)?;
+
+        while let Some((key, value)) = cursor.next().transpose()? {
+            let value = convert_old_vector_properties_to_new_format(value, &arena)?;
+
+            let success = unsafe { cursor.put_current(&key, &value)? };
+            if !success {
+                return Err(GraphError::New("failed to update value in LMDB".into()));
+            }
+        }
+        drop(cursor);
+
+        txn.commit()?;
+    }
+
+    Ok(())
+}
+
+fn convert_old_vector_properties_to_new_format<'arena, 'txn>(
+    property_bytes: &'txn [u8],
+    arena: &'arena bumpalo::Bump,
+) -> Result<Vec<u8>, GraphError> {
+    let mut old_properties: HashMap<String, Value> = bincode::deserialize(property_bytes)?;
+
+    let label = old_properties
+        .remove("label")
+        .expect("all old vectors should have label");
+    let is_deleted = old_properties
+        .remove("is_deleted")
+        .expect("all old vectors should have deleted");
+
+    let new_properties = ImmutablePropertiesMap::new_from_try(
+        old_properties.len(),
+        old_properties
+            .iter()
+            .map(|(k, v)| Ok::<_, GraphError>((k.as_str(), v.clone()))),
+        arena,
+    )?;
+
+    let new_vector: HVector = HVector {
+        id: 0u128,
+        label: &label.inner_stringify(),
+        version: 0,
+        deleted: is_deleted == true,
+        level: 0,
+        distance: None,
+        data: &[],
+        properties: Some(new_properties),
+    };
+
+    new_vector.to_bincode_bytes().map_err(GraphError::from)
 }

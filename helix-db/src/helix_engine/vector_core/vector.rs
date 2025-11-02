@@ -134,6 +134,11 @@ impl<'arena> HVector<'arena> {
             .map_err(|e| VectorError::ConversionError(format!("Error deserializing vector: {e}")))
     }
 
+    #[inline(always)]
+    pub fn to_bincode_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(self)
+    }
+
     pub fn from_raw_vector_data<'txn>(
         arena: &'arena bumpalo::Bump,
         raw_vector_data: &'txn [u8],
