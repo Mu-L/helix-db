@@ -1,5 +1,4 @@
 pub mod aggregate;
-pub mod count;
 pub mod group_by;
 pub mod id;
 pub mod items;

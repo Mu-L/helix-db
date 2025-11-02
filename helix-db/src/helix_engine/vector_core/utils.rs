@@ -1,8 +1,8 @@
 use super::binary_heap::BinaryHeap;
-use crate::{
-    helix_engine::{
-        traversal_core::LMDB_STRING_HEADER_LENGTH, types::VectorError, vector_core::{vector::HVector, vector_without_data::VectorWithoutData},
-    },
+use crate::helix_engine::{
+    traversal_core::LMDB_STRING_HEADER_LENGTH,
+    types::VectorError,
+    vector_core::{vector::HVector, vector_without_data::VectorWithoutData},
 };
 use heed3::{
     Database, RoTxn,
@@ -112,23 +112,29 @@ impl<'db, 'arena, 'txn, 'q> VectorFilter<'db, 'arena, 'txn, 'q>
                 let properties = match db.get(txn, &item.id)? {
                     Some(bytes) => {
                         println!("decoding");
-                        let res = Some(VectorWithoutData::from_bincode_bytes(arena, bytes, item.id)?);
+                        let res = Some(VectorWithoutData::from_bincode_bytes(
+                            arena, bytes, item.id,
+                        )?);
                         println!("decoded: {res:?}");
                         res
-                    },
+                    }
                     None => None, // TODO: maybe should be an error?
                 };
 
-
-                if let Some(properties) = properties && SHOULD_CHECK_DELETED && properties.deleted {
+                if let Some(properties) = properties
+                    && SHOULD_CHECK_DELETED
+                    && properties.deleted
+                {
                     continue;
                 }
 
-                
                 if item.label() == label
-                && (filter.is_none() || filter.unwrap().iter().all(|f| f(&item, txn)))
+                    && (filter.is_none() || filter.unwrap().iter().all(|f| f(&item, txn)))
                 {
-                    assert!(properties.is_some(), "properties should be some, otherwise there has been an error on vector insertion as properties are always inserted");
+                    assert!(
+                        properties.is_some(),
+                        "properties should be some, otherwise there has been an error on vector insertion as properties are always inserted"
+                    );
                     item.expand_from_vector_without_data(properties.unwrap());
                     result.push(item);
                     break;
@@ -140,7 +146,7 @@ impl<'db, 'arena, 'txn, 'q> VectorFilter<'db, 'arena, 'txn, 'q>
     }
 }
 
-pub fn check_deleted<'txn>(data: &'txn [u8]) -> bool {
+pub fn check_deleted(data: &[u8]) -> bool {
     assert!(
         data.len() >= LMDB_STRING_HEADER_LENGTH,
         "value length does not contain header which means the `label` field was missing from the node on insertion"

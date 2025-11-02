@@ -60,12 +60,16 @@ where
             GenRef::Unknown => {
                 // This should have been caught during analysis
                 // For now, panic with a descriptive message
-                panic!("Code generation error: Unknown reference type encountered. This indicates a bug in the analyzer.")
+                panic!(
+                    "Code generation error: Unknown reference type encountered. This indicates a bug in the analyzer."
+                )
             }
             GenRef::Std(t) => t,
             GenRef::Id(_) => {
                 // Id doesn't have an inner T, it's just a String identifier
-                panic!("Code generation error: Cannot get inner value of Id type. Use the identifier directly.")
+                panic!(
+                    "Code generation error: Cannot get inner value of Id type. Use the identifier directly."
+                )
             }
         }
     }
@@ -97,7 +101,7 @@ impl From<GenRef<String>> for String {
             GenRef::Literal(s) => format!("\"{s}\""),
             GenRef::Std(s) => format!("\"{s}\""),
             GenRef::Ref(s) => format!("\"{s}\""),
-            GenRef::Id(s) => s,  // Identifiers don't need quotes
+            GenRef::Id(s) => s, // Identifiers don't need quotes
             GenRef::Unknown => {
                 // Generate a compile error in the output code
                 "compile_error!(\"Unknown value in code generation\")".to_string()
@@ -123,7 +127,7 @@ impl From<IdType> for GenRef<String> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum VecData {
     Standard(GeneratedValue),
     // Embed {
@@ -189,15 +193,35 @@ impl Display for Order {
 
 pub fn write_properties(properties: &Option<Vec<(String, GeneratedValue)>>) -> String {
     match properties {
-        Some(properties) => format!(
-            "Some(props! {{ {} }})",
-            properties
+        Some(properties) => {
+            let prop_count = properties.len();
+            let props_str = properties
                 .iter()
-                .map(|(name, value)| format!("\"{name}\" => {value}"))
+                .map(|(name, value)| format!("(\"{name}\", Value::from({value}))"))
                 .collect::<Vec<String>>()
-                .join(", ")
-        ),
+                .join(", ");
+            format!(
+                "Some(ImmutablePropertiesMap::new({}, vec![{}].into_iter(), &arena))",
+                prop_count, props_str
+            )
+        }
         None => "None".to_string(),
+    }
+}
+
+pub fn write_properties_slice(properties: &Option<Vec<(String, GeneratedValue)>>) -> String {
+    match properties {
+        Some(properties) => {
+            format!(
+                "&[{}]",
+                properties
+                    .iter()
+                    .map(|(name, value)| format!("(\"{name}\", Value::from({value}))"))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            )
+        }
+        None => unreachable!(),
     }
 }
 
@@ -239,11 +263,15 @@ impl GeneratedValue {
             GeneratedValue::Traversal(_) => {
                 // This should not be called for traversals
                 // The caller should handle traversals specially
-                panic!("Code generation error: Cannot get inner value of Traversal. Traversals should be handled specially.")
+                panic!(
+                    "Code generation error: Cannot get inner value of Traversal. Traversals should be handled specially."
+                )
             }
             GeneratedValue::Unknown => {
                 // This indicates a bug in the analyzer
-                panic!("Code generation error: Unknown GeneratedValue encountered. This indicates incomplete type inference in the analyzer.")
+                panic!(
+                    "Code generation error: Unknown GeneratedValue encountered. This indicates incomplete type inference in the analyzer."
+                )
             }
         }
     }
@@ -400,10 +428,15 @@ pub fn write_headers() -> String {
 
 
 
+use bumpalo::Bump;
 use heed3::RoTxn;
 use helix_macros::{handler, tool_call, mcp_handler, migration};
 use helix_db::{
     helix_engine::{
+        reranker::{
+            RerankAdapter,
+            fusion::{RRFReranker, MMRReranker, DistanceMethod},
+        },
         traversal_core::{
             config::{Config, GraphConfig, VectorConfig},
             ops::{
@@ -414,7 +447,7 @@ use helix_db::{
                     from_n::FromNAdapter, from_v::FromVAdapter, out::OutAdapter, out_e::OutEdgesAdapter,
                 },
                 source::{
-                    add_e::{AddEAdapter, EdgeType},
+                    add_e::AddEAdapter,
                     add_n::AddNAdapter,
                     e_from_id::EFromIdAdapter,
                     e_from_type::EFromTypeAdapter,
@@ -427,7 +460,7 @@ use helix_db::{
                 util::{
                     dedup::DedupAdapter, drop::Drop, exist::Exist, filter_mut::FilterMut,
                     filter_ref::FilterRefAdapter, map::MapAdapter, paths::{PathAlgorithm, ShortestPathAdapter},
-                    props::PropsAdapter, range::RangeAdapter, update::UpdateAdapter, order::OrderByAdapter,
+                    range::RangeAdapter, update::UpdateAdapter, order::OrderByAdapter,
                     aggregate::AggregateAdapter, group_by::GroupByAdapter, count::CountAdapter,
                 },
                 vectors::{
@@ -435,7 +468,7 @@ use helix_db::{
                     search::SearchVAdapter,
                 },
             },
-            traversal_value::{Traversable, TraversalValue},
+            traversal_value::TraversalValue,
         },
         types::GraphError,
         vector_core::vector::HVector,
@@ -446,28 +479,36 @@ use helix_db::{
         mcp::mcp::{MCPHandlerSubmission, MCPToolInput, MCPHandler}
     },
     node_matches, props, embed, embed_async,
-    field_remapping, identifier_remapping, 
-    traversal_remapping, exclude_field, value_remapping, 
     field_addition_from_old_field, field_type_cast, field_addition_from_value,
     protocol::{
-        remapping::{Remapping, RemappingMap, ResponseRemapping},
         response::Response,
-        return_values::ReturnValue,
         value::{casting::{cast, CastType}, Value},
         format::Format,
     },
     utils::{
-        count::Count,
-        filterable::Filterable,
-        id::ID,
+        id::{ID, uuid_str},
         items::{Edge, Node},
+        properties::ImmutablePropertiesMap,
     },
 };
-use sonic_rs::{Deserialize, Serialize};
+use sonic_rs::{Deserialize, Serialize, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use chrono::{DateTime, Utc};
+
+// Re-export scalar types for generated code
+type I8 = i8;
+type I16 = i16;
+type I32 = i32;
+type I64 = i64;
+type U8 = u8;
+type U16 = u16;
+type U32 = u32;
+type U64 = u64;
+type U128 = u128;
+type F32 = f32;
+type F64 = f64;
     "#
     .to_string()
 }
@@ -665,13 +706,19 @@ mod tests {
     #[test]
     fn test_write_properties_some() {
         let props = Some(vec![
-            ("name".to_string(), GeneratedValue::Literal(GenRef::Literal("Alice".to_string()))),
-            ("age".to_string(), GeneratedValue::Primitive(GenRef::Std("30".to_string()))),
+            (
+                "name".to_string(),
+                GeneratedValue::Literal(GenRef::Literal("Alice".to_string())),
+            ),
+            (
+                "age".to_string(),
+                GeneratedValue::Primitive(GenRef::Std("30".to_string())),
+            ),
         ]);
         let output = write_properties(&props);
-        assert!(output.contains("Some(props!"));
-        assert!(output.contains("\"name\" => \"Alice\""));
-        assert!(output.contains("\"age\" => 30"));
+        assert!(output.contains("Some(ImmutablePropertiesMap::new("));
+        assert!(output.contains("(\"name\", Value::from(\"Alice\"))"));
+        assert!(output.contains("(\"age\", Value::from(30))"));
     }
 
     #[test]

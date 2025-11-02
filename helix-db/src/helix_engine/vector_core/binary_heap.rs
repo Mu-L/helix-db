@@ -44,7 +44,7 @@ impl<'arena, T: Ord> BinaryHeap<'arena, T> {
 
     #[must_use]
     pub fn peek(&self) -> Option<&T> {
-        self.data.get(0)
+        self.data.first()
     }
 
     pub fn from(
@@ -510,7 +510,6 @@ impl<'arena, T: Ord> Drop for RebuildOnDrop<'_, 'arena, T> {
 /// (provided by the [`IntoIterator`] trait). See its documentation for more.
 ///
 /// [`into_iter`]: BinaryHeap::into_iter
-
 pub struct IntoIter<'arena, T> {
     iter: bumpalo::collections::vec::IntoIter<'arena, T>,
 }

@@ -17,7 +17,7 @@ use std::{
 };
 /// A flexible value type that can represent various property values in nodes and edges.
 /// Handles both JSON and binary serialisation formats via custom implementaions of the Serialize and Deserialize traits.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum Value {
     String(String),
     F32(f32),
@@ -36,6 +36,7 @@ pub enum Value {
     Id(ID),
     Array(Vec<Value>),
     Object(HashMap<String, Value>),
+    #[default]
     Empty,
 }
 
@@ -120,6 +121,12 @@ impl Value {
             Value::String(s) => s.as_str(),
             _ => panic!("Not a string"),
         }
+    }
+
+    /// Checks if this value contains the needle value (as strings).
+    /// Converts both values to their string representations and performs substring matching.
+    pub fn contains(&self, needle: &str) -> bool {
+        self.inner_str().contains(needle)
     }
 
     #[inline]
@@ -1101,11 +1108,11 @@ impl FilterValues for Value {
         let comparison = match (self, value) {
             (Value::Array(a1), Value::Array(a2)) => a1.iter().any(|a1_item| {
                 a2.iter()
-                    .any(|a2_item| a1_item.compare(a2_item, operator.clone()))
+                    .any(|a2_item| a1_item.compare(a2_item, operator))
             }),
             (value, Value::Array(a)) => a
                 .iter()
-                .any(|a_item| value.compare(a_item, operator.clone())),
+                .any(|a_item| value.compare(a_item, operator)),
             (value1, value2) => match operator {
                 Some(op) => op.execute(value1, value2),
                 None => value1 == value2,
@@ -1495,6 +1502,15 @@ pub mod casting {
 
 pub trait IntoPrimitive<T> {
     fn into_primitive(&self) -> &T;
+}
+
+impl IntoPrimitive<String> for Value {
+    fn into_primitive(&self) -> &String {
+        match self {
+            Value::String(s) => s,
+            _ => panic!("Value is not a string"),
+        }
+    }
 }
 
 impl IntoPrimitive<i8> for Value {

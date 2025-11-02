@@ -7,6 +7,7 @@
 use crate::protocol::custom_serde::edge_serde::EdgeDeSeed;
 use crate::protocol::custom_serde::node_serde::NodeDeSeed;
 use crate::protocol::value::Value;
+use crate::utils::id::uuid_str_from_buf;
 use crate::utils::properties::ImmutablePropertiesMap;
 use bincode::Options;
 use std::cmp::Ordering;
@@ -33,26 +34,47 @@ pub struct Node<'arena> {
 // Custom Serialize implementation to match old #[derive(Serialize)] behavior
 // Bincode serializes #[derive(Serialize)] structs using serialize_struct internally
 // which produces a compact format without length prefixes
+// For JSON serialization, the id field is included, but for bincode it is skipped
 impl<'arena> serde::Serialize for Node<'arena> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Node", 3)?;
-        state.serialize_field("label", self.label)?;
-        state.serialize_field("version", &self.version)?;
-        state.serialize_field("properties", &self.properties)?;
-        state.end()
+
+        // Check if this is a human-readable format (like JSON)
+        if serializer.is_human_readable() {
+            // Include id for JSON serialization
+            let mut buffer = [0u8; 36];
+            let mut state = serializer.serialize_struct("Node", 4)?;
+            state.serialize_field("id", uuid_str_from_buf(self.id, &mut buffer))?;
+            state.serialize_field("label", self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        } else {
+            // Skip id for bincode serialization
+            let mut state = serializer.serialize_struct("Node", 3)?;
+            state.serialize_field("label", self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        }
     }
 }
 
 impl<'arena> Node<'arena> {
+    /// Gets property from node
+    ///
+    /// NOTE: the `'arena` lifetime which comes from the fact the node's ImmutablePropertiesMap
     #[inline(always)]
     pub fn get_property(&self, prop: &str) -> Option<&'arena Value> {
         self.properties.and_then(|value| value.get(prop))
     }
 
+    /// Deserializes bytes into a node using a custom deserializer that allocates into the provided arena
+    ///
+    /// NOTE: in this method, fixint encoding is used
     #[inline(always)]
     pub fn from_bincode_bytes<'txn>(
         id: u128,
@@ -138,28 +160,51 @@ pub struct Edge<'arena> {
 // Custom Serialize implementation to match old #[derive(Serialize)] behavior
 // Bincode serializes #[derive(Serialize)] structs using serialize_struct internally
 // which produces a compact format without length prefixes
+// For JSON serialization, the id field is included, but for bincode it is skipped
 impl<'arena> serde::Serialize for Edge<'arena> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Edge", 5)?;
-        state.serialize_field("label", self.label)?;
-        state.serialize_field("version", &self.version)?;
-        state.serialize_field("from_node", &self.from_node)?;
-        state.serialize_field("to_node", &self.to_node)?;
-        state.serialize_field("properties", &self.properties)?;
-        state.end()
+
+        // Check if this is a human-readable format (like JSON)
+        if serializer.is_human_readable() {
+            // Include id for JSON serialization
+            let mut buffer = [0u8; 36];
+            let mut state = serializer.serialize_struct("Edge", 6)?;
+            state.serialize_field("id", uuid_str_from_buf(self.id, &mut buffer))?;
+            state.serialize_field("label", self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("from_node", &self.from_node)?;
+            state.serialize_field("to_node", &self.to_node)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        } else {
+            // Skip id for bincode serialization
+            let mut state = serializer.serialize_struct("Edge", 5)?;
+            state.serialize_field("label", self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("from_node", &self.from_node)?;
+            state.serialize_field("to_node", &self.to_node)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        }
     }
 }
 
 impl<'arena> Edge<'arena> {
+    /// Gets property from node
+    ///
+    /// NOTE: the `'arena` lifetime which comes from the fact the node's ImmutablePropertiesMap
     #[inline(always)]
-    pub fn get_property(&self, prop: &str) -> Option<&Value> {
+    pub fn get_property(&self, prop: &str) -> Option<&'arena Value> {
         self.properties.as_ref().and_then(|value| value.get(prop))
     }
 
+    /// Deserializes bytes into an edge using a custom deserializer that allocates into the provided arena
+    ///
+    /// NOTE: in this method, fixint encoding is used
     #[inline(always)]
     pub fn from_bincode_bytes<'txn>(
         id: u128,

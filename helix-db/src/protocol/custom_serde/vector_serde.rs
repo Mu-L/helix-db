@@ -2,8 +2,8 @@ use crate::{
     helix_engine::vector_core::{vector::HVector, vector_without_data::VectorWithoutData},
     utils::properties::{ImmutablePropertiesMap, ImmutablePropertiesMapDeSeed},
 };
-use std::fmt;
 use serde::de::{DeserializeSeed, Visitor};
+use std::fmt;
 
 /// Helper DeserializeSeed for Option<ImmutablePropertiesMap>
 struct OptionPropertiesMapDeSeed<'arena> {
@@ -83,7 +83,7 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectorDeSeed<'txn, '
                 let label_string: &'de str = seq
                     .next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
-                let label = self.arena.alloc_str(&label_string);
+                let label = self.arena.alloc_str(label_string);
 
                 let version: u8 = seq.next_element()?.unwrap_or(0);
 
@@ -94,30 +94,7 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectorDeSeed<'txn, '
                     .next_element_seed(OptionPropertiesMapDeSeed { arena: self.arena })?
                     .ok_or_else(|| serde::de::Error::custom("Expected properties field"))?;
 
-                // Manually copy data to avoid alignment issues with bytemuck
-                if self.raw_vector_data.len() == 0 {
-                    return Err(serde::de::Error::custom("raw_vector_data.len() == 0"));
-                }
-                if self.raw_vector_data.len() % std::mem::size_of::<f64>() != 0 {
-                    return Err(serde::de::Error::custom("raw_vector_data bytes len is not a multiple of size_of::<f64>()"));
-                }
-                let dimensions = self.raw_vector_data.len() / std::mem::size_of::<f64>();
-
-                let layout = std::alloc::Layout::array::<f64>(dimensions)
-                    .map_err(|_| serde::de::Error::custom("vector_data array arithmetic overflow or total size exceeds isize::MAX"))?;
-
-                let vector_data: std::ptr::NonNull<u8> = self.arena.alloc_layout(layout);
-
-                let data: &'arena [f64] = unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        self.raw_vector_data.as_ptr(),
-                        vector_data.as_ptr(),
-                        self.raw_vector_data.len(),
-                    );
-
-                    let vector_data: std::ptr::NonNull<f64> = vector_data.cast();
-                    std::slice::from_raw_parts(vector_data.as_ptr(), dimensions)
-                };
+                let data = HVector::cast_raw_vector_data(self.arena, self.raw_vector_data);
 
                 Ok(HVector {
                     id: self.id,
@@ -150,7 +127,7 @@ pub struct VectoWithoutDataDeSeed<'arena> {
     pub id: u128,
 }
 
-impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectoWithoutDataDeSeed<'arena> {
+impl<'de, 'arena> serde::de::DeserializeSeed<'de> for VectoWithoutDataDeSeed<'arena> {
     type Value = VectorWithoutData<'arena>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -176,7 +153,7 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectoWithoutDataDeSe
                 let label_string: &'de str = seq
                     .next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
-                let label = self.arena.alloc_str(&label_string);
+                let label = self.arena.alloc_str(label_string);
 
                 let version: u8 = seq.next_element()?.unwrap_or(0);
 

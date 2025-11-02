@@ -10,25 +10,7 @@ pub trait DBMethods {
     fn drop_secondary_index(&mut self, name: &str) -> Result<(), GraphError>;
 }
 
-pub trait BasicStorageMethods {
-    /// Gets a node object for a given node id without copying its underlying data.
-    ///
-    /// This should only used when fetched data is only needed temporarily
-    /// as underlying data is pinned.
-    fn get_temp_node<'a>(&self, txn: &'a RoTxn, id: &u128) -> Result<&'a [u8], GraphError>;
-
-    /// Gets a edge object for a given edge id without copying its underlying data.
-    ///
-    /// This should only used when fetched data is only needed temporarily
-    /// as underlying data is pinned.
-    fn get_temp_edge<'a>(&self, txn: &'a RoTxn, id: &u128) -> Result<&'a [u8], GraphError>;
-}
 pub trait StorageMethods {
-    /// Checks whether an entry with a given id exists.
-    /// Works for nodes or edges.
-    #[deprecated(note = "use get_node or get_edge instead")]
-    fn check_exists(&self, txn: &RoTxn, id: &u128) -> Result<bool, GraphError>;
-
     /// Gets a node object for a given node id
     fn get_node<'arena>(
         &self,
@@ -36,6 +18,7 @@ pub trait StorageMethods {
         id: &u128,
         arena: &'arena bumpalo::Bump,
     ) -> Result<Node<'arena>, GraphError>;
+
     /// Gets a edge object for a given edge id
     fn get_edge<'arena>(
         &self,
@@ -44,7 +27,19 @@ pub trait StorageMethods {
         arena: &'arena bumpalo::Bump,
     ) -> Result<Edge<'arena>, GraphError>;
 
+    /// Removes the following from the storage engine:
+    /// - The given node
+    /// - All connected incoming AND outgoing edge mappings and the actual edges
+    /// - All secondary indexes for the given node
     fn drop_node(&self, txn: &mut RwTxn, id: &u128) -> Result<(), GraphError>;
+
+    /// Removes the following from the storage engine:
+    /// - The given edge 
+    /// - All incoming and outgoing mappings for that edge
     fn drop_edge(&self, txn: &mut RwTxn, id: &u128) -> Result<(), GraphError>;
+
+    /// Sets the `deleted` field of a vector to true
+    /// 
+    /// NOTE: The vector is not ACTUALLY deleted and is still present in the db. 
     fn drop_vector(&self, txn: &mut RwTxn, id: &u128) -> Result<(), GraphError>;
 }

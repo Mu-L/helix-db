@@ -59,7 +59,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         "value length is not at least the header length plus the label length meaning there has been a corruption on node insertion"
                     );
                     let label_in_lmdb = &value[LMDB_STRING_HEADER_LENGTH
-                        ..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb as usize];
+                        ..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb];
         
                     if label_in_lmdb == label_bytes {
                         

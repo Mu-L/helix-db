@@ -1,6 +1,6 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
-use crate::helixc::analyzer::utils::type_in_scope;
+use crate::helixc::analyzer::utils::{VariableInfo, type_in_scope};
 use crate::helixc::generator::traversal_steps::EdgeType;
 use crate::helixc::generator::utils::EmbedData;
 use crate::{
@@ -15,11 +15,11 @@ use crate::{
         generator::{
             queries::Query as GeneratedQuery,
             traversal_steps::{
-                In as GeneratedIn, InE as GeneratedInE, Out as GeneratedOut, OutE as GeneratedOutE,
-                SearchVectorStep, ShortestPath as GeneratedShortestPath,
-                ShortestPathBFS as GeneratedShortestPathBFS,
+                FromV as GeneratedFromV, In as GeneratedIn, InE as GeneratedInE,
+                Out as GeneratedOut, OutE as GeneratedOutE, SearchVectorStep,
+                ShortestPath as GeneratedShortestPath, ShortestPathBFS as GeneratedShortestPathBFS,
                 ShortestPathDijkstras as GeneratedShortestPathDijkstras, ShouldCollect,
-                Step as GeneratedStep, Traversal as GeneratedTraversal,
+                Step as GeneratedStep, ToV as GeneratedToV, Traversal as GeneratedTraversal,
             },
             utils::{GenRef, GeneratedValue, Separator, VecData},
         },
@@ -50,7 +50,7 @@ pub(crate) fn apply_graph_step<'a>(
     cur_ty: &Type,
     original_query: &'a Query,
     traversal: &mut GeneratedTraversal,
-    scope: &mut HashMap<&'a str, Type>,
+    scope: &mut HashMap<&'a str, VariableInfo>,
     gen_query: &mut GeneratedQuery,
 ) -> Option<Type> {
     use GraphStepType::*;
@@ -151,6 +151,7 @@ pub(crate) fn apply_graph_step<'a>(
                 .push(Separator::Period(GeneratedStep::Out(GeneratedOut {
                     edge_type: edge_type.clone(),
                     label: GenRef::Literal(label.clone()),
+                    get_vector_data: false, // Will be updated if 'data' field is accessed
                 })));
             traversal.should_collect = ShouldCollect::ToVec;
             let edge = match ctx.edge_map.get(label.as_str()) {
@@ -214,6 +215,7 @@ pub(crate) fn apply_graph_step<'a>(
                 .push(Separator::Period(GeneratedStep::In(GeneratedIn {
                     edge_type: edge_type.clone(),
                     label: GenRef::Literal(label.clone()),
+                    get_vector_data: false, // Will be updated if 'data' field is accessed
                 })));
             traversal.should_collect = ShouldCollect::ToVec;
             let edge = match ctx.edge_map.get(label.as_str()) {
@@ -315,7 +317,9 @@ pub(crate) fn apply_graph_step<'a>(
             };
             traversal
                 .steps
-                .push(Separator::Period(GeneratedStep::FromV));
+                .push(Separator::Period(GeneratedStep::FromV(GeneratedFromV {
+                    get_vector_data: false,
+                })));
             // Preserve collection type: multiple edges -> multiple vectors, single edge -> single vector
             match cur_ty {
                 Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
@@ -339,7 +343,11 @@ pub(crate) fn apply_graph_step<'a>(
             } else {
                 None
             };
-            traversal.steps.push(Separator::Period(GeneratedStep::ToV));
+            traversal
+                .steps
+                .push(Separator::Period(GeneratedStep::ToV(GeneratedToV {
+                    get_vector_data: false,
+                })));
             // Preserve collection type: multiple edges -> multiple vectors, single edge -> single vector
             match cur_ty {
                 Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,

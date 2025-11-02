@@ -6,7 +6,7 @@ use crate::{
     helixc::{
         analyzer::{
             Ctx, errors::push_query_err, methods::infer_expr_type::infer_expr_type, types::Type,
-            utils::is_valid_identifier,
+            utils::{is_valid_identifier, VariableInfo},
         },
         generator::{
             queries::Query as GeneratedQuery,
@@ -15,6 +15,7 @@ use crate::{
                 Assignment as GeneratedAssignment, Drop as GeneratedDrop,
                 ForEach as GeneratedForEach, ForLoopInVariable, ForVariable,
             },
+            traversal_steps::ShouldCollect,
             utils::GenRef,
         },
         parser::types::*,
@@ -38,7 +39,7 @@ use std::collections::HashMap;
 /// * `Option<GeneratedStatement>` - The validated statement to generate rust code for
 pub(crate) fn validate_statements<'a>(
     ctx: &mut Ctx<'a>,
-    scope: &mut HashMap<&'a str, Type>,
+    scope: &mut HashMap<&'a str, VariableInfo>,
     original_query: &'a Query,
     query: &mut GeneratedQuery,
     statement: &'a Statement,
@@ -58,8 +59,18 @@ pub(crate) fn validate_statements<'a>(
 
             let (rhs_ty, stmt) =
                 infer_expr_type(ctx, &assign.value, scope, original_query, None, query);
-            
-            scope.insert(assign.variable.as_str(), rhs_ty);
+
+            // Determine if the variable is single or collection based on type
+            let is_single = if let Some(GeneratedStatement::Traversal(ref tr)) = stmt {
+                // Check if should_collect is ToObj, or if the type is a single value
+                matches!(tr.should_collect, ShouldCollect::ToObj) ||
+                matches!(rhs_ty, Type::Node(_) | Type::Edge(_) | Type::Vector(_))
+            } else {
+                // Non-traversal: check if type is single
+                matches!(rhs_ty, Type::Node(_) | Type::Edge(_) | Type::Vector(_))
+            };
+
+            scope.insert(assign.variable.as_str(), VariableInfo::new(rhs_ty, is_single));
 
             stmt.as_ref()?;
 
@@ -75,7 +86,9 @@ pub(crate) fn validate_statements<'a>(
             stmt.as_ref()?;
 
             query.is_mut = true;
-            if let Some(GeneratedStatement::Traversal(tr)) = stmt {
+            if let Some(GeneratedStatement::Traversal(mut tr)) = stmt {
+                // Drop should not collect - it needs the iterator
+                tr.should_collect = ShouldCollect::No;
                 Some(GeneratedStatement::Drop(GeneratedDrop { expression: tr }))
             } else {
                 panic!("Drop should only be applied to traversals");
@@ -93,7 +106,7 @@ pub(crate) fn validate_statements<'a>(
                 generate_error!(ctx, original_query, fl.loc.clone(), E301, &fl.in_variable.1);
             }
 
-            let mut body_scope = HashMap::new();
+            let mut body_scope: HashMap<&str, VariableInfo> = HashMap::new();
             let mut for_loop_in_variable: ForLoopInVariable = ForLoopInVariable::Empty;
 
             // Check if the in variable is a parameter
@@ -110,7 +123,7 @@ pub(crate) fn validate_statements<'a>(
                     Type::from(param.param_type.1.clone())
                 }
                 None => match scope.get(fl.in_variable.1.as_str()) {
-                    Some(fl_in_var_ty) => {
+                    Some(fl_in_var_info) => {
                         is_valid_identifier(
                             ctx,
                             original_query,
@@ -120,7 +133,7 @@ pub(crate) fn validate_statements<'a>(
 
                         for_loop_in_variable =
                             ForLoopInVariable::Identifier(GenRef::Std(fl.in_variable.1.clone()));
-                        fl_in_var_ty.clone()
+                        fl_in_var_info.ty.clone()
                     }
                     None => {
                         generate_error!(
@@ -155,8 +168,8 @@ pub(crate) fn validate_statements<'a>(
                             Type::Unknown
                         }
                     };
-                    body_scope.insert(name.as_str(), field_type.clone());
-                    scope.insert(name.as_str(), field_type);
+                    body_scope.insert(name.as_str(), VariableInfo::new(field_type.clone(), true));
+                    scope.insert(name.as_str(), VariableInfo::new(field_type, true));
                     for_variable = ForVariable::Identifier(GenRef::Std(name.clone()));
                 }
                 ForLoopVars::ObjectAccess { .. } => {
@@ -187,8 +200,8 @@ pub(crate) fn validate_statements<'a>(
                                                     .unwrap()
                                                     .clone(),
                                             );
-                                            body_scope.insert(field_name.as_str(), field_type.clone());
-                                            scope.insert(field_name.as_str(), field_type);
+                                            body_scope.insert(field_name.as_str(), VariableInfo::new(field_type.clone(), true));
+                                            scope.insert(field_name.as_str(), VariableInfo::new(field_type, true));
                                         }
                                         for_variable = ForVariable::ObjectDestructure(
                                             fields
@@ -221,32 +234,44 @@ pub(crate) fn validate_statements<'a>(
                             }
                         }
                         None => match scope.get(fl.in_variable.1.as_str()) {
-                            Some(Type::Array(object_arr)) => {
-                                match object_arr.as_ref() {
-                                    Type::Object(object) => {
-                                        let mut obj_dest_fields = Vec::with_capacity(fields.len());
-                                        let object = object.clone();
-                                        for (_, field_name) in fields {
-                                            let name = field_name.as_str();
-                                            // adds non-param fields to scope
-                                            let field_type = object.get(name).unwrap().clone();
-                                            body_scope.insert(name, field_type.clone());
-                                            scope.insert(name, field_type);
+                            Some(var_info) => match &var_info.ty {
+                                Type::Array(object_arr) => {
+                                    match object_arr.as_ref() {
+                                        Type::Object(object) => {
+                                            let mut obj_dest_fields = Vec::with_capacity(fields.len());
+                                            let object = object.clone();
+                                            for (_, field_name) in fields {
+                                                let name = field_name.as_str();
+                                                // adds non-param fields to scope
+                                                let field_type = object.get(name).unwrap().clone();
+                                                body_scope.insert(name, VariableInfo::new(field_type.clone(), true));
+                                                scope.insert(name, VariableInfo::new(field_type, true));
                                             obj_dest_fields.push(GenRef::Std(name.to_string()));
                                         }
                                         for_variable =
                                             ForVariable::ObjectDestructure(obj_dest_fields);
+                                        }
+                                        _ => {
+                                            generate_error!(
+                                                ctx,
+                                                original_query,
+                                                fl.in_variable.0.clone(),
+                                                E653,
+                                                [&fl.in_variable.1],
+                                                [&fl.in_variable.1]
+                                            );
+                                        }
                                     }
-                                    _ => {
-                                        generate_error!(
-                                            ctx,
-                                            original_query,
-                                            fl.in_variable.0.clone(),
-                                            E653,
-                                            [&fl.in_variable.1],
-                                            [&fl.in_variable.1]
-                                        );
-                                    }
+                                }
+                                _ => {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        fl.in_variable.0.clone(),
+                                        E653,
+                                        [&fl.in_variable.1],
+                                        [&fl.in_variable.1]
+                                    );
                                 }
                             }
                             _ => {

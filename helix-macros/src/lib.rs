@@ -5,7 +5,7 @@ extern crate syn;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse::{Parse, ParseStream}, parse_macro_input, Expr, FnArg, Ident, ItemFn, ItemStruct, ItemTrait, LitInt, Pat, Stmt, Token, TraitItem
+    parse::{Parse, ParseStream}, parse_macro_input, Data, DeriveInput, Expr, FnArg, Ident, ItemFn, ItemStruct, ItemTrait, LitInt, Pat, Stmt, Token, TraitItem
 };
 
 #[proc_macro_attribute]
@@ -359,6 +359,50 @@ pub fn helix_node(_attr: TokenStream, input: TokenStream) -> TokenStream {
         pub struct #name {
             id: String,
             #(#fields),*
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+#[proc_macro_derive(Traversable)]
+pub fn traversable_derive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+
+    // Verify that the struct has an 'id' field
+    let has_id_field = match &input.data {
+        Data::Struct(data) => {
+            data.fields.iter().any(|field| {
+                field.ident.as_ref().map(|i| i == "id").unwrap_or(false)
+            })
+        }
+        _ => false,
+    };
+
+    if !has_id_field {
+        return TokenStream::from(
+            quote! {
+                compile_error!("Traversable can only be derived for structs with an 'id: &'a str' field");
+            }
+        );
+    }
+
+    // Extract lifetime parameter if present
+    let lifetime = if let Some(param) = input.generics.lifetimes().next() {
+        let lifetime = &param.lifetime;
+        quote! { #lifetime }
+    } else {
+        quote! { 'a }
+    };
+
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+    let expanded = quote! {
+        impl #impl_generics #name #ty_generics #where_clause {
+            pub fn id(&self) -> &#lifetime str {
+                self.id
+            }
         }
     };
 

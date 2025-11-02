@@ -26,7 +26,7 @@ impl G {
     /// let traversal = G::new(storage, &txn);
     /// ```
     #[inline]
-    pub fn new<'db, 'arena, 'txn>(
+    pub fn new<'db: 'arena, 'arena: 'txn, 'txn>(
         storage: &'db HelixGraphStorage,
         txn: &'txn RoTxn<'db>,
         arena: &'arena bumpalo::Bump,
@@ -62,7 +62,7 @@ impl G {
     /// let txn = storage.graph_env.read_txn().unwrap();
     /// let traversal = G::from_iter(storage, &txn, vec![TraversalValue::Node(Node { id: 1, label: "Person".to_string(), properties: None })]);
     /// ```
-    pub fn from_iter<'db, 'arena, 'txn>(
+    pub fn from_iter<'db: 'arena, 'arena: 'txn, 'txn>(
         storage: &'db HelixGraphStorage,
         txn: &'txn RoTxn<'db>,
         items: impl Iterator<Item = TraversalValue<'arena>>,
@@ -96,7 +96,7 @@ impl G {
     /// let txn = storage.graph_env.write_txn().unwrap();
     /// let traversal = G::new_mut(storage, &mut txn);
     /// ```
-    pub fn new_mut<'db, 'arena, 'txn>(
+    pub fn new_mut<'db: 'arena, 'arena: 'txn, 'txn>(
         storage: &'db HelixGraphStorage,
         arena: &'arena bumpalo::Bump,
         txn: &'txn mut RwTxn<'db>,
@@ -117,7 +117,7 @@ impl G {
         }
     }
 
-    pub fn new_mut_from_iter<'db, 'arena, 'txn>(
+    pub fn new_mut_from_iter<'db: 'arena, 'arena: 'txn, 'txn>(
         storage: &'db HelixGraphStorage,
         txn: &'txn mut RwTxn<'db>,
         items: impl Iterator<Item = TraversalValue<'arena>>,

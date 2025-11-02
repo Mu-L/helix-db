@@ -1,7 +1,7 @@
 use crate::{
     helix_engine::types::VectorError,
     protocol::{custom_serde::vector_serde::VectoWithoutDataDeSeed, value::Value},
-    utils::properties::ImmutablePropertiesMap,
+    utils::{id::uuid_str_from_buf, properties::ImmutablePropertiesMap},
 };
 use bincode::Options;
 use core::fmt;
@@ -12,26 +12,55 @@ use std::fmt::Debug;
 // TODO: set level as u8
 
 #[repr(C, align(16))]
-#[derive(Serialize, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct VectorWithoutData<'arena> {
-    #[serde(skip)]
     /// The id of the HVector
     pub id: u128,
     /// The label of the HVector
     pub label: &'arena str,
     /// the version of the vector
-    #[serde(default)]
     pub version: u8,
     /// whether the vector is deleted
-    #[serde(default)]
     pub deleted: bool,
     /// The level of the HVector
-    #[serde(skip)]
     pub level: usize,
 
     /// The properties of the HVector
-    #[serde(default)]
     pub properties: Option<ImmutablePropertiesMap<'arena>>,
+}
+
+// Custom Serialize implementation to conditionally include id field
+// For JSON serialization, the id field is included, but for bincode it is skipped
+impl<'arena> Serialize for VectorWithoutData<'arena> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        // Check if this is a human-readable format (like JSON)
+        if serializer.is_human_readable() {
+            // Include id for JSON serialization
+            let mut buffer = [0u8; 36];
+            let mut state = serializer.serialize_struct("VectorWithoutData", 6)?;
+            state.serialize_field("id", uuid_str_from_buf(self.id, &mut buffer))?;
+            state.serialize_field("label", self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("deleted", &self.deleted)?;
+            state.serialize_field("level", &self.level)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        } else {
+            // Skip id for bincode serialization
+            let mut state = serializer.serialize_struct("VectorWithoutData", 5)?;
+            state.serialize_field("label", self.label)?;
+            state.serialize_field("version", &self.version)?;
+            state.serialize_field("deleted", &self.deleted)?;
+            state.serialize_field("level", &self.level)?;
+            state.serialize_field("properties", &self.properties)?;
+            state.end()
+        }
+    }
 }
 
 impl Debug for VectorWithoutData<'_> {

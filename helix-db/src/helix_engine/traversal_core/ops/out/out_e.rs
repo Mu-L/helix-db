@@ -59,11 +59,13 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                                                 return Some(Err(e));
                                             }
                                         };
-                                    if let Ok(edge) = self.storage.get_edge(self.txn, &edge_id, self.arena) {
+                                    if let Ok(edge) =
+                                        self.storage.get_edge(self.txn, &edge_id, self.arena)
+                                    {
                                         return Some(Ok(TraversalValue::Edge(edge)));
                                     }
                                 }
-                                return None;
+                                None
                             })),
                             Ok(None) => None,
                             Err(e) => {

@@ -3,16 +3,14 @@ use serde::Serialize;
 use crate::{
     helix_engine::vector_core::{vector::HVector, vector_without_data::VectorWithoutData},
     protocol::value::Value,
-    utils::{
-        count::Count,
-        items::{Edge, Node},
-    },
+    utils::items::{Edge, Node},
 };
 use std::{borrow::Cow, hash::Hash};
 
 pub type Variable<'arena> = Cow<'arena, TraversalValue<'arena>>;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
+#[serde(untagged)]
 pub enum TraversalValue<'arena> {
     /// A node in the graph
     Node(Node<'arena>),
@@ -23,7 +21,6 @@ pub enum TraversalValue<'arena> {
     /// Vector node without vector data
     VectorNodeWithoutVectorData(VectorWithoutData<'arena>),
     /// A count of the number of items
-    Count(Count),
     /// A path between two nodes in the graph
     Path((Vec<Node<'arena>>, Vec<Edge<'arena>>)),
     /// A value in the graph
@@ -47,7 +44,7 @@ impl<'arena> TraversalValue<'arena> {
         }
     }
 
-    pub fn label(&self) -> &str {
+    pub fn label(&self) -> &'arena str {
         match self {
             TraversalValue::Node(node) => node.label,
             TraversalValue::Edge(edge) => edge.label,
@@ -58,7 +55,46 @@ impl<'arena> TraversalValue<'arena> {
         }
     }
 
-    pub fn get_property(&self, property: &str) -> Option<&Value> {
+    pub fn from_node(&self) -> u128 {
+        match self {
+            TraversalValue::Edge(edge) => edge.from_node,
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn to_node(&self) -> u128 {
+        match self {
+            TraversalValue::Edge(edge) => edge.to_node,
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn data(&self) -> &'arena [f64] {
+        match self {
+            TraversalValue::Vector(vector) => vector.data,
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn score(&self) -> f64 {
+        match self {
+            TraversalValue::Vector(vector) => vector.score(),
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn label_arena(&self) -> &'arena str {
+        match self {
+            TraversalValue::Node(node) => node.label,
+            TraversalValue::Edge(edge) => edge.label,
+            TraversalValue::Vector(vector) => vector.label,
+            TraversalValue::VectorNodeWithoutVectorData(vector) => vector.label,
+            TraversalValue::Empty => "",
+            _ => "",
+        }
+    }
+
+    pub fn get_property(&self, property: &str) -> Option<&'arena Value> {
         match self {
             TraversalValue::Node(node) => node.get_property(property),
             TraversalValue::Edge(edge) => edge.get_property(property),

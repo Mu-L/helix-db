@@ -83,18 +83,14 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                                 {
                                     return Some(Ok(TraversalValue::Vector(vec)));
                                 }
-                            } else {
-                                if let Ok(Some(vec)) = self
-                                    .storage
-                                    .vectors
-                                    .get_vector_properties(self.txn, item_id, self.arena)
-                                {
-                                    return Some(Ok(TraversalValue::VectorNodeWithoutVectorData(
-                                        vec,
-                                    )));
-                                }
+                            } else if let Ok(Some(vec)) = self
+                                .storage
+                                .vectors
+                                .get_vector_properties(self.txn, item_id, self.arena)
+                            {
+                                return Some(Ok(TraversalValue::VectorNodeWithoutVectorData(vec)));
                             }
-                            return None;
+                            None
                         } else {
                             None
                         }
@@ -148,11 +144,12 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                                     return Some(Err(e));
                                 }
                             };
-                            if let Ok(node) = self.storage.get_node(self.txn, &item_id, self.arena) {
+                            if let Ok(node) = self.storage.get_node(self.txn, &item_id, self.arena)
+                            {
                                 return Some(Ok(TraversalValue::Node(node)));
                             }
                         }
-                        return None;
+                        None
                     })),
                     Ok(None) => None,
                     Err(e) => {

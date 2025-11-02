@@ -8,8 +8,6 @@ use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use core_affinity::CoreId;
-use helix_metrics::events::{EventType, QueryErrorEvent, QuerySuccessEvent};
-use sonic_rs::json;
 use tracing::{info, trace, warn};
 
 use super::router::router::{HandlerFn, HelixRouter};
@@ -79,7 +77,7 @@ impl HelixGateway {
         let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(tokio_core_setter.num_threads())
-                .on_thread_start(move || Arc::clone(&tokio_core_setter).set_current())
+                .on_thread_unpark(move || Arc::clone(&tokio_core_setter).set_current_once())
                 .enable_all()
                 .build()?,
         );
@@ -162,9 +160,9 @@ async fn post_handler(
     req: protocol::request::Request,
 ) -> axum::http::Response<Body> {
     // #[cfg(feature = "metrics")]
-    let start_time = Instant::now();
-    let body = req.body.to_vec();
-    let query_name = req.name.clone();
+    let _start_time = Instant::now();
+    let _body = req.body.to_vec();
+    let _query_name = req.name.clone();
     let res = state.worker_pool.process(req).await;
 
     match res {
@@ -240,4 +238,17 @@ impl CoreSetter {
             ),
         };
     }
+
+    pub fn set_current_once(self: Arc<Self>) {
+        use std::sync::OnceLock;
+    
+        thread_local! {
+            static CORE_SET: OnceLock<()> = const { OnceLock::new() };
+        }
+    
+        CORE_SET.with(|flag| {
+            flag.get_or_init(move || self.set_current());
+        });
+    }
+    
 }

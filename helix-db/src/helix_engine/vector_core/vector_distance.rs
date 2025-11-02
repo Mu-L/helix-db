@@ -18,7 +18,7 @@ impl<'a> DistanceCalc for HVector<'a> {
     #[inline(always)]
     #[cfg(feature = "cosine")]
     fn distance(from: &HVector, to: &HVector) -> Result<f64, VectorError> {
-        cosine_similarity(&from.data, &to.data).map(|sim| 1.0 - sim)
+        cosine_similarity(from.data, to.data).map(|sim| 1.0 - sim)
     }
 }
 

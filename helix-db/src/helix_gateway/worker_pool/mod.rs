@@ -37,7 +37,7 @@ impl WorkerPool {
         if num_workers < 2 {
             panic!("The number of workers must be at least 2 for parity to act as a select.");
         }
-        if num_workers % 2 != 0 {
+        if !num_workers.is_multiple_of(2) {
             panic!("The number of workers should be a multiple of 2 for fairness.");
         }
 

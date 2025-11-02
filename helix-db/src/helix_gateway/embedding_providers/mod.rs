@@ -264,6 +264,7 @@ pub fn get_embedding_model(
 ///
 /// ## Example Use
 /// ```rust
+/// use helix_db::embed;
 /// let query = embed!("Hello, world!");
 /// let embedding = embed!("Hello, world!", "text-embedding-ada-002");
 /// let embedding = embed!("Hello, world!", "gemini:gemini-embedding-001:SEMANTIC_SIMILARITY");

@@ -129,9 +129,9 @@ impl Display for Drop {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Drop::<Vec<_>>::drop_traversal(
-                {},
-                Arc::clone(&db),
+            "Drop::drop_traversal(
+                {}.collect::<Vec<_>>().into_iter(),
+                &db,
                 &mut txn,
             )?;",
             self.expression
