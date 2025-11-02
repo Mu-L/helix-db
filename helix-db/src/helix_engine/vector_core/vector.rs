@@ -155,6 +155,11 @@ impl<'arena> HVector<'arena> {
             .map_err(|e| VectorError::ConversionError(format!("Error deserializing vector: {e}")))
     }
 
+    #[inline(always)]
+    pub fn to_bincode_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(self)
+    }
+
     /// Casts the raw bytes to a f64 slice by copying them once into the arena
     #[inline]
     pub fn cast_raw_vector_data<'txn>(
