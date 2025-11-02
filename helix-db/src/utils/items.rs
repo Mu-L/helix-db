@@ -202,7 +202,7 @@ impl<'arena> Edge<'arena> {
         self.properties.as_ref().and_then(|value| value.get(prop))
     }
 
-    // Deserializes bytes into an edge using a custom deserializer that allocates into the provided arena
+    /// Deserializes bytes into an edge using a custom deserializer that allocates into the provided arena
     ///
     /// NOTE: in this method, fixint encoding is used
     #[inline(always)]

@@ -94,39 +94,7 @@ impl<'de, 'txn, 'arena> serde::de::DeserializeSeed<'de> for VectorDeSeed<'txn, '
                     .next_element_seed(OptionPropertiesMapDeSeed { arena: self.arena })?
                     .ok_or_else(|| serde::de::Error::custom("Expected properties field"))?;
 
-                // Manually copy data to avoid alignment issues with bytemuck
-                if self.raw_vector_data.is_empty() {
-                    return Err(serde::de::Error::custom("raw_vector_data.len() == 0"));
-                }
-                if !self
-                    .raw_vector_data
-                    .len()
-                    .is_multiple_of(std::mem::size_of::<f64>())
-                {
-                    return Err(serde::de::Error::custom(
-                        "raw_vector_data bytes len is not a multiple of size_of::<f64>()",
-                    ));
-                }
-                let dimensions = self.raw_vector_data.len() / std::mem::size_of::<f64>();
-
-                let layout = std::alloc::Layout::array::<f64>(dimensions).map_err(|_| {
-                    serde::de::Error::custom(
-                        "vector_data array arithmetic overflow or total size exceeds isize::MAX",
-                    )
-                })?;
-
-                let vector_data: std::ptr::NonNull<u8> = self.arena.alloc_layout(layout);
-
-                let data: &'arena [f64] = unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        self.raw_vector_data.as_ptr(),
-                        vector_data.as_ptr(),
-                        self.raw_vector_data.len(),
-                    );
-
-                    let vector_data: std::ptr::NonNull<f64> = vector_data.cast();
-                    std::slice::from_raw_parts(vector_data.as_ptr(), dimensions)
-                };
+                let data = HVector::cast_raw_vector_data(self.arena, self.raw_vector_data);
 
                 Ok(HVector {
                     id: self.id,
