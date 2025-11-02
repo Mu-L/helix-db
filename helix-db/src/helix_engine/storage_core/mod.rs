@@ -292,12 +292,7 @@ impl DBMethods for HelixGraphStorage {
 }
 
 impl StorageMethods for HelixGraphStorage {
-    #[inline(always)]
-    fn check_exists(&self, txn: &RoTxn, id: &u128) -> Result<bool, GraphError> {
-        Ok(self.nodes_db.get(txn, Self::node_key(id))?.is_some())
-    }
-
-    #[inline(always)]
+    #[inline]
     fn get_node<'arena>(
         &self,
         txn: &RoTxn,
@@ -313,7 +308,7 @@ impl StorageMethods for HelixGraphStorage {
         Ok(node)
     }
 
-    #[inline(always)]
+    #[inline]
     fn get_edge<'arena>(
         &self,
         txn: &RoTxn,
