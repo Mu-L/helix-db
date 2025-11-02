@@ -96,7 +96,7 @@ impl CrossEncoderReranker {
         if let Some(props) = properties {
             // Try common text field names
             for field in &["text", "content", "description", "body", "title"] {
-                if let Some(value) = props.get(*field)
+                if let Some(value) = props.get(field)
                     && let crate::protocol::value::Value::String(text) = value
                 {
                     return Ok(text.to_string());

@@ -4,7 +4,7 @@ use crate::{
         vector_core::{vector_distance::DistanceCalc, vector_without_data::VectorWithoutData},
     },
     protocol::{custom_serde::vector_serde::VectorDeSeed, value::Value},
-    utils::{id::v6_uuid, properties::ImmutablePropertiesMap},
+    utils::{id::{uuid_str_from_buf, v6_uuid}, properties::ImmutablePropertiesMap},
 };
 use bincode::Options;
 use core::fmt;
@@ -46,8 +46,9 @@ impl<'arena> Serialize for HVector<'arena> {
         // Check if this is a human-readable format (like JSON)
         if serializer.is_human_readable() {
             // Include id for JSON serialization
+            let mut buffer = [0u8; 36];
             let mut state = serializer.serialize_struct("HVector", 5)?;
-            state.serialize_field("id", &self.id)?;
+            state.serialize_field("id", uuid_str_from_buf(self.id, &mut buffer))?;
             state.serialize_field("label", &self.label)?;
             state.serialize_field("version", &self.version)?;
             state.serialize_field("deleted", &self.deleted)?;

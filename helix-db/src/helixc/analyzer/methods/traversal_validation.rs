@@ -1261,7 +1261,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
-                                gen_identifier_or_param(original_query, i.as_str(), false, true)
+                                gen_identifier_or_param(original_query, i.as_str(), true, false)
                             }
                             ExpressionType::BooleanLiteral(b) => {
                                 GeneratedValue::Primitive(GenRef::Std(b.to_string()))
