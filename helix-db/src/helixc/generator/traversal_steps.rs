@@ -492,12 +492,12 @@ impl Display for WhereRef {
                 // Handle PropertyFetch with BoolOp - use get_property
                 if let (Some(prop), Some(bool_op)) = (prop, bool_op) {
                     let bool_expr = match bool_op {
-                        BoolOp::Gt(gt) => format!("*v{gt}"),
-                        BoolOp::Gte(gte) => format!("*v{gte}"),
-                        BoolOp::Lt(lt) => format!("*v{lt}"),
-                        BoolOp::Lte(lte) => format!("*v{lte}"),
-                        BoolOp::Eq(eq) => format!("*v{eq}"),
-                        BoolOp::Neq(neq) => format!("*v{neq}"),
+                        BoolOp::Gt(gt) => format!("{gt}"),
+                        BoolOp::Gte(gte) => format!("{gte}"),
+                        BoolOp::Lt(lt) => format!("{lt}"),
+                        BoolOp::Lte(lte) => format!("{lte}"),
+                        BoolOp::Eq(eq) => format!("{eq}"),
+                        BoolOp::Neq(neq) => format!("{neq}"),
                         BoolOp::Contains(contains) => format!("v{contains}"),
                         BoolOp::IsIn(is_in) => format!("v{is_in}"),
                     };
