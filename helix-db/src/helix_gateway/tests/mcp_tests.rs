@@ -24,7 +24,7 @@ mod mcp_tests {
             tools::{EdgeType, FilterProperties, FilterTraversal, Operator, ToolArgs},
         },
         protocol::{Format, Request, request::RequestType, value::Value},
-        utils::properties::ImmutablePropertiesMap,
+        utils::{id::uuid_str, properties::ImmutablePropertiesMap},
     };
 
     fn setup_engine() -> (HelixGraphEngine, TempDir) {
@@ -329,7 +329,7 @@ mod mcp_tests {
 
         let response = out_step(&mut input).unwrap();
         let body = String::from_utf8(response.body.clone()).unwrap();
-        assert!(body.contains(&person2.id().to_string()));
+        assert!(body.contains(&uuid_str(person2.id(), &arena)));
     }
 
     #[test]
@@ -473,8 +473,9 @@ mod mcp_tests {
         });
         connections.lock().unwrap().add_connection(connection);
 
-        let request_body =
-            Bytes::from(r#"{"connection_id":"conn4","data":{"edge_label":"knows","filter":null}}"#.to_string());
+        let request_body = Bytes::from(
+            r#"{"connection_id":"conn4","data":{"edge_label":"knows","filter":null}}"#.to_string(),
+        );
 
         let request = Request {
             name: "in_e_step".to_string(),
@@ -876,11 +877,7 @@ mod mcp_tests {
                 "person",
                 Some(ImmutablePropertiesMap::new(
                     2,
-                    [
-                        ("age", Value::from(25)),
-                        ("name", Value::from("Alice")),
-                    ]
-                    .into_iter(),
+                    [("age", Value::from(25)), ("name", Value::from("Alice"))].into_iter(),
                     &arena,
                 )),
                 None,
@@ -892,11 +889,7 @@ mod mcp_tests {
                 "person",
                 Some(ImmutablePropertiesMap::new(
                     2,
-                    [
-                        ("age", Value::from(30)),
-                        ("name", Value::from("Bob")),
-                    ]
-                    .into_iter(),
+                    [("age", Value::from(30)), ("name", Value::from("Bob"))].into_iter(),
                     &arena,
                 )),
                 None,
@@ -1160,7 +1153,10 @@ mod mcp_tests {
                     2,
                     [
                         ("title", Value::from("Introduction to Rust")),
-                        ("content", Value::from("Rust is a systems programming language")),
+                        (
+                            "content",
+                            Value::from("Rust is a systems programming language"),
+                        ),
                     ]
                     .into_iter(),
                     &arena,
@@ -1252,10 +1248,12 @@ mod mcp_tests {
 
         let response = search_keyword(&mut input);
         assert!(response.is_err());
-        assert!(response
-            .unwrap_err()
-            .to_string()
-            .contains("Connection not found"));
+        assert!(
+            response
+                .unwrap_err()
+                .to_string()
+                .contains("Connection not found")
+        );
     }
 
     #[test]
@@ -1271,7 +1269,8 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         // Test with invalid JSON
-        let request_body = Bytes::from(r#"{"connection_id":"conn_validate","invalid":true}"#.to_string());
+        let request_body =
+            Bytes::from(r#"{"connection_id":"conn_validate","invalid":true}"#.to_string());
 
         let request = Request {
             name: "search_keyword".to_string(),
@@ -1395,10 +1394,12 @@ mod mcp_tests {
 
         let response = search_vector(&mut input);
         assert!(response.is_err());
-        assert!(response
-            .unwrap_err()
-            .to_string()
-            .contains("Connection not found"));
+        assert!(
+            response
+                .unwrap_err()
+                .to_string()
+                .contains("Connection not found")
+        );
     }
 
     #[test]
@@ -1507,10 +1508,12 @@ mod mcp_tests {
 
         let response = search_vector_text(&mut input);
         assert!(response.is_err());
-        assert!(response
-            .unwrap_err()
-            .to_string()
-            .contains("Connection not found"));
+        assert!(
+            response
+                .unwrap_err()
+                .to_string()
+                .contains("Connection not found")
+        );
     }
 
     #[test]
@@ -1526,8 +1529,9 @@ mod mcp_tests {
         connections.lock().unwrap().add_connection(connection);
 
         // Test with invalid JSON (missing required query field)
-        let request_body =
-            Bytes::from(r#"{"connection_id":"conn_vec_text_validate","data":{"label":"document"}}"#.to_string());
+        let request_body = Bytes::from(
+            r#"{"connection_id":"conn_vec_text_validate","data":{"label":"document"}}"#.to_string(),
+        );
 
         let request = Request {
             name: "search_vector_text".to_string(),

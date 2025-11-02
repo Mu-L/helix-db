@@ -45,7 +45,7 @@ impl<'arena> serde::Serialize for Node<'arena> {
         // Check if this is a human-readable format (like JSON)
         if serializer.is_human_readable() {
             // Include id for JSON serialization
-            let mut buffer = [0u8, 36];
+            let mut buffer = [0u8; 36];
             let mut state = serializer.serialize_struct("Node", 4)?;
             state.serialize_field("id", uuid_str_from_buf(self.id, &mut buffer))?;
             state.serialize_field("label", self.label)?;
