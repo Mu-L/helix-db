@@ -4,7 +4,8 @@ use crate::helixc::parser::{
     types::{
         Aggregate, BooleanOp, BooleanOpType, Closure, Exclude, Expression, ExpressionType, FieldAddition,
         FieldValue, FieldValueType, GraphStep, GraphStepType, GroupBy, IdType, MMRDistance, Object, OrderBy,
-        OrderByType, RerankMMR, RerankRRF, ShortestPath, ShortestPathBFS, ShortestPathDijkstras, Step, StepType, Update,
+        OrderByType, RerankMMR, RerankRRF, ShortestPath, ShortestPathAStar, ShortestPathBFS,
+        ShortestPathDijkstras, Step, StepType, Update,
     },
     utils::{PairTools, PairsTools},
 };
@@ -564,6 +565,82 @@ impl HelixParser {
                             loc: pair.loc(),
                         }),
                         type_arg,
+                    }),
+                }
+            }
+            Rule::shortest_path_astar => {
+                // Parse: ShortestPathAStar<Type>(weight_expr, "heuristic_property")
+                let mut type_arg: Option<String> = None;
+                let mut weight_expression: Option<Expression> = None;
+                let mut heuristic_property: Option<String> = None;
+                let mut from: Option<String> = None;
+                let mut to: Option<String> = None;
+
+                for inner_pair in pair.clone().into_inner() {
+                    match inner_pair.as_rule() {
+                        Rule::type_args => {
+                            type_arg = Some(inner_pair.into_inner().next().unwrap().as_str().to_string());
+                        }
+                        Rule::math_expression => {
+                            weight_expression = Some(self.parse_expression(inner_pair)?);
+                        }
+                        Rule::string_literal => {
+                            // Extract string content (remove quotes)
+                            let literal = inner_pair.as_str();
+                            heuristic_property = Some(literal[1..literal.len() - 1].to_string());
+                        }
+                        Rule::to_from => {
+                            match inner_pair.into_inner().next() {
+                                Some(p) => match p.as_rule() {
+                                    Rule::to => {
+                                        to = Some(p.into_inner().next().unwrap().as_str().to_string());
+                                    }
+                                    Rule::from => {
+                                        from = Some(p.into_inner().next().unwrap().as_str().to_string());
+                                    }
+                                    _ => {}
+                                },
+                                None => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Determine weight expression type
+                let (inner_traversal, weight_expr_typed) = if let Some(expr) = weight_expression {
+                    let weight_type = match &expr.expr {
+                        ExpressionType::Traversal(_trav) => {
+                            Some(crate::helixc::parser::types::WeightExpression::Expression(Box::new(expr.clone())))
+                        }
+                        ExpressionType::MathFunctionCall(_) => {
+                            Some(crate::helixc::parser::types::WeightExpression::Expression(Box::new(expr.clone())))
+                        }
+                        _ => {
+                            Some(crate::helixc::parser::types::WeightExpression::Expression(Box::new(expr.clone())))
+                        }
+                    };
+                    (None, weight_type)
+                } else {
+                    (None, Some(crate::helixc::parser::types::WeightExpression::Default))
+                };
+
+                GraphStep {
+                    loc: pair.loc(),
+                    step: GraphStepType::ShortestPathAStar(ShortestPathAStar {
+                        loc: pair.loc(),
+                        from: from.map(|id| IdType::Identifier {
+                            value: id,
+                            loc: pair.loc(),
+                        }),
+                        to: to.map(|id| IdType::Identifier {
+                            value: id,
+                            loc: pair.loc(),
+                        }),
+                        type_arg,
+                        inner_traversal,
+                        weight_expr: weight_expr_typed,
+                        heuristic_property: heuristic_property.unwrap_or_else(|| "h".to_string()),
                     }),
                 }
             }

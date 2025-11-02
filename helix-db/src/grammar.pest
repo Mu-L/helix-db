@@ -167,6 +167,7 @@ graph_step = {
   | in_nodes
   | shortest_path_dijkstras
   | shortest_path_bfs
+  | shortest_path_astar
   | shortest_path
   | search_vector
 }
@@ -181,6 +182,7 @@ in_nodes ={ "In" ~ ("<" ~ type_args ~ ">")?}
 shortest_path ={ "ShortestPath" ~ ("<" ~ type_args ~ ">")? ~ to_from}
 shortest_path_dijkstras ={ "ShortestPathDijkstras" ~ ("<" ~ type_args ~ ">")? ~ "(" ~ math_expression ~ ")" ~ to_from}
 shortest_path_bfs ={ "ShortestPathBFS" ~ ("<" ~ type_args ~ ">")? ~ to_from}
+shortest_path_astar ={ "ShortestPathAStar" ~ ("<" ~ type_args ~ ">")? ~ "(" ~ math_expression ~ "," ~ string_literal ~ ")" ~ to_from}
 
 
 // ---------------------------------------------------------------------

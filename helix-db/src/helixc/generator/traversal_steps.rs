@@ -241,6 +241,7 @@ pub enum Step {
     ShortestPath(ShortestPath),
     ShortestPathDijkstras(ShortestPathDijkstras),
     ShortestPathBFS(ShortestPathBFS),
+    ShortestPathAStar(ShortestPathAStar),
 
     // search vector
     SearchVector(SearchVectorStep),
@@ -288,6 +289,7 @@ impl Display for Step {
                 write!(f, "{shortest_path_dijkstras}")
             }
             Step::ShortestPathBFS(shortest_path_bfs) => write!(f, "{shortest_path_bfs}"),
+            Step::ShortestPathAStar(shortest_path_astar) => write!(f, "{shortest_path_astar}"),
             Step::SearchVector(search_vector) => write!(f, "{search_vector}"),
             Step::GroupBy(group_by) => write!(f, "{group_by}"),
             Step::AggregateBy(aggregate_by) => write!(f, "{aggregate_by}"),
@@ -318,6 +320,7 @@ impl Debug for Step {
             Step::ShortestPath(_) => write!(f, "ShortestPath"),
             Step::ShortestPathDijkstras(_) => write!(f, "ShortestPathDijkstras"),
             Step::ShortestPathBFS(_) => write!(f, "ShortestPathBFS"),
+            Step::ShortestPathAStar(_) => write!(f, "ShortestPathAStar"),
             Step::SearchVector(_) => write!(f, "SearchVector"),
             Step::GroupBy(_) => write!(f, "GroupBy"),
             Step::AggregateBy(_) => write!(f, "AggregateBy"),
@@ -629,6 +632,15 @@ pub struct ShortestPathBFS {
 }
 
 #[derive(Clone)]
+pub struct ShortestPathAStar {
+    pub label: Option<GenRef<String>>,
+    pub from: Option<GenRef<String>>,
+    pub to: Option<GenRef<String>>,
+    pub weight_calculation: WeightCalculation,
+    pub heuristic_property: GenRef<String>,
+}
+
+#[derive(Clone)]
 pub enum PathAlgorithm {
     BFS,
     Dijkstra,
@@ -742,6 +754,54 @@ impl Display for ShortestPathBFS {
                 .as_ref()
                 .map_or("None".to_string(), |to| format!("Some(&{to})"))
         )
+    }
+}
+
+impl Display for ShortestPathAStar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "shortest_path_astar({}, {}, {}, ",
+            self.label
+                .as_ref()
+                .map_or("None".to_string(), |label| format!("Some({label})")),
+            self.from
+                .as_ref()
+                .map_or("None".to_string(), |from| format!("Some(&{from})")),
+            self.to
+                .as_ref()
+                .map_or("None".to_string(), |to| format!("Some(&{to})"))
+        )?;
+
+        // Generate the weight calculation closure
+        match &self.weight_calculation {
+            WeightCalculation::Property(prop) => {
+                write!(
+                    f,
+                    "|edge, _src_node, _dst_node| -> Result<f64, GraphError> {{ Ok(edge.get_property({})?.as_f64()?) }}, ",
+                    prop
+                )?;
+            }
+            WeightCalculation::Expression(expr) => {
+                write!(
+                    f,
+                    "|edge, src_node, dst_node| -> Result<f64, GraphError> {{ Ok({}) }}, ",
+                    expr
+                )?;
+            }
+            WeightCalculation::Default => {
+                write!(f, "helix_db::helix_engine::traversal_core::ops::util::paths::default_weight_fn, ")?;
+            }
+        }
+
+        // Generate the heuristic function closure
+        write!(
+            f,
+            "|node| helix_db::helix_engine::traversal_core::ops::util::paths::property_heuristic(node, {})",
+            self.heuristic_property
+        )?;
+
+        write!(f, ")")
     }
 }
 

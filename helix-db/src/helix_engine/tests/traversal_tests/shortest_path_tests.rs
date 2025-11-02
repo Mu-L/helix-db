@@ -491,3 +491,278 @@ fn test_shortest_path_with_constant_weight() {
         panic!("expected path");
     }
 }
+
+#[test]
+fn test_astar_with_property_heuristic() {
+    use crate::helix_engine::traversal_core::ops::util::paths::property_heuristic;
+
+    let (storage, _temp_dir) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    // Create a graph where A* should find the optimal path
+    // Graph: start -> mid1 -> goal
+    //        start -> mid2 -> goal
+    // Weights: start->mid1: 5.0, mid1->goal: 5.0 (total: 10.0)
+    //          start->mid2: 1.0, mid2->goal: 15.0 (total: 16.0)
+    // Heuristics: start: h=10, mid1: h=5, mid2: h=5, goal: h=0
+
+    let start = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "city",
+            props_option(&arena, props!("name" => "start", "h" => 10.0)),
+            None,
+        )
+        .collect_to::<Vec<_>>()[0]
+        .id();
+
+    let mid1 = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "city",
+            props_option(&arena, props!("name" => "mid1", "h" => 5.0)),
+            None,
+        )
+        .collect_to::<Vec<_>>()[0]
+        .id();
+
+    let mid2 = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "city",
+            props_option(&arena, props!("name" => "mid2", "h" => 5.0)),
+            None,
+        )
+        .collect_to::<Vec<_>>()[0]
+        .id();
+
+    let goal = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "city",
+            props_option(&arena, props!("name" => "goal", "h" => 0.0)),
+            None,
+        )
+        .collect_to::<Vec<_>>()[0]
+        .id();
+
+    // Add edges with weights
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("weight" => 5.0)),
+            start,
+            mid1,
+            false,
+        )
+        .collect_to_obj();
+
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("weight" => 5.0)),
+            mid1,
+            goal,
+            false,
+        )
+        .collect_to_obj();
+
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("weight" => 1.0)),
+            start,
+            mid2,
+            false,
+        )
+        .collect_to_obj();
+
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("weight" => 15.0)),
+            mid2,
+            goal,
+            false,
+        )
+        .collect_to_obj();
+
+    txn.commit().unwrap();
+
+    // Run A* with property-based heuristic
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    let heuristic = |node: &crate::utils::items::Node| property_heuristic(node, "h");
+
+    let path = G::new(&storage, &txn, &arena)
+        .n_from_id(&start)
+        .shortest_path_astar(Some("road"), None, Some(&goal), default_weight_fn, heuristic)
+        .collect_to::<Vec<_>>();
+
+    assert_eq!(path.len(), 1);
+    if let TraversalValue::Path((nodes, edges)) = &path[0] {
+        // A* should find the path: start -> mid1 -> goal (total cost 10.0)
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(edges.len(), 2);
+
+        // Verify the nodes in the path
+        assert_eq!(nodes[0].id, start);
+        assert_eq!(nodes[1].id, mid1);
+        assert_eq!(nodes[2].id, goal);
+    } else {
+        panic!("expected path");
+    }
+}
+
+#[test]
+fn test_astar_matches_dijkstra_with_zero_heuristic() {
+    let (storage, _temp_dir) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    let start = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "city",
+            props_option(&arena, props!("name" => "start", "h" => 0.0)),
+            None,
+        )
+        .collect_to::<Vec<_>>()[0]
+        .id();
+
+    let mid = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "city",
+            props_option(&arena, props!("name" => "mid", "h" => 0.0)),
+            None,
+        )
+        .collect_to::<Vec<_>>()[0]
+        .id();
+
+    let end = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "city",
+            props_option(&arena, props!("name" => "end", "h" => 0.0)),
+            None,
+        )
+        .collect_to::<Vec<_>>()[0]
+        .id();
+
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("weight" => 5.0)),
+            start,
+            mid,
+            false,
+        )
+        .collect_to_obj();
+
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("weight" => 3.0)),
+            mid,
+            end,
+            false,
+        )
+        .collect_to_obj();
+
+    txn.commit().unwrap();
+
+    // Test that A* with zero heuristic behaves like Dijkstra
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    let zero_heuristic = |_node: &crate::utils::items::Node| Ok(0.0);
+
+    let astar_path = G::new(&storage, &txn, &arena)
+        .n_from_id(&start)
+        .shortest_path_astar(Some("road"), None, Some(&end), default_weight_fn, zero_heuristic)
+        .collect_to::<Vec<_>>();
+
+    let dijkstra_path = G::new(&storage, &txn, &arena)
+        .n_from_id(&start)
+        .shortest_path_with_algorithm(Some("road"), None, Some(&end), PathAlgorithm::Dijkstra, default_weight_fn)
+        .collect_to::<Vec<_>>();
+
+    // Both should find the same path
+    assert_eq!(astar_path.len(), 1);
+    assert_eq!(dijkstra_path.len(), 1);
+
+    if let (TraversalValue::Path((astar_nodes, astar_edges)), TraversalValue::Path((dijkstra_nodes, dijkstra_edges))) =
+        (&astar_path[0], &dijkstra_path[0])
+    {
+        assert_eq!(astar_nodes.len(), dijkstra_nodes.len());
+        assert_eq!(astar_edges.len(), dijkstra_edges.len());
+    } else {
+        panic!("expected paths");
+    }
+}
+
+#[test]
+fn test_astar_custom_weight_and_heuristic() {
+    use crate::helix_engine::traversal_core::ops::util::paths::property_heuristic;
+
+    let (storage, _temp_dir) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    let start = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "city",
+            props_option(&arena, props!("name" => "start", "h" => 10.0)),
+            None,
+        )
+        .collect_to::<Vec<_>>()[0]
+        .id();
+
+    let end = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "city",
+            props_option(&arena, props!("name" => "end", "h" => 0.0)),
+            None,
+        )
+        .collect_to::<Vec<_>>()[0]
+        .id();
+
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_edge(
+            "road",
+            props_option(&arena, props!("distance" => 100.0, "traffic" => 0.5)),
+            start,
+            end,
+            false,
+        )
+        .collect_to_obj();
+
+    txn.commit().unwrap();
+
+    // Test A* with custom weight function (distance * traffic) and property heuristic
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    let custom_weight = |edge: &crate::utils::items::Edge,
+                         _src: &crate::utils::items::Node,
+                         _dst: &crate::utils::items::Node| {
+        let distance = edge.get_property("distance")
+            .ok_or(crate::helix_engine::types::GraphError::New("distance property not found".to_string()))?
+            .as_f64();
+        let traffic = edge.get_property("traffic")
+            .ok_or(crate::helix_engine::types::GraphError::New("traffic property not found".to_string()))?
+            .as_f64();
+        Ok(distance * traffic)
+    };
+
+    let heuristic = |node: &crate::utils::items::Node| property_heuristic(node, "h");
+
+    let path = G::new(&storage, &txn, &arena)
+        .n_from_id(&start)
+        .shortest_path_astar(Some("road"), None, Some(&end), custom_weight, heuristic)
+        .collect_to::<Vec<_>>();
+
+    assert_eq!(path.len(), 1);
+    if let TraversalValue::Path((nodes, edges)) = &path[0] {
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(edges.len(), 1);
+    } else {
+        panic!("expected path");
+    }
+}

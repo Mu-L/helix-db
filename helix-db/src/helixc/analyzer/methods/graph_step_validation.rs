@@ -18,7 +18,8 @@ use crate::{
             traversal_steps::{
                 FromV as GeneratedFromV, In as GeneratedIn, InE as GeneratedInE,
                 Out as GeneratedOut, OutE as GeneratedOutE, SearchVectorStep,
-                ShortestPath as GeneratedShortestPath, ShortestPathBFS as GeneratedShortestPathBFS,
+                ShortestPath as GeneratedShortestPath, ShortestPathAStar as GeneratedShortestPathAStar,
+                ShortestPathBFS as GeneratedShortestPathBFS,
                 ShortestPathDijkstras as GeneratedShortestPathDijkstras, ShouldCollect,
                 Step as GeneratedStep, ToV as GeneratedToV, Traversal as GeneratedTraversal,
                 WeightCalculation,
@@ -539,6 +540,69 @@ pub(crate) fn apply_graph_step<'a>(
                             to: Some(GenRef::from(to)),
                         },
                         (None, None) => panic!("Invalid shortest path bfs"),
+                    },
+                )));
+            traversal.should_collect = ShouldCollect::ToVec;
+            Some(Type::Unknown)
+        }
+        (ShortestPathAStar(sp), Type::Nodes(_) | Type::Node(_)) => {
+            let type_arg = sp.type_arg.clone().map(GenRef::Literal);
+
+            // Generate weight calculation
+            let weight_calculation = match &sp.weight_expr {
+                Some(WeightExpression::Property(prop)) => {
+                    WeightCalculation::Property(GenRef::Literal(prop.clone()))
+                }
+                Some(WeightExpression::Expression(expr)) => {
+                    match generate_math_expr(expr, ExpressionContext::WeightCalculation) {
+                        Ok(math_expr) => {
+                            WeightCalculation::Expression(format!("{}", math_expr))
+                        }
+                        Err(e) => {
+                            generate_error!(
+                                ctx,
+                                original_query,
+                                sp.loc.clone(),
+                                E202,
+                                &format!("Failed to generate weight expression: {}", e),
+                                "valid math expression",
+                                "ShortestPathAStar"
+                            );
+                            WeightCalculation::Default
+                        }
+                    }
+                }
+                Some(WeightExpression::Default) | None => WeightCalculation::Default,
+            };
+
+            let heuristic_property = GenRef::Literal(sp.heuristic_property.clone());
+
+            traversal
+                .steps
+                .push(Separator::Period(GeneratedStep::ShortestPathAStar(
+                    match (sp.from.clone(), sp.to.clone()) {
+                        (Some(from), Some(to)) => GeneratedShortestPathAStar {
+                            label: type_arg,
+                            from: Some(GenRef::from(from)),
+                            to: Some(GenRef::from(to)),
+                            weight_calculation,
+                            heuristic_property,
+                        },
+                        (Some(from), None) => GeneratedShortestPathAStar {
+                            label: type_arg,
+                            from: Some(GenRef::from(from)),
+                            to: None,
+                            weight_calculation,
+                            heuristic_property,
+                        },
+                        (None, Some(to)) => GeneratedShortestPathAStar {
+                            label: type_arg,
+                            from: None,
+                            to: Some(GenRef::from(to)),
+                            weight_calculation,
+                            heuristic_property,
+                        },
+                        (None, None) => panic!("Invalid shortest path astar"),
                     },
                 )));
             traversal.should_collect = ShouldCollect::ToVec;
