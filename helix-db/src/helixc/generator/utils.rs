@@ -486,7 +486,6 @@ use helix_db::{
         format::Format,
     },
     utils::{
-        count::Count,
         id::{ID, uuid_str},
         items::{Edge, Node},
         properties::ImmutablePropertiesMap,
