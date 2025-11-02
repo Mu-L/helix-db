@@ -3,10 +3,7 @@ use serde::Serialize;
 use crate::{
     helix_engine::vector_core::{vector::HVector, vector_without_data::VectorWithoutData},
     protocol::value::Value,
-    utils::{
-        count::Count,
-        items::{Edge, Node},
-    },
+    utils::items::{Edge, Node},
 };
 use std::{borrow::Cow, hash::Hash};
 
@@ -24,7 +21,6 @@ pub enum TraversalValue<'arena> {
     /// Vector node without vector data
     VectorNodeWithoutVectorData(VectorWithoutData<'arena>),
     /// A count of the number of items
-    Count(Count),
     /// A path between two nodes in the graph
     Path((Vec<Node<'arena>>, Vec<Edge<'arena>>)),
     /// A value in the graph
@@ -35,7 +31,6 @@ pub enum TraversalValue<'arena> {
     /// An empty traversal value
     Empty,
 }
-
 
 impl<'arena> TraversalValue<'arena> {
     pub fn id(&self) -> u128 {
