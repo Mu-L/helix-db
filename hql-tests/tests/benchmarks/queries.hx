@@ -20,6 +20,11 @@ E::Interacted {
     To: Item
 }
 
+N::Metadata {
+    INDEX key: String,
+    value: String
+}
+
 
 QUERY PointGet(item_id: ID) =>
     item <- V<Item>(item_id)
@@ -44,3 +49,6 @@ QUERY VectorHopFilter(vector: [F64], top_k: I64, country: U8) =>
     items <- similar_items::WHERE(EXISTS(_::In<Interacted>::WHERE(_::{country}::EQ(country))))
     RETURN items::{id, category}
     
+QUERY GetDatasetId() =>
+    dataset_id <- N<Metadata>({ key: "dataset_id" })
+    RETURN dataset_id::{value}

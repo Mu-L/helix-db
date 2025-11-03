@@ -116,6 +116,49 @@ fn build_return_fields(
         return fields;
     }
 
+    // Handle Scalar types with field projection (single field access)
+    // When a single field is accessed like `node::{field}`, the type is Scalar but we still need a struct
+    if let Type::Scalar(scalar_type) = inferred_type {
+        if !traversal.object_fields.is_empty() {
+            eprintln!(
+                "DEBUG build_return_fields: Scalar type with field projection, scalar_type={:?}, object_fields={:?}",
+                scalar_type, traversal.object_fields
+            );
+            // Get the field name (should be only one for scalar types)
+            for field_name in &traversal.object_fields {
+                // Determine the Rust type based on whether it's an implicit field
+                match field_name.as_str() {
+                    "id" | "label" | "from_node" | "to_node" => {
+                        fields.push(ReturnFieldInfo::new_implicit(
+                            field_name.clone(),
+                            "&'a str".to_string(),
+                        ));
+                    }
+                    "data" => {
+                        fields.push(ReturnFieldInfo::new_implicit(
+                            field_name.clone(),
+                            "&'a [f64]".to_string(),
+                        ));
+                    }
+                    "score" => {
+                        fields.push(ReturnFieldInfo::new_implicit(
+                            field_name.clone(),
+                            "f64".to_string(),
+                        ));
+                    }
+                    _ => {
+                        // Schema field - use Option<&'a Value>
+                        fields.push(ReturnFieldInfo::new_schema(
+                            field_name.clone(),
+                            "Option<&'a Value>".to_string(),
+                        ));
+                    }
+                }
+            }
+            return fields;
+        }
+    }
+
     // Get schema type name if this is a schema type
     let schema_type = match inferred_type {
         Type::Node(Some(label)) | Type::Nodes(Some(label)) => Some((label.as_str(), "node")),
@@ -731,8 +774,8 @@ fn analyze_return_expr<'a>(
                             ));
 
                             // New unified approach
-                            // Skip struct generation for primitive types (Boolean, Scalar) - they use legacy path only
-                            if !matches!(inferred_type, Type::Boolean | Type::Scalar(_)) {
+                            // Skip struct generation for primitive types (Boolean, Scalar) unless they have field projection
+                            if !matches!(inferred_type, Type::Boolean | Type::Scalar(_)) || !traversal.object_fields.is_empty() {
                                 let struct_name_prefix = format!(
                                     "{}{}",
                                     capitalize_first(&query.name),
@@ -748,7 +791,8 @@ fn analyze_return_expr<'a>(
                                 let is_collection = matches!(
                                     inferred_type,
                                     Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_)
-                                );
+                                ) || (matches!(inferred_type, Type::Scalar(_))
+                                      && matches!(traversal.should_collect, ShouldCollect::ToVec));
                                 let (
                                     is_aggregate,
                                     is_group_by,
@@ -816,7 +860,8 @@ fn analyze_return_expr<'a>(
                             let is_collection = matches!(
                                 inferred_type,
                                 Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_)
-                            );
+                            ) || (matches!(inferred_type, Type::Scalar(_))
+                                  && matches!(traversal.should_collect, ShouldCollect::ToVec));
                             let (
                                 is_aggregate,
                                 is_group_by,
