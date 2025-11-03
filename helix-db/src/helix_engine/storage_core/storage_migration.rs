@@ -206,8 +206,7 @@ pub(crate) fn convert_all_vector_properties(storage: &mut HelixGraphStorage) -> 
 
     let batch_bounds = {
         let txn = storage.graph_env.read_txn()?;
-        let len = storage.vectors.vector_properties_db.len(&txn)? as usize;
-        let mut keys = Vec::with_capacity(len);
+        let mut keys = vec![];
 
         for (i, kv) in storage
             .vectors
@@ -223,7 +222,7 @@ pub(crate) fn convert_all_vector_properties(storage: &mut HelixGraphStorage) -> 
             }
         }
 
-        let mut ranges = Vec::with_capacity(len / BATCH_SIZE);
+        let mut ranges = vec![];
         for (start, end) in keys.iter().copied().tuple_windows() {
             ranges.push((Bound::Included(start), Bound::Excluded(end)));
         }
