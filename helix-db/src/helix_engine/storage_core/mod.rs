@@ -3,6 +3,9 @@ pub mod storage_methods;
 pub mod storage_migration;
 pub mod version_info;
 
+#[cfg(test)]
+mod storage_migration_tests;
+
 use crate::{
     helix_engine::{
         bm25::bm25::HBM25Config,

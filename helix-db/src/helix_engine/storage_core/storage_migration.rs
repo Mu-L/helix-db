@@ -36,7 +36,7 @@ pub fn migrate(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
     Ok(())
 }
 
-fn migrate_pre_metadata_to_native_vector_endianness(
+pub(crate) fn migrate_pre_metadata_to_native_vector_endianness(
     storage: &mut HelixGraphStorage,
 ) -> Result<StorageMetadata, GraphError> {
     // In PreMetadata, all vectors are stored as big endian.
@@ -63,7 +63,7 @@ fn migrate_pre_metadata_to_native_vector_endianness(
     Ok(metadata)
 }
 
-fn convert_vectors_to_native_endianness(
+pub(crate) fn convert_vectors_to_native_endianness(
     currently_stored_vector_endianness: VectorEndianness,
     storage: &mut HelixGraphStorage,
 ) -> Result<StorageMetadata, GraphError> {
@@ -82,7 +82,7 @@ fn convert_vectors_to_native_endianness(
     Ok(metadata)
 }
 
-fn convert_all_vectors(
+pub(crate) fn convert_all_vectors(
     source_endianness: VectorEndianness,
     storage: &mut HelixGraphStorage,
 ) -> Result<(), GraphError> {
@@ -146,7 +146,7 @@ fn convert_all_vectors(
 
 /// Converts a single vector's endianness by reading f64 values in source endianness
 /// and writing them in native endianness. Uses arena for allocations.
-fn convert_vector_endianness<'arena>(
+pub(crate) fn convert_vector_endianness<'arena>(
     bytes: &[u8],
     source_endianness: VectorEndianness,
     arena: &'arena bumpalo::Bump,
@@ -201,7 +201,7 @@ fn convert_vector_endianness<'arena>(
     Ok(result_bytes)
 }
 
-fn convert_all_vector_properties(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
+pub(crate) fn convert_all_vector_properties(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
     const BATCH_SIZE: usize = 1024;
 
     let batch_bounds = {
@@ -261,7 +261,7 @@ fn convert_all_vector_properties(storage: &mut HelixGraphStorage) -> Result<(), 
     Ok(())
 }
 
-fn convert_old_vector_properties_to_new_format<'arena, 'txn>(
+pub(crate) fn convert_old_vector_properties_to_new_format<'arena, 'txn>(
     property_bytes: &'txn [u8],
     arena: &'arena bumpalo::Bump,
 ) -> Result<Vec<u8>, GraphError> {
