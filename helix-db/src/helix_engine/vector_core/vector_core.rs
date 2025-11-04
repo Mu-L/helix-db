@@ -195,29 +195,8 @@ impl VectorCore {
         for result in iter {
             let (key, _) = result?;
 
-            // println!("Edge key length: {}, key bytes: {:?}", key.len(), key);
-            // println!("prefix_len: {}", prefix_len);
-
             let mut arr = [0u8; 16];
-            let len = std::cmp::min(key.len(), 16);
-            // println!(
-            //     "len: {}, extracting bytes {}..{}",
-            //     len,
-            //     prefix_len,
-            //     prefix_len + len
-            // );
-
-            arr[..len].copy_from_slice(&key[prefix_len..(prefix_len + len)]);
-            let neighbor_id = u128::from_be_bytes(arr);
-            // println!(
-            //     "Extracted neighbor_id: {} ({})",
-            //     neighbor_id,
-            //     uuid::Uuid::from_u128(neighbor_id)
-            // );
-
-            let mut arr = [0u8; 16];
-            let len = std::cmp::min(key.len(), 16);
-            arr[..len].copy_from_slice(&key[prefix_len..(prefix_len + len)]);
+            arr[..16].copy_from_slice(&key[prefix_len..(prefix_len + 16)]);
             let neighbor_id = u128::from_be_bytes(arr);
 
             if neighbor_id == id {

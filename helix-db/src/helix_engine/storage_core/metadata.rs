@@ -43,7 +43,7 @@ impl StorageMetadata {
         txn: &RoTxn<WithTls>,
         metadata_db: &Database<Bytes, Bytes>,
     ) -> Result<Self, GraphError> {
-        match metadata_db.get(&txn, STORAGE_VERSION_KEY)? {
+        match metadata_db.get(txn, STORAGE_VERSION_KEY)? {
             None => Ok(Self::PreMetadata),
             Some(version_bytes) => {
                 let version_byte_array: [u8; std::mem::size_of::<u64>()] =
@@ -53,7 +53,7 @@ impl StorageMetadata {
 
                 let version = u64::from_le_bytes(version_byte_array);
 
-                Self::parse(version, &txn, metadata_db)
+                Self::parse(version, txn, metadata_db)
             }
         }
     }

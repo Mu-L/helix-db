@@ -167,7 +167,7 @@ pub(crate) fn convert_vector_endianness<'arena>(
         return Ok(&[]);
     }
 
-    if bytes.len() % mem::size_of::<f64>() != 0 {
+    if !bytes.len().is_multiple_of(mem::size_of::<f64>()) {
         return Err(GraphError::New(
             "Vector data length is not a multiple of f64 size".to_string(),
         ));
@@ -271,9 +271,9 @@ pub(crate) fn convert_all_vector_properties(
     Ok(())
 }
 
-pub(crate) fn convert_old_vector_properties_to_new_format<'arena, 'txn>(
-    property_bytes: &'txn [u8],
-    arena: &'arena bumpalo::Bump,
+pub(crate) fn convert_old_vector_properties_to_new_format(
+    property_bytes: &[u8],
+    arena: &bumpalo::Bump,
 ) -> Result<Vec<u8>, GraphError> {
     let mut old_properties: HashMap<String, Value> = bincode::deserialize(property_bytes)?;
 
