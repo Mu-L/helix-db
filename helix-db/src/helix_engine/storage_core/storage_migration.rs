@@ -36,7 +36,7 @@ pub fn migrate(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
     }
 
     verify_vectors_and_repair(storage)?;
-    check_orphaned_edges(storage)?;
+    check_orphaned_vector_edges(storage)?;
 
     Ok(())
 }
@@ -398,15 +398,15 @@ fn verify_vectors_and_repair(storage: &HelixGraphStorage) -> Result<(), GraphErr
     Ok(())
 }
 
-fn check_orphaned_edges(storage: &HelixGraphStorage) -> Result<(), GraphError> {
-    println!("\nChecking for orphaned edges...");
+fn check_orphaned_vector_edges(storage: &HelixGraphStorage) -> Result<(), GraphError> {
+    println!("\nChecking for orphaned vector edges...");
 
     let txn = storage.graph_env.read_txn()?;
     let mut orphaned_count = 0;
     let mut orphaned_edges = Vec::new();
     let mut checked_edges = 0;
 
-    // Iterate through all edges
+    // Iterate through all vector edges
     for kv in storage.vectors.edges_db.iter(&txn)? {
         let (key, _) = kv?;
         checked_edges += 1;
@@ -415,7 +415,7 @@ fn check_orphaned_edges(storage: &HelixGraphStorage) -> Result<(), GraphError> {
         // Total: 40 bytes
         if key.len() != 40 {
             println!(
-                "WARNING: Edge key has unexpected length: {} bytes",
+                "WARNING: Vector edge key has unexpected length: {} bytes",
                 key.len()
             );
             continue;
@@ -450,8 +450,8 @@ fn check_orphaned_edges(storage: &HelixGraphStorage) -> Result<(), GraphError> {
         }
     }
 
-    println!("Total edges checked: {}", checked_edges);
-    println!("Orphaned edges found: {}", orphaned_count);
+    println!("Total vector edges checked: {checked_edges}");
+    println!("Orphaned vector edges found: {orphaned_count}");
 
     if orphaned_count > 0 {
         println!("\nOrphaned edge details:");
@@ -464,16 +464,18 @@ fn check_orphaned_edges(storage: &HelixGraphStorage) -> Result<(), GraphError> {
             orphaned_edges.iter().take(100)
         {
             println!(
-                "{} -> {} (level: {}) [source: {}, sink: {}]",
-                source_id, sink_id, level, source_exists, sink_exists
+                "{source_id} -> {sink_id} (level: {level}) [source: {source_exists}, sink: {sink_exists}]"
             );
         }
 
         if orphaned_count > 100 {
-            println!("\n... and {} more orphaned edges", orphaned_count - 100);
+            println!(
+                "\n... and {} more orphaned vector edges\n",
+                orphaned_count - 100
+            );
         }
     } else {
-        println!("No orphaned edges found!");
+        println!("No orphaned vector edges found!");
     }
 
     Ok(())
