@@ -25,7 +25,7 @@ const DB_VECTORS: &str = "vectors"; // for vector data (v:)
 const DB_VECTOR_DATA: &str = "vector_data"; // for vector data (v:)
 const DB_HNSW_EDGES: &str = "hnsw_out_nodes"; // for hnsw out node data
 const VECTOR_PREFIX: &[u8] = b"v:";
-pub const ENTRY_POINT_KEY: &str = "entry_point";
+pub const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HNSWConfig {
@@ -125,7 +125,7 @@ impl VectorCore {
         label: &'arena str,
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError> {
-        let ep_id = self.vectors_db.get(txn, ENTRY_POINT_KEY.as_bytes())?;
+        let ep_id = self.vectors_db.get(txn, ENTRY_POINT_KEY)?;
         if let Some(ep_id) = ep_id {
             let mut arr = [0u8; 16];
             let len = std::cmp::min(ep_id.len(), 16);
@@ -142,9 +142,8 @@ impl VectorCore {
 
     #[inline]
     fn set_entry_point(&self, txn: &mut RwTxn, entry: &HVector) -> Result<(), VectorError> {
-        let entry_key = ENTRY_POINT_KEY.as_bytes().to_vec();
         self.vectors_db
-            .put(txn, &entry_key, &entry.id.to_be_bytes())
+            .put(txn, ENTRY_POINT_KEY, &entry.id.to_be_bytes())
             .map_err(VectorError::from)?;
         Ok(())
     }
