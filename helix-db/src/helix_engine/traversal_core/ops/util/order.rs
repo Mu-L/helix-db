@@ -102,9 +102,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 (None, None) => Ordering::Equal,
                             }
                         }
-                        (TraversalValue::Count(val_a), TraversalValue::Count(val_b)) => {
-                            val_a.cmp(val_b)
-                        }
                         (TraversalValue::Value(val_a), TraversalValue::Value(val_b)) => {
                             val_a.cmp(val_b)
                         }
@@ -156,9 +153,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 (None, Some(_)) => Ordering::Greater,
                                 (None, None) => Ordering::Equal,
                             }
-                        }
-                        (TraversalValue::Count(val_a), TraversalValue::Count(val_b)) => {
-                            val_b.cmp(val_a)
                         }
                         (TraversalValue::Value(val_a), TraversalValue::Value(val_b)) => {
                             val_b.cmp(val_a)

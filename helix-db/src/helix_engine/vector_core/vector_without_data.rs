@@ -99,10 +99,15 @@ impl<'arena> VectorWithoutData<'arena> {
     ) -> Result<Self, VectorError> {
         bincode::options()
             .with_fixint_encoding()
+            .allow_trailing_bytes()
             .deserialize_seed(VectoWithoutDataDeSeed { arena, id }, properties)
             .map_err(|e| VectorError::ConversionError(format!("Error deserializing vector: {e}")))
     }
 
+    #[inline(always)]
+    pub fn to_bincode_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(self)
+    }
     /// Returns the id of the HVector
     #[inline(always)]
     pub fn get_id(&self) -> u128 {

@@ -111,11 +111,11 @@ impl<'db, 'arena, 'txn, 'q> VectorFilter<'db, 'arena, 'txn, 'q>
             while let Some(mut item) = self.pop() {
                 let properties = match db.get(txn, &item.id)? {
                     Some(bytes) => {
-                        println!("decoding");
+                        // println!("decoding");
                         let res = Some(VectorWithoutData::from_bincode_bytes(
                             arena, bytes, item.id,
                         )?);
-                        println!("decoded: {res:?}");
+                        // println!("decoded: {res:?}");
                         res
                     }
                     None => None, // TODO: maybe should be an error?

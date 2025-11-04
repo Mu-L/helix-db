@@ -45,7 +45,7 @@ impl<'arena> serde::Serialize for Node<'arena> {
         // Check if this is a human-readable format (like JSON)
         if serializer.is_human_readable() {
             // Include id for JSON serialization
-            let mut buffer = [0u8, 36];
+            let mut buffer = [0u8; 36];
             let mut state = serializer.serialize_struct("Node", 4)?;
             state.serialize_field("id", uuid_str_from_buf(self.id, &mut buffer))?;
             state.serialize_field("label", self.label)?;
@@ -64,11 +64,17 @@ impl<'arena> serde::Serialize for Node<'arena> {
 }
 
 impl<'arena> Node<'arena> {
+    /// Gets property from node
+    ///
+    /// NOTE: the `'arena` lifetime which comes from the fact the node's ImmutablePropertiesMap
     #[inline(always)]
     pub fn get_property(&self, prop: &str) -> Option<&'arena Value> {
         self.properties.and_then(|value| value.get(prop))
     }
 
+    /// Deserializes bytes into a node using a custom deserializer that allocates into the provided arena
+    ///
+    /// NOTE: in this method, fixint encoding is used
     #[inline(always)]
     pub fn from_bincode_bytes<'txn>(
         id: u128,
@@ -188,11 +194,17 @@ impl<'arena> serde::Serialize for Edge<'arena> {
 }
 
 impl<'arena> Edge<'arena> {
+    /// Gets property from node
+    ///
+    /// NOTE: the `'arena` lifetime which comes from the fact the node's ImmutablePropertiesMap
     #[inline(always)]
     pub fn get_property(&self, prop: &str) -> Option<&'arena Value> {
         self.properties.as_ref().and_then(|value| value.get(prop))
     }
 
+    /// Deserializes bytes into an edge using a custom deserializer that allocates into the provided arena
+    ///
+    /// NOTE: in this method, fixint encoding is used
     #[inline(always)]
     pub fn from_bincode_bytes<'txn>(
         id: u128,

@@ -2,6 +2,7 @@
 
 use crate::generate_error;
 use crate::helixc::analyzer::error_codes::ErrorCode;
+use crate::helixc::generator::utils::GenRef;
 use crate::helixc::{
     analyzer::{
         Ctx,
@@ -721,12 +722,54 @@ fn analyze_return_expr<'a>(
                                 ctx,
                                 &field_name,
                             );
+
+                            // For Scalar types with field access (e.g., dataset_id::{value} or files::ID),
+                            // generate the property access code
+                            let literal_value = if matches!(inferred_type, Type::Scalar(_))
+                                && !traversal.object_fields.is_empty()
+                            {
+                                let property_name = &traversal.object_fields[0];
+
+                                match traversal.should_collect {
+                                    ShouldCollect::ToObj => {
+                                        // Single item - use literal_value
+                                        if property_name == "id" {
+                                            Some(GenRef::Std(format!(
+                                                "uuid_str({}.id(), &arena)",
+                                                field_name
+                                            )))
+                                        } else if property_name == "label" {
+                                            Some(GenRef::Std(format!("{}.label()", field_name)))
+                                        } else {
+                                            Some(GenRef::Std(format!(
+                                                "{}.get_property(\"{}\")",
+                                                field_name, property_name
+                                            )))
+                                        }
+                                    }
+                                    ShouldCollect::ToVec => {
+                                        // Collection - generate iteration code
+                                        let iter_code = if property_name == "id" {
+                                            format!("{}.iter().map(|item| uuid_str(item.id(), &arena)).collect::<Vec<_>>()", field_name)
+                                        } else if property_name == "label" {
+                                            format!("{}.iter().map(|item| item.label()).collect::<Vec<_>>()", field_name)
+                                        } else {
+                                            format!("{}.iter().map(|item| item.get_property(\"{}\")).collect::<Vec<_>>()", field_name, property_name)
+                                        };
+                                        Some(GenRef::Std(iter_code))
+                                    }
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            };
+
                             query.return_values.push((
                                 field_name.clone(),
                                 ReturnValue {
                                     name: rust_type,
                                     fields,
-                                    literal_value: None,
+                                    literal_value,
                                 },
                             ));
 

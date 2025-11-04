@@ -823,8 +823,8 @@ pub struct RerankRRF {
 impl Display for RerankRRF {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.k {
-            Some(k) => write!(f, "rerank(&RRFReranker::with_k({k} as f64).unwrap(), None)"),
-            None => write!(f, "rerank(&RRFReranker::new(), None)"),
+            Some(k) => write!(f, "rerank(RRFReranker::with_k({k} as f64).unwrap(), None)"),
+            None => write!(f, "rerank(RRFReranker::new(), None)"),
         }
     }
 }
@@ -856,8 +856,8 @@ impl Display for RerankMMR {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let lambda = self.lambda.as_ref().map_or_else(|| "0.7".to_string(), |l| l.to_string());
         match &self.distance {
-            Some(dist) => write!(f, "rerank(&MMRReranker::with_distance({lambda}, {dist}).unwrap(), None)"),
-            None => write!(f, "rerank(&MMRReranker::new({lambda}).unwrap(), None)"),
+            Some(dist) => write!(f, "rerank(MMRReranker::with_distance({lambda}, {dist}).unwrap(), None)"),
+            None => write!(f, "rerank(MMRReranker::new({lambda}).unwrap(), None)"),
         }
     }
 }

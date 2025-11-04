@@ -22,9 +22,8 @@
 //! let fused = RRFReranker::fuse_lists(vec![vec_results, bm25_results], 60.0)?;
 //!
 //! // MMR: Diversify results
-//! let mmr = MMRReranker::new(0.7)?; // 70% relevance, 30% diversity
 //! let diverse_results = storage.search_v(query_vec, 100, "doc", None)
-//!     .rerank(&mmr, None)
+//!     .rerank(MMRReranker::new(0.7)?, None) // 70% relevance, 30% diversity
 //!     .take(20)
 //!     .collect_to::<Vec<_>>();
 //! ```

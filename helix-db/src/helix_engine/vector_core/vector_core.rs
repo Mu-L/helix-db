@@ -25,7 +25,7 @@ const DB_VECTORS: &str = "vectors"; // for vector data (v:)
 const DB_VECTOR_DATA: &str = "vector_data"; // for vector data (v:)
 const DB_HNSW_EDGES: &str = "hnsw_out_nodes"; // for hnsw out node data
 const VECTOR_PREFIX: &[u8] = b"v:";
-const ENTRY_POINT_KEY: &str = "entry_point";
+pub const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HNSWConfig {
@@ -125,7 +125,7 @@ impl VectorCore {
         label: &'arena str,
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError> {
-        let ep_id = self.vectors_db.get(txn, ENTRY_POINT_KEY.as_bytes())?;
+        let ep_id = self.vectors_db.get(txn, ENTRY_POINT_KEY)?;
         if let Some(ep_id) = ep_id {
             let mut arr = [0u8; 16];
             let len = std::cmp::min(ep_id.len(), 16);
@@ -142,9 +142,8 @@ impl VectorCore {
 
     #[inline]
     fn set_entry_point(&self, txn: &mut RwTxn, entry: &HVector) -> Result<(), VectorError> {
-        let entry_key = ENTRY_POINT_KEY.as_bytes().to_vec();
         self.vectors_db
-            .put(txn, &entry_key, &entry.id.to_be_bytes())
+            .put(txn, ENTRY_POINT_KEY, &entry.id.to_be_bytes())
             .map_err(VectorError::from)?;
         Ok(())
     }
@@ -197,8 +196,7 @@ impl VectorCore {
             let (key, _) = result?;
 
             let mut arr = [0u8; 16];
-            let len = std::cmp::min(key.len(), 16);
-            arr[..len].copy_from_slice(&key[prefix_len..(prefix_len + len)]);
+            arr[..16].copy_from_slice(&key[prefix_len..(prefix_len + 16)]);
             let neighbor_id = u128::from_be_bytes(arr);
 
             if neighbor_id == id {
@@ -443,10 +441,12 @@ impl VectorCore {
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError> {
         let key = Self::vector_key(id, 0);
-        let vector_data_bytes = self
-            .vectors_db
-            .get(txn, key.as_ref())?
-            .ok_or(VectorError::VectorNotFound(id.to_string()))?;
+        // println!("Looking up vector {} at level 0, key: {:?}", uuid::Uuid::from_u128(id), key);
+        let vector_data_bytes = self.vectors_db.get(txn, key.as_ref())?.ok_or_else(|| {
+            println!("VECTOR NOT FOUND: {}", uuid::Uuid::from_u128(id));
+            VectorError::VectorNotFound(uuid::Uuid::from_u128(id).to_string())
+        })?;
+        // println!("Found vector {}, data len: {}", uuid::Uuid::from_u128(id), vector_data_bytes.len());
         HVector::from_raw_vector_data(arena, vector_data_bytes, label, id)
     }
 }
@@ -474,7 +474,7 @@ impl HNSW for VectorCore {
 
         let ef = self.config.ef;
         let curr_level = entry_point.level;
-        println!("curr_level: {curr_level}");
+        // println!("curr_level: {curr_level}");
         for level in (1..=curr_level).rev() {
             let mut nearest = self.search_level(
                 txn,
@@ -493,7 +493,7 @@ impl HNSW for VectorCore {
                 entry_point = closest;
             }
         }
-        println!("entry_point: {entry_point:?}");
+        // println!("entry_point: {entry_point:?}");
         let candidates = self.search_level(
             txn,
             label,
@@ -507,7 +507,7 @@ impl HNSW for VectorCore {
             },
             arena,
         )?;
-        println!("candidates");
+        // println!("candidates");
         let results = candidates.to_vec_with_filter::<F, true>(
             k,
             filter,

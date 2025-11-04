@@ -52,15 +52,14 @@ where
     /// ```ignore
     /// use helix_db::helix_engine::reranker::fusion::MMRReranker;
     ///
-    /// let mmr = MMRReranker::new(0.7).unwrap();
     /// let results = storage.search_v(query, 100, "doc", None)
-    ///     .rerank(&mmr, Some("search query"))
+    ///     .rerank(MMRReranker::new(0.7).unwrap(), Some("search query"))
     ///     .take(20)
     ///     .collect_to::<Vec<_>>();
     /// ```
     fn rerank<R: Reranker>(
         self,
-        reranker: &R,
+        reranker: R,
         query: Option<&str>,
     ) -> RoTraversalIterator<'db, 'arena, 'txn, impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>;
 }
@@ -74,7 +73,7 @@ where
 {
     fn rerank<R: Reranker>(
         self,
-        reranker: &R,
+        reranker: R,
         query: Option<&str>,
     ) -> RoTraversalIterator<'db, 'arena, 'txn, impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>> {
         // Collect all items from the iterator
