@@ -35,6 +35,9 @@ pub fn migrate(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
         };
     }
 
+    verify_vectors_and_repair(storage)?;
+    check_orphaned_edges(storage)?;
+
     Ok(())
 }
 
@@ -299,4 +302,179 @@ pub(crate) fn convert_old_vector_properties_to_new_format<'arena, 'txn>(
     };
 
     new_vector.to_bincode_bytes().map_err(GraphError::from)
+}
+
+fn verify_vectors_and_repair(storage: &HelixGraphStorage) -> Result<(), GraphError> {
+    // Verify that all vectors at level > 0 also exist at level 0 and collect ones that need repair
+    println!("\nVerifying vector integrity after migration...");
+    let vectors_to_repair: Vec<(u128, usize)> = {
+        let txn = storage.graph_env.read_txn()?;
+        let mut missing = Vec::new();
+
+        for kv in storage.vectors.vectors_db.iter(&txn)? {
+            let (key, _) = kv?;
+            if key.starts_with(b"v:") && key.len() >= 26 {
+                let id = u128::from_be_bytes(key[2..18].try_into().unwrap());
+                let level = usize::from_be_bytes(key[18..26].try_into().unwrap());
+
+                if level > 0 {
+                    // Check if level 0 exists
+                    let level_0_key = vector_core::VectorCore::vector_key(id, 0);
+                    if storage
+                        .vectors
+                        .vectors_db
+                        .get(&txn, &level_0_key)?
+                        .is_none()
+                    {
+                        println!(
+                            "ERROR: Vector {} exists at level {} but NOT at level 0!",
+                            uuid::Uuid::from_u128(id),
+                            level
+                        );
+                        missing.push((id, level));
+                    }
+                }
+            }
+        }
+        missing
+    };
+
+    if !vectors_to_repair.is_empty() {
+        println!(
+            "Found {} vectors at level > 0 missing their level 0 counterparts!",
+            vectors_to_repair.len()
+        );
+        println!("Repairing missing level 0 vectors...");
+
+        const REPAIR_BATCH_SIZE: usize = 128;
+
+        // Process repairs in batches
+        for batch in vectors_to_repair.chunks(REPAIR_BATCH_SIZE) {
+            let mut txn = storage.graph_env.write_txn()?;
+
+            let key_arena = bumpalo::Bump::new();
+
+            for &(id, source_level) in batch {
+                // Read vector data from source level
+                let source_key = vector_core::VectorCore::vector_key(id, source_level);
+                let vector_data: &[u8] = {
+                    let key = storage
+                        .vectors
+                        .vectors_db
+                        .get(&txn, &source_key)?
+                        .ok_or_else(|| {
+                            GraphError::New(format!(
+                                "Could not read vector {} at level {source_level} for repair",
+                                uuid::Uuid::from_u128(id)
+                            ))
+                        })?;
+                    key_arena.alloc_slice_copy(key)
+                };
+
+                // Write to level 0
+                let level_0_key = vector_core::VectorCore::vector_key(id, 0);
+                storage
+                    .vectors
+                    .vectors_db
+                    .put(&mut txn, &level_0_key, vector_data)?;
+                println!(
+                    "  Repaired: Copied vector {} from level {} to level 0",
+                    uuid::Uuid::from_u128(id),
+                    source_level
+                );
+            }
+
+            txn.commit()?;
+        }
+
+        println!(
+            "Repair complete! Repaired {} vectors.",
+            vectors_to_repair.len()
+        );
+    } else {
+        println!("All vectors verified successfully!");
+    }
+
+    Ok(())
+}
+
+fn check_orphaned_edges(storage: &HelixGraphStorage) -> Result<(), GraphError> {
+    println!("\nChecking for orphaned edges...");
+
+    let txn = storage.graph_env.read_txn()?;
+    let mut orphaned_count = 0;
+    let mut orphaned_edges = Vec::new();
+    let mut checked_edges = 0;
+
+    // Iterate through all edges
+    for kv in storage.vectors.edges_db.iter(&txn)? {
+        let (key, _) = kv?;
+        checked_edges += 1;
+
+        // Edge key format: [source_id (16 bytes), level (8 bytes), sink_id (16 bytes)]
+        // Total: 40 bytes
+        if key.len() != 40 {
+            println!(
+                "WARNING: Edge key has unexpected length: {} bytes",
+                key.len()
+            );
+            continue;
+        }
+
+        // Extract source_id
+        let source_id = u128::from_be_bytes(key[0..16].try_into().unwrap());
+
+        // Extract level
+        let level = usize::from_be_bytes(key[16..24].try_into().unwrap());
+
+        // Extract sink_id
+        let sink_id = u128::from_be_bytes(key[24..40].try_into().unwrap());
+
+        // Check if source vector exists at level 0
+        let source_key = vector_core::VectorCore::vector_key(source_id, 0);
+        let source_exists = storage.vectors.vectors_db.get(&txn, &source_key)?.is_some();
+
+        // Check if sink vector exists at level 0
+        let sink_key = vector_core::VectorCore::vector_key(sink_id, 0);
+        let sink_exists = storage.vectors.vectors_db.get(&txn, &sink_key)?.is_some();
+
+        if !source_exists || !sink_exists {
+            orphaned_count += 1;
+            orphaned_edges.push((
+                uuid::Uuid::from_u128(source_id),
+                level,
+                uuid::Uuid::from_u128(sink_id),
+                source_exists,
+                sink_exists,
+            ));
+        }
+    }
+
+    println!("Total edges checked: {}", checked_edges);
+    println!("Orphaned edges found: {}", orphaned_count);
+
+    if orphaned_count > 0 {
+        println!("\nOrphaned edge details:");
+        println!(
+            "Format: source_id -> sink_id (level: N) [source_exists: bool, sink_exists: bool]"
+        );
+        println!();
+
+        for (source_id, level, sink_id, source_exists, sink_exists) in
+            orphaned_edges.iter().take(100)
+        {
+            println!(
+                "{} -> {} (level: {}) [source: {}, sink: {}]",
+                source_id, sink_id, level, source_exists, sink_exists
+            );
+        }
+
+        if orphaned_count > 100 {
+            println!("\n... and {} more orphaned edges", orphaned_count - 100);
+        }
+    } else {
+        println!("No orphaned edges found!");
+    }
+
+    Ok(())
 }

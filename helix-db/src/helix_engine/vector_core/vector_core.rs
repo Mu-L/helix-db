@@ -196,6 +196,26 @@ impl VectorCore {
         for result in iter {
             let (key, _) = result?;
 
+            // println!("Edge key length: {}, key bytes: {:?}", key.len(), key);
+            // println!("prefix_len: {}", prefix_len);
+
+            let mut arr = [0u8; 16];
+            let len = std::cmp::min(key.len(), 16);
+            // println!(
+            //     "len: {}, extracting bytes {}..{}",
+            //     len,
+            //     prefix_len,
+            //     prefix_len + len
+            // );
+
+            arr[..len].copy_from_slice(&key[prefix_len..(prefix_len + len)]);
+            let neighbor_id = u128::from_be_bytes(arr);
+            // println!(
+            //     "Extracted neighbor_id: {} ({})",
+            //     neighbor_id,
+            //     uuid::Uuid::from_u128(neighbor_id)
+            // );
+
             let mut arr = [0u8; 16];
             let len = std::cmp::min(key.len(), 16);
             arr[..len].copy_from_slice(&key[prefix_len..(prefix_len + len)]);
@@ -443,10 +463,12 @@ impl VectorCore {
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError> {
         let key = Self::vector_key(id, 0);
-        let vector_data_bytes = self
-            .vectors_db
-            .get(txn, key.as_ref())?
-            .ok_or_else(|| VectorError::VectorNotFound(uuid::Uuid::from_u128(id).to_string()))?;
+        // println!("Looking up vector {} at level 0, key: {:?}", uuid::Uuid::from_u128(id), key);
+        let vector_data_bytes = self.vectors_db.get(txn, key.as_ref())?.ok_or_else(|| {
+            println!("VECTOR NOT FOUND: {}", uuid::Uuid::from_u128(id));
+            VectorError::VectorNotFound(uuid::Uuid::from_u128(id).to_string())
+        })?;
+        // println!("Found vector {}, data len: {}", uuid::Uuid::from_u128(id), vector_data_bytes.len());
         HVector::from_raw_vector_data(arena, vector_data_bytes, label, id)
     }
 }
@@ -474,7 +496,7 @@ impl HNSW for VectorCore {
 
         let ef = self.config.ef;
         let curr_level = entry_point.level;
-        println!("curr_level: {curr_level}");
+        // println!("curr_level: {curr_level}");
         for level in (1..=curr_level).rev() {
             let mut nearest = self.search_level(
                 txn,
@@ -493,7 +515,7 @@ impl HNSW for VectorCore {
                 entry_point = closest;
             }
         }
-        println!("entry_point: {entry_point:?}");
+        // println!("entry_point: {entry_point:?}");
         let candidates = self.search_level(
             txn,
             label,
@@ -507,7 +529,7 @@ impl HNSW for VectorCore {
             },
             arena,
         )?;
-        println!("candidates");
+        // println!("candidates");
         let results = candidates.to_vec_with_filter::<F, true>(
             k,
             filter,
