@@ -1,6 +1,8 @@
 use crate::{
     helix_engine::{
-        storage_core::HelixGraphStorage, types::GraphError, vector_core::vector::HVector,
+        storage_core::HelixGraphStorage,
+        types::GraphError,
+        vector_core::{vector::HVector, vector_core},
     },
     protocol::value::Value,
     utils::properties::ImmutablePropertiesMap,
@@ -129,6 +131,10 @@ pub(crate) fn convert_all_vectors(
         let mut cursor = storage.vectors.vectors_db.range_mut(&mut txn, &bounds)?;
 
         while let Some((key, value)) = cursor.next().transpose()? {
+            if key == vector_core::ENTRY_POINT_KEY.as_bytes() {
+                continue;
+            }
+
             let value = convert_vector_endianness(value, source_endianness, &arena)?;
 
             let success = unsafe { cursor.put_current(key, value)? };
@@ -201,7 +207,9 @@ pub(crate) fn convert_vector_endianness<'arena>(
     Ok(result_bytes)
 }
 
-pub(crate) fn convert_all_vector_properties(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
+pub(crate) fn convert_all_vector_properties(
+    storage: &mut HelixGraphStorage,
+) -> Result<(), GraphError> {
     const BATCH_SIZE: usize = 1024;
 
     let batch_bounds = {
@@ -273,15 +281,13 @@ pub(crate) fn convert_old_vector_properties_to_new_format<'arena, 'txn>(
         .remove("is_deleted")
         .expect("all old vectors should have deleted");
 
-    let new_properties = ImmutablePropertiesMap::new_from_try(
+    let new_properties = ImmutablePropertiesMap::new(
         old_properties.len(),
-        old_properties
-            .iter()
-            .map(|(k, v)| Ok::<_, GraphError>((k.as_str(), v.clone()))),
+        old_properties.iter().map(|(k, v)| (k.as_str(), v.clone())),
         arena,
-    )?;
+    );
 
-    let new_vector: HVector = HVector {
+    let new_vector = HVector {
         id: 0u128,
         label: &label.inner_stringify(),
         version: 0,

@@ -25,7 +25,7 @@ const DB_VECTORS: &str = "vectors"; // for vector data (v:)
 const DB_VECTOR_DATA: &str = "vector_data"; // for vector data (v:)
 const DB_HNSW_EDGES: &str = "hnsw_out_nodes"; // for hnsw out node data
 const VECTOR_PREFIX: &[u8] = b"v:";
-const ENTRY_POINT_KEY: &str = "entry_point";
+pub const ENTRY_POINT_KEY: &str = "entry_point";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HNSWConfig {
@@ -446,7 +446,7 @@ impl VectorCore {
         let vector_data_bytes = self
             .vectors_db
             .get(txn, key.as_ref())?
-            .ok_or(VectorError::VectorNotFound(id.to_string()))?;
+            .ok_or_else(|| VectorError::VectorNotFound(uuid::Uuid::from_u128(id).to_string()))?;
         HVector::from_raw_vector_data(arena, vector_data_bytes, label, id)
     }
 }
