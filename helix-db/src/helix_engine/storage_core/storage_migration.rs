@@ -36,7 +36,7 @@ pub fn migrate(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
     }
 
     verify_vectors_and_repair(storage)?;
-    check_orphaned_vector_edges(storage)?;
+    remove_orphaned_vector_edges(storage)?;
 
     Ok(())
 }
@@ -398,18 +398,12 @@ fn verify_vectors_and_repair(storage: &HelixGraphStorage) -> Result<(), GraphErr
     Ok(())
 }
 
-fn check_orphaned_vector_edges(storage: &HelixGraphStorage) -> Result<(), GraphError> {
-    println!("\nChecking for orphaned vector edges...");
-
+fn remove_orphaned_vector_edges(storage: &HelixGraphStorage) -> Result<(), GraphError> {
     let txn = storage.graph_env.read_txn()?;
-    let mut orphaned_count = 0;
     let mut orphaned_edges = Vec::new();
-    let mut checked_edges = 0;
 
-    // Iterate through all vector edges
     for kv in storage.vectors.edges_db.iter(&txn)? {
         let (key, _) = kv?;
-        checked_edges += 1;
 
         // Edge key format: [source_id (16 bytes), level (8 bytes), sink_id (16 bytes)]
         // Total: 40 bytes
@@ -439,43 +433,36 @@ fn check_orphaned_vector_edges(storage: &HelixGraphStorage) -> Result<(), GraphE
         let sink_exists = storage.vectors.vectors_db.get(&txn, &sink_key)?.is_some();
 
         if !source_exists || !sink_exists {
-            orphaned_count += 1;
             orphaned_edges.push((
                 uuid::Uuid::from_u128(source_id),
                 level,
                 uuid::Uuid::from_u128(sink_id),
-                source_exists,
-                sink_exists,
             ));
         }
     }
 
-    println!("Total vector edges checked: {checked_edges}");
-    println!("Orphaned vector edges found: {orphaned_count}");
+    for chunk in orphaned_edges.into_iter().chunks(64).into_iter() {
+        let mut txn = storage.graph_env.write_txn()?;
 
-    if orphaned_count > 0 {
-        println!("\nOrphaned edge details:");
-        println!(
-            "Format: source_id -> sink_id (level: N) [source_exists: bool, sink_exists: bool]"
-        );
-        println!();
-
-        for (source_id, level, sink_id, source_exists, sink_exists) in
-            orphaned_edges.iter().take(100)
-        {
-            println!(
-                "{source_id} -> {sink_id} (level: {level}) [source: {source_exists}, sink: {sink_exists}]"
+        for (source_id, level, sink_id) in chunk {
+            let edge_key = vector_core::VectorCore::out_edges_key(
+                source_id.as_u128(),
+                level,
+                Some(sink_id.as_u128()),
             );
+
+            storage
+                .vectors
+                .edges_db
+                .get(&txn, &edge_key)?
+                .ok_or_else(|| {
+                    GraphError::New("edge key doesnt exist when removing orphan".into())
+                })?;
+
+            storage.vectors.edges_db.delete(&mut txn, &edge_key)?;
         }
 
-        if orphaned_count > 100 {
-            println!(
-                "\n... and {} more orphaned vector edges\n",
-                orphaned_count - 100
-            );
-        }
-    } else {
-        println!("No orphaned vector edges found!");
+        txn.commit()?;
     }
 
     Ok(())
