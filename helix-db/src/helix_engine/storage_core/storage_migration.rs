@@ -134,7 +134,7 @@ pub(crate) fn convert_all_vectors(
         let mut cursor = storage.vectors.vectors_db.range_mut(&mut txn, &bounds)?;
 
         while let Some((key, value)) = cursor.next().transpose()? {
-            if key == vector_core::ENTRY_POINT_KEY.as_bytes() {
+            if key == vector_core::ENTRY_POINT_KEY {
                 continue;
             }
 
