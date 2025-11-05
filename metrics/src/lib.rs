@@ -24,16 +24,16 @@ static CONFIG: LazyLock<String> = LazyLock::new(|| {
     fs::read_to_string(config_path).unwrap_or_default()
 });
 
-pub static HELIX_USER_ID: LazyLock<String> = LazyLock::new(|| {
+pub static HELIX_USER_ID: LazyLock<&'static str> = LazyLock::new(|| {
     // read from credentials file
     for line in CONFIG.lines() {
         if let Some((key, value)) = line.split_once("=")
             && key.to_lowercase() == "helix_user_id"
         {
-            return value.to_string();
+            return value;
         }
     }
-    String::new()
+    String::new().leak()
 });
 
 pub static METRICS_ENABLED: LazyLock<bool> = LazyLock::new(|| {
