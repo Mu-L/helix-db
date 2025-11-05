@@ -6,13 +6,14 @@ use std::{
     fs,
     path::Path,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         LazyLock, OnceLock,
+        atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
 use serde::Serialize;
+use tokio::task::JoinHandle;
 
 pub static METRICS_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
@@ -23,16 +24,16 @@ static CONFIG: LazyLock<String> = LazyLock::new(|| {
     fs::read_to_string(config_path).unwrap_or_default()
 });
 
-pub static HELIX_USER_ID: LazyLock<&'static str> = LazyLock::new(|| {
+pub static HELIX_USER_ID: LazyLock<String> = LazyLock::new(|| {
     // read from credentials file
     for line in CONFIG.lines() {
         if let Some((key, value)) = line.split_once("=")
             && key.to_lowercase() == "helix_user_id"
         {
-            return value;
+            return value.to_string();
         }
     }
-    ""
+    String::new()
 });
 
 pub static METRICS_ENABLED: LazyLock<bool> = LazyLock::new(|| {
@@ -51,7 +52,7 @@ pub const METRICS_URL: &str = "https://logs.helix-db.com";
 // Thread-local buffer for events
 thread_local! {
     static EVENT_BUFFER: RefCell<Vec<events::RawEvent<events::EventData>>> =
-        RefCell::new(Vec::with_capacity(32));
+        RefCell::new(Vec::with_capacity(THREAD_LOCAL_EVENT_BUFFER_LENGTH));
 }
 
 // Global state for metrics system
@@ -86,7 +87,8 @@ static METRICS_STATE: LazyLock<MetricsState> = LazyLock::new(|| {
 });
 
 // Configuration constants
-const THREAD_LOCAL_FLUSH_THRESHOLD: usize = 10;
+const THREAD_LOCAL_EVENT_BUFFER_LENGTH: usize = 65536;
+const THREAD_LOCAL_FLUSH_THRESHOLD: usize = 65536;
 const BATCH_TIMEOUT_SECS: u64 = 1;
 const DEFAULT_THRESHOLD_BYTES: usize = 5 * 1024 * 1024; // 5MB default
 const ESTIMATED_EVENT_SIZE_BYTES: usize = 160; // Rough estimate per event
@@ -122,7 +124,9 @@ pub fn init_thread_local() {
 /// Set the memory threshold for batch notifications in bytes
 /// When the estimated memory usage exceeds this threshold, the sender task is notified
 pub fn set_threshold_bytes(bytes: usize) {
-    METRICS_STATE.threshold_bytes.store(bytes, Ordering::Relaxed);
+    METRICS_STATE
+        .threshold_bytes
+        .store(bytes, Ordering::Relaxed);
 }
 
 /// Set the memory threshold for batch notifications in megabytes
@@ -216,17 +220,19 @@ async fn sender_task(
 }
 
 /// Process a batch of events from the channel
-async fn process_batch(rx: &flume::Receiver<events::RawEvent<events::EventData>>) {
+async fn process_batch(
+    rx: &flume::Receiver<events::RawEvent<events::EventData>>,
+) -> Option<JoinHandle<()>> {
     // Drain all available events at once
-    let events: Vec<_> = rx.try_iter().collect();
+    let events: Vec<_> = rx.drain().collect();
 
     if events.is_empty() {
-        return;
+        return None;
     }
 
     // Spawn new task for serialization + HTTP
     // This allows the sender task to continue processing batches
-    tokio::spawn(async move {
+    Some(tokio::spawn(async move {
         // Serialize using sonic_rs (fast)
         let json_bytes = match sonic_rs::to_vec(&events) {
             Ok(bytes) => bytes,
@@ -243,14 +249,14 @@ async fn process_batch(rx: &flume::Receiver<events::RawEvent<events::EventData>>
             .body(json_bytes)
             .send()
             .await;
-    });
+    }))
 }
 
 /// Flush all pending events immediately
 /// Useful for graceful shutdown
-pub async fn flush_all() {
+pub async fn flush_all() -> Option<JoinHandle<()>> {
     if !*METRICS_ENABLED {
-        return;
+        return None;
     }
 
     // Flush all thread-local buffers first
@@ -262,80 +268,7 @@ pub async fn flush_all() {
     });
 
     // Process any remaining events in the channel
-    process_batch(&METRICS_STATE.events_rx).await;
-
-    // Give spawned HTTP tasks a moment to complete
-    tokio::time::sleep(Duration::from_millis(100)).await;
-}
-
-// Legacy compatibility - keep for backward compatibility
-pub struct HelixMetricsClient {
-    threads_tx: flume::Sender<tokio::task::JoinHandle<()>>,
-    threads_rx: flume::Receiver<tokio::task::JoinHandle<()>>,
-}
-
-impl Default for HelixMetricsClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl HelixMetricsClient {
-    pub fn new() -> Self {
-        let (tx, rx) = flume::unbounded();
-        Self {
-            threads_tx: tx,
-            threads_rx: rx,
-        }
-    }
-
-    pub fn get_client(&self) -> &'static LazyLock<reqwest::Client> {
-        &METRICS_CLIENT
-    }
-
-    pub async fn flush(&self) {
-        for handle in self.threads_rx.try_iter().collect::<Vec<_>>() {
-            let _ = handle.await;
-        }
-    }
-
-    pub fn send_event<D>(
-        &self,
-        event_type: events::EventType,
-        event_data: D,
-    ) where
-        D: Serialize + std::fmt::Debug + Send + Clone + Into<events::EventData> + 'static,
-    {
-        if !*METRICS_ENABLED {
-            return;
-        }
-
-        // get OS
-        let os = OS;
-
-        let raw_event = events::RawEvent {
-            os,
-            user_id: Some(&HELIX_USER_ID),
-            event_type,
-            event_data,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("Failed to get system time")
-                .as_secs(),
-            email: None,
-        };
-
-        // Spawn the request in the background for fire-and-forget behavior
-        let handle = tokio::spawn(async move {
-            let _ = METRICS_CLIENT
-                .post(METRICS_URL)
-                .header("Content-Type", "application/json")
-                .body(sonic_rs::to_vec(&raw_event).expect("Failed to serialize event"))
-                .send()
-                .await;
-        });
-        let _ = self.threads_tx.send(handle);
-    }
+    process_batch(&METRICS_STATE.events_rx).await
 }
 
 #[derive(Debug)]

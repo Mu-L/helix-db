@@ -1,4 +1,3 @@
-use std::sync::LazyLock;
 use std::sync::atomic::{self, AtomicUsize};
 use std::time::Instant;
 use std::{collections::HashMap, sync::Arc};
@@ -32,9 +31,6 @@ pub struct GatewayOpts {}
 impl GatewayOpts {
     pub const DEFAULT_WORKERS_PER_CORE: usize = 5;
 }
-
-pub static HELIX_METRICS_CLIENT: LazyLock<helix_metrics::HelixMetricsClient> =
-    LazyLock::new(helix_metrics::HelixMetricsClient::new);
 
 pub struct HelixGateway {
     pub(crate) address: String,
