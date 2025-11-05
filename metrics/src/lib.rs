@@ -57,11 +57,11 @@ thread_local! {
 
 // Global state for metrics system
 struct MetricsState {
-    events_tx: flume::Sender<events::RawEvent<events::EventData>>,
-    events_rx: flume::Receiver<events::RawEvent<events::EventData>>,
+    events_tx: flume::Sender<Vec<events::RawEvent<events::EventData>>>,
+    events_rx: flume::Receiver<Vec<events::RawEvent<events::EventData>>>,
     notify_tx: flume::Sender<()>,
     notify_rx: flume::Receiver<()>,
-    threshold_bytes: AtomicUsize,
+    threshold_batches: AtomicUsize,
     sender_handle: OnceLock<tokio::task::JoinHandle<()>>,
 }
 
@@ -70,18 +70,17 @@ static METRICS_STATE: LazyLock<MetricsState> = LazyLock::new(|| {
     let (notify_tx, notify_rx) = flume::unbounded();
 
     // Read threshold from environment or use default
-    let threshold_bytes = std::env::var("HELIX_METRICS_THRESHOLD_MB")
+    let threshold_batches = std::env::var("HELIX_METRICS_THRESHOLD_BATCHES")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .map(|mb| mb * 1024 * 1024)
-        .unwrap_or(DEFAULT_THRESHOLD_BYTES);
+        .unwrap_or(DEFAULT_THRESHOLD_BATCHES);
 
     MetricsState {
         events_tx,
         events_rx,
         notify_tx,
         notify_rx,
-        threshold_bytes: AtomicUsize::new(threshold_bytes),
+        threshold_batches: AtomicUsize::new(threshold_batches),
         sender_handle: OnceLock::new(),
     }
 });
@@ -90,8 +89,7 @@ static METRICS_STATE: LazyLock<MetricsState> = LazyLock::new(|| {
 const THREAD_LOCAL_EVENT_BUFFER_LENGTH: usize = 65536;
 const THREAD_LOCAL_FLUSH_THRESHOLD: usize = 65536;
 const BATCH_TIMEOUT_SECS: u64 = 1;
-const DEFAULT_THRESHOLD_BYTES: usize = 5 * 1024 * 1024; // 5MB default
-const ESTIMATED_EVENT_SIZE_BYTES: usize = 160; // Rough estimate per event
+const DEFAULT_THRESHOLD_BATCHES: usize = 32_000; // Number of Vec batches before notifying sender
 
 /// Initialize the metrics system with a tokio runtime
 /// This must be called once at startup with an active tokio runtime
@@ -121,24 +119,17 @@ pub fn init_thread_local() {
     });
 }
 
-/// Set the memory threshold for batch notifications in bytes
-/// When the estimated memory usage exceeds this threshold, the sender task is notified
-pub fn set_threshold_bytes(bytes: usize) {
+/// Set the batch threshold for notifications
+/// When the number of batches in channel exceeds this, sender task is notified
+pub fn set_threshold_batches(batches: usize) {
     METRICS_STATE
-        .threshold_bytes
-        .store(bytes, Ordering::Relaxed);
+        .threshold_batches
+        .store(batches, Ordering::Relaxed);
 }
 
-/// Set the memory threshold for batch notifications in megabytes
-/// When the estimated memory usage exceeds this threshold, the sender task is notified
-pub fn set_threshold_mb(megabytes: usize) {
-    let bytes = megabytes * 1024 * 1024;
-    set_threshold_bytes(bytes);
-}
-
-/// Get the current memory threshold in bytes
-pub fn get_threshold_bytes() -> usize {
-    METRICS_STATE.threshold_bytes.load(Ordering::Relaxed)
+/// Get the current batch threshold
+pub fn get_threshold_batches() -> usize {
+    METRICS_STATE.threshold_batches.load(Ordering::Relaxed)
 }
 
 /// Log an event to the metrics system
@@ -168,16 +159,18 @@ where
 fn flush_local_buffer(buf: &mut Vec<events::RawEvent<events::EventData>>) {
     let events = std::mem::take(buf);
 
-    for event in events {
-        let _ = METRICS_STATE.events_tx.send(event);
+    if events.is_empty() {
+        return;
     }
 
-    // Check if we should notify the sender task based on estimated memory usage
-    let channel_len = METRICS_STATE.events_tx.len();
-    let estimated_bytes = channel_len * ESTIMATED_EVENT_SIZE_BYTES;
-    let threshold_bytes = METRICS_STATE.threshold_bytes.load(Ordering::Relaxed);
+    // Send entire vec in one operation - much faster!
+    let _ = METRICS_STATE.events_tx.send(events);
 
-    if estimated_bytes >= threshold_bytes {
+    // Check if we should notify based on batch count
+    let channel_len = METRICS_STATE.events_tx.len();
+    let threshold = METRICS_STATE.threshold_batches.load(Ordering::Relaxed);
+
+    if channel_len >= threshold {
         let _ = METRICS_STATE.notify_tx.try_send(());
     }
 }
@@ -202,7 +195,7 @@ fn create_raw_event(
 
 /// Background task that batches and sends events via HTTP
 async fn sender_task(
-    events_rx: flume::Receiver<events::RawEvent<events::EventData>>,
+    events_rx: flume::Receiver<Vec<events::RawEvent<events::EventData>>>,
     notify_rx: flume::Receiver<()>,
 ) {
     loop {
@@ -221,10 +214,10 @@ async fn sender_task(
 
 /// Process a batch of events from the channel
 async fn process_batch(
-    rx: &flume::Receiver<events::RawEvent<events::EventData>>,
+    rx: &flume::Receiver<Vec<events::RawEvent<events::EventData>>>,
 ) -> Option<JoinHandle<()>> {
-    // Drain all available events at once
-    let events: Vec<_> = rx.drain().collect();
+    // Drain all Vec batches and flatten into single Vec
+    let events: Vec<_> = rx.drain().flatten().collect();
 
     if events.is_empty() {
         return None;
@@ -367,35 +360,33 @@ mod tests {
             assert_eq!(buffer.borrow().len(), 0);
         });
 
-        // At least THREAD_LOCAL_FLUSH_THRESHOLD events should have been added
+        // At least 1 batch should have been added (since we logged THREAD_LOCAL_FLUSH_THRESHOLD events)
         let channel_count = METRICS_STATE.events_rx.len();
         assert!(
-            channel_count >= THREAD_LOCAL_FLUSH_THRESHOLD,
-            "Expected at least {} events in channel, got {}",
-            THREAD_LOCAL_FLUSH_THRESHOLD,
+            channel_count >= 1,
+            "Expected at least 1 batch in channel, got {}",
             channel_count
         );
     }
 
     #[test]
     fn test_threshold_configuration() {
-        // Test setting threshold in bytes
-        set_threshold_bytes(1024);
-        assert_eq!(get_threshold_bytes(), 1024);
+        // Test setting threshold in batches
+        set_threshold_batches(100);
+        assert_eq!(get_threshold_batches(), 100);
 
-        // Test setting threshold in MB
-        set_threshold_mb(10);
-        assert_eq!(get_threshold_bytes(), 10 * 1024 * 1024);
+        set_threshold_batches(500);
+        assert_eq!(get_threshold_batches(), 500);
 
         // Reset to default
-        set_threshold_bytes(DEFAULT_THRESHOLD_BYTES);
+        set_threshold_batches(DEFAULT_THRESHOLD_BATCHES);
     }
 
     #[test]
     fn test_default_threshold() {
-        // Default should be 5MB
-        let threshold = METRICS_STATE.threshold_bytes.load(Ordering::Relaxed);
-        assert!(threshold >= DEFAULT_THRESHOLD_BYTES || threshold > 0);
+        // Default should be 1000 batches
+        let threshold = METRICS_STATE.threshold_batches.load(Ordering::Relaxed);
+        assert!(threshold >= DEFAULT_THRESHOLD_BATCHES || threshold > 0);
     }
 
     #[test]
@@ -406,10 +397,10 @@ mod tests {
         while METRICS_STATE.events_rx.try_recv().is_ok() {}
         while METRICS_STATE.notify_rx.try_recv().is_ok() {}
 
-        // Set a very low threshold to trigger notification
-        set_threshold_bytes(100);
+        // Set threshold to 1 batch to trigger notification easily
+        set_threshold_batches(1);
 
-        // Log enough events to exceed threshold
+        // Log enough events to trigger a flush (which sends 1 batch)
         for i in 0..THREAD_LOCAL_FLUSH_THRESHOLD {
             log_event(
                 events::EventType::Test,
@@ -429,7 +420,7 @@ mod tests {
         assert!(notification_count > 0, "Expected notification to be sent");
 
         // Reset threshold
-        set_threshold_bytes(DEFAULT_THRESHOLD_BYTES);
+        set_threshold_batches(DEFAULT_THRESHOLD_BATCHES);
     }
 
     #[test]
@@ -513,21 +504,23 @@ mod tests {
         // Clear channel
         while METRICS_STATE.events_rx.try_recv().is_ok() {}
 
-        // Add events to channel
-        for i in 0..10 {
-            let event = create_raw_event(
-                events::EventType::Test,
-                events::EventData::Test(events::TestEvent {
-                    cluster_id: format!("test_batch_{}", i),
-                    queries_string: "test".to_string(),
-                    num_of_queries: 1,
-                    time_taken_sec: 1,
-                    success: true,
-                    error_messages: None,
-                }),
-            );
-            METRICS_STATE.events_tx.send(event).unwrap();
-        }
+        // Add a batch of events to channel
+        let events: Vec<_> = (0..10)
+            .map(|i| {
+                create_raw_event(
+                    events::EventType::Test,
+                    events::EventData::Test(events::TestEvent {
+                        cluster_id: format!("test_batch_{}", i),
+                        queries_string: "test".to_string(),
+                        num_of_queries: 1,
+                        time_taken_sec: 1,
+                        success: true,
+                        error_messages: None,
+                    }),
+                )
+            })
+            .collect();
+        METRICS_STATE.events_tx.send(events).unwrap();
 
         // Give a moment for all events to arrive
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -542,8 +535,8 @@ mod tests {
             // Give spawned tasks a moment to start
             tokio::time::sleep(Duration::from_millis(50)).await;
 
-            // Channel should have fewer or equal events
-            let final_count = METRICS_STATE.events_rx.len();
+            // Channel should have fewer or equal batches
+            let _final_count = METRICS_STATE.events_rx.len();
             
         }
     }
@@ -634,23 +627,4 @@ mod tests {
         assert!(json_str.ends_with(']'));
     }
 
-    #[test]
-    fn test_estimated_memory_calculation() {
-        // Test that our memory estimation makes sense
-        let event = create_raw_event(
-            events::EventType::Test,
-            events::EventData::Test(events::TestEvent::default()),
-        );
-
-        let serialized = sonic_rs::to_vec(&event).unwrap();
-        let actual_size = serialized.len();
-
-        // Our estimate should be in the right ballpark (within 2x)
-        assert!(
-            actual_size < ESTIMATED_EVENT_SIZE_BYTES * 2,
-            "Actual size {} exceeds 2x estimate {}",
-            actual_size,
-            ESTIMATED_EVENT_SIZE_BYTES * 2
-        );
-    }
 }
