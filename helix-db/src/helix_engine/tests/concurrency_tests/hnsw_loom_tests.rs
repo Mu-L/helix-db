@@ -11,7 +11,7 @@
 /// NOTE: Loom tests are expensive - they explore all possible execution orderings.
 /// Keep the problem space small (few operations, few threads).
 
-#![cfg(loom)]
+
 
 use loom::sync::Arc;
 use loom::sync::atomic::{AtomicU64, Ordering};
