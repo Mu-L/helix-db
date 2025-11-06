@@ -231,7 +231,7 @@ fn test_n_from_id() {
     // Create a test node
     let person = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let node_id = person.id();
 
     txn.commit().unwrap();
@@ -252,10 +252,10 @@ fn test_n_from_id_with_traversal() {
     // Create test graph: (person1)-[knows]->(person2)
     let person1 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, person1.id(), person2.id(), true)
         .collect::<Result<Vec<_>,_>>().unwrap();
@@ -292,16 +292,16 @@ fn test_n_from_id_chain_operations() {
     // Create test graph: (person1)-[knows]->(person2)-[likes]->(person3)
     let person1 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let person3 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, person1.id(), person2.id(), false)
@@ -335,7 +335,7 @@ fn test_with_id_type() {
             props_option(&arena, props! { "name" => "test" }),
             None,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
     #[derive(Serialize, Deserialize, Debug)]
     struct Input {
@@ -373,7 +373,7 @@ fn test_double_add_and_double_fetch() {
             props_option(&arena, props! { "entity_name" => "person1" }),
             None,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let original_node2 = G::new_mut(&db, &arena, &mut txn)
         .add_n(
@@ -381,7 +381,7 @@ fn test_double_add_and_double_fetch() {
             props_option(&arena, props! { "entity_name" => "person2" }),
             None,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
 
@@ -425,7 +425,7 @@ fn test_double_add_and_double_fetch() {
             node2.first().unwrap().id(),
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
 

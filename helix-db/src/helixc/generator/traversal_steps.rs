@@ -73,7 +73,7 @@ impl Display for ShouldCollect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ShouldCollect::ToVec => write!(f, ".collect::<Result<Vec<_>, _>>()?"),
-            ShouldCollect::ToObj => write!(f, ".collect_to_obj()"),
+            ShouldCollect::ToObj => write!(f, ".collect_to_obj()?"),
             ShouldCollect::Try => write!(f, "?"),
             ShouldCollect::No => write!(f, ""),
             ShouldCollect::ToValue => write!(f, ".collect_to_value()"),

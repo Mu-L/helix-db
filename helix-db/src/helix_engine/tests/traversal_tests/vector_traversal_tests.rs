@@ -45,19 +45,22 @@ fn test_insert_and_fetch_vector() {
 
     let vector = G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<Filter>(&[0.1, 0.2, 0.3], "embedding", None)
-        .collect_to_obj();
+        .collect_to_obj()
+        .unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
     let fetched = G::new(&storage, &txn, &arena)
         .e_from_type("embedding")
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert!(fetched.is_empty());
 
     let results = G::new(&storage, &txn, &arena)
         .search_v::<Filter, _>(&[0.1, 0.2, 0.3], 10, "embedding", None)
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id(), vector.id());
 }
@@ -70,15 +73,18 @@ fn test_vector_edges_from_and_to_node() {
 
     let node_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     let vector_id = G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<Filter>(&[1.0, 0.0, 0.0], "embedding", None)
         .collect_to_obj()
+        .unwrap()
         .id();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("has_vector", None, node_id, vector_id, false)
-        .collect_to_obj();
+        .collect_to_obj()
+        .unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -87,7 +93,8 @@ fn test_vector_edges_from_and_to_node() {
         .n_from_id(&node_id)
         .out_e("has_vector")
         .to_v(true)
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(neighbors.len(), 1);
     assert_eq!(neighbors[0].id(), vector_id);
 }
@@ -100,7 +107,8 @@ fn test_brute_force_vector_search_orders_by_distance() {
 
     let node = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj();
+        .collect_to_obj()
+        .unwrap();
 
     let vectors = vec![
         vec![1.0, 2.0, 3.0],
@@ -112,10 +120,12 @@ fn test_brute_force_vector_search_orders_by_distance() {
         let vec_id = G::new_mut(&storage, &arena, &mut txn)
             .insert_v::<Filter>(&vector, "vector", None)
             .collect_to_obj()
+            .unwrap()
             .id();
         G::new_mut(&storage, &arena, &mut txn)
             .add_edge("embedding", None, node.id(), vec_id, false)
-            .collect_to_obj();
+            .collect_to_obj()
+            .unwrap();
         vector_ids.push(vec_id);
     }
     txn.commit().unwrap();
@@ -127,7 +137,8 @@ fn test_brute_force_vector_search_orders_by_distance() {
         .out_e("embedding")
         .to_v(true)
         .brute_force_search_v(&[1.0, 2.0, 3.0], 10)
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(traversal.len(), 3);
     assert_eq!(traversal[0].id(), vector_ids[0]);
 }
@@ -140,22 +151,26 @@ fn test_drop_vector_removes_edges() {
 
     let node_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     let vector_id = G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<Filter>(&[0.5, 0.5, 0.5], "vector", None)
         .collect_to_obj()
+        .unwrap()
         .id();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("has_vector", None, node_id, vector_id, false)
-        .collect_to_obj();
+        .collect_to_obj()
+        .unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
     let vectors = G::new(&storage, &txn, &arena)
         .search_v::<Filter, _>(&[0.5, 0.5, 0.5], 10, "vector", None)
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     drop(txn);
 
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -174,6 +189,7 @@ fn test_drop_vector_removes_edges() {
     let remaining = G::new(&storage, &txn, &arena)
         .n_from_id(&node_id)
         .out_vec("has_vector", false)
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert!(remaining.is_empty());
 }

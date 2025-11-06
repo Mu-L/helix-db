@@ -65,7 +65,7 @@ fn test_add_edge_creates_relationship() {
 
     let edge = G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, source_id, target_id, false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -93,7 +93,7 @@ fn test_out_e_returns_edge() {
         .id();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, source_id, target_id, false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -122,7 +122,7 @@ fn test_in_e_returns_edge() {
         .id();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, source_id, target_id, false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -151,7 +151,7 @@ fn test_out_node_returns_neighbor() {
         .id();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, source_id, neighbor_id, false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -186,7 +186,7 @@ fn test_edge_properties_can_be_read() {
             target_id,
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -218,7 +218,7 @@ fn test_vector_edges_roundtrip() {
         .id();
     let vector_id = match G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<Filter>(&[1.0, 0.0, 0.0], "embedding", None)
-        .collect_to_obj()
+        .collect_to_obj().unwrap()
     {
         TraversalValue::Vector(vector) => vector.id,
         TraversalValue::VectorNodeWithoutVectorData(vector) => *vector.id(),
@@ -226,7 +226,7 @@ fn test_vector_edges_roundtrip() {
     };
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("has_vector", None, node_id, vector_id, false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();

@@ -41,19 +41,15 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             .collect::<B>()
     }
 
-
     pub fn collect_dedup<B: FromIterator<TraversalValue<'arena>>>(self) -> B {
         self.inner
             .filter_map(|item| item.ok())
             .unique()
             .collect::<B>()
     }
-    
-    pub fn collect_to_obj(self) -> TraversalValue<'arena> {
-        match self.inner.filter_map(|item| item.ok()).next() {
-            Some(val) => val,
-            None => TraversalValue::Empty,
-        }
+
+    pub fn collect_to_obj(mut self) -> Result<TraversalValue<'arena>, GraphError> {
+        self.inner.next().unwrap_or(Ok(TraversalValue::Empty))
     }
 
     pub fn collect_to_value(self) -> Value {
@@ -133,11 +129,8 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             .collect::<B>()
     }
 
-    pub fn collect_to_obj(self) -> TraversalValue<'arena> {
-        match self.inner.filter_map(|item| item.ok()).next() {
-            Some(val) => val,
-            None => TraversalValue::Empty,
-        }
+    pub fn collect_to_obj(mut self) -> Result<TraversalValue<'arena>, GraphError> {
+        self.inner.next().unwrap_or(Ok(TraversalValue::Empty))
     }
 
     pub fn map_value_or(

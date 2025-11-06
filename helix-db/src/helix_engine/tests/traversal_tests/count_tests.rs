@@ -149,7 +149,7 @@ fn test_count_filter_ref() {
     for _ in 0..100 {
         let node = G::new_mut(&storage, &arena, &mut txn)
             .add_n("Country", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
         nodes.push(node);
     }
     let mut num_countries = 0;
@@ -158,7 +158,7 @@ fn test_count_filter_ref() {
         for _ in 0..rand_num {
             let city = G::new_mut(&storage, &arena, &mut txn)
                 .add_n("City", None, None)
-                .collect_to_obj();
+                .collect_to_obj().unwrap();
             G::new_mut(&storage, &arena, &mut txn)
                 .add_edge(
                     "Country_to_City",

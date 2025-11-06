@@ -40,10 +40,10 @@ fn test_update_node() {
 
     let node = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props!("name" => "test")), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props!("name" => "test2")), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena_read = Bump::new();

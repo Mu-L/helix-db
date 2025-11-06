@@ -145,7 +145,7 @@ fn test_concurrent_edge_additions() {
                     let label = format!("knows_t{}_e{}", thread_id, i);
                     G::new_mut(&storage, &arena, &mut wtxn)
                         .add_edge(&label, None, node_ids[source_idx], node_ids[target_idx], false)
-                        .collect_to_obj();
+                        .collect_to_obj().unwrap();
 
                     wtxn.commit().unwrap();
                 }
@@ -197,7 +197,7 @@ fn test_concurrent_reads_during_writes() {
 
             G::new_mut(&storage, &arena, &mut wtxn)
                 .add_edge("connects", None, root, neighbor_id, false)
-                .collect_to_obj();
+                .collect_to_obj().unwrap();
         }
 
         wtxn.commit().unwrap();
@@ -266,7 +266,7 @@ fn test_concurrent_reads_during_writes() {
 
                 G::new_mut(&storage, &arena, &mut wtxn)
                     .add_edge("connects", None, root_id, new_node_id, false)
-                    .collect_to_obj();
+                    .collect_to_obj().unwrap();
 
                 wtxn.commit().unwrap();
 
@@ -325,7 +325,7 @@ fn test_traversal_snapshot_isolation() {
 
             G::new_mut(&storage, &arena, &mut wtxn)
                 .add_edge("links", None, root, node_id, false)
-                .collect_to_obj();
+                .collect_to_obj().unwrap();
         }
 
         wtxn.commit().unwrap();
@@ -357,7 +357,7 @@ fn test_traversal_snapshot_isolation() {
 
             G::new_mut(&storage_clone, &arena, &mut wtxn)
                 .add_edge("links", None, root_id, new_id, false)
-                .collect_to_obj();
+                .collect_to_obj().unwrap();
 
             wtxn.commit().unwrap();
         }
@@ -430,7 +430,7 @@ fn test_concurrent_bidirectional_traversals() {
             for target_id in &targets {
                 G::new_mut(&storage, &arena, &mut wtxn)
                     .add_edge("points_to", None, *source_id, *target_id, false)
-                    .collect_to_obj();
+                    .collect_to_obj().unwrap();
             }
         }
 
@@ -517,7 +517,7 @@ fn test_concurrent_multi_hop_traversals() {
 
                 G::new_mut(&storage, &arena, &mut wtxn)
                     .add_edge("to_l1", None, root, id, false)
-                    .collect_to_obj();
+                    .collect_to_obj().unwrap();
 
                 id
             })
@@ -534,7 +534,7 @@ fn test_concurrent_multi_hop_traversals() {
 
                 G::new_mut(&storage, &arena, &mut wtxn)
                     .add_edge("to_l2", None, l1_id, l2_id, false)
-                    .collect_to_obj();
+                    .collect_to_obj().unwrap();
             }
         }
 
@@ -625,7 +625,7 @@ fn test_concurrent_graph_topology_consistency() {
 
                     G::new_mut(&storage, &arena, &mut wtxn)
                         .add_edge("connects", None, node1_id, node2_id, false)
-                        .collect_to_obj();
+                        .collect_to_obj().unwrap();
 
                     wtxn.commit().unwrap();
                 }
@@ -723,7 +723,7 @@ fn test_stress_concurrent_mixed_operations() {
                 let root_idx = write_count % root_ids.len();
                 G::new_mut(&storage, &arena, &mut wtxn)
                     .add_edge("links", None, root_ids[root_idx], new_id, false)
-                    .collect_to_obj();
+                    .collect_to_obj().unwrap();
 
                 wtxn.commit().unwrap();
                 write_count += 1;

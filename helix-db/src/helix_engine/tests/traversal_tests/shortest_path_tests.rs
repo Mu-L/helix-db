@@ -49,13 +49,13 @@ fn test_shortest_path_simple_chain() {
 
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, node_ids[0], node_ids[1], false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, node_ids[1], node_ids[2], false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, node_ids[2], node_ids[3], false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -108,7 +108,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             end,
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
             "road",
@@ -117,7 +117,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             mid1,
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
             "road",
@@ -126,7 +126,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             mid2,
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
             "road",
@@ -135,7 +135,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             end,
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();

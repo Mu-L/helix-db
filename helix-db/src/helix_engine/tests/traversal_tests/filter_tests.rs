@@ -39,13 +39,13 @@ fn test_filter_nodes() {
     // Create nodes with different properties
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 25 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let person3 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 35 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -134,7 +134,7 @@ fn test_filter_macro_multiple_arguments() {
         .collect::<Result<Vec<_>,_>>().unwrap();
     let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     fn age_greater_than(
@@ -174,10 +174,10 @@ fn test_filter_edges() {
 
     let person1 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
@@ -196,7 +196,7 @@ fn test_filter_edges() {
             person1.id(),
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -274,17 +274,17 @@ fn test_filter_chain() {
             props_option(&arena, props! { "age" => 25, "name" => "Alice" }),
             None,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n(
             "person",
             props_option(&arena, props! { "age" => 30, "name" => "Bob" }),
             None,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 35 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();

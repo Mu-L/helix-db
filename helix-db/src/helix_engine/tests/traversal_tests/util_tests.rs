@@ -45,15 +45,15 @@ fn test_order_node_by_asc() {
 
     let node = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let node2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 20 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let node3 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 10 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
 
@@ -77,15 +77,15 @@ fn test_order_node_by_desc() {
 
     let node = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let node2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 20 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let node3 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 10 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
 
@@ -109,15 +109,15 @@ fn test_order_edge_by_asc() {
 
     let node = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let node2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 20 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let node3 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 10 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let edge = G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
@@ -127,7 +127,7 @@ fn test_order_edge_by_asc() {
             node2.id(),
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let edge2 = G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
@@ -137,7 +137,7 @@ fn test_order_edge_by_asc() {
             node2.id(),
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
 
@@ -161,15 +161,15 @@ fn test_order_edge_by_desc() {
 
     let node = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let node2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 20 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let node3 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 10 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let edge = G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
@@ -179,7 +179,7 @@ fn test_order_edge_by_desc() {
             node2.id(),
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let edge2 = G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
@@ -189,7 +189,7 @@ fn test_order_edge_by_desc() {
             node2.id(),
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
 
@@ -214,15 +214,15 @@ fn test_order_vector_by_asc() {
 
     let vector = G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", props_option(&arena, props! { "age" => 30 }))
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let vector2 = G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", props_option(&arena, props! { "age" => 20 }))
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let vector3 = G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", props_option(&arena, props! { "age" => 10 }))
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
 
@@ -247,15 +247,15 @@ fn test_order_vector_by_desc() {
 
     let vector = G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", props_option(&arena, props! { "age" => 30 }))
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let vector2 = G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", props_option(&arena, props! { "age" => 20 }))
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let vector3 = G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<FnTy>(&[1.0, 2.0, 3.0], "vector", props_option(&arena, props! { "age" => 10 }))
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
 
@@ -279,15 +279,15 @@ fn test_dedup() {
 
     let node = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let node2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 20 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let node3 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 10 }), None)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let _edge = G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
@@ -297,7 +297,7 @@ fn test_dedup() {
             node2.id(),
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     let _edge2 = G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
@@ -307,7 +307,7 @@ fn test_dedup() {
             node2.id(),
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
 
     txn.commit().unwrap();
 

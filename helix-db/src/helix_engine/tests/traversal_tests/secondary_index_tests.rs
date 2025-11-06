@@ -50,12 +50,12 @@ fn test_delete_node_with_secondary_index() {
             props_option(&arena, props! { "name" => "John" }),
             Some(&["name"]),
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     let node_id = node.id();
 
     G::new_mut_from_iter(&storage, &mut txn, std::iter::once(node), &arena)
         .update(&[("name", Value::from("Jane"))])
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -103,14 +103,14 @@ fn test_update_of_secondary_indices() {
             props_option(&arena, props! { "name" => "John" }),
             Some(&["name"]),
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
     G::new_mut_from_iter(&storage, &mut txn, std::iter::once(node), &arena)
         .update(&[("name", Value::from("Jane"))])
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
