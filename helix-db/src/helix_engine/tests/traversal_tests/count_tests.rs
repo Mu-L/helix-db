@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use crate::{
     helix_engine::{
@@ -22,6 +22,7 @@ use crate::{
 use rand::Rng;
 use tempfile::TempDir;
 use bumpalo::Bump;
+use tokio::time;
 fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
@@ -41,7 +42,7 @@ fn test_count_single_node() {
     let mut txn = storage.graph_env.write_txn().unwrap();
     let person = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let person = person.first().unwrap();
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -59,13 +60,13 @@ fn test_count_node_array() {
     let mut txn = storage.graph_env.write_txn().unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -84,15 +85,15 @@ fn test_count_mixed_steps() {
     // Create a graph with multiple paths
     let person1 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let person1 = person1.first().unwrap();
     let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let person2 = person2.first().unwrap();
     let person3 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let person3 = person3.first().unwrap();
 
     G::new_mut(&storage, &arena, &mut txn)
@@ -103,7 +104,7 @@ fn test_count_mixed_steps() {
             person2.id(),
             false,
         )
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
             "knows",
@@ -112,7 +113,7 @@ fn test_count_mixed_steps() {
             person3.id(),
             false,
         )
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     txn.commit().unwrap();
     println!("person1: {person1:?},\nperson2: {person2:?},\nperson3: {person3:?}");
 
@@ -166,7 +167,9 @@ fn test_count_filter_ref() {
                     city.id(),
                     false,
                 )
-                .collect_to::<Vec<_>>();
+                .collect::<Result<Vec<_>,_>>().unwrap();
+            // sleep for one microsecond
+            std::thread::sleep(Duration::from_micros(1));
         }
         if rand_num > 10 {
             num_countries += 1;
@@ -193,7 +196,7 @@ fn test_count_filter_ref() {
                 Ok(false)
             }
         })
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     println!("count: {count:?}, num_countries: {num_countries}");
 

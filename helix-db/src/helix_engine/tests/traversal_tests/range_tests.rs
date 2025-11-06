@@ -45,7 +45,7 @@ fn test_range_subset() {
         .map(|_| {
             G::new_mut(&storage, &arena, &mut txn)
                 .add_n("person", None, None)
-                .collect_to::<Vec<_>>()
+                .collect::<Result<Vec<_>,_>>().unwrap()
                 .first()
                 .unwrap();
         })
@@ -72,7 +72,7 @@ fn test_range_chaining() {
         .map(|i| {
             G::new_mut(&storage, &arena, &mut txn)
                 .add_n("person", props_option(&arena, props! { "name" => i }), None)
-                .collect_to::<Vec<_>>()
+                .collect::<Result<Vec<_>,_>>().unwrap()
                 .first()
                 .unwrap()
                 .clone()
@@ -89,7 +89,7 @@ fn test_range_chaining() {
                 nodes[i + 1].id(),
                 false,
             )
-            .collect_to::<Vec<_>>();
+            .collect::<Result<Vec<_>,_>>().unwrap();
     }
 
     G::new_mut(&storage, &arena, &mut txn)
@@ -100,14 +100,14 @@ fn test_range_chaining() {
             nodes[0].id(),
             false,
         )
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
     let count = G::new(&storage, &txn, &arena)
         .n_from_type("person") // Get all nodes
         .range(0, 3) // Take first 3 nodes
         .out_node("knows") // Get their outgoing nodes
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(count.len(), 3);
 }
@@ -121,7 +121,7 @@ fn test_range_empty() {
     let count = G::new(&storage, &txn, &arena)
         .n_from_type("person") // Get all nodes
         .range(0, 0) // Take first 3 nodes
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(count.len(), 0);
 }

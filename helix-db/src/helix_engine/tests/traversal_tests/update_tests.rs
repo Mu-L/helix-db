@@ -50,21 +50,21 @@ fn test_update_node() {
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(&storage, &txn, &arena_read)
         .n_from_id(&node.id())
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     drop(txn);
 
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
     G::new_mut_from_iter(&storage, &mut txn, traversal.into_iter(), &arena)
         .update(&[("name", Value::from("john"))])
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
     let updated = G::new(&storage, &txn, &arena)
         .n_from_id(&node.id())
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(updated.len(), 1);
 
     match &updated[0] {

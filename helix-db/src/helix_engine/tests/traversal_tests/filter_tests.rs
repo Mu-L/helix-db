@@ -67,7 +67,7 @@ fn test_filter_nodes() {
                 Ok(false)
             }
         })
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(traversal.len(), 1);
     assert_eq!(traversal[0].id(), person3.id());
 }
@@ -84,14 +84,14 @@ fn test_filter_macro_single_argument() {
             props_option(&arena, props! { "name" => "Alice" }),
             None,
         )
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n(
             "person",
             props_option(&arena, props! { "name" => "Bob" }),
             None,
         )
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     fn has_name(val: &Result<TraversalValue, GraphError>) -> Result<bool, GraphError> {
         if let Ok(TraversalValue::Node(node)) = val {
@@ -106,7 +106,7 @@ fn test_filter_macro_single_argument() {
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .filter_ref(|val, _| has_name(val))
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(traversal.len(), 2);
     assert!(
         traversal
@@ -131,7 +131,7 @@ fn test_filter_macro_multiple_arguments() {
 
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 25 }), None)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
         .collect_to_obj();
@@ -160,7 +160,7 @@ fn test_filter_macro_multiple_arguments() {
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .filter_ref(|val, _| age_greater_than(val, 27))
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 1);
     assert_eq!(traversal[0].id(), person2.id());
@@ -187,7 +187,7 @@ fn test_filter_edges() {
             person2.id(),
             false,
         )
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let edge2 = G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
             "knows",
@@ -223,7 +223,7 @@ fn test_filter_edges() {
     let traversal = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
         .filter_ref(|val, _| recent_edge(val, 2021))
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 1);
     assert_eq!(traversal[0].id(), edge2.id());
@@ -237,7 +237,7 @@ fn test_filter_empty_result() {
 
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 25 }), None)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -258,7 +258,7 @@ fn test_filter_empty_result() {
                 Ok(false)
             }
         })
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert!(traversal.is_empty());
 }
 
@@ -320,7 +320,7 @@ fn test_filter_chain() {
         .n_from_type("person")
         .filter_ref(|val, _| has_name(val))
         .filter_ref(|val, _| age_greater_than(val, 27))
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 1);
     assert_eq!(traversal[0].id(), person2.id());

@@ -86,7 +86,7 @@ fn test_drop_edge() {
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(&storage, &txn, &arena)
         .e_from_id(&edge_id)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     drop(txn);
 
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -103,13 +103,13 @@ fn test_drop_edge() {
     let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node1_id)
         .out_e("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert!(edges.is_empty());
 
     let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node2_id)
         .in_e("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert!(edges.is_empty());
 }
 
@@ -138,7 +138,7 @@ fn test_drop_node() {
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_id(&node1_id)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     drop(txn);
 
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -155,7 +155,7 @@ fn test_drop_node() {
     let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node2_id)
         .in_e("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert!(edges.is_empty());
 }
 
@@ -190,10 +190,10 @@ fn test_drop_traversal() {
     let neighbors = G::new(&storage, &txn, &arena)
         .n_from_id(&origin_id)
         .out_node("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let origin = G::new(&storage, &txn, &arena)
         .n_from_id(&origin_id)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     drop(txn);
 
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -205,7 +205,7 @@ fn test_drop_traversal() {
     let txn = storage.graph_env.read_txn().unwrap();
     let remaining = G::new(&storage, &txn, &arena)
         .n_from_type("person")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert!(remaining.is_empty());
     drop(txn);
 
@@ -253,7 +253,7 @@ fn test_node_deletion_in_existing_graph() {
     let txn = storage.graph_env.read_txn().unwrap();
     let source = G::new(&storage, &txn, &arena)
         .n_from_id(&source_id)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     drop(txn);
 
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -265,19 +265,19 @@ fn test_node_deletion_in_existing_graph() {
     let out_edges = G::new(&storage, &txn, &arena)
         .n_from_id(&source_id)
         .out_node("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let arena = Bump::new();
     let in_edges = G::new(&storage, &txn, &arena)
         .n_from_id(&source_id)
         .in_node("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert!(out_edges.is_empty());
     assert!(in_edges.is_empty());
 
     let arena = Bump::new();
     let remaining_edges = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(remaining_edges.len(), others.len());
     assert!(remaining_edges.iter().all(|value| {
         if let TraversalValue::Edge(edge) = value {
@@ -321,7 +321,7 @@ fn test_edge_deletion_in_existing_graph() {
     let txn = storage.graph_env.read_txn().unwrap();
     let edges = G::new(&storage, &txn, &arena)
         .e_from_id(&edge1_id)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     drop(txn);
 
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -332,7 +332,7 @@ fn test_edge_deletion_in_existing_graph() {
     let txn = storage.graph_env.read_txn().unwrap();
     let edges = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(edges.len(), 1);
     assert_eq!(edges[0].id(), edge2_id);
 }
@@ -389,7 +389,7 @@ fn test_vector_deletion_in_existing_graph() {
     let txn = storage.graph_env.read_txn().unwrap();
     let edges = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(edges.len(), 30);
     drop(txn);
 
@@ -407,7 +407,7 @@ fn test_vector_deletion_in_existing_graph() {
             Err(err) => Err(GraphError::from(err.to_string())),
         })
         .dedup()
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     drop(txn);
 
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -419,19 +419,19 @@ fn test_vector_deletion_in_existing_graph() {
     let out_edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node_id)
         .out_vec("knows", false)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let arena = Bump::new();
     let in_edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node_id)
         .in_vec("knows", false)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert!(out_edges.is_empty());
     assert!(in_edges.is_empty());
 
     let arena = Bump::new();
     let other_edges = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(other_edges.len(), vector_ids.len());
     assert!(other_edges.iter().all(|value| {
         if let TraversalValue::Edge(edge) = value {

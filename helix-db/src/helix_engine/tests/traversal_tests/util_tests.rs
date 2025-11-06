@@ -61,7 +61,7 @@ fn test_order_node_by_asc() {
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .order_by_asc("age")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 3);
     assert_eq!(traversal[0].id(), node3.id());
@@ -93,7 +93,7 @@ fn test_order_node_by_desc() {
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .order_by_desc("age")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 3);
     assert_eq!(traversal[0].id(), node.id());
@@ -146,7 +146,7 @@ fn test_order_edge_by_asc() {
         .n_from_type("person")
         .out_e("knows")
         .order_by_asc("since")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 2);
     assert_eq!(traversal[0].id(), edge.id());
@@ -198,7 +198,7 @@ fn test_order_edge_by_desc() {
         .n_from_type("person")
         .out_e("knows")
         .order_by_desc("since")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 2);
     assert_eq!(traversal[0].id(), edge2.id());
@@ -230,7 +230,7 @@ fn test_order_vector_by_asc() {
     let traversal = G::new(&storage, &txn, &arena)
         .search_v::<FnTy, _>(&[1.0, 2.0, 3.0], 10, "vector", None)
         .order_by_asc("age")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 3);
     assert_eq!(traversal[0].id(), vector3.id());
@@ -263,7 +263,7 @@ fn test_order_vector_by_desc() {
     let traversal = G::new(&storage, &txn, &arena)
         .search_v::<FnTy, _>(&[1.0, 2.0, 3.0], 10, "vector", None)
         .order_by_desc("age")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 3);
     assert_eq!(traversal[0].id(), vector.id());
@@ -315,7 +315,7 @@ fn test_dedup() {
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .out_node("knows")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 2);
 
@@ -323,7 +323,7 @@ fn test_dedup() {
         .n_from_type("person")
         .out_node("knows")
         .dedup()
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(traversal.len(), 1);
     assert_eq!(traversal[0].id(), node2.id());

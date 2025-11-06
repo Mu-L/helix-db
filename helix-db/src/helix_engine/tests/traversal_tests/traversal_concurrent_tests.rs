@@ -69,7 +69,7 @@ fn test_concurrent_node_additions() {
                     let label = format!("person_t{}_n{}", thread_id, i);
                     G::new_mut(&storage, &arena, &mut wtxn)
                         .add_n(&label, None, None)
-                        .collect_to::<Vec<_>>();
+                        .collect::<Result<Vec<_>,_>>().unwrap();
 
                     wtxn.commit().unwrap();
                 }
@@ -112,7 +112,7 @@ fn test_concurrent_edge_additions() {
                 let label = format!("node_{}", i);
                 G::new_mut(&storage, &arena, &mut wtxn)
                     .add_n(&label, None, None)
-                    .collect_to::<Vec<_>>()[0]
+                    .collect::<Result<Vec<_>,_>>().unwrap()[0]
                     .id()
             })
             .collect();
@@ -184,7 +184,7 @@ fn test_concurrent_reads_during_writes() {
 
         let root = G::new_mut(&storage, &arena, &mut wtxn)
             .add_n("root", None, None)
-            .collect_to::<Vec<_>>()[0]
+            .collect::<Result<Vec<_>,_>>().unwrap()[0]
             .id();
 
         // Add initial neighbors
@@ -192,7 +192,7 @@ fn test_concurrent_reads_during_writes() {
             let label = format!("initial_{}", i);
             let neighbor_id = G::new_mut(&storage, &arena, &mut wtxn)
                 .add_n(&label, None, None)
-                .collect_to::<Vec<_>>()[0]
+                .collect::<Result<Vec<_>,_>>().unwrap()[0]
                 .id();
 
             G::new_mut(&storage, &arena, &mut wtxn)
@@ -228,7 +228,7 @@ fn test_concurrent_reads_during_writes() {
                 let neighbors = G::new(&storage, &rtxn, &arena)
                     .n_from_id(&root_id)
                     .out_node("connects")
-                    .collect_to::<Vec<_>>();
+                    .collect::<Result<Vec<_>,_>>().unwrap();
 
                 // Should see at least initial neighbors
                 assert!(
@@ -261,7 +261,7 @@ fn test_concurrent_reads_during_writes() {
                 let label = format!("writer_{}_node_{}", writer_id, i);
                 let new_node_id = G::new_mut(&storage, &arena, &mut wtxn)
                     .add_n(&label, None, None)
-                    .collect_to::<Vec<_>>()[0]
+                    .collect::<Result<Vec<_>,_>>().unwrap()[0]
                     .id();
 
                 G::new_mut(&storage, &arena, &mut wtxn)
@@ -286,7 +286,7 @@ fn test_concurrent_reads_during_writes() {
     let final_neighbors = G::new(&storage, &rtxn, &arena)
         .n_from_id(&root_id)
         .out_node("connects")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     let expected_count = 5 + (num_writers * 10);
     assert_eq!(
@@ -313,14 +313,14 @@ fn test_traversal_snapshot_isolation() {
 
         let root = G::new_mut(&storage, &arena, &mut wtxn)
             .add_n("root", None, None)
-            .collect_to::<Vec<_>>()[0]
+            .collect::<Result<Vec<_>,_>>().unwrap()[0]
             .id();
 
         for i in 0..5 {
             let label = format!("node_{}", i);
             let node_id = G::new_mut(&storage, &arena, &mut wtxn)
                 .add_n(&label, None, None)
-                .collect_to::<Vec<_>>()[0]
+                .collect::<Result<Vec<_>,_>>().unwrap()[0]
                 .id();
 
             G::new_mut(&storage, &arena, &mut wtxn)
@@ -338,7 +338,7 @@ fn test_traversal_snapshot_isolation() {
     let initial_neighbors = G::new(&storage, &rtxn, &arena)
         .n_from_id(&root_id)
         .out_node("links")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     let initial_count = initial_neighbors.len();
     assert_eq!(initial_count, 5);
 
@@ -352,7 +352,7 @@ fn test_traversal_snapshot_isolation() {
             let label = format!("new_node_{}", i);
             let new_id = G::new_mut(&storage_clone, &arena, &mut wtxn)
                 .add_n(&label, None, None)
-                .collect_to::<Vec<_>>()[0]
+                .collect::<Result<Vec<_>,_>>().unwrap()[0]
                 .id();
 
             G::new_mut(&storage_clone, &arena, &mut wtxn)
@@ -370,7 +370,7 @@ fn test_traversal_snapshot_isolation() {
     let current_neighbors = G::new(&storage, &rtxn, &arena2)
         .n_from_id(&root_id)
         .out_node("links")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
 
     assert_eq!(
         current_neighbors.len(),
@@ -388,7 +388,7 @@ fn test_traversal_snapshot_isolation() {
     let final_neighbors = G::new(&storage, &rtxn_new, &arena3)
         .n_from_id(&root_id)
         .out_node("links")
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(final_neighbors.len(), 15);
 }
 
@@ -410,7 +410,7 @@ fn test_concurrent_bidirectional_traversals() {
                 let label = format!("source_{}", i);
                 G::new_mut(&storage, &arena, &mut wtxn)
                     .add_n(&label, None, None)
-                    .collect_to::<Vec<_>>()[0]
+                    .collect::<Result<Vec<_>,_>>().unwrap()[0]
                     .id()
             })
             .collect();
@@ -420,7 +420,7 @@ fn test_concurrent_bidirectional_traversals() {
                 let label = format!("target_{}", i);
                 G::new_mut(&storage, &arena, &mut wtxn)
                     .add_n(&label, None, None)
-                    .collect_to::<Vec<_>>()[0]
+                    .collect::<Result<Vec<_>,_>>().unwrap()[0]
                     .id()
             })
             .collect();
@@ -463,7 +463,7 @@ fn test_concurrent_bidirectional_traversals() {
                             let neighbors = G::new(&storage, &rtxn, &arena)
                                 .n_from_id(source_id)
                                 .out_node("points_to")
-                                .collect_to::<Vec<_>>();
+                                .collect::<Result<Vec<_>,_>>().unwrap();
                             assert_eq!(neighbors.len(), 5, "Source should have 5 outgoing edges");
                         }
                     } else {
@@ -472,7 +472,7 @@ fn test_concurrent_bidirectional_traversals() {
                             let neighbors = G::new(&storage, &rtxn, &arena)
                                 .n_from_id(target_id)
                                 .in_node("points_to")
-                                .collect_to::<Vec<_>>();
+                                .collect::<Result<Vec<_>,_>>().unwrap();
                             assert_eq!(neighbors.len(), 5, "Target should have 5 incoming edges");
                         }
                     }
@@ -503,7 +503,7 @@ fn test_concurrent_multi_hop_traversals() {
 
         let root = G::new_mut(&storage, &arena, &mut wtxn)
             .add_n("root", None, None)
-            .collect_to::<Vec<_>>()[0]
+            .collect::<Result<Vec<_>,_>>().unwrap()[0]
             .id();
 
         // Create level 1 nodes
@@ -512,7 +512,7 @@ fn test_concurrent_multi_hop_traversals() {
                 let label = format!("level1_{}", i);
                 let id = G::new_mut(&storage, &arena, &mut wtxn)
                     .add_n(&label, None, None)
-                    .collect_to::<Vec<_>>()[0]
+                    .collect::<Result<Vec<_>,_>>().unwrap()[0]
                     .id();
 
                 G::new_mut(&storage, &arena, &mut wtxn)
@@ -529,7 +529,7 @@ fn test_concurrent_multi_hop_traversals() {
                 let label = format!("level2_{}", i);
                 let l2_id = G::new_mut(&storage, &arena, &mut wtxn)
                     .add_n(&label, None, None)
-                    .collect_to::<Vec<_>>()[0]
+                    .collect::<Result<Vec<_>,_>>().unwrap()[0]
                     .id();
 
                 G::new_mut(&storage, &arena, &mut wtxn)
@@ -561,7 +561,7 @@ fn test_concurrent_multi_hop_traversals() {
                     let level1 = G::new(&storage, &rtxn, &arena)
                         .n_from_id(&root_id)
                         .out_node("to_l1")
-                        .collect_to::<Vec<_>>();
+                        .collect::<Result<Vec<_>,_>>().unwrap();
                     assert_eq!(level1.len(), 3, "Should have 3 level1 nodes");
 
                     // For each level1, traverse to level2
@@ -570,7 +570,7 @@ fn test_concurrent_multi_hop_traversals() {
                         let level2 = G::new(&storage, &rtxn, &arena2)
                             .n_from_id(&l1_node.id())
                             .out_node("to_l2")
-                            .collect_to::<Vec<_>>();
+                            .collect::<Result<Vec<_>,_>>().unwrap();
                         assert_eq!(level2.len(), 2, "Each level1 should have 2 level2 nodes");
                     }
 
@@ -615,12 +615,12 @@ fn test_concurrent_graph_topology_consistency() {
 
                     let node1_id = G::new_mut(&storage, &arena, &mut wtxn)
                         .add_n(&label1, None, None)
-                        .collect_to::<Vec<_>>()[0]
+                        .collect::<Result<Vec<_>,_>>().unwrap()[0]
                         .id();
 
                     let node2_id = G::new_mut(&storage, &arena, &mut wtxn)
                         .add_n(&label2, None, None)
-                        .collect_to::<Vec<_>>()[0]
+                        .collect::<Result<Vec<_>,_>>().unwrap()[0]
                         .id();
 
                     G::new_mut(&storage, &arena, &mut wtxn)
@@ -688,7 +688,7 @@ fn test_stress_concurrent_mixed_operations() {
                 let label = format!("root_{}", i);
                 G::new_mut(&storage, &arena, &mut wtxn)
                     .add_n(&label, None, None)
-                    .collect_to::<Vec<_>>()[0]
+                    .collect::<Result<Vec<_>,_>>().unwrap()[0]
                     .id()
             })
             .collect();
@@ -717,7 +717,7 @@ fn test_stress_concurrent_mixed_operations() {
                 let label = format!("w{}_n{}", writer_id, write_count);
                 let new_id = G::new_mut(&storage, &arena, &mut wtxn)
                     .add_n(&label, None, None)
-                    .collect_to::<Vec<_>>()[0]
+                    .collect::<Result<Vec<_>,_>>().unwrap()[0]
                     .id();
 
                 let root_idx = write_count % root_ids.len();
@@ -747,7 +747,7 @@ fn test_stress_concurrent_mixed_operations() {
                     let _neighbors = G::new(&storage, &rtxn, &arena)
                         .n_from_id(root_id)
                         .out_node("links")
-                        .collect_to::<Vec<_>>();
+                        .collect::<Result<Vec<_>,_>>().unwrap();
                     read_count += 1;
                 }
             }

@@ -62,13 +62,13 @@ fn test_delete_node_with_secondary_index() {
     let txn = storage.graph_env.read_txn().unwrap();
     let jane_nodes = G::new(&storage, &txn, &arena)
         .n_from_index("person", "name", &"Jane".to_string())
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(jane_nodes.len(), 1);
     assert_eq!(jane_nodes[0].id(), node_id);
 
     let john_nodes = G::new(&storage, &txn, &arena)
         .n_from_index("person", "name", &"John".to_string())
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert!(john_nodes.is_empty());
     drop(txn);
 
@@ -76,7 +76,7 @@ fn test_delete_node_with_secondary_index() {
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_id(&node_id)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     drop(txn);
 
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -87,7 +87,7 @@ fn test_delete_node_with_secondary_index() {
     let txn = storage.graph_env.read_txn().unwrap();
     let node = G::new(&storage, &txn, &arena)
         .n_from_index("person", "name", &"Jane".to_string())
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert!(node.is_empty());
 }
 
@@ -117,7 +117,7 @@ fn test_update_of_secondary_indices() {
     let txn = storage.graph_env.read_txn().unwrap();
     let nodes = G::new(&storage, &txn, &arena)
         .n_from_index("person", "name", &"Jane".to_string())
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(nodes.len(), 1);
     if let TraversalValue::Node(node) = &nodes[0] {
         match node.properties.as_ref().unwrap().get("name").unwrap() {
@@ -130,6 +130,6 @@ fn test_update_of_secondary_indices() {
 
     let john_nodes = G::new(&storage, &txn, &arena)
         .n_from_index("person", "name", &"John".to_string())
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert!(john_nodes.is_empty());
 }

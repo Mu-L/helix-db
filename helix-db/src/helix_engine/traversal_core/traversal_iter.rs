@@ -41,16 +41,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             .collect::<B>()
     }
 
-    pub fn collect_to<B: FromIterator<TraversalValue<'arena>>>(self) -> B {
-        self.inner.filter_map(|item| item.ok()).collect::<B>()
-    }
-
-    // pub fn collect_in<'arena, B: FromIterator<TraversalValue<'arena>>>(
-    //     self,
-    //     arena: &'arena Arena,
-    // ) -> B {
-    //     //
-    // }
 
     pub fn collect_dedup<B: FromIterator<TraversalValue<'arena>>>(self) -> B {
         self.inner
@@ -134,10 +124,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             .filter_map(|item| item.ok())
             .take(n)
             .collect::<B>()
-    }
-
-    pub fn collect_to<B: FromIterator<TraversalValue<'arena>>>(self) -> B {
-        self.inner.filter_map(|item| item.ok()).collect::<B>()
     }
 
     pub fn collect_dedup<B: FromIterator<TraversalValue<'arena>>>(self) -> B {
