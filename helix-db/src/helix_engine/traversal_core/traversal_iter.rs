@@ -48,7 +48,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             .unique()
             .collect::<B>()
     }
-
+    
     pub fn collect_to_obj(self) -> TraversalValue<'arena> {
         match self.inner.filter_map(|item| item.ok()).next() {
             Some(val) => val,

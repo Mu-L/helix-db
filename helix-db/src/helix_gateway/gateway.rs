@@ -30,7 +30,7 @@ use crate::{
 pub struct GatewayOpts {}
 
 impl GatewayOpts {
-    pub const DEFAULT_WORKERS_PER_CORE: usize = 6;
+    pub const DEFAULT_WORKERS_PER_CORE: usize = 8;
 }
 
 pub static HELIX_METRICS_CLIENT: LazyLock<helix_metrics::HelixMetricsClient> =

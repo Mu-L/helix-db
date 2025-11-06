@@ -1466,13 +1466,11 @@ pub(crate) fn validate_traversal<'a>(
                                         ExpressionType::BooleanLiteral(i) => {
                                             GeneratedValue::Primitive(GenRef::Std(i.to_string()))
                                         }
-                                        v => {
-                                            println!("ID {v:?}");
+                                        _ => {
                                             panic!("expr be primitive or value")
                                         }
                                     },
-                                    v => {
-                                        println!("{v:?}");
+                                    _ => {
                                         panic!("Should be primitive or value")
                                     }
                                 },

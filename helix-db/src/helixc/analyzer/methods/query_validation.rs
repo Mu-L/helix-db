@@ -46,11 +46,6 @@ fn build_return_fields(
 
     // Handle aggregate types specially
     if let Type::Aggregate(info) = inferred_type {
-        eprintln!(
-            "DEBUG build_return_fields: processing aggregate type, is_count={}, is_group_by={}",
-            info.is_count, info.is_group_by
-        );
-
         // All aggregates have a key field (the grouping key from HashMap)
         fields.push(ReturnFieldInfo::new_implicit(
             "key".to_string(),
@@ -124,14 +119,6 @@ fn build_return_fields(
         Type::Vector(Some(label)) | Type::Vectors(Some(label)) => Some((label.as_str(), "vector")),
         _ => None,
     };
-    eprintln!(
-        "DEBUG build_return_fields: inferred_type={:?}, schema_type={:?}, has_object_step={}, has_spread={}, object_fields={:?}",
-        inferred_type,
-        schema_type,
-        traversal.has_object_step,
-        traversal.has_spread,
-        traversal.object_fields
-    );
 
     // Step 1: Add implicit fields if this is a schema type
     if let Some((label, item_type)) = schema_type {
@@ -148,14 +135,12 @@ fn build_return_fields(
 
         // Add id and label if no object step OR if explicitly selected
         if should_add_field("id") {
-            eprintln!("DEBUG: Adding implicit 'id' field with type &'a str");
             fields.push(ReturnFieldInfo::new_implicit(
                 "id".to_string(),
                 "&'a str".to_string(),
             ));
         }
         if should_add_field("label") {
-            eprintln!("DEBUG: Adding implicit 'label' field with type &'a str");
             fields.push(ReturnFieldInfo::new_implicit(
                 "label".to_string(),
                 "&'a str".to_string(),
@@ -229,22 +214,10 @@ fn build_return_fields(
 
                 // If has_spread, add all remaining schema fields
                 if traversal.has_spread {
-                    eprintln!(
-                        "DEBUG: Processing spread, current fields: {:?}",
-                        fields.iter().map(|f| &f.name).collect::<Vec<_>>()
-                    );
                     for (field_name, _field) in schema_fields.iter() {
                         // Skip if already added
                         let already_exists = fields.iter().any(|f| f.name == *field_name);
-                        eprintln!(
-                            "DEBUG: Checking field '{}', already_exists={}",
-                            field_name, already_exists
-                        );
                         if already_exists {
-                            eprintln!(
-                                "DEBUG: Skipping '{}' from spread - already added",
-                                field_name
-                            );
                             continue;
                         }
                         // Skip if excluded
@@ -264,19 +237,11 @@ fn build_return_fields(
                                 "score" => "f64".to_string(),
                                 _ => "&'a str".to_string(),
                             };
-                            eprintln!(
-                                "DEBUG: Adding implicit field '{}' from spread with type {}",
-                                field_name, rust_type
-                            );
                             fields.push(ReturnFieldInfo::new_implicit(
                                 field_name.to_string(),
                                 rust_type,
                             ));
                         } else {
-                            eprintln!(
-                                "DEBUG: Adding schema field '{}' from spread with type Option<&'a Value>",
-                                field_name
-                            );
                             fields.push(ReturnFieldInfo::new_schema(
                                 field_name.to_string(),
                                 "Option<&'a Value>".to_string(),
@@ -311,15 +276,7 @@ fn build_return_fields(
     }
 
     // Step 3: Add nested traversals
-    eprintln!(
-        "DEBUG build_return_fields: processing {} nested traversals",
-        traversal.nested_traversals.len()
-    );
     for (field_name, nested_info) in &traversal.nested_traversals {
-        eprintln!(
-            "DEBUG build_return_fields: nested traversal field_name = {}",
-            field_name
-        );
         // For nested traversals, extract the return type and build nested fields
         if let Some(ref return_type) = nested_info.return_type {
             // Check if this is a scalar type or needs a struct
@@ -359,14 +316,6 @@ fn build_return_fields(
                     let trav_code = nested_info.traversal.format_steps_only();
                     // Extract the accessed field name from object_fields
                     let accessed_field_name = nested_info.traversal.object_fields.first().cloned();
-                    eprintln!(
-                        "DEBUG: Scalar nested field '{}', accessed_field={:?}, has_object_step={}, trav_code='{}', closure_source_var={:?}",
-                        field_name,
-                        accessed_field,
-                        nested_info.traversal.has_object_step,
-                        trav_code,
-                        nested_info.closure_source_var
-                    );
                     fields.push(ReturnFieldInfo {
                         name: field_name.clone(),
                         field_type: ReturnFieldType::Simple(rust_type),
