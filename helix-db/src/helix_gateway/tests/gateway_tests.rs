@@ -27,10 +27,10 @@ fn create_test_graph() -> (Arc<HelixGraphEngine>, TempDir) {
 #[test]
 fn test_gateway_new_basic() {
     let (graph, _temp_dir) = create_test_graph();
-    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 5, None, None, None);
+    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 6, None, None, None);
 
     assert_eq!(gateway.address, "127.0.0.1:8080");
-    assert_eq!(gateway.workers_per_core, 5);
+    assert_eq!(gateway.workers_per_core, 6);
     assert!(gateway.opts.is_none());
 }
 
@@ -38,7 +38,7 @@ fn test_gateway_new_basic() {
 fn test_gateway_new_with_routes() {
     let (graph, _temp_dir) = create_test_graph();
     let routes = HashMap::new();
-    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 5, Some(routes), None, None);
+    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 6, Some(routes), None, None);
 
     assert_eq!(gateway.address, "127.0.0.1:8080");
     assert!(gateway.router.routes.is_empty());
@@ -48,7 +48,7 @@ fn test_gateway_new_with_routes() {
 fn test_gateway_new_with_mcp_routes() {
     let (graph, _temp_dir) = create_test_graph();
     let mcp_routes = HashMap::new();
-    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 5, None, Some(mcp_routes), None);
+    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 6, None, Some(mcp_routes), None);
 
     assert_eq!(gateway.address, "127.0.0.1:8080");
     assert!(gateway.router.mcp_routes.is_empty());
@@ -62,7 +62,7 @@ fn test_gateway_new_with_opts() {
         config: Config::default(),
         version_info: Default::default(),
     };
-    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 5, None, None, Some(opts));
+    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 6, None, None, Some(opts));
 
     assert!(gateway.opts.is_some());
 }
@@ -73,7 +73,7 @@ fn test_gateway_new_with_cluster_id() {
         std::env::set_var("CLUSTER_ID", "test-cluster-123");
     }
     let (graph, _temp_dir) = create_test_graph();
-    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 5, None, None, None);
+    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 6, None, None, None);
 
     assert!(gateway.cluster_id.is_some());
     assert_eq!(gateway.cluster_id.unwrap(), "test-cluster-123");
@@ -119,7 +119,7 @@ fn test_gateway_workers_per_core() {
         None,
         None,
     );
-    assert_eq!(gateway3.workers_per_core, 5);
+    assert_eq!(gateway3.workers_per_core, 6);
 }
 
 // ============================================================================
@@ -211,10 +211,10 @@ fn test_app_state_with_cluster_id() {
 #[test]
 fn test_core_setter_new() {
     let cores = vec![CoreId { id: 0 }, CoreId { id: 1 }];
-    let setter = CoreSetter::new(cores.clone(), 5);
+    let setter = CoreSetter::new(cores.clone(), 6);
 
     assert_eq!(setter.cores.len(), 2);
-    assert_eq!(setter.threads_per_core, 5);
+    assert_eq!(setter.threads_per_core, 6);
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn test_core_setter_num_threads_multiple_cores() {
 #[test]
 fn test_core_setter_num_threads_multiple_threads_per_core() {
     let cores = vec![CoreId { id: 0 }, CoreId { id: 1 }];
-    let setter = CoreSetter::new(cores, 5);
+    let setter = CoreSetter::new(cores, 6);
 
     assert_eq!(setter.num_threads(), 10);
 }
@@ -244,7 +244,7 @@ fn test_core_setter_num_threads_multiple_threads_per_core() {
 #[test]
 fn test_core_setter_num_threads_edge_cases() {
     // Zero cores
-    let setter1 = CoreSetter::new(vec![], 5);
+    let setter1 = CoreSetter::new(vec![], 6);
     assert_eq!(setter1.num_threads(), 0);
 
     // Zero threads per core
@@ -294,7 +294,7 @@ fn test_core_setter_many_threads() {
 #[test]
 fn test_core_setter_num_threads_consistency() {
     let cores = vec![CoreId { id: 0 }, CoreId { id: 1 }];
-    let setter = CoreSetter::new(cores, 5);
+    let setter = CoreSetter::new(cores, 6);
 
     assert_eq!(setter.num_threads(), 10);
     assert_eq!(setter.num_threads(), 10);
@@ -315,7 +315,7 @@ fn test_core_setter_with_default_workers() {
     let cores = vec![CoreId { id: 0 }, CoreId { id: 1 }];
     let setter = CoreSetter::new(cores, GatewayOpts::DEFAULT_WORKERS_PER_CORE);
 
-    assert_eq!(setter.threads_per_core, 5);
+    assert_eq!(setter.threads_per_core, 6);
     assert_eq!(setter.num_threads(), 10);
 }
 
@@ -329,5 +329,5 @@ fn test_core_setter_index_initial_value() {
 
 #[test]
 fn test_gateway_opts_default_workers_per_core() {
-    assert_eq!(GatewayOpts::DEFAULT_WORKERS_PER_CORE, 5);
+    assert_eq!(GatewayOpts::DEFAULT_WORKERS_PER_CORE, 6);
 }
