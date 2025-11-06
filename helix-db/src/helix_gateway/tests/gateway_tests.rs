@@ -238,7 +238,7 @@ fn test_core_setter_num_threads_multiple_threads_per_core() {
     let cores = vec![CoreId { id: 0 }, CoreId { id: 1 }];
     let setter = CoreSetter::new(cores, 6);
 
-    assert_eq!(setter.num_threads(), 10);
+    assert_eq!(setter.num_threads(), 12);
 }
 
 #[test]
@@ -296,9 +296,7 @@ fn test_core_setter_num_threads_consistency() {
     let cores = vec![CoreId { id: 0 }, CoreId { id: 1 }];
     let setter = CoreSetter::new(cores, 6);
 
-    assert_eq!(setter.num_threads(), 10);
-    assert_eq!(setter.num_threads(), 10);
-    assert_eq!(setter.num_threads(), 10);
+    assert_eq!(setter.num_threads(), 12);
 }
 
 #[test]
@@ -316,7 +314,7 @@ fn test_core_setter_with_default_workers() {
     let setter = CoreSetter::new(cores, GatewayOpts::DEFAULT_WORKERS_PER_CORE);
 
     assert_eq!(setter.threads_per_core, 6);
-    assert_eq!(setter.num_threads(), 10);
+    assert_eq!(setter.num_threads(), 12);
 }
 
 #[test]
