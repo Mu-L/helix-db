@@ -19,7 +19,7 @@ use crate::{
     props,
 };
 
-fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
@@ -28,12 +28,12 @@ fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
         Default::default(),
     )
     .unwrap();
-    (Arc::new(storage), temp_dir)
+    (temp_dir, Arc::new(storage))
 }
 
 #[test]
 fn test_shortest_path_simple_chain() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -75,7 +75,7 @@ fn test_shortest_path_simple_chain() {
 
 #[test]
 fn test_dijkstra_shortest_path_weighted_graph() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 

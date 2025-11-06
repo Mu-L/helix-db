@@ -25,7 +25,7 @@ use crate::helix_engine::{
 
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
-fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
@@ -34,12 +34,12 @@ fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
         Default::default(),
     )
     .unwrap();
-    (Arc::new(storage), temp_dir)
+    (temp_dir, Arc::new(storage))
 }
 
 #[test]
 fn test_insert_and_fetch_vector() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -64,7 +64,7 @@ fn test_insert_and_fetch_vector() {
 
 #[test]
 fn test_vector_edges_from_and_to_node() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -94,7 +94,7 @@ fn test_vector_edges_from_and_to_node() {
 
 #[test]
 fn test_brute_force_vector_search_orders_by_distance() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -134,7 +134,7 @@ fn test_brute_force_vector_search_orders_by_distance() {
 
 #[test]
 fn test_drop_vector_removes_edges() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 

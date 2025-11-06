@@ -29,7 +29,11 @@ use crate::helix_engine::vector_core::{
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
 /// Setup test environment with larger map size for concurrent access
-fn setup_concurrent_env() -> (Env, TempDir) {
+///
+/// IMPORTANT: Returns (TempDir, Env) to ensure TempDir outlives Env.
+/// This prevents double-free errors where LMDB tries to access memory-mapped
+/// files after the directory has been deleted.
+fn setup_concurrent_env() -> (TempDir, Env) {
     let temp_dir = tempfile::tempdir().unwrap();
     let path = temp_dir.path();
 
@@ -41,7 +45,7 @@ fn setup_concurrent_env() -> (Env, TempDir) {
             .open(path)
             .unwrap()
     };
-    (env, temp_dir)
+    (temp_dir, env)
 }
 
 /// Generate a random vector of given dimensionality
@@ -64,7 +68,7 @@ fn test_concurrent_inserts_single_label() {
     //
     // EXPECTED: All inserts should succeed, graph should remain consistent
 
-    let (env, _temp_dir) = setup_concurrent_env();
+    let (_temp_dir, env) = setup_concurrent_env();
     let env = Arc::new(env);
 
     // Initialize the index
@@ -145,7 +149,7 @@ fn test_concurrent_searches_during_inserts() {
     // - Searches should return consistent results (no torn reads)
     // - Number of results should increase over time as inserts complete
 
-    let (env, _temp_dir) = setup_concurrent_env();
+    let (_temp_dir, env) = setup_concurrent_env();
     let env = Arc::new(env);
 
     // Initialize with some initial vectors
@@ -288,7 +292,7 @@ fn test_concurrent_inserts_multiple_labels() {
     //
     // EXPECTED: No contention between different labels, all inserts succeed
 
-    let (env, _temp_dir) = setup_concurrent_env();
+    let (_temp_dir, env) = setup_concurrent_env();
     let env = Arc::new(env);
 
     // Initialize the index
@@ -378,7 +382,7 @@ fn test_entry_point_consistency() {
     //
     // EXPECTED: Entry point should always be a valid vector ID
 
-    let (env, _temp_dir) = setup_concurrent_env();
+    let (_temp_dir, env) = setup_concurrent_env();
     let env = Arc::new(env);
 
     {
@@ -450,7 +454,7 @@ fn test_graph_connectivity_after_concurrent_inserts() {
     // EXPECTED: Graph should remain connected (no orphaned nodes)
     // All vectors should be reachable from entry point
 
-    let (env, _temp_dir) = setup_concurrent_env();
+    let (_temp_dir, env) = setup_concurrent_env();
     let env = Arc::new(env);
 
     {
@@ -536,7 +540,7 @@ fn test_transaction_isolation() {
     //
     // EXPECTED: Readers should see consistent snapshots even while writes occur
 
-    let (env, _temp_dir) = setup_concurrent_env();
+    let (_temp_dir, env) = setup_concurrent_env();
     let env = Arc::new(env);
 
     // Initialize with known vectors

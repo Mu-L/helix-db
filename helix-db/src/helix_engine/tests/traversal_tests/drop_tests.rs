@@ -27,7 +27,7 @@ use crate::{
 
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
-fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
@@ -36,7 +36,7 @@ fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
         Default::default(),
     )
     .unwrap();
-    (Arc::new(storage), temp_dir)
+    (temp_dir, Arc::new(storage))
 }
 
 fn to_result_iter(
@@ -61,7 +61,7 @@ fn edge_id(value: TraversalValue) -> u128 {
 
 #[test]
 fn test_drop_edge() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -115,7 +115,7 @@ fn test_drop_edge() {
 
 #[test]
 fn test_drop_node() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -161,7 +161,7 @@ fn test_drop_node() {
 
 #[test]
 fn test_drop_traversal() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -215,7 +215,7 @@ fn test_drop_traversal() {
 
 #[test]
 fn test_node_deletion_in_existing_graph() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -290,7 +290,7 @@ fn test_node_deletion_in_existing_graph() {
 
 #[test]
 fn test_edge_deletion_in_existing_graph() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -339,7 +339,7 @@ fn test_edge_deletion_in_existing_graph() {
 
 #[test]
 fn test_vector_deletion_in_existing_graph() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 

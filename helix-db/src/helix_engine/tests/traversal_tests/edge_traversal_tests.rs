@@ -29,7 +29,7 @@ use heed3::RoTxn;
 
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
-fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
@@ -38,7 +38,7 @@ fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
         Default::default(),
     )
     .unwrap();
-    (Arc::new(storage), temp_dir)
+    (temp_dir, Arc::new(storage))
 }
 
 fn edge_id(value: &TraversalValue) -> u128 {
@@ -50,7 +50,7 @@ fn edge_id(value: &TraversalValue) -> u128 {
 
 #[test]
 fn test_add_edge_creates_relationship() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -79,7 +79,7 @@ fn test_add_edge_creates_relationship() {
 
 #[test]
 fn test_out_e_returns_edge() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -108,7 +108,7 @@ fn test_out_e_returns_edge() {
 
 #[test]
 fn test_in_e_returns_edge() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -137,7 +137,7 @@ fn test_in_e_returns_edge() {
 
 #[test]
 fn test_out_node_returns_neighbor() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -166,7 +166,7 @@ fn test_out_node_returns_neighbor() {
 
 #[test]
 fn test_edge_properties_can_be_read() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -208,7 +208,7 @@ fn test_edge_properties_can_be_read() {
 
 #[test]
 fn test_vector_edges_roundtrip() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 

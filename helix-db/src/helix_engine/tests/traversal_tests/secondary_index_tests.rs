@@ -19,17 +19,17 @@ use crate::{
         },
         types::GraphError,
     },
-    protocol::value::Value,
     props,
+    protocol::value::Value,
 };
 
-fn setup_indexed_db() -> (Arc<HelixGraphStorage>, TempDir) {
+fn setup_indexed_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let mut config = crate::helix_engine::traversal_core::config::Config::default();
     config.graph_config.as_mut().unwrap().secondary_indices = Some(vec!["name".to_string()]);
     let storage = HelixGraphStorage::new(db_path, config, Default::default()).unwrap();
-    (Arc::new(storage), temp_dir)
+    (temp_dir, Arc::new(storage))
 }
 
 fn to_result_iter(
@@ -40,7 +40,7 @@ fn to_result_iter(
 
 #[test]
 fn test_delete_node_with_secondary_index() {
-    let (storage, _temp_dir) = setup_indexed_db();
+    let (_temp_dir, storage) = setup_indexed_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -93,7 +93,7 @@ fn test_delete_node_with_secondary_index() {
 
 #[test]
 fn test_update_of_secondary_indices() {
-    let (storage, _temp_dir) = setup_indexed_db();
+    let (_temp_dir, storage) = setup_indexed_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 

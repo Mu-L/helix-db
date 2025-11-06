@@ -26,7 +26,7 @@ use crate::{
 use bumpalo::Bump;
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
-fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
@@ -35,12 +35,12 @@ fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
         Default::default(),
     )
     .unwrap();
-    (Arc::new(storage), temp_dir)
+    (temp_dir, Arc::new(storage))
 }
 
 #[test]
 fn test_add_n() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
 
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -80,7 +80,7 @@ fn test_add_n() {
 
 #[test]
 fn test_out() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -106,19 +106,15 @@ fn test_out() {
         .collect_to::<Vec<_>>();
 
     txn.commit().unwrap();
-    let txn = storage.graph_env.write_txn().unwrap();
+    let txn = storage.graph_env.read_txn().unwrap();
 
-    // let nodes = VFromId::new(&storage, &txn, person1.id.as_str())
-    //     .out("knows")
-    //     .filter_map(|node| node.ok())
-    //     .collect::<Vec<_>>();
     let nodes = G::new(&storage, &txn, &arena)
         .n_from_id(&person1.id())
         .out_node("knows")
         .filter_map(|node| node.ok())
         .collect::<Vec<_>>();
 
-    // txn.commit().unwrap();
+    txn.commit().unwrap();
     // Check that current step is at person2
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].id(), person2.id());
@@ -126,7 +122,7 @@ fn test_out() {
 
 #[test]
 fn test_in() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -150,6 +146,7 @@ fn test_in() {
         .in_node("knows")
         .collect_to::<Vec<_>>();
 
+    txn.commit().unwrap();
     // Check that current step is at person1
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].id(), person1.id());
@@ -157,7 +154,7 @@ fn test_in() {
 
 #[test]
 fn test_complex_traversal() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -227,7 +224,7 @@ fn test_complex_traversal() {
 
 #[test]
 fn test_n_from_id() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -248,7 +245,7 @@ fn test_n_from_id() {
 
 #[test]
 fn test_n_from_id_with_traversal() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -277,7 +274,7 @@ fn test_n_from_id_with_traversal() {
 
 #[test]
 fn test_n_from_id_nonexistent() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
     let nodes = G::new(&storage, &txn, &arena)
@@ -288,7 +285,7 @@ fn test_n_from_id_nonexistent() {
 
 #[test]
 fn test_n_from_id_chain_operations() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -328,7 +325,7 @@ fn test_n_from_id_chain_operations() {
 
 #[test]
 fn test_with_id_type() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -365,7 +362,8 @@ fn test_with_id_type() {
 
 #[test]
 fn test_double_add_and_double_fetch() {
-    let (db, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
+    let db = &*storage;
     let arena = Bump::new();
     let mut txn = db.graph_env.write_txn().unwrap();
 
