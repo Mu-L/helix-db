@@ -106,9 +106,8 @@ fn test_drop_edge() {
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(&storage, &txn, &arena)
         .e_from_id(&edge_id)
-        .collect_to_obj()
-        .unwrap();
-    assert_eq!(traversal, TraversalValue::Empty);
+        .collect_to_obj();
+    assert!(matches!(traversal, Err(GraphError::EdgeNotFound)));
 
     let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node1_id)
@@ -165,15 +164,14 @@ fn test_drop_node() {
     let txn = storage.graph_env.read_txn().unwrap();
     let node_val = G::new(&storage, &txn, &arena)
         .n_from_id(&node1_id)
-        .collect_to_obj()
-        .unwrap();
-    assert_eq!(node_val, TraversalValue::Empty);
+        .collect_to_obj();
+    assert!(matches!(node_val, Err(GraphError::NodeNotFound)));
 
     let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node2_id)
         .in_e("knows")
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+        .collect::<Result<Vec<_>, _>>().unwrap();
+    println!("edges: {:?}", edges);
     assert!(edges.is_empty());
 }
 

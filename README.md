@@ -126,3 +126,7 @@ HelixDB is available as a managed service for selected users, if you're interest
 ---
 
 Just Use Helix
+
+
+
+Error: [FAILED] PROCESSING FAILED: 8 out of 55 tests failed compilation/check: ["cloud_queries", "companies_graph", "companies_graph_v2", "graphiti", "knowledge_graphs", "series", "update", "update_drop_then_add"]

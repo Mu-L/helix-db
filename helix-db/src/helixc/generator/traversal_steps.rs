@@ -154,7 +154,7 @@ impl Display for Traversal {
                     "G::new_mut_from_iter(&db, &mut txn, update_tr.iter().cloned(), &arena)",
                 )?;
                 write!(f, "\n    .update({})", write_properties_slice(properties))?;
-                write!(f, "\n    .collect_to_obj()")?;
+                write!(f, "\n    .collect_to_obj()?")?;
                 write!(f, "}}")?;
             }
         }

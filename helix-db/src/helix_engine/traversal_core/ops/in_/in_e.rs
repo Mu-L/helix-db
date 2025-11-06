@@ -28,8 +28,8 @@ impl<'db, 'arena, 'txn> Iterator for InEdgesIterator<'db, 'arena, 'txn> {
     type Item = Result<TraversalValue<'arena>, GraphError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(Ok((_, data))) = self.iter.next() {
-            match data.decode() {
+        match self.iter.next() {
+            Some(Ok((_, data))) => match data.decode() {
                 Ok(data) => {
                     let (edge_id, _) = match HelixGraphStorage::unpack_adj_edge_data(data) {
                         Ok(data) => data,
@@ -38,17 +38,19 @@ impl<'db, 'arena, 'txn> Iterator for InEdgesIterator<'db, 'arena, 'txn> {
                             return Some(Err(e));
                         }
                     };
-                    if let Ok(edge) = self.storage.get_edge(self.txn, &edge_id, self.arena) {
-                        return Some(Ok(TraversalValue::Edge(edge)));
+                    match self.storage.get_edge(self.txn, &edge_id, self.arena) {
+                        Ok(edge) => Some(Ok(TraversalValue::Edge(edge))),
+                        Err(e) => Some(Err(e)),
                     }
                 }
                 Err(e) => {
                     println!("Error decoding edge data: {e:?}");
                     return Some(Err(GraphError::DecodeError(e.to_string())));
                 }
-            }
+            },
+            Some(Err(e)) => Some(Err(e.into())),
+            None => None,
         }
-        None
     }
 }
 
