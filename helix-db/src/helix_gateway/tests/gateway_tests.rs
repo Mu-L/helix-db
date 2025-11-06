@@ -139,7 +139,7 @@ fn test_app_state_creation() {
     );
 
     let cores = core_affinity::get_core_ids().unwrap_or_default();
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
     let worker_pool = WorkerPool::new(core_setter, graph, router, rt);
 
     let state = AppState {
@@ -165,7 +165,7 @@ fn test_app_state_with_schema() {
     );
 
     let cores = core_affinity::get_core_ids().unwrap_or_default();
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
     let worker_pool = WorkerPool::new(core_setter, graph, router, rt);
 
     let state = AppState {
@@ -191,7 +191,7 @@ fn test_app_state_with_cluster_id() {
     );
 
     let cores = core_affinity::get_core_ids().unwrap_or_default();
-    let core_setter = Arc::new(CoreSetter::new(cores, 1));
+    let core_setter = Arc::new(CoreSetter::new(cores, 2));
     let worker_pool = WorkerPool::new(core_setter, graph, router, rt);
 
     let state = AppState {
