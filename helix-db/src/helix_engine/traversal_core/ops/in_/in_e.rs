@@ -34,7 +34,6 @@ impl<'db, 'arena, 'txn> Iterator for InEdgesIterator<'db, 'arena, 'txn> {
                     let (edge_id, _) = match HelixGraphStorage::unpack_adj_edge_data(data) {
                         Ok(data) => data,
                         Err(e) => {
-                            println!("Error unpacking edge data: {e:?}");
                             return Some(Err(e));
                         }
                     };
@@ -44,8 +43,7 @@ impl<'db, 'arena, 'txn> Iterator for InEdgesIterator<'db, 'arena, 'txn> {
                     }
                 }
                 Err(e) => {
-                    println!("Error decoding edge data: {e:?}");
-                    return Some(Err(GraphError::DecodeError(e.to_string())));
+                    Some(Err(GraphError::DecodeError(e.to_string())))
                 }
             },
             Some(Err(e)) => Some(Err(e.into())),
