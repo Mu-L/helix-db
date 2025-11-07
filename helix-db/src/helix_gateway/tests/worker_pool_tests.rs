@@ -14,9 +14,13 @@ use tempfile::TempDir;
 
 fn create_test_graph() -> (Arc<HelixGraphEngine>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
+    let mut config = Config::default();
+    // Use very minimal DB size for tests (0 means use minimum)
+    // This reduces memory mapping requirements when running many tests in parallel
+    config.db_max_size_gb = Some(0);
     let opts = HelixGraphEngineOpts {
         path: temp_dir.path().to_str().unwrap().to_string(),
-        config: Config::default(),
+        config,
         version_info: Default::default(),
     };
     let graph = Arc::new(HelixGraphEngine::new(opts).unwrap());

@@ -251,15 +251,15 @@ mod tests {
 
         let node1 = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         let node2 = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         let _edge = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_e("knows", None, node1.id(), node2.id(), false, EdgeType::Node)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         txn.commit().unwrap();
 
@@ -296,15 +296,15 @@ mod tests {
 
         let node1 = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         let node2 = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         let _edge = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_e("knows", None, node1.id(), node2.id(), false, EdgeType::Node)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         txn.commit().unwrap();
 
@@ -340,7 +340,7 @@ mod tests {
 
         let node = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         txn.commit().unwrap();
 

@@ -19,7 +19,7 @@ use crate::{
     props,
 };
 
-fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
@@ -28,12 +28,12 @@ fn setup_test_db() -> (Arc<HelixGraphStorage>, TempDir) {
         Default::default(),
     )
     .unwrap();
-    (Arc::new(storage), temp_dir)
+    (temp_dir, Arc::new(storage))
 }
 
 #[test]
 fn test_shortest_path_simple_chain() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -42,20 +42,20 @@ fn test_shortest_path_simple_chain() {
         .map(|name| {
             G::new_mut(&storage, &arena, &mut txn)
                 .add_n("person", props_option(&arena, props!("name" => name)), None)
-                .collect_to::<Vec<_>>()[0]
+                .collect::<Result<Vec<_>,_>>().unwrap()[0]
                 .id()
         })
         .collect();
 
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, node_ids[0], node_ids[1], false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, node_ids[1], node_ids[2], false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge("knows", None, node_ids[2], node_ids[3], false)
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -63,7 +63,7 @@ fn test_shortest_path_simple_chain() {
     let path = G::new(&storage, &txn, &arena)
         .n_from_id(&node_ids[0])
         .shortest_path(Some("knows"), None, Some(&node_ids[3]))
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     assert_eq!(path.len(), 1);
     if let TraversalValue::Path((nodes, edges)) = &path[0] {
         assert_eq!(nodes.len(), 4);
@@ -75,7 +75,7 @@ fn test_shortest_path_simple_chain() {
 
 #[test]
 fn test_dijkstra_shortest_path_weighted_graph() {
-    let (storage, _temp_dir) = setup_test_db();
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -85,19 +85,19 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             props_option(&arena, props!("name" => "start")),
             None,
         )
-        .collect_to::<Vec<_>>()[0]
+        .collect::<Result<Vec<_>,_>>().unwrap()[0]
         .id();
     let mid1 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("city", props_option(&arena, props!("name" => "mid1")), None)
-        .collect_to::<Vec<_>>()[0]
+        .collect::<Result<Vec<_>,_>>().unwrap()[0]
         .id();
     let mid2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("city", props_option(&arena, props!("name" => "mid2")), None)
-        .collect_to::<Vec<_>>()[0]
+        .collect::<Result<Vec<_>,_>>().unwrap()[0]
         .id();
     let end = G::new_mut(&storage, &arena, &mut txn)
         .add_n("city", props_option(&arena, props!("name" => "end")), None)
-        .collect_to::<Vec<_>>()[0]
+        .collect::<Result<Vec<_>,_>>().unwrap()[0]
         .id();
 
     G::new_mut(&storage, &arena, &mut txn)
@@ -108,7 +108,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             end,
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
             "road",
@@ -117,7 +117,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             mid1,
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
             "road",
@@ -126,7 +126,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             mid2,
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
             "road",
@@ -135,7 +135,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             end,
             false,
         )
-        .collect_to_obj();
+        .collect_to_obj().unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -143,7 +143,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
     let bfs = G::new(&storage, &txn, &arena)
         .n_from_id(&start)
         .shortest_path_with_algorithm(Some("road"), None, Some(&end), PathAlgorithm::BFS, default_weight_fn)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     if let TraversalValue::Path((nodes, _)) = &bfs[0] {
         assert_eq!(nodes.len(), 2);
     } else {
@@ -153,7 +153,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
     let dijkstra = G::new(&storage, &txn, &arena)
         .n_from_id(&start)
         .shortest_path_with_algorithm(Some("road"), None, Some(&end), PathAlgorithm::Dijkstra, default_weight_fn)
-        .collect_to::<Vec<_>>();
+        .collect::<Result<Vec<_>,_>>().unwrap();
     if let TraversalValue::Path((nodes, _)) = &dijkstra[0] {
         assert_eq!(nodes.len(), 4);
     } else {

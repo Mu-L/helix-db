@@ -6,51 +6,6 @@ use crate::{
     },
     utils::label_hash::hash_label,
 };
-use heed3::{RoTxn, types::Bytes};
-
-pub struct InEdgesIterator<'db, 'arena, 'txn>
-where
-    'db: 'arena,
-    'arena: 'txn,
-{
-    pub storage: &'db HelixGraphStorage,
-    pub arena: &'arena bumpalo::Bump,
-    pub txn: &'txn RoTxn<'db>,
-    pub iter: heed3::RoIter<
-        'txn,
-        Bytes,
-        heed3::types::LazyDecode<Bytes>,
-        heed3::iteration_method::MoveOnCurrentKeyDuplicates,
-    >,
-}
-
-impl<'db, 'arena, 'txn> Iterator for InEdgesIterator<'db, 'arena, 'txn> {
-    type Item = Result<TraversalValue<'arena>, GraphError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(Ok((_, data))) = self.iter.next() {
-            match data.decode() {
-                Ok(data) => {
-                    let (edge_id, _) = match HelixGraphStorage::unpack_adj_edge_data(data) {
-                        Ok(data) => data,
-                        Err(e) => {
-                            println!("Error unpacking edge data: {e:?}");
-                            return Some(Err(e));
-                        }
-                    };
-                    if let Ok(edge) = self.storage.get_edge(self.txn, &edge_id, self.arena) {
-                        return Some(Ok(TraversalValue::Edge(edge)));
-                    }
-                }
-                Err(e) => {
-                    println!("Error decoding edge data: {e:?}");
-                    return Some(Err(GraphError::DecodeError(e.to_string())));
-                }
-            }
-        }
-        None
-    }
-}
 
 pub trait InEdgesAdapter<'db, 'arena, 'txn, 's, I>:
     Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
@@ -103,12 +58,26 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                     .lazily_decode_data()
                     .get_duplicates(self.txn, &prefix)
                 {
-                    Ok(Some(iter)) => Some(InEdgesIterator {
-                        iter,
-                        storage: self.storage,
-                        arena: self.arena,
-                        txn: self.txn,
-                    }),
+                    Ok(Some(iter)) => {
+                        let iter = iter.map(|item| match item {
+                            Ok((_, data)) => match data.decode() {
+                                Ok(data) => {
+                                    let (edge_id, _) =
+                                        match HelixGraphStorage::unpack_adj_edge_data(data) {
+                                            Ok(data) => data,
+                                            Err(e) => return Err(e),
+                                        };
+                                    match self.storage.get_edge(self.txn, &edge_id, self.arena) {
+                                        Ok(edge) => Ok(TraversalValue::Edge(edge)),
+                                        Err(e) => Err(e),
+                                    }
+                                }
+                                Err(e) => Err(GraphError::DecodeError(e.to_string())),
+                            },
+                            Err(e) => Err(e.into()),
+                        });
+                        Some(iter)
+                    }
                     Ok(None) => None,
                     Err(e) => {
                         println!("Error getting in edges: {e:?}");

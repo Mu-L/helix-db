@@ -53,15 +53,15 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let person2 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, person1.id(), person2.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -111,10 +111,10 @@ mod mcp_tests {
 
         let _ = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
         let _ = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -148,7 +148,7 @@ mod mcp_tests {
         for _ in 0..5 {
             let _ = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
                 .add_n("person", None, None)
-                .collect_to_obj();
+                .collect_to_obj().unwrap();
         }
         txn.commit().unwrap();
 
@@ -276,15 +276,15 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let person2 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, person1.id(), person2.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -342,15 +342,15 @@ mod mcp_tests {
 
         let person1 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let person2 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, person1.id(), person2.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -397,15 +397,15 @@ mod mcp_tests {
 
         let person1 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let person2 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, person1.id(), person2.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -452,15 +452,15 @@ mod mcp_tests {
 
         let person1 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let person2 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, person1.id(), person2.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -507,7 +507,7 @@ mod mcp_tests {
         for _ in 0..3 {
             G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
                 .add_n("person", None, None)
-                .collect_to_obj();
+                .collect_to_obj().unwrap();
         }
 
         txn.commit().unwrap();
@@ -551,15 +551,15 @@ mod mcp_tests {
 
         let person1 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let person2 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, person1.id(), person2.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -610,7 +610,7 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n(
@@ -622,7 +622,7 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -678,7 +678,7 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n(
@@ -690,7 +690,7 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -748,7 +748,7 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let bob = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n(
@@ -760,7 +760,7 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let charlie = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n(
@@ -772,15 +772,15 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, alice.id(), bob.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, bob.id(), charlie.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -830,15 +830,15 @@ mod mcp_tests {
 
         let alice = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let bob = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, alice.id(), bob.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -882,7 +882,7 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n(
@@ -894,7 +894,7 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -950,7 +950,7 @@ mod mcp_tests {
                     )),
                     None,
                 )
-                .collect_to_obj();
+                .collect_to_obj().unwrap();
         }
 
         txn.commit().unwrap();
@@ -1001,7 +1001,7 @@ mod mcp_tests {
                     )),
                     None,
                 )
-                .collect_to_obj();
+                .collect_to_obj().unwrap();
         }
 
         txn.commit().unwrap();
@@ -1043,23 +1043,23 @@ mod mcp_tests {
 
         let alice = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let bob = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let charlie = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, alice.id(), bob.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, bob.id(), charlie.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -1100,19 +1100,19 @@ mod mcp_tests {
 
         let person1 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         let person2 = G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n("person", None, None)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("knows", None, person1.id(), person2.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_edge("likes", None, person1.id(), person2.id(), false)
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 
@@ -1163,7 +1163,7 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         G::new_mut(engine.storage.as_ref(), &arena, &mut txn)
             .add_n(
@@ -1179,7 +1179,7 @@ mod mcp_tests {
                 )),
                 None,
             )
-            .collect_to_obj();
+            .collect_to_obj().unwrap();
 
         txn.commit().unwrap();
 

@@ -84,7 +84,9 @@ fn get_reserved_property_type(prop_name: &str, item_type: &Type) -> Option<Field
         "data" | "Data" => {
             // Only valid for vectors
             match item_type {
-                Type::Vector(_) | Type::Vectors(_) => Some(FieldType::Array(Box::new(FieldType::F64))),
+                Type::Vector(_) | Type::Vectors(_) => {
+                    Some(FieldType::Array(Box::new(FieldType::F64)))
+                }
                 _ => None,
             }
         }
@@ -701,7 +703,8 @@ pub(crate) fn validate_traversal<'a>(
                     &mut fields_out,
                     scope,
                     gen_query,
-                );
+                )
+                .ok()?;
             }
 
             StepType::Where(expr) => {
@@ -864,7 +867,9 @@ pub(crate) fn validate_traversal<'a>(
                         }
                         Type::Nodes(Some(node_ty)) | Type::Node(Some(node_ty)) => {
                             // Check if this is a reserved property first
-                            if let Some(reserved_type) = get_reserved_property_type(field_name.as_str(), &cur_ty) {
+                            if let Some(reserved_type) =
+                                get_reserved_property_type(field_name.as_str(), &cur_ty)
+                            {
                                 // Validate the type matches
                                 if let FieldType::Array(inner_type) = &property_type {
                                     if reserved_type != **inner_type {
@@ -944,7 +949,9 @@ pub(crate) fn validate_traversal<'a>(
                         }
                         Type::Edges(Some(edge_ty)) | Type::Edge(Some(edge_ty)) => {
                             // Check if this is a reserved property first
-                            if let Some(reserved_type) = get_reserved_property_type(field_name.as_str(), &cur_ty) {
+                            if let Some(reserved_type) =
+                                get_reserved_property_type(field_name.as_str(), &cur_ty)
+                            {
                                 // Validate the type matches
                                 if reserved_type != property_type {
                                     generate_error!(
@@ -996,7 +1003,9 @@ pub(crate) fn validate_traversal<'a>(
                         }
                         Type::Vectors(Some(sv)) | Type::Vector(Some(sv)) => {
                             // Check if this is a reserved property first
-                            if let Some(reserved_type) = get_reserved_property_type(field_name.as_str(), &cur_ty) {
+                            if let Some(reserved_type) =
+                                get_reserved_property_type(field_name.as_str(), &cur_ty)
+                            {
                                 // Validate the type matches
                                 if reserved_type != property_type {
                                     generate_error!(
@@ -1475,13 +1484,11 @@ pub(crate) fn validate_traversal<'a>(
                                         ExpressionType::BooleanLiteral(i) => {
                                             GeneratedValue::Primitive(GenRef::Std(i.to_string()))
                                         }
-                                        v => {
-                                            println!("ID {v:?}");
+                                        _ => {
                                             panic!("expr be primitive or value")
                                         }
                                     },
-                                    v => {
-                                        println!("{v:?}");
+                                    _ => {
                                         panic!("Should be primitive or value")
                                     }
                                 },
@@ -1725,7 +1732,8 @@ pub(crate) fn validate_traversal<'a>(
                     &mut fields_out,
                     scope,
                     gen_query,
-                );
+                )
+                .ok()?;
 
                 // Tag all nested traversals with closure context
                 for (_field_name, nested_info) in gen_traversal.nested_traversals.iter_mut() {
@@ -1751,37 +1759,51 @@ pub(crate) fn validate_traversal<'a>(
             }
             StepType::RerankRRF(rerank_rrf) => {
                 // Generate k parameter if provided
-                let k = rerank_rrf.k.as_ref().map(|k_expr| {
-                    match &k_expr.expr {
-                        ExpressionType::Identifier(id) => {
-                            is_valid_identifier(ctx, original_query, k_expr.loc.clone(), id.as_str());
-                            gen_identifier_or_param(original_query, id.as_str(), false, true)
-                        }
-                        ExpressionType::IntegerLiteral(val) => {
-                            GeneratedValue::Primitive(GenRef::Std(val.to_string()))
-                        }
-                        ExpressionType::FloatLiteral(val) => {
-                            GeneratedValue::Primitive(GenRef::Std(val.to_string()))
-                        }
-                        _ => {
-                            generate_error!(ctx, original_query, k_expr.loc.clone(), E206, &k_expr.expr.to_string());
-                            GeneratedValue::Unknown
-                        }
+                let k = rerank_rrf.k.as_ref().map(|k_expr| match &k_expr.expr {
+                    ExpressionType::Identifier(id) => {
+                        is_valid_identifier(ctx, original_query, k_expr.loc.clone(), id.as_str());
+                        gen_identifier_or_param(original_query, id.as_str(), false, true)
+                    }
+                    ExpressionType::IntegerLiteral(val) => {
+                        GeneratedValue::Primitive(GenRef::Std(val.to_string()))
+                    }
+                    ExpressionType::FloatLiteral(val) => {
+                        GeneratedValue::Primitive(GenRef::Std(val.to_string()))
+                    }
+                    _ => {
+                        generate_error!(
+                            ctx,
+                            original_query,
+                            k_expr.loc.clone(),
+                            E206,
+                            &k_expr.expr.to_string()
+                        );
+                        GeneratedValue::Unknown
                     }
                 });
 
                 gen_traversal
                     .steps
                     .push(Separator::Period(GeneratedStep::RerankRRF(
-                        crate::helixc::generator::traversal_steps::RerankRRF { k }
+                        crate::helixc::generator::traversal_steps::RerankRRF { k },
                     )));
             }
             StepType::RerankMMR(rerank_mmr) => {
                 // Generate lambda parameter
                 let lambda = match &rerank_mmr.lambda.expr {
                     ExpressionType::Identifier(id) => {
-                        is_valid_identifier(ctx, original_query, rerank_mmr.lambda.loc.clone(), id.as_str());
-                        Some(gen_identifier_or_param(original_query, id.as_str(), false, true))
+                        is_valid_identifier(
+                            ctx,
+                            original_query,
+                            rerank_mmr.lambda.loc.clone(),
+                            id.as_str(),
+                        );
+                        Some(gen_identifier_or_param(
+                            original_query,
+                            id.as_str(),
+                            false,
+                            true,
+                        ))
                     }
                     ExpressionType::FloatLiteral(val) => {
                         Some(GeneratedValue::Primitive(GenRef::Std(val.to_string())))
@@ -1790,7 +1812,13 @@ pub(crate) fn validate_traversal<'a>(
                         Some(GeneratedValue::Primitive(GenRef::Std(val.to_string())))
                     }
                     _ => {
-                        generate_error!(ctx, original_query, rerank_mmr.lambda.loc.clone(), E206, &rerank_mmr.lambda.expr.to_string());
+                        generate_error!(
+                            ctx,
+                            original_query,
+                            rerank_mmr.lambda.loc.clone(),
+                            E206,
+                            &rerank_mmr.lambda.expr.to_string()
+                        );
                         None
                     }
                 };
@@ -1798,12 +1826,22 @@ pub(crate) fn validate_traversal<'a>(
                 // Generate distance parameter if provided
                 let distance = if let Some(MMRDistance::Identifier(id)) = &rerank_mmr.distance {
                     is_valid_identifier(ctx, original_query, rerank_mmr.loc.clone(), id.as_str());
-                    Some(crate::helixc::generator::traversal_steps::MMRDistanceMethod::Identifier(id.clone()))
+                    Some(
+                        crate::helixc::generator::traversal_steps::MMRDistanceMethod::Identifier(
+                            id.clone(),
+                        ),
+                    )
                 } else {
                     rerank_mmr.distance.as_ref().map(|d| match d {
-                        MMRDistance::Cosine => crate::helixc::generator::traversal_steps::MMRDistanceMethod::Cosine,
-                        MMRDistance::Euclidean => crate::helixc::generator::traversal_steps::MMRDistanceMethod::Euclidean,
-                        MMRDistance::DotProduct => crate::helixc::generator::traversal_steps::MMRDistanceMethod::DotProduct,
+                        MMRDistance::Cosine => {
+                            crate::helixc::generator::traversal_steps::MMRDistanceMethod::Cosine
+                        }
+                        MMRDistance::Euclidean => {
+                            crate::helixc::generator::traversal_steps::MMRDistanceMethod::Euclidean
+                        }
+                        MMRDistance::DotProduct => {
+                            crate::helixc::generator::traversal_steps::MMRDistanceMethod::DotProduct
+                        }
                         MMRDistance::Identifier(_) => unreachable!(),
                     })
                 };
@@ -1811,10 +1849,7 @@ pub(crate) fn validate_traversal<'a>(
                 gen_traversal
                     .steps
                     .push(Separator::Period(GeneratedStep::RerankMMR(
-                        crate::helixc::generator::traversal_steps::RerankMMR {
-                            lambda,
-                            distance,
-                        }
+                        crate::helixc::generator::traversal_steps::RerankMMR { lambda, distance },
                     )));
             }
         }

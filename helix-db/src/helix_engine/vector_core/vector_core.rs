@@ -93,7 +93,7 @@ impl VectorCore {
     }
 
     #[inline(always)]
-    fn out_edges_key(source_id: u128, level: usize, sink_id: Option<u128>) -> Vec<u8> {
+    pub fn out_edges_key(source_id: u128, level: usize, sink_id: Option<u128>) -> Vec<u8> {
         match sink_id {
             Some(sink_id) => [
                 source_id.to_be_bytes().as_slice(),

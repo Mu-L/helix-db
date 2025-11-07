@@ -332,17 +332,13 @@ impl PartialEq<Value> for FieldType {
             }
             (FieldType::Date, value) => match value {
                 Value::String(date) => {
-                    println!("date: {}, {:?}", date, date.parse::<NaiveDate>());
                     date.parse::<NaiveDate>().is_ok() || date.parse::<DateTime<Utc>>().is_ok()
                 }
                 Value::I64(timestamp) => DateTime::from_timestamp(*timestamp, 0).is_some(),
                 Value::U64(timestamp) => DateTime::from_timestamp(*timestamp as i64, 0).is_some(),
                 _ => false,
             },
-            l => {
-                println!("l: {l:?}");
-                false
-            }
+            _ => false,
         }
     }
 }
@@ -374,7 +370,6 @@ impl PartialEq<DefaultValue> for FieldType {
             ) => true,
             (FieldType::Boolean, DefaultValue::Boolean(_)) => true,
             (FieldType::Date, DefaultValue::String(date)) => {
-                println!("date: {}, {:?}", date, date.parse::<NaiveDate>());
                 date.parse::<NaiveDate>().is_ok() || date.parse::<DateTime<Utc>>().is_ok()
             }
             (FieldType::Date, DefaultValue::I64(timestamp)) => {

@@ -38,6 +38,7 @@ impl WorkerPool {
             panic!("The number of workers must be at least 2 for parity to act as a select.");
         }
         if !num_workers.is_multiple_of(2) {
+            println!("Expected an even number of workers, got {num_workers}");
             panic!("The number of workers should be a multiple of 2 for fairness.");
         }
 
@@ -165,29 +166,6 @@ impl Worker {
                     }
                 }
             }
-
-            // loop {
-            //     Selector::new()
-            //         .recv(&cont_rx, |m| match m {
-            //             Ok((ret_chan, cfn)) => {
-            //                 ret_chan.send(cfn().map_err(Into::into)).expect("todo")
-            //             }
-            //             Err(_) => error!("Continuation Channel was dropped"),
-            //         })
-            //         .recv(&rx, |m| match m {
-            //             Ok((req, ret_chan)) => request_mapper(
-            //                 req,
-            //                 ret_chan,
-            //                 graph_access.clone(),
-            //                 &router,
-            //                 &io_rt,
-            //                 &cont_tx,
-            //             ),
-            //             Err(_) => error!("Request Channel was dropped"),
-            //         })
-            //         .wait();
-            // }
-            // trace!("thread shutting down");
         });
         Worker { _handle: handle }
     }

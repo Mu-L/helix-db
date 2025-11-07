@@ -261,15 +261,15 @@ mod tests {
 
         let node1 = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_n("person", Some(vec![("name".to_string(), Value::String("Alice".to_string()))]), None)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         let node2 = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_n("person", Some(vec![("name".to_string(), Value::String("Bob".to_string()))]), None)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         let _edge = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_e("knows", None, node1.id(), node2.id(), false, EdgeType::Node)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         txn.commit().unwrap();
 
@@ -307,7 +307,7 @@ mod tests {
         for i in 0..10 {
             let node = G::new_mut(Arc::clone(&engine.storage), &mut txn)
                 .add_n("person", Some(vec![("index".to_string(), Value::I64(i))]), None)
-                .collect_to_obj();
+                .collect_to_obj()?;
             nodes.push(node);
         }
 
@@ -315,7 +315,7 @@ mod tests {
         for i in 0..5 {
             let _edge = G::new_mut(Arc::clone(&engine.storage), &mut txn)
                 .add_e("connects", None, nodes[i].id(), nodes[i+1].id(), false, EdgeType::Node)
-                .collect_to_obj();
+                .collect_to_obj()?;
         }
 
         txn.commit().unwrap();
@@ -351,7 +351,7 @@ mod tests {
 
         let _node = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_n("person", Some(vec![("name".to_string(), Value::String("Test".to_string()))]), None)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         txn.commit().unwrap();
 

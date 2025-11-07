@@ -943,7 +943,7 @@ impl Query {
                     // Check if any field is a nested traversal (needs Result handling)
                     let has_nested = struct_def.fields.iter().any(|f| f.is_nested_traversal);
                     if has_nested {
-                        write!(f, "    }})).collect::<Result<Vec<_>, GraphError>>()?")
+                        write!(f, "    }})).collect::<Vec<_>>()")
                     } else {
                         write!(f, "    }}).collect::<Vec<_>>()")
                     }?;
@@ -1049,7 +1049,7 @@ impl Query {
                                             }
                                             format!(".map(|inner_item| inner_item.map(|inner_item| {} {{{}\n}})).collect::<Result<Vec<_>, _>>()?", inner_nested_name, inner_assigns)
                                         } else {
-                                            ".collect::<Vec<_>>()".to_string()
+                                            ".collect::<Result<Vec<_>,_>>()?".to_string()
                                         };
                                         format!("G::from_iter(&db, &txn, std::iter::once(item.clone()), &arena){}{}", inner_trav_code, inner_fields_str)
                                     } else {

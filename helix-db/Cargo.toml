@@ -64,6 +64,8 @@ lazy_static = "1.4.0"
 num_cpus = "1.17"     # TODO: write ourselves
 proptest = "1.4"
 criterion = "0.5"
+loom = "0.7"          # Concurrency model checking
+tokio-test = "0.4"    # Tokio testing utilities
 
 [features]
 debug-output = ["helix-macros/debug-output"]

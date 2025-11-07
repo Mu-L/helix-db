@@ -166,7 +166,7 @@ mod tests {
 
         let node = G::new_mut(Arc::clone(&engine.storage), &mut txn)
             .add_n("person", Some(vec![("name".to_string(), Value::String("Alice".to_string()))]), None)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         txn.commit().unwrap();
 
@@ -280,7 +280,7 @@ mod tests {
                 ("name".to_string(), Value::String("Alice".to_string())),
                 ("age".to_string(), Value::I64(30)),
             ]), None)
-            .collect_to_obj();
+            .collect_to_obj()?;
 
         txn.commit().unwrap();
 

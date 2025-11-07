@@ -73,7 +73,7 @@ impl Display for ShouldCollect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ShouldCollect::ToVec => write!(f, ".collect::<Result<Vec<_>, _>>()?"),
-            ShouldCollect::ToObj => write!(f, ".collect_to_obj()"),
+            ShouldCollect::ToObj => write!(f, ".collect_to_obj()?"),
             ShouldCollect::Try => write!(f, "?"),
             ShouldCollect::No => write!(f, ""),
             ShouldCollect::ToValue => write!(f, ".collect_to_value()"),
@@ -154,7 +154,7 @@ impl Display for Traversal {
                     "G::new_mut_from_iter(&db, &mut txn, update_tr.iter().cloned(), &arena)",
                 )?;
                 write!(f, "\n    .update({})", write_properties_slice(properties))?;
-                write!(f, "\n    .collect_to_obj()")?;
+                write!(f, "\n    .collect_to_obj()?")?;
                 write!(f, "}}")?;
             }
         }
