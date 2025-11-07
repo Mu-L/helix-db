@@ -3,7 +3,8 @@ use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
 use crate::project::{ProjectContext, get_helix_repo_cache};
 use crate::utils::{
-    copy_dir_recursive_excluding, helixc_utils::collect_hx_files, print_status, print_success,
+    copy_dir_recursive_excluding, diagnostic_source, helixc_utils::collect_hx_files, print_status,
+    print_success,
 };
 use eyre::Result;
 use std::time::Instant;
@@ -24,8 +25,7 @@ use helix_db::{
         },
     },
 };
-use std::fmt::Write;
-use std::fs;
+use std::{collections::HashMap, fmt::Write, fs};
 
 // Development flag - set to true when working on V2 locally
 const DEV_MODE: bool = cfg!(debug_assertions);
@@ -329,7 +329,7 @@ fn compile_helix_files(
     };
 
     // Run static analysis
-    let mut analyzed_source = analyze_source(source)?;
+    let mut analyzed_source = analyze_source(source, &content.file_map)?;
 
     // Read and set the config from the instance workspace
     analyzed_source.config = read_config(instance_src_dir)?;
@@ -356,10 +356,16 @@ pub(crate) fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
         .collect::<Vec<String>>()
         .join("\n");
 
+    let file_map = files
+        .iter()
+        .map(|file| (file.name.clone(), file.content.clone()))
+        .collect();
+
     Ok(Content {
         content,
         files,
         source: Source::default(),
+        file_map,
     })
 }
 
@@ -371,7 +377,10 @@ fn parse_content(content: &Content) -> Result<Source> {
 
 /// Runs the static analyzer on the parsed source to catch errors and generate diagnostics if any.
 /// Otherwise returns the generated source object which is an IR used to transpile the queries to rust.
-fn analyze_source(source: Source) -> Result<GeneratedSource> {
+fn analyze_source(
+    source: Source,
+    file_map: &HashMap<String, String>,
+) -> Result<GeneratedSource> {
     if source.schema.is_empty() {
         let error = crate::errors::CliError::new("no schema definitions found in project")
             .with_hint("add at least one schema definition like 'N::User { name: String }' to your .hx files");
@@ -384,7 +393,8 @@ fn analyze_source(source: Source) -> Result<GeneratedSource> {
         let mut error_msg = String::new();
         for diag in diagnostics {
             let filepath = diag.filepath.clone().unwrap_or("queries.hx".to_string());
-            error_msg.push_str(&diag.render(&source.source, &filepath));
+            let snippet_src = diagnostic_source(&filepath, file_map, &source.source);
+            error_msg.push_str(&diag.render(snippet_src.as_ref(), &filepath));
             error_msg.push('\n');
         }
         return Err(eyre::eyre!("Compilation failed:\n{error_msg}"));

@@ -15,6 +15,8 @@ pub struct Content {
     pub source: Source,
     /// Files in the content
     pub files: Vec<HxFile>,
+    /// Lookup map for file contents by path
+    pub file_map: HashMap<String, String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
