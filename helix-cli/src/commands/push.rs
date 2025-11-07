@@ -212,16 +212,10 @@ fn parse_queries_for_metrics(project: &ProjectContext) -> Result<MetricsData> {
         .collect::<Vec<String>>()
         .join("\n");
 
-    let file_map = hx_files
-        .iter()
-        .map(|file| (file.name.clone(), file.content.clone()))
-        .collect();
-
     let content = Content {
         content: content_str,
         files: hx_files,
         source: Source::default(),
-        file_map,
     };
 
     // Parse the content

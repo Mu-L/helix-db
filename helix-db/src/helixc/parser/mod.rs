@@ -197,14 +197,9 @@ pub fn write_to_temp_file(content: Vec<&str>) -> Content {
             content: c.to_string(),
         });
     }
-    let file_map = files
-        .iter()
-        .map(|file| (file.name.clone(), file.content.clone()))
-        .collect();
     Content {
         content: String::new(),
         files,
         source: Source::default(),
-        file_map,
     }
 }

@@ -25,7 +25,7 @@ use helix_db::{
         },
     },
 };
-use std::{collections::HashMap, fmt::Write, fs};
+use std::{fmt::Write, fs};
 
 // Development flag - set to true when working on V2 locally
 const DEV_MODE: bool = cfg!(debug_assertions);
@@ -329,7 +329,7 @@ fn compile_helix_files(
     };
 
     // Run static analysis
-    let mut analyzed_source = analyze_source(source, &content.file_map)?;
+    let mut analyzed_source = analyze_source(source, &content.files)?;
 
     // Read and set the config from the instance workspace
     analyzed_source.config = read_config(instance_src_dir)?;
@@ -356,16 +356,10 @@ pub(crate) fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
         .collect::<Vec<String>>()
         .join("\n");
 
-    let file_map = files
-        .iter()
-        .map(|file| (file.name.clone(), file.content.clone()))
-        .collect();
-
     Ok(Content {
         content,
         files,
         source: Source::default(),
-        file_map,
     })
 }
 
@@ -377,10 +371,7 @@ fn parse_content(content: &Content) -> Result<Source> {
 
 /// Runs the static analyzer on the parsed source to catch errors and generate diagnostics if any.
 /// Otherwise returns the generated source object which is an IR used to transpile the queries to rust.
-fn analyze_source(
-    source: Source,
-    file_map: &HashMap<String, String>,
-) -> Result<GeneratedSource> {
+fn analyze_source(source: Source, files: &[HxFile]) -> Result<GeneratedSource> {
     if source.schema.is_empty() {
         let error = crate::errors::CliError::new("no schema definitions found in project")
             .with_hint("add at least one schema definition like 'N::User { name: String }' to your .hx files");
@@ -393,7 +384,7 @@ fn analyze_source(
         let mut error_msg = String::new();
         for diag in diagnostics {
             let filepath = diag.filepath.clone().unwrap_or("queries.hx".to_string());
-            let snippet_src = diagnostic_source(&filepath, file_map, &source.source);
+            let snippet_src = diagnostic_source(&filepath, files, &source.source);
             error_msg.push_str(&diag.render(snippet_src.as_ref(), &filepath));
             error_msg.push('\n');
         }
