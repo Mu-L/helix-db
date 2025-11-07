@@ -1092,7 +1092,10 @@ pub(crate) fn validate_traversal<'a>(
                             }
                             _ => unreachable!("Cannot reach here"),
                         };
-                        BoolOp::Lte(Lte { value: v })
+                        BoolOp::Lte(Lte {
+                            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+                            right: v,
+                        })
                     }
                     BooleanOpType::LessThan(expr) => {
                         let v = match &expr.expr {
@@ -1113,7 +1116,10 @@ pub(crate) fn validate_traversal<'a>(
                             }
                             _ => unreachable!("Cannot reach here"),
                         };
-                        BoolOp::Lt(Lt { value: v })
+                        BoolOp::Lt(Lt {
+                            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+                            right: v,
+                        })
                     }
                     BooleanOpType::GreaterThanOrEqual(expr) => {
                         let v = match &expr.expr {
@@ -1134,7 +1140,10 @@ pub(crate) fn validate_traversal<'a>(
                             }
                             _ => unreachable!("Cannot reach here"),
                         };
-                        BoolOp::Gte(Gte { value: v })
+                        BoolOp::Gte(Gte {
+                            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+                            right: v,
+                        })
                     }
                     BooleanOpType::GreaterThan(expr) => {
                         let v = match &expr.expr {
@@ -1155,7 +1164,10 @@ pub(crate) fn validate_traversal<'a>(
                             }
                             _ => unreachable!("Cannot reach here"),
                         };
-                        BoolOp::Gt(Gt { value: v })
+                        BoolOp::Gt(Gt {
+                            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+                            right: v,
+                        })
                     }
                     BooleanOpType::Equal(expr) => {
                         let v = match &expr.expr {
@@ -1199,7 +1211,10 @@ pub(crate) fn validate_traversal<'a>(
                                 unreachable!("Cannot reach here");
                             }
                         };
-                        BoolOp::Eq(Eq { value: v })
+                        BoolOp::Eq(Eq {
+                            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+                            right: v,
+                        })
                     }
                     BooleanOpType::NotEqual(expr) => {
                         let v = match &expr.expr {
@@ -1241,7 +1256,10 @@ pub(crate) fn validate_traversal<'a>(
                             }
                             _ => unreachable!("Cannot reach here"),
                         };
-                        BoolOp::Neq(Neq { value: v })
+                        BoolOp::Neq(Neq {
+                            left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
+                            right: v,
+                        })
                     }
                     BooleanOpType::Contains(expr) => {
                         let v = match &expr.expr {

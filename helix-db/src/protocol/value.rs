@@ -1657,6 +1657,14 @@ impl IntoPrimitive<Date> for Value {
     }
 }
 
+
+impl Value {
+    #[inline(always)]
+    pub fn as_f64(&self) -> f64 {
+        *self.into_primitive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1243,6 +1243,14 @@ pub(crate) fn infer_expr_type<'a>(
                 Some(GeneratedStatement::BoExp(BoExp::Exists(traversal))),
             )
         }
+        MathFunctionCall(_math_call) => {
+            // Math function calls always return f64
+            // TODO: Add proper type inference and validation for math function arguments
+            (
+                Type::Scalar(FieldType::F64),
+                None, // Will be handled by generator
+            )
+        }
         Empty => (Type::Unknown, Some(GeneratedStatement::Empty)),
         BM25Search(bm25_search) => {
             if let Some(ref ty) = bm25_search.type_arg
