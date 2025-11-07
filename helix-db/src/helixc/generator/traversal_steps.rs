@@ -467,12 +467,12 @@ impl Display for WhereRef {
                         ReservedProp::Label => "Value::from(val.label())".to_string(),
                     };
                     let bool_expr = match bool_op {
-                        BoolOp::Gt(gt) => format!("{}{}", value_expr, gt),
-                        BoolOp::Gte(gte) => format!("{}{}", value_expr, gte),
-                        BoolOp::Lt(lt) => format!("{}{}", value_expr, lt),
-                        BoolOp::Lte(lte) => format!("{}{}", value_expr, lte),
-                        BoolOp::Eq(eq) => format!("{}{}", value_expr, eq),
-                        BoolOp::Neq(neq) => format!("{}{}", value_expr, neq),
+                        BoolOp::Gt(gt) => format!("{} > {}", value_expr, gt.right),
+                        BoolOp::Gte(gte) => format!("{} >= {}", value_expr, gte.right),
+                        BoolOp::Lt(lt) => format!("{} < {}", value_expr, lt.right),
+                        BoolOp::Lte(lte) => format!("{} <= {}", value_expr, lte.right),
+                        BoolOp::Eq(eq) => format!("{} == {}", value_expr, eq.right),
+                        BoolOp::Neq(neq) => format!("{} != {}", value_expr, neq.right),
                         BoolOp::Contains(contains) => format!("{}{}", value_expr, contains),
                         BoolOp::IsIn(is_in) => format!("{}{}", value_expr, is_in),
                     };
