@@ -62,7 +62,7 @@ get_stmt            = { identifier ~ "<-" ~ evaluates_to_anything }
 traversal           = { (start_node | start_edge | search_vector | start_vector) ~ step* ~ last_step? }
 id_traversal        = { identifier ~ ((step+ ~ last_step?) | last_step) }
 anonymous_traversal = { "_"  ~ ((step+ ~ last_step?) | last_step)? }
-step                = { "::" ~ (graph_step | order_by| aggregate | group_by | where_step | closure_step | object_step | exclude_field | count | ID | range_step | AddE) }
+step                = { "::" ~ (graph_step | order_by| aggregate | group_by | where_step | closure_step | object_step | exclude_field | count | ID | range_step | AddE | rerank_rrf | rerank_mmr) }
 last_step           = { "::" ~ (bool_operations | update | first) }
 // change this for loop to be able to take traversals etc in the future. 
 for_loop            = { "FOR" ~ for_argument ~ "IN" ~ identifier ~ "{" ~ query_body ~ "}" }
@@ -91,6 +91,7 @@ evaluates_to_anything = {
   | id_traversal
   | search_vector
   | bm25_search
+  | math_function_call
   | string_literal
   | array_literal
   | float
@@ -118,7 +119,8 @@ evaluates_to_bool = {
 // Evaluates to number
 // ---------------------------------------------------------------------
 evaluates_to_number = {
-    float
+    math_function_call
+  | float
   | integer
   | identifier
   | traversal
@@ -134,7 +136,7 @@ return_stmt = { "RETURN" ~ (evaluates_to_anything ~ ("," ~ evaluates_to_anything
 // Creation steps
 // ---------------------------------------------------------------------
 create_field  = { "{" ~ new_field ~ ("," ~ new_field)* ~ ","? ~ "}" }
-new_field     = { identifier ~ ":" ~ (anonymous_traversal | evaluates_to_anything | create_field) }
+new_field     = { identifier ~ ":" ~ (id_traversal | anonymous_traversal | evaluates_to_anything | create_field) }
 to_from       = { to ~ from? | from ~ to? }
 to            = { "::" ~ "To" ~ "(" ~ id_arg ~ ")" }
 from          = { "::" ~ "From" ~ "(" ~ id_arg ~ ")" }
@@ -165,6 +167,7 @@ graph_step = {
   | in_nodes
   | shortest_path_dijkstras
   | shortest_path_bfs
+  | shortest_path_astar
   | shortest_path
   | search_vector
 }
@@ -177,8 +180,9 @@ to_v ={ "ToV"}
 out ={ "Out" ~ ("<" ~ type_args ~ ">")?}
 in_nodes ={ "In" ~ ("<" ~ type_args ~ ">")?}
 shortest_path ={ "ShortestPath" ~ ("<" ~ type_args ~ ">")? ~ to_from}
-shortest_path_dijkstras ={ "ShortestPathDijkstras" ~ ("<" ~ type_args ~ ">")? ~ "(" ~ anonymous_traversal ~ ")" ~ to_from}
+shortest_path_dijkstras ={ "ShortestPathDijkstras" ~ ("<" ~ type_args ~ ">")? ~ "(" ~ math_expression ~ ")" ~ to_from}
 shortest_path_bfs ={ "ShortestPathBFS" ~ ("<" ~ type_args ~ ">")? ~ to_from}
+shortest_path_astar ={ "ShortestPathAStar" ~ ("<" ~ type_args ~ ">")? ~ "(" ~ math_expression ~ "," ~ string_literal ~ ")" ~ to_from}
 
 
 // ---------------------------------------------------------------------
@@ -205,6 +209,12 @@ group_by = { "GROUP_BY" ~ "(" ~ (identifier ~ ("," ~ identifier)*) ~ ")" }
 
 
 // ---------------------------------------------------------------------
+// Reranker steps
+// ---------------------------------------------------------------------
+rerank_rrf = { "RerankRRF" ~ ("(" ~ "k" ~ ":" ~ evaluates_to_number ~ ")")? }
+rerank_mmr = { "RerankMMR" ~ "(" ~ "lambda" ~ ":" ~ evaluates_to_number ~ ("," ~ "distance" ~ ":" ~ (string_literal | identifier))? ~ ")" }
+
+// ---------------------------------------------------------------------
 // Vector steps
 // ---------------------------------------------------------------------
 search_vector = { "SearchV" ~ "<" ~ identifier_upper ~ ">" ~ "(" ~ vector_data ~ "," ~ (integer | identifier) ~ ")" }// ~ ("::" ~ pre_filter)? }
@@ -214,15 +224,36 @@ BatchAddV = { "BatchAddV" ~ "<" ~ identifier_upper ~ ">" ~ "(" ~ identifier ~ ")
 embed_method = { "Embed" ~ "(" ~ (identifier | string_literal) ~ ")" }
 
 // ---------------------------------------------------------------------
+// Mathematical functions
+// ---------------------------------------------------------------------
+math_function_call = { math_function_name ~ "(" ~ function_args? ~ ")" }
+function_args      = { math_expression ~ ("," ~ math_expression)* }
+math_expression    = { math_function_call | evaluates_to_number | anonymous_traversal }
+
+math_function_name = {
+    // Arithmetic (binary)
+    "ADD" | "SUB" | "MUL" | "DIV" | "POW" | "MOD" |
+    // Unary math
+    "ABS" | "SQRT" | "LN" | "LOG10" | "LOG" | "EXP" |
+    "CEIL" | "FLOOR" | "ROUND" |
+    // Trigonometry
+    "SIN" | "COS" | "TAN" | "ASIN" | "ACOS" | "ATAN" | "ATAN2" |
+    // Constants
+    "PI" | "E" |
+    // Aggregates
+    "MIN" | "MAX" | "SUM" | "AVG" | "COUNT"
+}
+
+// ---------------------------------------------------------------------
 // Boolean operations
 // ---------------------------------------------------------------------
 and             = { negate? ~ "AND" ~ "(" ~ (evaluates_to_bool | anonymous_traversal) ~ ("," ~ (evaluates_to_bool | anonymous_traversal))* ~ ")" }
 or              = { negate? ~ "OR" ~ "(" ~ (evaluates_to_bool | anonymous_traversal) ~ ("," ~ (evaluates_to_bool | anonymous_traversal))* ~ ")" }
 bool_operations = { GT | GTE | LT | LTE | EQ | NEQ | CONTAINS | IS_IN }
-GT              = { "GT" ~ "(" ~ (evaluates_to_number | anonymous_traversal) ~ ")" }
-GTE             = { "GTE" ~ "(" ~ (evaluates_to_number | anonymous_traversal) ~ ")" }
-LT              = { "LT" ~ "(" ~ (evaluates_to_number | anonymous_traversal) ~ ")" }
-LTE             = { "LTE" ~ "(" ~ (evaluates_to_number | anonymous_traversal) ~ ")" }
+GT              = { "GT" ~ "(" ~ (evaluates_to_number | anonymous_traversal | math_function_call) ~ ")" }
+GTE             = { "GTE" ~ "(" ~ (evaluates_to_number | anonymous_traversal | math_function_call) ~ ")" }
+LT              = { "LT" ~ "(" ~ (evaluates_to_number | anonymous_traversal | math_function_call) ~ ")" }
+LTE             = { "LTE" ~ "(" ~ (evaluates_to_number | anonymous_traversal | math_function_call) ~ ")" }
 EQ              = { "EQ" ~ "(" ~ (evaluates_to_anything | anonymous_traversal) ~ ")" }
 NEQ             = { "NEQ" ~ "(" ~ (evaluates_to_anything | anonymous_traversal) ~ ")" }
 CONTAINS        = { "CONTAINS" ~ "(" ~ (evaluates_to_anything | anonymous_traversal) ~ ")" }
@@ -237,7 +268,7 @@ object_step   = { "{" ~ ((mapping_field ~ ("," ~ mapping_field)* ~ "," ~ spread_
 exclude_field = { "!" ~ "{" ~ identifier ~ ("," ~ identifier)* ~ "}" }
 closure_step  = { "|" ~ identifier ~ "|" ~ object_step }
 spread_object = { ".." ~ ","?}
-mapping_field = { (identifier ~ (":" ~ (anonymous_traversal | evaluates_to_anything | object_step))) | identifier }
+mapping_field = { (identifier ~ ":" ~ (id_traversal | anonymous_traversal | evaluates_to_anything | object_step)) | identifier }
 array_creation = { "[" ~ (identifier | object_creation ) ~ ("," ~ (identifier | object_creation))* ~ ","? ~ "]" }
 object_creation = {  "{" ~ object_inner ~ ("," ~ object_inner)* ~ ","? ~ "}" }
 object_inner = { identifier ~ ":" ~ object_field }

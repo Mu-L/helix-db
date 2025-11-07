@@ -1,10 +1,10 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
-use crate::helixc::analyzer::utils::type_in_scope;
+use crate::helixc::analyzer::utils::{VariableInfo, type_in_scope};
+use crate::helixc::generator::traversal_steps::EdgeType;
 use crate::helixc::generator::utils::EmbedData;
 use crate::{
     generate_error,
-    helix_engine::traversal_core::ops::source::add_e::EdgeType,
     helixc::{
         analyzer::{
             Ctx,
@@ -13,13 +13,16 @@ use crate::{
             utils::{gen_identifier_or_param, is_valid_identifier},
         },
         generator::{
+            math_functions::{generate_math_expr, ExpressionContext},
             queries::Query as GeneratedQuery,
             traversal_steps::{
-                In as GeneratedIn, InE as GeneratedInE, Out as GeneratedOut, OutE as GeneratedOutE,
-                SearchVectorStep, ShortestPath as GeneratedShortestPath,
+                FromV as GeneratedFromV, In as GeneratedIn, InE as GeneratedInE,
+                Out as GeneratedOut, OutE as GeneratedOutE, SearchVectorStep,
+                ShortestPath as GeneratedShortestPath, ShortestPathAStar as GeneratedShortestPathAStar,
                 ShortestPathBFS as GeneratedShortestPathBFS,
                 ShortestPathDijkstras as GeneratedShortestPathDijkstras, ShouldCollect,
-                Step as GeneratedStep, Traversal as GeneratedTraversal,
+                Step as GeneratedStep, ToV as GeneratedToV, Traversal as GeneratedTraversal,
+                WeightCalculation,
             },
             utils::{GenRef, GeneratedValue, Separator, VecData},
         },
@@ -50,7 +53,7 @@ pub(crate) fn apply_graph_step<'a>(
     cur_ty: &Type,
     original_query: &'a Query,
     traversal: &mut GeneratedTraversal,
-    scope: &mut HashMap<&'a str, Type>,
+    scope: &mut HashMap<&'a str, VariableInfo>,
     gen_query: &mut GeneratedQuery,
 ) -> Option<Type> {
     use GraphStepType::*;
@@ -149,8 +152,9 @@ pub(crate) fn apply_graph_step<'a>(
             traversal
                 .steps
                 .push(Separator::Period(GeneratedStep::Out(GeneratedOut {
-                    edge_type: GenRef::Ref(edge_type.to_string()),
+                    edge_type: edge_type.clone(),
                     label: GenRef::Literal(label.clone()),
+                    get_vector_data: false, // Will be updated if 'data' field is accessed
                 })));
             traversal.should_collect = ShouldCollect::ToVec;
             let edge = match ctx.edge_map.get(label.as_str()) {
@@ -212,8 +216,9 @@ pub(crate) fn apply_graph_step<'a>(
             traversal
                 .steps
                 .push(Separator::Period(GeneratedStep::In(GeneratedIn {
-                    edge_type: GenRef::Ref(edge_type.to_string()),
+                    edge_type: edge_type.clone(),
                     label: GenRef::Literal(label.clone()),
+                    get_vector_data: false, // Will be updated if 'data' field is accessed
                 })));
             traversal.should_collect = ShouldCollect::ToVec;
             let edge = match ctx.edge_map.get(label.as_str()) {
@@ -271,7 +276,7 @@ pub(crate) fn apply_graph_step<'a>(
             match cur_ty {
                 Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
                 Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
-                _ => {},
+                _ => {}
             }
             new_ty
         }
@@ -294,7 +299,7 @@ pub(crate) fn apply_graph_step<'a>(
             match cur_ty {
                 Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
                 Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
-                _ => {},
+                _ => {}
             }
             new_ty
         }
@@ -315,12 +320,14 @@ pub(crate) fn apply_graph_step<'a>(
             };
             traversal
                 .steps
-                .push(Separator::Period(GeneratedStep::FromV));
+                .push(Separator::Period(GeneratedStep::FromV(GeneratedFromV {
+                    get_vector_data: false,
+                })));
             // Preserve collection type: multiple edges -> multiple vectors, single edge -> single vector
             match cur_ty {
                 Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
                 Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
-                _ => {},
+                _ => {}
             }
             new_ty
         }
@@ -339,12 +346,16 @@ pub(crate) fn apply_graph_step<'a>(
             } else {
                 None
             };
-            traversal.steps.push(Separator::Period(GeneratedStep::ToV));
+            traversal
+                .steps
+                .push(Separator::Period(GeneratedStep::ToV(GeneratedToV {
+                    get_vector_data: false,
+                })));
             // Preserve collection type: multiple edges -> multiple vectors, single edge -> single vector
             match cur_ty {
                 Type::Edges(_) => traversal.should_collect = ShouldCollect::ToVec,
                 Type::Edge(_) => traversal.should_collect = ShouldCollect::ToObj,
-                _ => {},
+                _ => {}
             }
             new_ty
         }
@@ -385,37 +396,41 @@ pub(crate) fn apply_graph_step<'a>(
         (ShortestPathDijkstras(sp), Type::Nodes(_) | Type::Node(_)) => {
             let type_arg = sp.type_arg.clone().map(GenRef::Literal);
 
-            // Extract weight property from anonymous traversal
-            let weight_property = if let Some(ref inner_traversal) = sp.inner_traversal {
-                // Check if traversal is _::{property}
-                if let StartNode::Anonymous = inner_traversal.start
-                    && inner_traversal.steps.len() == 1
-                    && let StepType::Object(ref obj) = inner_traversal.steps[0].step
-                    && obj.fields.len() == 1
-                    && !obj.should_spread
-                {
-                    // For _::{weight}, the key is "weight"
-                    Some(obj.fields[0].key.clone())
-                } else {
-                    None
+            // Convert weight_expr to WeightCalculation for generator
+            let weight_calculation = match &sp.weight_expr {
+                Some(WeightExpression::Property(prop)) => {
+                    WeightCalculation::Property(GenRef::Literal(prop.clone()))
                 }
-            } else {
-                None
+                Some(WeightExpression::Expression(expr)) => {
+                    // Generate Rust code for the math expression
+                    match generate_math_expr(expr, ExpressionContext::WeightCalculation) {
+                        Ok(math_expr) => {
+                            WeightCalculation::Expression(format!("{}", math_expr))
+                        }
+                        Err(e) => {
+                            generate_error!(
+                                ctx,
+                                original_query,
+                                sp.loc.clone(),
+                                E202,
+                                &format!("Failed to generate weight expression: {}", e),
+                                "valid math expression",
+                                "ShortestPathDijkstras"
+                            );
+                            WeightCalculation::Default
+                        }
+                    }
+                }
+                Some(WeightExpression::Default) | None => {
+                    WeightCalculation::Default
+                }
             };
 
-            // If we have an inner traversal but couldn't extract a simple property, it's an error
-            if sp.inner_traversal.is_some() && weight_property.is_none() {
-                generate_error!(
-                    ctx,
-                    original_query,
-                    sp.loc.clone(),
-                    E202,
-                    "complex weight expression",
-                    "simple property access",
-                    "ShortestPathDijkstras"
-                );
-                return Some(Type::Unknown);
-            }
+            // Extract weight property for validation (if it's a simple property)
+            let weight_property = match &sp.weight_expr {
+                Some(WeightExpression::Property(prop)) => Some(prop.clone()),
+                _ => None,
+            };
 
             // Validate edge type and weight property if provided
             if let Some(ref edge_type) = sp.type_arg {
@@ -482,19 +497,19 @@ pub(crate) fn apply_graph_step<'a>(
                             label: type_arg,
                             from: Some(GenRef::from(from)),
                             to: Some(GenRef::from(to)),
-                            weight_property: weight_property.clone().map(GenRef::Literal),
+                            weight_calculation: weight_calculation.clone(),
                         },
                         (Some(from), None) => GeneratedShortestPathDijkstras {
                             label: type_arg,
                             from: Some(GenRef::from(from)),
                             to: None,
-                            weight_property: weight_property.clone().map(GenRef::Literal),
+                            weight_calculation: weight_calculation.clone(),
                         },
                         (None, Some(to)) => GeneratedShortestPathDijkstras {
                             label: type_arg,
                             from: None,
                             to: Some(GenRef::from(to)),
-                            weight_property: weight_property.clone().map(GenRef::Literal),
+                            weight_calculation: weight_calculation.clone(),
                         },
                         (None, None) => panic!("Invalid shortest path dijkstras"),
                     },
@@ -525,6 +540,69 @@ pub(crate) fn apply_graph_step<'a>(
                             to: Some(GenRef::from(to)),
                         },
                         (None, None) => panic!("Invalid shortest path bfs"),
+                    },
+                )));
+            traversal.should_collect = ShouldCollect::ToVec;
+            Some(Type::Unknown)
+        }
+        (ShortestPathAStar(sp), Type::Nodes(_) | Type::Node(_)) => {
+            let type_arg = sp.type_arg.clone().map(GenRef::Literal);
+
+            // Generate weight calculation
+            let weight_calculation = match &sp.weight_expr {
+                Some(WeightExpression::Property(prop)) => {
+                    WeightCalculation::Property(GenRef::Literal(prop.clone()))
+                }
+                Some(WeightExpression::Expression(expr)) => {
+                    match generate_math_expr(expr, ExpressionContext::WeightCalculation) {
+                        Ok(math_expr) => {
+                            WeightCalculation::Expression(format!("{}", math_expr))
+                        }
+                        Err(e) => {
+                            generate_error!(
+                                ctx,
+                                original_query,
+                                sp.loc.clone(),
+                                E202,
+                                &format!("Failed to generate weight expression: {}", e),
+                                "valid math expression",
+                                "ShortestPathAStar"
+                            );
+                            WeightCalculation::Default
+                        }
+                    }
+                }
+                Some(WeightExpression::Default) | None => WeightCalculation::Default,
+            };
+
+            let heuristic_property = GenRef::Literal(sp.heuristic_property.clone());
+
+            traversal
+                .steps
+                .push(Separator::Period(GeneratedStep::ShortestPathAStar(
+                    match (sp.from.clone(), sp.to.clone()) {
+                        (Some(from), Some(to)) => GeneratedShortestPathAStar {
+                            label: type_arg,
+                            from: Some(GenRef::from(from)),
+                            to: Some(GenRef::from(to)),
+                            weight_calculation,
+                            heuristic_property,
+                        },
+                        (Some(from), None) => GeneratedShortestPathAStar {
+                            label: type_arg,
+                            from: Some(GenRef::from(from)),
+                            to: None,
+                            weight_calculation,
+                            heuristic_property,
+                        },
+                        (None, Some(to)) => GeneratedShortestPathAStar {
+                            label: type_arg,
+                            from: None,
+                            to: Some(GenRef::from(to)),
+                            weight_calculation,
+                            heuristic_property,
+                        },
+                        (None, None) => panic!("Invalid shortest path astar"),
                     },
                 )));
             traversal.should_collect = ShouldCollect::ToVec;
@@ -672,5 +750,275 @@ pub(crate) fn apply_graph_step<'a>(
             generate_error!(ctx, original_query, gs.loc.clone(), E601, &gs.loc.span);
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::helixc::analyzer::error_codes::ErrorCode;
+    use crate::helixc::parser::{HelixParser, write_to_temp_file};
+
+    // ============================================================================
+    // Edge Direction Validation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_out_edge_correct_direction() {
+        let source = r#"
+            N::Person { name: String }
+            E::Knows { From: Person, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                friends <- person::Out<Knows>
+                RETURN friends
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_in_edge_correct_direction() {
+        let source = r#"
+            N::Person { name: String }
+            E::Follows { From: Person, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                followers <- person::In<Follows>
+                RETURN followers
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_out_edge_wrong_node_type() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+
+            QUERY test(id: ID) =>
+                company <- N<Company>(id)
+                employees <- company::Out<WorksAt>
+                RETURN employees
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E207));
+    }
+
+    // ============================================================================
+    // Edge-to-Node Conversion Tests
+    // ============================================================================
+
+    #[test]
+    fn test_out_edge_to_target_node() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                edges <- person::OutE<WorksAt>
+                companies <- edges::ToN
+                RETURN companies
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_out_edge_to_source_node() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                edges <- person::OutE<WorksAt>
+                source <- edges::FromN
+                RETURN source
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_in_edge_to_source_node() {
+        let source = r#"
+            N::Person { name: String }
+            E::Follows { From: Person, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                edges <- person::InE<Follows>
+                followers <- edges::FromN
+                RETURN followers
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    // ============================================================================
+    // Multi-Type Graph Tests
+    // ============================================================================
+
+    #[test]
+    fn test_multi_type_traversal() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+            E::LocatedIn { From: Company, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                companies <- person::Out<WorksAt>
+                locations <- companies::Out<LocatedIn>
+                RETURN locations
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_bidirectional_edges() {
+        let source = r#"
+            N::Person { name: String }
+            E::Knows { From: Person, To: Person }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                outgoing <- person::Out<Knows>
+                incoming <- person::In<Knows>
+                RETURN outgoing, incoming
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    // ============================================================================
+    // Edge Type Validation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_undeclared_edge_in_out_traversal() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                related <- person::Out<UndeclaredEdge>
+                RETURN related
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E102));
+    }
+
+    #[test]
+    fn test_undeclared_edge_in_out_e_traversal() {
+        let source = r#"
+            N::Person { name: String }
+
+            QUERY test(id: ID) =>
+                person <- N<Person>(id)
+                edges <- person::OutE<UndeclaredEdge>
+                RETURN edges
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E102));
+    }
+
+    // ============================================================================
+    // Complex Traversal Pattern Tests
+    // ============================================================================
+
+    #[test]
+    fn test_edge_chain_from_to() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+            E::WorksAt { From: Person, To: Company }
+
+            QUERY test(personId: ID, companyId: ID) =>
+                person <- N<Person>(personId)
+                company <- N<Company>(companyId)
+                personEdges <- person::OutE<WorksAt>
+                companyEdges <- company::InE<WorksAt>
+                personCompanies <- personEdges::ToN
+                companyPeople <- companyEdges::FromN
+                RETURN personCompanies, companyPeople
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
     }
 }
