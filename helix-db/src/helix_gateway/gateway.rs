@@ -8,8 +8,6 @@ use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use core_affinity::CoreId;
-use helix_metrics::events::{EventType, QueryErrorEvent, QuerySuccessEvent};
-use sonic_rs::json;
 use tracing::{info, trace, warn};
 
 use super::router::router::{HandlerFn, HelixRouter};
@@ -32,19 +30,19 @@ use crate::{
 pub struct GatewayOpts {}
 
 impl GatewayOpts {
-    pub const DEFAULT_WORKERS_PER_CORE: usize = 5;
+    pub const DEFAULT_WORKERS_PER_CORE: usize = 8;
 }
 
 pub static HELIX_METRICS_CLIENT: LazyLock<helix_metrics::HelixMetricsClient> =
     LazyLock::new(helix_metrics::HelixMetricsClient::new);
 
 pub struct HelixGateway {
-    address: String,
-    workers_per_core: usize,
-    graph_access: Arc<HelixGraphEngine>,
-    router: Arc<HelixRouter>,
-    opts: Option<HelixGraphEngineOpts>,
-    cluster_id: Option<String>,
+    pub(crate) address: String,
+    pub(crate) workers_per_core: usize,
+    pub(crate) graph_access: Arc<HelixGraphEngine>,
+    pub(crate) router: Arc<HelixRouter>,
+    pub(crate) opts: Option<HelixGraphEngineOpts>,
+    pub(crate) cluster_id: Option<String>,
 }
 
 impl HelixGateway {
@@ -162,38 +160,38 @@ async fn post_handler(
     req: protocol::request::Request,
 ) -> axum::http::Response<Body> {
     // #[cfg(feature = "metrics")]
-    let start_time = Instant::now();
-    let body = req.body.to_vec();
-    let query_name = req.name.clone();
+    let _start_time = Instant::now();
+    let _body = req.body.to_vec();
+    let _query_name = req.name.clone();
     let res = state.worker_pool.process(req).await;
 
     match res {
         Ok(r) => {
             // #[cfg(feature = "metrics")]
             {
-                HELIX_METRICS_CLIENT.send_event(
-                    EventType::QuerySuccess,
-                    QuerySuccessEvent {
-                        cluster_id: state.cluster_id.clone(),
-                        query_name,
-                        time_taken_usec: start_time.elapsed().as_micros() as u32,
-                    },
-                );
+                // HELIX_METRICS_CLIENT.send_event(
+                //     EventType::QuerySuccess,
+                //     QuerySuccessEvent {
+                //         cluster_id: state.cluster_id.clone(),
+                //         query_name,
+                //         time_taken_usec: start_time.elapsed().as_micros() as u32,
+                //     },
+                // );
             }
             r.into_response()
         }
         Err(e) => {
             info!(?e, "Got error");
-            HELIX_METRICS_CLIENT.send_event(
-                EventType::QueryError,
-                QueryErrorEvent {
-                    cluster_id: state.cluster_id.clone(),
-                    query_name,
-                    input_json: sonic_rs::to_string(&body).ok(),
-                    output_json: sonic_rs::to_string(&json!({ "error": e.to_string() })).ok(),
-                    time_taken_usec: start_time.elapsed().as_micros() as u32,
-                },
-            );
+            // HELIX_METRICS_CLIENT.send_event(
+            //     EventType::QueryError,
+            //     QueryErrorEvent {
+            //         cluster_id: state.cluster_id.clone(),
+            //         query_name,
+            //         input_json: sonic_rs::to_string(&body).ok(),
+            //         output_json: sonic_rs::to_string(&json!({ "error": e.to_string() })).ok(),
+            //         time_taken_usec: start_time.elapsed().as_micros() as u32,
+            //     },
+            // );
             e.into_response()
         }
     }
@@ -206,9 +204,9 @@ pub struct AppState {
 }
 
 pub struct CoreSetter {
-    cores: Vec<CoreId>,
-    threads_per_core: usize,
-    incrementing_index: AtomicUsize,
+    pub(crate) cores: Vec<CoreId>,
+    pub(crate) threads_per_core: usize,
+    pub(crate) incrementing_index: AtomicUsize,
 }
 
 impl CoreSetter {
