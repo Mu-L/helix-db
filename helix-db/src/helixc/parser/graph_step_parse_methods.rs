@@ -590,18 +590,15 @@ impl HelixParser {
                             heuristic_property = Some(literal[1..literal.len() - 1].to_string());
                         }
                         Rule::to_from => {
-                            match inner_pair.into_inner().next() {
-                                Some(p) => match p.as_rule() {
-                                    Rule::to => {
-                                        to = Some(p.into_inner().next().unwrap().as_str().to_string());
-                                    }
-                                    Rule::from => {
-                                        from = Some(p.into_inner().next().unwrap().as_str().to_string());
-                                    }
-                                    _ => {}
-                                },
-                                None => {}
-                            }
+                            if let Some(p) = inner_pair.into_inner().next() { match p.as_rule() {
+                                Rule::to => {
+                                    to = Some(p.into_inner().next().unwrap().as_str().to_string());
+                                }
+                                Rule::from => {
+                                    from = Some(p.into_inner().next().unwrap().as_str().to_string());
+                                }
+                                _ => {}
+                            } }
                         }
                         _ => {}
                     }

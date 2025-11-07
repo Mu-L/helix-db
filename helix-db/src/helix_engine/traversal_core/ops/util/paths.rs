@@ -526,6 +526,7 @@ pub trait ShortestPathAdapter<'db, 'arena, 'txn, 's, I>:
     /// let node2 = Node { id: 2, label: "Person".to_string(), properties: None };
     /// let traversal = G::new(storage, &txn).shortest_path(Some("knows"), Some(&node1.id), Some(&node2.id));
     /// ```
+    #[allow(clippy::type_complexity)]
     fn shortest_path(
         self,
         edge_label: Option<&'arena str>,

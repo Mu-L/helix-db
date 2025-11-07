@@ -321,21 +321,20 @@ fn parse_property_access_from_traversal(
     };
 
     // Extract property name from the Object step
-    if let StepType::Object(obj) = &traversal.steps[property_step_idx].step {
-        if obj.fields.len() == 1 && !obj.should_spread {
-            let property_name = obj.fields[0].key.clone();
+    if let StepType::Object(obj) = &traversal.steps[property_step_idx].step
+        && obj.fields.len() == 1 && !obj.should_spread {
+        let property_name = obj.fields[0].key.clone();
 
-            // Override context if specified by ExpressionContext
-            let final_context = match context {
-                ExpressionContext::WeightCalculation => prop_context,
-                ExpressionContext::Filter | ExpressionContext::General => PropertyContext::Current,
-            };
+        // Override context if specified by ExpressionContext
+        let final_context = match context {
+            ExpressionContext::WeightCalculation => prop_context,
+            ExpressionContext::Filter | ExpressionContext::General => PropertyContext::Current,
+        };
 
-            return Ok(MathExpr::PropertyAccess(PropertyAccess {
-                context: final_context,
-                property: GenRef::Literal(property_name),
-            }));
-        }
+        return Ok(MathExpr::PropertyAccess(PropertyAccess {
+            context: final_context,
+            property: GenRef::Literal(property_name),
+        }));
     }
 
     Err("Failed to extract property name from traversal".to_string())
