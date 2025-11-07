@@ -166,29 +166,6 @@ impl Worker {
                     }
                 }
             }
-
-            // loop {
-            //     Selector::new()
-            //         .recv(&cont_rx, |m| match m {
-            //             Ok((ret_chan, cfn)) => {
-            //                 ret_chan.send(cfn().map_err(Into::into)).expect("todo")
-            //             }
-            //             Err(_) => error!("Continuation Channel was dropped"),
-            //         })
-            //         .recv(&rx, |m| match m {
-            //             Ok((req, ret_chan)) => request_mapper(
-            //                 req,
-            //                 ret_chan,
-            //                 graph_access.clone(),
-            //                 &router,
-            //                 &io_rt,
-            //                 &cont_tx,
-            //             ),
-            //             Err(_) => error!("Request Channel was dropped"),
-            //         })
-            //         .wait();
-            // }
-            // trace!("thread shutting down");
         });
         Worker { _handle: handle }
     }
