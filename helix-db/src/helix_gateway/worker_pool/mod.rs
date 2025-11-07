@@ -100,6 +100,9 @@ impl Worker {
 
             trace!("thread started");
 
+            // Initialize thread-local metrics buffer
+            helix_metrics::init_thread_local();
+
             // Set thread local context, so we can access the io runtime
             let _io_guard = io_rt.enter();
 

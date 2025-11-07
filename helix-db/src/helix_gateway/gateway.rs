@@ -1,4 +1,3 @@
-use std::sync::LazyLock;
 use std::sync::atomic::{self, AtomicUsize};
 use std::time::Instant;
 use std::{collections::HashMap, sync::Arc};
@@ -32,9 +31,6 @@ pub struct GatewayOpts {}
 impl GatewayOpts {
     pub const DEFAULT_WORKERS_PER_CORE: usize = 8;
 }
-
-pub static HELIX_METRICS_CLIENT: LazyLock<helix_metrics::HelixMetricsClient> =
-    LazyLock::new(helix_metrics::HelixMetricsClient::new);
 
 pub struct HelixGateway {
     pub(crate) address: String,
@@ -114,6 +110,9 @@ impl HelixGateway {
         }));
 
         rt.block_on(async move {
+            // Initialize metrics system
+            helix_metrics::init_metrics_system();
+
             let listener = tokio::net::TcpListener::bind(self.address)
                 .await
                 .expect("Failed to bind listener");
@@ -159,39 +158,35 @@ async fn post_handler(
     State(state): State<Arc<AppState>>,
     req: protocol::request::Request,
 ) -> axum::http::Response<Body> {
-    // #[cfg(feature = "metrics")]
-    let _start_time = Instant::now();
-    let _body = req.body.to_vec();
-    let _query_name = req.name.clone();
+    let start_time = Instant::now();
+    let body = req.body.to_vec();
+    let query_name = req.name.clone();
     let res = state.worker_pool.process(req).await;
 
     match res {
         Ok(r) => {
-            // #[cfg(feature = "metrics")]
-            {
-                // HELIX_METRICS_CLIENT.send_event(
-                //     EventType::QuerySuccess,
-                //     QuerySuccessEvent {
-                //         cluster_id: state.cluster_id.clone(),
-                //         query_name,
-                //         time_taken_usec: start_time.elapsed().as_micros() as u32,
-                //     },
-                // );
-            }
+            helix_metrics::log_event(
+                helix_metrics::events::EventType::QuerySuccess,
+                helix_metrics::events::QuerySuccessEvent {
+                    cluster_id: state.cluster_id.clone(),
+                    query_name,
+                    time_taken_usec: start_time.elapsed().as_micros() as u32,
+                },
+            );
             r.into_response()
         }
         Err(e) => {
             info!(?e, "Got error");
-            // HELIX_METRICS_CLIENT.send_event(
-            //     EventType::QueryError,
-            //     QueryErrorEvent {
-            //         cluster_id: state.cluster_id.clone(),
-            //         query_name,
-            //         input_json: sonic_rs::to_string(&body).ok(),
-            //         output_json: sonic_rs::to_string(&json!({ "error": e.to_string() })).ok(),
-            //         time_taken_usec: start_time.elapsed().as_micros() as u32,
-            //     },
-            // );
+            helix_metrics::log_event(
+                helix_metrics::events::EventType::QueryError,
+                helix_metrics::events::QueryErrorEvent {
+                    cluster_id: state.cluster_id.clone(),
+                    query_name,
+                    input_json: sonic_rs::to_string(&body).ok(),
+                    output_json: Some(format!(r#"{{"error":"{e}"}}"#)),
+                    time_taken_usec: start_time.elapsed().as_micros() as u32,
+                },
+            );
             e.into_response()
         }
     }

@@ -133,7 +133,7 @@ async fn test_concurrent_burst_requests() {
         }
 
         for handle in handles {
-            handle.await.unwrap();
+            handle.await.unwrap().unwrap();
         }
     }
 
@@ -385,7 +385,7 @@ async fn test_worker_distribution_fairness() {
     }
 
     for handle in handles {
-        handle.await.unwrap();
+        handle.await.unwrap().unwrap();
     }
 
     let elapsed = start.elapsed();
