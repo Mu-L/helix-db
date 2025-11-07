@@ -6,7 +6,6 @@ use crate::{
     },
     utils::label_hash::hash_label,
 };
-use heed3::{RoTxn, types::Bytes};
 
 pub trait InEdgesAdapter<'db, 'arena, 'txn, 's, I>:
     Iterator<Item = Result<TraversalValue<'arena>, GraphError>>
