@@ -183,7 +183,7 @@ async fn post_handler(
                     cluster_id: state.cluster_id.clone(),
                     query_name,
                     input_json: sonic_rs::to_string(&body).ok(),
-                    output_json: Some(format!(r#"{{"error":"{}"}}"#, e.to_string())),
+                    output_json: Some(format!(r#"{{"error":"{e}"}}"#)),
                     time_taken_usec: start_time.elapsed().as_micros() as u32,
                 },
             );

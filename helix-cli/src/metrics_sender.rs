@@ -149,7 +149,7 @@ pub(crate) fn load_metrics_config() -> Result<MetricsConfig> {
     }
 
     let content: &'static str = fs::read_to_string(&config_path)?.leak();
-    let config = toml::from_str(&content)?;
+    let config = toml::from_str(content)?;
     Ok(config)
 }
 
@@ -241,7 +241,7 @@ impl MetricsSender {
 
         if !config.install_event_sent {
             let event = RawEvent {
-                os: &get_os_string(),
+                os: get_os_string(),
                 event_type: EventType::CliInstall,
                 event_data: EventData::CliInstall,
                 user_id: get_user_id(),
@@ -266,7 +266,7 @@ impl MetricsSender {
         error_messages: Option<String>,
     ) {
         let event = RawEvent {
-            os: &get_os_string(),
+            os: get_os_string(),
             event_type: EventType::Compile,
             event_data: EventData::Compile(CompileEvent {
                 cluster_id,
@@ -293,7 +293,7 @@ impl MetricsSender {
         error_messages: Option<String>,
     ) {
         let event = RawEvent {
-            os: &get_os_string(),
+            os: get_os_string(),
             event_type: EventType::DeployLocal,
             event_data: EventData::DeployLocal(DeployLocalEvent {
                 cluster_id,
@@ -320,7 +320,7 @@ impl MetricsSender {
         error_messages: Option<String>,
     ) {
         let event = RawEvent {
-            os: &get_os_string(),
+            os: get_os_string(),
             event_type: EventType::RedeployLocal,
             event_data: EventData::RedeployLocal(RedeployLocalEvent {
                 cluster_id,
@@ -347,7 +347,7 @@ impl MetricsSender {
         error_messages: Option<String>,
     ) {
         let event = RawEvent {
-            os: &get_os_string(),
+            os: get_os_string(),
             event_type: EventType::DeployCloud,
             event_data: EventData::DeployCloud(DeployCloudEvent {
                 cluster_id,
@@ -375,7 +375,7 @@ impl MetricsSender {
         error_messages: Option<String>,
     ) {
         let event = RawEvent {
-            os: &get_os_string(),
+            os: get_os_string(),
             event_type: EventType::Test,
             event_data: EventData::Test(TestEvent {
                 cluster_id,
