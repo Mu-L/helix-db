@@ -332,7 +332,9 @@ pub async fn shutdown_metrics_system() {
     let _ = METRICS_STATE.shutdown_tx.send(());
 
     // Flush all remaining events
-    let _ = flush_all().await;
+    if let Some(handle) = flush_all().await {
+        let _ = handle.await;
+    }
 }
 
 #[derive(Debug)]
