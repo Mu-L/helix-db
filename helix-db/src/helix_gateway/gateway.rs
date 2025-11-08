@@ -120,7 +120,20 @@ impl HelixGateway {
             axum::serve(listener, axum_app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await
-                .expect("Failed to serve")
+                .expect("Failed to serve");
+
+            // Shutdown metrics system to flush all pending events
+            info!("Shutting down metrics system...");
+            let shutdown_result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                helix_metrics::shutdown_metrics_system(),
+            )
+            .await;
+
+            match shutdown_result {
+                Ok(_) => info!("Metrics system shutdown complete"),
+                Err(_) => warn!("Metrics system shutdown timed out after 5 seconds"),
+            }
         });
 
         Ok(())

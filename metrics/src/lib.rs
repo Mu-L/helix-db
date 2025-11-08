@@ -47,7 +47,7 @@ pub static METRICS_ENABLED: LazyLock<bool> = LazyLock::new(|| {
     true
 });
 
-pub const METRICS_URL: &str = "https://logs.helix-db.com";
+pub const METRICS_URL: &str = "https://logs.helix-db.com/v2";
 
 // Thread-local buffer for events
 thread_local! {
@@ -61,6 +61,8 @@ struct MetricsState {
     events_rx: flume::Receiver<Vec<events::RawEvent<events::EventData>>>,
     notify_tx: flume::Sender<()>,
     notify_rx: flume::Receiver<()>,
+    shutdown_tx: flume::Sender<()>,
+    shutdown_rx: flume::Receiver<()>,
     threshold_batches: AtomicUsize,
     sender_handle: OnceLock<tokio::task::JoinHandle<()>>,
 }
@@ -68,6 +70,7 @@ struct MetricsState {
 static METRICS_STATE: LazyLock<MetricsState> = LazyLock::new(|| {
     let (events_tx, events_rx) = flume::unbounded();
     let (notify_tx, notify_rx) = flume::unbounded();
+    let (shutdown_tx, shutdown_rx) = flume::unbounded();
 
     // Read threshold from environment or use default
     let threshold_batches = std::env::var("HELIX_METRICS_THRESHOLD_BATCHES")
@@ -80,6 +83,8 @@ static METRICS_STATE: LazyLock<MetricsState> = LazyLock::new(|| {
         events_rx,
         notify_tx,
         notify_rx,
+        shutdown_tx,
+        shutdown_rx,
         threshold_batches: AtomicUsize::new(threshold_batches),
         sender_handle: OnceLock::new(),
     }
@@ -89,7 +94,7 @@ static METRICS_STATE: LazyLock<MetricsState> = LazyLock::new(|| {
 const THREAD_LOCAL_EVENT_BUFFER_LENGTH: usize = 65536;
 const THREAD_LOCAL_FLUSH_THRESHOLD: usize = 65536;
 const BATCH_TIMEOUT_SECS: u64 = 1;
-const DEFAULT_THRESHOLD_BATCHES: usize = 32_000; // Number of Vec batches before notifying sender
+const DEFAULT_THRESHOLD_BATCHES: usize = 10; // Number of Vec batches before notifying sender
 
 /// Initialize the metrics system with a tokio runtime
 /// This must be called once at startup with an active tokio runtime
@@ -103,6 +108,7 @@ pub fn init_metrics_system() {
         tokio::spawn(sender_task(
             METRICS_STATE.events_rx.clone(),
             METRICS_STATE.notify_rx.clone(),
+            METRICS_STATE.shutdown_rx.clone(),
         ))
     });
 }
@@ -197,9 +203,10 @@ fn create_raw_event(
 async fn sender_task(
     events_rx: flume::Receiver<Vec<events::RawEvent<events::EventData>>>,
     notify_rx: flume::Receiver<()>,
+    shutdown_rx: flume::Receiver<()>,
 ) {
     loop {
-        // Wait for notification or timeout
+        // Wait for notification, timeout, or shutdown signal
         tokio::select! {
             _ = notify_rx.recv_async() => {
                 process_batch(&events_rx).await;
@@ -207,6 +214,11 @@ async fn sender_task(
             _ = tokio::time::sleep(Duration::from_secs(BATCH_TIMEOUT_SECS)) => {
                 // Periodic flush even if threshold not reached
                 process_batch(&events_rx).await;
+            }
+            _ = shutdown_rx.recv_async() => {
+                // Shutdown signal received - process final batch and exit
+                process_batch(&events_rx).await;
+                break;
             }
         }
     }
@@ -226,22 +238,49 @@ async fn process_batch(
     // Spawn new task for serialization + HTTP
     // This allows the sender task to continue processing batches
     Some(tokio::spawn(async move {
-        // Serialize using sonic_rs (fast)
-        let json_bytes = match sonic_rs::to_vec(&events) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!("Failed to serialize events: {}", e);
-                return;
+        // Serialize as NDJSON (newline-delimited JSON)
+        // Each event is a separate JSON object on its own line
+        let mut ndjson = String::new();
+        for event in &events {
+            match sonic_rs::to_string(event) {
+                Ok(json) => {
+                    ndjson.push_str(&json);
+                    ndjson.push('\n');
+                }
+                Err(e) => {
+                    eprintln!("Failed to serialize event: {}", e);
+                    continue;
+                }
             }
-        };
+        }
 
-        // Send batch over HTTP
-        let _ = METRICS_CLIENT
+        if ndjson.is_empty() {
+            return;
+        }
+
+        // Send batch over HTTP as NDJSON
+        match METRICS_CLIENT
             .post(METRICS_URL)
-            .header("Content-Type", "application/json")
-            .body(json_bytes)
+            .header("Content-Type", "application/x-ndjson")
+            .body(ndjson)
             .send()
-            .await;
+            .await
+        {
+            Ok(response) => {
+                if !response.status().is_success() {
+                    eprintln!(
+                        "Metrics HTTP error: {} from {} (body: {:?})",
+                        response.status(),
+                        METRICS_URL,
+                        response.text().await.unwrap_or_default()
+                    );
+                }
+                // Success - no need to log (metrics are silent on success)
+            }
+            Err(e) => {
+                eprintln!("Failed to send metrics to {}: {}", METRICS_URL, e);
+            }
+        }
     }))
 }
 
@@ -262,6 +301,20 @@ pub async fn flush_all() -> Option<JoinHandle<()>> {
 
     // Process any remaining events in the channel
     process_batch(&METRICS_STATE.events_rx).await
+}
+
+/// Shutdown the metrics system gracefully
+/// This should be called before process exit to ensure all metrics are flushed
+pub async fn shutdown_metrics_system() {
+    if !*METRICS_ENABLED {
+        return;
+    }
+
+    // Send shutdown signal to sender task
+    let _ = METRICS_STATE.shutdown_tx.send(());
+
+    // Flush all remaining events
+    let _ = flush_all().await;
 }
 
 #[derive(Debug)]
