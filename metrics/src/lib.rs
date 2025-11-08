@@ -94,6 +94,7 @@ static METRICS_STATE: LazyLock<MetricsState> = LazyLock::new(|| {
 const THREAD_LOCAL_EVENT_BUFFER_LENGTH: usize = 65536;
 const THREAD_LOCAL_FLUSH_THRESHOLD: usize = 65536;
 const BATCH_TIMEOUT_SECS: u64 = 1;
+const THREAD_LOCAL_FLUSH_INTERVAL_SECS: u64 = 1; // Flush thread-local buffers every second
 const DEFAULT_THRESHOLD_BATCHES: usize = 10; // Number of Vec batches before notifying sender
 
 /// Initialize the metrics system with a tokio runtime
@@ -113,6 +114,11 @@ pub fn init_metrics_system() {
     });
 }
 
+// Track last flush time per thread
+thread_local! {
+    static LAST_FLUSH_TIME: RefCell<std::time::Instant> = RefCell::new(std::time::Instant::now());
+}
+
 /// Initialize thread-local buffer for the current thread
 /// Call this once per worker thread
 pub fn init_thread_local() {
@@ -122,6 +128,10 @@ pub fn init_thread_local() {
 
     EVENT_BUFFER.with(|buffer| {
         buffer.borrow_mut().clear();
+    });
+
+    LAST_FLUSH_TIME.with(|time| {
+        *time.borrow_mut() = std::time::Instant::now();
     });
 }
 
@@ -154,9 +164,17 @@ where
         let mut buf = buffer.borrow_mut();
         buf.push(raw_event);
 
-        // Flush if we've reached the threshold
-        if buf.len() >= THREAD_LOCAL_FLUSH_THRESHOLD {
+        // Check if we should flush based on size or time
+        let should_flush = buf.len() >= THREAD_LOCAL_FLUSH_THRESHOLD
+            || LAST_FLUSH_TIME.with(|time| {
+                time.borrow().elapsed() >= Duration::from_secs(THREAD_LOCAL_FLUSH_INTERVAL_SECS)
+            });
+
+        if should_flush {
             flush_local_buffer(&mut buf);
+            LAST_FLUSH_TIME.with(|time| {
+                *time.borrow_mut() = std::time::Instant::now();
+            });
         }
     });
 }
