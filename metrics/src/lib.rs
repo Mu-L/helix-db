@@ -76,7 +76,7 @@ static METRICS_STATE: LazyLock<MetricsState> = LazyLock::new(|| {
     let threshold_batches = std::env::var("HELIX_METRICS_THRESHOLD_BATCHES")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_THRESHOLD_BATCHES);
+        .unwrap_or(num_cpus::get());
 
     MetricsState {
         events_tx,
@@ -95,7 +95,6 @@ const THREAD_LOCAL_EVENT_BUFFER_LENGTH: usize = 65536;
 const THREAD_LOCAL_FLUSH_THRESHOLD: usize = 65536;
 const BATCH_TIMEOUT_SECS: u64 = 1;
 const THREAD_LOCAL_FLUSH_INTERVAL_SECS: u64 = 1; // Flush thread-local buffers every second
-const DEFAULT_THRESHOLD_BATCHES: usize = 10; // Number of Vec batches before notifying sender
 
 /// Initialize the metrics system with a tokio runtime
 /// This must be called once at startup with an active tokio runtime
@@ -452,14 +451,7 @@ mod tests {
         assert_eq!(get_threshold_batches(), 500);
 
         // Reset to default
-        set_threshold_batches(DEFAULT_THRESHOLD_BATCHES);
-    }
-
-    #[test]
-    fn test_default_threshold() {
-        // Default should be 1000 batches
-        let threshold = METRICS_STATE.threshold_batches.load(Ordering::Relaxed);
-        assert!(threshold >= DEFAULT_THRESHOLD_BATCHES || threshold > 0);
+        set_threshold_batches(num_cpus::get());
     }
 
     #[test]
@@ -493,7 +485,7 @@ mod tests {
         assert!(notification_count > 0, "Expected notification to be sent");
 
         // Reset threshold
-        set_threshold_batches(DEFAULT_THRESHOLD_BATCHES);
+        set_threshold_batches(num_cpus::get());
     }
 
     #[test]
