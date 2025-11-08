@@ -7,6 +7,7 @@ use crate::{
     protocol::value::Value,
     utils::properties::ImmutablePropertiesMap,
 };
+use bincode::Options;
 use itertools::Itertools;
 use std::{collections::HashMap, ops::Bound};
 
