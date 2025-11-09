@@ -1,7 +1,7 @@
 use crate::helix_engine::{
         traversal_core::{LMDB_STRING_HEADER_LENGTH, traversal_iter::RoTraversalIterator, traversal_value::TraversalValue},
         types::{GraphError, VectorError},
-        vector_core::{vector::HVector, vector_without_data::VectorWithoutData},
+        vector_core::{vector_without_data::VectorWithoutData},
     };
 
 pub trait VFromTypeAdapter<'db, 'arena, 'txn>:
