@@ -211,8 +211,8 @@ impl Query {
                                 nested_struct_name: None,
                                 ..
                             } = &field_info.source {
-                                // Resolve "_" placeholder to actual iteration variable
-                                let resolved_var = if closure_var == "_" {
+                                // Resolve "_" and "val" placeholders to actual iteration variable
+                                let resolved_var = if closure_var == "_" || closure_var == "val" {
                                     singular_var
                                 } else {
                                     closure_var.as_str()
@@ -245,18 +245,20 @@ impl Query {
                                 };
 
                                 // Extract the actual source variable from the traversal type
-                                // Resolve "_" placeholder to actual iteration variable
+                                // Resolve "_" and "val" placeholders to actual iteration variable
                                 let (source_var, is_single_source) = if let Some(trav_type) = traversal_type {
                                     use crate::helixc::generator::traversal_steps::TraversalType;
                                     match trav_type {
                                         TraversalType::FromSingle(var) => {
                                             let v = var.inner();
-                                            let resolved = if v == "_" { singular_var } else { v.as_str() };
+                                            // Resolve placeholders: both "_" and "val" should use the iteration variable
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
                                             (resolved.to_string(), true)
                                         }
                                         TraversalType::FromIter(var) => {
                                             let v = var.inner();
-                                            let resolved = if v == "_" { singular_var } else { v.as_str() };
+                                            // Resolve placeholders: both "_" and "val" should use the iteration variable
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
                                             (resolved.to_string(), false)
                                         }
                                         _ => {
@@ -286,9 +288,31 @@ impl Query {
                                     let nested_val = if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                         traversal_code: Some(inner_trav_code),
                                         nested_struct_name: Some(inner_nested_name),
+                                        traversal_type: inner_traversal_type,
                                         ..
                                     } = &nested_field.source {
                                         // This is a deeply nested traversal - generate nested traversal code
+
+                                        // Extract the source variable for this deeply nested traversal
+                                        let inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
+                                            use crate::helixc::generator::traversal_steps::TraversalType;
+                                            match inner_trav_type {
+                                                TraversalType::FromSingle(var) => {
+                                                    let v = var.inner();
+                                                    // Resolve placeholders: "_" and "val" should use "item" in nested context
+                                                    if v == "_" || v == "val" { "item" } else { v.as_str() }
+                                                }
+                                                TraversalType::FromIter(var) => {
+                                                    let v = var.inner();
+                                                    // Resolve placeholders: "_" and "val" should use "item" in nested context
+                                                    if v == "_" || v == "val" { "item" } else { v.as_str() }
+                                                }
+                                                _ => "item"
+                                            }
+                                        } else {
+                                            "item"
+                                        };
+
                                         // Get the nested fields if available
                                         let inner_fields_str = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(inner_fields) = &nested_field.field_type {
                                             // Generate field assignments for the deeply nested struct
@@ -307,7 +331,7 @@ impl Query {
                                         } else {
                                             ".collect::<Vec<_>>()".to_string()
                                         };
-                                        format!("G::from_iter(&db, &txn, std::iter::once(item.clone()), &arena){}{}", inner_trav_code, inner_fields_str)
+                                        format!("G::from_iter(&db, &txn, std::iter::once({}.clone()), &arena){}{}", inner_source_var, inner_trav_code, inner_fields_str)
                                     } else {
                                         // Check if this field itself is a nested traversal that accesses the closure parameter
                                         // Extract both the access variable and the actual field being accessed
@@ -411,8 +435,8 @@ impl Query {
                                 nested_struct_name: None,
                                 ..
                             } = &field_info.source {
-                                // Resolve "_" placeholder to actual iteration variable
-                                let resolved_var = if closure_var == "_" {
+                                // Resolve "_" and "val" placeholders to actual iteration variable
+                                let resolved_var = if closure_var == "_" || closure_var == "val" {
                                     singular_var
                                 } else {
                                     closure_var.as_str()
@@ -470,9 +494,31 @@ impl Query {
                                     let nested_val = if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                         traversal_code: Some(inner_trav_code),
                                         nested_struct_name: Some(inner_nested_name),
+                                        traversal_type: inner_traversal_type,
                                         ..
                                     } = &nested_field.source {
                                         // This is a deeply nested traversal - generate nested traversal code
+
+                                        // Extract the source variable for this deeply nested traversal
+                                        let inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
+                                            use crate::helixc::generator::traversal_steps::TraversalType;
+                                            match inner_trav_type {
+                                                TraversalType::FromSingle(var) => {
+                                                    let v = var.inner();
+                                                    // Resolve placeholders: "_" and "val" should use "item" in nested context
+                                                    if v == "_" || v == "val" { "item" } else { v.as_str() }
+                                                }
+                                                TraversalType::FromIter(var) => {
+                                                    let v = var.inner();
+                                                    // Resolve placeholders: "_" and "val" should use "item" in nested context
+                                                    if v == "_" || v == "val" { "item" } else { v.as_str() }
+                                                }
+                                                _ => "item"
+                                            }
+                                        } else {
+                                            "item"
+                                        };
+
                                         // Get the nested fields if available
                                         let inner_fields_str = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(inner_fields) = &nested_field.field_type {
                                             // Generate field assignments for the deeply nested struct
@@ -491,7 +537,7 @@ impl Query {
                                         } else {
                                             ".collect::<Vec<_>>()".to_string()
                                         };
-                                        format!("G::from_iter(&db, &txn, std::iter::once(item.clone()), &arena){}{}", inner_trav_code, inner_fields_str)
+                                        format!("G::from_iter(&db, &txn, std::iter::once({}.clone()), &arena){}{}", inner_source_var, inner_trav_code, inner_fields_str)
                                     } else {
                                         // Check if this field itself is a nested traversal that accesses the closure parameter
                                         // Extract both the access variable and the actual field being accessed
@@ -771,8 +817,8 @@ impl Query {
                                 nested_struct_name: None,
                                 ..
                             } = &field_info.source {
-                                // Resolve "_" placeholder to actual iteration variable
-                                let resolved_var = if closure_var == "_" {
+                                // Resolve "_" and "val" placeholders to actual iteration variable
+                                let resolved_var = if closure_var == "_" || closure_var == "val" {
                                     singular_var
                                 } else {
                                     closure_var.as_str()
@@ -805,18 +851,20 @@ impl Query {
                                 };
 
                                 // Extract the actual source variable from the traversal type
-                                // Resolve "_" placeholder to actual iteration variable
+                                // Resolve "_" and "val" placeholders to actual iteration variable
                                 let (source_var, is_single_source) = if let Some(trav_type) = traversal_type {
                                     use crate::helixc::generator::traversal_steps::TraversalType;
                                     match trav_type {
                                         TraversalType::FromSingle(var) => {
                                             let v = var.inner();
-                                            let resolved = if v == "_" { singular_var } else { v.as_str() };
+                                            // Resolve placeholders: both "_" and "val" should use the iteration variable
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
                                             (resolved.to_string(), true)
                                         }
                                         TraversalType::FromIter(var) => {
                                             let v = var.inner();
-                                            let resolved = if v == "_" { singular_var } else { v.as_str() };
+                                            // Resolve placeholders: both "_" and "val" should use the iteration variable
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
                                             (resolved.to_string(), false)
                                         }
                                         _ => {
@@ -846,9 +894,31 @@ impl Query {
                                     let nested_val = if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                         traversal_code: Some(inner_trav_code),
                                         nested_struct_name: Some(inner_nested_name),
+                                        traversal_type: inner_traversal_type,
                                         ..
                                     } = &nested_field.source {
                                         // This is a deeply nested traversal - generate nested traversal code
+
+                                        // Extract the source variable for this deeply nested traversal
+                                        let inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
+                                            use crate::helixc::generator::traversal_steps::TraversalType;
+                                            match inner_trav_type {
+                                                TraversalType::FromSingle(var) => {
+                                                    let v = var.inner();
+                                                    // Resolve placeholders: "_" and "val" should use "item" in nested context
+                                                    if v == "_" || v == "val" { "item" } else { v.as_str() }
+                                                }
+                                                TraversalType::FromIter(var) => {
+                                                    let v = var.inner();
+                                                    // Resolve placeholders: "_" and "val" should use "item" in nested context
+                                                    if v == "_" || v == "val" { "item" } else { v.as_str() }
+                                                }
+                                                _ => "item"
+                                            }
+                                        } else {
+                                            "item"
+                                        };
+
                                         // Get the nested fields if available
                                         let inner_fields_str = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(inner_fields) = &nested_field.field_type {
                                             // Generate field assignments for the deeply nested struct
@@ -867,7 +937,7 @@ impl Query {
                                         } else {
                                             ".collect::<Vec<_>>()".to_string()
                                         };
-                                        format!("G::from_iter(&db, &txn, std::iter::once(item.clone()), &arena){}{}", inner_trav_code, inner_fields_str)
+                                        format!("G::from_iter(&db, &txn, std::iter::once({}.clone()), &arena){}{}", inner_source_var, inner_trav_code, inner_fields_str)
                                     } else {
                                         // Check if this field itself is a nested traversal that accesses the closure parameter
                                         // Extract both the access variable and the actual field being accessed
@@ -971,8 +1041,8 @@ impl Query {
                                 nested_struct_name: None,
                                 ..
                             } = &field_info.source {
-                                // Resolve "_" placeholder to actual iteration variable
-                                let resolved_var = if closure_var == "_" {
+                                // Resolve "_" and "val" placeholders to actual iteration variable
+                                let resolved_var = if closure_var == "_" || closure_var == "val" {
                                     singular_var
                                 } else {
                                     closure_var.as_str()

@@ -1,4 +1,5 @@
 //! Semantic analyzer for Helix‑QL.
+use crate::helixc::analyzer::utils::DEFAULT_VAR_NAME;
 use crate::helixc::analyzer::{
     error_codes::ErrorCode, errors::push_query_err, utils::get_field_type_from_item_fields,
 };
@@ -323,18 +324,10 @@ fn validate_property_access<'a>(
                                         (None, None)
                                     }
                                 }
-                                StartNode::Anonymous => {
-                                    // Anonymous traversal (_::...) - map to current iteration variable
-                                    // For collection context like posts::{ field: _::traversal },
-                                    // the _ refers to the current post being iterated
-                                    // The iteration variable name is the singular form of the parent variable
-                                    // (e.g., "posts" -> "post")
-
-                                    // We need to look at the parent context to find what variable we're iterating over
-                                    // For now, we'll use a placeholder that will be resolved during code generation
-                                    // based on the source_variable name
-                                    (Some("_".to_string()), Some("_".to_string()))
-                                }
+                                StartNode::Anonymous => (
+                                    Some(DEFAULT_VAR_NAME.to_string()),
+                                    Some(DEFAULT_VAR_NAME.to_string()),
+                                ),
                                 _ => (None, None),
                             };
 
