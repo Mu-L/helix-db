@@ -20,6 +20,7 @@ pub struct NestedTraversalInfo {
     pub parsed_traversal: Option<Box<crate::helixc::parser::types::Traversal>>, // Original parsed traversal for validation
     pub closure_param_name: Option<String>, // The closure parameter name if in closure context (e.g., "usr")
     pub closure_source_var: Option<String>, // The actual source variable for the closure parameter (e.g., "user")
+    pub own_closure_param: Option<String>, // This traversal's own closure parameter if it ends with a Closure step (e.g., "cluster")
 }
 
 #[derive(Clone)]

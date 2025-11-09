@@ -344,6 +344,13 @@ fn validate_property_access<'a>(
                                 gen_query,
                             );
 
+                            // Check if this nested traversal ends with a Closure step
+                            let own_closure_param = tr.steps.last()
+                                .and_then(|step| match &step.step {
+                                    crate::helixc::parser::types::StepType::Closure(cl) => Some(cl.identifier.clone()),
+                                    _ => None,
+                                });
+
                             let nested_info = NestedTraversalInfo {
                                 traversal: Box::new(nested_gen_traversal),
                                 return_type: nested_type.clone(),
@@ -351,6 +358,7 @@ fn validate_property_access<'a>(
                                 parsed_traversal: Some(tr.clone()),
                                 closure_param_name: closure_param,
                                 closure_source_var: closure_source,
+                                own_closure_param,
                             };
                             gen_traversal
                                 .nested_traversals
@@ -377,6 +385,13 @@ fn validate_property_access<'a>(
                                     gen_query,
                                 );
 
+                                // Check if this nested traversal ends with a Closure step
+                                let own_closure_param = tr.steps.last()
+                                    .and_then(|step| match &step.step {
+                                        crate::helixc::parser::types::StepType::Closure(cl) => Some(cl.identifier.clone()),
+                                        _ => None,
+                                    });
+
                                 let nested_info = NestedTraversalInfo {
                                     traversal: Box::new(nested_gen_traversal),
                                     return_type: nested_type,
@@ -384,6 +399,7 @@ fn validate_property_access<'a>(
                                     parsed_traversal: Some(tr.clone()),
                                     closure_param_name: None, // Will be set by closure handling code
                                     closure_source_var: None, // Will be set by closure handling code
+                                    own_closure_param,
                                 };
                                 gen_traversal
                                     .nested_traversals

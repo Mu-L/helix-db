@@ -105,6 +105,7 @@ fn build_return_fields(
                     closure_param_name: None,
                     closure_source_var: None,
                     accessed_field_name: None,
+                    own_closure_param: None,
                 },
             });
         }
@@ -327,6 +328,7 @@ fn build_return_fields(
                             closure_param_name: nested_info.closure_param_name.clone(),
                             closure_source_var: nested_info.closure_source_var.clone(),
                             accessed_field_name,
+                            own_closure_param: nested_info.own_closure_param.clone(),
                         },
                     });
                 }
@@ -358,6 +360,7 @@ fn build_return_fields(
                             closure_param_name: nested_info.closure_param_name.clone(),
                             closure_source_var: nested_info.closure_source_var.clone(),
                             accessed_field_name: None,
+                            own_closure_param: nested_info.own_closure_param.clone(),
                         },
                     });
                 }
@@ -374,6 +377,7 @@ fn build_return_fields(
                             closure_param_name: nested_info.closure_param_name.clone(),
                             closure_source_var: nested_info.closure_source_var.clone(),
                             accessed_field_name: None,
+                            own_closure_param: nested_info.own_closure_param.clone(),
                         },
                     });
                 }
@@ -392,6 +396,7 @@ fn build_return_fields(
                     closure_param_name: None,
                     closure_source_var: None,
                     accessed_field_name: None,
+                    own_closure_param: None,
                 },
             });
         }
