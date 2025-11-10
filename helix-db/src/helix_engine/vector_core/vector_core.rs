@@ -10,7 +10,7 @@ use crate::{
             vector_without_data::VectorWithoutData,
         },
     },
-    utils::properties::ImmutablePropertiesMap,
+    utils::{id::uuid_str, properties::ImmutablePropertiesMap},
 };
 use heed3::{
     Database, Env, RoTxn, RwTxn,
@@ -417,11 +417,10 @@ impl VectorCore {
         id: u128,
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError> {
-        let key = Self::vector_key(id, 0);
         let vector_data_bytes = self
             .vectors_db
-            .get(txn, key.as_ref())?
-            .ok_or(VectorError::VectorNotFound(id.to_string()))?;
+            .get(txn, &Self::vector_key(id, 0))?
+            .ok_or(VectorError::VectorNotFound(uuid_str(id, arena).to_string()))?;
 
         let properties_bytes = self.vector_properties_db.get(txn, &id)?;
 
@@ -440,13 +439,10 @@ impl VectorCore {
         label: &'arena str,
         arena: &'arena bumpalo::Bump,
     ) -> Result<HVector<'arena>, VectorError> {
-        let key = Self::vector_key(id, 0);
-        // println!("Looking up vector {} at level 0, key: {:?}", uuid::Uuid::from_u128(id), key);
-        let vector_data_bytes = self.vectors_db.get(txn, key.as_ref())?.ok_or_else(|| {
-            println!("VECTOR NOT FOUND: {}", uuid::Uuid::from_u128(id));
-            VectorError::VectorNotFound(uuid::Uuid::from_u128(id).to_string())
-        })?;
-        // println!("Found vector {}, data len: {}", uuid::Uuid::from_u128(id), vector_data_bytes.len());
+        let vector_data_bytes = self
+            .vectors_db
+            .get(txn, &Self::vector_key(id, 0))?
+            .ok_or(VectorError::VectorNotFound(uuid_str(id, arena).to_string()))?;
         HVector::from_raw_vector_data(arena, vector_data_bytes, label, id)
     }
 }

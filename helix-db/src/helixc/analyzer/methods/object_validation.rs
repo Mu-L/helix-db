@@ -1,4 +1,5 @@
 //! Semantic analyzer for Helix‑QL.
+use crate::helixc::analyzer::utils::DEFAULT_VAR_NAME;
 use crate::helixc::analyzer::{
     error_codes::ErrorCode, errors::push_query_err, utils::get_field_type_from_item_fields,
 };
@@ -323,18 +324,10 @@ fn validate_property_access<'a>(
                                         (None, None)
                                     }
                                 }
-                                StartNode::Anonymous => {
-                                    // Anonymous traversal (_::...) - map to current iteration variable
-                                    // For collection context like posts::{ field: _::traversal },
-                                    // the _ refers to the current post being iterated
-                                    // The iteration variable name is the singular form of the parent variable
-                                    // (e.g., "posts" -> "post")
-
-                                    // We need to look at the parent context to find what variable we're iterating over
-                                    // For now, we'll use a placeholder that will be resolved during code generation
-                                    // based on the source_variable name
-                                    (Some("_".to_string()), Some("_".to_string()))
-                                }
+                                StartNode::Anonymous => (
+                                    Some(DEFAULT_VAR_NAME.to_string()),
+                                    Some(DEFAULT_VAR_NAME.to_string()),
+                                ),
                                 _ => (None, None),
                             };
 
@@ -351,6 +344,13 @@ fn validate_property_access<'a>(
                                 gen_query,
                             );
 
+                            // Check if this nested traversal ends with a Closure step
+                            let own_closure_param = tr.steps.last()
+                                .and_then(|step| match &step.step {
+                                    crate::helixc::parser::types::StepType::Closure(cl) => Some(cl.identifier.clone()),
+                                    _ => None,
+                                });
+
                             let nested_info = NestedTraversalInfo {
                                 traversal: Box::new(nested_gen_traversal),
                                 return_type: nested_type.clone(),
@@ -358,6 +358,7 @@ fn validate_property_access<'a>(
                                 parsed_traversal: Some(tr.clone()),
                                 closure_param_name: closure_param,
                                 closure_source_var: closure_source,
+                                own_closure_param,
                             };
                             gen_traversal
                                 .nested_traversals
@@ -384,6 +385,13 @@ fn validate_property_access<'a>(
                                     gen_query,
                                 );
 
+                                // Check if this nested traversal ends with a Closure step
+                                let own_closure_param = tr.steps.last()
+                                    .and_then(|step| match &step.step {
+                                        crate::helixc::parser::types::StepType::Closure(cl) => Some(cl.identifier.clone()),
+                                        _ => None,
+                                    });
+
                                 let nested_info = NestedTraversalInfo {
                                     traversal: Box::new(nested_gen_traversal),
                                     return_type: nested_type,
@@ -391,6 +399,7 @@ fn validate_property_access<'a>(
                                     parsed_traversal: Some(tr.clone()),
                                     closure_param_name: None, // Will be set by closure handling code
                                     closure_source_var: None, // Will be set by closure handling code
+                                    own_closure_param,
                                 };
                                 gen_traversal
                                     .nested_traversals

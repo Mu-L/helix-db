@@ -1,5 +1,5 @@
 [project]
-name = "user_test_1"
+name = "where_filter"
 queries = "."
 
 [local.dev]
