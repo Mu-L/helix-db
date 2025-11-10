@@ -171,6 +171,113 @@ impl Query {
                         struct_def.source_variable,
                         struct_def.source_variable
                     )?;
+                } else if struct_def.source_variable.is_empty() {
+                    // Object literal - construct from multiple sources
+                    // Generate each field from the object literal
+                    for (field_idx, field) in struct_def.fields.iter().enumerate() {
+                        if field_idx > 0 {
+                            write!(f, ",")?;
+                            writeln!(f)?;
+                        }
+
+                        let field_info = &struct_def.field_infos[field_idx];
+
+                        // Determine how to construct this field based on its source
+                        let field_value = match &field_info.source {
+                            crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                closure_source_var: Some(source_var),
+                                accessed_field_name: Some(prop_name),
+                                nested_struct_name: None,
+                                ..
+                            } => {
+                                // Simple property access like app::{name}
+                                if prop_name == "id" {
+                                    format!("uuid_str({}.id(), &arena)", source_var)
+                                } else if prop_name == "label" {
+                                    format!("{}.label()", source_var)
+                                } else {
+                                    format!("{}.get_property(\"{}\")", source_var, prop_name)
+                                }
+                            }
+                            _ if matches!(
+                                field_info.field_type,
+                                crate::helixc::generator::return_values::ReturnFieldType::Nested(_)
+                            ) => {
+                                // Nested struct or object - need to construct recursively
+                                let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
+                                    fields
+                                } else {
+                                    panic!("Expected nested field type");
+                                };
+
+                                // Extract nested struct name and source var from field info
+                                let (nested_struct_name, source_var) = match &field_info.source {
+                                    crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                        closure_source_var: Some(src),
+                                        nested_struct_name: Some(name),
+                                        ..
+                                    } => (Some(name.clone()), Some(src.clone())),
+                                    crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                        closure_source_var: Some(src),
+                                        ..
+                                    } => (None, Some(src.clone())),
+                                    _ => (None, None),
+                                };
+
+                                // Check if this is a collection (Vec)
+                                let is_vec = field.field_type.starts_with("Vec<");
+
+                                if is_vec {
+                                    // Generate construction for each element
+                                    if let Some(src_var) = source_var {
+                                        let struct_name = nested_struct_name.as_ref().map(|s| s.as_str()).unwrap_or("UnknownStruct");
+
+                                        format!("vec![{}].into_iter().map(|item| {} {{\n{}            \n}}).collect::<Vec<_>>()",
+                                            src_var,
+                                            struct_name,
+                                            nested_fields.iter().map(|f| {
+                                                let val = if f.name == "id" {
+                                                    "uuid_str(item.id(), &arena)".to_string()
+                                                } else if f.name == "label" {
+                                                    "item.label()".to_string()
+                                                } else {
+                                                    format!("item.get_property(\"{}\")", f.name)
+                                                };
+                                                format!("                {}: {},", f.name, val)
+                                            }).collect::<Vec<_>>().join("\n")
+                                        )
+                                    } else {
+                                        "Vec::new()".to_string()
+                                    }
+                                } else {
+                                    // Single nested object
+                                    if let (Some(struct_name), Some(src_var)) = (nested_struct_name.as_ref(), source_var.as_ref()) {
+                                        format!("{} {{\n{}            \n}}",
+                                            struct_name,
+                                            nested_fields.iter().map(|f| {
+                                                let val = if f.name == "id" {
+                                                    format!("uuid_str({}.id(), &arena)", src_var)
+                                                } else if f.name == "label" {
+                                                    format!("{}.label()", src_var)
+                                                } else {
+                                                    format!("{}.get_property(\"{}\")", src_var, f.name)
+                                                };
+                                                format!("                {}: {},", f.name, val)
+                                            }).collect::<Vec<_>>().join("\n")
+                                        )
+                                    } else {
+                                        "serde_json::Value::Null".to_string()
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Fallback
+                                "serde_json::Value::Null".to_string()
+                            }
+                        };
+
+                        write!(f, "    \"{}\": {}", field.name, field_value)?;
+                    }
                 } else if struct_def.is_collection {
                     // Collection - generate mapping code
                     let singular_var = struct_def.source_variable.trim_end_matches('s');

@@ -14,7 +14,8 @@ use crate::helixc::{
     generator::{
         queries::{Parameter as GeneratedParameter, Query as GeneratedQuery},
         return_values::{
-            ReturnFieldInfo, ReturnFieldSource, ReturnFieldType, ReturnValue, ReturnValueStruct,
+            ReturnFieldInfo, ReturnFieldSource, ReturnFieldType, ReturnValue,
+            ReturnValueStruct,
         },
         source_steps::SourceStep,
         statements::Statement as GeneratedStatement,
@@ -403,6 +404,240 @@ fn build_return_fields(
     }
 
     fields
+}
+
+/// Process object literal return types and create struct definitions
+/// This handles RETURN { field1: expr1, field2: { ... }, field3: [...] } syntax
+///
+/// Note: This is a simplified implementation that delegates to analyze_return_expr for each field
+fn process_object_literal<'a>(
+    ctx: &mut Ctx<'a>,
+    _original_query: &'a Query,
+    scope: &mut HashMap<&'a str, VariableInfo>,
+    query: &mut GeneratedQuery,
+    object_fields: &HashMap<String, ReturnType>,
+    _struct_name: String,
+) -> ReturnValueStruct {
+    // Build JSON construction code recursively
+    fn build_json_code<'a>(
+        ctx: &Ctx<'a>,
+        obj_fields: &HashMap<String, ReturnType>,
+        scope: &HashMap<&str, VariableInfo>,
+    ) -> String {
+        let mut json_parts = Vec::new();
+
+        for (field_name, return_type) in obj_fields {
+            let field_value = match return_type {
+                ReturnType::Expression(expr) => {
+                    match &expr.expr {
+                        ExpressionType::Traversal(trav) => {
+                            // Handle traversal like app::{name}
+                            // Extract variable name from start node
+                            let var_name = match &trav.start {
+                                crate::helixc::parser::types::StartNode::Identifier(id) => id.clone(),
+                                _ => "unknown".to_string(),
+                            };
+
+                            // Check if there's an Object step to extract property name
+                            if let Some(step) = trav.steps.first() {
+                                if let crate::helixc::parser::types::StepType::Object(obj) = &step.step {
+                                    // Extract the first field name from the object step
+                                    if let Some(field) = obj.fields.first() {
+                                        let prop_name = &field.key;
+
+                                        // Generate appropriate access code based on property
+                                        if prop_name == "id" {
+                                            format!("uuid_str({}.id(), &arena)", var_name)
+                                        } else if prop_name == "label" {
+                                            format!("{}.label()", var_name)
+                                        } else {
+                                            format!("{}.get_property(\"{}\")", var_name, prop_name)
+                                        }
+                                    } else {
+                                        // No fields in object step
+                                        format!("json!({})", var_name)
+                                    }
+                                } else {
+                                    // Not an Object step, just return the variable
+                                    format!("json!({})", var_name)
+                                }
+                            } else {
+                                // No steps, just the identifier
+                                format!("json!({})", var_name)
+                            }
+                        }
+                        ExpressionType::Identifier(id) => {
+                            // Look up the variable type in scope and generate property extraction
+                            if let Some(var_info) = scope.get(id.as_str()) {
+                                build_identifier_json(ctx, id, &var_info.ty)
+                            } else {
+                                // Fallback if not in scope
+                                format!("json!({})", id)
+                            }
+                        }
+                        _ => {
+                            "serde_json::Value::Null".to_string()
+                        }
+                    }
+                }
+                ReturnType::Object(nested_obj) => {
+                    // Recursively build nested object
+                    let nested_json = build_json_code(ctx, nested_obj, scope);
+                    format!("json!({})", nested_json)
+                }
+                ReturnType::Array(arr) => {
+                    // Build array
+                    let mut array_parts = Vec::new();
+                    for elem in arr {
+                        match elem {
+                            ReturnType::Expression(expr) => {
+                                match &expr.expr {
+                                    ExpressionType::Identifier(id) => {
+                                        // Look up the variable type and generate property extraction
+                                        if let Some(var_info) = scope.get(id.as_str()) {
+                                            array_parts.push(build_identifier_json(ctx, id, &var_info.ty));
+                                        } else {
+                                            // Fallback
+                                            array_parts.push(format!("json!({})", id));
+                                        }
+                                    }
+                                    ExpressionType::Traversal(trav) => {
+                                        // Handle traversal in array
+                                        let var_name = match &trav.start {
+                                            crate::helixc::parser::types::StartNode::Identifier(id) => id.clone(),
+                                            _ => "unknown".to_string(),
+                                        };
+
+                                        // Check for object step
+                                        if let Some(step) = trav.steps.first() {
+                                            if let crate::helixc::parser::types::StepType::Object(obj) = &step.step {
+                                                if let Some(field) = obj.fields.first() {
+                                                    let prop_name = &field.key;
+                                                    if prop_name == "id" {
+                                                        array_parts.push(format!("uuid_str({}.id(), &arena)", var_name));
+                                                    } else if prop_name == "label" {
+                                                        array_parts.push(format!("{}.label()", var_name));
+                                                    } else {
+                                                        array_parts.push(format!("{}.get_property(\"{}\")", var_name, prop_name));
+                                                    }
+                                                } else {
+                                                    array_parts.push(format!("json!({})", var_name));
+                                                }
+                                            } else {
+                                                array_parts.push(format!("json!({})", var_name));
+                                            }
+                                        } else {
+                                            array_parts.push(format!("json!({})", var_name));
+                                        }
+                                    }
+                                    _ => {
+                                        array_parts.push("serde_json::Value::Null".to_string());
+                                    }
+                                }
+                            }
+                            ReturnType::Object(obj) => {
+                                let nested_json = build_json_code(ctx, obj, scope);
+                                array_parts.push(format!("json!({})", nested_json));
+                            }
+                            _ => {
+                                array_parts.push("serde_json::Value::Null".to_string());
+                            }
+                        }
+                    }
+                    format!("json!([{}])", array_parts.join(", "))
+                }
+                ReturnType::Empty => "serde_json::Value::Null".to_string(),
+            };
+
+            json_parts.push(format!("\"{}\": {}", field_name, field_value));
+        }
+
+        format!("{{\n        {}\n    }}", json_parts.join(",\n        "))
+    }
+
+    // Helper function to build JSON for an identifier based on its type
+    fn build_identifier_json(ctx: &Ctx, var_name: &str, ty: &Type) -> String {
+        match ty {
+            Type::Node(Some(label)) => {
+                // Look up the node schema to get its properties
+                if let Some(node_fields) = ctx.node_fields.get(label.as_str()) {
+                    let mut props = vec![
+                        format!("\"id\": uuid_str({}.id(), &arena)", var_name),
+                        format!("\"label\": {}.label()", var_name),
+                    ];
+
+                    for (prop_name, _prop_type) in node_fields.iter() {
+                        // Skip implicit fields that are accessed via methods, not get_property
+                        if *prop_name == "id" || *prop_name == "label" {
+                            continue;
+                        }
+                        props.push(format!("\"{}\":  {}.get_property(\"{}\")", prop_name, var_name, prop_name));
+                    }
+
+                    format!("json!({{\n        {}\n    }})", props.join(",\n        "))
+                } else {
+                    // Fallback if schema not found
+                    format!("json!({{\"id\": uuid_str({}.id(), &arena), \"label\": {}.label()}})", var_name, var_name)
+                }
+            }
+            Type::Edge(Some(label)) => {
+                // Similar for edges
+                if let Some(edge_fields) = ctx.edge_fields.get(label.as_str()) {
+                    let mut props = vec![
+                        format!("\"id\": uuid_str({}.id(), &arena)", var_name),
+                        format!("\"label\": {}.label()", var_name),
+                    ];
+
+                    for (prop_name, _prop_type) in edge_fields.iter() {
+                        // Skip implicit fields
+                        if *prop_name == "id" || *prop_name == "label" {
+                            continue;
+                        }
+                        props.push(format!("\"{}\":  {}.get_property(\"{}\")", prop_name, var_name, prop_name));
+                    }
+
+                    format!("json!({{\n        {}\n    }})", props.join(",\n        "))
+                } else {
+                    format!("json!({{\"id\": uuid_str({}.id(), &arena), \"label\": {}.label()}})", var_name, var_name)
+                }
+            }
+            _ => {
+                // For other types (Node(None), Edge(None), primitives, etc), just use json! macro
+                format!("json!({})", var_name)
+            }
+        }
+    }
+
+    let json_code = build_json_code(ctx, object_fields, scope);
+
+    // Add a single return value with the literal JSON construction code
+    query.return_values.push((
+        "response".to_string(),
+        ReturnValue {
+            name: "serde_json::Value".to_string(),
+            fields: vec![],
+            literal_value: Some(crate::helixc::generator::utils::GenRef::Std(format!("json!({})", json_code))),
+        },
+    ));
+
+    // Mark to NOT use struct returns
+    query.use_struct_returns = false;
+
+    // Return a placeholder struct (won't be used)
+    ReturnValueStruct {
+        name: "Unused".to_string(),
+        fields: vec![],
+        has_lifetime: false,
+        is_query_return_type: false,
+        is_collection: false,
+        is_aggregate: false,
+        is_group_by: false,
+        source_variable: String::new(),
+        is_reused_variable: false,
+        field_infos: vec![],
+        aggregate_properties: Vec::new(),
+        is_count_aggregate: false,
+    }
 }
 
 /// Helper function to get Rust type string from analyzer Type and populate return value fields
@@ -964,9 +1199,23 @@ fn analyze_return_expr<'a>(
                     analyze_return_expr(ctx, original_query, scope, query, return_expr);
                 }
             } else {
-                // Complex nested array/object structure - not yet supported
-                // TODO: Implement proper nested structure serialization
-                // For now, this will result in an empty return which the user needs to handle manually
+                // Complex nested array/object structure
+                // Wrap in an object with a single "data" field for now
+                let mut object_fields = HashMap::new();
+                object_fields.insert("data".to_string(), ReturnType::Array(values.clone()));
+
+                let struct_name = format!("{}ReturnType", capitalize_first(&query.name));
+                process_object_literal(
+                    ctx,
+                    original_query,
+                    scope,
+                    query,
+                    &object_fields,
+                    struct_name,
+                );
+
+                // Note: process_object_literal adds to query.return_values
+                // and sets use_struct_returns = false, so no need to push to return_structs
             }
         }
         ReturnType::Object(values) => {
@@ -982,9 +1231,19 @@ fn analyze_return_expr<'a>(
                     analyze_return_expr(ctx, original_query, scope, query, return_expr);
                 }
             } else {
-                // Complex nested object - not yet supported
-                // TODO: Implement proper nested structure serialization
-                // For now, this will result in an empty return which the user needs to handle manually
+                // Complex nested object - use new object literal processing
+                let struct_name = format!("{}ReturnType", capitalize_first(&query.name));
+                process_object_literal(
+                    ctx,
+                    original_query,
+                    scope,
+                    query,
+                    values,
+                    struct_name,
+                );
+
+                // Note: process_object_literal adds to query.return_values
+                // and sets use_struct_returns = false, so no need to push to return_structs
             }
         }
         ReturnType::Empty => {}
