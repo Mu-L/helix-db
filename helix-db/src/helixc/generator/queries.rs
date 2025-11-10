@@ -230,7 +230,7 @@ impl Query {
                                 if is_vec {
                                     // Generate construction for each element
                                     if let Some(src_var) = source_var {
-                                        let struct_name = nested_struct_name.as_ref().map(|s| s.as_str()).unwrap_or("UnknownStruct");
+                                        let struct_name = nested_struct_name.as_deref().unwrap_or("UnknownStruct");
 
                                         format!("vec![{}].into_iter().map(|item| {} {{\n{}            \n}}).collect::<Vec<_>>()",
                                             src_var,
