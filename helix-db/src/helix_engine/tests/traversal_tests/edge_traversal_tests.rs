@@ -16,10 +16,12 @@ use crate::{
                     add_e::AddEAdapter, add_n::AddNAdapter, e_from_id::EFromIdAdapter,
                     e_from_type::EFromTypeAdapter, n_from_id::NFromIdAdapter,
                 },
+                util::drop::Drop,
                 vectors::insert::InsertVAdapter,
             },
             traversal_value::TraversalValue,
         },
+        types::GraphError,
         vector_core::vector::HVector,
     },
     props,
@@ -241,4 +243,111 @@ fn test_vector_edges_roundtrip() {
         TraversalValue::VectorNodeWithoutVectorData(vec) => assert_eq!(*vec.id(), vector_id),
         other => panic!("unexpected traversal value: {other:?}"),
     }
+}
+
+// ============================================================================
+// Error Tests for e_from_id
+// ============================================================================
+
+#[test]
+fn test_e_from_id_with_nonexistent_id() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    // Generate a random ID that doesn't exist
+    let fake_id = uuid::Uuid::new_v4().as_u128();
+
+    // Attempt to query
+    let result = G::new(&storage, &txn, &arena)
+        .e_from_id(&fake_id)
+        .collect_to_obj();
+
+    // Assert it returns EdgeNotFound error
+    assert!(matches!(result, Err(GraphError::EdgeNotFound)));
+}
+
+#[test]
+fn test_e_from_id_with_deleted_edge() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    // Create two nodes and an edge between them
+    let source_id = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", None, None)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
+        .id();
+    let target_id = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", None, None)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
+        .id();
+
+    let edge = G::new_mut(&storage, &arena, &mut txn)
+        .add_edge("knows", None, source_id, target_id, false)
+        .collect_to_obj()
+        .unwrap();
+    let edge_id = edge.id();
+
+    txn.commit().unwrap();
+
+    // Delete the edge
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let edge_to_delete = G::new(&storage, &txn, &arena)
+        .e_from_id(&edge_id)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    drop(txn);
+
+    let mut txn = storage.graph_env.write_txn().unwrap();
+    Drop::drop_traversal(
+        edge_to_delete.into_iter().map(Ok::<_, GraphError>),
+        storage.as_ref(),
+        &mut txn,
+    )
+    .unwrap();
+    txn.commit().unwrap();
+
+    // Try to query the deleted edge
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let result = G::new(&storage, &txn, &arena)
+        .e_from_id(&edge_id)
+        .collect_to_obj();
+
+    // Assert it returns EdgeNotFound error
+    assert!(matches!(result, Err(GraphError::EdgeNotFound)));
+}
+
+#[test]
+fn test_e_from_id_with_zero_id() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    // Query with ID = 0
+    let result = G::new(&storage, &txn, &arena)
+        .e_from_id(&0)
+        .collect_to_obj();
+
+    // Assert it returns EdgeNotFound error
+    assert!(matches!(result, Err(GraphError::EdgeNotFound)));
+}
+
+#[test]
+fn test_e_from_id_with_max_id() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    // Query with ID = u128::MAX
+    let result = G::new(&storage, &txn, &arena)
+        .e_from_id(&u128::MAX)
+        .collect_to_obj();
+
+    // Assert it returns EdgeNotFound error
+    assert!(matches!(result, Err(GraphError::EdgeNotFound)));
 }

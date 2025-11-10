@@ -13,10 +13,11 @@ use crate::{
                     add_e::AddEAdapter, add_n::AddNAdapter, e_from_type::EFromTypeAdapter,
                     n_from_id::NFromIdAdapter, n_from_type::NFromTypeAdapter,
                 },
-                util::filter_ref::FilterRefAdapter,
+                util::{filter_ref::FilterRefAdapter, drop::Drop},
             },
             traversal_value::TraversalValue,
         },
+        types::GraphError,
     },
     props,
     protocol::value::Value,
@@ -441,4 +442,100 @@ fn test_double_add_and_double_fetch() {
     } else {
         panic!("e[0] is not an edge");
     }
+}
+
+// ============================================================================
+// Error Tests for n_from_id
+// ============================================================================
+
+#[test]
+fn test_n_from_id_with_nonexistent_id() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    // Generate a random ID that doesn't exist
+    let fake_id = uuid::Uuid::new_v4().as_u128();
+
+    // Attempt to query
+    let result = G::new(&storage, &txn, &arena)
+        .n_from_id(&fake_id)
+        .collect_to_obj();
+
+    // Assert it returns NodeNotFound error
+    assert!(matches!(result, Err(GraphError::NodeNotFound)));
+}
+
+#[test]
+fn test_n_from_id_with_deleted_node() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    // Create a node
+    let node = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", None, None)
+        .collect_to_obj()
+        .unwrap();
+    let node_id = node.id();
+
+    txn.commit().unwrap();
+
+    // Delete the node
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let node_to_delete = G::new(&storage, &txn, &arena)
+        .n_from_id(&node_id)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    drop(txn);
+
+    let mut txn = storage.graph_env.write_txn().unwrap();
+    Drop::drop_traversal(
+        node_to_delete.into_iter().map(Ok::<_, GraphError>),
+        storage.as_ref(),
+        &mut txn,
+    )
+    .unwrap();
+    txn.commit().unwrap();
+
+    // Try to query the deleted node
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let result = G::new(&storage, &txn, &arena)
+        .n_from_id(&node_id)
+        .collect_to_obj();
+
+    // Assert it returns NodeNotFound error
+    assert!(matches!(result, Err(GraphError::NodeNotFound)));
+}
+
+#[test]
+fn test_n_from_id_with_zero_id() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    // Query with ID = 0
+    let result = G::new(&storage, &txn, &arena)
+        .n_from_id(&0)
+        .collect_to_obj();
+
+    // Assert it returns NodeNotFound error
+    assert!(matches!(result, Err(GraphError::NodeNotFound)));
+}
+
+#[test]
+fn test_n_from_id_with_max_id() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    // Query with ID = u128::MAX
+    let result = G::new(&storage, &txn, &arena)
+        .n_from_id(&u128::MAX)
+        .collect_to_obj();
+
+    // Assert it returns NodeNotFound error
+    assert!(matches!(result, Err(GraphError::NodeNotFound)));
 }

@@ -13,7 +13,7 @@ use crate::{
             out::{out::OutAdapter, out_e::OutEdgesAdapter},
             source::{
                 add_e::AddEAdapter, add_n::AddNAdapter, e_from_type::EFromTypeAdapter,
-                n_from_id::NFromIdAdapter, v_from_type::VFromTypeAdapter,
+                n_from_id::NFromIdAdapter, v_from_id::VFromIdAdapter, v_from_type::VFromTypeAdapter,
             },
             util::drop::Drop,
             vectors::{
@@ -21,6 +21,7 @@ use crate::{
                 search::SearchVAdapter,
             },
         },
+        types::GraphError,
         vector_core::vector::HVector,
     },
     utils::properties::ImmutablePropertiesMap,
@@ -731,4 +732,138 @@ fn test_v_from_type_after_migration() {
         .unwrap();
 
     assert!(empty_results.is_empty(), "Should find no vectors with nonexistent label");
+}
+
+// ============================================================================
+// Error Tests for v_from_id
+// ============================================================================
+
+#[test]
+fn test_v_from_id_with_nonexistent_id_with_data() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    // Generate a random ID that doesn't exist
+    let fake_id = uuid::Uuid::new_v4().as_u128();
+
+    // Attempt to query with include_vector_data = true
+    let result = G::new(&storage, &txn, &arena)
+        .v_from_id(&fake_id, true)
+        .collect_to_obj();
+
+    // Assert it returns VectorError (VectorNotFound)
+    assert!(
+        matches!(result, Err(GraphError::VectorError(_))),
+        "Expected VectorError but got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_v_from_id_with_nonexistent_id_without_data() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    // Generate a random ID that doesn't exist
+    let fake_id = uuid::Uuid::new_v4().as_u128();
+
+    // Attempt to query with include_vector_data = false
+    let result = G::new(&storage, &txn, &arena)
+        .v_from_id(&fake_id, false)
+        .collect_to_obj();
+
+    // Assert it returns VectorError (VectorNotFound)
+    assert!(
+        matches!(result, Err(GraphError::VectorError(_))),
+        "Expected VectorError but got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_v_from_id_with_deleted_vector() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    // Create a vector
+    let vector = G::new_mut(&storage, &arena, &mut txn)
+        .insert_v::<Filter>(&[1.0, 2.0, 3.0], "test_vector", None)
+        .collect_to_obj()
+        .unwrap();
+    let vector_id = vector.id();
+
+    txn.commit().unwrap();
+
+    // Delete the vector
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let vector_to_delete = G::new(&storage, &txn, &arena)
+        .v_from_id(&vector_id, true)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    drop(txn);
+
+    let mut txn = storage.graph_env.write_txn().unwrap();
+    Drop::drop_traversal(
+        vector_to_delete.into_iter().map(Ok::<_, GraphError>),
+        storage.as_ref(),
+        &mut txn,
+    )
+    .unwrap();
+    txn.commit().unwrap();
+
+    // Try to query the deleted vector
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let result = G::new(&storage, &txn, &arena)
+        .v_from_id(&vector_id, true)
+        .collect_to_obj();
+
+    // Assert it returns VectorError (VectorDeleted or VectorNotFound)
+    assert!(
+        matches!(result, Err(GraphError::VectorError(_))),
+        "Expected VectorError but got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_v_from_id_with_zero_id() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    // Query with ID = 0
+    let result = G::new(&storage, &txn, &arena)
+        .v_from_id(&0, true)
+        .collect_to_obj();
+
+    // Assert it returns VectorError
+    assert!(
+        matches!(result, Err(GraphError::VectorError(_))),
+        "Expected VectorError but got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_v_from_id_with_max_id() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    // Query with ID = u128::MAX
+    let result = G::new(&storage, &txn, &arena)
+        .v_from_id(&u128::MAX, true)
+        .collect_to_obj();
+
+    // Assert it returns VectorError
+    assert!(
+        matches!(result, Err(GraphError::VectorError(_))),
+        "Expected VectorError but got: {:?}",
+        result
+    );
 }
