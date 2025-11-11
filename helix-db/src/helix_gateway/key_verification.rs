@@ -24,7 +24,7 @@ mod tests {
     #[test]
     fn test_verify_key_success() {
         // The API key is set at compile time via env!("HELIX_API_KEY")
-        let result = verify_key(API_KEY);
+        let result = verify_key(API_KEY_HASH);
         assert!(result.is_ok());
     }
 
@@ -44,7 +44,7 @@ mod tests {
     fn test_verify_key_partial_match() {
         // Create a key that matches the first half but not the second
         let mut partial_key = [0u8; 32];
-        partial_key[..16].copy_from_slice(&API_KEY[..16]);
+        partial_key[..16].copy_from_slice(&API_KEY_HASH[..16]);
         // Rest stays as zeros
 
         let result = verify_key(&partial_key);
@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn test_verify_key_off_by_one() {
         // Create a key that differs by just one bit in the last byte
-        let mut almost_correct = API_KEY.to_vec();
+        let mut almost_correct = API_KEY_HASH.to_vec();
         almost_correct[31] ^= 1; // Flip the least significant bit
 
         let result = verify_key(&almost_correct);
@@ -104,6 +104,6 @@ mod tests {
     #[test]
     fn test_api_key_length() {
         // Verify the compile-time API key is exactly 32 bytes
-        assert_eq!(API_KEY.len(), 32);
+        assert_eq!(API_KEY_HASH.len(), 32);
     }
 }
