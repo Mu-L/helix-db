@@ -445,6 +445,52 @@ impl VectorCore {
             .ok_or(VectorError::VectorNotFound(uuid_str(id, arena).to_string()))?;
         HVector::from_raw_vector_data(arena, vector_data_bytes, label, id)
     }
+
+    /// Get all vectors from the database, optionally filtered by level
+    pub fn get_all_vectors<'db: 'arena, 'arena: 'txn, 'txn>(
+        &self,
+        txn: &'txn RoTxn<'db>,
+        level: Option<usize>,
+        arena: &'arena bumpalo::Bump,
+    ) -> Result<bumpalo::collections::Vec<'arena, HVector<'arena>>, VectorError> {
+        let mut vectors = bumpalo::collections::Vec::new_in(arena);
+
+        // Iterate over all vectors in the database
+        let prefix_iter = self.vectors_db.prefix_iter(txn, VECTOR_PREFIX)?;
+
+        for result in prefix_iter {
+            let (key, _) = result?;
+
+            // Extract id from the key: v: (2 bytes) + id (16 bytes) + level (8 bytes)
+            if key.len() < VECTOR_PREFIX.len() + 16 {
+                continue; // Skip malformed keys
+            }
+
+            let mut id_bytes = [0u8; 16];
+            id_bytes.copy_from_slice(&key[VECTOR_PREFIX.len()..VECTOR_PREFIX.len() + 16]);
+            let id = u128::from_be_bytes(id_bytes);
+
+            // Get the full vector using the existing method
+            match self.get_full_vector(txn, id, arena) {
+                Ok(vector) => {
+                    // Filter by level if specified
+                    if let Some(lvl) = level {
+                        if vector.level == lvl {
+                            vectors.push(vector);
+                        }
+                    } else {
+                        vectors.push(vector);
+                    }
+                }
+                Err(_) => {
+                    // Skip vectors that can't be loaded (e.g., deleted)
+                    continue;
+                }
+            }
+        }
+
+        Ok(vectors)
+    }
 }
 
 impl HNSW for VectorCore {
