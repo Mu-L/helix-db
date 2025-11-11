@@ -172,16 +172,16 @@ async fn post_handler(
     req: protocol::request::Request,
 ) -> axum::http::Response<Body> {
     let start_time = Instant::now();
-    // #[cfg(feature = "api-key")]
+    #[cfg(feature = "api-key")]
     {
         use crate::helix_gateway::key_verification::verify_key;
         if let Err(e) = verify_key(&req.api_key_hash.unwrap()) {
             info!(?e, "Invalid API key");
             helix_metrics::log_event(
-                helix_metrics::events::EventType::QueryError,
+                helix_metrics::events::EventType::InvalidApiKey,
                 helix_metrics::events::InvalidApiKeyEvent {
                     cluster_id: state.cluster_id.clone(),
-                    time_taken_usec: Instant::now().elapsed().as_micros() as u32,
+                    time_taken_usec: start_time.elapsed().as_micros() as u32,
                 },
             );
             return e.into_response();

@@ -1,12 +1,12 @@
 use crate::protocol::HelixError;
 use subtle::ConstantTimeEq;
 
-/// API KEY HASH 
-const API_KEY_HASH: &'static [u8] = env!("HELIX_API_KEY").as_bytes();
+/// API KEY HASH
+const API_KEY_HASH: &[u8] = env!("HELIX_API_KEY").as_bytes();
 
 pub(crate) fn verify_key(key: &[u8]) -> Result<(), HelixError> {
     assert_eq!(API_KEY_HASH.len(), 32, "API key must be 32 bytes");
-    if API_KEY_HASH.ct_eq(&key).into() {
+    if API_KEY_HASH.ct_eq(key).into() {
         Ok(())
     } else {
         Err(HelixError::InvalidApiKey)

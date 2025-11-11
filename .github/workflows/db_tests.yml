@@ -42,4 +42,4 @@ jobs:
     - name: Run production tests
       run: | 
         cd helix-db
-        cargo test --release --lib --features production -- --skip concurrency_tests    
+        HELIX_API_KEY=12345678901234567890123456789012 cargo test --release --lib --features production -- --skip concurrency_tests    
