@@ -1395,6 +1395,7 @@ dependencies = [
  "reqwest",
  "serde",
  "sonic-rs",
+ "subtle",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",

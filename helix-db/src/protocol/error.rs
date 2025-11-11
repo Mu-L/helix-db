@@ -14,6 +14,8 @@ pub enum HelixError {
     Vector(#[from] VectorError),
     #[error("Couldn't find `{name}` of type {ty:?}")]
     NotFound { ty: RequestType, name: String },
+    #[error("Invalid API key")]
+    InvalidApiKey,
 }
 
 impl IntoResponse for HelixError {
@@ -22,6 +24,7 @@ impl IntoResponse for HelixError {
         let code = match &self {
             HelixError::Graph(_) | HelixError::Vector(_) => 500,
             HelixError::NotFound { .. } => 404,
+            HelixError::InvalidApiKey => 403,
         };
 
         axum::response::Response::builder()
