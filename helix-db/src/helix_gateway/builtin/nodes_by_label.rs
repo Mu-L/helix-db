@@ -30,6 +30,7 @@ pub async fn nodes_by_label_handler(
     let mut req = protocol::request::Request {
         name: "nodes_by_label".to_string(),
         req_type: RequestType::Query,
+        api_key_hash: None,
         body: axum::body::Bytes::new(),
         in_fmt: protocol::Format::default(),
         out_fmt: protocol::Format::default(),
@@ -204,6 +205,7 @@ mod tests {
         let request = Request {
             name: "nodes_by_label".to_string(),
             req_type: RequestType::Query,
+            api_key_hash: None,
             body: Bytes::from(params_json),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -252,6 +254,7 @@ mod tests {
         let request = Request {
             name: "nodes_by_label".to_string(),
             req_type: RequestType::Query,
+            api_key_hash: None,
             body: Bytes::from(params_json),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -281,6 +284,7 @@ mod tests {
         let request = Request {
             name: "nodes_by_label".to_string(),
             req_type: RequestType::Query,
+            api_key_hash: None,
             body: Bytes::from(params_json),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -307,6 +311,7 @@ mod tests {
         let request = Request {
             name: "nodes_by_label".to_string(),
             req_type: RequestType::Query,
+            api_key_hash: None,
             body: Bytes::new(),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -343,6 +348,7 @@ mod tests {
         let request = Request {
             name: "nodes_by_label".to_string(),
             req_type: RequestType::Query,
+            api_key_hash: None,
             body: Bytes::from(params_json),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
