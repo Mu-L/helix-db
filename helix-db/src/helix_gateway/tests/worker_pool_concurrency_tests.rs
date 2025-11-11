@@ -49,6 +49,7 @@ fn create_request(name: &str) -> Request {
     Request {
         name: name.to_string(),
         req_type: RequestType::Query,
+        api_key_hash: None,
         body: Bytes::new(),
         in_fmt: Format::Json,
         out_fmt: Format::Json,

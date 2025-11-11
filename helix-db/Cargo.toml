@@ -57,6 +57,8 @@ polars = { version = "0.46.0", features = [
     "lazy",
     "json",
 ], optional = true }
+subtle = "2.6.1"
+sha_256 = "=0.1.1"
 
 [dev-dependencies]
 rand = "0.9.0"
@@ -73,7 +75,7 @@ compiler = ["pest", "pest_derive"]
 
 # vector features
 cosine = []
-
+api-key = []
 build = ["compiler"]
 vectors = ["cosine", "url"]
 server = ["build", "compiler", "vectors", "reqwest"]
@@ -82,6 +84,7 @@ bench = ["polars"]
 dev = ["debug-output", "server", "bench"]
 dev-instance = []
 default = ["server"]
+production = ["api-key","server"]
 
 # benches/tests
 [[test]]
