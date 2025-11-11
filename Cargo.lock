@@ -1394,6 +1394,7 @@ dependencies = [
  "rayon",
  "reqwest",
  "serde",
+ "sha_256",
  "sonic-rs",
  "subtle",
  "tempfile",
@@ -3907,6 +3908,12 @@ dependencies = [
  "cpufeatures",
  "digest",
 ]
+
+[[package]]
+name = "sha_256"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "327b330d8a640167a79f91ff3f2b31c36e626587f3cdb5ec970aa795af6b65e0"
 
 [[package]]
 name = "sharded-slab"

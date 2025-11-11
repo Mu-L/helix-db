@@ -3,7 +3,7 @@ pub mod builtin;
 pub mod embedding_providers;
 pub mod gateway;
 pub mod introspect_schema;
-#[cfg(feature = "api-key")]
+// #[cfg(feature = "api-key")]
 pub mod key_verification;
 pub mod mcp;
 pub mod router;
