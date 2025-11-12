@@ -251,7 +251,7 @@ fn test_stress_rapid_graph_growth() {
     assert!(total_reads > 100, "Should perform many traversals");
 
     // Verify graph integrity
-    let arena = Bump::new();
+    let _arena = Bump::new();
     let rtxn = storage.graph_env.read_txn().unwrap();
     let final_node_count = storage.nodes_db.len(&rtxn).unwrap();
     let final_edge_count = storage.edges_db.len(&rtxn).unwrap();

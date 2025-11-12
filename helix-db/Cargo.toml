@@ -85,13 +85,3 @@ dev = ["debug-output", "server", "bench"]
 dev-instance = []
 default = ["server"]
 production = ["api-key","server"]
-
-# benches/tests
-[[test]]
-name = "bm25_benches"
-path = "benches/bm25_benches.rs"
-
-[[test]]
-name = "hnsw_benches"
-path = "benches/hnsw_benches.rs"
-

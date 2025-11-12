@@ -22,7 +22,6 @@ use crate::{
 use rand::Rng;
 use tempfile::TempDir;
 use bumpalo::Bump;
-use tokio::time;
 fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();

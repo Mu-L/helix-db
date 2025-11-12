@@ -83,7 +83,7 @@ fn test_concurrent_inserts_single_label() {
     let barrier = Arc::new(Barrier::new(num_threads));
 
     let handles: Vec<_> = (0..num_threads)
-        .map(|thread_id| {
+        .map(|_thread_id| {
             let env = Arc::clone(&env);
             let barrier = Arc::clone(&barrier);
 
@@ -91,7 +91,7 @@ fn test_concurrent_inserts_single_label() {
                 // Wait for all threads to be ready
                 barrier.wait();
 
-                for i in 0..vectors_per_thread {
+                for _i in 0..vectors_per_thread {
                     // Each insert needs its own write transaction (serialized by LMDB)
                     let mut wtxn = env.write_txn().unwrap();
                     let arena = Bump::new();
@@ -236,14 +236,14 @@ fn test_concurrent_searches_during_inserts() {
     }
 
     // Spawn writer threads
-    for writer_id in 0..num_writers {
+    for _writer_id in 0..num_writers {
         let env = Arc::clone(&env);
         let barrier = Arc::clone(&barrier);
 
         handles.push(thread::spawn(move || {
             barrier.wait();
 
-            for i in 0..25 {
+            for _i in 0..25 {
                 let mut wtxn = env.write_txn().unwrap();
                 let arena = Bump::new();
 

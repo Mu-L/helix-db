@@ -82,7 +82,7 @@ fn test_concurrent_node_additions() {
     }
 
     // Verify: All nodes created
-    let arena = Bump::new();
+    let _arena = Bump::new();
     let rtxn = storage.graph_env.read_txn().unwrap();
     let count = storage.nodes_db.len(&rtxn).unwrap();
     assert_eq!(

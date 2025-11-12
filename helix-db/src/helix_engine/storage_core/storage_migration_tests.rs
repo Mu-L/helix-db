@@ -136,6 +136,7 @@ fn populate_old_properties(
 }
 
 /// Set storage metadata to a specific state
+#[allow(dead_code)]
 fn set_metadata(
     storage: &mut HelixGraphStorage,
     metadata: StorageMetadata,
@@ -396,7 +397,7 @@ fn test_convert_old_properties_invalid_bincode() {
 
 #[test]
 fn test_migrate_empty_database() {
-    let (mut storage, _temp_dir) = setup_test_storage();
+    let (storage, _temp_dir) = setup_test_storage();
 
     // Storage is already created with migrations run, but let's verify the state
     let txn = storage.graph_env.read_txn().unwrap();
