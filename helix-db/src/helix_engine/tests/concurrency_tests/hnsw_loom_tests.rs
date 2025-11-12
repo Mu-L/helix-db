@@ -273,9 +273,9 @@ fn loom_graph_operation_ordering() {
 
 #[test]
 fn loom_two_writers_one_reader() {
-    /// Model of two writers and one reader accessing shared counter
-    ///
-    /// Tests MVCC-like behavior where reader should see consistent state
+    // Model of two writers and one reader accessing shared counter
+    //
+    // Tests MVCC-like behavior where reader should see consistent state
 
     loom::model(|| {
         let value = Arc::new(AtomicU64::new(0));

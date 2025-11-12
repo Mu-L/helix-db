@@ -20,6 +20,8 @@ pub enum EventType {
     WriteError,
     #[serde(rename = "read_error")]
     ReadError,
+    #[serde(rename = "invalid_api_key")]
+    InvalidApiKey,
     #[serde(rename = "test")]
     Test,
 }
@@ -36,6 +38,7 @@ impl EventType {
             EventType::QueryError => "query_error",
             EventType::WriteError => "write_error",
             EventType::ReadError => "read_error",
+            EventType::InvalidApiKey => "invalid_api_key",
             EventType::Test => "test",
         }
     }
@@ -63,6 +66,7 @@ pub enum EventData {
     QueryError(QueryErrorEvent),
     WriteError(WriteErrorEvent),
     ReadError(ReadErrorEvent),
+    InvalidApiKey(InvalidApiKeyEvent),
     Test(TestEvent),
 }
 
@@ -117,6 +121,12 @@ impl From<ReadErrorEvent> for EventData {
 impl From<TestEvent> for EventData {
     fn from(e: TestEvent) -> Self {
         EventData::Test(e)
+    }
+}
+
+impl From<InvalidApiKeyEvent> for EventData {
+    fn from(e: InvalidApiKeyEvent) -> Self {
+        EventData::InvalidApiKey(e)
     }
 }
 
@@ -230,5 +240,12 @@ pub struct QuerySuccessEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cluster_id: Option<String>,
     pub query_name: String,
+    pub time_taken_usec: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct InvalidApiKeyEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster_id: Option<String>,
     pub time_taken_usec: u32,
 }
