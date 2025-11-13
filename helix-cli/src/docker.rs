@@ -159,10 +159,24 @@ impl<'a> DockerManager<'a> {
             }
             "windows" => {
                 print_status("DOCKER", "Starting Docker Desktop for Windows...");
-                Command::new("cmd")
-                    .args(["/c", "start", "Docker"])
-                    .output()
-                    .map_err(|e| eyre!("Failed to start Docker Desktop: {}", e))?;
+                // Try Docker Desktop CLI (4.37+) first
+                let cli_result = Command::new("docker")
+                    .args(["desktop", "start"])
+                    .output();
+
+                match cli_result {
+                    Ok(output) if output.status.success() => {
+                        // Modern Docker Desktop CLI worked
+                    }
+                    _ => {
+                        // Fallback to direct executable path for older versions
+                        // Note: Empty string "" is required as window title parameter
+                        Command::new("cmd")
+                            .args(["/c", "start", "", "\"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe\""])
+                            .output()
+                            .map_err(|e| eyre!("Failed to start Docker Desktop: {}", e))?;
+                    }
+                }
             }
             _ => {
                 return Err(eyre!("Unsupported platform for auto-starting Docker"));
