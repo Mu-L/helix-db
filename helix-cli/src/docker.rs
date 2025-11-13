@@ -177,12 +177,11 @@ impl<'a> DockerManager<'a> {
                 .args(["info"])
                 .output();
 
-            if let Ok(output) = output {
-                if output.status.success() {
+            if let Ok(output) = output
+                && output.status.success() {
                     print_status("DOCKER", "Docker daemon is now running");
                     return Ok(());
                 }
-            }
 
             // Wait a bit before retrying
             thread::sleep(Duration::from_millis(500));
