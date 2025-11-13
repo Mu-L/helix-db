@@ -1,6 +1,6 @@
 use crate::config::{BuildMode, InstanceInfo};
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_confirm, print_warning};
+use crate::utils::{print_confirm, print_status, print_warning};
 use eyre::{Result, eyre};
 use std::process::{Command, Output};
 use std::thread;
@@ -137,22 +137,30 @@ impl<'a> DockerManager<'a> {
             "linux" => {
                 print_status("DOCKER", "Attempting to start Docker daemon on Linux...");
                 // Try systemctl first, then service command as fallback
-                let systemctl_result = Command::new("systemctl")
-                    .args(["start", "docker"])
-                    .output();
+                let systemctl_result = Command::new("systemctl").args(["start", "docker"]).output();
 
-                if systemctl_result.is_err() {
-                    // Try service command as fallback
-                    Command::new("service")
-                        .args(["docker", "start"])
-                        .output()
-                        .map_err(|e| eyre!("Failed to start Docker daemon (tried systemctl and service): {}", e))?;
+                match systemctl_result {
+                    Ok(output) if output.status.success() => {
+                        // systemctl succeeded
+                    }
+                    _ => {
+                        // Try service command as fallback
+                        let service_result = Command::new("service")
+                            .args(["docker", "start"])
+                            .output()
+                            .map_err(|e| eyre!("Failed to start Docker daemon: {}", e))?;
+
+                        if !service_result.status.success() {
+                            let stderr = String::from_utf8_lossy(&service_result.stderr);
+                            return Err(eyre!("Failed to start Docker daemon: {}", stderr));
+                        }
+                    }
                 }
             }
             "windows" => {
                 print_status("DOCKER", "Starting Docker Desktop for Windows...");
                 Command::new("cmd")
-                    .args(["/c", "start", "", "\"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe\""])
+                    .args(["/c", "start", "Docker"])
                     .output()
                     .map_err(|e| eyre!("Failed to start Docker Desktop: {}", e))?;
             }
@@ -173,21 +181,22 @@ impl<'a> DockerManager<'a> {
 
         while start.elapsed() < timeout {
             // Check if Docker daemon is responding
-            let output = Command::new("docker")
-                .args(["info"])
-                .output();
+            let output = Command::new("docker").args(["info"]).output();
 
             if let Ok(output) = output
-                && output.status.success() {
-                    print_status("DOCKER", "Docker daemon is now running");
-                    return Ok(());
-                }
+                && output.status.success()
+            {
+                print_status("DOCKER", "Docker daemon is now running");
+                return Ok(());
+            }
 
             // Wait a bit before retrying
             thread::sleep(Duration::from_millis(500));
         }
 
-        Err(eyre!("Timeout waiting for Docker daemon to start. Please start Docker manually and try again."))
+        Err(eyre!(
+            "Timeout waiting for Docker daemon to start. Please start Docker manually and try again."
+        ))
     }
 
     /// Check if Docker is installed and running
@@ -209,8 +218,9 @@ impl<'a> DockerManager<'a> {
 
         if !output.status.success() {
             // Docker daemon is not running - prompt user
-            let should_start = print_confirm("Docker daemon is not running. Would you like to start Docker?")
-                .unwrap_or(false);
+            let should_start =
+                print_confirm("Docker daemon is not running. Would you like to start Docker?")
+                    .unwrap_or(false);
 
             if should_start {
                 // Try to start Docker
@@ -226,7 +236,9 @@ impl<'a> DockerManager<'a> {
                     .map_err(|_| eyre!("Failed to verify Docker daemon status"))?;
 
                 if !verify_output.status.success() {
-                    return Err(eyre!("Docker daemon failed to start. Please start Docker manually and try again."));
+                    return Err(eyre!(
+                        "Docker daemon failed to start. Please start Docker manually and try again."
+                    ));
                 }
             } else {
                 print_warning("Docker daemon must be running to execute this command.");
