@@ -1,0 +1,82 @@
+use crate::project::ProjectContext;
+use crate::utils::{print_confirm, print_status, print_success, print_warning};
+use eyre::Result;
+use std::fs;
+use std::fs::create_dir_all;
+use std::path::{PathBuf};
+
+pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
+
+    // Load project context
+    let project = ProjectContext::find_and_load(None)?;
+
+    // Get instance config
+    let _instance_config = project.config.get_instance(&instance_name)?;
+
+    print_status("BACKUP", &format!("Backing up instance '{instance_name}'"));
+
+    // Get the instance volume
+    let volumes_dir = project
+        .root
+        .join(".helix")
+        .join(".volumes")
+        .join(&instance_name)
+        .join("user");
+
+    let data_file = volumes_dir.join("data.mdb");
+    let lock_file = volumes_dir.join("lock.mdb");
+
+    if !data_file.exists() {
+        return Err(eyre::eyre!(
+            "instance data file not found at {:?}",
+            data_file
+        ));
+    }
+
+    // Get path to backup instance
+    let backup_dir = match output {
+        Some(path) => path,
+        None => {
+            let ts = chrono::Local::now()
+                .format("backup-%Y%m%d-%H%M%S")
+                .to_string();
+            project.root.join("backups").join(ts)
+        }
+    };
+
+    create_dir_all(&backup_dir)?;
+
+    // Get the size of the data
+    let total_size = fs::metadata(&data_file)?.len() + std::fs::metadata(&lock_file)?.len();
+
+    const TEN_GB: u64 = 10 * 1024 * 1024 * 1024;
+
+    // Check and warn if file is greater than 10 GB
+    if total_size > TEN_GB {
+        if total_size > TEN_GB {
+            let size_gb = (total_size as f64) / (1024.0 * 1024.0 * 1024.0);
+            print_warning(&format!(
+                "Backup size is {:.2} GB — this may take a while.",
+                size_gb
+            ));
+            let confirmed = print_confirm(&format!("Do you want to continue?"));
+            if !confirmed? {
+                print_status("CANCEL", "Backup aborted by user");
+                return Ok(());
+            }
+        }
+    }
+
+    print_status("COPY", "Copying data...");
+
+    // Copy the instance data
+    fs::copy(&data_file, backup_dir.join("data.mdb"))?;
+    fs::copy(&lock_file, backup_dir.join("lock.mdb"))?;
+
+    print_success(&format!(
+        "Backup for '{instance_name}' created at {:?}",
+        backup_dir
+    ));
+
+    Ok(())
+}
