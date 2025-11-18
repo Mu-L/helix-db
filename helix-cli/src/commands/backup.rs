@@ -1,12 +1,12 @@
 use crate::project::ProjectContext;
-use crate::utils::{print_confirm, print_status, print_success, print_warning};
+use crate::utils::{print_confirm, print_error, print_status, print_success, print_warning};
 use eyre::Result;
 use std::fs;
 use std::fs::create_dir_all;
-use std::path::{PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
-
     // Load project context
     let project = ProjectContext::find_and_load(None)?;
 
@@ -67,7 +67,9 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
         }
     }
 
-    print_status("COPY", "Copying data...");
+    // Check if the instance is readable or not
+    copy_with_debug(&data_file, &backup_dir.join("data.mdb"))?;
+    copy_with_debug(&lock_file, &backup_dir.join("lock.mdb"))?;
 
     // Copy the instance data
     fs::copy(&data_file, backup_dir.join("data.mdb"))?;
@@ -77,6 +79,31 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
         "Backup for '{instance_name}' created at {:?}",
         backup_dir
     ));
+
+    Ok(())
+}
+
+pub fn copy_with_debug(src: &Path, dest: &Path) -> std::io::Result<()> {
+    // Check permission for src
+    print_status("BACKUP", &format!("Checking read permission for: src"));
+    match fs::File::open(src) {
+        Ok(_) => print_status("BACKUP", &format!("Readable ✔")),
+        Err(_e) => print_error("Not readable"),
+    }
+
+    // Check permission for dest
+    print_status("BACKUP", &format!("Checking write permission for: dest"));
+    if let Some(dir) = dest.parent() {
+        match fs::File::create(dir.join(".perm_test")) {
+            Ok(_) => {
+                print_status("BACKUP", &format!("Writable ✔"));
+                let _ = fs::remove_file(dir.join(".perm_test"));
+            }
+            Err(_e) => print_error("Not writable"),
+        }
+    }
+
+    println!("Copying {} → {}", src.display(), dest.display());
 
     Ok(())
 }
