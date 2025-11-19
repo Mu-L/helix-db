@@ -26,6 +26,7 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
     let data_file = volumes_dir.join("data.mdb");
     let lock_file = volumes_dir.join("lock.mdb");
 
+    // Check existence before calling metadata()
     if !data_file.exists() {
         return Err(eyre::eyre!(
             "instance data file not found at {:?}",
@@ -52,24 +53,30 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
     const TEN_GB: u64 = 10 * 1024 * 1024 * 1024;
 
     // Check and warn if file is greater than 10 GB
+
     if total_size > TEN_GB {
-        if total_size > TEN_GB {
-            let size_gb = (total_size as f64) / (1024.0 * 1024.0 * 1024.0);
-            print_warning(&format!(
-                "Backup size is {:.2} GB — this may take a while.",
-                size_gb
-            ));
-            let confirmed = print_confirm(&format!("Do you want to continue?"));
-            if !confirmed? {
-                print_status("CANCEL", "Backup aborted by user");
-                return Ok(());
-            }
+        let size_gb = (total_size as f64) / (1024.0 * 1024.0 * 1024.0);
+        print_warning(&format!(
+            "Backup size is {:.2} GB — this may take a while.",
+            size_gb
+        ));
+        let confirmed = print_confirm(&format!("Do you want to continue?"));
+        if !confirmed? {
+            print_status("CANCEL", "Backup aborted by user");
+            return Ok(());
         }
     }
 
     // Check if the instance is readable or not
-    copy_with_debug(&data_file, &backup_dir.join("data.mdb"))?;
-    copy_with_debug(&lock_file, &backup_dir.join("lock.mdb"))?;
+    if !check_read_write_permission(&data_file, &backup_dir.join("data.mdb"))? {
+        print_status("CANCEL", "Backup aborted due to permission failure");
+        return Ok(());
+    }
+
+    if !check_read_write_permission(&lock_file, &backup_dir.join("lock.mdb"))? {
+        print_status("CANCEL", "Backup aborted due to permission failure");
+        return Ok(());
+    }
 
     // Copy the instance data
     fs::copy(&data_file, backup_dir.join("data.mdb"))?;
@@ -83,27 +90,58 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
     Ok(())
 }
 
-pub fn copy_with_debug(src: &Path, dest: &Path) -> std::io::Result<()> {
+// pub fn check_read_write_permission(src: &Path, dest: &Path) -> std::io::Result<()> {
+//     // Check permission for src
+//     print_status("BACKUP", &format!("Checking read permission for: src"));
+//     match fs::File::open(src) {
+//         Ok(_) => print_status("BACKUP", &format!("Readable ✔")),
+//         Err(_e) => print_error("Not readable"),
+//     }
+
+//     // Check permission for dest
+//     print_status("BACKUP", &format!("Checking write permission for: dest"));
+//     if let Some(dir) = dest.parent() {
+//         match fs::File::create(dir.join(".perm_test")) {
+//             Ok(_) => {
+//                 print_status("BACKUP", &format!("Writable ✔"));
+//                 let _ = fs::remove_file(dir.join(".perm_test"));
+//             }
+//             Err(_e) => print_error("Not writable"),
+//         }
+//     }
+
+//     println!("Copying {} → {}", src.display(), dest.display());
+
+//     Ok(())
+// }
+
+pub fn check_read_write_permission(src: &Path, dest: &Path) -> std::io::Result<bool> {
     // Check permission for src
-    print_status("BACKUP", &format!("Checking read permission for: src"));
-    match fs::File::open(src) {
-        Ok(_) => print_status("BACKUP", &format!("Readable ✔")),
-        Err(_e) => print_error("Not readable"),
+    print_status("BACKUP", "Checking read permission for: src");
+    if let Err(_e) = fs::File::open(src) {
+        print_error("Not readable");
+        return Ok(false);
     }
+    print_status("BACKUP", "Readable ✔");
 
     // Check permission for dest
-    print_status("BACKUP", &format!("Checking write permission for: dest"));
+    print_status("BACKUP", "Checking write permission for: dest");
     if let Some(dir) = dest.parent() {
-        match fs::File::create(dir.join(".perm_test")) {
-            Ok(_) => {
-                print_status("BACKUP", &format!("Writable ✔"));
-                let _ = fs::remove_file(dir.join(".perm_test"));
-            }
-            Err(_e) => print_error("Not writable"),
+        let testfile = dir.join(".perm_test");
+
+        if let Err(_e) = fs::File::create(&testfile) {
+            print_error("Not writable");
+            return Ok(false);
         }
+
+        let _ = fs::remove_file(testfile);
+        print_status("BACKUP", "Writable ✔");
+    } else {
+        print_error("Destination has no parent directory");
+        return Ok(false);
     }
 
     println!("Copying {} → {}", src.display(), dest.display());
 
-    Ok(())
+    Ok(true)
 }
