@@ -158,9 +158,6 @@ impl Display for BoExp {
             }
             BoExp::Exists(traversal) => {
                 // Optimize Exists expressions in filter context to use std::iter::once for single values
-                println!("Optimizing Exists expression");
-                println!("{:?}", traversal.traversal_type);
-                println!("{:?}", traversal.source_step);
                 let is_val_traversal = match &traversal.traversal_type {
                     TraversalType::FromIter(var) | TraversalType::FromSingle(var) => match var {
                         GenRef::Std(s) | GenRef::Literal(s) => {
@@ -174,7 +171,6 @@ impl Display for BoExp {
                     },
                     _ => false,
                 };
-                println!("is_val_traversal: {}", is_val_traversal);
 
                 if is_val_traversal {
                     // Create a modified traversal that uses FromSingle instead of FromIter
