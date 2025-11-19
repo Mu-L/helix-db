@@ -26,11 +26,19 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
     let data_file = volumes_dir.join("data.mdb");
     let lock_file = volumes_dir.join("lock.mdb");
 
-    // Check existence before calling metadata()
+    // Check existence of data_file before calling metadata()
     if !data_file.exists() {
         return Err(eyre::eyre!(
             "instance data file not found at {:?}",
             data_file
+        ));
+    }
+
+    // Check existence of lock_file before calling metadata()
+    if !lock_file.exists() {
+        return Err(eyre::eyre!(
+            "instance lock file not found at {:?}",
+            lock_file
         ));
     }
 
@@ -78,6 +86,8 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
         return Ok(());
     }
 
+    println!("Copying {:?} → {:?}", &data_file, &backup_dir);
+
     // Copy the instance data
     fs::copy(&data_file, backup_dir.join("data.mdb"))?;
     fs::copy(&lock_file, backup_dir.join("lock.mdb"))?;
@@ -115,8 +125,6 @@ pub fn check_read_write_permission(src: &Path, dest: &Path) -> std::io::Result<b
         print_error("Destination has no parent directory");
         return Ok(false);
     }
-
-    println!("Copying {} → {}", src.display(), dest.display());
 
     Ok(true)
 }
