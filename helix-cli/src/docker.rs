@@ -3,7 +3,7 @@
 //! Despite the module name, this works with both Docker and Podman as they
 //! share the same CLI interface and support standard Dockerfile formats.
 
-use crate::config::{BuildMode, InstanceInfo,ContainerRuntime};
+use crate::config::{BuildMode, ContainerRuntime, InstanceInfo};
 use crate::project::ProjectContext;
 use crate::utils::{print_confirm, print_status, print_warning};
 use eyre::{Result, eyre};
@@ -14,17 +14,17 @@ use std::time::Duration;
 pub struct DockerManager<'a> {
     project: &'a ProjectContext,
     /// The container runtime to use (Docker or Podman)
-    pub(crate) runtime: ContainerRuntime,  
+    pub(crate) runtime: ContainerRuntime,
 }
-
 
 pub const HELIX_DATA_DIR: &str = "/data";
 
 impl<'a> DockerManager<'a> {
     pub fn new(project: &'a ProjectContext) -> Self {
-        Self { project ,
-        runtime : project.config.project.container_runtime,
-    }
+        Self {
+            project,
+            runtime: project.config.project.container_runtime,
+        }
     }
 
     // === CENTRALIZED NAMING METHODS ===
@@ -109,7 +109,13 @@ impl<'a> DockerManager<'a> {
         let output = Command::new(self.runtime.binary())
             .args(args)
             .output()
-            .map_err(|e| eyre!("Failed to run {} {}: {e}",self.runtime.binary(), args.join(" ")))?;
+            .map_err(|e| {
+                eyre!(
+                    "Failed to run {} {}: {e}",
+                    self.runtime.binary(),
+                    args.join(" ")
+                )
+            })?;
         Ok(output)
     }
 
@@ -126,7 +132,13 @@ impl<'a> DockerManager<'a> {
             .args(&full_args)
             .current_dir(&workspace)
             .output()
-            .map_err(|e| eyre!("Failed to run {} compose {}: {e}", self.runtime.binary() , full_args.join(" ")))?;
+            .map_err(|e| {
+                eyre!(
+                    "Failed to run {} compose {}: {e}",
+                    self.runtime.binary(),
+                    full_args.join(" ")
+                )
+            })?;
         Ok(output)
     }
 
@@ -146,95 +158,95 @@ impl<'a> DockerManager<'a> {
     }
 
     /// Start the container runtime daemon based on platform and runtime
-fn start_runtime_daemon(runtime: ContainerRuntime) -> Result<()> {
-    let platform = Self::detect_platform();
+    fn start_runtime_daemon(runtime: ContainerRuntime) -> Result<()> {
+        let platform = Self::detect_platform();
 
-    match (runtime, platform) {
-        // Docker on macOS
-        (ContainerRuntime::Docker, "macos") => {
-            print_status("DOCKER", "Starting Docker Desktop for macOS...");
-            Command::new("open")
-                .args(["-a", "Docker"])
-                .output()
-                .map_err(|e| eyre!("Failed to start Docker Desktop: {}", e))?;
-        }
-
-        // Podman on macOS
-        (ContainerRuntime::Podman, "macos") => {
-            print_status("PODMAN", "Starting Podman machine on macOS...");
-            
-            // Check if machine exists first
-            let list_output = Command::new("podman")
-                .args(["machine", "list", "--format", "{{.Name}}"])
-                .output()
-                .map_err(|e| eyre!("Failed to list Podman machines: {}", e))?;
-            
-            let machines = String::from_utf8_lossy(&list_output.stdout);
-            
-            if machines.trim().is_empty() {
-                // No machine exists, initialize one
-                print_status("PODMAN", "Initializing Podman machine (first time)...");
-                let init_output = Command::new("podman")
-                    .args(["machine", "init"])
+        match (runtime, platform) {
+            // Docker on macOS
+            (ContainerRuntime::Docker, "macos") => {
+                print_status("DOCKER", "Starting Docker Desktop for macOS...");
+                Command::new("open")
+                    .args(["-a", "Docker"])
                     .output()
-                    .map_err(|e| eyre!("Failed to initialize Podman machine: {}", e))?;
-                
-                if !init_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&init_output.stderr);
-                    return Err(eyre!("Failed to initialize Podman machine: {}", stderr));
-                }
+                    .map_err(|e| eyre!("Failed to start Docker Desktop: {}", e))?;
             }
-            
-            // Start the machine
-            Command::new("podman")
-                .args(["machine", "start"])
-                .output()
-                .map_err(|e| eyre!("Failed to start Podman machine: {}", e))?;
-        }
 
-        // Docker on Linux
-        (ContainerRuntime::Docker, "linux") => {
-            print_status("DOCKER", "Attempting to start Docker daemon on Linux...");
-            let systemctl_result = Command::new("systemctl").args(["start", "docker"]).output();
+            // Podman on macOS
+            (ContainerRuntime::Podman, "macos") => {
+                print_status("PODMAN", "Starting Podman machine on macOS...");
 
-            match systemctl_result {
-                Ok(output) if output.status.success() => {}
-                _ => {
-                    let service_result = Command::new("service")
-                        .args(["docker", "start"])
+                // Check if machine exists first
+                let list_output = Command::new("podman")
+                    .args(["machine", "list", "--format", "{{.Name}}"])
+                    .output()
+                    .map_err(|e| eyre!("Failed to list Podman machines: {}", e))?;
+
+                let machines = String::from_utf8_lossy(&list_output.stdout);
+
+                if machines.trim().is_empty() {
+                    // No machine exists, initialize one
+                    print_status("PODMAN", "Initializing Podman machine (first time)...");
+                    let init_output = Command::new("podman")
+                        .args(["machine", "init"])
                         .output()
-                        .map_err(|e| eyre!("Failed to start Docker daemon: {}", e))?;
+                        .map_err(|e| eyre!("Failed to initialize Podman machine: {}", e))?;
 
-                    if !service_result.status.success() {
-                        let stderr = String::from_utf8_lossy(&service_result.stderr);
-                        return Err(eyre!("Failed to start Docker daemon: {}", stderr));
+                    if !init_output.status.success() {
+                        let stderr = String::from_utf8_lossy(&init_output.stderr);
+                        return Err(eyre!("Failed to initialize Podman machine: {}", stderr));
+                    }
+                }
+
+                // Start the machine
+                Command::new("podman")
+                    .args(["machine", "start"])
+                    .output()
+                    .map_err(|e| eyre!("Failed to start Podman machine: {}", e))?;
+            }
+
+            // Docker on Linux
+            (ContainerRuntime::Docker, "linux") => {
+                print_status("DOCKER", "Attempting to start Docker daemon on Linux...");
+                let systemctl_result = Command::new("systemctl").args(["start", "docker"]).output();
+
+                match systemctl_result {
+                    Ok(output) if output.status.success() => {}
+                    _ => {
+                        let service_result = Command::new("service")
+                            .args(["docker", "start"])
+                            .output()
+                            .map_err(|e| eyre!("Failed to start Docker daemon: {}", e))?;
+
+                        if !service_result.status.success() {
+                            let stderr = String::from_utf8_lossy(&service_result.stderr);
+                            return Err(eyre!("Failed to start Docker daemon: {}", stderr));
+                        }
                     }
                 }
             }
-        }
 
-        // Podman on Linux
-        (ContainerRuntime::Podman, "linux") => {
-            print_status("PODMAN", "Starting Podman service on Linux...");
-            
-            // Try to start user service (rootless)
-            let user_service = Command::new("systemctl")
-                .args(["--user", "start", "podman.socket"])
-                .output();
-            
-            if user_service.is_err() || !user_service.unwrap().status.success() {
-                // Try system service (rootful) as fallback
-                let system_service = Command::new("systemctl")
-                    .args(["start", "podman.socket"])
+            // Podman on Linux
+            (ContainerRuntime::Podman, "linux") => {
+                print_status("PODMAN", "Starting Podman service on Linux...");
+
+                // Try to start user service (rootless)
+                let user_service = Command::new("systemctl")
+                    .args(["--user", "start", "podman.socket"])
                     .output();
-                
-                if let Err(e) = system_service {
-                    print_warning(&format!("Could not start Podman service: {}", e));
+
+                if user_service.is_err() || !user_service.unwrap().status.success() {
+                    // Try system service (rootful) as fallback
+                    let system_service = Command::new("systemctl")
+                        .args(["start", "podman.socket"])
+                        .output();
+
+                    if let Err(e) = system_service {
+                        print_warning(&format!("Could not start Podman service: {}", e));
+                    }
                 }
             }
-        }
-        // Docker on Windows
-        (ContainerRuntime::Docker, "windows") => {
+            // Docker on Windows
+            (ContainerRuntime::Docker, "windows") => {
                 print_status("DOCKER", "Starting Docker Desktop for Windows...");
                 // Try Docker Desktop CLI (4.37+) first
                 let cli_result = Command::new("docker").args(["desktop", "start"]).output();
@@ -258,137 +270,146 @@ fn start_runtime_daemon(runtime: ContainerRuntime) -> Result<()> {
                     }
                 }
             }
-        
 
-        // Podman on Windows
-        (ContainerRuntime::Podman, "windows") => {
-            print_status("PODMAN", "Starting Podman machine on Windows...");
-            
-            // Check if machine exists
-            let list_output = Command::new("podman")
-                .args(["machine", "list", "--format", "{{.Name}}"])
-                .output()
-                .map_err(|e| eyre!("Failed to list Podman machines: {}", e))?;
-            
-            let machines = String::from_utf8_lossy(&list_output.stdout);
-            
-            if machines.trim().is_empty() {
-                // Initialize machine first
-                print_status("PODMAN", "Initializing Podman machine (first time)...");
-                let init_output = Command::new("podman")
-                    .args(["machine", "init"])
+            // Podman on Windows
+            (ContainerRuntime::Podman, "windows") => {
+                print_status("PODMAN", "Starting Podman machine on Windows...");
+
+                // Check if machine exists
+                let list_output = Command::new("podman")
+                    .args(["machine", "list", "--format", "{{.Name}}"])
                     .output()
-                    .map_err(|e| eyre!("Failed to initialize Podman machine: {}", e))?;
-                
-                if !init_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&init_output.stderr);
-                    return Err(eyre!("Failed to initialize Podman machine: {}", stderr));
+                    .map_err(|e| eyre!("Failed to list Podman machines: {}", e))?;
+
+                let machines = String::from_utf8_lossy(&list_output.stdout);
+
+                if machines.trim().is_empty() {
+                    // Initialize machine first
+                    print_status("PODMAN", "Initializing Podman machine (first time)...");
+                    let init_output = Command::new("podman")
+                        .args(["machine", "init"])
+                        .output()
+                        .map_err(|e| eyre!("Failed to initialize Podman machine: {}", e))?;
+
+                    if !init_output.status.success() {
+                        let stderr = String::from_utf8_lossy(&init_output.stderr);
+                        return Err(eyre!("Failed to initialize Podman machine: {}", stderr));
+                    }
+                }
+
+                // Start the machine
+                let start_output = Command::new("podman")
+                    .args(["machine", "start"])
+                    .output()
+                    .map_err(|e| eyre!("Failed to start Podman machine: {}", e))?;
+
+                if !start_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&start_output.stderr);
+                    return Err(eyre!("Failed to start Podman machine: {}", stderr));
                 }
             }
-            
-            // Start the machine
-            let start_output = Command::new("podman")
-                .args(["machine", "start"])
-                .output()
-                .map_err(|e| eyre!("Failed to start Podman machine: {}", e))?;
-            
-            if !start_output.status.success() {
-                let stderr = String::from_utf8_lossy(&start_output.stderr);
-                return Err(eyre!("Failed to start Podman machine: {}", stderr));
+
+            (_, platform) => {
+                return Err(eyre!(
+                    "Unsupported platform '{}' for auto-starting {}",
+                    platform,
+                    runtime.label()
+                ));
             }
         }
 
-        (_, platform) => {
-            return Err(eyre!("Unsupported platform '{}' for auto-starting {}", platform, runtime.label()));
+        Ok(())
+    }
+
+    fn wait_for_runtime(runtime: ContainerRuntime, timeout_secs: u64) -> Result<()> {
+        print_status(runtime.label(), "Waiting for daemon to start...");
+
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_secs(timeout_secs);
+
+        while start.elapsed() < timeout {
+            let output = Command::new(runtime.binary()).args(["info"]).output();
+
+            if let Ok(output) = output
+                && output.status.success()
+            {
+                print_status(runtime.label(), "Daemon is now running");
+                return Ok(());
+            }
+
+            thread::sleep(Duration::from_millis(500));
         }
-    }
 
-    Ok(())
-}
-
-fn wait_for_runtime(runtime: ContainerRuntime, timeout_secs: u64) -> Result<()> {
-    print_status(runtime.label(), "Waiting for daemon to start...");
-
-    let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(timeout_secs);
-
-    while start.elapsed() < timeout {
-        let output = Command::new(runtime.binary()).args(["info"]).output();
-
-        if let Ok(output) = output && output.status.success() {
-            print_status(runtime.label(), "Daemon is now running");
-            return Ok(());
-        }
-
-        thread::sleep(Duration::from_millis(500));
-    }
-
-    Err(eyre!(
-        "Timeout waiting for {} daemon to start. Please start {} manually and try again.",
-        runtime.label(),
-        runtime.binary()
-    ))
-}
-
-    /// Check if container runtime is installed and running, with auto-start option
-pub fn check_runtime_available(runtime: ContainerRuntime) -> Result<()> {
-    let cmd = runtime.binary();
-    
-    let output = Command::new(cmd)
-        .args(["--version"])
-        .output()
-        .map_err(|_| eyre!("{} is not installed or not available in PATH", cmd))?;
-
-    if !output.status.success() {
-        return Err(eyre!("{} is installed but not working properly", cmd));
-    }
-
-    // Check if daemon is running
-    let output = Command::new(cmd)
-        .args(["info"])
-        .output()
-        .map_err(|_| eyre!("Failed to check {} daemon status", cmd))?;
-
-    if !output.status.success() {
-        // Daemon not running - ask user if they want to start it
-        let message = format!(
-            "{} daemon is not running. Would you like to start {}?",
+        Err(eyre!(
+            "Timeout waiting for {} daemon to start. Please start {} manually and try again.",
             runtime.label(),
             runtime.binary()
-        );
-        let should_start = print_confirm(&message).unwrap_or(false);
+        ))
+    }
 
-        if should_start {
-            // Try to start the runtime
-            Self::start_runtime_daemon(runtime)?;
+    /// Check if container runtime is installed and running, with auto-start option
+    pub fn check_runtime_available(runtime: ContainerRuntime) -> Result<()> {
+        let cmd = runtime.binary();
 
-            // Wait for it to be ready
-            Self::wait_for_runtime(runtime, 15)?;
+        let output = Command::new(cmd)
+            .args(["--version"])
+            .output()
+            .map_err(|_| eyre!("{} is not installed or not available in PATH", cmd))?;
 
-            // Verify it's running now
-            let verify_output = Command::new(cmd)
-                .args(["info"])
-                .output()
-                .map_err(|_| eyre!("Failed to verify {} daemon status", cmd))?;
+        if !output.status.success() {
+            return Err(eyre!("{} is installed but not working properly", cmd));
+        }
 
-            if !verify_output.status.success() {
+        // Check if daemon is running
+        let output = Command::new(cmd)
+            .args(["info"])
+            .output()
+            .map_err(|_| eyre!("Failed to check {} daemon status", cmd))?;
+
+        if !output.status.success() {
+            // Daemon not running - ask user if they want to start it
+            let message = format!(
+                "{} daemon is not running. Would you like to start {}?",
+                runtime.label(),
+                runtime.binary()
+            );
+            let should_start = print_confirm(&message).unwrap_or(false);
+
+            if should_start {
+                // Try to start the runtime
+                Self::start_runtime_daemon(runtime)?;
+
+                // Wait for it to be ready
+                Self::wait_for_runtime(runtime, 15)?;
+
+                // Verify it's running now
+                let verify_output = Command::new(cmd)
+                    .args(["info"])
+                    .output()
+                    .map_err(|_| eyre!("Failed to verify {} daemon status", cmd))?;
+
+                if !verify_output.status.success() {
+                    return Err(eyre!(
+                        "{} daemon failed to start. Please start {} manually and try again.",
+                        runtime.label(),
+                        cmd
+                    ));
+                }
+            } else {
+                print_warning(&format!(
+                    "{} daemon must be running to execute this command.",
+                    runtime.label()
+                ));
                 return Err(eyre!(
-                    "{} daemon failed to start. Please start {} manually and try again.",
-                    runtime.label(),
+                    "{} daemon is not running. Please start {}.",
+                    cmd,
                     cmd
                 ));
             }
-        } else {
-            print_warning(&format!(
-                "{} daemon must be running to execute this command.",
-                runtime.label()
-            ));
-            return Err(eyre!("{} daemon is not running. Please start {}.", cmd, cmd));
         }
-    }
 
-    Ok(())
-}
+        Ok(())
+    }
 
     /// Generate Dockerfile for an instance
     pub fn generate_dockerfile(
@@ -530,7 +551,7 @@ networks:
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("{} build failed:\n{stderr}",self.runtime.binary()));
+            return Err(eyre!("{} build failed:\n{stderr}", self.runtime.binary()));
         }
 
         print_status(self.runtime.label(), "Image built successfully");
@@ -539,7 +560,10 @@ networks:
 
     /// Start instance using docker/podman compose
     pub fn start_instance(&self, instance_name: &str) -> Result<()> {
-        print_status(self.runtime.label(), &format!("Starting instance '{instance_name}'..."));
+        print_status(
+            self.runtime.label(),
+            &format!("Starting instance '{instance_name}'..."),
+        );
 
         let output = self.run_compose_command(instance_name, vec!["up", "-d"])?;
 
@@ -557,7 +581,10 @@ networks:
 
     /// Stop instance using docker/podman compose
     pub fn stop_instance(&self, instance_name: &str) -> Result<()> {
-        print_status(self.runtime.label(), &format!("Stopping instance '{instance_name}'..."));
+        print_status(
+            self.runtime.label(),
+            &format!("Stopping instance '{instance_name}'..."),
+        );
 
         let output = self.run_compose_command(instance_name, vec!["down"])?;
 
@@ -642,7 +669,10 @@ networks:
 
     /// Remove instance containers and optionally volumes
     pub fn prune_instance(&self, instance_name: &str, remove_volumes: bool) -> Result<()> {
-        print_status(self.runtime.label(), &format!("Pruning instance '{instance_name}'..."));
+        print_status(
+            self.runtime.label(),
+            &format!("Pruning instance '{instance_name}'..."),
+        );
 
         // Check if workspace exists - if not, there's nothing to prune
         let workspace = self.project.instance_workspace(instance_name);
@@ -707,7 +737,7 @@ networks:
             let _ = self.run_docker_command(&["volume", "rm", &volume_to_remove]);
         }
 
-        Ok(()) 
+        Ok(())
     }
 
     /// Remove Docker/Podman images associated with an instance
@@ -743,7 +773,7 @@ networks:
                 "reference=helix-*",
             ])
             .output()
-            .map_err(|e| eyre!("Failed to list {} images: {e}",runtime.binary()))?;
+            .map_err(|e| eyre!("Failed to list {} images: {e}", runtime.binary()))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -772,7 +802,10 @@ networks:
         }
 
         let count = images.len();
-        print_status(runtime.label(), &format!("Found {count} Helix images to remove"));
+        print_status(
+            runtime.label(),
+            &format!("Found {count} Helix images to remove"),
+        );
 
         for image in images {
             let output = Command::new(runtime.binary())
@@ -807,7 +840,10 @@ networks:
 
     pub fn push(&self, image_name: &str, registry_url: &str) -> Result<()> {
         let registry_image = format!("{registry_url}/{image_name}");
-        print_status(self.runtime.label(), &format!("Pushing image: {registry_image}"));
+        print_status(
+            self.runtime.label(),
+            &format!("Pushing image: {registry_image}"),
+        );
         let output = Command::new(self.runtime.binary())
             .arg("push")
             .arg(&registry_image)

@@ -106,7 +106,10 @@ pub struct DbConfig {
     pub bm25: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
-    #[serde(default = "default_embedding_model", skip_serializing_if = "is_default_embedding_model")]
+    #[serde(
+        default = "default_embedding_model",
+        skip_serializing_if = "is_default_embedding_model"
+    )]
     pub embedding_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graphvis_node_label: Option<String>,
@@ -120,7 +123,6 @@ pub struct LocalInstanceConfig {
     pub build_mode: BuildMode,
     #[serde(flatten)]
     pub db_config: DbConfig,
-    
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -441,7 +443,6 @@ impl HelixConfig {
                 port: Some(6969),
                 build_mode: BuildMode::Debug,
                 db_config: DbConfig::default(),
-                
             },
         );
 
