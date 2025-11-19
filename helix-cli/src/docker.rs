@@ -234,7 +234,8 @@ impl<'a> DockerManager<'a> {
                     .args(["--user", "start", "podman.socket"])
                     .output();
 
-                if user_service.is_err() || !user_service.unwrap().status.success() {
+                // Only skip fallback if command succeeded AND status is success
+                if !user_service.is_ok_and(|output| output.status.success()) {
                     // Try system service (rootful) as fallback
                     let system_service = Command::new("systemctl")
                         .args(["start", "podman.socket"])
