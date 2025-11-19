@@ -57,7 +57,10 @@ impl<'a> DockerManager<'a> {
 
     /// Get environment variables for an instance
     pub(crate) fn environment_variables(&self, instance_name: &str) -> Vec<String> {
-        vec![
+        // Load .env file (silently ignore if it doesn't exist)
+        let _ = dotenvy::dotenv();
+
+        let mut env_vars = vec![
             {
                 let port = self
                     .project
@@ -74,7 +77,17 @@ impl<'a> DockerManager<'a> {
                 let project_name = &self.project.config.project.name;
                 format!("HELIX_PROJECT={project_name}")
             },
-        ]
+        ];
+
+        // Add API keys from environment (which includes .env after dotenv() call)
+        if let Ok(openai_key) = std::env::var("OPENAI_API_KEY") {
+            env_vars.push(format!("OPENAI_API_KEY={openai_key}"));
+        }
+        if let Ok(gemini_key) = std::env::var("GEMINI_API_KEY") {
+            env_vars.push(format!("GEMINI_API_KEY={gemini_key}"));
+        }
+
+        env_vars
     }
 
     /// Get the container name for an instance
@@ -220,24 +233,32 @@ fn start_runtime_daemon(runtime: ContainerRuntime) -> Result<()> {
                 }
             }
         }
-
         // Docker on Windows
         (ContainerRuntime::Docker, "windows") => {
-            print_status("DOCKER", "Starting Docker Desktop for Windows...");
-            let cli_result = Command::new("docker")
-                .args(["desktop", "start"])
-                .output();
+                print_status("DOCKER", "Starting Docker Desktop for Windows...");
+                // Try Docker Desktop CLI (4.37+) first
+                let cli_result = Command::new("docker").args(["desktop", "start"]).output();
 
-            match cli_result {
-                Ok(output) if output.status.success() => {}
-                _ => {
-                    Command::new("cmd")
-                        .args(["/c", "start", "", "\"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe\""])
-                        .output()
-                        .map_err(|e| eyre!("Failed to start Docker Desktop: {}", e))?;
+                match cli_result {
+                    Ok(output) if output.status.success() => {
+                        // Modern Docker Desktop CLI worked
+                    }
+                    _ => {
+                        // Fallback to direct executable path for older versions
+                        // Note: Empty string "" is required as window title parameter
+                        Command::new("cmd")
+                            .args([
+                                "/c",
+                                "start",
+                                "",
+                                "\"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe\"",
+                            ])
+                            .output()
+                            .map_err(|e| eyre!("Failed to start Docker Desktop: {}", e))?;
+                    }
                 }
             }
-        }
+        
 
         // Podman on Windows
         (ContainerRuntime::Podman, "windows") => {
@@ -458,7 +479,13 @@ CMD ["helix-container"]
         let service_name = Self::service_name();
         let image_name = self.image_name(instance_name, instance_config.build_mode());
         let container_name = self.container_name(instance_name);
-        let network_name = self.network_name(instance_name);
+        let network_name = self.network_name(instance_name); // Get all environment variables dynamically
+        let env_vars = self.environment_variables(instance_name);
+        let env_section = env_vars
+            .iter()
+            .map(|var| format!("      - {var}"))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let compose = format!(
             r#"# Generated docker-compose.yml for Helix instance: {instance_name}
@@ -475,10 +502,7 @@ services:
     volumes:
       - ../.volumes/{instance_name}:/data
     environment:
-      - HELIX_PORT={port}
-      - HELIX_DATA_DIR={data_dir}
-      - HELIX_INSTANCE={instance_name}
-      - HELIX_PROJECT={project_name}
+{env_section}
     restart: unless-stopped
     networks:
       - {network_name}
@@ -490,8 +514,6 @@ networks:
             platform = instance_config
                 .docker_build_target()
                 .map_or("".to_string(), |p| format!("platforms:\n        - {p}")),
-            project_name = self.project.config.project.name,
-            data_dir = HELIX_DATA_DIR,
         );
 
         Ok(compose)
