@@ -90,31 +90,6 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
     Ok(())
 }
 
-// pub fn check_read_write_permission(src: &Path, dest: &Path) -> std::io::Result<()> {
-//     // Check permission for src
-//     print_status("BACKUP", &format!("Checking read permission for: src"));
-//     match fs::File::open(src) {
-//         Ok(_) => print_status("BACKUP", &format!("Readable ✔")),
-//         Err(_e) => print_error("Not readable"),
-//     }
-
-//     // Check permission for dest
-//     print_status("BACKUP", &format!("Checking write permission for: dest"));
-//     if let Some(dir) = dest.parent() {
-//         match fs::File::create(dir.join(".perm_test")) {
-//             Ok(_) => {
-//                 print_status("BACKUP", &format!("Writable ✔"));
-//                 let _ = fs::remove_file(dir.join(".perm_test"));
-//             }
-//             Err(_e) => print_error("Not writable"),
-//         }
-//     }
-
-//     println!("Copying {} → {}", src.display(), dest.display());
-
-//     Ok(())
-// }
-
 pub fn check_read_write_permission(src: &Path, dest: &Path) -> std::io::Result<bool> {
     // Check permission for src
     print_status("BACKUP", "Checking read permission for: src");
