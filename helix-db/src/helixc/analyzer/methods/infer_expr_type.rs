@@ -588,6 +588,16 @@ pub(crate) fn infer_expr_type<'a>(
                     Some(id) => match id {
                         IdType::Identifier { value, loc } => {
                             is_valid_identifier(ctx, original_query, loc.clone(), value.as_str());
+                            // Validate that the identifier exists in scope or is a parameter
+                            if !scope.contains_key(value.as_str()) && is_param(original_query, value.as_str()).is_none() {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    loc.clone(),
+                                    E301,
+                                    value.as_str()
+                                );
+                            }
                             // Check if this variable is plural
                             let is_plural = scope
                                 .get(value.as_str())
@@ -626,6 +636,16 @@ pub(crate) fn infer_expr_type<'a>(
                     Some(id) => match id {
                         IdType::Identifier { value, loc } => {
                             is_valid_identifier(ctx, original_query, loc.clone(), value.as_str());
+                            // Validate that the identifier exists in scope or is a parameter
+                            if !scope.contains_key(value.as_str()) && is_param(original_query, value.as_str()).is_none() {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    loc.clone(),
+                                    E301,
+                                    value.as_str()
+                                );
+                            }
                             // Check if this variable is plural
                             let is_plural = scope
                                 .get(value.as_str())
