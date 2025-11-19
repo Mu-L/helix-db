@@ -1274,21 +1274,29 @@ pub(crate) fn infer_expr_type<'a>(
             assert!(matches!(stmt, Some(GeneratedStatement::Traversal(_))));
             let traversal = match stmt.unwrap() {
                 GeneratedStatement::Traversal(mut tr) => {
-                    let source_variable = match tr.source_step.inner() {
-                        SourceStep::Identifier(id) => id.inner().clone(),
-                        _ => DEFAULT_VAR_NAME.to_string(),
-                    };
-                    // Check if the variable is single or plural to determine traversal type
-                    let is_single = scope
-                        .get(source_variable.as_str())
-                        .map(|var_info| var_info.is_single)
-                        .unwrap_or(false);
+                    // Only modify traversal_type if source is Identifier or Anonymous
+                    match tr.source_step.inner() {
+                        SourceStep::Identifier(id) => {
+                            let source_variable = id.inner().clone();
+                            // Check if the variable is single or plural to determine traversal type
+                            let is_single = scope
+                                .get(source_variable.as_str())
+                                .map(|var_info| var_info.is_single)
+                                .unwrap_or(false);
 
-                    tr.traversal_type = if is_single {
-                        TraversalType::FromSingle(GenRef::Std(source_variable))
-                    } else {
-                        TraversalType::FromIter(GenRef::Std(source_variable))
-                    };
+                            tr.traversal_type = if is_single {
+                                TraversalType::FromSingle(GenRef::Std(source_variable))
+                            } else {
+                                TraversalType::FromIter(GenRef::Std(source_variable))
+                            };
+                        }
+                        SourceStep::Anonymous => {
+                            tr.traversal_type = TraversalType::FromSingle(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
+                        }
+                        _ => {
+                            // For AddN, AddV, AddE, SearchVector, etc., leave traversal_type unchanged (Ref)
+                        }
+                    }
                     tr.should_collect = ShouldCollect::No;
                     tr
                 }

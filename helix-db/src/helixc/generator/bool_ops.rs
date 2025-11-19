@@ -1,7 +1,10 @@
 use core::fmt;
 use std::fmt::Display;
 
-use crate::helixc::generator::traversal_steps::{Step, Traversal, TraversalType};
+use crate::helixc::generator::{
+    source_steps::SourceStep,
+    traversal_steps::{Step, Traversal, TraversalType},
+};
 
 use super::utils::{GenRef, GeneratedValue, Separator};
 
@@ -155,13 +158,23 @@ impl Display for BoExp {
             }
             BoExp::Exists(traversal) => {
                 // Optimize Exists expressions in filter context to use std::iter::once for single values
+                println!("Optimizing Exists expression");
+                println!("{:?}", traversal.traversal_type);
+                println!("{:?}", traversal.source_step);
                 let is_val_traversal = match &traversal.traversal_type {
                     TraversalType::FromIter(var) | TraversalType::FromSingle(var) => match var {
-                        GenRef::Std(s) | GenRef::Literal(s) => s == "val",
+                        GenRef::Std(s) | GenRef::Literal(s) => {
+                            s == "val"
+                                && matches!(
+                                    traversal.source_step.inner(),
+                                    SourceStep::Identifier(_) | SourceStep::Anonymous
+                                )
+                        }
                         _ => false,
                     },
                     _ => false,
                 };
+                println!("is_val_traversal: {}", is_val_traversal);
 
                 if is_val_traversal {
                     // Create a modified traversal that uses FromSingle instead of FromIter
