@@ -132,7 +132,7 @@ async fn prune_unused_resources(project: &ProjectContext) -> Result<()> {
     print_newline();
     let runtime = project.config.project.container_runtime;
     // Check Docker availability
-    print_status("PRUNE", "Checking Docker availability");
+    print_status("PRUNE", "Checking container runtime availability");
     DockerManager::check_runtime_available(runtime)?;
 
     print_status("PRUNE", "Running Docker system cleanup");
