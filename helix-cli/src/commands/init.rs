@@ -32,13 +32,12 @@ pub async fn run(
     .await;
 
     // If there was an error, perform cleanup
-    if let Err(ref e) = result {
-        if cleanup_tracker.has_tracked_resources() {
+    if let Err(ref e) = result
+        && cleanup_tracker.has_tracked_resources() {
             eprintln!("Init failed, performing cleanup: {}", e);
             let summary = cleanup_tracker.cleanup();
             summary.log_summary();
         }
-    }
 
     result
 }

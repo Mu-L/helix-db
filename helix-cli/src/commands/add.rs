@@ -18,13 +18,12 @@ pub async fn run(deployment_type: CloudDeploymentTypeCommand) -> Result<()> {
     let result = run_add_inner(deployment_type, &mut cleanup_tracker).await;
 
     // If there was an error, perform cleanup
-    if let Err(ref e) = result {
-        if cleanup_tracker.has_tracked_resources() {
+    if let Err(ref e) = result
+        && cleanup_tracker.has_tracked_resources() {
             eprintln!("Add failed, performing cleanup: {}", e);
             let summary = cleanup_tracker.cleanup();
             summary.log_summary();
         }
-    }
 
     result
 }

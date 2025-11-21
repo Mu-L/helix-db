@@ -25,6 +25,12 @@ pub struct CleanupSummary {
     pub errors: Vec<String>,
 }
 
+impl Default for CleanupTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CleanupTracker {
     /// Create a new cleanup tracker
     pub fn new() -> Self {
