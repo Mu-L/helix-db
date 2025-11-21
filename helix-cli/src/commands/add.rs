@@ -1,3 +1,4 @@
+use crate::cleanup::CleanupTracker;
 use crate::CloudDeploymentTypeCommand;
 use crate::commands::integrations::ecr::{EcrAuthType, EcrManager};
 use crate::commands::integrations::fly::{FlyAuthType, FlyManager, VmSize};
@@ -11,6 +12,26 @@ use eyre::Result;
 use std::env;
 
 pub async fn run(deployment_type: CloudDeploymentTypeCommand) -> Result<()> {
+    let mut cleanup_tracker = CleanupTracker::new();
+
+    // Execute the add logic, capturing any errors
+    let result = run_add_inner(deployment_type, &mut cleanup_tracker).await;
+
+    // If there was an error, perform cleanup
+    if let Err(ref e) = result
+        && cleanup_tracker.has_tracked_resources() {
+            eprintln!("Add failed, performing cleanup: {}", e);
+            let summary = cleanup_tracker.cleanup();
+            summary.log_summary();
+        }
+
+    result
+}
+
+async fn run_add_inner(
+    deployment_type: CloudDeploymentTypeCommand,
+    cleanup_tracker: &mut CleanupTracker,
+) -> Result<()> {
     let cwd = env::current_dir()?;
     let mut project_context = ProjectContext::find_and_load(Some(&cwd))?;
 
@@ -33,6 +54,10 @@ pub async fn run(deployment_type: CloudDeploymentTypeCommand) -> Result<()> {
         "ADD",
         &format!("Adding instance '{instance_name}' to Helix project"),
     );
+
+    // Backup the original config before any modifications
+    let config_path = project_context.root.join("helix.toml");
+    cleanup_tracker.backup_config(&project_context.config, config_path.clone());
 
     // Determine instance type
 
