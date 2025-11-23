@@ -25,6 +25,8 @@ pub struct ProjectConfig {
         deserialize_with = "deserialize_path"
     )]
     pub queries: PathBuf,
+    #[serde(default = "default_container_runtime")]
+    pub container_runtime: ContainerRuntime,
 }
 
 fn default_queries_path() -> PathBuf {
@@ -46,7 +48,34 @@ where
     // Normalize path separators for cross-platform compatibility
     Ok(PathBuf::from(s.replace('\\', "/")))
 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ContainerRuntime {
+    #[default]
+    Docker,
+    Podman,
+}
 
+impl ContainerRuntime {
+    /// Get the CLI command name for this runtime
+    pub fn binary(&self) -> &'static str {
+        match self {
+            Self::Docker => "docker",
+            Self::Podman => "podman",
+        }
+    }
+
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Docker => "DOCKER",
+            Self::Podman => "PODMAN",
+        }
+    }
+}
+
+fn default_container_runtime() -> ContainerRuntime {
+    ContainerRuntime::Docker
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VectorConfig {
     #[serde(default = "default_m")]
@@ -77,7 +106,10 @@ pub struct DbConfig {
     pub bm25: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
-    #[serde(default = "default_embedding_model", skip_serializing_if = "is_default_embedding_model")]
+    #[serde(
+        default = "default_embedding_model",
+        skip_serializing_if = "is_default_embedding_model"
+    )]
     pub embedding_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graphvis_node_label: Option<String>,
@@ -418,6 +450,7 @@ impl HelixConfig {
             project: ProjectConfig {
                 name: project_name.to_string(),
                 queries: default_queries_path(),
+                container_runtime: default_container_runtime(),
             },
             local,
             cloud: HashMap::new(),

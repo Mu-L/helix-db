@@ -67,16 +67,20 @@ async fn run_add_inner(
             let helix_manager = HelixManager::new(&project_context);
 
             // Create cloud instance configuration
-            let cloud_config = helix_manager.create_instance_config(&instance_name, region).await?;
+            let cloud_config = helix_manager
+                .create_instance_config(&instance_name, region)
+                .await?;
 
             // Initialize the cloud cluster
-            helix_manager.init_cluster(&instance_name, &cloud_config).await?;
+            helix_manager
+                .init_cluster(&instance_name, &cloud_config)
+                .await?;
 
             // Insert into project configuration
-            project_context
-                .config
-                .cloud
-                .insert(instance_name.clone(), CloudConfig::Helix(cloud_config.clone()));
+            project_context.config.cloud.insert(
+                instance_name.clone(),
+                CloudConfig::Helix(cloud_config.clone()),
+            );
 
             print_status("CLOUD", "Helix cloud instance configuration added");
         }
@@ -95,7 +99,9 @@ async fn run_add_inner(
                 .await?;
 
             // Initialize the ECR repository
-            ecr_manager.init_repository(&instance_name, &ecr_config).await?;
+            ecr_manager
+                .init_repository(&instance_name, &ecr_config)
+                .await?;
 
             // Save configuration to ecr.toml
             ecr_manager.save_config(&instance_name, &ecr_config).await?;
@@ -135,12 +141,14 @@ async fn run_add_inner(
             );
 
             // Initialize the Fly.io app
-            fly_manager.init_app(&instance_name, &instance_config).await?;
+            fly_manager
+                .init_app(&instance_name, &instance_config)
+                .await?;
 
-            project_context
-                .config
-                .cloud
-                .insert(instance_name.clone(), CloudConfig::FlyIo(instance_config.clone()));
+            project_context.config.cloud.insert(
+                instance_name.clone(),
+                CloudConfig::FlyIo(instance_config.clone()),
+            );
         }
         _ => {
             // Add local instance with default configuration
