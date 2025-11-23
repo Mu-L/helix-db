@@ -3,6 +3,7 @@ use eyre::Result;
 use helix_cli::{AuthAction, CloudDeploymentTypeCommand, MetricsAction};
 use std::path::PathBuf;
 
+mod cleanup;
 mod commands;
 mod config;
 mod docker;
