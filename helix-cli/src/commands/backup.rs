@@ -68,7 +68,7 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
             "Backup size is {:.2} GB — this may take a while.",
             size_gb
         ));
-        let confirmed = print_confirm(&format!("Do you want to continue?"));
+        let confirmed = print_confirm("Do you want to continue?");
         if !confirmed? {
             print_status("CANCEL", "Backup aborted by user");
             return Ok(());
