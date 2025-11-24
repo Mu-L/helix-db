@@ -203,8 +203,8 @@ pub async fn github_login() -> Result<(String, String)> {
                 SseEvent::DeviceCodeTimeout { message } => {
                     Err(eyre!("Login timeout: {}. Please try again.", message))
                 }
-                SseEvent::Error { message, .. } => {
-                    Err(eyre!("Login error: {}", message))
+                SseEvent::Error { error } => {
+                    Err(eyre!("Login error: {}", error))
                 }
                 _ => {
                     // Ignore other event types during login

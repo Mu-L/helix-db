@@ -268,10 +268,10 @@ impl<'a> HelixManager<'a> {
                             event_source.close();
                             break;
                         }
-                        SseEvent::Error { message, .. } => {
-                            progress.finish_error(&format!("Error: {}", message));
+                        SseEvent::Error { error } => {
+                            progress.finish_error(&format!("Error: {}", error));
                             event_source.close();
-                            return Err(eyre!("Deployment failed: {}", message));
+                            return Err(eyre!("Deployment failed: {}", error));
                         }
                         _ => {
                             // Ignore other event types

@@ -2,11 +2,10 @@ use crate::{
     commands::integrations::helix::CLOUD_AUTHORITY,
     config::{CloudInstanceConfig, DbConfig},
     project::ProjectContext,
-    sse_client::{SseClient, SseEvent, SseProgressHandler},
+    sse_client::SseEvent,
     utils::{print_error, print_info, print_status, print_success},
 };
 use eyre::{OptionExt, Result, eyre};
-use serde_json::json;
 
 /// Create a new cluster in Helix Cloud
 pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
@@ -15,12 +14,24 @@ pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
     // Load project context
     let project = ProjectContext::find_and_load(None)?;
 
-    // Check if this instance already exists
-    if project.config.cloud.contains_key(instance_name) {
-        return Err(eyre!(
-            "Instance '{}' already exists in helix.toml. Use a different name or remove the existing instance.",
-            instance_name
-        ));
+    // Check if this instance already exists and has a real cluster
+    if let Some(existing_config) = project.config.cloud.get(instance_name) {
+        if let crate::config::CloudConfig::Helix(config) = existing_config {
+            // If cluster already has a real ID (not placeholder), error out
+            if config.cluster_id != "YOUR_CLUSTER_ID" {
+                return Err(eyre!(
+                    "Instance '{}' already has a cluster (ID: {}). Cannot create a new cluster for this instance.",
+                    instance_name,
+                    config.cluster_id
+                ));
+            }
+            // Otherwise, proceed to create the cluster and update the config
+        } else {
+            return Err(eyre!(
+                "Instance '{}' exists but is not a Helix Cloud instance.",
+                instance_name
+            ));
+        }
     }
 
     // Get credentials
@@ -39,106 +50,106 @@ pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
         return Err(eyre!("Invalid credentials"));
     }
 
-    // Generate cluster ID
-    let cluster_id = uuid::Uuid::new_v4().to_string();
-
-    // Prepare create cluster request
+    // Get or default region
     let region = region.unwrap_or_else(|| "us-east-1".to_string());
-    let create_request = json!({
-        "name": instance_name,
-        "cluster_id": &cluster_id,
-        "region": &region,
-        "instance_type": "small",
-        "user_id": credentials.user_id
-    });
 
-    // POST to create-cluster endpoint
-    let client = reqwest::Client::new();
+    // Connect to SSE stream for cluster creation
+    // The server will send CheckoutRequired, PaymentConfirmed, CreatingProject, ProjectCreated events
+    print_status("INITIATING", "Starting cluster creation...");
+
     let create_url = format!("http://{}/create-cluster", *CLOUD_AUTHORITY);
+    let client = reqwest::Client::new();
 
-    let response = client
+    use reqwest_eventsource::RequestBuilderExt;
+    let mut event_source = client
         .post(&create_url)
         .header("x-api-key", &credentials.helix_admin_key)
         .header("Content-Type", "application/json")
-        .json(&create_request)
-        .send()
-        .await?;
+        .eventsource()?;
 
-    if !response.status().is_success() {
-        let error_text = response.text().await?;
-        return Err(eyre!("Failed to initiate cluster creation: {}", error_text));
-    }
+    let mut final_cluster_id: Option<String> = None;
+    let mut checkout_opened = false;
 
-    // Parse response to get Stripe checkout URL
-    let response_data: serde_json::Value = response.json().await?;
-    let stripe_url = response_data
-        .get("stripe_url")
-        .and_then(|v| v.as_str())
-        .ok_or_eyre("No Stripe checkout URL in response")?;
-
-    print_info(&format!("Opening Stripe checkout in your browser..."));
-    print_info(&format!("If the browser doesn't open, visit: {}", stripe_url));
-
-    // Open browser to Stripe checkout
-    if let Err(e) = webbrowser::open(stripe_url) {
-        print_error(&format!("Failed to open browser: {}", e));
-        print_info(&format!("Please manually open: {}", stripe_url));
-    }
-
-    // Connect to SSE stream for provisioning status
-    print_status("WAITING", "Waiting for payment confirmation...");
-
-    let sse_url = format!("http://{}/create-cluster-status/{}", *CLOUD_AUTHORITY, cluster_id);
-    let sse_client = SseClient::new(sse_url)
-        .header("x-api-key", &credentials.helix_admin_key)
-        .timeout(std::time::Duration::from_secs(1800)); // 30 minutes
-
-    let progress = SseProgressHandler::new("Provisioning cluster...");
-    let mut cluster_ready = false;
-
-    sse_client
-        .connect(|event| {
-            match event {
-                SseEvent::Progress { percentage, message } => {
-                    progress.set_progress(percentage);
-                    if let Some(msg) = message {
-                        progress.set_message(&msg);
-                    }
-                    Ok(true)
-                }
-                SseEvent::Log { message, .. } => {
-                    progress.println(&message);
-                    Ok(true)
-                }
-                SseEvent::StatusTransition { to, message, .. } => {
-                    let msg = message.unwrap_or_else(|| format!("Status: {}", to));
-                    progress.println(&msg);
-                    Ok(true)
-                }
-                SseEvent::Success { .. } => {
-                    cluster_ready = true;
-                    progress.finish("Cluster provisioned successfully!");
-                    Ok(false) // Stop processing
-                }
-                SseEvent::Error { message, .. } => {
-                    progress.finish_error(&format!("Error: {}", message));
-                    Err(eyre!("Cluster creation failed: {}", message))
-                }
-                _ => Ok(true), // Ignore other events
+    use futures_util::StreamExt;
+    while let Some(event) = event_source.next().await {
+        match event {
+            Ok(reqwest_eventsource::Event::Open) => {
+                // Connection opened
             }
-        })
-        .await?;
+            Ok(reqwest_eventsource::Event::Message(message)) => {
+                // Debug: print raw data
+                eprintln!("DEBUG: Received SSE data: {}", message.data);
 
-    if !cluster_ready {
-        return Err(eyre!("Cluster creation did not complete successfully"));
+                let sse_event: SseEvent = match serde_json::from_str(&message.data) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        print_error(&format!("Failed to parse event: {} | Raw data: {}", e, message.data));
+                        continue;
+                    }
+                };
+
+                match sse_event {
+                    SseEvent::CheckoutRequired { url } => {
+                        if !checkout_opened {
+                            print_info("Opening Stripe checkout in your browser...");
+                            print_info(&format!("If the browser doesn't open, visit: {}", url));
+
+                            if let Err(e) = webbrowser::open(&url) {
+                                print_error(&format!("Failed to open browser: {}", e));
+                                print_info(&format!("Please manually open: {}", url));
+                            }
+
+                            checkout_opened = true;
+                            print_status("WAITING", "Waiting for payment confirmation...");
+                        }
+                    }
+                    SseEvent::PaymentConfirmed => {
+                        print_success("Payment confirmed!");
+                    }
+                    SseEvent::CreatingProject => {
+                        print_status("CREATING", "Creating cluster...");
+                    }
+                    SseEvent::ProjectCreated { cluster_id } => {
+                        final_cluster_id = Some(cluster_id);
+                        print_success("Cluster created successfully!");
+                        event_source.close();
+                        break;
+                    }
+                    SseEvent::Error { error } => {
+                        print_error(&format!("Error: {}", error));
+                        event_source.close();
+                        return Err(eyre!("Cluster creation failed: {}", error));
+                    }
+                    _ => {
+                        // Ignore other event types
+                    }
+                }
+            }
+            Err(err) => {
+                print_error(&format!("Stream error: {}", err));
+                return Err(eyre!("Cluster creation stream error: {}", err));
+            }
+        }
     }
+
+    let cluster_id = final_cluster_id.ok_or_eyre("Cluster creation completed but no cluster_id received")?;
 
     // Save cluster configuration to helix.toml
-    let config = CloudInstanceConfig {
-        cluster_id: cluster_id.clone(),
-        region: Some(region.clone()),
-        build_mode: crate::config::BuildMode::Release,
-        db_config: DbConfig::default(),
+    // If instance already exists, preserve its existing settings and just update cluster_id
+    let config = if let Some(crate::config::CloudConfig::Helix(existing)) = project.config.cloud.get(instance_name) {
+        CloudInstanceConfig {
+            cluster_id: cluster_id.clone(),
+            region: existing.region.clone().or(Some(region.clone())),
+            build_mode: existing.build_mode,
+            db_config: existing.db_config.clone(),
+        }
+    } else {
+        CloudInstanceConfig {
+            cluster_id: cluster_id.clone(),
+            region: Some(region.clone()),
+            build_mode: crate::config::BuildMode::Release,
+            db_config: DbConfig::default(),
+        }
     };
 
     // Update helix.toml

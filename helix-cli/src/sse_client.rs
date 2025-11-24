@@ -7,7 +7,7 @@ use std::time::Duration;
 
 /// SSE event types from Helix Cloud backend
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "PascalCase")]
+#[serde(rename_all = "snake_case")]
 pub enum SseEvent {
     /// GitHub login: Contains device code and verification URI
     UserVerification {
@@ -27,10 +27,7 @@ pub enum SseEvent {
     DeviceCodeTimeout { message: String },
 
     /// Error event
-    Error {
-        message: String,
-        code: Option<String>,
-    },
+    Error { error: String },
 
     /// Progress update with percentage
     Progress {
@@ -51,8 +48,17 @@ pub enum SseEvent {
         message: Option<String>,
     },
 
-    /// Stripe checkout URL (for cluster creation)
-    StripeCheckout { url: String, session_id: String },
+    /// Cluster creation: Checkout required (Stripe)
+    CheckoutRequired { url: String },
+
+    /// Cluster creation: Payment confirmed
+    PaymentConfirmed,
+
+    /// Cluster creation: Creating project
+    CreatingProject,
+
+    /// Cluster creation: Project created successfully
+    ProjectCreated { cluster_id: String },
 }
 
 /// SSE client for streaming events from Helix Cloud

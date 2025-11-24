@@ -1,6 +1,7 @@
 [project]
 name = "add_n"
 queries = "."
+container_runtime = "docker"
 
 [local.dev]
 port = 6969
