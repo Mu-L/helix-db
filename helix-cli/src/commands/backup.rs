@@ -1,6 +1,7 @@
 use crate::project::ProjectContext;
 use crate::utils::{print_confirm, print_error, print_status, print_success, print_warning};
 use eyre::Result;
+use heed3::{CompactionOption, EnvFlags, EnvOpenOptions};
 use std::fs;
 use std::fs::create_dir_all;
 use std::path::Path;
@@ -25,6 +26,16 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
 
     let data_file = volumes_dir.join("data.mdb");
     let lock_file = volumes_dir.join("lock.mdb");
+
+    let env_path = Path::new(&volumes_dir);
+
+    // Validate existence of environment
+    if !env_path.exists() {
+        return Err(eyre::eyre!(
+            "Instance LMDB environment not found at {:?}",
+            env_path
+        ));
+    }
 
     // Check existence of data_file before calling metadata()
     if !data_file.exists() {
@@ -65,7 +76,7 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
     if total_size > TEN_GB {
         let size_gb = (total_size as f64) / (1024.0 * 1024.0 * 1024.0);
         print_warning(&format!(
-            "Backup size is {:.2} GB — this may take a while.",
+            "Backup size is {:.2} GB. Taking atomic snapshot… this may take time depending on DB size",
             size_gb
         ));
         let confirmed = print_confirm("Do you want to continue?");
@@ -75,22 +86,20 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
         }
     }
 
-    // Check if the instance is readable or not
-    if !check_read_write_permission(&data_file, &backup_dir.join("data.mdb"))? {
-        print_status("CANCEL", "Backup aborted due to permission failure");
-        return Ok(());
-    }
-
-    if !check_read_write_permission(&lock_file, &backup_dir.join("lock.mdb"))? {
-        print_status("CANCEL", "Backup aborted due to permission failure");
-        return Ok(());
-    }
+    // Open LMDB read-only snapshot environment
+    let env = unsafe {
+        EnvOpenOptions::new()
+            .flags(EnvFlags::READ_ONLY)
+            .max_dbs(200)
+            .max_readers(200)
+            .open(env_path)?
+    };
 
     println!("Copying {:?} → {:?}", &data_file, &backup_dir);
 
-    // Copy the instance data
-    fs::copy(&data_file, backup_dir.join("data.mdb"))?;
-    fs::copy(&lock_file, backup_dir.join("lock.mdb"))?;
+    // backup database to given database
+    env.copy_to_path(backup_dir.join("data.mdb"), CompactionOption::Disabled)?;
+    env.copy_to_path(backup_dir.join("lock.mdb"), CompactionOption::Disabled)?;
 
     print_success(&format!(
         "Backup for '{instance_name}' created at {:?}",
@@ -98,33 +107,4 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
     ));
 
     Ok(())
-}
-
-pub fn check_read_write_permission(src: &Path, dest: &Path) -> std::io::Result<bool> {
-    // Check permission for src
-    print_status("BACKUP", "Checking read permission for: src");
-    if let Err(_e) = fs::File::open(src) {
-        print_error("Not readable");
-        return Ok(false);
-    }
-    print_status("BACKUP", "Readable ✔");
-
-    // Check permission for dest
-    print_status("BACKUP", "Checking write permission for: dest");
-    if let Some(dir) = dest.parent() {
-        let testfile = dir.join(".perm_test");
-
-        if let Err(_e) = fs::File::create(&testfile) {
-            print_error("Not writable");
-            return Ok(false);
-        }
-
-        let _ = fs::remove_file(testfile);
-        print_status("BACKUP", "Writable ✔");
-    } else {
-        print_error("Destination has no parent directory");
-        return Ok(false);
-    }
-
-    Ok(true)
 }
