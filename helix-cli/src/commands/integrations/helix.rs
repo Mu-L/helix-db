@@ -1,11 +1,12 @@
 use crate::commands::auth::Credentials;
 use crate::config::{BuildMode, CloudInstanceConfig, DbConfig, InstanceInfo};
 use crate::project::ProjectContext;
+use crate::sse_client::{SseEvent, SseProgressHandler};
 use crate::utils::helixc_utils::{collect_hx_files, generate_content};
 use crate::utils::{print_error_with_hint, print_status, print_success};
 use eyre::{OptionExt, Result, eyre};
 use helix_db::helix_engine::traversal_core::config::Config;
-use helix_db::utils::styled_string::StyledString;
+use reqwest_eventsource::RequestBuilderExt;
 use serde_json::json;
 use std::env;
 use std::path::PathBuf;
@@ -14,7 +15,13 @@ use std::sync::LazyLock;
 
 const DEFAULT_CLOUD_AUTHORITY: &str = "ec2-184-72-27-116.us-west-1.compute.amazonaws.com:3000";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
-    std::env::var("CLOUD_AUTHORITY").unwrap_or(DEFAULT_CLOUD_AUTHORITY.to_string())
+    std::env::var("CLOUD_AUTHORITY").unwrap_or_else(|_| {
+        if cfg!(debug_assertions) {
+            "localhost:3000".to_string()
+        } else {
+            DEFAULT_CLOUD_AUTHORITY.to_string()
+        }
+    })
 });
 
 pub struct HelixManager<'a> {
@@ -75,6 +82,7 @@ impl<'a> HelixManager<'a> {
         })
     }
 
+    #[allow(dead_code)]
     pub async fn init_cluster(
         &self,
         instance_name: &str,
@@ -193,7 +201,9 @@ impl<'a> HelixManager<'a> {
             }
         };
 
-        // upload queries to central server
+        print_status("DEPLOY", &format!("Deploying to cluster: {}", cluster_name));
+
+        // Prepare deployment payload
         let payload = json!({
             "user_id": credentials.user_id,
             "queries": content.files,
@@ -201,32 +211,100 @@ impl<'a> HelixManager<'a> {
             "version": "0.1.0",
             "helix_config": config.to_json()
         });
+
+        // Initiate deployment with SSE streaming
         let client = reqwest::Client::new();
+        let deploy_url = format!("http://{}/deploy", *CLOUD_AUTHORITY);
 
-        let cloud_url = format!("http://{}/clusters/deploy-queries", *CLOUD_AUTHORITY);
-
-        match client
-            .post(cloud_url)
-            .header("x-api-key", &credentials.helix_admin_key) // used to verify user
-            .header("x-cluster-id", &cluster_info.cluster_id) // used to verify instance with user
+        let mut event_source = client
+            .post(&deploy_url)
+            .header("x-api-key", &credentials.helix_admin_key)
+            .header("x-cluster-id", &cluster_info.cluster_id)
             .header("Content-Type", "application/json")
-            .body(serde_json::to_string(&payload).unwrap())
-            .send()
-            .await
-        {
-            Ok(response) => {
-                if response.status().is_success() {
-                    println!("{}", "Queries uploaded to remote db".green().bold());
-                } else {
-                    return Err(eyre!("Error uploading queries to remote db"));
+            .json(&payload)
+            .eventsource()?;
+
+        let progress = SseProgressHandler::new("Deploying queries...");
+        let mut deployment_success = false;
+
+        // Process SSE events
+        use futures_util::StreamExt;
+
+        while let Some(event) = event_source.next().await {
+            match event {
+                Ok(reqwest_eventsource::Event::Open) => {
+                    // Connection opened
+                }
+                Ok(reqwest_eventsource::Event::Message(message)) => {
+                    // Parse the SSE event
+                    let sse_event: SseEvent = match serde_json::from_str(&message.data) {
+                        Ok(event) => event,
+                        Err(e) => {
+                            progress.println(&format!("Failed to parse event: {}", e));
+                            continue;
+                        }
+                    };
+
+                    match sse_event {
+                        SseEvent::Progress {
+                            percentage,
+                            message,
+                        } => {
+                            progress.set_progress(percentage);
+                            if let Some(msg) = message {
+                                progress.set_message(&msg);
+                            }
+                        }
+                        SseEvent::Log { message, .. } => {
+                            progress.println(&message);
+                        }
+                        SseEvent::StatusTransition { to, message, .. } => {
+                            let msg = message.unwrap_or_else(|| format!("Status: {}", to));
+                            progress.println(&msg);
+                        }
+                        SseEvent::Success { .. } => {
+                            deployment_success = true;
+                            progress.finish("Deployment completed successfully!");
+                            event_source.close();
+                            break;
+                        }
+                        SseEvent::Error { message, .. } => {
+                            progress.finish_error(&format!("Error: {}", message));
+                            event_source.close();
+                            return Err(eyre!("Deployment failed: {}", message));
+                        }
+                        _ => {
+                            // Ignore other event types
+                        }
+                    }
+                }
+                Err(err) => {
+                    progress.finish_error(&format!("Stream error: {}", err));
+                    return Err(eyre!("Deployment stream error: {}", err));
                 }
             }
-            Err(e) => {
-                return Err(eyre!("Error uploading queries to remote db: {e}"));
-            }
-        };
+        }
 
+        if !deployment_success {
+            return Err(eyre!("Deployment did not complete successfully"));
+        }
+
+        print_success("Queries deployed successfully");
         Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn redeploy(&self, path: Option<String>, cluster_name: String) -> Result<()> {
+        // Redeploy is similar to deploy but may have different backend handling
+        // For now, we'll use the same implementation with a different status message
+        print_status(
+            "REDEPLOY",
+            &format!("Redeploying to cluster: {}", cluster_name),
+        );
+
+        // Call deploy with the same logic
+        // In the future, this could use a different endpoint or add a "redeploy" flag
+        self.deploy(path, cluster_name).await
     }
 }
 
