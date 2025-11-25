@@ -372,9 +372,10 @@ fn is_valid_schema_field_type(ft: &FieldType) -> bool {
     }
 }
 
-const NODE_RESERVED_FIELD_NAMES: &[&str] = &["id", "label"];
-const EDGE_RESERVED_FIELD_NAMES: &[&str] = &["id", "label", "to_node", "from_node"];
-const VEC_RESERVED_FIELD_NAMES: &[&str] = &["id", "label", "data", "score"];
+const NODE_RESERVED_FIELD_NAMES: &[&str] = &["id", "label", "type", "version"];
+const EDGE_RESERVED_FIELD_NAMES: &[&str] =
+    &["id", "label", "to_node", "from_node", "type", "version"];
+const VEC_RESERVED_FIELD_NAMES: &[&str] = &["id", "label", "data", "score", "type", "version"];
 
 #[cfg(test)]
 mod tests {
