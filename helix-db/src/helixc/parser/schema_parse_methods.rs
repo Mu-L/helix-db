@@ -22,7 +22,7 @@ impl HelixParser {
         let name = pairs.try_next()?.as_str().to_string();
         let fields = self.parse_node_body(pairs.try_next()?, filepath.clone())?;
         Ok(NodeSchema {
-            name: (pair.loc(), name),
+            name: (pair.loc_with_filepath(filepath.clone()), name),
             fields,
             loc: pair.loc_with_filepath(filepath),
         })
@@ -498,7 +498,7 @@ impl HelixParser {
         };
 
         Ok(EdgeSchema {
-            name: (pair.loc(), name),
+            name: (pair.loc_with_filepath(filepath.clone()), name),
             from,
             to,
             properties,
