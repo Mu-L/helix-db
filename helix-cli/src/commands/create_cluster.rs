@@ -170,7 +170,7 @@ pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
         instance_name, cluster_id
     ));
     print_info(&format!("Region: {}", region));
-    print_info(&format!("Configuration saved to helix.toml"));
+    print_info("Configuration saved to helix.toml");
     print_info(&format!("You can now deploy with: helix push {}", instance_name));
 
     Ok(())

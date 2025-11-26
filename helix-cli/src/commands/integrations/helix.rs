@@ -180,7 +180,8 @@ impl<'a> HelixManager<'a> {
         let schema_path = path.join("schema.hx");
 
         // Use from_files if schema.hx exists (backward compatibility), otherwise use from_file
-        let config = if schema_path.exists() {
+        // keep for sending config at some point
+        let _config = if schema_path.exists() {
             match Config::from_files(config_path, schema_path) {
                 Ok(config) => config,
                 Err(e) => {
