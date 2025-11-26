@@ -101,12 +101,14 @@ impl SseClient {
     }
 
     /// Add a header to the request
+    #[allow(dead_code)]
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.push((key.into(), value.into()));
         self
     }
 
     /// Set the timeout duration
+    #[allow(dead_code)]
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
