@@ -93,6 +93,10 @@ pub enum ErrorCode {
     E625,
     /// `E626` - `edge type does not have a vector type as its To source`
     E626,
+    /// `E627` - `shortest path requires from or to parameter`
+    E627,
+    /// `E628` - `DROP can only be applied to traversals`
+    E628,
 
     /// `E631` - `range must have a start and end`
     E631,
@@ -167,6 +171,8 @@ impl std::fmt::Display for ErrorCode {
             ErrorCode::E624 => write!(f, "E624"),
             ErrorCode::E625 => write!(f, "E625"),
             ErrorCode::E626 => write!(f, "E626"),
+            ErrorCode::E627 => write!(f, "E627"),
+            ErrorCode::E628 => write!(f, "E628"),
             ErrorCode::E631 => write!(f, "E631"),
             ErrorCode::E632 => write!(f, "E632"),
             ErrorCode::E633 => write!(f, "E633"),
@@ -260,6 +266,8 @@ implement_error_code!(E623, "edge type `{}` does not have a node type as its `Fr
 implement_error_code!(E624, "edge type `{}` does not have a node type as its `To` source" => { edge_type }, "set the `To` type of the edge to a node type" => {});
 implement_error_code!(E625, "edge type `{}` does not have a vector type as its `From` source" => { edge_type }, "set the `From` type of the edge to a vector type" => {});
 implement_error_code!(E626, "edge type `{}` does not have a vector type as its `To` source" => { edge_type }, "set the `To` type of the edge to a vector type" => {});
+implement_error_code!(E627, "`{}` requires either a `from` or `to` parameter" => { step_name }, "add a `from` or `to` parameter to the step" => {});
+implement_error_code!(E628, "`DROP` can only be applied to traversals, but got `{}`" => { expression_type }, "ensure the expression is a traversal" => {});
 
 // Range errors
 implement_error_code!(E631, "range must have a start and end, missing the `{}` value" => { start_or_end }, "add a `{}` value to the range" => { start_or_end });
