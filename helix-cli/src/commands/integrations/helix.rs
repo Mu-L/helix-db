@@ -8,12 +8,14 @@ use eyre::{OptionExt, Result, eyre};
 use helix_db::helix_engine::traversal_core::config::Config;
 use reqwest_eventsource::RequestBuilderExt;
 use serde_json::json;
+use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 // use uuid::Uuid;
 
-const DEFAULT_CLOUD_AUTHORITY: &str = "ec2-184-72-27-116.us-west-1.compute.amazonaws.com:3000";
+const DEFAULT_CLOUD_AUTHORITY: &str =
+    "helix-cloud-build-test2-alb-1131293116.us-east-2.elb.amazonaws.com";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
     std::env::var("CLOUD_AUTHORITY").unwrap_or_else(|_| {
         if cfg!(debug_assertions) {
@@ -78,6 +80,7 @@ impl<'a> HelixManager<'a> {
             cluster_id,
             region,
             build_mode: BuildMode::Release,
+            env_vars: HashMap::new(),
             db_config: DbConfig::default(),
         })
     }
@@ -203,13 +206,24 @@ impl<'a> HelixManager<'a> {
 
         print_status("DEPLOY", &format!("Deploying to cluster: {}", cluster_name));
 
+        // Separate schema from query files
+        let mut schema_content = String::new();
+        let mut queries_map: HashMap<String, String> = HashMap::new();
+
+        for file in &content.files {
+            if file.name.ends_with("schema.hx") {
+                schema_content = file.content.clone();
+            } else {
+                queries_map.insert(file.name.clone(), file.content.clone());
+            }
+        }
+
         // Prepare deployment payload
         let payload = json!({
-            "user_id": credentials.user_id,
-            "queries": content.files,
-            "cluster_id": cluster_info.cluster_id,
-            "version": "0.1.0",
-            "helix_config": config.to_json()
+            "schema": schema_content,
+            "queries": queries_map,
+            "env_vars": cluster_info.env_vars,
+            "instance_name": cluster_name
         });
 
         // Initiate deployment with SSE streaming
@@ -272,6 +286,42 @@ impl<'a> HelixManager<'a> {
                             progress.finish_error(&format!("Error: {}", error));
                             event_source.close();
                             return Err(eyre!("Deployment failed: {}", error));
+                        }
+                        // Deploy-specific events
+                        SseEvent::ValidatingQueries => {
+                            progress.set_message("Validating queries...");
+                        }
+                        SseEvent::Building { estimated_percentage } => {
+                            progress.set_progress(estimated_percentage as f64);
+                            progress.set_message("Building...");
+                        }
+                        SseEvent::Deploying => {
+                            progress.set_message("Deploying to infrastructure...");
+                        }
+                        SseEvent::Deployed { url, auth_key } => {
+                            deployment_success = true;
+                            progress.finish("Deployment completed!");
+                            print_success(&format!("Deployed to: {}", url));
+                            print_status("AUTH_KEY", &format!("Your auth key: {}", auth_key));
+                            event_source.close();
+                            break;
+                        }
+                        SseEvent::Redeployed { url } => {
+                            deployment_success = true;
+                            progress.finish("Redeployment completed!");
+                            print_success(&format!("Redeployed to: {}", url));
+                            event_source.close();
+                            break;
+                        }
+                        SseEvent::BadRequest { error } => {
+                            progress.finish_error(&format!("Bad request: {}", error));
+                            event_source.close();
+                            return Err(eyre!("Bad request: {}", error));
+                        }
+                        SseEvent::QueryValidationError { error } => {
+                            progress.finish_error(&format!("Query validation failed: {}", error));
+                            event_source.close();
+                            return Err(eyre!("Query validation error: {}", error));
                         }
                         _ => {
                             // Ignore other event types

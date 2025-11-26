@@ -141,6 +141,7 @@ pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
             cluster_id: cluster_id.clone(),
             region: existing.region.clone().or(Some(region.clone())),
             build_mode: existing.build_mode,
+            env_vars: existing.env_vars.clone(),
             db_config: existing.db_config.clone(),
         }
     } else {
@@ -148,6 +149,7 @@ pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
             cluster_id: cluster_id.clone(),
             region: Some(region.clone()),
             build_mode: crate::config::BuildMode::Release,
+            env_vars: std::collections::HashMap::new(),
             db_config: DbConfig::default(),
         }
     };

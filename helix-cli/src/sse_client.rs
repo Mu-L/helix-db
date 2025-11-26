@@ -9,12 +9,10 @@ use std::time::Duration;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SseEvent {
-    /// GitHub login: Contains device code and verification URI
+    /// GitHub login: Contains user code and verification URI
     UserVerification {
         user_code: String,
         verification_uri: String,
-        device_code: String,
-        expires_in: u64,
     },
 
     /// Successful authentication/operation
@@ -59,6 +57,28 @@ pub enum SseEvent {
 
     /// Cluster creation: Project created successfully
     ProjectCreated { cluster_id: String },
+
+    // Deploy events
+    /// Deploy: Validating queries
+    ValidatingQueries,
+
+    /// Deploy: Building with progress
+    Building { estimated_percentage: u16 },
+
+    /// Deploy: Deploying to infrastructure
+    Deploying,
+
+    /// Deploy: Successfully deployed (new instance)
+    Deployed { url: String, auth_key: String },
+
+    /// Deploy: Successfully redeployed (existing instance)
+    Redeployed { url: String },
+
+    /// Deploy: Bad request error
+    BadRequest { error: String },
+
+    /// Deploy: Query validation error
+    QueryValidationError { error: String },
 }
 
 /// SSE client for streaming events from Helix Cloud
@@ -66,6 +86,7 @@ pub struct SseClient {
     url: String,
     headers: Vec<(String, String)>,
     timeout: Duration,
+    use_post: bool,
 }
 
 impl SseClient {
@@ -75,6 +96,7 @@ impl SseClient {
             url,
             headers: Vec::new(),
             timeout: Duration::from_secs(300), // 5 minutes default
+            use_post: false,
         }
     }
 
@@ -90,6 +112,12 @@ impl SseClient {
         self
     }
 
+    /// Use POST method instead of GET
+    pub fn post(mut self) -> Self {
+        self.use_post = true;
+        self
+    }
+
     /// Connect to SSE stream and process events
     pub async fn connect<F>(&self, mut handler: F) -> Result<()>
     where
@@ -97,7 +125,11 @@ impl SseClient {
     {
         let client = reqwest::Client::builder().timeout(self.timeout).build()?;
 
-        let mut request = client.get(&self.url);
+        let mut request = if self.use_post {
+            client.post(&self.url)
+        } else {
+            client.get(&self.url)
+        };
         for (key, value) in &self.headers {
             request = request.header(key, value);
         }
@@ -183,13 +215,12 @@ mod tests {
 
     #[test]
     fn test_sse_event_deserialization() {
-        // Test UserVerification
+        // Test UserVerification (externally-tagged format with snake_case)
         let json = r#"{
-            "type": "UserVerification",
-            "user_code": "ABC-123",
-            "verification_uri": "https://github.com/login/device",
-            "device_code": "device123",
-            "expires_in": 300
+            "user_verification": {
+                "user_code": "ABC-123",
+                "verification_uri": "https://github.com/login/device"
+            }
         }"#;
         let event: SseEvent = serde_json::from_str(json).unwrap();
         match event {
@@ -199,11 +230,12 @@ mod tests {
             _ => panic!("Wrong event type"),
         }
 
-        // Test Progress
+        // Test Progress (externally-tagged format with snake_case)
         let json = r#"{
-            "type": "Progress",
-            "percentage": 45.5,
-            "message": "Building..."
+            "progress": {
+                "percentage": 45.5,
+                "message": "Building..."
+            }
         }"#;
         let event: SseEvent = serde_json::from_str(json).unwrap();
         match event {
