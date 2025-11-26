@@ -198,10 +198,10 @@ impl GitHubIssueBuilder {
 
         for line_num in sorted_lines {
             // Add separator if there's a gap
-            if let Some(last) = last_line {
-                if line_num > last + 1 {
-                    result.push_str("     ...\n");
-                }
+            if let Some(last) = last_line
+                && line_num > last + 1
+            {
+                result.push_str("     ...\n");
             }
 
             // Line numbers are 1-indexed, array is 0-indexed
@@ -307,8 +307,7 @@ pub fn filter_errors_only(cargo_output: &str) -> String {
     // (better to have too much info than too little)
     let trimmed = result.trim();
     if trimmed.is_empty()
-        || (trimmed.starts_with("error: could not compile")
-            && !trimmed.contains("-->"))
+        || (trimmed.starts_with("error: could not compile") && !trimmed.contains("-->"))
     {
         // Filter out just warning lines from full output
         return cargo_output
