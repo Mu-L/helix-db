@@ -1,5 +1,5 @@
 use crate::project::ProjectContext;
-use crate::utils::{print_confirm, print_error, print_status, print_success, print_warning};
+use crate::utils::{print_confirm, print_status, print_success, print_warning};
 use eyre::Result;
 use heed3::{CompactionOption, EnvFlags, EnvOpenOptions};
 use std::fs;
