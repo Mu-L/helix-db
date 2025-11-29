@@ -98,7 +98,7 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
     Ok(metrics_data.clone())
 }
 
-async fn ensure_helix_repo_cached() -> Result<()> {
+pub(crate) async fn ensure_helix_repo_cached() -> Result<()> {
     let repo_cache = get_helix_repo_cache()?;
 
     if needs_cache_recreation(&repo_cache)? {
@@ -223,7 +223,7 @@ fn update_git_cache(repo_cache: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &str) -> Result<()> {
+pub(crate) async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &str) -> Result<()> {
     print_status(
         "PREPARE",
         &format!("Preparing workspace for '{instance_name}'"),
@@ -253,7 +253,7 @@ async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &st
     Ok(())
 }
 
-async fn compile_project(project: &ProjectContext, instance_name: &str) -> Result<MetricsData> {
+pub(crate) async fn compile_project(project: &ProjectContext, instance_name: &str) -> Result<MetricsData> {
     print_status("COMPILE", "Compiling Helix queries...");
 
     // Create helix-container directory in instance workspace for generated files
