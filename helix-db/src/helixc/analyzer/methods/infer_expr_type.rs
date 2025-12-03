@@ -994,6 +994,24 @@ pub(crate) fn infer_expr_type<'a>(
                         }
                         VectorData::Identifier(i) => {
                             is_valid_identifier(ctx, original_query, add.loc.clone(), i.as_str());
+                            // Check that the identifier is of type [F64]
+                            if let Some(var_info) = scope.get(i.as_str()) {
+                                let expected_type =
+                                    Type::Array(Box::new(Type::Scalar(FieldType::F64)));
+                                if var_info.ty != expected_type {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        add.loc.clone(),
+                                        E205,
+                                        i.as_str(),
+                                        &var_info.ty.to_string(),
+                                        "[F64]",
+                                        "AddV",
+                                        ty.as_str()
+                                    );
+                                }
+                            }
                             let id =
                                 gen_identifier_or_param(original_query, i.as_str(), true, false);
                             VecData::Standard(id)
@@ -1075,8 +1093,26 @@ pub(crate) fn infer_expr_type<'a>(
                 }
                 Some(VectorData::Identifier(i)) => {
                     is_valid_identifier(ctx, original_query, sv.loc.clone(), i.as_str());
-                    // if is in params then use data.
-                    let _ = type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
+                    // Check that the identifier is of type [F64]
+                    if let Some(var_type) =
+                        type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str())
+                    {
+                        let expected_type =
+                            Type::Array(Box::new(Type::Scalar(FieldType::F64)));
+                        if var_type != expected_type {
+                            generate_error!(
+                                ctx,
+                                original_query,
+                                sv.loc.clone(),
+                                E205,
+                                i.as_str(),
+                                &var_type.to_string(),
+                                "[F64]",
+                                "SearchV",
+                                sv.vector_type.as_deref().unwrap_or("unknown")
+                            );
+                        }
+                    }
                     VecData::Standard(gen_identifier_or_param(
                         original_query,
                         i.as_str(),
