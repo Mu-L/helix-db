@@ -296,7 +296,7 @@ fn get_dashboard_port(runtime: ContainerRuntime) -> Result<u16> {
     port_mapping
         .trim()
         .split(':')
-        .last()
+        .next_back()
         .and_then(|p| p.parse().ok())
         .ok_or_else(|| eyre!("Failed to parse dashboard port"))
 }
