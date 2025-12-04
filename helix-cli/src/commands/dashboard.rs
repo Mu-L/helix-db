@@ -11,7 +11,7 @@ use eyre::{Result, eyre};
 use std::process::Command;
 
 // Dashboard configuration constants
-const DASHBOARD_IMAGE: &str = "helixdb/helix-dashboard";
+const DASHBOARD_IMAGE: &str = "public.ecr.aws/p8l2s5f1/helix-dashboard";
 const DASHBOARD_TAG: &str = "latest";
 const DASHBOARD_CONTAINER_NAME: &str = "helix-dashboard";
 
@@ -75,8 +75,10 @@ async fn start(
     start_dashboard_container(runtime, port, &env_vars, attach)?;
 
     if !attach {
+        let url = format!("http://localhost:{port}");
+
         print_success("Dashboard started successfully");
-        print_field("URL", &format!("http://localhost:{port}"));
+        print_field("URL", &url);
         print_field("Helix Host", &display_info.host);
         print_field("Helix Port", &display_info.helix_port.to_string());
         if let Some(instance_name) = &display_info.instance_name {
@@ -85,6 +87,11 @@ async fn start(
         print_field("Mode", &display_info.mode);
         print_newline();
         print_info("Run 'helix dashboard stop' to stop the dashboard");
+
+        // Open the dashboard in the default browser
+        if let Err(e) = open::that(&url) {
+            print_warning(&format!("Could not open browser: {e}"));
+        }
     }
 
     Ok(())
