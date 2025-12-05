@@ -38,6 +38,39 @@ pub enum MetricsAction {
 }
 
 #[derive(Subcommand)]
+pub enum DashboardAction {
+    /// Start the dashboard
+    Start {
+        /// Instance to connect to (from helix.toml)
+        instance: Option<String>,
+
+        /// Port to run dashboard on
+        #[clap(short, long, default_value = "3000")]
+        port: u16,
+
+        /// Helix host to connect to (e.g., localhost). Bypasses project config.
+        #[clap(long)]
+        host: Option<String>,
+
+        /// Helix port to connect to. Used with --host.
+        #[clap(long, default_value = "6969")]
+        helix_port: u16,
+
+        /// Run dashboard in foreground with logs
+        #[clap(long)]
+        attach: bool,
+
+        /// Restart if dashboard is already running
+        #[clap(long)]
+        restart: bool,
+    },
+    /// Stop the dashboard
+    Stop,
+    /// Show dashboard status
+    Status,
+}
+
+#[derive(Subcommand)]
 pub enum CloudDeploymentTypeCommand {
     /// Initialize Helix Cloud deployment
     #[clap(name = "cloud")]
