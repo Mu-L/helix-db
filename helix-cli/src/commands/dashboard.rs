@@ -14,6 +14,14 @@ use std::process::Command;
 const DASHBOARD_IMAGE: &str = "public.ecr.aws/p8l2s5f1/helix-dashboard";
 const DASHBOARD_TAG: &str = "latest";
 const DASHBOARD_CONTAINER_NAME: &str = "helix-dashboard";
+const DEFAULT_HELIX_PORT: u16 = 6969;
+
+struct DisplayInfo {
+    host: String,
+    helix_port: u16,
+    instance_name: Option<String>,
+    mode: String,
+}
 
 pub async fn run(action: DashboardAction) -> Result<()> {
     match action {
@@ -25,8 +33,8 @@ pub async fn run(action: DashboardAction) -> Result<()> {
             attach,
             restart,
         } => start(instance, port, host, helix_port, attach, restart).await,
-        DashboardAction::Stop => stop().await,
-        DashboardAction::Status => status().await,
+        DashboardAction::Stop => stop(),
+        DashboardAction::Status => status(),
     }
 }
 
@@ -57,6 +65,11 @@ async fn start(
             print_info("Use 'helix dashboard stop' to stop it, or '--restart' to restart");
             return Ok(());
         }
+    }
+
+    // Warn if --helix-port is specified without --host
+    if host.is_none() && helix_port != DEFAULT_HELIX_PORT {
+        print_warning("--helix-port is ignored without --host; using project config or defaults");
     }
 
     // Prepare environment variables based on connection mode
@@ -95,13 +108,6 @@ async fn start(
     }
 
     Ok(())
-}
-
-struct DisplayInfo {
-    host: String,
-    helix_port: u16,
-    instance_name: Option<String>,
-    mode: String,
 }
 
 fn prepare_direct_env_vars(
@@ -147,7 +153,7 @@ fn prepare_env_vars_from_context(
             let env_vars = prepare_environment_vars(&project, &instance_name, &instance_config)?;
 
             let (host, helix_port, mode) = if instance_config.is_local() {
-                let port = instance_config.port().unwrap_or(6969);
+                let port = instance_config.port().unwrap_or(DEFAULT_HELIX_PORT);
                 ("localhost".to_string(), port, "Local".to_string())
             } else {
                 ("cloud".to_string(), 443, "Cloud".to_string())
@@ -163,9 +169,11 @@ fn prepare_env_vars_from_context(
             Ok((env_vars, display_info))
         }
         Err(_) => {
-            // No project found - use defaults (localhost:6969)
-            print_info("No helix.toml found, using default connection (localhost:6969)");
-            prepare_direct_env_vars("localhost", 6969, runtime)
+            // No project found - use defaults
+            print_info(&format!(
+                "No helix.toml found, using default connection (localhost:{DEFAULT_HELIX_PORT})"
+            ));
+            prepare_direct_env_vars("localhost", DEFAULT_HELIX_PORT, runtime)
         }
     }
 }
@@ -213,7 +221,7 @@ fn prepare_environment_vars(
 
     if instance_config.is_local() {
         // Local instance - connect via Docker host networking
-        let port = instance_config.port().unwrap_or(6969);
+        let port = instance_config.port().unwrap_or(DEFAULT_HELIX_PORT);
 
         // Use host.docker.internal for Docker, host.containers.internal for Podman
         let host = match project.config.project.container_runtime {
@@ -397,7 +405,7 @@ fn stop_dashboard_container(runtime: ContainerRuntime) -> Result<()> {
     Ok(())
 }
 
-async fn stop() -> Result<()> {
+fn stop() -> Result<()> {
     // Detect runtime - try to load project config, fallback to checking available runtimes
     let runtime = detect_runtime()?;
 
@@ -420,18 +428,22 @@ fn detect_runtime() -> Result<ContainerRuntime> {
     }
 
     // Fallback: check if Docker is available, then Podman
-    if Command::new("docker").arg("--version").output().is_ok() {
+    if let Ok(output) = Command::new("docker").arg("--version").output()
+        && output.status.success()
+    {
         return Ok(ContainerRuntime::Docker);
     }
 
-    if Command::new("podman").arg("--version").output().is_ok() {
+    if let Ok(output) = Command::new("podman").arg("--version").output()
+        && output.status.success()
+    {
         return Ok(ContainerRuntime::Podman);
     }
 
     Err(eyre!("Neither Docker nor Podman is available"))
 }
 
-async fn status() -> Result<()> {
+fn status() -> Result<()> {
     let runtime = detect_runtime()?;
 
     print_header("Dashboard Status");
