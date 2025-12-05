@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
-use helix_cli::{AuthAction, CloudDeploymentTypeCommand, MetricsAction};
+use helix_cli::{AuthAction, CloudDeploymentTypeCommand, DashboardAction, MetricsAction};
 
 mod cleanup;
 mod commands;
@@ -124,6 +124,12 @@ enum Commands {
         action: MetricsAction,
     },
 
+    /// Launch the Helix Dashboard
+    Dashboard {
+        #[clap(subcommand)]
+        action: DashboardAction,
+    },
+
     /// Update to the latest version
     Update {
         /// Force update even if already on latest version
@@ -197,6 +203,7 @@ async fn main() -> Result<()> {
         Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
         Commands::Delete { instance } => commands::delete::run(instance).await,
         Commands::Metrics { action } => commands::metrics::run(action).await,
+        Commands::Dashboard { action } => commands::dashboard::run(action).await,
         Commands::Update { force } => commands::update::run(force).await,
         Commands::Migrate {
             path,
