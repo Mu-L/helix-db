@@ -547,15 +547,14 @@ networks:
             self.runtime.label(),
             &format!("Building image for instance '{instance_name}'..."),
         );
-
         let output = self.run_compose_command(instance_name, vec!["build"])?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(eyre!("{} build failed:\n{stderr}", self.runtime.binary()));
         }
-
         print_status(self.runtime.label(), "Image built successfully");
+
         Ok(())
     }
 
