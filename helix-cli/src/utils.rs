@@ -5,6 +5,7 @@ use helix_db::helixc::parser::types::HxFile;
 use std::{borrow::Cow, fs, path::Path};
 use tokio::sync::oneshot;
 use tokio::time::Duration;
+use std::io::IsTerminal;
 
 
 const IGNORES: [&str; 3] = ["target", ".git", ".helix"];
@@ -382,6 +383,9 @@ impl Spinner {
     }
     // function that starts the spinner
     pub fn start(&mut self) {
+        if !std::io::stdout().is_terminal() {
+            return; // skip animation for non-interactive terminals
+        }
         let message = self.message.clone();
         let prefix = self.prefix.clone();
         let (tx, mut rx) = oneshot::channel::<()>();
@@ -413,7 +417,7 @@ impl Spinner {
             let _ = tx.send(());
         }
         if let Some(handle) = self.handle.take() {
-            let _ = handle.abort();
+            handle.abort();
         }
         print!("\r");
         std::io::Write::flush(&mut std::io::stdout()).unwrap();
