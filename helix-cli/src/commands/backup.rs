@@ -25,7 +25,6 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
         .join("user");
 
     let data_file = volumes_dir.join("data.mdb");
-    let lock_file = volumes_dir.join("lock.mdb");
 
     let env_path = Path::new(&volumes_dir);
 
@@ -45,14 +44,6 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
         ));
     }
 
-    // Check existence of lock_file before calling metadata()
-    if !lock_file.exists() {
-        return Err(eyre::eyre!(
-            "instance lock file not found at {:?}",
-            lock_file
-        ));
-    }
-
     // Get path to backup instance
     let backup_dir = match output {
         Some(path) => path,
@@ -67,7 +58,7 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
     create_dir_all(&backup_dir)?;
 
     // Get the size of the data
-    let total_size = fs::metadata(&data_file)?.len() + std::fs::metadata(&lock_file)?.len();
+    let total_size = fs::metadata(&data_file)?.len();
 
     const TEN_GB: u64 = 10 * 1024 * 1024 * 1024;
 
@@ -99,7 +90,6 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
 
     // backup database to given database
     env.copy_to_path(backup_dir.join("data.mdb"), CompactionOption::Disabled)?;
-    env.copy_to_path(backup_dir.join("lock.mdb"), CompactionOption::Disabled)?;
 
     print_success(&format!(
         "Backup for '{instance_name}' created at {:?}",

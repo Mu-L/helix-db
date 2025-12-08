@@ -136,11 +136,7 @@ async fn push_cloud_instance(
 
     let metrics_data = if instance_config.should_build_docker_image() {
         // Build happens, get metrics data from build
-        let mut spinner = Spinner::new("BUILD", "Building instance...");
-        spinner.start();
-        let result = crate::commands::build::run(instance_name.to_string(), metrics_sender).await;
-        spinner.stop();
-        result?
+        crate::commands::build::run(instance_name.to_string(), metrics_sender).await?
     } else {
         // No build, use lightweight parsing
         parse_queries_for_metrics(project)?
