@@ -3,7 +3,7 @@ use crate::config::{BuildMode, CloudInstanceConfig, DbConfig, InstanceInfo};
 use crate::project::ProjectContext;
 use crate::sse_client::{SseEvent, SseProgressHandler};
 use crate::utils::helixc_utils::{collect_hx_files, generate_content};
-use crate::utils::{print_error_with_hint, print_status, print_success};
+use crate::utils::{print_error, print_error_with_hint, print_status, print_success};
 use eyre::{OptionExt, Result, eyre};
 use helix_db::helix_engine::traversal_core::config::Config;
 use reqwest_eventsource::RequestBuilderExt;
@@ -201,8 +201,6 @@ impl<'a> HelixManager<'a> {
             }
         };
 
-        print_status("DEPLOY", &format!("Deploying to cluster: {}", cluster_name));
-
         // Separate schema from query files
         let mut schema_content = String::new();
         let mut queries_map: HashMap<String, String> = HashMap::new();
@@ -302,6 +300,96 @@ impl<'a> HelixManager<'a> {
                             progress.finish("Deployment completed!");
                             print_success(&format!("Deployed to: {}", url));
                             print_status("AUTH_KEY", &format!("Your auth key: {}", auth_key));
+
+                            // Prompt user for .env handling
+                            println!();
+                            println!("Would you like to save connection details to a .env file?");
+                            println!("  1. Add to .env in project root (Recommended)");
+                            println!("  2. Don't add");
+                            println!("  3. Specify custom path");
+                            print!("\nChoice [1]: ");
+
+                            use std::io::{self, Write};
+                            io::stdout().flush().ok();
+
+                            let mut input = String::new();
+                            if io::stdin().read_line(&mut input).is_ok() {
+                                let choice = input.trim();
+                                match choice {
+                                    "1" | "" => {
+                                        let env_path = self.project.root.join(".env");
+                                        let comment = format!(
+                                            "# HelixDB Cloud URL for instance: {}",
+                                            cluster_name
+                                        );
+                                        if let Err(e) = crate::utils::add_env_var_with_comment(
+                                            &env_path,
+                                            "HELIX_CLOUD_URL",
+                                            &url,
+                                            Some(&comment),
+                                        ) {
+                                            print_error(&format!("Failed to write .env: {}", e));
+                                        }
+                                        match crate::utils::add_env_var_to_file(
+                                            &env_path,
+                                            "HELIX_API_KEY",
+                                            &auth_key,
+                                        ) {
+                                            Ok(_) => print_success(&format!(
+                                                "Added HELIX_CLOUD_URL and HELIX_API_KEY to {}",
+                                                env_path.display()
+                                            )),
+                                            Err(e) => {
+                                                print_error(&format!("Failed to write .env: {}", e))
+                                            }
+                                        }
+                                    }
+                                    "2" => {
+                                        print_status("INFO", "Skipped saving to .env");
+                                    }
+                                    "3" => {
+                                        print!("Enter path: ");
+                                        io::stdout().flush().ok();
+                                        let mut path_input = String::new();
+                                        if io::stdin().read_line(&mut path_input).is_ok() {
+                                            let custom_path = PathBuf::from(path_input.trim());
+                                            let comment = format!(
+                                                "# HelixDB Cloud URL for instance: {}",
+                                                cluster_name
+                                            );
+                                            if let Err(e) = crate::utils::add_env_var_with_comment(
+                                                &custom_path,
+                                                "HELIX_CLOUD_URL",
+                                                &url,
+                                                Some(&comment),
+                                            ) {
+                                                print_error(&format!("Failed to write .env: {}", e));
+                                            }
+                                            match crate::utils::add_env_var_to_file(
+                                                &custom_path,
+                                                "HELIX_API_KEY",
+                                                &auth_key,
+                                            ) {
+                                                Ok(_) => print_success(&format!(
+                                                    "Added HELIX_CLOUD_URL and HELIX_API_KEY to {}",
+                                                    custom_path.display()
+                                                )),
+                                                Err(e) => print_error(&format!(
+                                                    "Failed to write .env: {}",
+                                                    e
+                                                )),
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        print_status(
+                                            "INFO",
+                                            "Invalid choice, skipped saving to .env",
+                                        );
+                                    }
+                                }
+                            }
+
                             event_source.close();
                             break;
                         }

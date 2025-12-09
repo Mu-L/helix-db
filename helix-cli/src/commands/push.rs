@@ -175,7 +175,7 @@ async fn push_cloud_instance(
                 .await?;
         }
         CloudConfig::Helix(_config) => {
-            deploy_spinner.update("Deploying to Helix...");
+            deploy_spinner.stop(); // Stop spinner before helix.deploy() starts its own progress
             let helix = HelixManager::new(project);
             helix.deploy(None, instance_name.to_string()).await?;
         }
