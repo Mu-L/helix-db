@@ -1,9 +1,7 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
-use std::path::PathBuf;
 use helix_cli::{AuthAction, CloudDeploymentTypeCommand, DashboardAction, MetricsAction};
 use std::path::PathBuf;
-
 
 mod cleanup;
 mod commands;
