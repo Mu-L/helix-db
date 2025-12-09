@@ -57,7 +57,7 @@ pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
     // The server will send CheckoutRequired, PaymentConfirmed, CreatingProject, ProjectCreated events
     print_status("INITIATING", "Starting cluster creation...");
 
-    let create_url = format!("http://{}/create-cluster", *CLOUD_AUTHORITY);
+    let create_url = format!("https://{}/create-cluster", *CLOUD_AUTHORITY);
     let client = reqwest::Client::new();
 
     use reqwest_eventsource::RequestBuilderExt;
@@ -83,7 +83,10 @@ pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
                 let sse_event: SseEvent = match serde_json::from_str(&message.data) {
                     Ok(event) => event,
                     Err(e) => {
-                        print_error(&format!("Failed to parse event: {} | Raw data: {}", e, message.data));
+                        print_error(&format!(
+                            "Failed to parse event: {} | Raw data: {}",
+                            e, message.data
+                        ));
                         continue;
                     }
                 };
@@ -132,11 +135,14 @@ pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
         }
     }
 
-    let cluster_id = final_cluster_id.ok_or_eyre("Cluster creation completed but no cluster_id received")?;
+    let cluster_id =
+        final_cluster_id.ok_or_eyre("Cluster creation completed but no cluster_id received")?;
 
     // Save cluster configuration to helix.toml
     // If instance already exists, preserve its existing settings and just update cluster_id
-    let config = if let Some(crate::config::CloudConfig::Helix(existing)) = project.config.cloud.get(instance_name) {
+    let config = if let Some(crate::config::CloudConfig::Helix(existing)) =
+        project.config.cloud.get(instance_name)
+    {
         CloudInstanceConfig {
             cluster_id: cluster_id.clone(),
             region: existing.region.clone().or(Some(region.clone())),
@@ -171,7 +177,10 @@ pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
     ));
     print_info(&format!("Region: {}", region));
     print_info("Configuration saved to helix.toml");
-    print_info(&format!("You can now deploy with: helix push {}", instance_name));
+    print_info(&format!(
+        "You can now deploy with: helix push {}",
+        instance_name
+    ));
 
     Ok(())
 }
