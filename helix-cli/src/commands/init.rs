@@ -1,5 +1,5 @@
-use crate::cleanup::CleanupTracker;
 use crate::CloudDeploymentTypeCommand;
+use crate::cleanup::CleanupTracker;
 use crate::commands::integrations::ecr::{EcrAuthType, EcrManager};
 use crate::commands::integrations::fly::{FlyAuthType, FlyManager, VmSize};
 use crate::commands::integrations::helix::HelixManager;
@@ -33,11 +33,12 @@ pub async fn run(
 
     // If there was an error, perform cleanup
     if let Err(ref e) = result
-        && cleanup_tracker.has_tracked_resources() {
-            eprintln!("Init failed, performing cleanup: {}", e);
-            let summary = cleanup_tracker.cleanup();
-            summary.log_summary();
-        }
+        && cleanup_tracker.has_tracked_resources()
+    {
+        eprintln!("Init failed, performing cleanup: {}", e);
+        let summary = cleanup_tracker.cleanup();
+        summary.log_summary();
+    }
 
     result
 }
@@ -144,7 +145,10 @@ async fn run_init_inner(
                         println!();
                         print_status(
                             "INFO",
-                            &format!("Cluster creation skipped. Run 'helix create-cluster {}' when ready.", project_name)
+                            &format!(
+                                "Cluster creation skipped. Run 'helix create-cluster {}' when ready.",
+                                project_name
+                            ),
                         );
                     }
                 }

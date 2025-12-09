@@ -228,7 +228,7 @@ impl<'a> HelixManager<'a> {
 
         // Initiate deployment with SSE streaming
         let client = reqwest::Client::new();
-        let deploy_url = format!("http://{}/deploy", *CLOUD_AUTHORITY);
+        let deploy_url = format!("https://{}/deploy", *CLOUD_AUTHORITY);
 
         let mut event_source = client
             .post(&deploy_url)

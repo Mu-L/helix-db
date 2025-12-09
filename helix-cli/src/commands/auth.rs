@@ -168,7 +168,7 @@ impl Credentials {
 }
 
 pub async fn github_login() -> Result<(String, String)> {
-    let url = format!("http://{}/github-login", *CLOUD_AUTHORITY);
+    let url = format!("https://{}/github-login", *CLOUD_AUTHORITY);
     let client = SseClient::new(url).post();
 
     let mut api_key: Option<String> = None;
