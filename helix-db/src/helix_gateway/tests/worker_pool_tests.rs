@@ -42,7 +42,7 @@ fn create_test_request(name: &str, req_type: RequestType) -> Request {
     Request {
         name: name.to_string(),
         req_type,
-        api_key_hash: None,
+        api_key: None,
         body: Bytes::new(),
         in_fmt: Format::Json,
         out_fmt: Format::Json,
@@ -588,7 +588,7 @@ async fn test_request_with_body_data() {
         body: Bytes::from(vec![1, 2, 3, 4]),
         in_fmt: Format::Json,
         out_fmt: Format::Json,
-        api_key_hash: None,
+        api_key: None,
     };
 
     let result = pool.process(request).await;
@@ -648,7 +648,7 @@ async fn test_request_format_json() {
         body: Bytes::new(),
         in_fmt: Format::Json,
         out_fmt: Format::Json,
-        api_key_hash: None,
+        api_key: None,
     };
 
     let result = pool.process(request).await;
@@ -1143,7 +1143,7 @@ async fn test_request_with_large_body() {
         body: Bytes::from(large_body),
         in_fmt: Format::Json,
         out_fmt: Format::Json,
-        api_key_hash: None,
+        api_key: None,
     };
 
     let result = pool.process(request).await;
@@ -1246,7 +1246,7 @@ async fn test_request_type_query_explicit() {
         body: Bytes::new(),
         in_fmt: Format::Json,
         out_fmt: Format::Json,
-        api_key_hash: None,
+        api_key: None,
     };
 
     let result = pool.process(request).await;

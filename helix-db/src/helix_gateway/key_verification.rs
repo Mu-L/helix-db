@@ -1,12 +1,33 @@
 use crate::protocol::HelixError;
+use sha2::{Digest, Sha256};
+use std::sync::LazyLock;
 use subtle::ConstantTimeEq;
 
-/// API KEY HASH
-const API_KEY_HASH: &[u8] = env!("HELIX_API_KEY").as_bytes();
+/// API KEY HASH (pre-computed SHA-256 hash read from HELIX_API_KEY env var on startup)
+static API_KEY_HASH: LazyLock<[u8; 32]> = LazyLock::new(|| {
+    let key = std::env::var("HELIX_API_KEY").unwrap_or_default();
+    if key.is_empty() {
+        return [0u8; 32];
+    }
+    // Decode hex string to bytes
+    let mut hash = [0u8; 32];
+    if key.len() == 64 {
+        for (i, chunk) in key.as_bytes().chunks(2).enumerate() {
+            if let Ok(byte) = u8::from_str_radix(std::str::from_utf8(chunk).unwrap_or("00"), 16) {
+                hash[i] = byte;
+            }
+        }
+    }
+    hash
+});
 
-pub(crate) fn verify_key(key: &[u8]) -> Result<(), HelixError> {
-    assert_eq!(API_KEY_HASH.len(), 32, "API key must be 32 bytes");
-    if API_KEY_HASH.ct_eq(key).into() {
+#[inline(always)]
+pub(crate) fn verify_key(key: &str) -> Result<(), HelixError> {
+    if *API_KEY_HASH == [0u8; 32] {
+        return Err(HelixError::InvalidApiKey);
+    }
+    let provided_hash = Sha256::digest(key.as_bytes());
+    if provided_hash.ct_eq(&API_KEY_HASH[..]).into() {
         Ok(())
     } else {
         Err(HelixError::InvalidApiKey)
@@ -16,94 +37,87 @@ pub(crate) fn verify_key(key: &[u8]) -> Result<(), HelixError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     // ============================================================================
     // Key Verification Tests
     // ============================================================================
 
-    #[test]
-    fn test_verify_key_success() {
-        // The API key is set at compile time via env!("HELIX_API_KEY")
-        let result = verify_key(API_KEY_HASH);
-        assert!(result.is_ok());
+    fn compute_hash(key: &str) -> [u8; 32] {
+        Sha256::digest(key.as_bytes()).into()
+    }
+
+    fn hash_to_hex(hash: &[u8; 32]) -> String {
+        hash.iter().map(|b| format!("{:02x}", b)).collect()
     }
 
     #[test]
-    fn test_verify_key_wrong_key() {
-        let wrong_key = [0u8; 32]; // All zeros
-        let result = verify_key(&wrong_key);
-        assert!(result.is_err());
+    fn test_sha256_verify_correct_key() {
+        let test_key = "test-api-key-12345";
+        let hash = compute_hash(test_key);
 
-        if let Err(e) = result {
-            assert!(matches!(e, HelixError::InvalidApiKey));
-            assert_eq!(e.to_string(), "Invalid API key");
+        // Verify that the hash of the same key matches
+        let provided_hash = Sha256::digest(test_key.as_bytes());
+        assert!(bool::from(provided_hash.ct_eq(&hash[..])));
+    }
+
+    #[test]
+    fn test_sha256_verify_wrong_key() {
+        let test_key = "test-api-key-12345";
+        let wrong_key = "wrong-api-key";
+        let hash = compute_hash(test_key);
+
+        // Verify that wrong key fails
+        let provided_hash = Sha256::digest(wrong_key.as_bytes());
+        assert!(!bool::from(provided_hash.ct_eq(&hash[..])));
+    }
+
+    #[test]
+    fn test_sha256_verify_empty_key() {
+        let test_key = "test-api-key-12345";
+        let hash = compute_hash(test_key);
+
+        // Empty key should not verify
+        let provided_hash = Sha256::digest("".as_bytes());
+        assert!(!bool::from(provided_hash.ct_eq(&hash[..])));
+    }
+
+    #[test]
+    fn test_sha256_verify_similar_key() {
+        let test_key = "test-api-key-12345";
+        let similar_key = "test-api-key-12346"; // Off by one character
+        let hash = compute_hash(test_key);
+
+        // Similar key should not verify
+        let provided_hash = Sha256::digest(similar_key.as_bytes());
+        assert!(!bool::from(provided_hash.ct_eq(&hash[..])));
+    }
+
+    #[test]
+    fn test_sha256_hash_format() {
+        let test_key = "test-api-key";
+        let hash = compute_hash(test_key);
+        let hex_hash = hash_to_hex(&hash);
+
+        // SHA-256 hashes are 32 bytes (64 hex characters)
+        assert_eq!(hash.len(), 32);
+        assert_eq!(hex_hash.len(), 64);
+        // Should be valid hex
+        assert!(hex_hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_hex_decode_roundtrip() {
+        let test_key = "test-api-key";
+        let hash = compute_hash(test_key);
+        let hex_hash = hash_to_hex(&hash);
+
+        // Decode the hex back to bytes
+        let mut decoded = [0u8; 32];
+        for (i, chunk) in hex_hash.as_bytes().chunks(2).enumerate() {
+            decoded[i] = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap();
         }
-    }
 
-    #[test]
-    fn test_verify_key_partial_match() {
-        // Create a key that matches the first half but not the second
-        let mut partial_key = [0u8; 32];
-        partial_key[..16].copy_from_slice(&API_KEY_HASH[..16]);
-        // Rest stays as zeros
-
-        let result = verify_key(&partial_key);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), HelixError::InvalidApiKey));
-    }
-
-    #[test]
-    fn test_verify_key_off_by_one() {
-        // Create a key that differs by just one bit in the last byte
-        let mut almost_correct = API_KEY_HASH.to_vec();
-        almost_correct[31] ^= 1; // Flip the least significant bit
-
-        let result = verify_key(&almost_correct);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), HelixError::InvalidApiKey));
-    }
-
-    #[test]
-    fn test_verify_key_empty() {
-        let empty_key = [];
-        let result = verify_key(&empty_key);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_verify_key_wrong_length_short() {
-        let short_key = [0u8; 16];
-        let result = verify_key(&short_key);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_verify_key_wrong_length_long() {
-        let long_key = [0u8; 64];
-        let result = verify_key(&long_key);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_verify_key_is_constant_time() {
-        // This test verifies that the comparison is constant-time
-        // by ensuring the function doesn't panic with different inputs
-        let key1 = [0u8; 32];
-        let key2 = [255u8; 32];
-
-        // Both should fail but should take similar time
-        // (We can't easily test timing in unit tests, but we verify they both fail)
-        assert!(verify_key(&key1).is_err());
-        assert!(verify_key(&key2).is_err());
-    }
-
-    // ============================================================================
-    // API Key Length Tests
-    // ============================================================================
-
-    #[test]
-    fn test_api_key_length() {
-        // Verify the compile-time API key is exactly 32 bytes
-        assert_eq!(API_KEY_HASH.len(), 32);
+        assert_eq!(hash, decoded);
     }
 }

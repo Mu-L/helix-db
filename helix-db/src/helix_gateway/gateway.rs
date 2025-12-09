@@ -175,7 +175,7 @@ async fn post_handler(
     #[cfg(feature = "api-key")]
     {
         use crate::helix_gateway::key_verification::verify_key;
-        if let Err(e) = verify_key(&req.api_key_hash.unwrap()) {
+        if let Err(e) = verify_key(req.api_key.as_ref().unwrap()) {
             info!(?e, "Invalid API key");
             helix_metrics::log_event(
                 helix_metrics::events::EventType::InvalidApiKey,

@@ -1,20 +1,28 @@
 use crate::commands::auth::Credentials;
 use crate::config::{BuildMode, CloudInstanceConfig, DbConfig, InstanceInfo};
 use crate::project::ProjectContext;
+use crate::sse_client::{SseEvent, SseProgressHandler};
 use crate::utils::helixc_utils::{collect_hx_files, generate_content};
-use crate::utils::{print_error_with_hint, print_status, print_success};
+use crate::utils::{print_error, print_error_with_hint, print_status, print_success};
 use eyre::{OptionExt, Result, eyre};
 use helix_db::helix_engine::traversal_core::config::Config;
-use helix_db::utils::styled_string::StyledString;
+use reqwest_eventsource::RequestBuilderExt;
 use serde_json::json;
+use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 // use uuid::Uuid;
 
-const DEFAULT_CLOUD_AUTHORITY: &str = "ec2-184-72-27-116.us-west-1.compute.amazonaws.com:3000";
+const DEFAULT_CLOUD_AUTHORITY: &str = "cloud.helix-db.com";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
-    std::env::var("CLOUD_AUTHORITY").unwrap_or(DEFAULT_CLOUD_AUTHORITY.to_string())
+    std::env::var("CLOUD_AUTHORITY").unwrap_or_else(|_| {
+        if cfg!(debug_assertions) {
+            "localhost:3000".to_string()
+        } else {
+            DEFAULT_CLOUD_AUTHORITY.to_string()
+        }
+    })
 });
 
 pub struct HelixManager<'a> {
@@ -71,10 +79,12 @@ impl<'a> HelixManager<'a> {
             cluster_id,
             region,
             build_mode: BuildMode::Release,
+            env_vars: HashMap::new(),
             db_config: DbConfig::default(),
         })
     }
 
+    #[allow(dead_code)]
     pub async fn init_cluster(
         &self,
         instance_name: &str,
@@ -164,25 +174,23 @@ impl<'a> HelixManager<'a> {
         // get credentials - already validated by check_auth()
         let credentials = Credentials::read_from_file(&self.credentials_path()?);
 
-        // read config.hx.json
-        let config_path = path.join("config.hx.json");
+        // Optionally load config from helix.toml or legacy config.hx.json
+        let helix_toml_path = path.join("helix.toml");
+        let config_hx_path = path.join("config.hx.json");
         let schema_path = path.join("schema.hx");
 
-        // Use from_files if schema.hx exists (backward compatibility), otherwise use from_file
-        let config = if schema_path.exists() {
-            match Config::from_files(config_path, schema_path) {
-                Ok(config) => config,
-                Err(e) => {
-                    return Err(eyre!("Error: failed to load config: {e}"));
-                }
+        let _config: Option<Config> = if helix_toml_path.exists() {
+            // v2 format: helix.toml (config is already loaded in self.project)
+            None
+        } else if config_hx_path.exists() {
+            // v1 backward compatibility: config.hx.json
+            if schema_path.exists() {
+                Config::from_files(config_hx_path, schema_path).ok()
+            } else {
+                Config::from_file(config_hx_path).ok()
             }
         } else {
-            match Config::from_file(config_path) {
-                Ok(config) => config,
-                Err(e) => {
-                    return Err(eyre!("Error: failed to load config: {e}"));
-                }
-            }
+            None
         };
 
         // get cluster information from helix.toml
@@ -193,40 +201,247 @@ impl<'a> HelixManager<'a> {
             }
         };
 
-        // upload queries to central server
+        // Separate schema from query files
+        let mut schema_content = String::new();
+        let mut queries_map: HashMap<String, String> = HashMap::new();
+
+        for file in &content.files {
+            if file.name.ends_with("schema.hx") {
+                schema_content = file.content.clone();
+            } else {
+                queries_map.insert(file.name.clone(), file.content.clone());
+            }
+        }
+
+        // Prepare deployment payload
         let payload = json!({
-            "user_id": credentials.user_id,
-            "queries": content.files,
-            "cluster_id": cluster_info.cluster_id,
-            "version": "0.1.0",
-            "helix_config": config.to_json()
+            "schema": schema_content,
+            "queries": queries_map,
+            "env_vars": cluster_info.env_vars,
+            "instance_name": cluster_name
         });
+
+        // Initiate deployment with SSE streaming
         let client = reqwest::Client::new();
+        let deploy_url = format!("https://{}/deploy", *CLOUD_AUTHORITY);
 
-        let cloud_url = format!("http://{}/clusters/deploy-queries", *CLOUD_AUTHORITY);
-
-        match client
-            .post(cloud_url)
-            .header("x-api-key", &credentials.helix_admin_key) // used to verify user
-            .header("x-cluster-id", &cluster_info.cluster_id) // used to verify instance with user
+        let mut event_source = client
+            .post(&deploy_url)
+            .header("x-api-key", &credentials.helix_admin_key)
+            .header("x-cluster-id", &cluster_info.cluster_id)
             .header("Content-Type", "application/json")
-            .body(serde_json::to_string(&payload).unwrap())
-            .send()
-            .await
-        {
-            Ok(response) => {
-                if response.status().is_success() {
-                    println!("{}", "Queries uploaded to remote db".green().bold());
-                } else {
-                    return Err(eyre!("Error uploading queries to remote db"));
+            .json(&payload)
+            .eventsource()?;
+
+        let progress = SseProgressHandler::new("Deploying queries...");
+        let mut deployment_success = false;
+
+        // Process SSE events
+        use futures_util::StreamExt;
+
+        while let Some(event) = event_source.next().await {
+            match event {
+                Ok(reqwest_eventsource::Event::Open) => {
+                    // Connection opened
+                }
+                Ok(reqwest_eventsource::Event::Message(message)) => {
+                    // Parse the SSE event
+                    let sse_event: SseEvent = match serde_json::from_str(&message.data) {
+                        Ok(event) => event,
+                        Err(e) => {
+                            progress.println(&format!("Failed to parse event: {}", e));
+                            continue;
+                        }
+                    };
+
+                    match sse_event {
+                        SseEvent::Progress {
+                            percentage,
+                            message,
+                        } => {
+                            progress.set_progress(percentage);
+                            if let Some(msg) = message {
+                                progress.set_message(&msg);
+                            }
+                        }
+                        SseEvent::Log { message, .. } => {
+                            progress.println(&message);
+                        }
+                        SseEvent::StatusTransition { to, message, .. } => {
+                            let msg = message.unwrap_or_else(|| format!("Status: {}", to));
+                            progress.println(&msg);
+                        }
+                        SseEvent::Success { .. } => {
+                            deployment_success = true;
+                            progress.finish("Deployment completed successfully!");
+                            event_source.close();
+                            break;
+                        }
+                        SseEvent::Error { error } => {
+                            progress.finish_error(&format!("Error: {}", error));
+                            event_source.close();
+                            return Err(eyre!("Deployment failed: {}", error));
+                        }
+                        // Deploy-specific events
+                        SseEvent::ValidatingQueries => {
+                            progress.set_message("Validating queries...");
+                        }
+                        SseEvent::Building {
+                            estimated_percentage,
+                        } => {
+                            progress.set_progress(estimated_percentage as f64);
+                            progress.set_message("Building...");
+                        }
+                        SseEvent::Deploying => {
+                            progress.set_message("Deploying to infrastructure...");
+                        }
+                        SseEvent::Deployed { url, auth_key } => {
+                            deployment_success = true;
+                            progress.finish("Deployment completed!");
+                            print_success(&format!("Deployed to: {}", url));
+                            print_status("AUTH_KEY", &format!("Your auth key: {}", auth_key));
+
+                            // Prompt user for .env handling
+                            println!();
+                            println!("Would you like to save connection details to a .env file?");
+                            println!("  1. Add to .env in project root (Recommended)");
+                            println!("  2. Don't add");
+                            println!("  3. Specify custom path");
+                            print!("\nChoice [1]: ");
+
+                            use std::io::{self, Write};
+                            io::stdout().flush().ok();
+
+                            let mut input = String::new();
+                            if io::stdin().read_line(&mut input).is_ok() {
+                                let choice = input.trim();
+                                match choice {
+                                    "1" | "" => {
+                                        let env_path = self.project.root.join(".env");
+                                        let comment = format!(
+                                            "# HelixDB Cloud URL for instance: {}",
+                                            cluster_name
+                                        );
+                                        if let Err(e) = crate::utils::add_env_var_with_comment(
+                                            &env_path,
+                                            "HELIX_CLOUD_URL",
+                                            &url,
+                                            Some(&comment),
+                                        ) {
+                                            print_error(&format!("Failed to write .env: {}", e));
+                                        }
+                                        match crate::utils::add_env_var_to_file(
+                                            &env_path,
+                                            "HELIX_API_KEY",
+                                            &auth_key,
+                                        ) {
+                                            Ok(_) => print_success(&format!(
+                                                "Added HELIX_CLOUD_URL and HELIX_API_KEY to {}",
+                                                env_path.display()
+                                            )),
+                                            Err(e) => {
+                                                print_error(&format!("Failed to write .env: {}", e))
+                                            }
+                                        }
+                                    }
+                                    "2" => {
+                                        print_status("INFO", "Skipped saving to .env");
+                                    }
+                                    "3" => {
+                                        print!("Enter path: ");
+                                        io::stdout().flush().ok();
+                                        let mut path_input = String::new();
+                                        if io::stdin().read_line(&mut path_input).is_ok() {
+                                            let custom_path = PathBuf::from(path_input.trim());
+                                            let comment = format!(
+                                                "# HelixDB Cloud URL for instance: {}",
+                                                cluster_name
+                                            );
+                                            if let Err(e) = crate::utils::add_env_var_with_comment(
+                                                &custom_path,
+                                                "HELIX_CLOUD_URL",
+                                                &url,
+                                                Some(&comment),
+                                            ) {
+                                                print_error(&format!("Failed to write .env: {}", e));
+                                            }
+                                            match crate::utils::add_env_var_to_file(
+                                                &custom_path,
+                                                "HELIX_API_KEY",
+                                                &auth_key,
+                                            ) {
+                                                Ok(_) => print_success(&format!(
+                                                    "Added HELIX_CLOUD_URL and HELIX_API_KEY to {}",
+                                                    custom_path.display()
+                                                )),
+                                                Err(e) => print_error(&format!(
+                                                    "Failed to write .env: {}",
+                                                    e
+                                                )),
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        print_status(
+                                            "INFO",
+                                            "Invalid choice, skipped saving to .env",
+                                        );
+                                    }
+                                }
+                            }
+
+                            event_source.close();
+                            break;
+                        }
+                        SseEvent::Redeployed { url } => {
+                            deployment_success = true;
+                            progress.finish("Redeployment completed!");
+                            print_success(&format!("Redeployed to: {}", url));
+                            event_source.close();
+                            break;
+                        }
+                        SseEvent::BadRequest { error } => {
+                            progress.finish_error(&format!("Bad request: {}", error));
+                            event_source.close();
+                            return Err(eyre!("Bad request: {}", error));
+                        }
+                        SseEvent::QueryValidationError { error } => {
+                            progress.finish_error(&format!("Query validation failed: {}", error));
+                            event_source.close();
+                            return Err(eyre!("Query validation error: {}", error));
+                        }
+                        _ => {
+                            // Ignore other event types
+                        }
+                    }
+                }
+                Err(err) => {
+                    progress.finish_error(&format!("Stream error: {}", err));
+                    return Err(eyre!("Deployment stream error: {}", err));
                 }
             }
-            Err(e) => {
-                return Err(eyre!("Error uploading queries to remote db: {e}"));
-            }
-        };
+        }
 
+        if !deployment_success {
+            return Err(eyre!("Deployment did not complete successfully"));
+        }
+
+        print_success("Queries deployed successfully");
         Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn redeploy(&self, path: Option<String>, cluster_name: String) -> Result<()> {
+        // Redeploy is similar to deploy but may have different backend handling
+        // For now, we'll use the same implementation with a different status message
+        print_status(
+            "REDEPLOY",
+            &format!("Redeploying to cluster: {}", cluster_name),
+        );
+
+        // Call deploy with the same logic
+        // In the future, this could use a different endpoint or add a "redeploy" flag
+        self.deploy(path, cluster_name).await
     }
 }
 

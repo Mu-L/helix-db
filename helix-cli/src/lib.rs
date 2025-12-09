@@ -9,6 +9,7 @@ pub mod errors;
 pub mod github_issue;
 pub mod metrics_sender;
 pub mod project;
+pub mod sse_client;
 pub mod update;
 pub mod utils;
 

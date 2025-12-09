@@ -16,7 +16,7 @@ pub type ReqMsg = (Request, RetChan);
 pub struct Request {
     pub name: String,
     pub req_type: RequestType,
-    pub api_key_hash: Option<[u8; 32]>,
+    pub api_key: Option<String>,
     /// This contains the input parameters serialized with in_fmt
     pub body: Bytes,
     pub in_fmt: Format,
@@ -65,21 +65,17 @@ where
             None => Format::default(),
         };
 
-        let api_key_hash = {
+        let api_key = {
             #[cfg(feature = "api-key")]
             match headers.get("x-api-key") {
                 Some(v) => match v.to_str() {
-                    Ok(s) => {
-                        let mut hasher = sha_256::Sha256::new();
-                        let hash = hasher.digest(s.as_bytes());
-                        Some(hash)
-                    }
+                    Ok(s) => Some(s.to_string()),
                     Err(_) => return Err(StatusCode::BAD_REQUEST),
                 },
                 None => return Err(StatusCode::BAD_REQUEST),
             }
             #[cfg(not(feature = "api-key"))]
-            None::<[u8; 32]>
+            None::<String>
         };
 
         let out_fmt = match headers.get(ACCEPT) {
@@ -100,7 +96,7 @@ where
         let out = Request {
             name,
             req_type,
-            api_key_hash,
+            api_key,
             body,
             in_fmt,
             out_fmt,
@@ -124,7 +120,7 @@ mod tests {
         let request = Request {
             name: "test_query".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: body.clone(),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -141,7 +137,7 @@ mod tests {
         let request = Request {
             name: "original".to_string(),
             req_type: RequestType::MCP,
-            api_key_hash: None,
+            api_key: None,
             body: body.clone(),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -157,7 +153,7 @@ mod tests {
         let request = Request {
             name: "debug_test".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: Bytes::from("test"),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -218,7 +214,7 @@ mod tests {
         let request = Request {
             name: "empty_body".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: Bytes::new(),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -235,7 +231,7 @@ mod tests {
         let request = Request {
             name: "large_body".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: body.clone(),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -249,7 +245,7 @@ mod tests {
         let request = Request {
             name: "test_世界_query".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: Bytes::from("test"),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -259,53 +255,36 @@ mod tests {
     }
 
     // ============================================================================
-    // API Key Hash Tests
+    // API Key Tests
     // ============================================================================
 
     #[cfg(feature = "api-key")]
     #[test]
-    fn test_request_with_api_key_hash() {
-        let hash = [42u8; 32];
+    fn test_request_with_api_key() {
+        let key = "my-secret-api-key".to_string();
         let request = Request {
             name: "secure_query".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: Some(hash),
+            api_key: Some(key.clone()),
             body: Bytes::from("test"),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
 
-        assert!(request.api_key_hash.is_some());
-        assert_eq!(request.api_key_hash.unwrap(), hash);
+        assert!(request.api_key.is_some());
+        assert_eq!(request.api_key.unwrap(), key);
     }
 
     #[cfg(feature = "api-key")]
     #[test]
-    fn test_api_key_hash_length() {
-        // Verify that API key hashes are always 32 bytes (SHA-256)
-        let hash = [0u8; 32];
-        let request = Request {
-            name: "test".to_string(),
-            req_type: RequestType::Query,
-            api_key_hash: Some(hash),
-            body: Bytes::from("test"),
-            in_fmt: Format::Json,
-            out_fmt: Format::Json,
-        };
-
-        assert_eq!(request.api_key_hash.unwrap().len(), 32);
-    }
-
-    #[cfg(feature = "api-key")]
-    #[test]
-    fn test_api_key_hash_different_values() {
-        let hash1 = [1u8; 32];
-        let hash2 = [2u8; 32];
+    fn test_api_key_different_values() {
+        let key1 = "api-key-1".to_string();
+        let key2 = "api-key-2".to_string();
 
         let request1 = Request {
             name: "test1".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: Some(hash1),
+            api_key: Some(key1.clone()),
             body: Bytes::from("test"),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -314,43 +293,43 @@ mod tests {
         let request2 = Request {
             name: "test2".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: Some(hash2),
+            api_key: Some(key2.clone()),
             body: Bytes::from("test"),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
 
-        assert_ne!(request1.api_key_hash.unwrap(), request2.api_key_hash.unwrap());
+        assert_ne!(request1.api_key.unwrap(), request2.api_key.unwrap());
     }
 
     #[test]
-    fn test_request_without_api_key_hash() {
+    fn test_request_without_api_key() {
         let request = Request {
             name: "unsecured_query".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: Bytes::from("test"),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
 
-        assert!(request.api_key_hash.is_none());
+        assert!(request.api_key.is_none());
     }
 
     #[cfg(feature = "api-key")]
     #[test]
-    fn test_api_key_hash_clone() {
-        let hash = [99u8; 32];
+    fn test_api_key_clone() {
+        let key = "test-api-key".to_string();
         let request = Request {
             name: "test".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: Some(hash),
+            api_key: Some(key),
             body: Bytes::from("test"),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
 
         let cloned = request.clone();
-        assert_eq!(cloned.api_key_hash, request.api_key_hash);
+        assert_eq!(cloned.api_key, request.api_key);
     }
 }

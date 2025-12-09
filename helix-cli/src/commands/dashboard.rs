@@ -1,12 +1,15 @@
 //! Dashboard management for Helix projects
 
+use crate::DashboardAction;
 use crate::commands::auth::Credentials;
 use crate::commands::integrations::helix::CLOUD_AUTHORITY;
 use crate::config::{ContainerRuntime, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
-use crate::utils::{print_field, print_header, print_info, print_newline, print_status, print_success, print_warning};
-use crate::DashboardAction;
+use crate::utils::{
+    print_field, print_header, print_info, print_newline, print_status, print_success,
+    print_warning,
+};
 use eyre::{Result, eyre};
 use std::process::Command;
 
@@ -269,24 +272,28 @@ fn load_cloud_credentials() -> Result<Credentials> {
 
 fn get_cloud_url(instance_config: &InstanceInfo) -> Result<String> {
     match instance_config {
-        InstanceInfo::Helix(config) => {
-            Ok(format!("http://{}/clusters/{}", *CLOUD_AUTHORITY, config.cluster_id))
-        }
-        InstanceInfo::FlyIo(_) => {
-            Err(eyre!("Fly.io instances are not yet supported for the dashboard"))
-        }
-        InstanceInfo::Ecr(_) => {
-            Err(eyre!("ECR instances are not yet supported for the dashboard"))
-        }
-        InstanceInfo::Local(_) => {
-            Err(eyre!("Local instances should not call get_cloud_url"))
-        }
+        InstanceInfo::Helix(config) => Ok(format!(
+            "https://{}/clusters/{}",
+            *CLOUD_AUTHORITY, config.cluster_id
+        )),
+        InstanceInfo::FlyIo(_) => Err(eyre!(
+            "Fly.io instances are not yet supported for the dashboard"
+        )),
+        InstanceInfo::Ecr(_) => Err(eyre!(
+            "ECR instances are not yet supported for the dashboard"
+        )),
+        InstanceInfo::Local(_) => Err(eyre!("Local instances should not call get_cloud_url")),
     }
 }
 
 fn is_dashboard_running(runtime: ContainerRuntime) -> Result<bool> {
     let output = Command::new(runtime.binary())
-        .args(["ps", "-q", "-f", &format!("name={DASHBOARD_CONTAINER_NAME}")])
+        .args([
+            "ps",
+            "-q",
+            "-f",
+            &format!("name={DASHBOARD_CONTAINER_NAME}"),
+        ])
         .output()
         .map_err(|e| eyre!("Failed to check dashboard status: {e}"))?;
 
@@ -466,7 +473,7 @@ fn status() -> Result<()> {
             "inspect",
             DASHBOARD_CONTAINER_NAME,
             "--format",
-            "{{range .Config.Env}}{{println .}}{{end}}"
+            "{{range .Config.Env}}{{println .}}{{end}}",
         ])
         .output();
 
