@@ -174,26 +174,23 @@ impl<'a> HelixManager<'a> {
         // get credentials - already validated by check_auth()
         let credentials = Credentials::read_from_file(&self.credentials_path()?);
 
-        // read config.hx.json
-        let config_path = path.join("config.hx.json");
+        // Optionally load config from helix.toml or legacy config.hx.json
+        let helix_toml_path = path.join("helix.toml");
+        let config_hx_path = path.join("config.hx.json");
         let schema_path = path.join("schema.hx");
 
-        // Use from_files if schema.hx exists (backward compatibility), otherwise use from_file
-        // keep for sending config at some point
-        let _config = if schema_path.exists() {
-            match Config::from_files(config_path, schema_path) {
-                Ok(config) => config,
-                Err(e) => {
-                    return Err(eyre!("Error: failed to load config: {e}"));
-                }
+        let _config: Option<Config> = if helix_toml_path.exists() {
+            // v2 format: helix.toml (config is already loaded in self.project)
+            None
+        } else if config_hx_path.exists() {
+            // v1 backward compatibility: config.hx.json
+            if schema_path.exists() {
+                Config::from_files(config_hx_path, schema_path).ok()
+            } else {
+                Config::from_file(config_hx_path).ok()
             }
         } else {
-            match Config::from_file(config_path) {
-                Ok(config) => config,
-                Err(e) => {
-                    return Err(eyre!("Error: failed to load config: {e}"));
-                }
-            }
+            None
         };
 
         // get cluster information from helix.toml

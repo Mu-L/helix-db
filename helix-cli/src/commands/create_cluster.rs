@@ -77,9 +77,6 @@ pub async fn run(instance_name: &str, region: Option<String>) -> Result<()> {
                 // Connection opened
             }
             Ok(reqwest_eventsource::Event::Message(message)) => {
-                // Debug: print raw data
-                eprintln!("DEBUG: Received SSE data: {}", message.data);
-
                 let sse_event: SseEvent = match serde_json::from_str(&message.data) {
                     Ok(event) => event,
                     Err(e) => {

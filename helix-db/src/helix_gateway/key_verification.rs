@@ -1,11 +1,16 @@
 use crate::protocol::HelixError;
+use std::sync::LazyLock;
 
-/// API KEY HASH (bcrypt hash stored at compile time)
-const api_key: &str = env!("HELIX_API_KEY");
+/// API KEY HASH (bcrypt hash read from HELIX_API_KEY env var on startup)
+static API_KEY: LazyLock<String> =
+    LazyLock::new(|| std::env::var("HELIX_API_KEY").unwrap_or_default());
 
 #[inline(always)]
 pub(crate) fn verify_key(key: &str) -> Result<(), HelixError> {
-    match bcrypt::verify(key, api_key) {
+    if API_KEY.is_empty() {
+        return Err(HelixError::InvalidApiKey);
+    }
+    match bcrypt::verify(key, &*API_KEY) {
         Ok(true) => Ok(()),
         Ok(false) => Err(HelixError::InvalidApiKey),
         Err(_) => Err(HelixError::InvalidApiKey),

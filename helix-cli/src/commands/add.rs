@@ -99,6 +99,22 @@ async fn run_add_inner(
             if input.is_empty() || input == "y" || input == "yes" {
                 // Run create-cluster flow
                 crate::commands::create_cluster::run(&instance_name, region).await?;
+
+                // create_cluster::run() already saved the updated config with the real cluster_id
+                // Return early to avoid overwriting it with the stale in-memory config
+                print_success(&format!(
+                    "Instance '{instance_name}' added to Helix project"
+                ));
+
+                print_instructions(
+                    "Next steps:",
+                    &[
+                        &format!("Run 'helix build {instance_name}' to compile your project for this instance"),
+                        &format!("Run 'helix push {instance_name}' to start the '{instance_name}' instance"),
+                    ],
+                );
+
+                return Ok(());
             } else {
                 println!();
                 print_status(
