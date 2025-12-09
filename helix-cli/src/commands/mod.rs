@@ -4,6 +4,7 @@ pub mod backup;
 pub mod build;
 pub mod check;
 pub mod compile;
+pub mod create_cluster;
 pub mod dashboard;
 pub mod delete;
 pub mod init;

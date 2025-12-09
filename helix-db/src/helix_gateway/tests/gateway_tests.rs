@@ -336,27 +336,15 @@ fn test_gateway_opts_default_workers_per_core() {
 
 #[cfg(feature = "api-key")]
 mod api_key_tests {
-    use super::*;
     use crate::helix_gateway::key_verification::verify_key;
-    use crate::protocol::{HelixError, request::Request};
+    use crate::protocol::request::Request;
+    use crate::protocol::{Format, HelixError};
     use axum::body::Bytes;
-    use crate::protocol::Format;
 
     #[test]
-    fn test_verify_key_integration_success() {
-        // The HELIX_API_KEY env var is the expected SHA-256 hash (32 bytes)
-        // In production, clients send their raw key in the x-api-key header,
-        // which gets SHA-256 hashed in request.rs and compared here
-        let expected_hash = env!("HELIX_API_KEY").as_bytes();
-
-        let result = verify_key(expected_hash);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_verify_key_integration_wrong_key() {
-        let wrong_hash = [0u8; 32];
-        let result = verify_key(&wrong_hash);
+    fn test_verify_key_wrong_key() {
+        let wrong_key = "wrong-api-key";
+        let result = verify_key(wrong_key);
 
         assert!(result.is_err());
         if let Err(e) = result {
@@ -365,80 +353,67 @@ mod api_key_tests {
     }
 
     #[test]
-    fn test_verify_key_integration_all_ones() {
-        let wrong_hash = [255u8; 32];
-        let result = verify_key(&wrong_hash);
+    fn test_verify_key_empty_key() {
+        let empty_key = "";
+        let result = verify_key(empty_key);
 
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_request_with_valid_api_key_hash() {
-        // The stored hash is what we expect to receive
-        let expected_hash_bytes = env!("HELIX_API_KEY").as_bytes();
-        let mut hash_array = [0u8; 32];
-        hash_array.copy_from_slice(expected_hash_bytes);
+    fn test_request_with_api_key() {
+        let api_key = "test-api-key".to_string();
 
         let request = Request {
             name: "test_query".to_string(),
             req_type: crate::protocol::request::RequestType::Query,
-            api_key_hash: Some(hash_array),
+            api_key: Some(api_key.clone()),
             body: Bytes::from("{}"),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
 
-        // Verify the key in the request would pass validation
-        assert!(request.api_key_hash.is_some());
-        let result = verify_key(&request.api_key_hash.unwrap());
-        assert!(result.is_ok());
+        assert!(request.api_key.is_some());
+        assert_eq!(request.api_key.unwrap(), api_key);
     }
 
     #[test]
-    fn test_request_with_invalid_api_key_hash() {
-        let wrong_hash = [123u8; 32];
-
+    fn test_request_without_api_key() {
         let request = Request {
             name: "test_query".to_string(),
             req_type: crate::protocol::request::RequestType::Query,
-            api_key_hash: Some(wrong_hash),
+            api_key: None,
             body: Bytes::from("{}"),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
 
-        // Verify the key in the request would fail validation
-        assert!(request.api_key_hash.is_some());
-        let result = verify_key(&request.api_key_hash.unwrap());
-        assert!(result.is_err());
+        assert!(request.api_key.is_none());
     }
 
     #[test]
     fn test_api_key_hash_consistency() {
-        // Test that the stored hash is always the same
-        let hash1 = env!("HELIX_API_KEY").as_bytes();
-        let hash2 = env!("HELIX_API_KEY").as_bytes();
+        // Test that the stored bcrypt hash is always the same
+        let hash1 = env!("HELIX_API_KEY");
+        let hash2 = env!("HELIX_API_KEY");
 
         assert_eq!(hash1, hash2);
     }
 
     #[test]
-    fn test_client_key_hashing() {
-        // Test that hashing different client keys produces different hashes
-        // This simulates what happens in request.rs when processing x-api-key header
-        let mut hasher1 = sha_256::Sha256::new();
-        let hash1 = hasher1.digest(b"client_key_1");
+    fn test_bcrypt_verification_works() {
+        // Test that bcrypt verification works correctly
+        let test_key = "test-api-key-12345";
+        let hash = bcrypt::hash(test_key, bcrypt::DEFAULT_COST).unwrap();
 
-        let mut hasher2 = sha_256::Sha256::new();
-        let hash2 = hasher2.digest(b"client_key_2");
-
-        assert_ne!(hash1, hash2);
+        assert!(bcrypt::verify(test_key, &hash).unwrap());
+        assert!(!bcrypt::verify("wrong-key", &hash).unwrap());
     }
 
     #[test]
     fn test_verify_key_error_type() {
-        let wrong_hash = [0u8; 32];
-        let result = verify_key(&wrong_hash);
+        let wrong_key = "definitely-wrong-key";
+        let result = verify_key(wrong_key);
 
         assert!(result.is_err());
         match result {
@@ -451,8 +426,8 @@ mod api_key_tests {
 
     #[test]
     fn test_verify_key_error_message() {
-        let wrong_hash = [0u8; 32];
-        let result = verify_key(&wrong_hash);
+        let wrong_key = "wrong-key";
+        let result = verify_key(wrong_key);
 
         if let Err(e) = result {
             assert_eq!(e.to_string(), "Invalid API key");
@@ -463,8 +438,8 @@ mod api_key_tests {
     fn test_verify_key_error_http_status() {
         use axum::response::IntoResponse;
 
-        let wrong_hash = [0u8; 32];
-        let result = verify_key(&wrong_hash);
+        let wrong_key = "wrong-key";
+        let result = verify_key(wrong_key);
 
         if let Err(e) = result {
             let response = e.into_response();

@@ -32,7 +32,7 @@ pub async fn node_connections_handler(
     let mut req = protocol::request::Request {
         name: "node_connections".to_string(),
         req_type: RequestType::Query,
-        api_key_hash: None,
+        api_key: None,
         body: axum::body::Bytes::new(),
         in_fmt: protocol::Format::default(),
         out_fmt: protocol::Format::default(),
@@ -275,7 +275,7 @@ mod tests {
         let request = Request {
             name: "node_connections".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: Bytes::from(params_json),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -328,7 +328,7 @@ mod tests {
         let request = Request {
             name: "node_connections".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: Bytes::from(params_json),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -366,7 +366,7 @@ mod tests {
         let request = Request {
             name: "node_connections".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: Bytes::from(params_json),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -397,7 +397,7 @@ mod tests {
         let request = Request {
             name: "node_connections".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: Bytes::from(params_json),
             in_fmt: Format::Json,
             out_fmt: Format::Json,
@@ -419,7 +419,7 @@ mod tests {
         let request = Request {
             name: "node_connections".to_string(),
             req_type: RequestType::Query,
-            api_key_hash: None,
+            api_key: None,
             body: Bytes::new(),
             in_fmt: Format::Json,
             out_fmt: Format::Json,

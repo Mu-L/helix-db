@@ -218,6 +218,55 @@ pub fn print_confirm(message: &str) -> std::io::Result<bool> {
     Ok(response.to_lowercase() == "y" || response.to_lowercase() == "yes")
 }
 
+/// Add or update an environment variable in a .env file
+pub fn add_env_var_to_file(file_path: &Path, key: &str, value: &str) -> std::io::Result<()> {
+    add_env_var_with_comment(file_path, key, value, None)
+}
+
+/// Add or update an environment variable in a .env file with an optional comment
+pub fn add_env_var_with_comment(
+    file_path: &Path,
+    key: &str,
+    value: &str,
+    comment: Option<&str>,
+) -> std::io::Result<()> {
+    let mut content = if file_path.exists() {
+        fs::read_to_string(file_path)?
+    } else {
+        String::new()
+    };
+
+    let key_prefix = format!("{}=", key);
+    if content.lines().any(|line| line.starts_with(&key_prefix)) {
+        // Replace existing key (preserve any existing comment above it)
+        content = content
+            .lines()
+            .map(|line| {
+                if line.starts_with(&key_prefix) {
+                    format!("{}={}", key, value)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+    } else {
+        // Append new key with optional comment
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        if let Some(cmt) = comment {
+            content.push_str(&format!("{}\n", cmt));
+        }
+        content.push_str(&format!("{}={}\n", key, value));
+    }
+
+    fs::write(file_path, content)
+}
+
 #[derive(Default)]
 #[allow(unused)]
 pub enum Template {
@@ -466,7 +515,8 @@ impl Spinner {
         if let Some(handle) = self.handle.take() {
             handle.abort();
         }
-        print!("\r");
+        // Clear the line completely
+        print!("\r\x1b[K");
         std::io::Write::flush(&mut std::io::stdout()).unwrap();
     }
     /// function that updates the message
@@ -480,5 +530,178 @@ impl Spinner {
 impl Drop for Spinner {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_add_env_var_creates_new_file() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+
+        add_env_var_to_file(&env_path, "HELIX_API_KEY", "test-key-123").unwrap();
+
+        let content = fs::read_to_string(&env_path).unwrap();
+        assert_eq!(content, "HELIX_API_KEY=test-key-123\n");
+    }
+
+    #[test]
+    fn test_add_env_var_appends_to_existing_file() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+
+        // Create existing .env file
+        fs::write(&env_path, "EXISTING_VAR=value\n").unwrap();
+
+        add_env_var_to_file(&env_path, "HELIX_API_KEY", "test-key-123").unwrap();
+
+        let content = fs::read_to_string(&env_path).unwrap();
+        assert_eq!(content, "EXISTING_VAR=value\nHELIX_API_KEY=test-key-123\n");
+    }
+
+    #[test]
+    fn test_add_env_var_appends_newline_if_missing() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+
+        // Create existing .env file without trailing newline
+        fs::write(&env_path, "EXISTING_VAR=value").unwrap();
+
+        add_env_var_to_file(&env_path, "HELIX_API_KEY", "test-key-123").unwrap();
+
+        let content = fs::read_to_string(&env_path).unwrap();
+        assert_eq!(content, "EXISTING_VAR=value\nHELIX_API_KEY=test-key-123\n");
+    }
+
+    #[test]
+    fn test_add_env_var_updates_existing_key() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+
+        // Create existing .env file with the key already present
+        fs::write(&env_path, "OTHER_VAR=foo\nHELIX_API_KEY=old-key\nANOTHER_VAR=bar\n").unwrap();
+
+        add_env_var_to_file(&env_path, "HELIX_API_KEY", "new-key-456").unwrap();
+
+        let content = fs::read_to_string(&env_path).unwrap();
+        assert_eq!(content, "OTHER_VAR=foo\nHELIX_API_KEY=new-key-456\nANOTHER_VAR=bar\n");
+    }
+
+    #[test]
+    fn test_add_env_var_handles_empty_file() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+
+        // Create empty .env file
+        fs::write(&env_path, "").unwrap();
+
+        add_env_var_to_file(&env_path, "HELIX_API_KEY", "test-key-123").unwrap();
+
+        let content = fs::read_to_string(&env_path).unwrap();
+        assert_eq!(content, "HELIX_API_KEY=test-key-123\n");
+    }
+
+    #[test]
+    fn test_add_env_var_preserves_other_variables() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+
+        // Create .env with multiple variables
+        fs::write(&env_path, "VAR1=value1\nVAR2=value2\nVAR3=value3\n").unwrap();
+
+        add_env_var_to_file(&env_path, "HELIX_API_KEY", "my-key").unwrap();
+
+        let content = fs::read_to_string(&env_path).unwrap();
+        assert!(content.contains("VAR1=value1"));
+        assert!(content.contains("VAR2=value2"));
+        assert!(content.contains("VAR3=value3"));
+        assert!(content.contains("HELIX_API_KEY=my-key"));
+    }
+
+    #[test]
+    fn test_add_env_var_with_comment_creates_file_with_comment() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+
+        add_env_var_with_comment(
+            &env_path,
+            "HELIX_CLOUD_URL",
+            "https://example.com",
+            Some("# HelixDB Cloud URL for instance: test"),
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(&env_path).unwrap();
+        assert_eq!(
+            content,
+            "# HelixDB Cloud URL for instance: test\nHELIX_CLOUD_URL=https://example.com\n"
+        );
+    }
+
+    #[test]
+    fn test_add_env_var_with_comment_appends_with_comment() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+
+        // Create existing .env file
+        fs::write(&env_path, "EXISTING_VAR=value\n").unwrap();
+
+        add_env_var_with_comment(
+            &env_path,
+            "HELIX_CLOUD_URL",
+            "https://example.com",
+            Some("# HelixDB Cloud URL for instance: test"),
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(&env_path).unwrap();
+        assert_eq!(
+            content,
+            "EXISTING_VAR=value\n# HelixDB Cloud URL for instance: test\nHELIX_CLOUD_URL=https://example.com\n"
+        );
+    }
+
+    #[test]
+    fn test_add_env_var_with_comment_updates_without_duplicate_comment() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+
+        // Create existing .env file with key and comment
+        fs::write(
+            &env_path,
+            "# HelixDB Cloud URL for instance: old\nHELIX_CLOUD_URL=https://old.com\n",
+        )
+        .unwrap();
+
+        add_env_var_with_comment(
+            &env_path,
+            "HELIX_CLOUD_URL",
+            "https://new.com",
+            Some("# HelixDB Cloud URL for instance: new"),
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(&env_path).unwrap();
+        // Should update value but preserve existing comment (not add duplicate)
+        assert_eq!(
+            content,
+            "# HelixDB Cloud URL for instance: old\nHELIX_CLOUD_URL=https://new.com\n"
+        );
+    }
+
+    #[test]
+    fn test_add_env_var_with_no_comment() {
+        let dir = tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+
+        add_env_var_with_comment(&env_path, "HELIX_API_KEY", "test-key", None).unwrap();
+
+        let content = fs::read_to_string(&env_path).unwrap();
+        assert_eq!(content, "HELIX_API_KEY=test-key\n");
     }
 }

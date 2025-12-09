@@ -1,6 +1,6 @@
 [package]
 name = "helix-db"
-version = "1.1.4"
+version = "1.1.5"
 edition = "2024"
 description = "HelixDB is a powerful, open-source, graph-vector database built in Rust for intelligent data storage for RAG and AI."
 license = "AGPL-3.0"
@@ -57,8 +57,7 @@ polars = { version = "0.46.0", features = [
     "lazy",
     "json",
 ], optional = true }
-subtle = "2.6.1"
-sha_256 = "=0.1.1"
+bcrypt = "0.17"
 
 [dev-dependencies]
 rand = "0.9.0"

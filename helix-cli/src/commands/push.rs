@@ -134,6 +134,13 @@ async fn push_cloud_instance(
         .cluster_id()
         .ok_or_else(|| eyre::eyre!("Cloud instance '{instance_name}' must have a cluster_id"))?;
 
+    // Check if cluster has been created
+    if cluster_id == "YOUR_CLUSTER_ID" {
+        return Err(eyre::eyre!(
+            "Cluster for instance '{instance_name}' has not been created yet.\nRun 'helix create-cluster {instance_name}' to create the cluster first."
+        ));
+    }
+
     let metrics_data = if instance_config.should_build_docker_image() {
         // Build happens, get metrics data from build
         crate::commands::build::run(instance_name.to_string(), metrics_sender).await?
@@ -142,12 +149,7 @@ async fn push_cloud_instance(
         parse_queries_for_metrics(project)?
     };
 
-    // TODO: Implement cloud deployment
-    // This would involve:
-    // 1. Reading compiled queries from the container directory
-    // 2. Uploading them to the cloud cluster
-    // 3. Triggering deployment on the cloud
-
+    // Deploy to cloud
     let config = project.config.cloud.get(instance_name).unwrap();
     let mut deploy_spinner = Spinner::new("DEPLOY", "Deploying instance...");
     deploy_spinner.start();
@@ -173,7 +175,7 @@ async fn push_cloud_instance(
                 .await?;
         }
         CloudConfig::Helix(_config) => {
-            deploy_spinner.update("Deploying to Helix...");
+            deploy_spinner.stop(); // Stop spinner before helix.deploy() starts its own progress
             let helix = HelixManager::new(project);
             helix.deploy(None, instance_name.to_string()).await?;
         }

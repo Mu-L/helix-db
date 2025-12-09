@@ -1,8 +1,7 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
-use std::path::PathBuf;
 use helix_cli::{AuthAction, CloudDeploymentTypeCommand, DashboardAction, MetricsAction};
-
+use std::path::PathBuf;
 
 mod cleanup;
 mod commands;
@@ -12,6 +11,7 @@ mod errors;
 mod github_issue;
 mod metrics_sender;
 mod project;
+mod sse_client;
 mod update;
 mod utils;
 
@@ -46,6 +46,16 @@ enum Commands {
     Add {
         #[clap(subcommand)]
         cloud: CloudDeploymentTypeCommand,
+    },
+
+    /// Create a new Helix Cloud cluster
+    CreateCluster {
+        /// Instance name
+        instance: String,
+
+        /// Region for cluster (defaults to us-east-1)
+        #[clap(short, long)]
+        region: Option<String>,
     },
 
     /// Validate project configuration and queries
@@ -201,6 +211,9 @@ async fn main() -> Result<()> {
             cloud,
         } => commands::init::run(path, template, queries_path, cloud).await,
         Commands::Add { cloud } => commands::add::run(cloud).await,
+        Commands::CreateCluster { instance, region } => {
+            commands::create_cluster::run(&instance, region).await
+        }
         Commands::Check { instance } => commands::check::run(instance, &metrics_sender).await,
         Commands::Compile { output, path } => commands::compile::run(output, path).await,
         Commands::Build { instance } => commands::build::run(instance, &metrics_sender)
