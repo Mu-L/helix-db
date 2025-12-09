@@ -175,7 +175,7 @@ mod mcp_tests {
             name: "collect".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -326,7 +326,7 @@ mod mcp_tests {
             name: "out_step".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -386,7 +386,7 @@ mod mcp_tests {
             name: "in_step".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -444,7 +444,7 @@ mod mcp_tests {
             name: "out_e_step".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -503,7 +503,7 @@ mod mcp_tests {
             name: "in_e_step".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -549,7 +549,7 @@ mod mcp_tests {
             name: "n_from_type".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -604,7 +604,7 @@ mod mcp_tests {
             name: "e_from_type".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -675,7 +675,7 @@ mod mcp_tests {
             name: "filter_items".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -745,7 +745,7 @@ mod mcp_tests {
             name: "order_by".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -1256,7 +1256,7 @@ mod mcp_tests {
             name: "search_keyword".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -1294,7 +1294,7 @@ mod mcp_tests {
             name: "search_keyword".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -1336,7 +1336,7 @@ mod mcp_tests {
             name: "search_keyword".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -1407,7 +1407,7 @@ mod mcp_tests {
             name: "search_vector".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -1443,7 +1443,7 @@ mod mcp_tests {
             name: "search_vector".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -1486,7 +1486,7 @@ mod mcp_tests {
             name: "search_vector".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -1523,7 +1523,7 @@ mod mcp_tests {
             name: "search_vector_text".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -1560,7 +1560,7 @@ mod mcp_tests {
             name: "search_vector_text".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
@@ -1603,7 +1603,7 @@ mod mcp_tests {
             name: "search_vector_text".to_string(),
             req_type: RequestType::MCP,
             body: request_body,
-            api_key_hash: None,
+            api_key: None,
             in_fmt: Format::Json,
             out_fmt: Format::Json,
         };
