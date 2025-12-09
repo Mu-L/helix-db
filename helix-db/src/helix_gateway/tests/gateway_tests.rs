@@ -393,21 +393,30 @@ mod api_key_tests {
 
     #[test]
     fn test_api_key_hash_consistency() {
-        // Test that the stored bcrypt hash is always the same
-        let hash1 = env!("HELIX_API_KEY");
-        let hash2 = env!("HELIX_API_KEY");
+        // Test that SHA-256 produces consistent hashes for the same input
+        use sha2::{Digest, Sha256};
+
+        let test_key = "test-api-key";
+        let hash1 = Sha256::digest(test_key.as_bytes());
+        let hash2 = Sha256::digest(test_key.as_bytes());
 
         assert_eq!(hash1, hash2);
     }
 
     #[test]
-    fn test_bcrypt_verification_works() {
-        // Test that bcrypt verification works correctly
-        let test_key = "test-api-key-12345";
-        let hash = bcrypt::hash(test_key, bcrypt::DEFAULT_COST).unwrap();
+    fn test_sha256_verification_works() {
+        use sha2::{Digest, Sha256};
+        use subtle::ConstantTimeEq;
 
-        assert!(bcrypt::verify(test_key, &hash).unwrap());
-        assert!(!bcrypt::verify("wrong-key", &hash).unwrap());
+        // Test that SHA-256 verification works correctly
+        let test_key = "test-api-key-12345";
+        let hash = Sha256::digest(test_key.as_bytes());
+
+        let correct_hash = Sha256::digest(test_key.as_bytes());
+        let wrong_hash = Sha256::digest("wrong-key".as_bytes());
+
+        assert!(bool::from(hash.ct_eq(&correct_hash)));
+        assert!(!bool::from(hash.ct_eq(&wrong_hash)));
     }
 
     #[test]
