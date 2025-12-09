@@ -14,8 +14,7 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 // use uuid::Uuid;
 
-const DEFAULT_CLOUD_AUTHORITY: &str =
-    "helix-cloud-build-prod-alb-118957331.us-east-1.elb.amazonaws.com";
+const DEFAULT_CLOUD_AUTHORITY: &str = "cloud.helix-db.com";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
     std::env::var("CLOUD_AUTHORITY").unwrap_or_else(|_| {
         if cfg!(debug_assertions) {
