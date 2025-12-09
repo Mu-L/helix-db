@@ -1,12 +1,15 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
-use helix_cli::{AuthAction, CloudDeploymentTypeCommand, MetricsAction};
+use std::path::PathBuf;
+use helix_cli::{AuthAction, CloudDeploymentTypeCommand, DashboardAction, MetricsAction};
+
 
 mod cleanup;
 mod commands;
 mod config;
 mod docker;
 mod errors;
+mod github_issue;
 mod metrics_sender;
 mod project;
 mod sse_client;
@@ -134,6 +137,12 @@ enum Commands {
         action: MetricsAction,
     },
 
+    /// Launch the Helix Dashboard
+    Dashboard {
+        #[clap(subcommand)]
+        action: DashboardAction,
+    },
+
     /// Update to the latest version
     Update {
         /// Force update even if already on latest version
@@ -167,6 +176,16 @@ enum Commands {
         #[clap(long)]
         no_backup: bool,
     },
+
+    /// Backup instance at the given path
+    Backup {
+        /// Instance name to backup
+        instance: String,
+
+        /// Output directory for the backup. If omitted, ./backups/backup-<ts>/ will be used
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -196,7 +215,7 @@ async fn main() -> Result<()> {
         Commands::CreateCluster { instance, region } => {
             commands::create_cluster::run(&instance, region).await
         }
-        Commands::Check { instance } => commands::check::run(instance).await,
+        Commands::Check { instance } => commands::check::run(instance, &metrics_sender).await,
         Commands::Compile { output, path } => commands::compile::run(output, path).await,
         Commands::Build { instance } => commands::build::run(instance, &metrics_sender)
             .await
@@ -210,6 +229,7 @@ async fn main() -> Result<()> {
         Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
         Commands::Delete { instance } => commands::delete::run(instance).await,
         Commands::Metrics { action } => commands::metrics::run(action).await,
+        Commands::Dashboard { action } => commands::dashboard::run(action).await,
         Commands::Update { force } => commands::update::run(force).await,
         Commands::Migrate {
             path,
@@ -218,7 +238,10 @@ async fn main() -> Result<()> {
             port,
             dry_run,
             no_backup,
-        } => commands::migrate::run(path, queries_dir, instance_name, port, dry_run, no_backup).await,
+        } => {
+            commands::migrate::run(path, queries_dir, instance_name, port, dry_run, no_backup).await
+        }
+        Commands::Backup { instance, output } => commands::backup::run(output, instance).await,
     };
 
     // Shutdown metrics sender

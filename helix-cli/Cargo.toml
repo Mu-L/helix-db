@@ -1,6 +1,6 @@
 [package]
 name = "helix-cli"
-version = "2.1.3"
+version = "2.1.4"
 edition = "2024"
 
 [dependencies]
@@ -28,6 +28,8 @@ regex = "1.11.2"
 reqwest-eventsource = "0.6"
 indicatif = "0.18.3"
 webbrowser = "1.0"
+heed3 = "0.22.0"
+open = "5.3"
 
 [dev-dependencies]
 tempfile = "3.23.0"

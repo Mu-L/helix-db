@@ -4,7 +4,7 @@ use crate::metrics_sender::MetricsSender;
 use crate::project::{ProjectContext, get_helix_repo_cache};
 use crate::utils::{
     copy_dir_recursive_excluding, diagnostic_source, helixc_utils::collect_hx_files, print_status,
-    print_success,
+    print_success, Spinner,
 };
 use eyre::Result;
 use std::time::Instant;
@@ -90,7 +90,10 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
         DockerManager::check_runtime_available(runtime)?;
         let docker = DockerManager::new(&project);
 
+        let mut spinner = Spinner::new("DOCKER", "Building Docker image...");
+        spinner.start();
         docker.build_image(&instance_name, instance_config.docker_build_target())?;
+        spinner.stop();
     }
 
     print_success(&format!("Instance '{instance_name}' built successfully"));
@@ -98,7 +101,7 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
     Ok(metrics_data.clone())
 }
 
-async fn ensure_helix_repo_cached() -> Result<()> {
+pub(crate) async fn ensure_helix_repo_cached() -> Result<()> {
     let repo_cache = get_helix_repo_cache()?;
 
     if needs_cache_recreation(&repo_cache)? {
@@ -223,7 +226,7 @@ fn update_git_cache(repo_cache: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &str) -> Result<()> {
+pub(crate) async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &str) -> Result<()> {
     print_status(
         "PREPARE",
         &format!("Preparing workspace for '{instance_name}'"),
@@ -253,7 +256,7 @@ async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &st
     Ok(())
 }
 
-async fn compile_project(project: &ProjectContext, instance_name: &str) -> Result<MetricsData> {
+pub(crate) async fn compile_project(project: &ProjectContext, instance_name: &str) -> Result<MetricsData> {
     print_status("COMPILE", "Compiling Helix queries...");
 
     // Create helix-container directory in instance workspace for generated files

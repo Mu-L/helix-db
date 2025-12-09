@@ -3,6 +3,10 @@ use color_eyre::owo_colors::OwoColorize;
 use eyre::{Result, eyre};
 use helix_db::helixc::parser::types::HxFile;
 use std::{borrow::Cow, fs, path::Path};
+use tokio::sync::oneshot;
+use tokio::time::Duration;
+use std::io::IsTerminal;
+
 
 const IGNORES: [&str; 3] = ["target", ".git", ".helix"];
 
@@ -358,5 +362,123 @@ pub mod helixc_utils {
     pub fn generate_rust_code(source: GeneratedSource, path: &Path) -> Result<()> {
         generate(source, path)?;
         Ok(())
+    }
+
+    /// Collect all .hx file contents as a single string with file path headers.
+    /// Used for GitHub issue reporting.
+    /// Filters out files that only contain comments (no actual schema or query definitions).
+    pub fn collect_hx_contents(root: &Path, queries_dir: &Path) -> Result<String> {
+        let files = collect_hx_files(root, queries_dir)?;
+        let mut combined = String::new();
+
+        for file in files {
+            let path = file.path();
+            let content = fs::read_to_string(&path)
+                .map_err(|e| eyre::eyre!("Failed to read file {}: {e}", path.display()))?;
+
+            // Skip files that only contain comments
+            if !has_actual_content(&content) {
+                continue;
+            }
+
+            // Get relative path for cleaner display
+            let relative_path = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+
+            combined.push_str(&format!("// File: {}\n", relative_path));
+            combined.push_str(&content);
+            combined.push_str("\n\n");
+        }
+
+        Ok(combined.trim().to_string())
+    }
+
+    /// Check if a .hx file has actual content (not just comments and whitespace).
+    /// Returns true if the file contains any non-comment, non-whitespace content.
+    fn has_actual_content(content: &str) -> bool {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            // Skip empty lines and comment lines
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                continue;
+            }
+            // Found actual content
+            return true;
+        }
+        false
+    }
+}
+
+pub struct Spinner {
+    message: std::sync::Arc<std::sync::Mutex<String>>,
+    prefix: String,
+    stop_tx: Option<oneshot::Sender<()>>,
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Spinner {
+    pub fn new(prefix: &str, message: &str) -> Self {
+        Self {
+            message: std::sync::Arc::new(std::sync::Mutex::new(message.to_string())),
+            prefix: prefix.to_string(),
+            stop_tx: None,
+            handle: None,
+        }
+    }
+    // function that starts the spinner
+    pub fn start(&mut self) {
+        if !std::io::stdout().is_terminal() {
+            return; // skip animation for non-interactive terminals
+        }
+        let message = self.message.clone();
+        let prefix = self.prefix.clone();
+        let (tx, mut rx) = oneshot::channel::<()>();
+
+        let handle = tokio::spawn(async move {
+            let frames = vec!["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let mut frame_idx = 0;
+            loop {
+                if rx.try_recv().is_ok() {
+                    break;
+                }
+                let frame = frames[frame_idx % frames.len()];
+                let msg = message.lock().unwrap().clone();
+                print!(
+                    "\r{} {frame} {msg}",
+                    format!("[{prefix}]").blue().bold()
+                );
+                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                frame_idx += 1;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        self.handle = Some(handle);
+        self.stop_tx = Some(tx);
+    }
+    // function that Stops the spinner
+    pub fn stop(&mut self) {
+        if let Some(tx) = self.stop_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
+        print!("\r");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    }
+    /// function that updates the message
+    pub fn update(&mut self, message: &str) {
+        if let Ok(mut msg) = self.message.lock() {
+            *msg = message.to_string();
+        }
+    }
+}
+
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
