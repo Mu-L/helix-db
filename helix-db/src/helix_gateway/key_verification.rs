@@ -1,11 +1,11 @@
 use crate::protocol::HelixError;
 
 /// API KEY HASH (bcrypt hash stored at compile time)
-const API_KEY_HASH: &str = env!("HELIX_API_KEY");
+const api_key: &str = env!("HELIX_API_KEY");
 
 #[inline(always)]
 pub(crate) fn verify_key(key: &str) -> Result<(), HelixError> {
-    match bcrypt::verify(key, API_KEY_HASH) {
+    match bcrypt::verify(key, api_key) {
         Ok(true) => Ok(()),
         Ok(false) => Err(HelixError::InvalidApiKey),
         Err(_) => Err(HelixError::InvalidApiKey),
