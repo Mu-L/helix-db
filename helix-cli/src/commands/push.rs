@@ -6,7 +6,7 @@ use crate::config::{CloudConfig, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success};
+use crate::utils::{print_status, print_success, Spinner};
 use eyre::Result;
 use std::time::Instant;
 
@@ -149,8 +149,11 @@ async fn push_cloud_instance(
     // 3. Triggering deployment on the cloud
 
     let config = project.config.cloud.get(instance_name).unwrap();
+    let mut deploy_spinner = Spinner::new("DEPLOY", "Deploying instance...");
+    deploy_spinner.start();
     match config {
         CloudConfig::FlyIo(config) => {
+            deploy_spinner.update("Deploying to Fly.io...");
             let fly = FlyManager::new(project, config.auth_type.clone()).await?;
             let docker = DockerManager::new(project);
             // Get the correct image name from docker compose project name
@@ -160,6 +163,7 @@ async fn push_cloud_instance(
                 .await?;
         }
         CloudConfig::Ecr(config) => {
+            deploy_spinner.update("Deploying to ECR...");
             let ecr = EcrManager::new(project, config.auth_type.clone()).await?;
             let docker = DockerManager::new(project);
             // Get the correct image name from docker compose project name
@@ -169,10 +173,12 @@ async fn push_cloud_instance(
                 .await?;
         }
         CloudConfig::Helix(_config) => {
+            deploy_spinner.update("Deploying to Helix...");
             let helix = HelixManager::new(project);
             helix.deploy(None, instance_name.to_string()).await?;
         }
     }
+    deploy_spinner.stop();
 
     print_status("UPLOAD", &format!("Uploading to cluster: {cluster_id}"));
 
