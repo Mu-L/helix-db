@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 // use uuid::Uuid;
 
 const DEFAULT_CLOUD_AUTHORITY: &str =
-    "helix-cloud-build-test2-alb-1131293116.us-east-2.elb.amazonaws.com";
+    "helix-cloud-build-prod-alb-118957331.us-east-1.elb.amazonaws.com";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
     std::env::var("CLOUD_AUTHORITY").unwrap_or_else(|_| {
         if cfg!(debug_assertions) {
@@ -292,7 +292,9 @@ impl<'a> HelixManager<'a> {
                         SseEvent::ValidatingQueries => {
                             progress.set_message("Validating queries...");
                         }
-                        SseEvent::Building { estimated_percentage } => {
+                        SseEvent::Building {
+                            estimated_percentage,
+                        } => {
                             progress.set_progress(estimated_percentage as f64);
                             progress.set_message("Building...");
                         }
