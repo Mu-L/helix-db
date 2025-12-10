@@ -1,10 +1,18 @@
 use axum::{body::Body, response::IntoResponse};
+use reqwest::header::CONTENT_TYPE;
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::{
     helix_engine::types::{GraphError, VectorError},
     protocol::request::RequestType,
 };
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String,
+    code: &'static str,
+}
 
 #[derive(Debug, Error)]
 pub enum HelixError {
@@ -18,17 +26,36 @@ pub enum HelixError {
     InvalidApiKey,
 }
 
+impl HelixError {
+    fn code(&self) -> &'static str {
+        match self {
+            HelixError::Graph(_) => "GRAPH_ERROR",
+            HelixError::Vector(_) => "VECTOR_ERROR",
+            HelixError::NotFound { .. } => "NOT_FOUND",
+            HelixError::InvalidApiKey => "INVALID_API_KEY",
+        }
+    }
+}
+
 impl IntoResponse for HelixError {
     fn into_response(self) -> axum::response::Response {
-        let body = self.to_string();
-        let code = match &self {
+        let status = match &self {
             HelixError::Graph(_) | HelixError::Vector(_) => 500,
             HelixError::NotFound { .. } => 404,
             HelixError::InvalidApiKey => 403,
         };
 
+        let error_response = ErrorResponse {
+            error: self.to_string(),
+            code: self.code(),
+        };
+
+        let body = sonic_rs::to_vec(&error_response)
+            .unwrap_or_else(|_| br#"{"error":"Internal serialization error","code":"INTERNAL_ERROR"}"#.to_vec());
+
         axum::response::Response::builder()
-            .status(code)
+            .status(status)
+            .header(CONTENT_TYPE, "application/json")
             .body(Body::from(body))
             .unwrap_or_else(|_| panic!("Should be able to turn HelixError into Response: {self}"))
     }
@@ -85,7 +112,7 @@ mod tests {
     }
 
     // ============================================================================
-    // IntoResponse Tests (HTTP Status Codes)
+    // IntoResponse Tests (HTTP Status Codes and JSON Format)
     // ============================================================================
 
     #[test]
@@ -97,6 +124,10 @@ mod tests {
 
         let response = error.into_response();
         assert_eq!(response.status(), 404);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
     }
 
     #[test]
@@ -106,6 +137,10 @@ mod tests {
 
         let response = helix_err.into_response();
         assert_eq!(response.status(), 500);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
     }
 
     #[test]
@@ -115,6 +150,41 @@ mod tests {
 
         let response = helix_err.into_response();
         assert_eq!(response.status(), 500);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
+    }
+
+    // ============================================================================
+    // Error Code Tests
+    // ============================================================================
+
+    #[test]
+    fn test_helix_error_code_graph() {
+        let error = HelixError::Graph(GraphError::NodeNotFound);
+        assert_eq!(error.code(), "GRAPH_ERROR");
+    }
+
+    #[test]
+    fn test_helix_error_code_vector() {
+        let error = HelixError::Vector(VectorError::InvalidVectorLength);
+        assert_eq!(error.code(), "VECTOR_ERROR");
+    }
+
+    #[test]
+    fn test_helix_error_code_not_found() {
+        let error = HelixError::NotFound {
+            ty: RequestType::Query,
+            name: "test".to_string(),
+        };
+        assert_eq!(error.code(), "NOT_FOUND");
+    }
+
+    #[test]
+    fn test_helix_error_code_invalid_api_key() {
+        let error = HelixError::InvalidApiKey;
+        assert_eq!(error.code(), "INVALID_API_KEY");
     }
 
     // ============================================================================
