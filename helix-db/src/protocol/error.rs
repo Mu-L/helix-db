@@ -51,7 +51,7 @@ impl IntoResponse for HelixError {
         };
 
         let body = sonic_rs::to_vec(&error_response)
-            .unwrap_or_else(|_| format!(r#"{{"error":"{}","code":"UNKNOWN"}}"#, self).into_bytes());
+            .unwrap_or_else(|_| br#"{"error":"Internal serialization error","code":"INTERNAL_ERROR"}"#.to_vec());
 
         axum::response::Response::builder()
             .status(status)
