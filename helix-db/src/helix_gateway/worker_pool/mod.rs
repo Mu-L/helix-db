@@ -64,10 +64,9 @@ impl WorkerPool {
             })
             .collect();
 
-        // Create the dedicated writer worker
+        // Create the dedicated writer worker (no core pinning needed for single thread)
         let writer_worker = Worker::start_writer(
             write_rx,
-            workers_core_setter,
             Arc::clone(&graph_access),
             Arc::clone(&router),
             Arc::clone(&io_rt),
@@ -206,17 +205,15 @@ impl Worker {
 
     /// Start a dedicated writer worker thread
     /// This thread handles all write operations to ensure proper LMDB locking
+    /// Note: No core pinning for the writer - let the OS scheduler handle it
     pub fn start_writer(
         rx: Receiver<ReqMsg>,
-        core_setter: Arc<CoreSetter>,
         graph_access: Arc<HelixGraphEngine>,
         router: Arc<HelixRouter>,
         io_rt: Arc<Runtime>,
         (cont_tx, cont_rx): (ContChan, Receiver<ContMsg>),
     ) -> Worker {
         let handle = std::thread::spawn(move || {
-            core_setter.set_current();
-
             trace!("writer thread started");
 
             // Initialize thread-local metrics buffer
