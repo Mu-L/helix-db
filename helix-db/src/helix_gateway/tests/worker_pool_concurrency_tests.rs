@@ -57,7 +57,7 @@ fn create_test_pool(
     threads_per_core: usize,
 ) -> (WorkerPool, Arc<HelixGraphEngine>, TempDir) {
     let (graph, temp_dir) = create_test_graph();
-    let router = Arc::new(HelixRouter::new(None, None));
+    let router = Arc::new(HelixRouter::new(None, None, None));
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(num_cores)

@@ -8,12 +8,32 @@ use syn::{
     parse::{Parse, ParseStream}, parse_macro_input, Data, DeriveInput, Expr, FnArg, Ident, ItemFn, ItemStruct, ItemTrait, LitInt, Pat, Stmt, Token, TraitItem
 };
 
+struct HandlerArgs {
+    is_write: bool,
+}
+
+impl Parse for HandlerArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.is_empty() {
+            return Ok(HandlerArgs { is_write: false });
+        }
+        let ident: Ident = input.parse()?;
+        if ident == "is_write" {
+            Ok(HandlerArgs { is_write: true })
+        } else {
+            Err(syn::Error::new(ident.span(), "expected `is_write`"))
+        }
+    }
+}
+
 #[proc_macro_attribute]
-pub fn handler(_args: TokenStream, item: TokenStream) -> TokenStream {
+pub fn handler(args: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(args as HandlerArgs);
     let input_fn = parse_macro_input!(item as ItemFn);
     let fn_name = &input_fn.sig.ident;
     let fn_name_str = fn_name.to_string();
-    println!("fn_name_str: {fn_name_str}");
+    let is_write = args.is_write;
+    println!("fn_name_str: {fn_name_str}, is_write: {is_write}");
     // Create a unique static name for each handler
     let static_name = quote::format_ident!(
         "_MAIN_HANDLER_REGISTRATION_{}",
@@ -30,7 +50,8 @@ pub fn handler(_args: TokenStream, item: TokenStream) -> TokenStream {
                 ::helix_db::helix_gateway::router::router::HandlerSubmission(
                     ::helix_db::helix_gateway::router::router::Handler::new(
                         #fn_name_str,
-                        #fn_name
+                        #fn_name,
+                        #is_write
                     )
                 )
             }
@@ -89,7 +110,8 @@ pub fn get_handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 ::helix_db::helix_gateway::router::router::HandlerSubmission(
                     ::helix_db::helix_gateway::router::router::Handler::new(
                         #fn_name_str,
-                        #fn_name
+                        #fn_name,
+                        false
                     )
                 )
             }

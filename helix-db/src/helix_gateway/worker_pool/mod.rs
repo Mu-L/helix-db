@@ -20,7 +20,10 @@ use tracing::{error, trace};
 /// A Thread Pool of workers to execute Database operations
 pub struct WorkerPool {
     tx: Sender<ReqMsg>,
+    write_tx: Sender<ReqMsg>,
+    router: Arc<HelixRouter>,
     _workers: Vec<Worker>,
+    _writer_worker: Worker,
 }
 
 impl WorkerPool {
@@ -33,6 +36,10 @@ impl WorkerPool {
         let (req_tx, req_rx) = flume::bounded::<ReqMsg>(1000);
         let (cont_tx, cont_rx) = flume::bounded::<ContMsg>(1000);
 
+        // Dedicated channel for write operations - single writer thread
+        let (write_tx, write_rx) = flume::bounded::<ReqMsg>(1000);
+        let (write_cont_tx, write_cont_rx) = flume::bounded::<ContMsg>(1000);
+
         let num_workers = workers_core_setter.num_threads();
         if num_workers < 2 {
             panic!("The number of workers must be at least 2 for parity to act as a select.");
@@ -42,7 +49,7 @@ impl WorkerPool {
             panic!("The number of workers should be a multiple of 2 for fairness.");
         }
 
-        let workers = iter::repeat_n(workers_core_setter, num_workers)
+        let workers = iter::repeat_n(Arc::clone(&workers_core_setter), num_workers)
             .enumerate()
             .map(|(i, setter)| {
                 Worker::start(
@@ -57,24 +64,48 @@ impl WorkerPool {
             })
             .collect();
 
+        // Create the dedicated writer worker
+        let writer_worker = Worker::start_writer(
+            write_rx,
+            workers_core_setter,
+            Arc::clone(&graph_access),
+            Arc::clone(&router),
+            Arc::clone(&io_rt),
+            (write_cont_tx, write_cont_rx),
+        );
+
         WorkerPool {
             tx: req_tx,
+            write_tx,
+            router,
             _workers: workers,
+            _writer_worker: writer_worker,
         }
     }
 
     /// Process a request on the Worker Pool
+    /// Write operations are routed to a dedicated writer thread to ensure proper LMDB locking
     pub async fn process(&self, req: Request) -> Result<Response, HelixError> {
         let (ret_tx, ret_rx) = oneshot::channel();
 
-        // this read by Worker in start()
-        self.tx
-            .send_async((req, ret_tx))
-            .await
-            .expect("WorkerPool channel should be open");
+        // Check if this is a write operation and route accordingly
+        let is_write = self.router.is_write_route(&req.name);
+
+        if is_write {
+            // Route to dedicated writer thread
+            self.write_tx
+                .send_async((req, ret_tx))
+                .await
+                .expect("WorkerPool write channel should be open");
+        } else {
+            // Route to reader worker pool
+            self.tx
+                .send_async((req, ret_tx))
+                .await
+                .expect("WorkerPool channel should be open");
+        }
 
         // This is sent by the Worker
-
         ret_rx
             .await
             .expect("Worker shouldn't drop sender before replying")
@@ -166,6 +197,61 @@ impl Worker {
                                 error!("Continuation Channel was dropped")
                             }
                         }
+                    }
+                }
+            }
+        });
+        Worker { _handle: handle }
+    }
+
+    /// Start a dedicated writer worker thread
+    /// This thread handles all write operations to ensure proper LMDB locking
+    pub fn start_writer(
+        rx: Receiver<ReqMsg>,
+        core_setter: Arc<CoreSetter>,
+        graph_access: Arc<HelixGraphEngine>,
+        router: Arc<HelixRouter>,
+        io_rt: Arc<Runtime>,
+        (cont_tx, cont_rx): (ContChan, Receiver<ContMsg>),
+    ) -> Worker {
+        let handle = std::thread::spawn(move || {
+            core_setter.set_current();
+
+            trace!("writer thread started");
+
+            // Initialize thread-local metrics buffer
+            helix_metrics::init_thread_local();
+
+            // Set thread local context, so we can access the io runtime
+            let _io_guard = io_rt.enter();
+
+            // Simple loop for the writer - no parity needed since it's a single thread
+            loop {
+                // First check for any pending continuations (non-blocking)
+                match cont_rx.try_recv() {
+                    Ok((ret_chan, cfn)) => {
+                        ret_chan.send(cfn().map_err(Into::into)).expect("todo")
+                    }
+                    Err(flume::TryRecvError::Disconnected) => {
+                        error!("Writer continuation channel was dropped");
+                        break;
+                    }
+                    Err(flume::TryRecvError::Empty) => {}
+                }
+
+                // Then wait for write requests
+                match rx.recv() {
+                    Ok((req, ret_chan)) => request_mapper(
+                        req,
+                        ret_chan,
+                        graph_access.clone(),
+                        &router,
+                        &io_rt,
+                        &cont_tx,
+                    ),
+                    Err(flume::RecvError::Disconnected) => {
+                        trace!("Writer request channel was dropped, shutting down");
+                        break;
                     }
                 }
             }
