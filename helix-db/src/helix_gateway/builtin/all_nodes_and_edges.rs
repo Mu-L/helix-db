@@ -184,7 +184,7 @@ fn get_all_nodes_edges_json(
 
 inventory::submit! {
     HandlerSubmission(
-        Handler::new("nodes_edges", nodes_edges_inner)
+        Handler::new("nodes_edges", nodes_edges_inner, false)
     )
 }
 
