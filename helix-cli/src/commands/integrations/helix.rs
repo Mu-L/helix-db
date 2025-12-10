@@ -80,7 +80,6 @@ impl<'a> HelixManager<'a> {
             region,
             build_mode: BuildMode::Release,
             env_vars: HashMap::new(),
-            dev_profile: None,
             db_config: DbConfig::default(),
         })
     }

@@ -6,7 +6,7 @@ use crate::config::{CloudConfig, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success, Spinner};
+use crate::utils::{Spinner, print_status, print_success};
 use eyre::Result;
 use std::time::Instant;
 
@@ -179,9 +179,12 @@ async fn push_cloud_instance(
         CloudConfig::Helix(config) => {
             deploy_spinner.stop(); // Stop spinner before helix.deploy() starts its own progress
             let helix = HelixManager::new(project);
-            // CLI --dev flag takes precedence, otherwise use config value
-            let dev_profile = if dev { Some(true) } else { config.dev_profile };
-            helix.deploy(None, instance_name.to_string(), dev_profile).await?;
+            // CLI --dev flag takes precedence, otherwise use build_mode from config
+            let dev_profile =
+                (dev || config.build_mode == crate::config::BuildMode::Dev).then_some(true);
+            helix
+                .deploy(None, instance_name.to_string(), dev_profile)
+                .await?;
         }
     }
     deploy_spinner.stop();
@@ -191,7 +194,7 @@ async fn push_cloud_instance(
     Ok(metrics_data)
 }
 
-/// Lightweight parsing for metrics when no compilation happens  
+/// Lightweight parsing for metrics when no compilation happens
 fn parse_queries_for_metrics(project: &ProjectContext) -> Result<MetricsData> {
     use helix_db::helixc::parser::{
         HelixParser,
