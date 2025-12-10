@@ -2,7 +2,7 @@ use crate::commands::build::MetricsData;
 use crate::commands::integrations::ecr::EcrManager;
 use crate::commands::integrations::fly::FlyManager;
 use crate::commands::integrations::helix::HelixManager;
-use crate::config::{CloudConfig, InstanceInfo};
+use crate::config::{BuildMode, CloudConfig, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
 use crate::project::ProjectContext;
@@ -180,10 +180,14 @@ async fn push_cloud_instance(
             deploy_spinner.stop(); // Stop spinner before helix.deploy() starts its own progress
             let helix = HelixManager::new(project);
             // CLI --dev flag takes precedence, otherwise use build_mode from config
-            let dev_profile =
-                (dev || config.build_mode == crate::config::BuildMode::Dev).then_some(true);
+            let build_mode = if dev {
+                BuildMode::Dev
+            } else {
+                config.build_mode
+            };
+
             helix
-                .deploy(None, instance_name.to_string(), dev_profile)
+                .deploy(None, instance_name.to_string(), build_mode)
                 .await?;
         }
     }

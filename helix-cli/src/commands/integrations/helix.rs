@@ -153,7 +153,12 @@ impl<'a> HelixManager<'a> {
         Ok(())
     }
 
-    pub(crate) async fn deploy(&self, path: Option<String>, cluster_name: String, dev_profile: Option<bool>) -> Result<()> {
+    pub(crate) async fn deploy(
+        &self,
+        path: Option<String>,
+        cluster_name: String,
+        build_mode: BuildMode,
+    ) -> Result<()> {
         self.check_auth()?;
         let path = match get_path_or_cwd(path.as_ref()) {
             Ok(path) => path,
@@ -212,6 +217,8 @@ impl<'a> HelixManager<'a> {
                 queries_map.insert(file.name.clone(), file.content.clone());
             }
         }
+
+        let dev_profile = build_mode == BuildMode::Dev;
 
         // Prepare deployment payload
         let payload = json!({
@@ -364,7 +371,10 @@ impl<'a> HelixManager<'a> {
                                                 &url,
                                                 Some(&comment),
                                             ) {
-                                                print_error(&format!("Failed to write .env: {}", e));
+                                                print_error(&format!(
+                                                    "Failed to write .env: {}",
+                                                    e
+                                                ));
                                             }
                                             match crate::utils::add_env_var_to_file(
                                                 &custom_path,
@@ -432,7 +442,12 @@ impl<'a> HelixManager<'a> {
     }
 
     #[allow(dead_code)]
-    pub(crate) async fn redeploy(&self, path: Option<String>, cluster_name: String, dev_profile: Option<bool>) -> Result<()> {
+    pub(crate) async fn redeploy(
+        &self,
+        path: Option<String>,
+        cluster_name: String,
+        build_mode: BuildMode,
+    ) -> Result<()> {
         // Redeploy is similar to deploy but may have different backend handling
         // For now, we'll use the same implementation with a different status message
         print_status(
@@ -442,7 +457,7 @@ impl<'a> HelixManager<'a> {
 
         // Call deploy with the same logic
         // In the future, this could use a different endpoint or add a "redeploy" flag
-        self.deploy(path, cluster_name, dev_profile).await
+        self.deploy(path, cluster_name, build_mode).await
     }
 }
 
