@@ -134,6 +134,8 @@ pub struct CloudInstanceConfig {
     pub build_mode: BuildMode,
     #[serde(default)]
     pub env_vars: HashMap<String, String>,
+    #[serde(default)]
+    pub dev_profile: Option<bool>,
     #[serde(flatten)]
     pub db_config: DbConfig,
 }

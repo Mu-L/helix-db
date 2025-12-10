@@ -80,6 +80,7 @@ impl<'a> HelixManager<'a> {
             region,
             build_mode: BuildMode::Release,
             env_vars: HashMap::new(),
+            dev_profile: None,
             db_config: DbConfig::default(),
         })
     }
@@ -153,7 +154,7 @@ impl<'a> HelixManager<'a> {
         Ok(())
     }
 
-    pub(crate) async fn deploy(&self, path: Option<String>, cluster_name: String) -> Result<()> {
+    pub(crate) async fn deploy(&self, path: Option<String>, cluster_name: String, dev_profile: Option<bool>) -> Result<()> {
         self.check_auth()?;
         let path = match get_path_or_cwd(path.as_ref()) {
             Ok(path) => path,
@@ -218,7 +219,8 @@ impl<'a> HelixManager<'a> {
             "schema": schema_content,
             "queries": queries_map,
             "env_vars": cluster_info.env_vars,
-            "instance_name": cluster_name
+            "instance_name": cluster_name,
+            "dev_profile": dev_profile
         });
 
         // Initiate deployment with SSE streaming
@@ -431,7 +433,7 @@ impl<'a> HelixManager<'a> {
     }
 
     #[allow(dead_code)]
-    pub(crate) async fn redeploy(&self, path: Option<String>, cluster_name: String) -> Result<()> {
+    pub(crate) async fn redeploy(&self, path: Option<String>, cluster_name: String, dev_profile: Option<bool>) -> Result<()> {
         // Redeploy is similar to deploy but may have different backend handling
         // For now, we'll use the same implementation with a different status message
         print_status(
@@ -441,7 +443,7 @@ impl<'a> HelixManager<'a> {
 
         // Call deploy with the same logic
         // In the future, this could use a different endpoint or add a "redeploy" flag
-        self.deploy(path, cluster_name).await
+        self.deploy(path, cluster_name, dev_profile).await
     }
 }
 

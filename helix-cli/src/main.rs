@@ -85,6 +85,9 @@ enum Commands {
     Push {
         /// Instance name to push
         instance: String,
+        /// Use development profile for faster builds (Helix Cloud only)
+        #[clap(long)]
+        dev: bool,
     },
 
     /// Pull .hql files from instance back to local project
@@ -219,7 +222,7 @@ async fn main() -> Result<()> {
         Commands::Build { instance } => commands::build::run(instance, &metrics_sender)
             .await
             .map(|_| ()),
-        Commands::Push { instance } => commands::push::run(instance, &metrics_sender).await,
+        Commands::Push { instance, dev } => commands::push::run(instance, dev, &metrics_sender).await,
         Commands::Pull { instance } => commands::pull::run(instance).await,
         Commands::Start { instance } => commands::start::run(instance).await,
         Commands::Stop { instance } => commands::stop::run(instance).await,

@@ -10,7 +10,7 @@ use crate::utils::{print_status, print_success, Spinner};
 use eyre::Result;
 use std::time::Instant;
 
-pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Result<()> {
+pub async fn run(instance_name: String, dev: bool, metrics_sender: &MetricsSender) -> Result<()> {
     let start_time = Instant::now();
 
     // Load project context
@@ -26,6 +26,7 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
             &project,
             &instance_name,
             instance_config.clone(),
+            dev,
             metrics_sender,
         )
         .await
@@ -123,6 +124,7 @@ async fn push_cloud_instance(
     project: &ProjectContext,
     instance_name: &str,
     instance_config: InstanceInfo<'_>,
+    dev: bool,
     metrics_sender: &MetricsSender,
 ) -> Result<MetricsData> {
     print_status(
@@ -174,10 +176,12 @@ async fn push_cloud_instance(
             ecr.deploy_image(&docker, config, instance_name, &image_name)
                 .await?;
         }
-        CloudConfig::Helix(_config) => {
+        CloudConfig::Helix(config) => {
             deploy_spinner.stop(); // Stop spinner before helix.deploy() starts its own progress
             let helix = HelixManager::new(project);
-            helix.deploy(None, instance_name.to_string()).await?;
+            // CLI --dev flag takes precedence, otherwise use config value
+            let dev_profile = if dev { Some(true) } else { config.dev_profile };
+            helix.deploy(None, instance_name.to_string(), dev_profile).await?;
         }
     }
     deploy_spinner.stop();
