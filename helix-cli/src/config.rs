@@ -157,7 +157,7 @@ impl CloudConfig {
         }
     }
 }
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum BuildMode {
     Dev,

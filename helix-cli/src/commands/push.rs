@@ -2,15 +2,15 @@ use crate::commands::build::MetricsData;
 use crate::commands::integrations::ecr::EcrManager;
 use crate::commands::integrations::fly::FlyManager;
 use crate::commands::integrations::helix::HelixManager;
-use crate::config::{CloudConfig, InstanceInfo};
+use crate::config::{BuildMode, CloudConfig, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
 use crate::project::ProjectContext;
-use crate::utils::{print_status, print_success, Spinner};
+use crate::utils::{Spinner, print_status, print_success};
 use eyre::Result;
 use std::time::Instant;
 
-pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Result<()> {
+pub async fn run(instance_name: String, dev: bool, metrics_sender: &MetricsSender) -> Result<()> {
     let start_time = Instant::now();
 
     // Load project context
@@ -26,6 +26,7 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
             &project,
             &instance_name,
             instance_config.clone(),
+            dev,
             metrics_sender,
         )
         .await
@@ -123,6 +124,7 @@ async fn push_cloud_instance(
     project: &ProjectContext,
     instance_name: &str,
     instance_config: InstanceInfo<'_>,
+    dev: bool,
     metrics_sender: &MetricsSender,
 ) -> Result<MetricsData> {
     print_status(
@@ -174,10 +176,19 @@ async fn push_cloud_instance(
             ecr.deploy_image(&docker, config, instance_name, &image_name)
                 .await?;
         }
-        CloudConfig::Helix(_config) => {
+        CloudConfig::Helix(config) => {
             deploy_spinner.stop(); // Stop spinner before helix.deploy() starts its own progress
             let helix = HelixManager::new(project);
-            helix.deploy(None, instance_name.to_string()).await?;
+            // CLI --dev flag takes precedence, otherwise use build_mode from config
+            let build_mode = if dev {
+                BuildMode::Dev
+            } else {
+                config.build_mode
+            };
+
+            helix
+                .deploy(None, instance_name.to_string(), build_mode)
+                .await?;
         }
     }
     deploy_spinner.stop();
@@ -187,7 +198,7 @@ async fn push_cloud_instance(
     Ok(metrics_data)
 }
 
-/// Lightweight parsing for metrics when no compilation happens  
+/// Lightweight parsing for metrics when no compilation happens
 fn parse_queries_for_metrics(project: &ProjectContext) -> Result<MetricsData> {
     use helix_db::helixc::parser::{
         HelixParser,
