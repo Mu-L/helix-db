@@ -487,7 +487,7 @@ impl Spinner {
         let (tx, mut rx) = oneshot::channel::<()>();
 
         let handle = tokio::spawn(async move {
-            let frames = vec!["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let mut frame_idx = 0;
             loop {
                 if rx.try_recv().is_ok() {

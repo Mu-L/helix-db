@@ -1,7 +1,4 @@
-use crate::{
-    helix_engine::types::GraphError,
-    helixc::analyzer::{INTROSPECTION_DATA, SECONDARY_INDICES},
-};
+use crate::{helix_engine::types::GraphError, helixc::analyzer::IntrospectionData};
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf};
 
@@ -152,31 +149,15 @@ impl Config {
     pub fn get_schema(&self) -> Option<String> {
         self.schema.clone()
     }
-}
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            vector_config: Some(VectorConfig {
-                m: Some(16),
-                ef_construction: Some(128),
-                ef_search: Some(768),
-            }),
-            graph_config: Some(GraphConfig {
-                secondary_indices: None,
-            }),
-            db_max_size_gb: Some(10),
-            mcp: Some(true),
-            bm25: Some(true),
-            schema: None,
-            embedding_model: Some("text-embedding-ada-002".to_string()),
-            graphvis_node_label: None,
-        }
-    }
-}
-
-impl fmt::Display for Config {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    /// Format the config with the provided introspection data and secondary indices.
+    /// This method is used during code generation to embed schema metadata.
+    pub fn fmt_with_schema(
+        &self,
+        f: &mut fmt::Formatter,
+        introspection_data: Option<&IntrospectionData>,
+        secondary_indices: &[String],
+    ) -> fmt::Result {
         writeln!(f, "pub fn config() -> Option<Config> {{")?;
         writeln!(f, "return Some(Config {{")?;
         writeln!(f, "vector_config: Some(VectorConfig {{")?;
@@ -212,18 +193,17 @@ impl fmt::Display for Config {
         writeln!(
             f,
             "secondary_indices: {},",
-            match SECONDARY_INDICES.get() {
-                Some(indices) => {
-                    format!(
-                        "Some(vec![{}])",
-                        indices
-                            .iter()
-                            .map(|i| format!("\"{i}\".to_string()"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                }
-                None => "None".to_string(),
+            if secondary_indices.is_empty() {
+                "None".to_string()
+            } else {
+                format!(
+                    "Some(vec![{}])",
+                    secondary_indices
+                        .iter()
+                        .map(|i| format!("\"{i}\".to_string()"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
         )?;
         writeln!(f, "}}),")?;
@@ -234,7 +214,7 @@ impl fmt::Display for Config {
         )?;
         writeln!(f, "mcp: Some({}),", self.mcp.unwrap_or(true))?;
         writeln!(f, "bm25: Some({}),", self.bm25.unwrap_or(true))?;
-        if let Some(data) = INTROSPECTION_DATA.get()
+        if let Some(data) = introspection_data
             && let Ok(stringified) = sonic_rs::to_string_pretty(data)
         {
             writeln!(f, "schema: Some(r#\"{stringified}\"#.to_string()),")?;
@@ -260,5 +240,35 @@ impl fmt::Display for Config {
         writeln!(f, "}})")?;
         writeln!(f, "}}")?;
         Ok(())
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            vector_config: Some(VectorConfig {
+                m: Some(16),
+                ef_construction: Some(128),
+                ef_search: Some(768),
+            }),
+            graph_config: Some(GraphConfig {
+                secondary_indices: None,
+            }),
+            db_max_size_gb: Some(10),
+            mcp: Some(true),
+            bm25: Some(true),
+            schema: None,
+            embedding_model: Some("text-embedding-ada-002".to_string()),
+            graphvis_node_label: None,
+        }
+    }
+}
+
+impl fmt::Display for Config {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // For backward compatibility, delegate to fmt_with_schema with empty values.
+        // The actual introspection data and secondary indices should be provided
+        // via fmt_with_schema when generating code from Source.
+        self.fmt_with_schema(f, None, &[])
     }
 }
