@@ -1,10 +1,12 @@
 use crate::config::InstanceInfo;
-use crate::docker::DockerManager;
+use crate::docker::{DockerBuildError, DockerManager};
+use crate::github_issue::{GitHubIssueBuilder, filter_errors_only};
 use crate::metrics_sender::MetricsSender;
 use crate::project::{ProjectContext, get_helix_repo_cache};
 use crate::utils::{
-    copy_dir_recursive_excluding, diagnostic_source, helixc_utils::collect_hx_files, print_status,
-    print_success, Spinner,
+    copy_dir_recursive_excluding, diagnostic_source,
+    helixc_utils::{collect_hx_contents, collect_hx_files},
+    print_confirm, print_error, print_status, print_success, print_warning, Spinner,
 };
 use eyre::Result;
 use std::time::Instant;
@@ -92,8 +94,22 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
 
         let mut spinner = Spinner::new("DOCKER", "Building Docker image...");
         spinner.start();
-        docker.build_image(&instance_name, instance_config.docker_build_target())?;
-        spinner.stop();
+
+        match docker.build_image(&instance_name, instance_config.docker_build_target()) {
+            Ok(()) => {
+                spinner.stop();
+            }
+            Err(e) => {
+                spinner.stop();
+                // Check if this is a Rust compilation error
+                if let Some(DockerBuildError::RustCompilation { output, .. }) =
+                    e.downcast_ref::<DockerBuildError>()
+                {
+                    handle_docker_rust_compilation_failure(output, &project)?;
+                }
+                return Err(e);
+            }
+        }
     }
 
     print_success(&format!("Instance '{instance_name}' built successfully"));
@@ -417,4 +433,42 @@ fn read_config(instance_src_dir: &std::path::Path) -> Result<Config> {
     let config =
         Config::from_file(config_path).map_err(|e| eyre::eyre!("Failed to load config: {e}"))?;
     Ok(config)
+}
+
+/// Handle Rust compilation failure during Docker build - print errors and offer GitHub issue creation.
+fn handle_docker_rust_compilation_failure(docker_output: &str, project: &ProjectContext) -> Result<()> {
+    print_error("Rust compilation failed during Docker build");
+    println!();
+    println!("This may indicate a bug in the Helix code generator.");
+    println!();
+
+    // Offer to create GitHub issue
+    print_warning("You can report this issue to help improve Helix.");
+    println!();
+
+    let should_create =
+        print_confirm("Would you like to create a GitHub issue with diagnostic information?")?;
+
+    if !should_create {
+        return Ok(());
+    }
+
+    // Filter to get just cargo errors from the Docker output
+    let cargo_errors = filter_errors_only(docker_output);
+
+    // Collect .hx content
+    let hx_content = collect_hx_contents(&project.root, &project.config.project.queries)
+        .unwrap_or_else(|_| String::from("[Could not read .hx files]"));
+
+    // Build and open GitHub issue (no generated Rust available from Docker build)
+    let issue = GitHubIssueBuilder::new(cargo_errors).with_hx_content(hx_content);
+
+    print_status("BROWSER", "Opening GitHub issue page...");
+    println!("Please review the content before submitting.");
+
+    issue.open_in_browser()?;
+
+    print_success("GitHub issue page opened in your browser");
+
+    Ok(())
 }

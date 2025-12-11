@@ -7,9 +7,39 @@ use crate::config::{BuildMode, ContainerRuntime, InstanceInfo};
 use crate::project::ProjectContext;
 use crate::utils::{print_confirm, print_status, print_warning};
 use eyre::{Result, eyre};
+use std::fmt;
 use std::process::{Command, Output};
 use std::thread;
 use std::time::Duration;
+
+/// Error type for Docker build failures that may be Rust compilation errors.
+#[derive(Debug)]
+pub enum DockerBuildError {
+    /// Rust compilation failed during Docker build
+    RustCompilation {
+        output: String,
+        instance_name: String,
+    },
+}
+
+impl fmt::Display for DockerBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DockerBuildError::RustCompilation { output, instance_name } => {
+                write!(f, "Rust compilation failed for instance '{}': {}", instance_name, output)
+            }
+        }
+    }
+}
+
+impl std::error::Error for DockerBuildError {}
+
+/// Check if Docker build output indicates a Rust compilation error.
+fn is_rust_compilation_error(output: &str) -> bool {
+    output.contains("error[E")
+        || output.contains("error: could not compile")
+        || (output.contains("cargo build") && output.contains("error:"))
+}
 
 pub struct DockerManager<'a> {
     project: &'a ProjectContext,
@@ -550,7 +580,19 @@ networks:
         let output = self.run_compose_command(instance_name, vec!["build"])?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let full_output = format!("{}\n{}", stderr, stdout);
+
+            // Check if this is a Rust compilation error
+            if is_rust_compilation_error(&full_output) {
+                return Err(DockerBuildError::RustCompilation {
+                    output: full_output,
+                    instance_name: instance_name.to_string(),
+                }
+                .into());
+            }
+
             return Err(eyre!("{} build failed:\n{stderr}", self.runtime.binary()));
         }
         print_status(self.runtime.label(), "Image built successfully");
