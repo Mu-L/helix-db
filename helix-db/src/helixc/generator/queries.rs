@@ -407,7 +407,7 @@ impl Query {
                                         // This is a deeply nested traversal - generate nested traversal code
 
                                         // Extract the source variable for this deeply nested traversal
-                                        let inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
+                                        let _inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
                                             use crate::helixc::generator::traversal_steps::TraversalType;
                                             match inner_trav_type {
                                                 TraversalType::FromSingle(var) | TraversalType::FromIter(var) => {
@@ -612,7 +612,7 @@ impl Query {
                                         // This is a deeply nested traversal - generate nested traversal code
 
                                         // Extract the source variable for this deeply nested traversal
-                                        let inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
+                                        let _inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
                                             use crate::helixc::generator::traversal_steps::TraversalType;
                                             match inner_trav_type {
                                                 TraversalType::FromSingle(var) | TraversalType::FromIter(var) => {
@@ -1013,7 +1013,7 @@ impl Query {
                                         // This is a deeply nested traversal - generate nested traversal code
 
                                         // Extract the source variable for this deeply nested traversal
-                                        let inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
+                                        let _inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
                                             use crate::helixc::generator::traversal_steps::TraversalType;
                                             match inner_trav_type {
                                                 TraversalType::FromSingle(var) | TraversalType::FromIter(var) => {
@@ -1218,7 +1218,7 @@ impl Query {
                                         // This is a deeply nested traversal - generate nested traversal code
 
                                         // Extract the source variable for this deeply nested traversal
-                                        let inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
+                                        let _inner_source_var = if let Some(inner_trav_type) = inner_traversal_type {
                                             use crate::helixc::generator::traversal_steps::TraversalType;
                                             match inner_trav_type {
                                                 TraversalType::FromSingle(var) | TraversalType::FromIter(var) => {
