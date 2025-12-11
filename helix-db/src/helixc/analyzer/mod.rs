@@ -24,7 +24,6 @@ use serde::Serialize;
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    sync::OnceLock,
 };
 
 pub fn analyze(src: &Source) -> Result<(Vec<Diagnostic>, GeneratedSource), ParserError> {
@@ -60,21 +59,29 @@ pub(crate) struct Ctx<'a> {
     pub(super) output: GeneratedSource,
 }
 
-pub static INTROSPECTION_DATA: OnceLock<IntrospectionData> = OnceLock::new();
-pub static SECONDARY_INDICES: OnceLock<Vec<String>> = OnceLock::new();
-
 impl<'a> Ctx<'a> {
     pub(super) fn new(src: &'a Source) -> Result<Self, ParserError> {
         // Build field look‑ups once
         let all_schemas = build_field_lookups(src);
         let (node_fields, edge_fields, vector_fields) = all_schemas.get_latest();
 
-        let output = GeneratedSource {
-            src: src.source.clone(),
-            ..Default::default()
-        };
+        // Build secondary indices from indexed fields
+        let secondary_indices: Vec<String> = src
+            .get_latest_schema()?
+            .node_schemas
+            .iter()
+            .flat_map(|schema| {
+                schema
+                    .fields
+                    .iter()
+                    .filter(|f| f.is_indexed())
+                    .map(|f| f.name.clone())
+            })
+            .dedup()
+            .collect();
 
-        let ctx = Self {
+        // Create the context first (without output populated)
+        let mut ctx = Self {
             node_set: src
                 .get_latest_schema()?
                 .node_schemas
@@ -99,29 +106,19 @@ impl<'a> Ctx<'a> {
             all_schemas,
             src,
             diagnostics: Vec::new(),
-            output,
+            output: GeneratedSource {
+                src: src.source.clone(),
+                ..Default::default()
+            },
         };
 
-        INTROSPECTION_DATA
-            .set(IntrospectionData::from_schema(&ctx))
-            .ok();
+        // Now build introspection data from the context
+        let introspection_data = IntrospectionData::from_schema(&ctx);
 
-        SECONDARY_INDICES
-            .set(
-                src.get_latest_schema()?
-                    .node_schemas
-                    .iter()
-                    .flat_map(|schema| {
-                        schema
-                            .fields
-                            .iter()
-                            .filter(|f| f.is_indexed())
-                            .map(|f| f.name.clone())
-                    })
-                    .dedup()
-                    .collect(),
-            )
-            .ok();
+        // Update the output with introspection data and secondary indices
+        ctx.output.introspection_data = Some(introspection_data);
+        ctx.output.secondary_indices = secondary_indices;
+
         Ok(ctx)
     }
 
