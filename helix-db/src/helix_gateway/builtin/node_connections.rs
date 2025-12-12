@@ -203,7 +203,7 @@ pub fn node_connections_inner(input: HandlerInput) -> Result<protocol::Response,
 
 inventory::submit! {
     HandlerSubmission(
-        Handler::new("node_connections", node_connections_inner)
+        Handler::new("node_connections", node_connections_inner, false)
     )
 }
 

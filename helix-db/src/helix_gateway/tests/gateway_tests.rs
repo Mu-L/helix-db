@@ -27,7 +27,7 @@ fn create_test_graph() -> (Arc<HelixGraphEngine>, TempDir) {
 #[test]
 fn test_gateway_new_basic() {
     let (graph, _temp_dir) = create_test_graph();
-    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 8, None, None, None);
+    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 8, None, None, None, None);
 
     assert_eq!(gateway.address, "127.0.0.1:8080");
     assert_eq!(gateway.workers_per_core, 8);
@@ -38,7 +38,7 @@ fn test_gateway_new_basic() {
 fn test_gateway_new_with_routes() {
     let (graph, _temp_dir) = create_test_graph();
     let routes = HashMap::new();
-    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 8, Some(routes), None, None);
+    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 8, Some(routes), None, None, None);
 
     assert_eq!(gateway.address, "127.0.0.1:8080");
     assert!(gateway.router.routes.is_empty());
@@ -48,7 +48,7 @@ fn test_gateway_new_with_routes() {
 fn test_gateway_new_with_mcp_routes() {
     let (graph, _temp_dir) = create_test_graph();
     let mcp_routes = HashMap::new();
-    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 8, None, Some(mcp_routes), None);
+    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 8, None, Some(mcp_routes), None, None);
 
     assert_eq!(gateway.address, "127.0.0.1:8080");
     assert!(gateway.router.mcp_routes.is_empty());
@@ -62,7 +62,7 @@ fn test_gateway_new_with_opts() {
         config: Config::default(),
         version_info: Default::default(),
     };
-    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 8, None, None, Some(opts));
+    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 8, None, None, None, Some(opts));
 
     assert!(gateway.opts.is_some());
 }
@@ -73,7 +73,7 @@ fn test_gateway_new_with_cluster_id() {
         std::env::set_var("CLUSTER_ID", "test-cluster-123");
     }
     let (graph, _temp_dir) = create_test_graph();
-    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 8, None, None, None);
+    let gateway = HelixGateway::new("127.0.0.1:8080", graph, 8, None, None, None, None);
 
     assert!(gateway.cluster_id.is_some());
     assert_eq!(gateway.cluster_id.unwrap(), "test-cluster-123");
@@ -85,7 +85,7 @@ fn test_gateway_new_with_cluster_id() {
 #[test]
 fn test_gateway_fields() {
     let (graph, _temp_dir) = create_test_graph();
-    let gateway = HelixGateway::new("0.0.0.0:3000", graph, 10, None, None, None);
+    let gateway = HelixGateway::new("0.0.0.0:3000", graph, 10, None, None, None, None);
 
     assert_eq!(gateway.address, "0.0.0.0:3000");
     assert_eq!(gateway.workers_per_core, 10);
@@ -94,10 +94,10 @@ fn test_gateway_fields() {
 #[test]
 fn test_gateway_address_format() {
     let (graph, _temp_dir) = create_test_graph();
-    let gateway = HelixGateway::new("localhost:8080", graph.clone(), 1, None, None, None);
+    let gateway = HelixGateway::new("localhost:8080", graph.clone(), 1, None, None, None, None);
     assert_eq!(gateway.address, "localhost:8080");
 
-    let gateway2 = HelixGateway::new("0.0.0.0:80", graph, 1, None, None, None);
+    let gateway2 = HelixGateway::new("0.0.0.0:80", graph, 1, None, None, None, None);
     assert_eq!(gateway2.address, "0.0.0.0:80");
 }
 
@@ -105,16 +105,17 @@ fn test_gateway_address_format() {
 fn test_gateway_workers_per_core() {
     let (graph, _temp_dir) = create_test_graph();
 
-    let gateway1 = HelixGateway::new("127.0.0.1:8080", graph.clone(), 1, None, None, None);
+    let gateway1 = HelixGateway::new("127.0.0.1:8080", graph.clone(), 1, None, None, None, None);
     assert_eq!(gateway1.workers_per_core, 1);
 
-    let gateway2 = HelixGateway::new("127.0.0.1:8080", graph.clone(), 10, None, None, None);
+    let gateway2 = HelixGateway::new("127.0.0.1:8080", graph.clone(), 10, None, None, None, None);
     assert_eq!(gateway2.workers_per_core, 10);
 
     let gateway3 = HelixGateway::new(
         "127.0.0.1:8080",
         graph,
         GatewayOpts::DEFAULT_WORKERS_PER_CORE,
+        None,
         None,
         None,
         None,
@@ -129,7 +130,7 @@ fn test_gateway_workers_per_core() {
 #[test]
 fn test_app_state_creation() {
     let (graph, _temp_dir) = create_test_graph();
-    let router = Arc::new(HelixRouter::new(None, None));
+    let router = Arc::new(HelixRouter::new(None, None, None));
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -155,7 +156,7 @@ fn test_app_state_creation() {
 #[test]
 fn test_app_state_with_schema() {
     let (graph, _temp_dir) = create_test_graph();
-    let router = Arc::new(HelixRouter::new(None, None));
+    let router = Arc::new(HelixRouter::new(None, None, None));
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -181,7 +182,7 @@ fn test_app_state_with_schema() {
 #[test]
 fn test_app_state_with_cluster_id() {
     let (graph, _temp_dir) = create_test_graph();
-    let router = Arc::new(HelixRouter::new(None, None));
+    let router = Arc::new(HelixRouter::new(None, None, None));
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
