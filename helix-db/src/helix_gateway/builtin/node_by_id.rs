@@ -121,7 +121,7 @@ pub fn node_details_inner(input: HandlerInput) -> Result<protocol::Response, Gra
 
 inventory::submit! {
     HandlerSubmission(
-        Handler::new("node_details", node_details_inner)
+        Handler::new("node_details", node_details_inner, false)
     )
 }
 

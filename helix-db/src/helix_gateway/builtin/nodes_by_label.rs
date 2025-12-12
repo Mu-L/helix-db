@@ -138,7 +138,7 @@ pub fn nodes_by_label_inner(input: HandlerInput) -> Result<protocol::Response, G
 
 inventory::submit! {
     HandlerSubmission(
-        Handler::new("nodes_by_label", nodes_by_label_inner)
+        Handler::new("nodes_by_label", nodes_by_label_inner, false)
     )
 }
 

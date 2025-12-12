@@ -47,7 +47,7 @@ fn echo_handler(input: HandlerInput) -> Result<Response, GraphError> {
 
 #[test]
 fn test_router_new_empty() {
-    let router = HelixRouter::new(None, None);
+    let router = HelixRouter::new(None, None, None);
     assert!(router.routes.is_empty());
     assert!(router.mcp_routes.is_empty());
 }
@@ -57,7 +57,7 @@ fn test_router_new_with_routes() {
     let mut routes = HashMap::new();
     routes.insert("test".to_string(), Arc::new(test_handler) as HandlerFn);
 
-    let router = HelixRouter::new(Some(routes), None);
+    let router = HelixRouter::new(Some(routes), None, None);
     assert_eq!(router.routes.len(), 1);
     assert!(router.routes.contains_key("test"));
     assert!(router.mcp_routes.is_empty());
@@ -70,7 +70,7 @@ fn test_router_new_with_multiple_routes() {
     routes.insert("route2".to_string(), Arc::new(error_handler) as HandlerFn);
     routes.insert("route3".to_string(), Arc::new(echo_handler) as HandlerFn);
 
-    let router = HelixRouter::new(Some(routes), None);
+    let router = HelixRouter::new(Some(routes), None, None);
     assert_eq!(router.routes.len(), 3);
     assert!(router.routes.contains_key("route1"));
     assert!(router.routes.contains_key("route2"));
@@ -83,8 +83,8 @@ fn test_router_new_with_multiple_routes() {
 
 #[test]
 fn test_add_route() {
-    let mut router = HelixRouter::new(None, None);
-    router.add_route("test", test_handler);
+    let mut router = HelixRouter::new(None, None, None);
+    router.add_route("test", test_handler, false);
 
     assert_eq!(router.routes.len(), 1);
     assert!(router.routes.contains_key("test"));
@@ -92,10 +92,10 @@ fn test_add_route() {
 
 #[test]
 fn test_add_multiple_routes() {
-    let mut router = HelixRouter::new(None, None);
-    router.add_route("route1", test_handler);
-    router.add_route("route2", error_handler);
-    router.add_route("route3", echo_handler);
+    let mut router = HelixRouter::new(None, None, None);
+    router.add_route("route1", test_handler, false);
+    router.add_route("route2", error_handler, false);
+    router.add_route("route3", echo_handler, false);
 
     assert_eq!(router.routes.len(), 3);
     assert!(router.routes.contains_key("route1"));
@@ -105,9 +105,9 @@ fn test_add_multiple_routes() {
 
 #[test]
 fn test_add_route_overwrites_existing() {
-    let mut router = HelixRouter::new(None, None);
-    router.add_route("test", test_handler);
-    router.add_route("test", error_handler);
+    let mut router = HelixRouter::new(None, None, None);
+    router.add_route("test", test_handler, false);
+    router.add_route("test", error_handler, false);
 
     assert_eq!(router.routes.len(), 1);
     assert!(router.routes.contains_key("test"));
@@ -115,10 +115,10 @@ fn test_add_route_overwrites_existing() {
 
 #[test]
 fn test_add_route_with_special_characters() {
-    let mut router = HelixRouter::new(None, None);
-    router.add_route("/api/v1/query", test_handler);
-    router.add_route("user:detail", test_handler);
-    router.add_route("test-route", test_handler);
+    let mut router = HelixRouter::new(None, None, None);
+    router.add_route("/api/v1/query", test_handler, false);
+    router.add_route("user:detail", test_handler, false);
+    router.add_route("test-route", test_handler, false);
 
     assert_eq!(router.routes.len(), 3);
     assert!(router.routes.contains_key("/api/v1/query"));
@@ -133,8 +133,8 @@ fn test_add_route_with_special_characters() {
 #[test]
 fn test_handler_invocation_success() {
     let (graph, _temp_dir) = create_test_graph();
-    let mut router = HelixRouter::new(None, None);
-    router.add_route("test", test_handler);
+    let mut router = HelixRouter::new(None, None, None);
+    router.add_route("test", test_handler, false);
 
     let handler = router.routes.get("test").unwrap();
     let input = HandlerInput {
@@ -158,8 +158,8 @@ fn test_handler_invocation_success() {
 #[test]
 fn test_handler_invocation_error() {
     let (graph, _temp_dir) = create_test_graph();
-    let mut router = HelixRouter::new(None, None);
-    router.add_route("error", error_handler);
+    let mut router = HelixRouter::new(None, None, None);
+    router.add_route("error", error_handler, false);
 
     let handler = router.routes.get("error").unwrap();
     let input = HandlerInput {
@@ -182,8 +182,8 @@ fn test_handler_invocation_error() {
 #[test]
 fn test_handler_invocation_echo() {
     let (graph, _temp_dir) = create_test_graph();
-    let mut router = HelixRouter::new(None, None);
-    router.add_route("echo", echo_handler);
+    let mut router = HelixRouter::new(None, None, None);
+    router.add_route("echo", echo_handler, false);
 
     let handler = router.routes.get("echo").unwrap();
     let input = HandlerInput {
@@ -206,7 +206,7 @@ fn test_handler_invocation_echo() {
 
 #[test]
 fn test_route_not_found() {
-    let router = HelixRouter::new(None, None);
+    let router = HelixRouter::new(None, None, None);
     assert!(router.routes.get("nonexistent").is_none());
 }
 
@@ -289,13 +289,13 @@ fn test_graph_error_to_router_error() {
 
 #[test]
 fn test_handler_creation() {
-    let handler = Handler::new("test_handler", test_handler);
+    let handler = Handler::new("test_handler", test_handler, false);
     assert_eq!(handler.name, "test_handler");
 }
 
 #[test]
 fn test_handler_submission_creation() {
-    let handler = Handler::new("test", test_handler);
+    let handler = Handler::new("test", test_handler, false);
     let submission = HandlerSubmission(handler);
     assert_eq!(submission.0.name, "test");
 }
@@ -303,7 +303,7 @@ fn test_handler_submission_creation() {
 #[test]
 fn test_router_new_with_mcp_routes() {
     let routes = HashMap::new();
-    let router = HelixRouter::new(Some(routes), None);
+    let router = HelixRouter::new(Some(routes), None, None);
     assert!(router.routes.is_empty());
     assert!(router.mcp_routes.is_empty());
 }

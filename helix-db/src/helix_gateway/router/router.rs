@@ -62,11 +62,12 @@ pub struct HandlerSubmission(pub Handler);
 pub struct Handler {
     pub name: &'static str,
     pub func: BasicHandlerFn,
+    pub is_write: bool,
 }
 
 impl Handler {
-    pub const fn new(name: &'static str, func: BasicHandlerFn) -> Self {
-        Self { name, func }
+    pub const fn new(name: &'static str, func: BasicHandlerFn, is_write: bool) -> Self {
+        Self { name, func, is_write }
     }
 }
 
@@ -79,6 +80,8 @@ pub struct HelixRouter {
     /// Name => Function
     pub routes: HashMap<String, HandlerFn>,
     pub mcp_routes: HashMap<String, MCPHandlerFn>,
+    /// Set of route names that perform write operations
+    pub write_routes: std::collections::HashSet<String>,
 }
 
 impl HelixRouter {
@@ -86,18 +89,29 @@ impl HelixRouter {
     pub fn new(
         routes: Option<HashMap<String, HandlerFn>>,
         mcp_routes: Option<HashMap<String, MCPHandlerFn>>,
+        write_routes: Option<std::collections::HashSet<String>>,
     ) -> Self {
         let rts = routes.unwrap_or_default();
         let mcp_rts = mcp_routes.unwrap_or_default();
+        let write_rts = write_routes.unwrap_or_default();
         Self {
             routes: rts,
             mcp_routes: mcp_rts,
+            write_routes: write_rts,
         }
     }
 
+    /// Check if a route is a write operation
+    pub fn is_write_route(&self, name: &str) -> bool {
+        self.write_routes.contains(name)
+    }
+
     /// Add a route to the router
-    pub fn add_route(&mut self, name: &str, handler: BasicHandlerFn) {
+    pub fn add_route(&mut self, name: &str, handler: BasicHandlerFn, is_write: bool) {
         self.routes.insert(name.to_string(), Arc::new(handler));
+        if is_write {
+            self.write_routes.insert(name.to_string());
+        }
     }
 }
 
