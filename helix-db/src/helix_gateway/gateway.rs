@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{self, AtomicUsize};
 use std::time::Instant;
 use std::{collections::HashMap, sync::Arc};
@@ -48,7 +49,7 @@ impl HelixGateway {
         workers_per_core: usize,
         routes: Option<HashMap<String, HandlerFn>>,
         mcp_routes: Option<HashMap<String, MCPHandlerFn>>,
-        write_routes: Option<std::collections::HashSet<String>>,
+        write_routes: Option<HashSet<String>>,
         opts: Option<HelixGraphEngineOpts>,
     ) -> HelixGateway {
         let router = Arc::new(HelixRouter::new(routes, mcp_routes, write_routes));

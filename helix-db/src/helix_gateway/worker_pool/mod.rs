@@ -226,12 +226,9 @@ impl Worker {
             loop {
                 // First check for any pending continuations (non-blocking)
                 match cont_rx.try_recv() {
-                    Ok((ret_chan, cfn)) => {
-                        ret_chan.send(cfn().map_err(Into::into)).expect("todo")
-                    }
+                    Ok((ret_chan, cfn)) => ret_chan.send(cfn().map_err(Into::into)).expect("todo"),
                     Err(flume::TryRecvError::Disconnected) => {
                         error!("Writer continuation channel was dropped");
-                        break;
                     }
                     Err(flume::TryRecvError::Empty) => {}
                 }
@@ -248,7 +245,6 @@ impl Worker {
                     ),
                     Err(flume::RecvError::Disconnected) => {
                         trace!("Writer request channel was dropped, shutting down");
-                        break;
                     }
                 }
             }
