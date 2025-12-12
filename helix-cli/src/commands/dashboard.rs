@@ -319,6 +319,10 @@ fn get_dashboard_port(runtime: ContainerRuntime) -> Result<u16> {
 fn pull_dashboard_image(runtime: ContainerRuntime) -> Result<()> {
     print_status("DASHBOARD", "Pulling dashboard image...");
 
+    let _ = Command::new(runtime.binary())
+        .args(["logout", "public.ecr.aws"])
+        .output();
+
     let image = format!("{DASHBOARD_IMAGE}:{DASHBOARD_TAG}");
     let output = Command::new(runtime.binary())
         .args(["pull", &image])
