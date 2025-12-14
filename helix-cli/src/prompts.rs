@@ -276,3 +276,28 @@ pub fn is_interactive() -> bool {
     use std::io::IsTerminal;
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
+
+/// Prompt user to select an instance from available instances
+///
+/// Takes a slice of (name, type_hint) tuples to show instance types.
+/// If only one instance exists, it will be auto-selected without prompting.
+/// If no instances exist, returns an error.
+pub fn select_instance(instances: &[(&String, &str)]) -> Result<String> {
+    if instances.is_empty() {
+        return Err(eyre::eyre!(
+            "No instances found in helix.toml. Run 'helix init' to create a project first."
+        ));
+    }
+
+    // Auto-select if only one instance
+    if instances.len() == 1 {
+        return Ok(instances[0].0.clone());
+    }
+
+    let mut select = cliclack::select("Select an instance");
+    for (name, type_hint) in instances {
+        select = select.item((*name).clone(), name.as_str(), *type_hint);
+    }
+    let selected = select.interact()?;
+    Ok(selected)
+}

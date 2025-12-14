@@ -437,6 +437,28 @@ impl HelixConfig {
         instances
     }
 
+    /// List all instances with their type labels for display
+    /// Returns tuples of (name, type_hint) e.g. ("dev", "local"), ("prod", "Helix Cloud")
+    pub fn list_instances_with_types(&self) -> Vec<(&String, &'static str)> {
+        let mut instances = Vec::new();
+
+        for name in self.local.keys() {
+            instances.push((name, "local"));
+        }
+
+        for (name, config) in &self.cloud {
+            let type_hint = match config {
+                CloudConfig::Helix(_) => "Helix Cloud",
+                CloudConfig::FlyIo(_) => "Fly.io",
+                CloudConfig::Ecr(_) => "AWS ECR",
+            };
+            instances.push((name, type_hint));
+        }
+
+        instances.sort_by(|a, b| a.0.cmp(b.0));
+        instances
+    }
+
     pub fn default_config(project_name: &str) -> Self {
         let mut local = HashMap::new();
         local.insert(

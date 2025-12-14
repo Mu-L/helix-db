@@ -78,14 +78,14 @@ enum Commands {
 
     /// Build and compile project for an instance
     Build {
-        /// Instance name to build
-        instance: String,
+        /// Instance name to build (interactive selection if not provided)
+        instance: Option<String>,
     },
 
     /// Deploy/start an instance
     Push {
-        /// Instance name to push
-        instance: String,
+        /// Instance name to push (interactive selection if not provided)
+        instance: Option<String>,
         /// Use development profile for faster builds (Helix Cloud only)
         #[clap(long)]
         dev: bool,
@@ -99,14 +99,14 @@ enum Commands {
 
     /// Start an instance (doesn't rebuild)
     Start {
-        /// Instance name to start
-        instance: String,
+        /// Instance name to start (interactive selection if not provided)
+        instance: Option<String>,
     },
 
     /// Stop an instance
     Stop {
-        /// Instance name to stop
-        instance: String,
+        /// Instance name to stop (interactive selection if not provided)
+        instance: Option<String>,
     },
 
     /// Show status of all instances

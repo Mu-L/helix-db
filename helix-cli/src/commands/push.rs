@@ -6,15 +6,36 @@ use crate::config::{BuildMode, CloudConfig, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
 use crate::project::ProjectContext;
+use crate::prompts;
 use crate::utils::{Spinner, print_status, print_success};
 use eyre::Result;
 use std::time::Instant;
 
-pub async fn run(instance_name: String, dev: bool, metrics_sender: &MetricsSender) -> Result<()> {
+pub async fn run(
+    instance_name: Option<String>,
+    dev: bool,
+    metrics_sender: &MetricsSender,
+) -> Result<()> {
     let start_time = Instant::now();
 
     // Load project context
     let project = ProjectContext::find_and_load(None)?;
+
+    // Get instance name - prompt if not provided
+    let instance_name = match instance_name {
+        Some(name) => name,
+        None if prompts::is_interactive() => {
+            let instances = project.config.list_instances_with_types();
+            prompts::select_instance(&instances)?
+        }
+        None => {
+            let instances = project.config.list_instances();
+            return Err(eyre::eyre!(
+                "No instance specified. Available instances: {}",
+                instances.into_iter().cloned().collect::<Vec<_>>().join(", ")
+            ));
+        }
+    };
 
     // Get instance config
     let instance_config = project.config.get_instance(&instance_name)?;
@@ -99,7 +120,7 @@ async fn push_local_instance(
 
     // Build the instance first (this ensures it's up to date) and get metrics data
     let metrics_data =
-        crate::commands::build::run(instance_name.to_string(), metrics_sender).await?;
+        crate::commands::build::run(Some(instance_name.to_string()), metrics_sender).await?;
 
     // Start the instance
     docker.start_instance(instance_name)?;
@@ -145,7 +166,7 @@ async fn push_cloud_instance(
 
     let metrics_data = if instance_config.should_build_docker_image() {
         // Build happens, get metrics data from build
-        crate::commands::build::run(instance_name.to_string(), metrics_sender).await?
+        crate::commands::build::run(Some(instance_name.to_string()), metrics_sender).await?
     } else {
         // No build, use lightweight parsing
         parse_queries_for_metrics(project)?

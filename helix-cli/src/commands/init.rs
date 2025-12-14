@@ -262,7 +262,6 @@ async fn run_init_inner(
         &[
             &format!("Edit {queries_path_clean}/schema.hx to define your data model"),
             &format!("Add queries to {queries_path_clean}/queries.hx"),
-            "Run 'helix build dev' to compile your project",
             "Run 'helix push dev' to start your development instance",
         ],
     );
