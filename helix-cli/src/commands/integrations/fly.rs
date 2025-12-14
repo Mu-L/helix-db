@@ -106,8 +106,9 @@ impl TryFrom<String> for VmSize {
 }
 
 impl VmSize {
-    fn into_command_args(&self) -> [&'static str; 2] {
-        let vm_size_arg = match self {
+    /// Get the string representation of the VM size (used for CLI args and config)
+    pub fn as_str(&self) -> &'static str {
+        match self {
             VmSize::SharedCpu4x => "shared-cpu-4x",
             VmSize::SharedCpu8x => "shared-cpu-8x",
             VmSize::PerformanceCpu4x => "performance-4x",
@@ -117,8 +118,11 @@ impl VmSize {
             VmSize::A10040Gb => "a100-40gb",
             VmSize::A10080Gb => "a100-80gb",
             VmSize::L40s => "l40s",
-        };
-        ["--vm-size", vm_size_arg]
+        }
+    }
+
+    fn into_command_args(&self) -> [&'static str; 2] {
+        ["--vm-size", self.as_str()]
     }
 }
 /// Configuration for a Fly.io instance

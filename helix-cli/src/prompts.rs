@@ -200,23 +200,10 @@ pub fn build_deployment_command(default_name: &str) -> Result<Option<CloudDeploy
             let volume_size = input_fly_volume_size()?;
             let private = confirm("Make deployment private (internal network only)?")?;
 
-            // Convert VmSize enum to the string format expected by the CLI
-            let vm_size_str = match vm_size {
-                VmSize::SharedCpu4x => "shared-cpu-4x",
-                VmSize::SharedCpu8x => "shared-cpu-8x",
-                VmSize::PerformanceCpu4x => "performance-4x",
-                VmSize::PerformanceCpu8x => "performance-8x",
-                VmSize::PerformanceCpu16x => "performance-16x",
-                VmSize::A10 => "a10",
-                VmSize::A10040Gb => "a100-40gb",
-                VmSize::A10080Gb => "a100-80gb",
-                VmSize::L40s => "l40s",
-            };
-
             Ok(Some(CloudDeploymentTypeCommand::Fly {
                 auth: "cli".to_string(),
                 volume_size,
-                vm_size: vm_size_str.to_string(),
+                vm_size: vm_size.as_str().to_string(),
                 private,
                 name: Some(instance_name),
             }))
@@ -247,23 +234,10 @@ pub fn build_init_deployment_command() -> Result<Option<CloudDeploymentTypeComma
             let volume_size = input_fly_volume_size()?;
             let private = confirm("Make deployment private (internal network only)?")?;
 
-            // Convert VmSize enum to the string format expected by the CLI
-            let vm_size_str = match vm_size {
-                VmSize::SharedCpu4x => "shared-cpu-4x",
-                VmSize::SharedCpu8x => "shared-cpu-8x",
-                VmSize::PerformanceCpu4x => "performance-4x",
-                VmSize::PerformanceCpu8x => "performance-8x",
-                VmSize::PerformanceCpu16x => "performance-16x",
-                VmSize::A10 => "a10",
-                VmSize::A10040Gb => "a100-40gb",
-                VmSize::A10080Gb => "a100-80gb",
-                VmSize::L40s => "l40s",
-            };
-
             Ok(Some(CloudDeploymentTypeCommand::Fly {
                 auth: "cli".to_string(),
                 volume_size,
-                vm_size: vm_size_str.to_string(),
+                vm_size: vm_size.as_str().to_string(),
                 private,
                 name: None,
             }))

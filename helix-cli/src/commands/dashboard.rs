@@ -345,7 +345,7 @@ async fn check_instance_running(project: &ProjectContext, instance_name: &str) -
     // If not interactive, just fail with instructions
     if !prompts::is_interactive() {
         return Err(eyre!(
-            "Instance '{}' has not been built. Build and start it with 'helix push {}'",
+            "Instance '{}' is not running. Start it with 'helix push {}'",
             instance_name,
             instance_name
         ));
