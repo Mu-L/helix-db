@@ -11,6 +11,7 @@ mod errors;
 mod github_issue;
 mod metrics_sender;
 mod project;
+mod prompts;
 mod sse_client;
 mod update;
 mod utils;
@@ -45,7 +46,7 @@ enum Commands {
     /// Add a new instance to an existing Helix project
     Add {
         #[clap(subcommand)]
-        cloud: CloudDeploymentTypeCommand,
+        cloud: Option<CloudDeploymentTypeCommand>,
     },
 
     /// Create a new Helix Cloud cluster

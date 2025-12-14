@@ -52,7 +52,7 @@ impl TryFrom<String> for FlyAuthType {
 }
 
 /// VM sizes available on Fly.io
-#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum VmSize {
     /// 4 CPU, 1GB RAM
     #[serde(rename = "shared-cpu-4x")]
