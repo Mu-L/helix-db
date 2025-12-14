@@ -131,7 +131,7 @@ pub fn input_fly_volume_size() -> Result<u16> {
         .default_input("20")
         .placeholder("20")
         .validate(|input: &String| match input.parse::<u16>() {
-            Ok(n) if n >= 1 && n <= 500 => Ok(()),
+            Ok(n) if (1..=500).contains(&n) => Ok(()),
             Ok(_) => Err("Volume size must be between 1 and 500 GB"),
             Err(_) => Err("Please enter a valid number"),
         })
