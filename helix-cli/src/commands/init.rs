@@ -7,6 +7,7 @@ use crate::config::{CloudConfig, HelixConfig};
 use crate::docker::DockerManager;
 use crate::errors::project_error;
 use crate::project::ProjectContext;
+use crate::prompts;
 use crate::utils::{print_instructions, print_status, print_success};
 use eyre::Result;
 use std::env;
@@ -94,7 +95,14 @@ async fn run_init_inner(
     // Create project structure
     create_project_structure(&project_dir, &queries_path, cleanup_tracker)?;
 
-    // Initialize deployment type based on flags
+    // Initialize deployment type based on flags or interactive selection
+    // If no deployment type provided and we're in an interactive terminal, prompt the user
+    let deployment_type = if deployment_type.is_none() && prompts::is_interactive() {
+        prompts::intro("helix init")?;
+        prompts::build_init_deployment_command()?
+    } else {
+        deployment_type
+    };
 
     match deployment_type {
         Some(deployment) => {
@@ -127,18 +135,22 @@ async fn run_init_inner(
                     // Prompt user to create cluster now
                     println!();
                     print_status("CLUSTER", "Helix Cloud instance configuration saved");
-                    println!("\nWould you like to create the cluster now?");
                     println!("This will open Stripe for payment and provision your cluster.");
-                    println!();
-                    print!("Create cluster now? [Y/n]: ");
-                    use std::io::{self, Write};
-                    io::stdout().flush()?;
 
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input)?;
-                    let input = input.trim().to_lowercase();
+                    let should_create = if prompts::is_interactive() {
+                        prompts::confirm("Create cluster now?")?
+                    } else {
+                        // Fallback to raw stdin for non-interactive terminals
+                        use std::io::{self, Write};
+                        print!("Create cluster now? [Y/n]: ");
+                        io::stdout().flush()?;
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input)?;
+                        let input = input.trim().to_lowercase();
+                        input.is_empty() || input == "y" || input == "yes"
+                    };
 
-                    if input.is_empty() || input == "y" || input == "yes" {
+                    if should_create {
                         // Run create-cluster flow
                         crate::commands::create_cluster::run(project_name, region).await?;
                     } else {
@@ -250,7 +262,6 @@ async fn run_init_inner(
         &[
             &format!("Edit {queries_path_clean}/schema.hx to define your data model"),
             &format!("Add queries to {queries_path_clean}/queries.hx"),
-            "Run 'helix build dev' to compile your project",
             "Run 'helix push dev' to start your development instance",
         ],
     );

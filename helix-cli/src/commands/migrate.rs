@@ -474,10 +474,6 @@ fn provide_post_migration_guidance(ctx: &MigrationContext) -> Result<()> {
                 ctx.instance_name
             ),
             &format!(
-                "Run 'helix build {}' to build your queries",
-                ctx.instance_name
-            ),
-            &format!(
                 "Run 'helix push {}' to start your instance",
                 ctx.instance_name
             ),

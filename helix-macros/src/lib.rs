@@ -33,7 +33,6 @@ pub fn handler(args: TokenStream, item: TokenStream) -> TokenStream {
     let fn_name = &input_fn.sig.ident;
     let fn_name_str = fn_name.to_string();
     let is_write = args.is_write;
-    println!("fn_name_str: {fn_name_str}, is_write: {is_write}");
     // Create a unique static name for each handler
     let static_name = quote::format_ident!(
         "_MAIN_HANDLER_REGISTRATION_{}",
@@ -336,9 +335,7 @@ pub fn migration(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let input_fn = parse_macro_input!(item as ItemFn);
     let fn_name = &input_fn.sig.ident;
-    let fn_name_str = fn_name.to_string();
 
-    println!("fn_name_str: {fn_name_str}");
     // Create a unique static name for each handler
     let static_name = quote::format_ident!(
         "_MAIN_HANDLER_REGISTRATION_{}",

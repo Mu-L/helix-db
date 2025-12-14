@@ -1,5 +1,5 @@
-use crate::cleanup::CleanupTracker;
 use crate::CloudDeploymentTypeCommand;
+use crate::cleanup::CleanupTracker;
 use crate::commands::integrations::ecr::{EcrAuthType, EcrManager};
 use crate::commands::integrations::fly::{FlyAuthType, FlyManager, VmSize};
 use crate::commands::integrations::helix::HelixManager;
@@ -7,34 +7,63 @@ use crate::config::{BuildMode, CloudConfig, DbConfig, LocalInstanceConfig};
 use crate::docker::DockerManager;
 use crate::errors::project_error;
 use crate::project::ProjectContext;
+use crate::prompts;
 use crate::utils::{print_instructions, print_status, print_success};
 use eyre::Result;
 use std::env;
 
-pub async fn run(deployment_type: CloudDeploymentTypeCommand) -> Result<()> {
+pub async fn run(deployment_type: Option<CloudDeploymentTypeCommand>) -> Result<()> {
     let mut cleanup_tracker = CleanupTracker::new();
 
+    // Load project context first to get the project name for interactive prompts
+    let cwd = env::current_dir()?;
+    let project_context = ProjectContext::find_and_load(Some(&cwd))?;
+    let project_name = &project_context.config.project.name;
+
+    // If no deployment type provided and we're in an interactive terminal, prompt the user
+    let deployment_type = match deployment_type {
+        Some(dt) => dt,
+        None if prompts::is_interactive() => {
+            prompts::intro("helix add")?;
+            match prompts::build_deployment_command(project_name)? {
+                Some(dt) => dt,
+                None => {
+                    // User selected Local but didn't provide a name
+                    CloudDeploymentTypeCommand::Local { name: None }
+                }
+            }
+        }
+        None => {
+            return Err(eyre::eyre!(
+                "No deployment type specified. Run 'helix add' in an interactive terminal or specify a deployment type:\n  \
+                helix add local\n  \
+                helix add cloud\n  \
+                helix add ecr\n  \
+                helix add fly"
+            ));
+        }
+    };
+
     // Execute the add logic, capturing any errors
-    let result = run_add_inner(deployment_type, &mut cleanup_tracker).await;
+    let result = run_add_inner(deployment_type, project_context, &mut cleanup_tracker).await;
 
     // If there was an error, perform cleanup
     if let Err(ref e) = result
-        && cleanup_tracker.has_tracked_resources() {
-            eprintln!("Add failed, performing cleanup: {}", e);
-            let summary = cleanup_tracker.cleanup();
-            summary.log_summary();
-        }
+        && cleanup_tracker.has_tracked_resources()
+    {
+        eprintln!("Add failed, performing cleanup: {}", e);
+        let summary = cleanup_tracker.cleanup();
+        summary.log_summary();
+    }
 
     result
 }
 
 async fn run_add_inner(
     deployment_type: CloudDeploymentTypeCommand,
+    mut project_context: ProjectContext,
     cleanup_tracker: &mut CleanupTracker,
 ) -> Result<()> {
-    let cwd = env::current_dir()?;
-    let mut project_context = ProjectContext::find_and_load(Some(&cwd))?;
-
     let instance_name = deployment_type
         .name()
         .unwrap_or(project_context.config.project.name.clone());
@@ -85,18 +114,22 @@ async fn run_add_inner(
 
             // Prompt user to create cluster now
             println!();
-            println!("\nWould you like to create the cluster now?");
             println!("This will open Stripe for payment and provision your cluster.");
-            println!();
-            print!("Create cluster now? [Y/n]: ");
-            use std::io::{self, Write};
-            io::stdout().flush()?;
 
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            let input = input.trim().to_lowercase();
+            let should_create = if prompts::is_interactive() {
+                prompts::confirm("Create cluster now?")?
+            } else {
+                // Fallback to raw stdin for non-interactive terminals
+                use std::io::{self, Write};
+                print!("Create cluster now? [Y/n]: ");
+                io::stdout().flush()?;
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                let input = input.trim().to_lowercase();
+                input.is_empty() || input == "y" || input == "yes"
+            };
 
-            if input.is_empty() || input == "y" || input == "yes" {
+            if should_create {
                 // Run create-cluster flow
                 crate::commands::create_cluster::run(&instance_name, region).await?;
 
@@ -109,8 +142,12 @@ async fn run_add_inner(
                 print_instructions(
                     "Next steps:",
                     &[
-                        &format!("Run 'helix build {instance_name}' to compile your project for this instance"),
-                        &format!("Run 'helix push {instance_name}' to start the '{instance_name}' instance"),
+                        &format!(
+                            "Run 'helix build {instance_name}' to compile your project for this instance"
+                        ),
+                        &format!(
+                            "Run 'helix push {instance_name}' to start the '{instance_name}' instance"
+                        ),
                     ],
                 );
 
@@ -119,7 +156,10 @@ async fn run_add_inner(
                 println!();
                 print_status(
                     "INFO",
-                    &format!("Cluster creation skipped. Run 'helix create-cluster {}' when ready.", instance_name)
+                    &format!(
+                        "Cluster creation skipped. Run 'helix create-cluster {}' when ready.",
+                        instance_name
+                    ),
                 );
             }
         }

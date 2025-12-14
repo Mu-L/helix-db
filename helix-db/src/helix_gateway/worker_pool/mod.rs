@@ -86,28 +86,28 @@ impl WorkerPool {
     /// Write operations are routed to a dedicated writer thread to ensure proper LMDB locking
     pub async fn process(&self, req: Request) -> Result<Response, HelixError> {
         let (ret_tx, ret_rx) = oneshot::channel();
+        let req_name = req.name.clone();
 
-        // Check if this is a write operation and route accordingly
-        let is_write = self.router.is_write_route(&req.name);
-
-        if is_write {
-            // Route to dedicated writer thread
-            self.write_tx
-                .send_async((req, ret_tx))
-                .await
-                .expect("WorkerPool write channel should be open");
+        // Route to dedicated writer thread or reader worker pool
+        let channel = if self.router.is_write_route(&req.name) {
+            &self.write_tx
         } else {
-            // Route to reader worker pool
-            self.tx
-                .send_async((req, ret_tx))
-                .await
-                .expect("WorkerPool channel should be open");
-        }
+            &self.tx
+        };
 
-        // This is sent by the Worker
-        ret_rx
-            .await
-            .expect("Worker shouldn't drop sender before replying")
+        channel.send_async((req, ret_tx)).await.map_err(|_| {
+            error!("WorkerPool channel closed for request '{req_name}'");
+            HelixError::Graph(GraphError::New("Server is shutting down".into()))
+        })?;
+
+        // Handle the case where the worker might have dropped the sender
+        // (e.g., worker thread panicked or client disconnected)
+        ret_rx.await.unwrap_or_else(|_| {
+            error!("Worker dropped sender without reply for request '{req_name}'");
+            Err(HelixError::Graph(GraphError::New(
+                "Internal server error: worker failed to respond".into(),
+            )))
+        })
     }
 }
 
@@ -146,10 +146,14 @@ impl Worker {
 
                         match cont_rx.try_recv() {
                             Ok((ret_chan, cfn)) => {
-                                ret_chan.send(cfn().map_err(Into::into)).expect("todo")
+                                let result = cfn().map_err(Into::into);
+                                if ret_chan.send(result).is_err() {
+                                    trace!("Client disconnected before continuation response could be sent");
+                                }
                             }
                             Err(flume::TryRecvError::Disconnected) => {
-                                error!("Continuation Channel was dropped")
+                                error!("Continuation Channel was dropped");
+                                break;
                             }
                             Err(flume::TryRecvError::Empty) => {}
                         }
@@ -164,7 +168,8 @@ impl Worker {
                                 &cont_tx,
                             ),
                             Err(flume::RecvError::Disconnected) => {
-                                error!("Request Channel was dropped")
+                                error!("Request Channel was dropped");
+                                break;
                             }
                         }
                     }
@@ -183,17 +188,22 @@ impl Worker {
                                 &cont_tx,
                             ),
                             Err(flume::TryRecvError::Disconnected) => {
-                                error!("Request Channel was dropped")
+                                error!("Request Channel was dropped");
+                                break;
                             }
                             Err(flume::TryRecvError::Empty) => {}
                         }
 
                         match cont_rx.recv() {
                             Ok((ret_chan, cfn)) => {
-                                ret_chan.send(cfn().map_err(Into::into)).expect("todo")
+                                let result = cfn().map_err(Into::into);
+                                if ret_chan.send(result).is_err() {
+                                    trace!("Client disconnected before continuation response could be sent");
+                                }
                             }
                             Err(flume::RecvError::Disconnected) => {
-                                error!("Continuation Channel was dropped")
+                                error!("Continuation Channel was dropped");
+                                break;
                             }
                         }
                     }
@@ -226,9 +236,15 @@ impl Worker {
             loop {
                 // First check for any pending continuations (non-blocking)
                 match cont_rx.try_recv() {
-                    Ok((ret_chan, cfn)) => ret_chan.send(cfn().map_err(Into::into)).expect("todo"),
+                    Ok((ret_chan, cfn)) => {
+                        let result = cfn().map_err(Into::into);
+                        if ret_chan.send(result).is_err() {
+                            trace!("Client disconnected before continuation response could be sent");
+                        }
+                    }
                     Err(flume::TryRecvError::Disconnected) => {
                         error!("Writer continuation channel was dropped");
+                        break;
                     }
                     Err(flume::TryRecvError::Empty) => {}
                 }
@@ -245,6 +261,7 @@ impl Worker {
                     ),
                     Err(flume::RecvError::Disconnected) => {
                         trace!("Writer request channel was dropped, shutting down");
+                        break;
                     }
                 }
             }
@@ -311,10 +328,15 @@ fn request_mapper(
 
     let res = res.unwrap_or(Err(HelixError::NotFound {
         ty: req_type,
-        name: req_name,
+        name: req_name.clone(),
     }));
 
-    ret_chan
-        .send(res)
-        .expect("Should always be able to send, as only one worker processes a request")
+    // Client may have disconnected before we could send the response.
+    // This is normal behavior - just log at trace level and continue.
+    if ret_chan.send(res).is_err() {
+        trace!(
+            "Client disconnected before response could be sent for request '{}'",
+            req_name
+        );
+    }
 }

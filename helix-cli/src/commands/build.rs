@@ -3,6 +3,7 @@ use crate::docker::{DockerBuildError, DockerManager};
 use crate::github_issue::{GitHubIssueBuilder, filter_errors_only};
 use crate::metrics_sender::MetricsSender;
 use crate::project::{ProjectContext, get_helix_repo_cache};
+use crate::prompts;
 use crate::utils::{
     copy_dir_recursive_excluding, diagnostic_source,
     helixc_utils::{collect_hx_contents, collect_hx_files},
@@ -36,11 +37,30 @@ const HELIX_REPO_URL: &str = "https://github.com/helixdb/helix-db.git";
 // Get the cargo workspace root at compile time
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
-pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Result<MetricsData> {
+pub async fn run(
+    instance_name: Option<String>,
+    metrics_sender: &MetricsSender,
+) -> Result<MetricsData> {
     let start_time = Instant::now();
 
     // Load project context
     let project = ProjectContext::find_and_load(None)?;
+
+    // Get instance name - prompt if not provided
+    let instance_name = match instance_name {
+        Some(name) => name,
+        None if prompts::is_interactive() => {
+            let instances = project.config.list_instances_with_types();
+            prompts::select_instance(&instances)?
+        }
+        None => {
+            let instances = project.config.list_instances();
+            return Err(eyre::eyre!(
+                "No instance specified. Available instances: {}",
+                instances.into_iter().cloned().collect::<Vec<_>>().join(", ")
+            ));
+        }
+    };
 
     // Get instance config
     let instance_config = project.config.get_instance(&instance_name)?;

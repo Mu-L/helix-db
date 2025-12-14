@@ -2,12 +2,29 @@ use crate::commands::integrations::fly::FlyManager;
 use crate::config::CloudConfig;
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
+use crate::prompts;
 use crate::utils::{print_status, print_success};
 use eyre::{OptionExt, Result};
 
-pub async fn run(instance_name: String) -> Result<()> {
+pub async fn run(instance_name: Option<String>) -> Result<()> {
     // Load project context
     let project = ProjectContext::find_and_load(None)?;
+
+    // Get instance name - prompt if not provided
+    let instance_name = match instance_name {
+        Some(name) => name,
+        None if prompts::is_interactive() => {
+            let instances = project.config.list_instances_with_types();
+            prompts::select_instance(&instances)?
+        }
+        None => {
+            let instances = project.config.list_instances();
+            return Err(eyre::eyre!(
+                "No instance specified. Available instances: {}",
+                instances.into_iter().cloned().collect::<Vec<_>>().join(", ")
+            ));
+        }
+    };
 
     // Get instance config
     let instance_config = project.config.get_instance(&instance_name)?;
