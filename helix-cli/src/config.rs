@@ -439,6 +439,7 @@ impl HelixConfig {
 
     /// List all instances with their type labels for display
     /// Returns tuples of (name, type_hint) e.g. ("dev", "local"), ("prod", "Helix Cloud")
+    #[allow(dead_code)]
     pub fn list_instances_with_types(&self) -> Vec<(&String, &'static str)> {
         let mut instances = Vec::new();
 
