@@ -528,10 +528,18 @@ pub(crate) fn validate_traversal<'a>(
                 }
                 Some(VectorData::Embed(e)) => {
                     let embed_data = match &e.value {
-                        EvaluatesToString::Identifier(i) => EmbedData {
-                            data: gen_identifier_or_param(original_query, i.as_str(), true, false),
-                            model_name: gen_query.embedding_model_to_use.clone(),
-                        },
+                        EvaluatesToString::Identifier(i) => {
+                            type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
+                            EmbedData {
+                                data: gen_identifier_or_param(
+                                    original_query,
+                                    i.as_str(),
+                                    true,
+                                    false,
+                                ),
+                                model_name: gen_query.embedding_model_to_use.clone(),
+                            }
+                        }
                         EvaluatesToString::StringLiteral(s) => EmbedData {
                             data: GeneratedValue::Literal(GenRef::Ref(s.clone())),
                             model_name: gen_query.embedding_model_to_use.clone(),
@@ -584,6 +592,7 @@ pub(crate) fn validate_traversal<'a>(
                     }
                     EvaluatesToNumberType::Identifier(i) => {
                         is_valid_identifier(ctx, original_query, sv.loc.clone(), i.as_str());
+                        type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
                         gen_identifier_or_param(original_query, i, false, true)
                     }
                     _ => {
@@ -1127,6 +1136,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1151,6 +1161,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1175,6 +1186,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1199,6 +1211,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1254,6 +1267,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => {
@@ -1312,6 +1326,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1331,6 +1346,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), true, false)
                             }
                             ExpressionType::BooleanLiteral(b) => {
@@ -1358,6 +1374,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), true, false)
                             }
                             ExpressionType::ArrayLiteral(a) => GeneratedValue::Array(GenRef::Std(
@@ -1502,6 +1519,7 @@ pub(crate) fn validate_traversal<'a>(
                                             field.value.loc.clone(),
                                             i.as_str(),
                                         );
+                                        type_in_scope(ctx, original_query, field.value.loc.clone(), scope, i.as_str());
                                         gen_identifier_or_param(
                                             original_query,
                                             i.as_str(),
@@ -1525,6 +1543,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 e.loc.clone(),
                                                 i.as_str(),
                                             );
+                                            type_in_scope(ctx, original_query, e.loc.clone(), scope, i.as_str());
                                             gen_identifier_or_param(
                                                 original_query,
                                                 i.as_str(),
@@ -1825,6 +1844,7 @@ pub(crate) fn validate_traversal<'a>(
                 let k = rerank_rrf.k.as_ref().map(|k_expr| match &k_expr.expr {
                     ExpressionType::Identifier(id) => {
                         is_valid_identifier(ctx, original_query, k_expr.loc.clone(), id.as_str());
+                        type_in_scope(ctx, original_query, k_expr.loc.clone(), scope, id.as_str());
                         gen_identifier_or_param(original_query, id.as_str(), false, true)
                     }
                     ExpressionType::IntegerLiteral(val) => {
@@ -1861,6 +1881,13 @@ pub(crate) fn validate_traversal<'a>(
                             rerank_mmr.lambda.loc.clone(),
                             id.as_str(),
                         );
+                        type_in_scope(
+                            ctx,
+                            original_query,
+                            rerank_mmr.lambda.loc.clone(),
+                            scope,
+                            id.as_str(),
+                        );
                         Some(gen_identifier_or_param(
                             original_query,
                             id.as_str(),
@@ -1889,6 +1916,7 @@ pub(crate) fn validate_traversal<'a>(
                 // Generate distance parameter if provided
                 let distance = if let Some(MMRDistance::Identifier(id)) = &rerank_mmr.distance {
                     is_valid_identifier(ctx, original_query, rerank_mmr.loc.clone(), id.as_str());
+                    type_in_scope(ctx, original_query, rerank_mmr.loc.clone(), scope, id.as_str());
                     Some(
                         crate::helixc::generator::traversal_steps::MMRDistanceMethod::Identifier(
                             id.clone(),
