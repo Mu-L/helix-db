@@ -113,8 +113,9 @@ fn build_issue_body(message: &str) -> String {
 /// Truncate message to create a reasonable issue title
 fn truncate_for_title(message: &str) -> String {
     let first_line = message.lines().next().unwrap_or(message);
-    if first_line.len() > 50 {
-        format!("{}...", &first_line[..47])
+    if first_line.chars().count() > 50 {
+        let truncated: String = first_line.chars().take(47).collect();
+        format!("{}...", truncated)
     } else {
         first_line.to_string()
     }
