@@ -1,11 +1,9 @@
 //! Send feedback to the Helix team via GitHub issues.
 
+use crate::github_issue::GitHubIssueUrlBuilder;
 use crate::prompts;
 use crate::utils::{print_info, print_success};
 use eyre::{eyre, Result};
-
-const GITHUB_ISSUE_URL: &str = "https://github.com/helixdb/helix-db/issues/new";
-const MAX_URL_LENGTH: usize = 8000;
 
 /// Type of feedback being submitted
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,27 +87,11 @@ fn build_issue_url(feedback_type: FeedbackType, message: &str) -> String {
 
     let body = build_issue_body(message);
 
-    let encoded_title = urlencoding::encode(&title);
-    let encoded_body = urlencoding::encode(&body);
-    let encoded_labels = urlencoding::encode(feedback_type.labels());
-    let encoded_type = urlencoding::encode(feedback_type.issue_type());
-
-    let url = format!(
-        "{}?type={}&title={}&body={}&labels={}",
-        GITHUB_ISSUE_URL, encoded_type, encoded_title, encoded_body, encoded_labels
-    );
-
-    // Truncate body if URL is too long
-    if url.len() > MAX_URL_LENGTH {
-        let truncated_body = build_truncated_body(message);
-        let encoded_body = urlencoding::encode(&truncated_body);
-        format!(
-            "{}?type={}&title={}&body={}&labels={}",
-            GITHUB_ISSUE_URL, encoded_type, encoded_title, encoded_body, encoded_labels
-        )
-    } else {
-        url
-    }
+    GitHubIssueUrlBuilder::new(title)
+        .body(body)
+        .labels(feedback_type.labels())
+        .issue_type(feedback_type.issue_type())
+        .build_url()
 }
 
 /// Build the full issue body
@@ -131,29 +113,6 @@ fn build_issue_body(message: &str) -> String {
     body
 }
 
-/// Build a truncated body for when the URL would be too long
-fn build_truncated_body(message: &str) -> String {
-    let mut body = String::new();
-
-    // Environment section (always include)
-    body.push_str("## Environment\n");
-    body.push_str(&format!(
-        "- Helix CLI version: {}\n",
-        env!("CARGO_PKG_VERSION")
-    ));
-    body.push_str(&format!("- OS: {}\n\n", std::env::consts::OS));
-
-    // Feedback section (truncated)
-    body.push_str("## Feedback\n");
-    let truncated: String = message.chars().take(3000).collect();
-    body.push_str(&truncated);
-    if message.len() > 3000 {
-        body.push_str("\n\n_[Message truncated due to URL length limits]_");
-    }
-
-    body
-}
-
 /// Truncate message to create a reasonable issue title
 fn truncate_for_title(message: &str) -> String {
     let first_line = message.lines().next().unwrap_or(message);
@@ -161,24 +120,5 @@ fn truncate_for_title(message: &str) -> String {
         format!("{}...", &first_line[..47])
     } else {
         first_line.to_string()
-    }
-}
-
-/// URL encoding utilities
-mod urlencoding {
-    pub fn encode(input: &str) -> String {
-        let mut encoded = String::new();
-        for byte in input.bytes() {
-            match byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    encoded.push(byte as char);
-                }
-                b' ' => encoded.push_str("%20"),
-                _ => {
-                    encoded.push_str(&format!("%{:02X}", byte));
-                }
-            }
-        }
-        encoded
     }
 }
