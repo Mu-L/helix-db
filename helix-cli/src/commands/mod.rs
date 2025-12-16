@@ -7,6 +7,7 @@ pub mod compile;
 pub mod create_cluster;
 pub mod dashboard;
 pub mod delete;
+pub mod feedback;
 pub mod init;
 pub mod integrations;
 pub mod metrics;

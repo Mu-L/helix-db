@@ -3,8 +3,9 @@
 //! This module provides a consistent, user-friendly interactive experience
 //! for commands like `init` and `add` when flags are not provided.
 
-use crate::CloudDeploymentTypeCommand;
+use crate::commands::feedback::FeedbackType;
 use crate::commands::integrations::fly::VmSize;
+use crate::CloudDeploymentTypeCommand;
 use eyre::Result;
 
 /// Deployment type options for interactive selection
@@ -274,4 +275,45 @@ pub fn select_instance(instances: &[(&String, &str)]) -> Result<String> {
     }
     let selected = select.interact()?;
     Ok(selected)
+}
+
+/// Prompt user to select a feedback type
+pub fn select_feedback_type() -> Result<FeedbackType> {
+    let selected: FeedbackType = cliclack::select("What type of feedback would you like to send?")
+        .item(
+            FeedbackType::Bug,
+            "Bug Report",
+            "Report a bug or issue you've encountered",
+        )
+        .item(
+            FeedbackType::FeatureRequest,
+            "Feature Request",
+            "Suggest a new feature or improvement",
+        )
+        .item(
+            FeedbackType::General,
+            "General Feedback",
+            "Share general thoughts or comments",
+        )
+        .interact()?;
+
+    Ok(selected)
+}
+
+/// Prompt user to enter their feedback message
+pub fn input_feedback_message() -> Result<String> {
+    let message: String = cliclack::input("Enter your feedback")
+        .placeholder("Describe your feedback here...")
+        .validate(|input: &String| {
+            if input.trim().is_empty() {
+                Err("Feedback message cannot be empty")
+            } else if input.len() < 10 {
+                Err("Please provide more detail (at least 10 characters)")
+            } else {
+                Ok(())
+            }
+        })
+        .interact()?;
+
+    Ok(message)
 }
