@@ -1011,6 +1011,14 @@ pub(crate) fn infer_expr_type<'a>(
                                         ty.as_str()
                                     );
                                 }
+                            } else {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    add.loc.clone(),
+                                    E301,
+                                    i.as_str()
+                                );
                             }
                             let id =
                                 gen_identifier_or_param(original_query, i.as_str(), true, false);
@@ -1018,15 +1026,24 @@ pub(crate) fn infer_expr_type<'a>(
                         }
                         VectorData::Embed(e) => {
                             let embed_data = match &e.value {
-                                EvaluatesToString::Identifier(i) => EmbedData {
-                                    data: gen_identifier_or_param(
+                                EvaluatesToString::Identifier(i) => {
+                                    type_in_scope(
+                                        ctx,
                                         original_query,
+                                        add.loc.clone(),
+                                        scope,
                                         i.as_str(),
-                                        true,
-                                        false,
-                                    ),
-                                    model_name: gen_query.embedding_model_to_use.clone(),
-                                },
+                                    );
+                                    EmbedData {
+                                        data: gen_identifier_or_param(
+                                            original_query,
+                                            i.as_str(),
+                                            true,
+                                            false,
+                                        ),
+                                        model_name: gen_query.embedding_model_to_use.clone(),
+                                    }
+                                }
                                 EvaluatesToString::StringLiteral(s) => EmbedData {
                                     data: GeneratedValue::Literal(GenRef::Ref(s.clone())),
                                     model_name: gen_query.embedding_model_to_use.clone(),
@@ -1122,10 +1139,18 @@ pub(crate) fn infer_expr_type<'a>(
                 }
                 Some(VectorData::Embed(e)) => {
                     let embed_data = match &e.value {
-                        EvaluatesToString::Identifier(i) => EmbedData {
-                            data: gen_identifier_or_param(original_query, i.as_str(), true, false),
-                            model_name: gen_query.embedding_model_to_use.clone(),
-                        },
+                        EvaluatesToString::Identifier(i) => {
+                            type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
+                            EmbedData {
+                                data: gen_identifier_or_param(
+                                    original_query,
+                                    i.as_str(),
+                                    true,
+                                    false,
+                                ),
+                                model_name: gen_query.embedding_model_to_use.clone(),
+                            }
+                        }
                         EvaluatesToString::StringLiteral(s) => EmbedData {
                             data: GeneratedValue::Literal(GenRef::Ref(s.clone())),
                             model_name: gen_query.embedding_model_to_use.clone(),
@@ -1178,6 +1203,7 @@ pub(crate) fn infer_expr_type<'a>(
                     }
                     EvaluatesToNumberType::Identifier(i) => {
                         is_valid_identifier(ctx, original_query, sv.loc.clone(), i.as_str());
+                        type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
                         gen_identifier_or_param(original_query, i, false, false)
                     }
                     _ => {
