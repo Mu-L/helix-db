@@ -182,18 +182,18 @@ impl GitHubIssueBuilder {
             let actual_max_hx = (remaining / 3).min(max_hx_chars);
 
             // Schema/Queries section (truncated)
-            if let Some(hx_content) = &self.hx_content {
-                if actual_max_hx > 100 {
-                    // Only include if we have reasonable space
-                    body.push_str("## Schema/Queries (.hx files)\n");
-                    body.push_str("```helix\n");
-                    let truncated_hx: String = hx_content.chars().take(actual_max_hx).collect();
-                    body.push_str(&truncated_hx);
-                    if hx_content.chars().count() > actual_max_hx {
-                        body.push_str("\n... [truncated]");
-                    }
-                    body.push_str("\n```\n\n");
+            if let Some(hx_content) = &self.hx_content
+                && actual_max_hx > 100
+            {
+                // Only include if we have reasonable space
+                body.push_str("## Schema/Queries (.hx files)\n");
+                body.push_str("```helix\n");
+                let truncated_hx: String = hx_content.chars().take(actual_max_hx).collect();
+                body.push_str(&truncated_hx);
+                if hx_content.chars().count() > actual_max_hx {
+                    body.push_str("\n... [truncated]");
                 }
+                body.push_str("\n```\n\n");
             }
         }
 
@@ -205,7 +205,10 @@ impl GitHubIssueBuilder {
             // Emergency: just return minimal body
             let mut minimal = String::new();
             minimal.push_str("## Environment\n");
-            minimal.push_str(&format!("- Helix CLI version: {}\n", env!("CARGO_PKG_VERSION")));
+            minimal.push_str(&format!(
+                "- Helix CLI version: {}\n",
+                env!("CARGO_PKG_VERSION")
+            ));
             minimal.push_str(&format!("- OS: {}\n\n", std::env::consts::OS));
             minimal.push_str("## Error\n");
             minimal.push_str("Content too large for URL. Please describe the issue manually.\n");

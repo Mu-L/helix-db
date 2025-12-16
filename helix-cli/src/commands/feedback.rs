@@ -3,7 +3,7 @@
 use crate::github_issue::GitHubIssueUrlBuilder;
 use crate::prompts;
 use crate::utils::{print_info, print_success};
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 
 /// Type of feedback being submitted
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,17 +68,15 @@ pub async fn run(message: Option<String>) -> Result<()> {
     };
 
     // Build and open the GitHub issue URL
-    let url = build_issue_url(feedback_type, &feedback_message);
     print_info("Opening browser to submit feedback...");
-
-    open::that(&url).map_err(|e| eyre!("Failed to open browser: {}", e))?;
+    build_issue_builder(feedback_type, &feedback_message).open_in_browser()?;
 
     print_success("Browser opened! Complete your feedback submission on GitHub.");
     Ok(())
 }
 
-/// Build the GitHub issue URL with pre-filled content
-fn build_issue_url(feedback_type: FeedbackType, message: &str) -> String {
+/// Build the GitHub issue URL builder with pre-filled content
+fn build_issue_builder(feedback_type: FeedbackType, message: &str) -> GitHubIssueUrlBuilder {
     let title = format!(
         "{}{}",
         feedback_type.title_prefix(),
@@ -91,7 +89,6 @@ fn build_issue_url(feedback_type: FeedbackType, message: &str) -> String {
         .body(body)
         .labels(feedback_type.labels())
         .issue_type(feedback_type.issue_type())
-        .build_url()
 }
 
 /// Build the full issue body
