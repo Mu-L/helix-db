@@ -1539,6 +1539,7 @@ pub(crate) fn infer_expr_type<'a>(
                             bm25_search.loc.clone(),
                             i.as_str(),
                         );
+                        type_in_scope(ctx, original_query, bm25_search.loc.clone(), scope, i.as_str());
                         gen_identifier_or_param(original_query, i, false, false)
                     }
                     _ => {

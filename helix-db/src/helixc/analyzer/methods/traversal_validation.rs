@@ -1136,6 +1136,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1160,6 +1161,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1184,6 +1186,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1208,6 +1211,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1263,6 +1267,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => {
@@ -1321,6 +1326,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1340,6 +1346,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), true, false)
                             }
                             ExpressionType::BooleanLiteral(b) => {
@@ -1367,6 +1374,7 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
+                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
                                 gen_identifier_or_param(original_query, i.as_str(), true, false)
                             }
                             ExpressionType::ArrayLiteral(a) => GeneratedValue::Array(GenRef::Std(
@@ -1511,6 +1519,7 @@ pub(crate) fn validate_traversal<'a>(
                                             field.value.loc.clone(),
                                             i.as_str(),
                                         );
+                                        type_in_scope(ctx, original_query, field.value.loc.clone(), scope, i.as_str());
                                         gen_identifier_or_param(
                                             original_query,
                                             i.as_str(),
@@ -1534,6 +1543,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 e.loc.clone(),
                                                 i.as_str(),
                                             );
+                                            type_in_scope(ctx, original_query, e.loc.clone(), scope, i.as_str());
                                             gen_identifier_or_param(
                                                 original_query,
                                                 i.as_str(),
