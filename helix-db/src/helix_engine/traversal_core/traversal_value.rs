@@ -39,6 +39,7 @@ impl<'arena> TraversalValue<'arena> {
             TraversalValue::Edge(edge) => edge.id,
             TraversalValue::Vector(vector) => vector.id,
             TraversalValue::VectorNodeWithoutVectorData(vector) => vector.id,
+            TraversalValue::NodeWithScore { node, .. } => node.id,
             TraversalValue::Empty => 0,
             _ => 0,
         }
@@ -50,6 +51,7 @@ impl<'arena> TraversalValue<'arena> {
             TraversalValue::Edge(edge) => edge.label,
             TraversalValue::Vector(vector) => vector.label,
             TraversalValue::VectorNodeWithoutVectorData(vector) => vector.label,
+            TraversalValue::NodeWithScore { node, .. } => node.label,
             TraversalValue::Empty => "",
             _ => "",
         }
@@ -81,6 +83,7 @@ impl<'arena> TraversalValue<'arena> {
         match self {
             TraversalValue::Vector(vector) => vector.score(),
             TraversalValue::VectorNodeWithoutVectorData(_) => 2f64,
+            TraversalValue::NodeWithScore { score, .. } => *score,
             _ => unimplemented!(),
         }
     }
@@ -91,6 +94,7 @@ impl<'arena> TraversalValue<'arena> {
             TraversalValue::Edge(edge) => edge.label,
             TraversalValue::Vector(vector) => vector.label,
             TraversalValue::VectorNodeWithoutVectorData(vector) => vector.label,
+            TraversalValue::NodeWithScore { node, .. } => node.label,
             TraversalValue::Empty => "",
             _ => "",
         }
@@ -102,6 +106,7 @@ impl<'arena> TraversalValue<'arena> {
             TraversalValue::Edge(edge) => edge.get_property(property),
             TraversalValue::Vector(vector) => vector.get_property(property),
             TraversalValue::VectorNodeWithoutVectorData(vector) => vector.get_property(property),
+            TraversalValue::NodeWithScore { node, .. } => node.get_property(property),
             TraversalValue::Empty => None,
             _ => None,
         }
@@ -115,6 +120,7 @@ impl Hash for TraversalValue<'_> {
             TraversalValue::Edge(edge) => edge.id.hash(state),
             TraversalValue::Vector(vector) => vector.id.hash(state),
             TraversalValue::VectorNodeWithoutVectorData(vector) => vector.id.hash(state),
+            TraversalValue::NodeWithScore { node, .. } => node.id.hash(state),
             TraversalValue::Empty => state.write_u8(0),
             _ => state.write_u8(0),
         }
@@ -142,6 +148,10 @@ impl PartialEq for TraversalValue<'_> {
                 TraversalValue::VectorNodeWithoutVectorData(vector1),
                 TraversalValue::Vector(vector2),
             ) => vector1.id() == vector2.id(),
+            (
+                TraversalValue::NodeWithScore { node: n1, .. },
+                TraversalValue::NodeWithScore { node: n2, .. },
+            ) => n1.id == n2.id,
             (TraversalValue::Empty, TraversalValue::Empty) => true,
             _ => false,
         }
