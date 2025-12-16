@@ -22,6 +22,8 @@ pub enum ErrorCode {
     E108,
     /// `E109` – `duplicate field name in schema`
     E109,
+    /// `E110` – `schema item name is a reserved type name`
+    E110,
 
     // TYPE ERRORS
     /// `E201` – `item type not in schema`
@@ -141,6 +143,7 @@ impl std::fmt::Display for ErrorCode {
             ErrorCode::E107 => write!(f, "E107"),
             ErrorCode::E108 => write!(f, "E108"),
             ErrorCode::E109 => write!(f, "E109"),
+            ErrorCode::E110 => write!(f, "E110"),
             ErrorCode::E201 => write!(f, "E201"),
             ErrorCode::E202 => write!(f, "E202"),
             ErrorCode::E203 => write!(f, "E203"),
@@ -219,6 +222,7 @@ implement_error_code!(E105, "invalid identifier `{}`" => { identifier }, "check 
 implement_error_code!(E106, "use of undeclared node or vector type `{}` in schema" => { item_type_name }, "declare `{}` in the schema before using it in an edge" => { item_type_name });
 implement_error_code!(E107, "duplicate {} definition `{}`" => { schema_type, name }, "rename the {} or remove the duplicate definition" => { schema_type });
 implement_error_code!(E109, "duplicate field `{}` in {} `{}`" => { field_name, schema_type, schema_name }, "rename the field or remove the duplicate" => {});
+implement_error_code!(E110, "`{}` is a reserved type name and cannot be used as a {} name" => { name, schema_type }, "rename the {} to something else" => { schema_type });
 
 // Type errors
 implement_error_code!(E201, "item type not in schema `{}`" => { item_type }, "check the schema field names" => {});
