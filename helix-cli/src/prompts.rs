@@ -48,13 +48,14 @@ pub fn intro(title: &str, subheader: Option<&str>) -> Result<()> {
 }
 
 /// Show note banner
-#[allow(dead_code)]
+#[allow(unused)]
 pub fn note(message: &str) -> Result<()> {
     cliclack::log::remark(message)?;
     Ok(())
 }
 
 /// Show warning banner
+#[allow(unused)]
 pub fn warning(message: &str) -> Result<()> {
     cliclack::log::warning(message)?;
     Ok(())

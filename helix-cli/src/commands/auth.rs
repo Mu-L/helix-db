@@ -176,10 +176,10 @@ pub async fn require_auth() -> Result<Credentials> {
     let credentials_path = home.join(".helix").join("credentials");
 
     // Check if we have valid credentials
-    if let Some(credentials) = Credentials::try_read_from_file(&credentials_path) {
-        if credentials.is_authenticated() {
-            return Ok(credentials);
-        }
+    if let Some(credentials) = Credentials::try_read_from_file(&credentials_path)
+        && credentials.is_authenticated()
+    {
+        return Ok(credentials);
     }
 
     // Not authenticated - prompt user to login
