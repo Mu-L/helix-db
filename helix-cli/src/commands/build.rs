@@ -5,9 +5,9 @@ use crate::metrics_sender::MetricsSender;
 use crate::project::{ProjectContext, get_helix_repo_cache};
 use crate::prompts;
 use crate::utils::{
-    copy_dir_recursive_excluding, diagnostic_source,
+    Spinner, copy_dir_recursive_excluding, diagnostic_source,
     helixc_utils::{collect_hx_contents, collect_hx_files},
-    print_confirm, print_error, print_status, print_success, print_warning, Spinner,
+    print_confirm, print_error, print_status, print_success, print_warning,
 };
 use eyre::Result;
 use std::time::Instant;
@@ -51,13 +51,23 @@ pub async fn run(
         Some(name) => name,
         None if prompts::is_interactive() => {
             let instances = project.config.list_instances_with_types();
+            prompts::intro(
+                "helix build",
+                Some(
+                    "This will build your selected instance based on the configuration in helix.toml.",
+                ),
+            )?;
             prompts::select_instance(&instances)?
         }
         None => {
             let instances = project.config.list_instances();
             return Err(eyre::eyre!(
                 "No instance specified. Available instances: {}",
-                instances.into_iter().cloned().collect::<Vec<_>>().join(", ")
+                instances
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
     };
@@ -262,7 +272,10 @@ fn update_git_cache(repo_cache: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &str) -> Result<()> {
+pub(crate) async fn prepare_instance_workspace(
+    project: &ProjectContext,
+    instance_name: &str,
+) -> Result<()> {
     print_status(
         "PREPARE",
         &format!("Preparing workspace for '{instance_name}'"),
@@ -292,7 +305,10 @@ pub(crate) async fn prepare_instance_workspace(project: &ProjectContext, instanc
     Ok(())
 }
 
-pub(crate) async fn compile_project(project: &ProjectContext, instance_name: &str) -> Result<MetricsData> {
+pub(crate) async fn compile_project(
+    project: &ProjectContext,
+    instance_name: &str,
+) -> Result<MetricsData> {
     print_status("COMPILE", "Compiling Helix queries...");
 
     // Create helix-container directory in instance workspace for generated files
@@ -456,7 +472,10 @@ fn read_config(instance_src_dir: &std::path::Path) -> Result<Config> {
 }
 
 /// Handle Rust compilation failure during Docker build - print errors and offer GitHub issue creation.
-fn handle_docker_rust_compilation_failure(docker_output: &str, project: &ProjectContext) -> Result<()> {
+fn handle_docker_rust_compilation_failure(
+    docker_output: &str,
+    project: &ProjectContext,
+) -> Result<()> {
     print_error("Rust compilation failed during Docker build");
     println!();
     println!("This may indicate a bug in the Helix code generator.");
