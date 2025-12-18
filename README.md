@@ -33,8 +33,6 @@ You no longer need a separate application DB, vector DB, graph DB, or applicatio
 
 HelixDB primarily operates with a graph + vector data model, but it can also support KV, documents, and relational data.
 
----
-
 ### Get started with HelixDB
 
 <div align="center">                                                                                                                                                                                                                                                                                                                                                                                   
