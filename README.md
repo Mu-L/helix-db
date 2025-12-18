@@ -26,7 +26,6 @@
 
 <hr>
 
----
 
 HelixDB is a database that makes it easy to build all the components needed for an AI application in a single platform.
 
