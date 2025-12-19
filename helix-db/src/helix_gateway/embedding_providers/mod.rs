@@ -109,7 +109,7 @@ impl EmbeddingModelImpl {
             Some(m) if m.starts_with("azure_openai:") => {
                 let model_name = m
                     .strip_prefix("azure_openai:")
-                    .unwrap_or("text-embedding-ada-002");
+                    .unwrap_or("text-embedding-3-small");
                 
                 // Get Azure-specific configuration from environment
                 let resource_name = env::var("AZURE_OPENAI_RESOURCE_NAME")
