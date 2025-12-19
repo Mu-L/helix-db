@@ -16,7 +16,7 @@ pub trait EmbeddingModel {
 pub enum EmbeddingProvider {
     OpenAI,
     Gemini { task_type: String },
-    AzureOpenAI,
+    AzureOpenAI { resource_name: String, deployment_id: String },
     Local,
 }
 
@@ -26,8 +26,6 @@ pub struct EmbeddingModelImpl {
     client: Client,
     pub(crate) model: String,
     pub(crate) url: Option<String>,
-    pub(crate) resource_name: Option<String>,
-    pub(crate) deployment_id: Option<String>
 }
 
 impl EmbeddingModelImpl {
@@ -52,7 +50,7 @@ impl EmbeddingModelImpl {
                     .ok_or_else(|| GraphError::from("GEMINI_API_KEY not set"))?;
                 Some(key)
             }
-            EmbeddingProvider::AzureOpenAI => {
+            EmbeddingProvider::AzureOpenAI { .. } => {
                 let key = api_key
                     .map(String::from)
                     .or_else(|| env::var("AZURE_OPENAI_API_KEY").ok())
@@ -71,30 +69,12 @@ impl EmbeddingModelImpl {
             _ => None,
         };
 
-        // Get Azure-specific configuration
-        let (resource_name, deployment_id) = match &provider {
-            EmbeddingProvider::AzureOpenAI => {
-                let resource = env::var("AZURE_OPENAI_RESOURCE_NAME")
-                    .ok()
-                    .ok_or_else(|| GraphError::from("AZURE_OPENAI_RESOURCE_NAME not set"))?;
-                let deployment = if model_name.is_empty() {
-                    return Err(GraphError::from("Azure OpenAI deployment ID not specified"));
-                } else {
-                    model_name.clone()
-                };
-                (Some(resource), Some(deployment))
-            }
-            _ => (None, None),
-        };
-
         Ok(EmbeddingModelImpl {
             provider,
             api_key,
             client: Client::new(),
             model: model_name,
-            url,
-            resource_name,
-            deployment_id
+            url
         })
     }
 
@@ -130,7 +110,19 @@ impl EmbeddingModelImpl {
                 let model_name = m
                     .strip_prefix("azure_openai:")
                     .unwrap_or("text-embedding-ada-002");
-                Ok((EmbeddingProvider::AzureOpenAI, model_name.to_string()))
+                
+                // Get Azure-specific configuration from environment
+                let resource_name = env::var("AZURE_OPENAI_RESOURCE_NAME")
+                    .map_err(|_| GraphError::from("AZURE_OPENAI_RESOURCE_NAME not set"))?;
+                
+                // deployment_id comes from the model_name
+                let deployment_id = if model_name.is_empty() {
+                    return Err(GraphError::from("Azure OpenAI deployment ID not specified"));
+                } else {
+                    model_name.to_string()
+                };
+                
+                Ok((EmbeddingProvider::AzureOpenAI { resource_name, deployment_id }, model_name.to_string()))
             }
             Some("local") => Ok((EmbeddingProvider::Local, "local".to_string())),
 
@@ -190,19 +182,11 @@ impl EmbeddingModel for EmbeddingModelImpl {
 
                 Ok(embedding)
             }
-            EmbeddingProvider::AzureOpenAI => {
+            EmbeddingProvider::AzureOpenAI { resource_name, deployment_id } => {
                 let api_key = self
                     .api_key
                     .as_ref()
                     .ok_or_else(|| GraphError::from("AzureOpenAI API key not set"))?;
-                let resource_name = self
-                    .resource_name
-                    .as_ref()
-                    .ok_or_else(|| GraphError::from("Azure OpenAI resource name not set"))?;
-                let deployment_id = self
-                    .deployment_id
-                    .as_ref()
-                    .ok_or_else(|| GraphError::from("Azure OpenAI deployment ID not set"))?;
 
                 let url = format!(
                     "https://{}.openai.azure.com/openai/deployments/{}/embeddings?api-version=2024-10-21",
