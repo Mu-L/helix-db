@@ -121,21 +121,18 @@ impl<'db, 'arena, 'txn, 'q> VectorFilter<'db, 'arena, 'txn, 'q>
                     None => None, // TODO: maybe should be an error?
                 };
 
-                if let Some(properties) = properties
-                    && SHOULD_CHECK_DELETED
-                    && properties.deleted
-                {
+                let Some(properties) = properties else {
+                    continue;
+                };
+
+                if SHOULD_CHECK_DELETED && properties.deleted {
                     continue;
                 }
 
-                if item.label() == label
+                if properties.label == label
                     && (filter.is_none() || filter.unwrap().iter().all(|f| f(&item, txn)))
                 {
-                    assert!(
-                        properties.is_some(),
-                        "properties should be some, otherwise there has been an error on vector insertion as properties are always inserted"
-                    );
-                    item.expand_from_vector_without_data(properties.unwrap());
+                    item.expand_from_vector_without_data(properties);
                     result.push(item);
                     break;
                 }
