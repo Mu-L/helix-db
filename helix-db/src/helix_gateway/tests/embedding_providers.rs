@@ -88,20 +88,30 @@ fn test_parse_openai_provider_empty_model() {
 
 #[test]
 fn test_parse_azure_openai_provider_with_deployment() {
+    unsafe {
+        std::env::set_var("AZURE_OPENAI_RESOURCE_NAME", "test-resource");
+    }
     let result = EmbeddingModelImpl::parse_provider_and_model(Some("azure_openai:text-embedding-3-small"));
     assert!(result.is_ok());
     let (provider, model) = result.unwrap();
-    assert!(matches!(provider, EmbeddingProvider::AzureOpenAI));
+    match provider {
+        EmbeddingProvider::AzureOpenAI { resource_name, deployment_id } => {
+            assert_eq!(resource_name, "test-resource");
+            assert_eq!(deployment_id, "text-embedding-3-small");
+        }
+        _ => panic!("Expected AzureOpenAI provider"),
+    }
     assert_eq!(model, "text-embedding-3-small");
 }
 
 #[test]
 fn test_parse_azure_openai_provider_empty_deployment() {
+    unsafe {
+        std::env::set_var("AZURE_OPENAI_RESOURCE_NAME", "test-resource");
+    }
+    // Should fail because deployment ID is required
     let result = EmbeddingModelImpl::parse_provider_and_model(Some("azure_openai:"));
-    assert!(result.is_ok());
-    let (provider, model) = result.unwrap();
-    assert!(matches!(provider, EmbeddingProvider::AzureOpenAI));
-    assert_eq!(model, ""); // Returns empty string when no deployment specified after colon
+    assert!(result.is_err());
 }
 
 #[test]
