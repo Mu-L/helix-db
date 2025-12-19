@@ -9,7 +9,7 @@ use crate::protocol::{
     request::{ReqMsg, RequestType, RetChan},
     response::Response,
 };
-use flume::{Receiver, Sender};
+use flume::{Receiver, Selector, Sender};
 use std::iter;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -236,39 +236,51 @@ impl Worker {
             // Set thread local context, so we can access the io runtime
             let _io_guard = io_rt.enter();
 
-            // Simple loop for the writer - no parity needed since it's a single thread
+            // Use Selector to wait on both channels simultaneously.
+            // This is required because with a single writer thread, we can't use the
+            // parity trick that read workers use (which requires multiple threads).
             loop {
-                // First check for any pending continuations (non-blocking)
-                match cont_rx.try_recv() {
-                    Ok((ret_chan, cfn)) => {
-                        let result = cfn().map_err(Into::into);
-                        if ret_chan.send(result).is_err() {
-                            trace!(
-                                "Client disconnected before continuation response could be sent"
-                            );
+                let should_break = Selector::new()
+                    .recv(&cont_rx, |result| -> bool {
+                        match result {
+                            Ok((ret_chan, cfn)) => {
+                                let result = cfn().map_err(Into::into);
+                                if ret_chan.send(result).is_err() {
+                                    trace!(
+                                        "Client disconnected before continuation response could be sent"
+                                    );
+                                }
+                                false // continue loop
+                            }
+                            Err(_) => {
+                                error!("Writer continuation channel was dropped");
+                                true // break loop
+                            }
                         }
-                    }
-                    Err(flume::TryRecvError::Disconnected) => {
-                        error!("Writer continuation channel was dropped");
-                        break;
-                    }
-                    Err(flume::TryRecvError::Empty) => {}
-                }
+                    })
+                    .recv(&rx, |result| -> bool {
+                        match result {
+                            Ok((req, ret_chan)) => {
+                                request_mapper(
+                                    req,
+                                    ret_chan,
+                                    graph_access.clone(),
+                                    &router,
+                                    &io_rt,
+                                    &cont_tx,
+                                );
+                                false // continue loop
+                            }
+                            Err(_) => {
+                                trace!("Writer request channel was dropped, shutting down");
+                                true // break loop
+                            }
+                        }
+                    })
+                    .wait();
 
-                // Then wait for write requests
-                match rx.recv() {
-                    Ok((req, ret_chan)) => request_mapper(
-                        req,
-                        ret_chan,
-                        graph_access.clone(),
-                        &router,
-                        &io_rt,
-                        &cont_tx,
-                    ),
-                    Err(flume::RecvError::Disconnected) => {
-                        trace!("Writer request channel was dropped, shutting down");
-                        break;
-                    }
+                if should_break {
+                    break;
                 }
             }
         });

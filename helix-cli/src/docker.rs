@@ -87,8 +87,14 @@ impl<'a> DockerManager<'a> {
 
     /// Get environment variables for an instance
     pub(crate) fn environment_variables(&self, instance_name: &str) -> Vec<String> {
-        // Load .env file (silently ignore if it doesn't exist)
-        let _ = dotenvy::dotenv();
+        // Load .env from project root first (base configuration)
+        let root_env = self.project.root.join(".env");
+        let _ = dotenvy::from_path(&root_env);
+
+        // Load .env from db/queries directory (overrides project root)
+        let queries_dir = self.project.root.join(&self.project.config.project.queries);
+        let db_env = queries_dir.join(".env");
+        let _ = dotenvy::from_path_override(&db_env);
 
         let mut env_vars = vec![
             {
