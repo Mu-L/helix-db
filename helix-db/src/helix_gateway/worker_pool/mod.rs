@@ -9,7 +9,7 @@ use crate::protocol::{
     request::{ReqMsg, RequestType, RetChan},
     response::Response,
 };
-use flume::{Receiver, Selector, Sender};
+use flume::{Receiver, Sender};
 use std::iter;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -38,7 +38,6 @@ impl WorkerPool {
 
         // Dedicated channel for write operations - single writer thread
         let (write_tx, write_rx) = flume::bounded::<ReqMsg>(1000);
-        let (write_cont_tx, write_cont_rx) = flume::bounded::<ContMsg>(1000);
 
         let num_workers = workers_core_setter.num_threads();
         if num_workers < 2 {
@@ -70,7 +69,6 @@ impl WorkerPool {
             Arc::clone(&graph_access),
             Arc::clone(&router),
             Arc::clone(&io_rt),
-            (write_cont_tx, write_cont_rx),
         );
 
         WorkerPool {
@@ -225,7 +223,6 @@ impl Worker {
         graph_access: Arc<HelixGraphEngine>,
         router: Arc<HelixRouter>,
         io_rt: Arc<Runtime>,
-        (cont_tx, cont_rx): (ContChan, Receiver<ContMsg>),
     ) -> Worker {
         let handle = std::thread::spawn(move || {
             trace!("writer thread started");
@@ -236,51 +233,42 @@ impl Worker {
             // Set thread local context, so we can access the io runtime
             let _io_guard = io_rt.enter();
 
-            // Use Selector to wait on both channels simultaneously.
-            // This is required because with a single writer thread, we can't use the
-            // parity trick that read workers use (which requires multiple threads).
+            // Single-threaded writer: process one request at a time, waiting for
+            // any continuations to complete before moving to the next request.
             loop {
-                let should_break = Selector::new()
-                    .recv(&cont_rx, |result| -> bool {
-                        match result {
-                            Ok((ret_chan, cfn)) => {
-                                let result = cfn().map_err(Into::into);
-                                if ret_chan.send(result).is_err() {
-                                    trace!(
-                                        "Client disconnected before continuation response could be sent"
-                                    );
-                                }
-                                false // continue loop
-                            }
-                            Err(_) => {
-                                error!("Writer continuation channel was dropped");
-                                true // break loop
-                            }
-                        }
-                    })
-                    .recv(&rx, |result| -> bool {
-                        match result {
-                            Ok((req, ret_chan)) => {
-                                request_mapper(
-                                    req,
-                                    ret_chan,
-                                    graph_access.clone(),
-                                    &router,
-                                    &io_rt,
-                                    &cont_tx,
-                                );
-                                false // continue loop
-                            }
-                            Err(_) => {
-                                trace!("Writer request channel was dropped, shutting down");
-                                true // break loop
-                            }
-                        }
-                    })
-                    .wait();
+                match rx.recv() {
+                    Ok((req, ret_chan)) => {
+                        // Create a per-request continuation channel
+                        let (cont_tx, cont_rx) = flume::bounded::<ContMsg>(1);
 
-                if should_break {
-                    break;
+                        // Process the request
+                        request_mapper(
+                            req,
+                            ret_chan,
+                            graph_access.clone(),
+                            &router,
+                            &io_rt,
+                            &cont_tx,
+                        );
+
+                        // Drop our sender so the channel disconnects when the async future
+                        // (which holds a clone) completes.
+                        drop(cont_tx);
+
+                        // Poll continuation channel until sender is dropped.
+                        while let Ok((ret_chan, cfn)) = cont_rx.recv() {
+                            let result = cfn().map_err(Into::into);
+                            if ret_chan.send(result).is_err() {
+                                trace!(
+                                    "Client disconnected before continuation response could be sent"
+                                );
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        trace!("Writer request channel was dropped, shutting down");
+                        break;
+                    }
                 }
             }
         });

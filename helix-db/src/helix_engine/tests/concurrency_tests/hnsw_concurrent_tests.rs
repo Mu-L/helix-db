@@ -16,6 +16,7 @@
 use bumpalo::Bump;
 use heed3::{Env, EnvOpenOptions, RoTxn, RwTxn};
 use rand::Rng;
+use serial_test::serial;
 use std::sync::{Arc, Barrier};
 use std::thread;
 use tempfile::TempDir;
@@ -60,6 +61,7 @@ fn open_vector_core(env: &Env, txn: &mut RwTxn) -> Result<VectorCore, crate::hel
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_concurrent_inserts_single_label() {
     // Tests concurrent inserts from multiple threads to the same label
     //
@@ -141,6 +143,7 @@ fn test_concurrent_inserts_single_label() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_concurrent_searches_during_inserts() {
     // Tests read-write conflicts: Concurrent searches while inserts happen
     //
@@ -287,6 +290,7 @@ fn test_concurrent_searches_during_inserts() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_concurrent_inserts_multiple_labels() {
     // Tests concurrent inserts to different labels (should be independent)
     //
@@ -373,6 +377,7 @@ fn test_concurrent_inserts_multiple_labels() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_entry_point_consistency() {
     // Tests entry point consistency under concurrent inserts
     //
@@ -448,6 +453,7 @@ fn test_entry_point_consistency() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_graph_connectivity_after_concurrent_inserts() {
     // Tests HNSW graph topology consistency after concurrent operations
     //
@@ -535,6 +541,7 @@ fn test_graph_connectivity_after_concurrent_inserts() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_transaction_isolation() {
     // Tests MVCC snapshot isolation guarantees
     //
