@@ -1,4 +1,4 @@
-name: Core Database Tests
+name: Core Database Tests In Dev Instance Mode
 
 on:
   pull_request:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   test:
-    name: Test helix_engine
+    name: Test helix_engine in dev instance mode
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
