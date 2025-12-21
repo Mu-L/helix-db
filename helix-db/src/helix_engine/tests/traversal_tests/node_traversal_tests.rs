@@ -27,8 +27,7 @@ use crate::{
 use bumpalo::Bump;
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
-fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
-    let temp_dir = TempDir::new().unwrap();
+fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -36,12 +35,13 @@ fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
         Default::default(),
     )
     .unwrap();
-    (temp_dir, Arc::new(storage))
+    Arc::new(storage)
 }
 
 #[test]
 fn test_add_n() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
 
     let mut txn = storage.graph_env.write_txn().unwrap();
@@ -81,7 +81,8 @@ fn test_add_n() {
 
 #[test]
 fn test_out() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -123,7 +124,8 @@ fn test_out() {
 
 #[test]
 fn test_in() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -155,7 +157,8 @@ fn test_in() {
 
 #[test]
 fn test_complex_traversal() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -225,7 +228,8 @@ fn test_complex_traversal() {
 
 #[test]
 fn test_n_from_id() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -246,7 +250,8 @@ fn test_n_from_id() {
 
 #[test]
 fn test_n_from_id_with_traversal() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -276,7 +281,8 @@ fn test_n_from_id_with_traversal() {
 #[test]
 #[should_panic]
 fn test_n_from_id_nonexistent() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
     G::new(&storage, &txn, &arena)
@@ -286,7 +292,8 @@ fn test_n_from_id_nonexistent() {
 
 #[test]
 fn test_n_from_id_chain_operations() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -326,7 +333,8 @@ fn test_n_from_id_chain_operations() {
 
 #[test]
 fn test_with_id_type() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -363,7 +371,8 @@ fn test_with_id_type() {
 
 #[test]
 fn test_double_add_and_double_fetch() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let db = &*storage;
     let arena = Bump::new();
     let mut txn = db.graph_env.write_txn().unwrap();
@@ -450,7 +459,8 @@ fn test_double_add_and_double_fetch() {
 
 #[test]
 fn test_n_from_id_with_nonexistent_id() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -468,7 +478,8 @@ fn test_n_from_id_with_nonexistent_id() {
 
 #[test]
 fn test_n_from_id_with_deleted_node() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -512,7 +523,8 @@ fn test_n_from_id_with_deleted_node() {
 
 #[test]
 fn test_n_from_id_with_zero_id() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -527,7 +539,8 @@ fn test_n_from_id_with_zero_id() {
 
 #[test]
 fn test_n_from_id_with_max_id() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 

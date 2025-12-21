@@ -22,8 +22,7 @@ use crate::{
     props,
 };
 
-fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
-    let temp_dir = TempDir::new().unwrap();
+fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -31,12 +30,13 @@ fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
         Default::default(),
     )
     .unwrap();
-    (temp_dir, Arc::new(storage))
+    Arc::new(storage)
 }
 
 #[test]
 fn test_range_subset() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -63,7 +63,8 @@ fn test_range_subset() {
 
 #[test]
 fn test_range_chaining() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -114,7 +115,8 @@ fn test_range_chaining() {
 
 #[test]
 fn test_range_empty() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
 
     let txn = storage.graph_env.read_txn().unwrap();

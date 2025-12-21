@@ -29,8 +29,7 @@ use crate::{
 
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
-fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
-    let temp_dir = TempDir::new().unwrap();
+fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -38,12 +37,13 @@ fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
         Default::default(),
     )
     .unwrap();
-    (temp_dir, Arc::new(storage))
+    Arc::new(storage)
 }
 
 #[test]
 fn test_insert_and_fetch_vector() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -71,7 +71,8 @@ fn test_insert_and_fetch_vector() {
 
 #[test]
 fn test_vector_edges_from_and_to_node() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -105,7 +106,8 @@ fn test_vector_edges_from_and_to_node() {
 
 #[test]
 fn test_brute_force_vector_search_orders_by_distance() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -149,7 +151,8 @@ fn test_brute_force_vector_search_orders_by_distance() {
 
 #[test]
 fn test_drop_vector_removes_edges() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -204,7 +207,8 @@ fn test_drop_vector_removes_edges() {
 
 #[test]
 fn test_v_from_type_basic_with_vector_data() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -238,7 +242,8 @@ fn test_v_from_type_basic_with_vector_data() {
 
 #[test]
 fn test_v_from_type_without_vector_data() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -273,7 +278,8 @@ fn test_v_from_type_without_vector_data() {
 
 #[test]
 fn test_v_from_type_multiple_same_label() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -313,7 +319,8 @@ fn test_v_from_type_multiple_same_label() {
 
 #[test]
 fn test_v_from_type_multiple_different_labels() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -346,7 +353,8 @@ fn test_v_from_type_multiple_different_labels() {
 
 #[test]
 fn test_v_from_type_nonexistent_label() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -370,7 +378,8 @@ fn test_v_from_type_nonexistent_label() {
 
 #[test]
 fn test_v_from_type_empty_database() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
 
     // Query empty database
     let arena = Bump::new();
@@ -388,7 +397,8 @@ fn test_v_from_type_with_properties() {
     use std::collections::HashMap;
     use crate::protocol::value::Value;
 
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -443,7 +453,8 @@ fn test_v_from_type_with_properties() {
 
 #[test]
 fn test_v_from_type_deleted_vectors_filtered() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -494,7 +505,8 @@ fn test_v_from_type_deleted_vectors_filtered() {
 
 #[test]
 fn test_v_from_type_with_edges_and_nodes() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -580,7 +592,8 @@ fn test_v_from_type_after_migration() {
         Ok(())
     }
 
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let mut storage_mut = match Arc::try_unwrap(storage) {
         Ok(s) => s,
         Err(_) => panic!("Failed to unwrap Arc - there are multiple references"),
@@ -740,7 +753,8 @@ fn test_v_from_type_after_migration() {
 
 #[test]
 fn test_v_from_id_with_nonexistent_id_with_data() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -762,7 +776,8 @@ fn test_v_from_id_with_nonexistent_id_with_data() {
 
 #[test]
 fn test_v_from_id_with_nonexistent_id_without_data() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -784,7 +799,8 @@ fn test_v_from_id_with_nonexistent_id_without_data() {
 
 #[test]
 fn test_v_from_id_with_deleted_vector() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -832,7 +848,8 @@ fn test_v_from_id_with_deleted_vector() {
 
 #[test]
 fn test_v_from_id_with_zero_id() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -851,7 +868,8 @@ fn test_v_from_id_with_zero_id() {
 
 #[test]
 fn test_v_from_id_with_max_id() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 

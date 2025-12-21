@@ -32,8 +32,7 @@ use crate::{
 
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
-fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
-    let temp_dir = TempDir::new().unwrap();
+fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -41,7 +40,7 @@ fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
         Default::default(),
     )
     .unwrap();
-    (temp_dir, Arc::new(storage))
+    Arc::new(storage)
 }
 
 fn to_result_iter(
@@ -66,7 +65,8 @@ fn edge_id(value: TraversalValue) -> u128 {
 
 #[test]
 fn test_drop_edge() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -126,7 +126,8 @@ fn test_drop_edge() {
 
 #[test]
 fn test_drop_node() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -170,14 +171,16 @@ fn test_drop_node() {
     let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&node2_id)
         .in_e("knows")
-        .collect::<Result<Vec<_>, _>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     println!("edges: {:?}", edges);
     assert!(edges.is_empty());
 }
 
 #[test]
 fn test_drop_traversal() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -237,7 +240,8 @@ fn test_drop_traversal() {
 
 #[test]
 fn test_node_deletion_in_existing_graph() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -321,7 +325,8 @@ fn test_node_deletion_in_existing_graph() {
 
 #[test]
 fn test_edge_deletion_in_existing_graph() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -376,7 +381,8 @@ fn test_edge_deletion_in_existing_graph() {
 
 #[test]
 fn test_vector_deletion_in_existing_graph() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
