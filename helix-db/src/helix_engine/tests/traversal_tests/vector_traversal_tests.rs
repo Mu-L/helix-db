@@ -926,7 +926,8 @@ fn test_v_from_id_with_max_id() {
 
 #[test]
 fn test_search_v_filters_by_type() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -967,16 +968,29 @@ fn test_search_v_filters_by_type() {
         .unwrap();
 
     // Should only return the 2 vectors with type "type_b"
-    assert_eq!(results.len(), 2, "search_v should only return vectors of the specified type");
+    assert_eq!(
+        results.len(),
+        2,
+        "search_v should only return vectors of the specified type"
+    );
 
     let result_ids: Vec<u128> = results.iter().map(|v| v.id()).collect();
     assert!(result_ids.contains(&v1_b.id()), "Should contain v1_b");
     assert!(result_ids.contains(&v2_b.id()), "Should contain v2_b");
 
     // Verify type_a and type_c vectors are NOT in the results
-    assert!(!result_ids.contains(&v1_a.id()), "Should NOT contain v1_a (type_a)");
-    assert!(!result_ids.contains(&v2_a.id()), "Should NOT contain v2_a (type_a)");
-    assert!(!result_ids.contains(&v1_c.id()), "Should NOT contain v1_c (type_c)");
+    assert!(
+        !result_ids.contains(&v1_a.id()),
+        "Should NOT contain v1_a (type_a)"
+    );
+    assert!(
+        !result_ids.contains(&v2_a.id()),
+        "Should NOT contain v2_a (type_a)"
+    );
+    assert!(
+        !result_ids.contains(&v1_c.id()),
+        "Should NOT contain v1_c (type_c)"
+    );
 
     // Also verify by searching for type_a - should only get type_a vectors
     let arena = Bump::new();
@@ -985,7 +999,11 @@ fn test_search_v_filters_by_type() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(results_a.len(), 2, "search_v for type_a should return 2 vectors");
+    assert_eq!(
+        results_a.len(),
+        2,
+        "search_v for type_a should return 2 vectors"
+    );
     let result_a_ids: Vec<u128> = results_a.iter().map(|v| v.id()).collect();
     assert!(result_a_ids.contains(&v1_a.id()));
     assert!(result_a_ids.contains(&v2_a.id()));
@@ -997,6 +1015,10 @@ fn test_search_v_filters_by_type() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(results_c.len(), 1, "search_v for type_c should return 1 vector");
+    assert_eq!(
+        results_c.len(),
+        1,
+        "search_v for type_c should return 1 vector"
+    );
     assert_eq!(results_c[0].id(), v1_c.id());
 }
