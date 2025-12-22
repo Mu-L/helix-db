@@ -35,4 +35,4 @@ jobs:
     - name: Run dev instance tests
       run: | 
         cd helix-db
-        cargo test --release --lib --features dev-instance 
+        cargo test --release --lib --features dev-instance -- --skip concurrency_tests

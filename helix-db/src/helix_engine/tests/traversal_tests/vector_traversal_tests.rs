@@ -13,8 +13,7 @@ use crate::{
             out::{out::OutAdapter, out_e::OutEdgesAdapter},
             source::{
                 add_e::AddEAdapter, add_n::AddNAdapter, e_from_type::EFromTypeAdapter,
-                n_from_id::NFromIdAdapter, v_from_id::VFromIdAdapter,
-                v_from_type::VFromTypeAdapter,
+                n_from_id::NFromIdAdapter, v_from_id::VFromIdAdapter, v_from_type::VFromTypeAdapter,
             },
             util::drop::Drop,
             vectors::{
@@ -30,7 +29,8 @@ use crate::{
 
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
-fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
+    let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -38,13 +38,12 @@ fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
         Default::default(),
     )
     .unwrap();
-    Arc::new(storage)
+    (temp_dir, Arc::new(storage))
 }
 
 #[test]
 fn test_insert_and_fetch_vector() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -72,8 +71,7 @@ fn test_insert_and_fetch_vector() {
 
 #[test]
 fn test_vector_edges_from_and_to_node() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -107,8 +105,7 @@ fn test_vector_edges_from_and_to_node() {
 
 #[test]
 fn test_brute_force_vector_search_orders_by_distance() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -152,8 +149,7 @@ fn test_brute_force_vector_search_orders_by_distance() {
 
 #[test]
 fn test_drop_vector_removes_edges() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -208,8 +204,7 @@ fn test_drop_vector_removes_edges() {
 
 #[test]
 fn test_v_from_type_basic_with_vector_data() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -233,9 +228,7 @@ fn test_v_from_type_basic_with_vector_data() {
     assert_eq!(results[0].id(), vector_id);
 
     // Verify it's a full HVector with data
-    if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) =
-        &results[0]
-    {
+    if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) = &results[0] {
         assert_eq!(v.data.len(), 3);
         assert_eq!(v.data[0], 1.0);
     } else {
@@ -245,8 +238,7 @@ fn test_v_from_type_basic_with_vector_data() {
 
 #[test]
 fn test_v_from_type_without_vector_data() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -281,8 +273,7 @@ fn test_v_from_type_without_vector_data() {
 
 #[test]
 fn test_v_from_type_multiple_same_label() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -322,8 +313,7 @@ fn test_v_from_type_multiple_same_label() {
 
 #[test]
 fn test_v_from_type_multiple_different_labels() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -356,8 +346,7 @@ fn test_v_from_type_multiple_different_labels() {
 
 #[test]
 fn test_v_from_type_nonexistent_label() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -381,8 +370,7 @@ fn test_v_from_type_nonexistent_label() {
 
 #[test]
 fn test_v_from_type_empty_database() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
 
     // Query empty database
     let arena = Bump::new();
@@ -397,11 +385,10 @@ fn test_v_from_type_empty_database() {
 
 #[test]
 fn test_v_from_type_with_properties() {
-    use crate::protocol::value::Value;
     use std::collections::HashMap;
+    use crate::protocol::value::Value;
 
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -411,20 +398,15 @@ fn test_v_from_type_with_properties() {
     properties.insert("count".to_string(), Value::I64(42));
     properties.insert("score".to_string(), Value::F64(3.14));
     properties.insert("active".to_string(), Value::Boolean(true));
-    properties.insert(
-        "tags".to_string(),
-        Value::Array(vec![
-            Value::String("tag1".to_string()),
-            Value::String("tag2".to_string()),
-        ]),
-    );
+    properties.insert("tags".to_string(), Value::Array(vec![
+        Value::String("tag1".to_string()),
+        Value::String("tag2".to_string()),
+    ]));
 
     // Convert to ImmutablePropertiesMap
     let props_map = ImmutablePropertiesMap::new(
         properties.len(),
-        properties
-            .iter()
-            .map(|(k, v)| (arena.alloc_str(k) as &str, v.clone())),
+        properties.iter().map(|(k, v)| (arena.alloc_str(k) as &str, v.clone())),
         &arena,
     );
 
@@ -461,8 +443,7 @@ fn test_v_from_type_with_properties() {
 
 #[test]
 fn test_v_from_type_deleted_vectors_filtered() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -513,8 +494,7 @@ fn test_v_from_type_deleted_vectors_filtered() {
 
 #[test]
 fn test_v_from_type_with_edges_and_nodes() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -571,9 +551,9 @@ fn test_v_from_type_with_edges_and_nodes() {
 
 #[test]
 fn test_v_from_type_after_migration() {
-    use crate::helix_engine::storage_core::storage_migration::migrate;
-    use crate::protocol::value::Value;
     use std::collections::HashMap;
+    use crate::protocol::value::Value;
+    use crate::helix_engine::storage_core::storage_migration::migrate;
 
     // Helper to create old-format vector properties (HashMap-based)
     fn create_old_properties(
@@ -593,17 +573,14 @@ fn test_v_from_type_after_migration() {
     }
 
     // Helper to clear metadata (simulates PreMetadata state)
-    fn clear_metadata(
-        storage: &mut crate::helix_engine::storage_core::HelixGraphStorage,
-    ) -> Result<(), crate::helix_engine::types::GraphError> {
+    fn clear_metadata(storage: &mut crate::helix_engine::storage_core::HelixGraphStorage) -> Result<(), crate::helix_engine::types::GraphError> {
         let mut txn = storage.graph_env.write_txn()?;
         storage.metadata_db.clear(&mut txn)?;
         txn.commit()?;
         Ok(())
     }
 
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let mut storage_mut = match Arc::try_unwrap(storage) {
         Ok(s) => s,
         Err(_) => panic!("Failed to unwrap Arc - there are multiple references"),
@@ -630,12 +607,7 @@ fn test_v_from_type_after_migration() {
         // Add actual vector data with proper key format
         let vector_data1: Vec<f64> = vec![1.0, 2.0, 3.0];
         let bytes1: Vec<u8> = vector_data1.iter().flat_map(|f| f.to_be_bytes()).collect();
-        let key1 = [
-            b"v:".as_slice(),
-            &1u128.to_be_bytes(),
-            &0usize.to_be_bytes(),
-        ]
-        .concat();
+        let key1 = [b"v:".as_slice(), &1u128.to_be_bytes(), &0usize.to_be_bytes()].concat();
         storage_mut
             .vectors
             .vectors_db
@@ -656,12 +628,7 @@ fn test_v_from_type_after_migration() {
         // Add actual vector data with proper key format
         let vector_data2: Vec<f64> = vec![4.0, 5.0, 6.0];
         let bytes2: Vec<u8> = vector_data2.iter().flat_map(|f| f.to_be_bytes()).collect();
-        let key2 = [
-            b"v:".as_slice(),
-            &2u128.to_be_bytes(),
-            &0usize.to_be_bytes(),
-        ]
-        .concat();
+        let key2 = [b"v:".as_slice(), &2u128.to_be_bytes(), &0usize.to_be_bytes()].concat();
         storage_mut
             .vectors
             .vectors_db
@@ -681,12 +648,7 @@ fn test_v_from_type_after_migration() {
         // Add actual vector data with proper key format
         let vector_data3: Vec<f64> = vec![7.0, 8.0, 9.0];
         let bytes3: Vec<u8> = vector_data3.iter().flat_map(|f| f.to_be_bytes()).collect();
-        let key3 = [
-            b"v:".as_slice(),
-            &3u128.to_be_bytes(),
-            &0usize.to_be_bytes(),
-        ]
-        .concat();
+        let key3 = [b"v:".as_slice(), &3u128.to_be_bytes(), &0usize.to_be_bytes()].concat();
         storage_mut
             .vectors
             .vectors_db
@@ -711,11 +673,7 @@ fn test_v_from_type_after_migration() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(
-        results_with_data.len(),
-        2,
-        "Should find 2 vectors with test_migration label"
-    );
+    assert_eq!(results_with_data.len(), 2, "Should find 2 vectors with test_migration label");
 
     // Verify we got the right vectors
     let ids: Vec<u128> = results_with_data.iter().map(|v| v.id()).collect();
@@ -723,9 +681,7 @@ fn test_v_from_type_after_migration() {
     assert!(ids.contains(&2u128), "Should contain vector 2");
 
     // Verify vector data is accessible
-    if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) =
-        &results_with_data[0]
-    {
+    if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) = &results_with_data[0] {
         assert_eq!(v.data.len(), 3, "Vector should have 3 dimensions");
     } else {
         panic!("Expected TraversalValue::Vector");
@@ -765,11 +721,7 @@ fn test_v_from_type_after_migration() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(
-        other_results.len(),
-        1,
-        "Should find 1 vector with other_label"
-    );
+    assert_eq!(other_results.len(), 1, "Should find 1 vector with other_label");
     assert_eq!(other_results[0].id(), 3u128);
 
     // Query for non-existent label after migration
@@ -779,10 +731,7 @@ fn test_v_from_type_after_migration() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert!(
-        empty_results.is_empty(),
-        "Should find no vectors with nonexistent label"
-    );
+    assert!(empty_results.is_empty(), "Should find no vectors with nonexistent label");
 }
 
 // ============================================================================
@@ -791,8 +740,7 @@ fn test_v_from_type_after_migration() {
 
 #[test]
 fn test_v_from_id_with_nonexistent_id_with_data() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -814,8 +762,7 @@ fn test_v_from_id_with_nonexistent_id_with_data() {
 
 #[test]
 fn test_v_from_id_with_nonexistent_id_without_data() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -837,8 +784,7 @@ fn test_v_from_id_with_nonexistent_id_without_data() {
 
 #[test]
 fn test_v_from_id_with_deleted_vector() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -886,8 +832,7 @@ fn test_v_from_id_with_deleted_vector() {
 
 #[test]
 fn test_v_from_id_with_zero_id() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -906,8 +851,7 @@ fn test_v_from_id_with_zero_id() {
 
 #[test]
 fn test_v_from_id_with_max_id() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -926,8 +870,7 @@ fn test_v_from_id_with_max_id() {
 
 #[test]
 fn test_search_v_filters_by_type() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -968,29 +911,16 @@ fn test_search_v_filters_by_type() {
         .unwrap();
 
     // Should only return the 2 vectors with type "type_b"
-    assert_eq!(
-        results.len(),
-        2,
-        "search_v should only return vectors of the specified type"
-    );
+    assert_eq!(results.len(), 2, "search_v should only return vectors of the specified type");
 
     let result_ids: Vec<u128> = results.iter().map(|v| v.id()).collect();
     assert!(result_ids.contains(&v1_b.id()), "Should contain v1_b");
     assert!(result_ids.contains(&v2_b.id()), "Should contain v2_b");
 
     // Verify type_a and type_c vectors are NOT in the results
-    assert!(
-        !result_ids.contains(&v1_a.id()),
-        "Should NOT contain v1_a (type_a)"
-    );
-    assert!(
-        !result_ids.contains(&v2_a.id()),
-        "Should NOT contain v2_a (type_a)"
-    );
-    assert!(
-        !result_ids.contains(&v1_c.id()),
-        "Should NOT contain v1_c (type_c)"
-    );
+    assert!(!result_ids.contains(&v1_a.id()), "Should NOT contain v1_a (type_a)");
+    assert!(!result_ids.contains(&v2_a.id()), "Should NOT contain v2_a (type_a)");
+    assert!(!result_ids.contains(&v1_c.id()), "Should NOT contain v1_c (type_c)");
 
     // Also verify by searching for type_a - should only get type_a vectors
     let arena = Bump::new();
@@ -999,11 +929,7 @@ fn test_search_v_filters_by_type() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(
-        results_a.len(),
-        2,
-        "search_v for type_a should return 2 vectors"
-    );
+    assert_eq!(results_a.len(), 2, "search_v for type_a should return 2 vectors");
     let result_a_ids: Vec<u128> = results_a.iter().map(|v| v.id()).collect();
     assert!(result_a_ids.contains(&v1_a.id()));
     assert!(result_a_ids.contains(&v2_a.id()));
@@ -1015,10 +941,6 @@ fn test_search_v_filters_by_type() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(
-        results_c.len(),
-        1,
-        "search_v for type_c should return 1 vector"
-    );
+    assert_eq!(results_c.len(), 1, "search_v for type_c should return 1 vector");
     assert_eq!(results_c[0].id(), v1_c.id());
 }

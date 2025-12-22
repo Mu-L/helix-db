@@ -20,7 +20,8 @@ use crate::{
     props,
 };
 
-fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
+    let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -28,13 +29,12 @@ fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
         Default::default(),
     )
     .unwrap();
-    Arc::new(storage)
+    (temp_dir, Arc::new(storage))
 }
 
 #[test]
 fn test_update_node() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
