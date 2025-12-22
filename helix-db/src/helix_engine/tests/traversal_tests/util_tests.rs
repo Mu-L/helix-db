@@ -25,7 +25,8 @@ use crate::{
 use heed3::RoTxn;
 use tempfile::TempDir;
 use bumpalo::Bump;
-fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
+    let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -33,13 +34,12 @@ fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
         Default::default(),
     )
     .unwrap();
-    Arc::new(storage)
+    (temp_dir, Arc::new(storage))
 }
 
 #[test]
 fn test_order_node_by_asc() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -71,8 +71,7 @@ fn test_order_node_by_asc() {
 
 #[test]
 fn test_order_node_by_desc() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -104,8 +103,7 @@ fn test_order_node_by_desc() {
 
 #[test]
 fn test_order_edge_by_asc() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -157,8 +155,7 @@ fn test_order_edge_by_asc() {
 
 #[test]
 fn test_order_edge_by_desc() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -210,8 +207,7 @@ fn test_order_edge_by_desc() {
 
 #[test]
 fn test_order_vector_by_asc() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
     type FnTy = fn(&HVector, &RoTxn) -> bool;
@@ -244,8 +240,7 @@ fn test_order_vector_by_asc() {
 
 #[test]
 fn test_order_vector_by_desc() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
     type FnTy = fn(&HVector, &RoTxn) -> bool;
@@ -278,8 +273,7 @@ fn test_order_vector_by_desc() {
 
 #[test]
 fn test_dedup() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 

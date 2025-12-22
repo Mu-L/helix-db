@@ -22,7 +22,8 @@ use crate::{
 use rand::Rng;
 use tempfile::TempDir;
 use bumpalo::Bump;
-fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
+    let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -30,13 +31,12 @@ fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
         Default::default(),
     )
     .unwrap();
-    Arc::new(storage)
+    (temp_dir, Arc::new(storage))
 }
 
 #[test]
 fn test_count_single_node() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
     let person = G::new_mut(&storage, &arena, &mut txn)
@@ -54,8 +54,7 @@ fn test_count_single_node() {
 
 #[test]
 fn test_count_node_array() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
@@ -78,8 +77,7 @@ fn test_count_node_array() {
 
 #[test]
 fn test_count_mixed_steps() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -129,8 +127,7 @@ fn test_count_mixed_steps() {
 
 #[test]
 fn test_count_empty() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
     let count = G::new(&storage, &txn, &arena)
@@ -143,8 +140,7 @@ fn test_count_empty() {
 
 #[test]
 fn test_count_filter_ref() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 

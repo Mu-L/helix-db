@@ -20,8 +20,8 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use tempfile::TempDir;
 
-use crate::helix_engine::storage_core::HelixGraphStorage;
 use crate::helix_engine::storage_core::version_info::VersionInfo;
+use crate::helix_engine::storage_core::HelixGraphStorage;
 use crate::helix_engine::traversal_core::config::Config;
 use crate::helix_engine::traversal_core::ops::g::G;
 use crate::helix_engine::traversal_core::ops::vectors::insert::InsertVAdapter;
@@ -31,15 +31,17 @@ use crate::helix_engine::vector_core::vector::HVector;
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
 /// Setup storage for concurrent testing
-fn setup_concurrent_storage(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
+fn setup_concurrent_storage() -> (Arc<HelixGraphStorage>, TempDir) {
+    let temp_dir = tempfile::tempdir().unwrap();
     let path = temp_dir.path().to_str().unwrap();
 
-    let config = Config::default();
+    let mut config = Config::default();
+    config.db_max_size_gb = Some(1); // 1GB for concurrent testing
 
     let version_info = VersionInfo::default();
 
     let storage = HelixGraphStorage::new(path, config, version_info).unwrap();
-    Arc::new(storage)
+    (Arc::new(storage), temp_dir)
 }
 
 /// Generate a random vector of given dimensionality
@@ -58,8 +60,8 @@ fn test_concurrent_inserts_single_label() {
     // Multiple threads could race to set the entry point.
     //
     // EXPECTED: All inserts should succeed, graph should remain consistent
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_concurrent_storage(&temp_dir);
+
+    let (storage, _temp_dir) = setup_concurrent_storage();
 
     let num_threads = 4;
     let vectors_per_thread = 25;
@@ -132,8 +134,7 @@ fn test_concurrent_searches_during_inserts() {
     // - Searches should return consistent results (no torn reads)
     // - Number of results should increase over time as inserts complete
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_concurrent_storage(&temp_dir);
+    let (storage, _temp_dir) = setup_concurrent_storage();
 
     // Initialize with some initial vectors
     {
@@ -272,8 +273,7 @@ fn test_concurrent_inserts_multiple_labels() {
     //
     // EXPECTED: No contention between different labels, all inserts succeed
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_concurrent_storage(&temp_dir);
+    let (storage, _temp_dir) = setup_concurrent_storage();
 
     let num_labels = 4;
     let vectors_per_label = 25;
@@ -357,8 +357,7 @@ fn test_entry_point_consistency() {
     //
     // EXPECTED: Entry point should always be a valid vector ID
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_concurrent_storage(&temp_dir);
+    let (storage, _temp_dir) = setup_concurrent_storage();
 
     let num_threads = 8;
     let vectors_per_thread = 10;
@@ -415,9 +414,7 @@ fn test_entry_point_consistency() {
 
     // Verify results have valid properties
     for result in results.iter() {
-        if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) =
-            result
-        {
+        if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) = result {
             assert!(v.id > 0, "Result ID should be valid");
             assert!(!v.deleted, "Results should not be deleted");
             assert!(!v.data.is_empty(), "Results should have data");
@@ -433,8 +430,7 @@ fn test_graph_connectivity_after_concurrent_inserts() {
     // EXPECTED: Graph should remain connected (no orphaned nodes)
     // All vectors should be reachable from entry point
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_concurrent_storage(&temp_dir);
+    let (storage, _temp_dir) = setup_concurrent_storage();
 
     let num_threads = 4;
     let vectors_per_thread = 20;
@@ -490,9 +486,7 @@ fn test_graph_connectivity_after_concurrent_inserts() {
 
         // All results should have valid distances
         for result in results {
-            if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) =
-                result
-            {
+            if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) = result {
                 assert!(
                     v.distance.is_some() && v.distance.unwrap() >= 0.0,
                     "Result should have valid distance"
@@ -509,8 +503,7 @@ fn test_transaction_isolation() {
     //
     // EXPECTED: Readers should see consistent snapshots even while writes occur
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_concurrent_storage(&temp_dir);
+    let (storage, _temp_dir) = setup_concurrent_storage();
 
     // Initialize with known vectors
     let initial_count = 10;
