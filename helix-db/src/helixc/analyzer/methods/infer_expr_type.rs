@@ -1,6 +1,8 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
-use crate::helixc::analyzer::utils::{DEFAULT_VAR_NAME, VariableInfo, is_in_scope, is_param};
+use crate::helixc::analyzer::utils::{
+    DEFAULT_VAR_NAME, VariableInfo, is_in_scope, is_param, validate_id_type,
+};
 use crate::helixc::generator::utils::EmbedData;
 use crate::{
     generate_error,
@@ -288,16 +290,19 @@ pub(crate) fn infer_expr_type<'a>(
                                     match value {
                                         ValueType::Literal { value, loc } => {
                                             match ctx.node_fields.get(ty.as_str()) {
-                                                Some(fields) => match fields.get(field_name.as_str())
+                                                Some(fields) => match fields
+                                                    .get(field_name.as_str())
                                                 {
                                                     Some(field) => {
                                                         match field.field_type == FieldType::Date {
                                                             true => match Date::new(value) {
-                                                                Ok(date) => GeneratedValue::Literal(
-                                                                    GenRef::Literal(
-                                                                        date.to_rfc3339(),
-                                                                    ),
-                                                                ),
+                                                                Ok(date) => {
+                                                                    GeneratedValue::Literal(
+                                                                        GenRef::Literal(
+                                                                            date.to_rfc3339(),
+                                                                        ),
+                                                                    )
+                                                                }
                                                                 Err(_) => {
                                                                     generate_error!(
                                                                         ctx,
@@ -542,16 +547,19 @@ pub(crate) fn infer_expr_type<'a>(
                                     match value {
                                         ValueType::Literal { value, loc } => {
                                             match ctx.edge_fields.get(ty.as_str()) {
-                                                Some(fields) => match fields.get(field_name.as_str())
+                                                Some(fields) => match fields
+                                                    .get(field_name.as_str())
                                                 {
                                                     Some(field) => {
                                                         match field.field_type == FieldType::Date {
                                                             true => match Date::new(value) {
-                                                                Ok(date) => GeneratedValue::Literal(
-                                                                    GenRef::Literal(
-                                                                        date.to_rfc3339(),
-                                                                    ),
-                                                                ),
+                                                                Ok(date) => {
+                                                                    GeneratedValue::Literal(
+                                                                        GenRef::Literal(
+                                                                            date.to_rfc3339(),
+                                                                        ),
+                                                                    )
+                                                                }
                                                                 Err(_) => {
                                                                     generate_error!(
                                                                         ctx,
@@ -616,12 +624,10 @@ pub(crate) fn infer_expr_type<'a>(
 
                         Some(properties.into_iter().collect())
                     }
-                    None => {
-                        match default_properties.is_empty() {
-                            true => None,
-                            false => Some(default_properties),
-                        }
-                    }
+                    None => match default_properties.is_empty() {
+                        true => None,
+                        false => Some(default_properties),
+                    },
                 };
 
                 let (to, to_is_plural) = match &add.connection.to_id {
@@ -629,7 +635,9 @@ pub(crate) fn infer_expr_type<'a>(
                         IdType::Identifier { value, loc } => {
                             is_valid_identifier(ctx, original_query, loc.clone(), value.as_str());
                             // Validate that the identifier exists in scope or is a parameter
-                            if !scope.contains_key(value.as_str()) && is_param(original_query, value.as_str()).is_none() {
+                            if !scope.contains_key(value.as_str())
+                                && is_param(original_query, value.as_str()).is_none()
+                            {
                                 generate_error!(
                                     ctx,
                                     original_query,
@@ -638,6 +646,14 @@ pub(crate) fn infer_expr_type<'a>(
                                     value.as_str()
                                 );
                             }
+                            // Validate that the identifier is of type ID
+                            validate_id_type(
+                                ctx,
+                                original_query,
+                                loc.clone(),
+                                scope,
+                                value.as_str(),
+                            );
                             // Check if this variable is plural
                             let is_plural = scope
                                 .get(value.as_str())
@@ -677,7 +693,9 @@ pub(crate) fn infer_expr_type<'a>(
                         IdType::Identifier { value, loc } => {
                             is_valid_identifier(ctx, original_query, loc.clone(), value.as_str());
                             // Validate that the identifier exists in scope or is a parameter
-                            if !scope.contains_key(value.as_str()) && is_param(original_query, value.as_str()).is_none() {
+                            if !scope.contains_key(value.as_str())
+                                && is_param(original_query, value.as_str()).is_none()
+                            {
                                 generate_error!(
                                     ctx,
                                     original_query,
@@ -686,6 +704,14 @@ pub(crate) fn infer_expr_type<'a>(
                                     value.as_str()
                                 );
                             }
+                            // Validate that the identifier is of type ID
+                            validate_id_type(
+                                ctx,
+                                original_query,
+                                loc.clone(),
+                                scope,
+                                value.as_str(),
+                            );
                             // Check if this variable is plural
                             let is_plural = scope
                                 .get(value.as_str())
@@ -773,7 +799,12 @@ pub(crate) fn infer_expr_type<'a>(
                 }
                 let label = GenRef::Literal(ty.clone());
 
-                let vector_in_schema = match ctx.output.vectors.iter().find(|v| v.name == ty.as_str()) {
+                let vector_in_schema = match ctx
+                    .output
+                    .vectors
+                    .iter()
+                    .find(|v| v.name == ty.as_str())
+                {
                     Some(vector) => vector.clone(),
                     None => {
                         generate_error!(ctx, original_query, add.loc.clone(), E103, ty.as_str());
@@ -897,16 +928,19 @@ pub(crate) fn infer_expr_type<'a>(
                                     match value {
                                         ValueType::Literal { value, loc } => {
                                             match ctx.vector_fields.get(ty.as_str()) {
-                                                Some(fields) => match fields.get(field_name.as_str())
+                                                Some(fields) => match fields
+                                                    .get(field_name.as_str())
                                                 {
                                                     Some(field) => {
                                                         match field.field_type == FieldType::Date {
                                                             true => match Date::new(value) {
-                                                                Ok(date) => GeneratedValue::Literal(
-                                                                    GenRef::Literal(
-                                                                        date.to_rfc3339(),
-                                                                    ),
-                                                                ),
+                                                                Ok(date) => {
+                                                                    GeneratedValue::Literal(
+                                                                        GenRef::Literal(
+                                                                            date.to_rfc3339(),
+                                                                        ),
+                                                                    )
+                                                                }
                                                                 Err(_) => {
                                                                     generate_error!(
                                                                         ctx,
@@ -971,15 +1005,13 @@ pub(crate) fn infer_expr_type<'a>(
 
                         properties
                     }
-                    None => {
-                        default_properties.into_iter().fold(
-                            HashMap::new(),
-                            |mut acc, (field_name, default_value)| {
-                                acc.insert(field_name, default_value);
-                                acc
-                            },
-                        )
-                    }
+                    None => default_properties.into_iter().fold(
+                        HashMap::new(),
+                        |mut acc, (field_name, default_value)| {
+                            acc.insert(field_name, default_value);
+                            acc
+                        },
+                    ),
                 };
                 if let Some(vec_data) = &add.data {
                     let vec = match vec_data {
@@ -1011,6 +1043,14 @@ pub(crate) fn infer_expr_type<'a>(
                                         ty.as_str()
                                     );
                                 }
+                            } else {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    add.loc.clone(),
+                                    E301,
+                                    i.as_str()
+                                );
                             }
                             let id =
                                 gen_identifier_or_param(original_query, i.as_str(), true, false);
@@ -1018,15 +1058,24 @@ pub(crate) fn infer_expr_type<'a>(
                         }
                         VectorData::Embed(e) => {
                             let embed_data = match &e.value {
-                                EvaluatesToString::Identifier(i) => EmbedData {
-                                    data: gen_identifier_or_param(
+                                EvaluatesToString::Identifier(i) => {
+                                    type_in_scope(
+                                        ctx,
                                         original_query,
+                                        add.loc.clone(),
+                                        scope,
                                         i.as_str(),
-                                        true,
-                                        false,
-                                    ),
-                                    model_name: gen_query.embedding_model_to_use.clone(),
-                                },
+                                    );
+                                    EmbedData {
+                                        data: gen_identifier_or_param(
+                                            original_query,
+                                            i.as_str(),
+                                            true,
+                                            false,
+                                        ),
+                                        model_name: gen_query.embedding_model_to_use.clone(),
+                                    }
+                                }
                                 EvaluatesToString::StringLiteral(s) => EmbedData {
                                     data: GeneratedValue::Literal(GenRef::Ref(s.clone())),
                                     model_name: gen_query.embedding_model_to_use.clone(),
@@ -1097,8 +1146,7 @@ pub(crate) fn infer_expr_type<'a>(
                     if let Some(var_type) =
                         type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str())
                     {
-                        let expected_type =
-                            Type::Array(Box::new(Type::Scalar(FieldType::F64)));
+                        let expected_type = Type::Array(Box::new(Type::Scalar(FieldType::F64)));
                         if var_type != expected_type {
                             generate_error!(
                                 ctx,
@@ -1122,10 +1170,18 @@ pub(crate) fn infer_expr_type<'a>(
                 }
                 Some(VectorData::Embed(e)) => {
                     let embed_data = match &e.value {
-                        EvaluatesToString::Identifier(i) => EmbedData {
-                            data: gen_identifier_or_param(original_query, i.as_str(), true, false),
-                            model_name: gen_query.embedding_model_to_use.clone(),
-                        },
+                        EvaluatesToString::Identifier(i) => {
+                            type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
+                            EmbedData {
+                                data: gen_identifier_or_param(
+                                    original_query,
+                                    i.as_str(),
+                                    true,
+                                    false,
+                                ),
+                                model_name: gen_query.embedding_model_to_use.clone(),
+                            }
+                        }
                         EvaluatesToString::StringLiteral(s) => EmbedData {
                             data: GeneratedValue::Literal(GenRef::Ref(s.clone())),
                             model_name: gen_query.embedding_model_to_use.clone(),
@@ -1178,6 +1234,7 @@ pub(crate) fn infer_expr_type<'a>(
                     }
                     EvaluatesToNumberType::Identifier(i) => {
                         is_valid_identifier(ctx, original_query, sv.loc.clone(), i.as_str());
+                        type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
                         gen_identifier_or_param(original_query, i, false, false)
                     }
                     _ => {
@@ -1407,7 +1464,9 @@ pub(crate) fn infer_expr_type<'a>(
                             };
                         }
                         SourceStep::Anonymous => {
-                            tr.traversal_type = TraversalType::FromSingle(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
+                            tr.traversal_type = TraversalType::FromSingle(GenRef::Std(
+                                DEFAULT_VAR_NAME.to_string(),
+                            ));
                         }
                         _ => {
                             // For AddN, AddV, AddE, SearchVector, etc., leave traversal_type unchanged (Ref)
@@ -1511,6 +1570,13 @@ pub(crate) fn infer_expr_type<'a>(
                             ctx,
                             original_query,
                             bm25_search.loc.clone(),
+                            i.as_str(),
+                        );
+                        type_in_scope(
+                            ctx,
+                            original_query,
+                            bm25_search.loc.clone(),
+                            scope,
                             i.as_str(),
                         );
                         gen_identifier_or_param(original_query, i, false, false)

@@ -17,6 +17,7 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 use bumpalo::Bump;
+use serial_test::serial;
 use tempfile::TempDir;
 
 use crate::helix_engine::storage_core::HelixGraphStorage;
@@ -31,24 +32,25 @@ use crate::helix_engine::traversal_core::ops::out::out::OutAdapter;
 use crate::helix_engine::traversal_core::ops::in_::in_::InAdapter;
 
 /// Setup storage for concurrent testing
-fn setup_concurrent_storage() -> (TempDir, Arc<HelixGraphStorage>) {
-    let temp_dir = tempfile::tempdir().unwrap();
+fn setup_concurrent_storage(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
     let path = temp_dir.path().to_str().unwrap();
 
     let mut config = Config::default();
     config.db_max_size_gb = Some(10);
 
     let storage = HelixGraphStorage::new(path, config, Default::default()).unwrap();
-    (temp_dir, Arc::new(storage))
+    Arc::new(storage)
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_concurrent_node_additions() {
     // Tests multiple threads adding nodes concurrently
     //
     // EXPECTED: All nodes created successfully, no ID collisions
 
-    let (_temp_dir, storage) = setup_concurrent_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_concurrent_storage(&temp_dir);
 
     let num_threads = 4;
     let nodes_per_thread = 25;
@@ -95,12 +97,14 @@ fn test_concurrent_node_additions() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_concurrent_edge_additions() {
     // Tests multiple threads adding edges between nodes
     //
     // EXPECTED: All edges created, proper serialization
 
-    let (_temp_dir, storage) = setup_concurrent_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_concurrent_storage(&temp_dir);
 
     // Create nodes first
     let node_ids: Vec<u128> = {
@@ -170,12 +174,14 @@ fn test_concurrent_edge_additions() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_concurrent_reads_during_writes() {
     // Tests concurrent traversals while writes are happening
     //
     // EXPECTED: Readers see consistent snapshots (MVCC)
 
-    let (_temp_dir, storage) = setup_concurrent_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_concurrent_storage(&temp_dir);
 
     // Create initial graph structure
     let root_id = {
@@ -299,12 +305,14 @@ fn test_concurrent_reads_during_writes() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_traversal_snapshot_isolation() {
     // Tests that long-lived read transaction sees consistent snapshot
     //
     // EXPECTED: Traversal results don't change during transaction lifetime
 
-    let (_temp_dir, storage) = setup_concurrent_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_concurrent_storage(&temp_dir);
 
     // Create initial graph
     let root_id = {
@@ -393,12 +401,14 @@ fn test_traversal_snapshot_isolation() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_concurrent_bidirectional_traversals() {
     // Tests concurrent out() and in() traversals
     //
     // EXPECTED: Both directions remain consistent
 
-    let (_temp_dir, storage) = setup_concurrent_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_concurrent_storage(&temp_dir);
 
     // Create bidirectional graph structure
     let (source_ids, target_ids) = {
@@ -489,12 +499,14 @@ fn test_concurrent_bidirectional_traversals() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_concurrent_multi_hop_traversals() {
     // Tests concurrent traversals across multiple hops
     //
     // EXPECTED: Multi-hop paths remain consistent
 
-    let (_temp_dir, storage) = setup_concurrent_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_concurrent_storage(&temp_dir);
 
     // Create chain: root -> level1 nodes -> level2 nodes
     let root_id = {
@@ -586,12 +598,14 @@ fn test_concurrent_multi_hop_traversals() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_concurrent_graph_topology_consistency() {
     // Tests that graph topology remains valid under concurrent operations
     //
     // EXPECTED: No broken edges, all edges point to valid nodes
 
-    let (_temp_dir, storage) = setup_concurrent_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_concurrent_storage(&temp_dir);
 
     let num_writers = 4;
     let nodes_per_writer = 10;
@@ -671,12 +685,14 @@ fn test_concurrent_graph_topology_consistency() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_stress_concurrent_mixed_operations() {
     // Stress test: sustained mixed read/write operations
     //
     // EXPECTED: No panics, deadlocks, or corruption
 
-    let (_temp_dir, storage) = setup_concurrent_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_concurrent_storage(&temp_dir);
 
     // Create initial graph
     let root_ids: Vec<u128> = {

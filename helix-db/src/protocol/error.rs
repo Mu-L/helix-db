@@ -57,7 +57,16 @@ impl IntoResponse for HelixError {
             .status(status)
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(body))
-            .unwrap_or_else(|_| panic!("Should be able to turn HelixError into Response: {self}"))
+            .unwrap_or_else(|e| {
+                // This should never happen with valid HTTP headers, but handle gracefully
+                tracing::error!("Failed to build error response: {e:?}");
+                axum::response::Response::builder()
+                    .status(500)
+                    .body(Body::from(
+                        r#"{"error":"Internal server error","code":"INTERNAL_ERROR"}"#,
+                    ))
+                    .expect("static response should always build")
+            })
     }
 }
 

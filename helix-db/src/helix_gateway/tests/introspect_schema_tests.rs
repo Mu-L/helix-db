@@ -23,7 +23,7 @@ fn create_test_app_state(schema_json: Option<String>) -> Arc<AppState> {
         version_info: VersionInfo::default(),
     };
     let graph = Arc::new(HelixGraphEngine::new(opts).unwrap());
-    let router = Arc::new(HelixRouter::new(None, None));
+    let router = Arc::new(HelixRouter::new(None, None, None));
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)

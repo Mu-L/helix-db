@@ -31,8 +31,7 @@ use heed3::RoTxn;
 
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
-fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
-    let temp_dir = TempDir::new().unwrap();
+fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -40,7 +39,7 @@ fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
         Default::default(),
     )
     .unwrap();
-    (temp_dir, Arc::new(storage))
+    Arc::new(storage)
 }
 
 fn edge_id(value: &TraversalValue) -> u128 {
@@ -52,7 +51,8 @@ fn edge_id(value: &TraversalValue) -> u128 {
 
 #[test]
 fn test_add_edge_creates_relationship() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -81,7 +81,8 @@ fn test_add_edge_creates_relationship() {
 
 #[test]
 fn test_out_e_returns_edge() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -110,7 +111,8 @@ fn test_out_e_returns_edge() {
 
 #[test]
 fn test_in_e_returns_edge() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -139,7 +141,8 @@ fn test_in_e_returns_edge() {
 
 #[test]
 fn test_out_node_returns_neighbor() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -168,7 +171,8 @@ fn test_out_node_returns_neighbor() {
 
 #[test]
 fn test_edge_properties_can_be_read() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -210,7 +214,8 @@ fn test_edge_properties_can_be_read() {
 
 #[test]
 fn test_vector_edges_roundtrip() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -251,7 +256,8 @@ fn test_vector_edges_roundtrip() {
 
 #[test]
 fn test_e_from_id_with_nonexistent_id() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -269,7 +275,8 @@ fn test_e_from_id_with_nonexistent_id() {
 
 #[test]
 fn test_e_from_id_with_deleted_edge() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -324,7 +331,8 @@ fn test_e_from_id_with_deleted_edge() {
 
 #[test]
 fn test_e_from_id_with_zero_id() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -339,7 +347,8 @@ fn test_e_from_id_with_zero_id() {
 
 #[test]
 fn test_e_from_id_with_max_id() {
-    let (_temp_dir, storage) = setup_test_db();
+    let temp_dir = TempDir::new().unwrap();
+    let storage = setup_test_db(&temp_dir);
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 

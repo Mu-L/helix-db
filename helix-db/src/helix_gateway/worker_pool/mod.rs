@@ -20,7 +20,10 @@ use tracing::{error, trace};
 /// A Thread Pool of workers to execute Database operations
 pub struct WorkerPool {
     tx: Sender<ReqMsg>,
+    write_tx: Sender<ReqMsg>,
+    router: Arc<HelixRouter>,
     _workers: Vec<Worker>,
+    _writer_worker: Worker,
 }
 
 impl WorkerPool {
@@ -32,6 +35,9 @@ impl WorkerPool {
     ) -> WorkerPool {
         let (req_tx, req_rx) = flume::bounded::<ReqMsg>(1000);
         let (cont_tx, cont_rx) = flume::bounded::<ContMsg>(1000);
+
+        // Dedicated channel for write operations - single writer thread
+        let (write_tx, write_rx) = flume::bounded::<ReqMsg>(1000);
 
         let num_workers = workers_core_setter.num_threads();
         if num_workers < 2 {
@@ -57,27 +63,49 @@ impl WorkerPool {
             })
             .collect();
 
+        // Create the dedicated writer worker (no core pinning needed for single thread)
+        let writer_worker = Worker::start_writer(
+            write_rx,
+            Arc::clone(&graph_access),
+            Arc::clone(&router),
+            Arc::clone(&io_rt),
+        );
+
         WorkerPool {
             tx: req_tx,
+            write_tx,
+            router,
             _workers: workers,
+            _writer_worker: writer_worker,
         }
     }
 
     /// Process a request on the Worker Pool
+    /// Write operations are routed to a dedicated writer thread to ensure proper LMDB locking
     pub async fn process(&self, req: Request) -> Result<Response, HelixError> {
         let (ret_tx, ret_rx) = oneshot::channel();
+        let req_name = req.name.clone();
 
-        // this read by Worker in start()
-        self.tx
-            .send_async((req, ret_tx))
-            .await
-            .expect("WorkerPool channel should be open");
+        // Route to dedicated writer thread or reader worker pool
+        let channel = if self.router.is_write_route(&req.name) {
+            &self.write_tx
+        } else {
+            &self.tx
+        };
 
-        // This is sent by the Worker
+        channel.send_async((req, ret_tx)).await.map_err(|_| {
+            error!("WorkerPool channel closed for request '{req_name}'");
+            HelixError::Graph(GraphError::New("Server is shutting down".into()))
+        })?;
 
-        ret_rx
-            .await
-            .expect("Worker shouldn't drop sender before replying")
+        // Handle the case where the worker might have dropped the sender
+        // (e.g., worker thread panicked or client disconnected)
+        ret_rx.await.unwrap_or_else(|_| {
+            error!("Worker dropped sender without reply for request '{req_name}'");
+            Err(HelixError::Graph(GraphError::New(
+                "Internal server error: worker failed to respond".into(),
+            )))
+        })
     }
 }
 
@@ -116,10 +144,16 @@ impl Worker {
 
                         match cont_rx.try_recv() {
                             Ok((ret_chan, cfn)) => {
-                                ret_chan.send(cfn().map_err(Into::into)).expect("todo")
+                                let result = cfn().map_err(Into::into);
+                                if ret_chan.send(result).is_err() {
+                                    trace!(
+                                        "Client disconnected before continuation response could be sent"
+                                    );
+                                }
                             }
                             Err(flume::TryRecvError::Disconnected) => {
-                                error!("Continuation Channel was dropped")
+                                error!("Continuation Channel was dropped");
+                                break;
                             }
                             Err(flume::TryRecvError::Empty) => {}
                         }
@@ -134,7 +168,8 @@ impl Worker {
                                 &cont_tx,
                             ),
                             Err(flume::RecvError::Disconnected) => {
-                                error!("Request Channel was dropped")
+                                error!("Request Channel was dropped");
+                                break;
                             }
                         }
                     }
@@ -153,19 +188,86 @@ impl Worker {
                                 &cont_tx,
                             ),
                             Err(flume::TryRecvError::Disconnected) => {
-                                error!("Request Channel was dropped")
+                                error!("Request Channel was dropped");
+                                break;
                             }
                             Err(flume::TryRecvError::Empty) => {}
                         }
 
                         match cont_rx.recv() {
                             Ok((ret_chan, cfn)) => {
-                                ret_chan.send(cfn().map_err(Into::into)).expect("todo")
+                                let result = cfn().map_err(Into::into);
+                                if ret_chan.send(result).is_err() {
+                                    trace!(
+                                        "Client disconnected before continuation response could be sent"
+                                    );
+                                }
                             }
                             Err(flume::RecvError::Disconnected) => {
-                                error!("Continuation Channel was dropped")
+                                error!("Continuation Channel was dropped");
+                                break;
                             }
                         }
+                    }
+                }
+            }
+        });
+        Worker { _handle: handle }
+    }
+
+    /// Start a dedicated writer worker thread
+    /// This thread handles all write operations to ensure proper LMDB locking
+    /// Note: No core pinning for the writer - let the OS scheduler handle it
+    pub fn start_writer(
+        rx: Receiver<ReqMsg>,
+        graph_access: Arc<HelixGraphEngine>,
+        router: Arc<HelixRouter>,
+        io_rt: Arc<Runtime>,
+    ) -> Worker {
+        let handle = std::thread::spawn(move || {
+            trace!("writer thread started");
+
+            // Initialize thread-local metrics buffer
+            helix_metrics::init_thread_local();
+
+            // Set thread local context, so we can access the io runtime
+            let _io_guard = io_rt.enter();
+
+            // Single-threaded writer: process one request at a time, waiting for
+            // any continuations to complete before moving to the next request.
+            loop {
+                match rx.recv() {
+                    Ok((req, ret_chan)) => {
+                        // Create a per-request continuation channel
+                        let (cont_tx, cont_rx) = flume::bounded::<ContMsg>(1);
+
+                        // Process the request
+                        request_mapper(
+                            req,
+                            ret_chan,
+                            graph_access.clone(),
+                            &router,
+                            &io_rt,
+                            &cont_tx,
+                        );
+
+                        // Drop our sender so the channel disconnects when the async future
+                        // (which holds a clone) completes.
+                        drop(cont_tx);
+
+                        // Poll continuation channel until sender is dropped.
+                        while let Ok((ret_chan, cfn)) = cont_rx.recv() {
+                            let result = cfn().map_err(Into::into);
+                            if ret_chan.send(result).is_err() {
+                                trace!(
+                                    "Client disconnected before continuation response could be sent"
+                                );
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        trace!("Writer request channel was dropped, shutting down");
+                        break;
                     }
                 }
             }
@@ -232,10 +334,15 @@ fn request_mapper(
 
     let res = res.unwrap_or(Err(HelixError::NotFound {
         ty: req_type,
-        name: req_name,
+        name: req_name.clone(),
     }));
 
-    ret_chan
-        .send(res)
-        .expect("Should always be able to send, as only one worker processes a request")
+    // Client may have disconnected before we could send the response.
+    // This is normal behavior - just log at trace level and continue.
+    if ret_chan.send(res).is_err() {
+        trace!(
+            "Client disconnected before response could be sent for request '{}'",
+            req_name
+        );
+    }
 }

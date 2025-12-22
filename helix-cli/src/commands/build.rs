@@ -1,10 +1,13 @@
 use crate::config::InstanceInfo;
-use crate::docker::DockerManager;
+use crate::docker::{DockerBuildError, DockerManager};
+use crate::github_issue::{GitHubIssueBuilder, filter_errors_only};
 use crate::metrics_sender::MetricsSender;
 use crate::project::{ProjectContext, get_helix_repo_cache};
+use crate::prompts;
 use crate::utils::{
-    copy_dir_recursive_excluding, diagnostic_source, helixc_utils::collect_hx_files, print_status,
-    print_success, Spinner,
+    Spinner, copy_dir_recursive_excluding, diagnostic_source,
+    helixc_utils::{collect_hx_contents, collect_hx_files},
+    print_confirm, print_error, print_status, print_success, print_warning,
 };
 use eyre::Result;
 use std::time::Instant;
@@ -34,11 +37,40 @@ const HELIX_REPO_URL: &str = "https://github.com/helixdb/helix-db.git";
 // Get the cargo workspace root at compile time
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
-pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Result<MetricsData> {
+pub async fn run(
+    instance_name: Option<String>,
+    metrics_sender: &MetricsSender,
+) -> Result<MetricsData> {
     let start_time = Instant::now();
 
     // Load project context
     let project = ProjectContext::find_and_load(None)?;
+
+    // Get instance name - prompt if not provided
+    let instance_name = match instance_name {
+        Some(name) => name,
+        None if prompts::is_interactive() => {
+            let instances = project.config.list_instances_with_types();
+            prompts::intro(
+                "helix build",
+                Some(
+                    "This will build your selected instance based on the configuration in helix.toml.",
+                ),
+            )?;
+            prompts::select_instance(&instances)?
+        }
+        None => {
+            let instances = project.config.list_instances();
+            return Err(eyre::eyre!(
+                "No instance specified. Available instances: {}",
+                instances
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    };
 
     // Get instance config
     let instance_config = project.config.get_instance(&instance_name)?;
@@ -92,8 +124,22 @@ pub async fn run(instance_name: String, metrics_sender: &MetricsSender) -> Resul
 
         let mut spinner = Spinner::new("DOCKER", "Building Docker image...");
         spinner.start();
-        docker.build_image(&instance_name, instance_config.docker_build_target())?;
-        spinner.stop();
+
+        match docker.build_image(&instance_name, instance_config.docker_build_target()) {
+            Ok(()) => {
+                spinner.stop();
+            }
+            Err(e) => {
+                spinner.stop();
+                // Check if this is a Rust compilation error
+                if let Some(DockerBuildError::RustCompilation { output, .. }) =
+                    e.downcast_ref::<DockerBuildError>()
+                {
+                    handle_docker_rust_compilation_failure(output, &project)?;
+                }
+                return Err(e);
+            }
+        }
     }
 
     print_success(&format!("Instance '{instance_name}' built successfully"));
@@ -226,7 +272,10 @@ fn update_git_cache(repo_cache: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn prepare_instance_workspace(project: &ProjectContext, instance_name: &str) -> Result<()> {
+pub(crate) async fn prepare_instance_workspace(
+    project: &ProjectContext,
+    instance_name: &str,
+) -> Result<()> {
     print_status(
         "PREPARE",
         &format!("Preparing workspace for '{instance_name}'"),
@@ -256,7 +305,10 @@ pub(crate) async fn prepare_instance_workspace(project: &ProjectContext, instanc
     Ok(())
 }
 
-pub(crate) async fn compile_project(project: &ProjectContext, instance_name: &str) -> Result<MetricsData> {
+pub(crate) async fn compile_project(
+    project: &ProjectContext,
+    instance_name: &str,
+) -> Result<MetricsData> {
     print_status("COMPILE", "Compiling Helix queries...");
 
     // Create helix-container directory in instance workspace for generated files
@@ -417,4 +469,45 @@ fn read_config(instance_src_dir: &std::path::Path) -> Result<Config> {
     let config =
         Config::from_file(config_path).map_err(|e| eyre::eyre!("Failed to load config: {e}"))?;
     Ok(config)
+}
+
+/// Handle Rust compilation failure during Docker build - print errors and offer GitHub issue creation.
+fn handle_docker_rust_compilation_failure(
+    docker_output: &str,
+    project: &ProjectContext,
+) -> Result<()> {
+    print_error("Rust compilation failed during Docker build");
+    println!();
+    println!("This may indicate a bug in the Helix code generator.");
+    println!();
+
+    // Offer to create GitHub issue
+    print_warning("You can report this issue to help improve Helix.");
+    println!();
+
+    let should_create =
+        print_confirm("Would you like to create a GitHub issue with diagnostic information?")?;
+
+    if !should_create {
+        return Ok(());
+    }
+
+    // Filter to get just cargo errors from the Docker output
+    let cargo_errors = filter_errors_only(docker_output);
+
+    // Collect .hx content
+    let hx_content = collect_hx_contents(&project.root, &project.config.project.queries)
+        .unwrap_or_else(|_| String::from("[Could not read .hx files]"));
+
+    // Build and open GitHub issue (no generated Rust available from Docker build)
+    let issue = GitHubIssueBuilder::new(cargo_errors).with_hx_content(hx_content);
+
+    print_status("BROWSER", "Opening GitHub issue page...");
+    println!("Please review the content before submitting.");
+
+    issue.open_in_browser()?;
+
+    print_success("GitHub issue page opened in your browser");
+
+    Ok(())
 }

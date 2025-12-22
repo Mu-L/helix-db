@@ -7,11 +7,14 @@
 
 use crate::{
     helix_engine::traversal_core::config::Config,
-    helixc::generator::{
-        migrations::GeneratedMigration,
-        queries::Query,
-        schemas::{EdgeSchema, NodeSchema, VectorSchema},
-        utils::write_headers,
+    helixc::{
+        analyzer::IntrospectionData,
+        generator::{
+            migrations::GeneratedMigration,
+            queries::Query,
+            schemas::{EdgeSchema, NodeSchema, VectorSchema},
+            utils::write_headers,
+        },
     },
 };
 use core::fmt;
@@ -46,6 +49,8 @@ pub struct Source {
     pub config: Config,
     pub src: String,
     pub migrations: Vec<GeneratedMigration>,
+    pub introspection_data: Option<IntrospectionData>,
+    pub secondary_indices: Vec<String>,
 }
 impl Default for Source {
     fn default() -> Self {
@@ -57,13 +62,19 @@ impl Default for Source {
             config: Config::default(),
             src: "".to_string(),
             migrations: vec![],
+            introspection_data: None,
+            secondary_indices: vec![],
         }
     }
 }
 impl Display for Source {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "{}", write_headers())?;
-        writeln!(f, "{}", self.config)?;
+        self.config.fmt_with_schema(
+            f,
+            self.introspection_data.as_ref(),
+            &self.secondary_indices,
+        )?;
         write!(
             f,
             "{}",

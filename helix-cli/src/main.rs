@@ -11,6 +11,7 @@ mod errors;
 mod github_issue;
 mod metrics_sender;
 mod project;
+mod prompts;
 mod sse_client;
 mod update;
 mod utils;
@@ -45,7 +46,7 @@ enum Commands {
     /// Add a new instance to an existing Helix project
     Add {
         #[clap(subcommand)]
-        cloud: CloudDeploymentTypeCommand,
+        cloud: Option<CloudDeploymentTypeCommand>,
     },
 
     /// Create a new Helix Cloud cluster
@@ -77,14 +78,14 @@ enum Commands {
 
     /// Build and compile project for an instance
     Build {
-        /// Instance name to build
-        instance: String,
+        /// Instance name to build (interactive selection if not provided)
+        instance: Option<String>,
     },
 
     /// Deploy/start an instance
     Push {
-        /// Instance name to push
-        instance: String,
+        /// Instance name to push (interactive selection if not provided)
+        instance: Option<String>,
         /// Use development profile for faster builds (Helix Cloud only)
         #[clap(long)]
         dev: bool,
@@ -98,14 +99,14 @@ enum Commands {
 
     /// Start an instance (doesn't rebuild)
     Start {
-        /// Instance name to start
-        instance: String,
+        /// Instance name to start (interactive selection if not provided)
+        instance: Option<String>,
     },
 
     /// Stop an instance
     Stop {
-        /// Instance name to stop
-        instance: String,
+        /// Instance name to stop (interactive selection if not provided)
+        instance: Option<String>,
     },
 
     /// Show status of all instances
@@ -188,6 +189,12 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// Send feedback to the Helix team
+    Feedback {
+        /// Feedback message (opens interactive prompt if not provided)
+        message: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -244,6 +251,7 @@ async fn main() -> Result<()> {
             commands::migrate::run(path, queries_dir, instance_name, port, dry_run, no_backup).await
         }
         Commands::Backup { instance, output } => commands::backup::run(output, instance).await,
+        Commands::Feedback { message } => commands::feedback::run(message).await,
     };
 
     // Shutdown metrics sender

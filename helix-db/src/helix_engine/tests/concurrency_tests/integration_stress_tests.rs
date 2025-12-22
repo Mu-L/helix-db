@@ -1,4 +1,5 @@
 use bumpalo::Bump;
+use serial_test::serial;
 use std::sync::atomic::{AtomicUsize, Ordering};
 /// Integration Stress Tests for HelixDB
 ///
@@ -31,24 +32,25 @@ use crate::helix_engine::traversal_core::ops::source::{
 };
 
 /// Setup storage with appropriate configuration for stress testing
-fn setup_stress_storage() -> (Arc<HelixGraphStorage>, TempDir) {
-    let temp_dir = tempfile::tempdir().unwrap();
+fn setup_stress_storage(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
     let path = temp_dir.path().to_str().unwrap();
 
     let mut config = Config::default();
     config.db_max_size_gb = Some(20); // Large size for stress tests
 
     let storage = HelixGraphStorage::new(path, config, Default::default()).unwrap();
-    (Arc::new(storage), temp_dir)
+    Arc::new(storage)
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_stress_mixed_read_write_operations() {
     // Stress test: Simultaneous graph reads and writes under high load
     //
     // EXPECTED: Both operations function correctly under load
 
-    let (storage, _temp_dir) = setup_stress_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_stress_storage(&temp_dir);
 
     let duration = Duration::from_secs(3);
     let start = std::time::Instant::now();
@@ -136,12 +138,14 @@ fn test_stress_mixed_read_write_operations() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_stress_rapid_graph_growth() {
     // Stress test: Rapidly growing graph with immediate traversals
     //
     // EXPECTED: Graph remains traversable and consistent
 
-    let (storage, _temp_dir) = setup_stress_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_stress_storage(&temp_dir);
 
     // Create root nodes
     let root_ids: Vec<u128> = {
@@ -267,12 +271,14 @@ fn test_stress_rapid_graph_growth() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_stress_transaction_contention() {
     // Stress test: High contention on write transactions
     //
     // EXPECTED: LMDB single-writer enforced, no corruption
 
-    let (storage, _temp_dir) = setup_stress_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_stress_storage(&temp_dir);
 
     let num_threads = 8;
     let duration = Duration::from_secs(2);
@@ -340,12 +346,14 @@ fn test_stress_transaction_contention() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_stress_long_running_transactions() {
     // Stress test: Long-lived read transactions with concurrent writes
     //
     // EXPECTED: MVCC snapshot isolation maintained, no blocking
 
-    let (storage, _temp_dir) = setup_stress_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_stress_storage(&temp_dir);
 
     // Create initial data
     {
@@ -434,12 +442,14 @@ fn test_stress_long_running_transactions() {
 }
 
 #[test]
+#[serial(lmdb_stress)]
 fn test_stress_memory_stability() {
     // Stress test: Verify no memory leaks under sustained load
     //
     // EXPECTED: System remains stable, no unbounded growth
 
-    let (storage, _temp_dir) = setup_stress_storage();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage = setup_stress_storage(&temp_dir);
 
     let duration = Duration::from_secs(3);
     let iterations = 3;

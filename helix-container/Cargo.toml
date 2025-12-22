@@ -25,3 +25,4 @@ bumpalo = "3.19.0"
 
 [features]
 dev = ["helix-db/dev-instance"]
+production = ["helix-db/production"]

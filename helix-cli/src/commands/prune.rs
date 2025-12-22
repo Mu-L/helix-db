@@ -64,8 +64,6 @@ async fn prune_instance(project: &ProjectContext, instance_name: &str) -> Result
 }
 
 async fn prune_all_instances(project: &ProjectContext) -> Result<()> {
-    print_status("PRUNE", "Pruning all instances in project");
-
     let instances = project.config.list_instances();
 
     if instances.is_empty() {
@@ -73,10 +71,30 @@ async fn prune_all_instances(project: &ProjectContext) -> Result<()> {
         return Ok(());
     }
 
-    print_status(
-        "PRUNE",
-        &format!("Found {} instance(s) to prune", instances.len()),
-    );
+    print_warning(&format!(
+        "This will prune {} instance(s) in the project:",
+        instances.len()
+    ));
+    for instance in &instances {
+        println!("  • {}", instance);
+    }
+    print_lines(&[
+        "",
+        "This will remove:",
+        "  • Docker containers and images",
+        "  • Workspace directories",
+        "Note: Persistent volumes are preserved",
+    ]);
+    print_newline();
+
+    let confirmed = print_confirm("Are you sure you want to prune all instances?")?;
+
+    if !confirmed {
+        print_status("PRUNE", "Operation cancelled.");
+        return Ok(());
+    }
+
+    print_status("PRUNE", "Pruning all instances in project");
     let runtime = project.config.project.container_runtime;
     if DockerManager::check_runtime_available(runtime).is_ok() {
         let docker = DockerManager::new(project);

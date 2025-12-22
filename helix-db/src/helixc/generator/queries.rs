@@ -22,7 +22,11 @@ pub struct Query {
 
 impl Query {
     fn print_handler(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "#[handler]")
+        if self.is_mut {
+            writeln!(f, "#[handler(is_write)]")
+        } else {
+            writeln!(f, "#[handler]")
+        }
     }
 
     fn print_parameters(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

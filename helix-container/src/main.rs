@@ -112,18 +112,23 @@ fn main() {
     let submissions: Vec<_> = inventory::iter::<HandlerSubmission>.into_iter().collect();
     println!("Found {} route submissions", submissions.len());
 
-    let query_routes: HashMap<String, HandlerFn> = inventory::iter::<HandlerSubmission>
-        .into_iter()
-        .map(|submission| {
-            println!(
-                "Processing POST submission for handler: {}",
-                submission.0.name
-            );
-            let handler = &submission.0;
-            let func: HandlerFn = Arc::new(handler.func);
-            (handler.name.to_string(), func)
-        })
-        .collect();
+    let (query_routes, write_routes): (HashMap<String, HandlerFn>, std::collections::HashSet<String>) =
+        inventory::iter::<HandlerSubmission>
+            .into_iter()
+            .fold((HashMap::new(), std::collections::HashSet::new()), |(mut routes, mut writes), submission| {
+                println!(
+                    "Processing POST submission for handler: {} (is_write: {})",
+                    submission.0.name,
+                    submission.0.is_write
+                );
+                let handler = &submission.0;
+                let func: HandlerFn = Arc::new(handler.func);
+                routes.insert(handler.name.to_string(), func);
+                if handler.is_write {
+                    writes.insert(handler.name.to_string());
+                }
+                (routes, writes)
+            });
 
     // collect GET routes
     // let get_routes: HashMap<(String, String), HandlerFn> = inventory::iter::<HandlerSubmission>
@@ -153,12 +158,14 @@ fn main() {
         .collect::<HashMap<String, MCPHandlerFn>>();
 
     println!("Routes: {:?}", query_routes.keys());
+    println!("Write routes: {:?}", write_routes);
     let gateway = HelixGateway::new(
         &format!("0.0.0.0:{port}"),
         graph,
         GatewayOpts::DEFAULT_WORKERS_PER_CORE,
         Some(query_routes),
         Some(mcp_routes),
+        Some(write_routes),
         Some(opts),
     );
 
