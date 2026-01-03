@@ -238,8 +238,7 @@ impl SecondaryIndex {
         match field.prefix {
             FieldPrefix::Index => Self::Index(field.name.clone()),
             FieldPrefix::UniqueIndex => Self::Unique(field.name.clone()),
-            FieldPrefix::Empty => Self::None,
-            FieldPrefix::Optional => todo!(),
+            FieldPrefix::Optional | FieldPrefix::Empty => Self::None,
         }
     }
 }

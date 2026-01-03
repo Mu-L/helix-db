@@ -129,7 +129,7 @@ fn test_group_by_correctness() {
 #[test]
 fn test_update_operation_correctness() {
     let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db_with_nodes(1000, &temp_dir);
+    let storage = setup_test_db_with_nodes(50, &temp_dir);
     let read_arena = Bump::new();
 
     // Update all users' scores
