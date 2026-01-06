@@ -227,7 +227,7 @@ impl From<DefaultValue> for GeneratedValue {
 }
 
 /// Metadata for GROUPBY and AGGREGATE_BY operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AggregateInfo {
     pub source_type: Box<Type>,   // Original type being aggregated (Node, Edge, Vector)
     pub properties: Vec<String>,  // Properties being grouped by
@@ -290,7 +290,12 @@ impl Type {
                 let field_names = fields.keys().cloned().collect::<Vec<_>>();
                 format!("object({})", field_names.join(", "))
             }
-            _ => unreachable!(),
+            Type::Node(None) => "node".to_string(),
+            Type::Nodes(None) => "nodes".to_string(),
+            Type::Edge(None) => "edge".to_string(),
+            Type::Edges(None) => "edges".to_string(),
+            Type::Vector(None) => "vector".to_string(),
+            Type::Vectors(None) => "vectors".to_string(),
         }
     }
 
@@ -383,7 +388,8 @@ impl PartialEq for Type {
             (Type::Vectors(name), Type::Vectors(other_name)) => name == other_name,
             (Type::Array(inner), Type::Array(other_inner)) => inner == other_inner,
             (Type::Vector(name), Type::Vectors(other_name)) => name == other_name,
-            _ => unreachable!(),
+            (Type::Aggregate(info), Type::Aggregate(other_info)) => info == other_info,
+            _ => false,
         }
     }
 }

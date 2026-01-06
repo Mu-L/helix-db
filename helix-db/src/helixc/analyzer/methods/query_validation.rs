@@ -868,9 +868,10 @@ pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
                 E401,
                 &query.return_values.len().to_string()
             );
+        } else {
+            let return_name = query.return_values.first().unwrap().0.clone();
+            query.mcp_handler = Some(return_name);
         }
-        let return_name = query.return_values.first().unwrap().0.clone();
-        query.mcp_handler = Some(return_name);
     }
 
     ctx.output.queries.push(query);
