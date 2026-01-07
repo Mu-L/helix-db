@@ -803,6 +803,7 @@ pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
         }
         // constructs parameters and sub‑parameters for generator
         GeneratedParameter::unwrap_param(
+            &original_query.name,
             param.clone(),
             &mut query.parameters,
             &mut query.sub_parameters,
