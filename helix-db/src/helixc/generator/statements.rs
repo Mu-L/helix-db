@@ -62,10 +62,14 @@ impl Display for ForEach {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.for_variables {
             ForVariable::ObjectDestructure(variables) => {
+                // Use struct_name if available (for parameter-based loops), otherwise fall back to inner()Data
+                let struct_name = self.in_variable.struct_name()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("{}Data", self.in_variable.inner()));
                 write!(
                     f,
-                    "for {}Data {{ {} }} in {}",
-                    self.in_variable.inner(),
+                    "for {} {{ {} }} in {}",
+                    struct_name,
                     variables
                         .iter()
                         .map(|v| format!("{v}"))
@@ -98,15 +102,22 @@ pub enum ForVariable {
 #[derive(Debug, Clone)]
 pub enum ForLoopInVariable {
     Identifier(GenRef<String>),
-    Parameter(GenRef<String>),
+    Parameter(GenRef<String>, String),  // (param_name, struct_name)
     Empty,
 }
 impl ForLoopInVariable {
     pub fn inner(&self) -> String {
         match self {
             ForLoopInVariable::Identifier(identifier) => identifier.to_string(),
-            ForLoopInVariable::Parameter(parameter) => parameter.to_string(),
+            ForLoopInVariable::Parameter(parameter, _) => parameter.to_string(),
             ForLoopInVariable::Empty => "".to_string(),
+        }
+    }
+
+    pub fn struct_name(&self) -> Option<&str> {
+        match self {
+            ForLoopInVariable::Parameter(_, struct_name) => Some(struct_name.as_str()),
+            _ => None,
         }
     }
 }
@@ -114,7 +125,7 @@ impl Display for ForLoopInVariable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ForLoopInVariable::Identifier(identifier) => write!(f, "{identifier}"),
-            ForLoopInVariable::Parameter(parameter) => write!(f, "&data.{parameter}"),
+            ForLoopInVariable::Parameter(parameter, _) => write!(f, "&data.{parameter}"),
             ForLoopInVariable::Empty => {
                 panic!("For loop in variable is empty");
             }

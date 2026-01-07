@@ -24,6 +24,14 @@ use crate::{
 use paste::paste;
 use std::collections::HashMap;
 
+fn capitalize_first(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().chain(c).collect(),
+    }
+}
+
 /// Validates the statements in the query used at the highest level to generate each statement in the query
 ///
 /// # Arguments
@@ -119,8 +127,13 @@ pub(crate) fn validate_statements<'a>(
             // else assume variable in scope and add it to the body scope
             let in_var_type = match param {
                 Some(param) => {
+                    let struct_name = format!(
+                        "{}{}Data",
+                        original_query.name,
+                        capitalize_first(&param.name.1)
+                    );
                     for_loop_in_variable =
-                        ForLoopInVariable::Parameter(GenRef::Std(fl.in_variable.1.clone()));
+                        ForLoopInVariable::Parameter(GenRef::Std(fl.in_variable.1.clone()), struct_name);
                     Type::from(param.param_type.1.clone())
                 }
                 None => match scope.get(fl.in_variable.1.as_str()) {
@@ -179,8 +192,13 @@ pub(crate) fn validate_statements<'a>(
                 ForLoopVars::ObjectDestructuring { fields, loc: _ } => {
                     match &param {
                         Some(p) => {
+                            let struct_name = format!(
+                                "{}{}Data",
+                                original_query.name,
+                                capitalize_first(&p.name.1)
+                            );
                             for_loop_in_variable =
-                                ForLoopInVariable::Parameter(GenRef::Std(p.name.1.clone()));
+                                ForLoopInVariable::Parameter(GenRef::Std(p.name.1.clone()), struct_name);
                             match &p.param_type.1 {
                                 FieldType::Array(inner) => match inner.as_ref() {
                                     FieldType::Object(param_fields) => {
