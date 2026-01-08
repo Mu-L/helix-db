@@ -16,9 +16,9 @@ use crate::{
     props,
 };
 
+use bumpalo::Bump;
 use heed3::RoTxn;
 use tempfile::TempDir;
-use bumpalo::Bump;
 fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
@@ -131,6 +131,7 @@ fn test_order_edge_by_asc() {
             node.id(),
             node2.id(),
             false,
+            false,
         )
         .collect_to_obj()
         .unwrap();
@@ -141,6 +142,7 @@ fn test_order_edge_by_asc() {
             props_option(&arena, props! { "since" => 2014 }),
             node3.id(),
             node2.id(),
+            false,
             false,
         )
         .collect_to_obj()
@@ -189,6 +191,7 @@ fn test_order_edge_by_desc() {
             node.id(),
             node2.id(),
             false,
+            false,
         )
         .collect_to_obj()
         .unwrap();
@@ -199,6 +202,7 @@ fn test_order_edge_by_desc() {
             props_option(&arena, props! { "since" => 2014 }),
             node3.id(),
             node2.id(),
+            false,
             false,
         )
         .collect_to_obj()
@@ -345,6 +349,7 @@ fn test_dedup() {
             node.id(),
             node2.id(),
             false,
+            false,
         )
         .collect_to_obj()
         .unwrap();
@@ -355,6 +360,7 @@ fn test_dedup() {
             props_option(&arena, props! { "since" => 2010 }),
             node3.id(),
             node2.id(),
+            false,
             false,
         )
         .collect_to_obj()

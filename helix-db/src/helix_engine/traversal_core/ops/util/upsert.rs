@@ -76,7 +76,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     None => {
                         // Insert secondary indices
                         for (k, v) in props.iter() {
-                            let Some(db) = self.storage.secondary_indices.get(*k) else {
+                            let Some((db, _)) = self.storage.secondary_indices.get(*k) else {
                                 continue;
                             };
 
@@ -106,7 +106,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     }
                     Some(old) => {
                         for (k, v) in props.iter() {
-                            let Some(db) = self.storage.secondary_indices.get(*k) else {
+                            let Some((db, _)) = self.storage.secondary_indices.get(*k) else {
                                 continue;
                             };
 
@@ -152,7 +152,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
 
                         // Add secondary indices for NEW properties (not in old)
                         for (k, v) in diff.clone() {
-                            let Some(db) = self.storage.secondary_indices.get(*k) else {
+                            let Some((db, _)) = self.storage.secondary_indices.get(*k) else {
                                 continue;
                             };
 
@@ -256,7 +256,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                 }
 
                 for (k, v) in props.iter() {
-                    let Some(db) = self.storage.secondary_indices.get(*k) else {
+                    let Some((db, _)) = self.storage.secondary_indices.get(*k) else {
                         continue;
                     };
 
@@ -472,7 +472,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     None => {
                         // Insert secondary indices
                         for (k, v) in props.iter() {
-                            let Some(db) = self.storage.secondary_indices.get(*k) else {
+                            let Some((db, _)) = self.storage.secondary_indices.get(*k) else {
                                 continue;
                             };
 
@@ -502,7 +502,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     }
                     Some(old) => {
                         for (k, v) in props.iter() {
-                            let Some(db) = self.storage.secondary_indices.get(*k) else {
+                            let Some((db, _)) = self.storage.secondary_indices.get(*k) else {
                                 continue;
                             };
 
@@ -550,7 +550,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
 
                         // Add secondary indices for NEW properties (not in old)
                         for (k, v) in diff.clone() {
-                            let Some(db) = self.storage.secondary_indices.get(*k) else {
+                            let Some((db, _)) = self.storage.secondary_indices.get(*k) else {
                                 continue;
                             };
 
@@ -646,7 +646,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                 }
 
                 for (k, v) in props.iter() {
-                    let Some(db) = self.storage.secondary_indices.get(*k) else {
+                    let Some((db, _)) = self.storage.secondary_indices.get(*k) else {
                         continue;
                     };
 

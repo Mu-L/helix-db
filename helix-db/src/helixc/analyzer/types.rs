@@ -23,7 +23,7 @@ impl From<NodeSchema> for GeneratedNodeSchema {
                     name: f.name,
                     field_type: f.field_type.into(),
                     default_value: f.defaults.map(|d| d.into()),
-                    is_index: f.prefix,
+                    field_prefix: f.prefix,
                 })
                 .collect(),
         }
@@ -43,10 +43,11 @@ impl From<EdgeSchema> for GeneratedEdgeSchema {
                         name: f.name,
                         field_type: f.field_type.into(),
                         default_value: f.defaults.map(|d| d.into()),
-                        is_index: f.prefix,
+                        field_prefix: f.prefix,
                     })
                     .collect()
             }),
+            is_unique: generated.unique,
         }
     }
 }
@@ -62,7 +63,7 @@ impl From<VectorSchema> for GeneratedVectorSchema {
                     name: f.name,
                     field_type: f.field_type.into(),
                     default_value: f.defaults.map(|d| d.into()),
-                    is_index: f.prefix,
+                    field_prefix: f.prefix,
                 })
                 .collect(),
         }

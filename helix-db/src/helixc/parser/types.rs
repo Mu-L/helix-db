@@ -99,6 +99,7 @@ pub struct EdgeSchema {
     pub to: (Loc, String),
     pub properties: Option<Vec<Field>>,
     pub loc: Loc,
+    pub unique: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -173,6 +174,11 @@ impl Field {
         self.prefix.is_indexed()
     }
 }
+impl PartialEq for Field {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum DefaultValue {
@@ -196,12 +202,13 @@ pub enum DefaultValue {
 #[derive(Debug, Clone)]
 pub enum FieldPrefix {
     Index,
+    UniqueIndex,
     Optional,
     Empty,
 }
 impl FieldPrefix {
     pub fn is_indexed(&self) -> bool {
-        matches!(self, FieldPrefix::Index)
+        matches!(self, FieldPrefix::Index | FieldPrefix::UniqueIndex)
     }
 }
 

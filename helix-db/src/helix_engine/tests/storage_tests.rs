@@ -3,6 +3,7 @@ use crate::helix_engine::{
         HelixGraphStorage, StorageConfig, storage_methods::DBMethods, version_info::VersionInfo,
     },
     traversal_core::config::Config,
+    types::SecondaryIndex,
 };
 use tempfile::TempDir;
 
@@ -185,7 +186,7 @@ fn test_unpack_adj_edge_data_invalid_length() {
 fn test_create_secondary_index() {
     let (mut storage, _temp_dir) = setup_test_storage();
 
-    let result = storage.create_secondary_index("test_index");
+    let result = storage.create_secondary_index(SecondaryIndex::Index("test_index".to_string()));
     assert!(result.is_ok());
 
     // Verify index was added to secondary_indices map
@@ -197,7 +198,9 @@ fn test_drop_secondary_index() {
     let (mut storage, _temp_dir) = setup_test_storage();
 
     // Create an index first
-    storage.create_secondary_index("test_index").unwrap();
+    storage
+        .create_secondary_index(SecondaryIndex::Index("test_index".to_string()))
+        .unwrap();
     assert!(storage.secondary_indices.contains_key("test_index"));
 
     // Drop the index
@@ -220,9 +223,15 @@ fn test_drop_nonexistent_secondary_index() {
 fn test_multiple_secondary_indices() {
     let (mut storage, _temp_dir) = setup_test_storage();
 
-    storage.create_secondary_index("index1").unwrap();
-    storage.create_secondary_index("index2").unwrap();
-    storage.create_secondary_index("index3").unwrap();
+    storage
+        .create_secondary_index(SecondaryIndex::Index("index1".to_string()))
+        .unwrap();
+    storage
+        .create_secondary_index(SecondaryIndex::Index("index2".to_string()))
+        .unwrap();
+    storage
+        .create_secondary_index(SecondaryIndex::Index("index3".to_string()))
+        .unwrap();
 
     assert_eq!(storage.secondary_indices.len(), 3);
     assert!(storage.secondary_indices.contains_key("index1"));
