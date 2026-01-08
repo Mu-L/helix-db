@@ -108,14 +108,14 @@ pub enum ForVariable {
 }
 #[derive(Debug, Clone)]
 pub enum ForLoopInVariable {
-    Identifier(GenRef<String>),
-    Parameter(GenRef<String>, String), // (param_name, struct_name)
+    Identifier(GenRef<String>, Option<String>), // (identifier_name, optional_struct_name)
+    Parameter(GenRef<String>, String),          // (param_name, struct_name)
     Empty,
 }
 impl ForLoopInVariable {
     pub fn inner(&self) -> String {
         match self {
-            ForLoopInVariable::Identifier(identifier) => identifier.to_string(),
+            ForLoopInVariable::Identifier(identifier, _) => identifier.to_string(),
             ForLoopInVariable::Parameter(parameter, _) => parameter.to_string(),
             ForLoopInVariable::Empty => "".to_string(),
         }
@@ -124,6 +124,7 @@ impl ForLoopInVariable {
     pub fn struct_name(&self) -> Option<&str> {
         match self {
             ForLoopInVariable::Parameter(_, struct_name) => Some(struct_name.as_str()),
+            ForLoopInVariable::Identifier(_, Some(struct_name)) => Some(struct_name.as_str()),
             _ => None,
         }
     }
@@ -131,7 +132,7 @@ impl ForLoopInVariable {
 impl Display for ForLoopInVariable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ForLoopInVariable::Identifier(identifier) => write!(f, "{identifier}"),
+            ForLoopInVariable::Identifier(identifier, _) => write!(f, "{identifier}"),
             ForLoopInVariable::Parameter(parameter, _) => write!(f, "&data.{parameter}"),
             ForLoopInVariable::Empty => {
                 panic!("For loop in variable is empty");
@@ -229,9 +230,20 @@ mod tests {
 
     #[test]
     fn test_for_loop_in_variable_identifier() {
-        let var = ForLoopInVariable::Identifier(GenRef::Std("items".to_string()));
+        let var = ForLoopInVariable::Identifier(GenRef::Std("items".to_string()), None);
         assert_eq!(format!("{}", var), "items");
         assert_eq!(var.inner(), "items");
+    }
+
+    #[test]
+    fn test_for_loop_in_variable_identifier_with_struct_name() {
+        let var = ForLoopInVariable::Identifier(
+            GenRef::Std("subchapters".to_string()),
+            Some("loaddocs_ragSubchaptersData".to_string()),
+        );
+        assert_eq!(format!("{}", var), "subchapters");
+        assert_eq!(var.inner(), "subchapters");
+        assert_eq!(var.struct_name(), Some("loaddocs_ragSubchaptersData"));
     }
 
     #[test]

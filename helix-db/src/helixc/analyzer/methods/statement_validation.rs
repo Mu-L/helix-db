@@ -146,7 +146,7 @@ pub(crate) fn validate_statements<'a>(
                         );
 
                         for_loop_in_variable =
-                            ForLoopInVariable::Identifier(GenRef::Std(fl.in_variable.1.clone()));
+                            ForLoopInVariable::Identifier(GenRef::Std(fl.in_variable.1.clone()), fl_in_var_info.struct_name.clone());
                         fl_in_var_info.ty.clone()
                     }
                     None => {
@@ -213,14 +213,28 @@ pub(crate) fn validate_statements<'a>(
                                                     [field_name, &fl.in_variable.1]
                                                 );
                                             }
-                                            let field_type = Type::from(
-                                                param_fields
-                                                    .get(field_name.as_str())
-                                                    .unwrap()
-                                                    .clone(),
-                                            );
-                                            body_scope.insert(field_name.as_str(), VariableInfo::new(field_type.clone(), true));
-                                            scope.insert(field_name.as_str(), VariableInfo::new(field_type, true));
+                                            let param_field_type = param_fields
+                                                .get(field_name.as_str())
+                                                .unwrap();
+                                            let field_type = Type::from(param_field_type.clone());
+                                            // Check if the field is an Array(Object) and compute struct name for nested loops
+                                            let field_struct_name = match param_field_type {
+                                                FieldType::Array(inner) => match inner.as_ref() {
+                                                    FieldType::Object(_) => Some(format!(
+                                                        "{}{}Data",
+                                                        original_query.name,
+                                                        capitalize_first(field_name)
+                                                    )),
+                                                    _ => None,
+                                                },
+                                                _ => None,
+                                            };
+                                            let var_info = match field_struct_name {
+                                                Some(sn) => VariableInfo::new_with_struct_name(field_type.clone(), true, sn),
+                                                None => VariableInfo::new(field_type.clone(), true),
+                                            };
+                                            body_scope.insert(field_name.as_str(), var_info.clone());
+                                            scope.insert(field_name.as_str(), var_info);
                                         }
                                         for_variable = ForVariable::ObjectDestructure(
                                             fields
@@ -253,7 +267,13 @@ pub(crate) fn validate_statements<'a>(
                             }
                         }
                         None => match scope.get(fl.in_variable.1.as_str()) {
-                            Some(var_info) => match &var_info.ty {
+                            Some(var_info) => {
+                                // Set the for_loop_in_variable with struct_name from scope
+                                for_loop_in_variable = ForLoopInVariable::Identifier(
+                                    GenRef::Std(fl.in_variable.1.clone()),
+                                    var_info.struct_name.clone(),
+                                );
+                                match &var_info.ty {
                                 Type::Array(object_arr) => {
                                     match object_arr.as_ref() {
                                         Type::Object(object) => {
@@ -263,8 +283,24 @@ pub(crate) fn validate_statements<'a>(
                                                 let name = field_name.as_str();
                                                 // adds non-param fields to scope
                                                 let field_type = object.get(name).unwrap().clone();
-                                                body_scope.insert(name, VariableInfo::new(field_type.clone(), true));
-                                                scope.insert(name, VariableInfo::new(field_type, true));
+                                                // Check if the field is an Array(Object) and compute struct name for nested loops
+                                                let field_struct_name = match &field_type {
+                                                    Type::Array(inner) => match inner.as_ref() {
+                                                        Type::Object(_) => Some(format!(
+                                                            "{}{}Data",
+                                                            original_query.name,
+                                                            capitalize_first(name)
+                                                        )),
+                                                        _ => None,
+                                                    },
+                                                    _ => None,
+                                                };
+                                                let field_var_info = match field_struct_name {
+                                                    Some(sn) => VariableInfo::new_with_struct_name(field_type.clone(), true, sn),
+                                                    None => VariableInfo::new(field_type.clone(), true),
+                                                };
+                                                body_scope.insert(name, field_var_info.clone());
+                                                scope.insert(name, field_var_info);
                                             obj_dest_fields.push(GenRef::Std(name.to_string()));
                                         }
                                         for_variable =
@@ -292,6 +328,7 @@ pub(crate) fn validate_statements<'a>(
                                         [&fl.in_variable.1]
                                     );
                                 }
+                            }
                             }
                             _ => {
                                 generate_error!(
