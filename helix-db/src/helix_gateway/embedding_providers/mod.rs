@@ -8,13 +8,13 @@ use url::Url;
 /// Parse an API error response and return a descriptive GraphError
 fn parse_api_error(provider: &str, status: u16, body: &str) -> GraphError {
     // Try to extract error message from JSON response
-    if let Ok(json) = sonic_rs::from_str::<sonic_rs::Value>(body) {
-        if let Some(error_msg) = json["error"]["message"].as_str() {
-            return GraphError::EmbeddingError(format!(
-                "{} embedding API error ({}): {}",
-                provider, status, error_msg
-            ));
-        }
+    if let Ok(json) = sonic_rs::from_str::<sonic_rs::Value>(body)
+        && let Some(error_msg) = json["error"]["message"].as_str()
+    {
+        return GraphError::EmbeddingError(format!(
+            "{} embedding API error ({}): {}",
+            provider, status, error_msg
+        ));
     }
     // Fallback if JSON parsing fails or no message found
     let truncated_body = if body.len() > 200 {
@@ -197,16 +197,16 @@ impl EmbeddingModel for EmbeddingModelImpl {
                         GraphError::EmbeddingError(format!("Failed to send request to OpenAI: {e}"))
                     })?;
 
-                // Check for API errors before parsing
-                if !response.status().is_success() {
-                    let status = response.status().as_u16();
-                    let body = response.text().await.unwrap_or_default();
-                    return Err(parse_api_error("OpenAI", status, &body));
-                }
-
+                // Save status before consuming response body
+                let status = response.status();
                 let text_response = response.text().await.map_err(|e| {
                     GraphError::EmbeddingError(format!("Failed to read OpenAI response: {e}"))
                 })?;
+
+                // Check for API errors
+                if !status.is_success() {
+                    return Err(parse_api_error("OpenAI", status.as_u16(), &text_response));
+                }
 
                 let response =
                     sonic_rs::from_str::<sonic_rs::Value>(&text_response).map_err(|e| {
@@ -260,16 +260,16 @@ impl EmbeddingModel for EmbeddingModelImpl {
                         ))
                     })?;
 
-                // Check for API errors before parsing
-                if !response.status().is_success() {
-                    let status = response.status().as_u16();
-                    let body = response.text().await.unwrap_or_default();
-                    return Err(parse_api_error("Azure OpenAI", status, &body));
-                }
-
+                // Save status before consuming response body
+                let status = response.status();
                 let text_response = response.text().await.map_err(|e| {
                     GraphError::EmbeddingError(format!("Failed to read Azure OpenAI response: {e}"))
                 })?;
+
+                // Check for API errors
+                if !status.is_success() {
+                    return Err(parse_api_error("Azure OpenAI", status.as_u16(), &text_response));
+                }
 
                 let response =
                     sonic_rs::from_str::<sonic_rs::Value>(&text_response).map_err(|e| {
@@ -325,16 +325,16 @@ impl EmbeddingModel for EmbeddingModelImpl {
                         GraphError::EmbeddingError(format!("Failed to send request to Gemini: {e}"))
                     })?;
 
-                // Check for API errors before parsing
-                if !response.status().is_success() {
-                    let status = response.status().as_u16();
-                    let body = response.text().await.unwrap_or_default();
-                    return Err(parse_api_error("Gemini", status, &body));
-                }
-
+                // Save status before consuming response body
+                let status = response.status();
                 let text_response = response.text().await.map_err(|e| {
                     GraphError::EmbeddingError(format!("Failed to read Gemini response: {e}"))
                 })?;
+
+                // Check for API errors
+                if !status.is_success() {
+                    return Err(parse_api_error("Gemini", status.as_u16(), &text_response));
+                }
 
                 let response =
                     sonic_rs::from_str::<sonic_rs::Value>(&text_response).map_err(|e| {
@@ -382,18 +382,18 @@ impl EmbeddingModel for EmbeddingModelImpl {
                         ))
                     })?;
 
-                // Check for API errors before parsing
-                if !response.status().is_success() {
-                    let status = response.status().as_u16();
-                    let body = response.text().await.unwrap_or_default();
-                    return Err(parse_api_error("Local", status, &body));
-                }
-
+                // Save status before consuming response body
+                let status = response.status();
                 let text_response = response.text().await.map_err(|e| {
                     GraphError::EmbeddingError(format!(
                         "Failed to read local embedding response: {e}"
                     ))
                 })?;
+
+                // Check for API errors
+                if !status.is_success() {
+                    return Err(parse_api_error("Local", status.as_u16(), &text_response));
+                }
 
                 let response =
                     sonic_rs::from_str::<sonic_rs::Value>(&text_response).map_err(|e| {
