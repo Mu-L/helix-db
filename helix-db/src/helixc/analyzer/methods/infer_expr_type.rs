@@ -130,7 +130,7 @@ pub(crate) fn infer_expr_type<'a>(
             });
             match result {
                 Ok(stmts) => (
-                    Type::Array(Box::new(inner_array_ty.unwrap())),
+                    Type::Array(Box::new(inner_array_ty.unwrap_or(Type::Unknown))),
                     Some(GeneratedStatement::Array(stmts)),
                 ),
                 Err(()) => (Type::Unknown, Some(GeneratedStatement::Empty)),
@@ -2239,7 +2239,7 @@ pub(crate) fn infer_expr_type<'a>(
                     should_collect: ShouldCollect::ToVec,
                     source_step: Separator::Period(SourceStep::SearchVector(
                         GeneratedSearchVector {
-                            label: GenRef::Literal(sv.vector_type.clone().unwrap()),
+                            label: GenRef::Literal(sv.vector_type.clone().unwrap_or_default()),
                             vec,
                             k,
                             pre_filter,
@@ -2262,7 +2262,10 @@ pub(crate) fn infer_expr_type<'a>(
                         gen_query,
                     );
 
-                    match stmt.unwrap() {
+                    let Some(stmt) = stmt else {
+                        return BoExp::Empty;
+                    };
+                    match stmt {
                         GeneratedStatement::BoExp(expr) => match expr {
                             BoExp::Exists(mut traversal) => {
                                 traversal.should_collect = ShouldCollect::No;
@@ -2310,7 +2313,10 @@ pub(crate) fn infer_expr_type<'a>(
                         gen_query,
                     );
 
-                    match stmt.unwrap() {
+                    let Some(stmt) = stmt else {
+                        return BoExp::Empty;
+                    };
+                    match stmt {
                         GeneratedStatement::BoExp(expr) => match expr {
                             BoExp::Exists(mut traversal) => {
                                 traversal.should_collect = ShouldCollect::No;
@@ -2349,7 +2355,10 @@ pub(crate) fn infer_expr_type<'a>(
             let (ty, stmt) =
                 infer_expr_type(ctx, expr, scope, original_query, parent_ty, gen_query);
 
-            match stmt.unwrap() {
+            let Some(stmt) = stmt else {
+                return (Type::Unknown, None);
+            };
+            match stmt {
                 GeneratedStatement::BoExp(expr) => (
                     Type::Boolean,
                     Some(GeneratedStatement::BoExp(BoExp::Not(Box::new(expr)))),
@@ -2528,7 +2537,7 @@ pub(crate) fn infer_expr_type<'a>(
             };
 
             let search_bm25 = SearchBM25 {
-                type_arg: GenRef::Literal(bm25_search.type_arg.clone().unwrap()),
+                type_arg: GenRef::Literal(bm25_search.type_arg.clone().unwrap_or_default()),
                 query: vec,
                 k,
             };

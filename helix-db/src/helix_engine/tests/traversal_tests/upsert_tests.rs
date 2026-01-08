@@ -206,7 +206,7 @@ fn test_upsert_n_ignores_non_node_values() {
         .unwrap()[0]
         .clone();
     let edge = G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("knows", None, node1.id(), node2.id(), false)
+        .add_edge("knows", None, node1.id(), node2.id(), false, false)
         .collect_to_obj()
         .unwrap();
 
@@ -334,7 +334,7 @@ fn test_upsert_e_updates_existing_edge_with_no_properties() {
 
     // Create existing edge
     let existing_edge = G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("likes", None, node1, node2, false)
+        .add_edge("likes", None, node1, node2, false, false)
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
@@ -390,6 +390,7 @@ fn test_upsert_e_updates_existing_edge_with_properties() {
             ),
             node1,
             node2,
+            false,
             false,
         )
         .collect::<Result<Vec<_>, _>>()
@@ -883,7 +884,7 @@ fn test_upsert_e_preserves_edge_relationships() {
 
     // Create initial edge
     let edge = G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("friends", None, node1_id, node2_id, false)
+        .add_edge("friends", None, node1_id, node2_id, false, false)
         .collect::<Result<Vec<_>, _>>()
         .unwrap()[0]
         .clone();
