@@ -3,8 +3,6 @@ use std::fmt::Display;
 
 use crate::helixc::generator::{bool_ops::BoExp, traversal_steps::Traversal, utils::GenRef};
 
-
-
 #[derive(Clone)]
 pub enum Statement {
     Assignment(Assignment),
@@ -27,12 +25,19 @@ impl Display for Statement {
             Statement::Literal(literal) => write!(f, "{literal}"),
             Statement::Identifier(identifier) => write!(f, "{identifier}"),
             Statement::BoExp(bo) => write!(f, "{bo}"),
-            Statement::Array(array) => write!(f, "[{}]", array.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", ")),
+            Statement::Array(array) => write!(
+                f,
+                "[{}]",
+                array
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Statement::Empty => write!(f, ""),
         }
     }
 }
-
 
 #[derive(Clone)]
 pub enum IdentifierType {
@@ -63,7 +68,9 @@ impl Display for ForEach {
         match &self.for_variables {
             ForVariable::ObjectDestructure(variables) => {
                 // Use struct_name if available (for parameter-based loops), otherwise fall back to inner()Data
-                let struct_name = self.in_variable.struct_name()
+                let struct_name = self
+                    .in_variable
+                    .struct_name()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("{}Data", self.in_variable.inner()));
                 write!(
@@ -102,7 +109,7 @@ pub enum ForVariable {
 #[derive(Debug, Clone)]
 pub enum ForLoopInVariable {
     Identifier(GenRef<String>),
-    Parameter(GenRef<String>, String),  // (param_name, struct_name)
+    Parameter(GenRef<String>, String), // (param_name, struct_name)
     Empty,
 }
 impl ForLoopInVariable {
@@ -208,7 +215,9 @@ mod tests {
     fn test_assignment_statement() {
         let assignment = Statement::Assignment(Assignment {
             variable: GenRef::Std("result".to_string()),
-            value: Box::new(Statement::Identifier(GenRef::Std("computation".to_string()))),
+            value: Box::new(Statement::Identifier(GenRef::Std(
+                "computation".to_string(),
+            ))),
         });
         let output = format!("{}", assignment);
         assert!(output.contains("let result = computation"));
@@ -227,7 +236,10 @@ mod tests {
 
     #[test]
     fn test_for_loop_in_variable_parameter() {
-        let var = ForLoopInVariable::Parameter(GenRef::Std("param_name".to_string()));
+        let var = ForLoopInVariable::Parameter(
+            GenRef::Std("param_name".to_string()),
+            "TestStruct".to_string(),
+        );
         assert_eq!(format!("{}", var), "&data.param_name");
         assert_eq!(var.inner(), "param_name");
     }
@@ -238,4 +250,3 @@ mod tests {
         assert_eq!(var.inner(), "");
     }
 }
-
