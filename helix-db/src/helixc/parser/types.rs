@@ -606,6 +606,9 @@ pub enum ExpressionType {
     AddVector(AddVector),
     AddNode(AddNode),
     AddEdge(AddEdge),
+    UpsertVector(UpsertVector),
+    UpsertNode(UpsertNode),
+    UpsertEdge(UpsertEdge),
     Not(Box<Expression>),
     And(Vec<Expression>),
     Or(Vec<Expression>),
@@ -637,6 +640,9 @@ impl Debug for ExpressionType {
             ExpressionType::AddVector(av) => write!(f, "AddVector({av:?})"),
             ExpressionType::AddNode(an) => write!(f, "AddNode({an:?})"),
             ExpressionType::AddEdge(ae) => write!(f, "AddEdge({ae:?})"),
+            ExpressionType::UpsertVector(uv) => write!(f, "UpsertVector({uv:?})"),
+            ExpressionType::UpsertNode(un) => write!(f, "UpsertNode({un:?})"),
+            ExpressionType::UpsertEdge(ue) => write!(f, "UpsertEdge({ue:?})"),
             ExpressionType::Not(expr) => write!(f, "Not({expr:?})"),
             ExpressionType::And(exprs) => write!(f, "And({exprs:?})"),
             ExpressionType::Or(exprs) => write!(f, "Or({exprs:?})"),
@@ -661,6 +667,9 @@ impl Display for ExpressionType {
             ExpressionType::AddVector(av) => write!(f, "AddVector({av:?})"),
             ExpressionType::AddNode(an) => write!(f, "AddNode({an:?})"),
             ExpressionType::AddEdge(ae) => write!(f, "AddEdge({ae:?})"),
+            ExpressionType::UpsertVector(uv) => write!(f, "UpsertVector({uv:?})"),
+            ExpressionType::UpsertNode(un) => write!(f, "UpsertNode({un:?})"),
+            ExpressionType::UpsertEdge(ue) => write!(f, "UpsertEdge({ue:?})"),
             ExpressionType::Not(expr) => write!(f, "Not({expr:?})"),
             ExpressionType::And(exprs) => write!(f, "And({exprs:?})"),
             ExpressionType::Or(exprs) => write!(f, "Or({exprs:?})"),
@@ -776,6 +785,7 @@ pub enum StepType {
     Aggregate(Aggregate),
     GroupBy(GroupBy),
     AddEdge(AddEdge),
+    UpsertEdge(UpsertEdge),
     First,
     RerankRRF(RerankRRF),
     RerankMMR(RerankMMR),
@@ -799,6 +809,7 @@ impl PartialEq<StepType> for StepType {
                 | (&StepType::Range(_), &StepType::Range(_))
                 | (&StepType::OrderBy(_), &StepType::OrderBy(_))
                 | (&StepType::AddEdge(_), &StepType::AddEdge(_))
+                | (&StepType::UpsertEdge(_), &StepType::UpsertEdge(_))
                 | (&StepType::Aggregate(_), &StepType::Aggregate(_))
                 | (&StepType::GroupBy(_), &StepType::GroupBy(_))
                 | (&StepType::RerankRRF(_), &StepType::RerankRRF(_))
@@ -1013,6 +1024,30 @@ pub struct AddNode {
 
 #[derive(Debug, Clone)]
 pub struct AddEdge {
+    pub loc: Loc,
+    pub edge_type: Option<String>,
+    pub fields: Option<HashMap<String, ValueType>>,
+    pub connection: EdgeConnection,
+    pub from_identifier: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpsertVector {
+    pub loc: Loc,
+    pub vector_type: Option<String>,
+    pub data: Option<VectorData>,
+    pub fields: Option<HashMap<String, ValueType>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpsertNode {
+    pub loc: Loc,
+    pub node_type: Option<String>,
+    pub fields: Option<HashMap<String, ValueType>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpsertEdge {
     pub loc: Loc,
     pub edge_type: Option<String>,
     pub fields: Option<HashMap<String, ValueType>>,
