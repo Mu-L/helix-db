@@ -144,8 +144,10 @@ pub(crate) fn validate_statements<'a>(
                         original_query.name,
                         capitalize_first(&param.name.1)
                     );
-                    for_loop_in_variable =
-                        ForLoopInVariable::Parameter(GenRef::Std(fl.in_variable.1.clone()), struct_name);
+                    for_loop_in_variable = ForLoopInVariable::Parameter(
+                        GenRef::Std(fl.in_variable.1.clone()),
+                        struct_name,
+                    );
                     Type::from(param.param_type.1.clone())
                 }
                 None => match scope.get(fl.in_variable.1.as_str()) {
@@ -157,8 +159,10 @@ pub(crate) fn validate_statements<'a>(
                             fl.in_variable.1.as_str(),
                         );
 
-                        for_loop_in_variable =
-                            ForLoopInVariable::Identifier(GenRef::Std(fl.in_variable.1.clone()), fl_in_var_info.struct_name.clone());
+                        for_loop_in_variable = ForLoopInVariable::Identifier(
+                            GenRef::Std(fl.in_variable.1.clone()),
+                            fl_in_var_info.struct_name.clone(),
+                        );
                         fl_in_var_info.ty.clone()
                     }
                     None => {
@@ -209,8 +213,10 @@ pub(crate) fn validate_statements<'a>(
                                 original_query.name,
                                 capitalize_first(&p.name.1)
                             );
-                            for_loop_in_variable =
-                                ForLoopInVariable::Parameter(GenRef::Std(p.name.1.clone()), struct_name);
+                            for_loop_in_variable = ForLoopInVariable::Parameter(
+                                GenRef::Std(p.name.1.clone()),
+                                struct_name,
+                            );
                             match &p.param_type.1 {
                                 FieldType::Array(inner) => match inner.as_ref() {
                                     FieldType::Object(param_fields) => {
@@ -225,9 +231,8 @@ pub(crate) fn validate_statements<'a>(
                                                     [field_name, &fl.in_variable.1]
                                                 );
                                             }
-                                            let param_field_type = param_fields
-                                                .get(field_name.as_str())
-                                                .unwrap();
+                                            let param_field_type =
+                                                param_fields.get(field_name.as_str()).unwrap();
                                             let field_type = Type::from(param_field_type.clone());
                                             // Check if the field is an Array(Object) and compute struct name for nested loops
                                             let field_struct_name = match param_field_type {
@@ -242,10 +247,15 @@ pub(crate) fn validate_statements<'a>(
                                                 _ => None,
                                             };
                                             let var_info = match field_struct_name {
-                                                Some(sn) => VariableInfo::new_with_struct_name(field_type.clone(), true, sn),
+                                                Some(sn) => VariableInfo::new_with_struct_name(
+                                                    field_type.clone(),
+                                                    true,
+                                                    sn,
+                                                ),
                                                 None => VariableInfo::new(field_type.clone(), true),
                                             };
-                                            body_scope.insert(field_name.as_str(), var_info.clone());
+                                            body_scope
+                                                .insert(field_name.as_str(), var_info.clone());
                                             scope.insert(field_name.as_str(), var_info);
                                         }
                                         for_variable = ForVariable::ObjectDestructure(
@@ -286,62 +296,75 @@ pub(crate) fn validate_statements<'a>(
                                     var_info.struct_name.clone(),
                                 );
                                 match &var_info.ty {
-                                Type::Array(object_arr) => {
-                                    match object_arr.as_ref() {
-                                        Type::Object(object) => {
-                                            let mut obj_dest_fields =
-                                                Vec::with_capacity(fields.len());
-                                            let object = object.clone();
-                                            for (_, field_name) in fields {
-                                                let name = field_name.as_str();
-                                                // adds non-param fields to scope
-                                                let field_type = object.get(name).unwrap().clone();
-                                                // Check if the field is an Array(Object) and compute struct name for nested loops
-                                                let field_struct_name = match &field_type {
-                                                    Type::Array(inner) => match inner.as_ref() {
-                                                        Type::Object(_) => Some(format!(
-                                                            "{}{}Data",
-                                                            original_query.name,
-                                                            capitalize_first(name)
-                                                        )),
+                                    Type::Array(object_arr) => {
+                                        match object_arr.as_ref() {
+                                            Type::Object(object) => {
+                                                let mut obj_dest_fields =
+                                                    Vec::with_capacity(fields.len());
+                                                let object = object.clone();
+                                                for (_, field_name) in fields {
+                                                    let name = field_name.as_str();
+                                                    // adds non-param fields to scope
+                                                    let field_type =
+                                                        object.get(name).unwrap().clone();
+                                                    // Check if the field is an Array(Object) and compute struct name for nested loops
+                                                    let field_struct_name = match &field_type {
+                                                        Type::Array(inner) => {
+                                                            match inner.as_ref() {
+                                                                Type::Object(_) => Some(format!(
+                                                                    "{}{}Data",
+                                                                    original_query.name,
+                                                                    capitalize_first(name)
+                                                                )),
+                                                                _ => None,
+                                                            }
+                                                        }
                                                         _ => None,
-                                                    },
-                                                    _ => None,
-                                                };
-                                                let field_var_info = match field_struct_name {
-                                                    Some(sn) => VariableInfo::new_with_struct_name(field_type.clone(), true, sn),
-                                                    None => VariableInfo::new(field_type.clone(), true),
-                                                };
-                                                body_scope.insert(name, field_var_info.clone());
-                                                scope.insert(name, field_var_info);
-                                            obj_dest_fields.push(GenRef::Std(name.to_string()));
-                                        }
-                                        for_variable =
-                                            ForVariable::ObjectDestructure(obj_dest_fields);
-                                        }
-                                        _ => {
-                                            generate_error!(
-                                                ctx,
-                                                original_query,
-                                                fl.in_variable.0.clone(),
-                                                E653,
-                                                [&fl.in_variable.1],
-                                                [&fl.in_variable.1]
-                                            );
+                                                    };
+                                                    let field_var_info = match field_struct_name {
+                                                        Some(sn) => {
+                                                            VariableInfo::new_with_struct_name(
+                                                                field_type.clone(),
+                                                                true,
+                                                                sn,
+                                                            )
+                                                        }
+                                                        None => VariableInfo::new(
+                                                            field_type.clone(),
+                                                            true,
+                                                        ),
+                                                    };
+                                                    body_scope.insert(name, field_var_info.clone());
+                                                    scope.insert(name, field_var_info);
+                                                    obj_dest_fields
+                                                        .push(GenRef::Std(name.to_string()));
+                                                }
+                                                for_variable =
+                                                    ForVariable::ObjectDestructure(obj_dest_fields);
+                                            }
+                                            _ => {
+                                                generate_error!(
+                                                    ctx,
+                                                    original_query,
+                                                    fl.in_variable.0.clone(),
+                                                    E653,
+                                                    [&fl.in_variable.1],
+                                                    [&fl.in_variable.1]
+                                                );
+                                            }
                                         }
                                     }
+                                    _ => {
+                                        generate_error!(
+                                            ctx,
+                                            original_query,
+                                            fl.in_variable.0.clone(),
+                                            E653,
+                                            [&fl.in_variable.1],
+                                            [&fl.in_variable.1]
+                                        );
+                                    }
                                 }
-                                _ => {
-                                    generate_error!(
-                                        ctx,
-                                        original_query,
-                                        fl.in_variable.0.clone(),
-                                        E653,
-                                        [&fl.in_variable.1],
-                                        [&fl.in_variable.1]
-                                    );
-                                }
-                            }
                             }
                             _ => {
                                 generate_error!(

@@ -115,8 +115,7 @@ impl GeneratedParameter {
                 }
             },
             FieldType::Object(obj) => {
-                let struct_name =
-                    format!("{}{}Data", query_name, capitalize_first(&param.name.1));
+                let struct_name = format!("{}{}Data", query_name, capitalize_first(&param.name.1));
                 unwrap_object(query_name, struct_name.clone(), &obj, sub_parameters);
                 parameters.push(GeneratedParameter {
                     name: param.name.1.clone(),
@@ -146,8 +145,7 @@ fn unwrap_object(
         obj.iter()
             .map(|(field_name, field_type)| match field_type {
                 FieldType::Object(obj) => {
-                    let nested_name =
-                        format!("{}{}Data", query_name, capitalize_first(field_name));
+                    let nested_name = format!("{}{}Data", query_name, capitalize_first(field_name));
                     unwrap_object(query_name, nested_name.clone(), obj, sub_parameters);
                     GeneratedParameter {
                         name: field_name.clone(),

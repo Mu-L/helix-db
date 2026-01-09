@@ -476,7 +476,10 @@ fn test_out_edge_key_preserves_node_id_byte_order() {
 // ============================================================================
 
 use crate::helix_engine::storage_core::storage_methods::StorageMethods;
-use crate::utils::{items::{Node, Edge}, label_hash::hash_label};
+use crate::utils::{
+    items::{Edge, Node},
+    label_hash::hash_label,
+};
 use bumpalo::Bump;
 
 fn create_test_node<'a>(arena: &'a Bump, id: u128, label: &str) -> Node<'a> {
@@ -527,12 +530,18 @@ fn insert_edge(storage: &HelixGraphStorage, edge: &Edge) {
     let label_hash = hash_label(edge.label, None);
     let out_key = HelixGraphStorage::out_edge_key(&edge.from_node, &label_hash);
     let edge_data = HelixGraphStorage::pack_edge_data(&edge.id, &edge.to_node);
-    storage.out_edges_db.put(&mut txn, &out_key, &edge_data).unwrap();
+    storage
+        .out_edges_db
+        .put(&mut txn, &out_key, &edge_data)
+        .unwrap();
 
     // Insert into in_edges_db
     let in_key = HelixGraphStorage::in_edge_key(&edge.to_node, &label_hash);
     let in_edge_data = HelixGraphStorage::pack_edge_data(&edge.id, &edge.from_node);
-    storage.in_edges_db.put(&mut txn, &in_key, &in_edge_data).unwrap();
+    storage
+        .in_edges_db
+        .put(&mut txn, &in_key, &in_edge_data)
+        .unwrap();
 
     txn.commit().unwrap();
 }

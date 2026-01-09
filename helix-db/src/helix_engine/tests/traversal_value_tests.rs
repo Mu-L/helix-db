@@ -125,7 +125,11 @@ fn create_test_vector_with_props<'a>(
     }
 }
 
-fn create_test_vector_without_data<'a>(arena: &'a Bump, id: u128, label: &str) -> VectorWithoutData<'a> {
+fn create_test_vector_without_data<'a>(
+    arena: &'a Bump,
+    id: u128,
+    label: &str,
+) -> VectorWithoutData<'a> {
     VectorWithoutData {
         id,
         label: arena.alloc_str(label),
@@ -405,7 +409,12 @@ fn test_score_node_panics() {
 #[test]
 fn test_get_property_node_existing_property() {
     let arena = Bump::new();
-    let node = create_test_node_with_props(&arena, 1, "Person", vec![("name", Value::String("Alice".to_string()))]);
+    let node = create_test_node_with_props(
+        &arena,
+        1,
+        "Person",
+        vec![("name", Value::String("Alice".to_string()))],
+    );
     let tv = TraversalValue::Node(node);
     let prop = tv.get_property("name");
     assert!(prop.is_some());
@@ -415,7 +424,12 @@ fn test_get_property_node_existing_property() {
 #[test]
 fn test_get_property_node_nonexistent_property() {
     let arena = Bump::new();
-    let node = create_test_node_with_props(&arena, 1, "Person", vec![("name", Value::String("Alice".to_string()))]);
+    let node = create_test_node_with_props(
+        &arena,
+        1,
+        "Person",
+        vec![("name", Value::String("Alice".to_string()))],
+    );
     let tv = TraversalValue::Node(node);
     let prop = tv.get_property("age");
     assert!(prop.is_none());
@@ -424,7 +438,8 @@ fn test_get_property_node_nonexistent_property() {
 #[test]
 fn test_get_property_edge_existing_property() {
     let arena = Bump::new();
-    let edge = create_test_edge_with_props(&arena, 1, "KNOWS", 1, 2, vec![("since", Value::I32(2020))]);
+    let edge =
+        create_test_edge_with_props(&arena, 1, "KNOWS", 1, 2, vec![("since", Value::I32(2020))]);
     let tv = TraversalValue::Edge(edge);
     let prop = tv.get_property("since");
     assert!(prop.is_some());
@@ -434,7 +449,13 @@ fn test_get_property_edge_existing_property() {
 #[test]
 fn test_get_property_vector_existing_property() {
     let arena = Bump::new();
-    let vector = create_test_vector_with_props(&arena, 1, "Embedding", &[1.0], vec![("model", Value::String("gpt-4".to_string()))]);
+    let vector = create_test_vector_with_props(
+        &arena,
+        1,
+        "Embedding",
+        &[1.0],
+        vec![("model", Value::String("gpt-4".to_string()))],
+    );
     let tv = TraversalValue::Vector(vector);
     let prop = tv.get_property("model");
     assert!(prop.is_some());
@@ -444,7 +465,12 @@ fn test_get_property_vector_existing_property() {
 #[test]
 fn test_get_property_vector_without_data_existing_property() {
     let arena = Bump::new();
-    let vector = create_test_vector_without_data_with_props(&arena, 1, "Embedding", vec![("dim", Value::I32(768))]);
+    let vector = create_test_vector_without_data_with_props(
+        &arena,
+        1,
+        "Embedding",
+        vec![("dim", Value::I32(768))],
+    );
     let tv = TraversalValue::VectorNodeWithoutVectorData(vector);
     let prop = tv.get_property("dim");
     assert!(prop.is_some());
@@ -454,7 +480,12 @@ fn test_get_property_vector_without_data_existing_property() {
 #[test]
 fn test_get_property_node_with_score_existing_property() {
     let arena = Bump::new();
-    let node = create_test_node_with_props(&arena, 1, "Doc", vec![("title", Value::String("Report".to_string()))]);
+    let node = create_test_node_with_props(
+        &arena,
+        1,
+        "Doc",
+        vec![("title", Value::String("Report".to_string()))],
+    );
     let tv = TraversalValue::NodeWithScore { node, score: 0.9 };
     let prop = tv.get_property("title");
     assert!(prop.is_some());

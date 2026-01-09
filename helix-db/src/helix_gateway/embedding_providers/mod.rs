@@ -268,7 +268,11 @@ impl EmbeddingModel for EmbeddingModelImpl {
 
                 // Check for API errors
                 if !status.is_success() {
-                    return Err(parse_api_error("Azure OpenAI", status.as_u16(), &text_response));
+                    return Err(parse_api_error(
+                        "Azure OpenAI",
+                        status.as_u16(),
+                        &text_response,
+                    ));
                 }
 
                 let response =
