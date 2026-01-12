@@ -67,20 +67,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         let secondary_indices = secondary_indices.unwrap_or(&[]).to_vec();
         let mut result: Result<TraversalValue, GraphError> = Ok(TraversalValue::Empty);
 
-        match bincode::serialize(&node) {
-            Ok(bytes) => {
-                if let Err(e) = self.storage.nodes_db.put_with_flags(
-                    self.txn,
-                    PutFlags::APPEND,
-                    &node.id,
-                    &bytes,
-                ) {
-                    result = Err(GraphError::from(e));
-                }
-            }
-            Err(e) => result = Err(GraphError::from(e)),
-        }
-
+       
         for index in secondary_indices {
             match self.storage.secondary_indices.get(index) {
                 Some((db, secondary_index)) => {
@@ -137,6 +124,21 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                 }
             }
         }
+
+        match bincode::serialize(&node) {
+            Ok(bytes) => {
+                if let Err(e) = self.storage.nodes_db.put_with_flags(
+                    self.txn,
+                    PutFlags::APPEND,
+                    &node.id,
+                    &bytes,
+                ) {
+                    result = Err(GraphError::from(e));
+                }
+            }
+            Err(e) => result = Err(GraphError::from(e)),
+        }
+
 
         if let Some(bm25) = &self.storage.bm25
             && let Some(props) = node.properties.as_ref()
