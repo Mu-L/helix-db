@@ -1,5 +1,8 @@
 use super::location::Loc;
-use crate::{helixc::parser::{errors::ParserError, HelixParser}, protocol::value::Value};
+use crate::{
+    helixc::parser::{HelixParser, errors::ParserError},
+    protocol::value::Value,
+};
 use chrono::{DateTime, NaiveDate, Utc};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -96,6 +99,7 @@ pub struct EdgeSchema {
     pub to: (Loc, String),
     pub properties: Option<Vec<Field>>,
     pub loc: Loc,
+    pub unique: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -170,6 +174,11 @@ impl Field {
         self.prefix.is_indexed()
     }
 }
+impl PartialEq for Field {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum DefaultValue {
@@ -193,12 +202,13 @@ pub enum DefaultValue {
 #[derive(Debug, Clone)]
 pub enum FieldPrefix {
     Index,
+    UniqueIndex,
     Optional,
     Empty,
 }
 impl FieldPrefix {
     pub fn is_indexed(&self) -> bool {
-        matches!(self, FieldPrefix::Index)
+        matches!(self, FieldPrefix::Index | FieldPrefix::UniqueIndex)
     }
 }
 
@@ -477,7 +487,7 @@ pub enum MathFunction {
     Sqrt,
     Ln,
     Log10,
-    Log,    // Binary: LOG(x, base)
+    Log, // Binary: LOG(x, base)
     Exp,
     Ceil,
     Floor,
@@ -490,7 +500,7 @@ pub enum MathFunction {
     Asin,
     Acos,
     Atan,
-    Atan2,  // Binary: ATAN2(y, x)
+    Atan2, // Binary: ATAN2(y, x)
 
     // Constants (nullary)
     Pi,
@@ -509,16 +519,33 @@ impl MathFunction {
     pub fn arity(&self) -> usize {
         match self {
             MathFunction::Pi | MathFunction::E => 0,
-            MathFunction::Abs | MathFunction::Sqrt | MathFunction::Ln |
-            MathFunction::Log10 | MathFunction::Exp | MathFunction::Ceil |
-            MathFunction::Floor | MathFunction::Round | MathFunction::Sin |
-            MathFunction::Cos | MathFunction::Tan | MathFunction::Asin |
-            MathFunction::Acos | MathFunction::Atan | MathFunction::Min |
-            MathFunction::Max | MathFunction::Sum | MathFunction::Avg |
-            MathFunction::Count => 1,
-            MathFunction::Add | MathFunction::Sub | MathFunction::Mul |
-            MathFunction::Div | MathFunction::Pow | MathFunction::Mod |
-            MathFunction::Atan2 | MathFunction::Log => 2,
+            MathFunction::Abs
+            | MathFunction::Sqrt
+            | MathFunction::Ln
+            | MathFunction::Log10
+            | MathFunction::Exp
+            | MathFunction::Ceil
+            | MathFunction::Floor
+            | MathFunction::Round
+            | MathFunction::Sin
+            | MathFunction::Cos
+            | MathFunction::Tan
+            | MathFunction::Asin
+            | MathFunction::Acos
+            | MathFunction::Atan
+            | MathFunction::Min
+            | MathFunction::Max
+            | MathFunction::Sum
+            | MathFunction::Avg
+            | MathFunction::Count => 1,
+            MathFunction::Add
+            | MathFunction::Sub
+            | MathFunction::Mul
+            | MathFunction::Div
+            | MathFunction::Pow
+            | MathFunction::Mod
+            | MathFunction::Atan2
+            | MathFunction::Log => 2,
         }
     }
 
@@ -579,6 +606,9 @@ pub enum ExpressionType {
     AddVector(AddVector),
     AddNode(AddNode),
     AddEdge(AddEdge),
+    UpsertVector(UpsertVector),
+    UpsertNode(UpsertNode),
+    UpsertEdge(UpsertEdge),
     Not(Box<Expression>),
     And(Vec<Expression>),
     Or(Vec<Expression>),
@@ -610,6 +640,9 @@ impl Debug for ExpressionType {
             ExpressionType::AddVector(av) => write!(f, "AddVector({av:?})"),
             ExpressionType::AddNode(an) => write!(f, "AddNode({an:?})"),
             ExpressionType::AddEdge(ae) => write!(f, "AddEdge({ae:?})"),
+            ExpressionType::UpsertVector(uv) => write!(f, "UpsertVector({uv:?})"),
+            ExpressionType::UpsertNode(un) => write!(f, "UpsertNode({un:?})"),
+            ExpressionType::UpsertEdge(ue) => write!(f, "UpsertEdge({ue:?})"),
             ExpressionType::Not(expr) => write!(f, "Not({expr:?})"),
             ExpressionType::And(exprs) => write!(f, "And({exprs:?})"),
             ExpressionType::Or(exprs) => write!(f, "Or({exprs:?})"),
@@ -634,12 +667,17 @@ impl Display for ExpressionType {
             ExpressionType::AddVector(av) => write!(f, "AddVector({av:?})"),
             ExpressionType::AddNode(an) => write!(f, "AddNode({an:?})"),
             ExpressionType::AddEdge(ae) => write!(f, "AddEdge({ae:?})"),
+            ExpressionType::UpsertVector(uv) => write!(f, "UpsertVector({uv:?})"),
+            ExpressionType::UpsertNode(un) => write!(f, "UpsertNode({un:?})"),
+            ExpressionType::UpsertEdge(ue) => write!(f, "UpsertEdge({ue:?})"),
             ExpressionType::Not(expr) => write!(f, "Not({expr:?})"),
             ExpressionType::And(exprs) => write!(f, "And({exprs:?})"),
             ExpressionType::Or(exprs) => write!(f, "Or({exprs:?})"),
             ExpressionType::SearchVector(sv) => write!(f, "SearchVector({sv:?})"),
             ExpressionType::BM25Search(bm25) => write!(f, "BM25Search({bm25:?})"),
-            ExpressionType::MathFunctionCall(mfc) => write!(f, "{}({:?})", mfc.function.name(), mfc.args),
+            ExpressionType::MathFunctionCall(mfc) => {
+                write!(f, "{}({:?})", mfc.function.name(), mfc.args)
+            }
             ExpressionType::Empty => write!(f, "Empty"),
         }
     }
@@ -701,13 +739,13 @@ pub struct OrderBy {
 #[derive(Debug, Clone)]
 pub struct Aggregate {
     pub loc: Loc,
-    pub properties: Vec<String>
+    pub properties: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct GroupBy {
     pub loc: Loc,
-    pub properties: Vec<String>
+    pub properties: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -747,6 +785,7 @@ pub enum StepType {
     Aggregate(Aggregate),
     GroupBy(GroupBy),
     AddEdge(AddEdge),
+    UpsertEdge(UpsertEdge),
     First,
     RerankRRF(RerankRRF),
     RerankMMR(RerankMMR),
@@ -770,6 +809,7 @@ impl PartialEq<StepType> for StepType {
                 | (&StepType::Range(_), &StepType::Range(_))
                 | (&StepType::OrderBy(_), &StepType::OrderBy(_))
                 | (&StepType::AddEdge(_), &StepType::AddEdge(_))
+                | (&StepType::UpsertEdge(_), &StepType::UpsertEdge(_))
                 | (&StepType::Aggregate(_), &StepType::Aggregate(_))
                 | (&StepType::GroupBy(_), &StepType::GroupBy(_))
                 | (&StepType::RerankRRF(_), &StepType::RerankRRF(_))
@@ -984,6 +1024,30 @@ pub struct AddNode {
 
 #[derive(Debug, Clone)]
 pub struct AddEdge {
+    pub loc: Loc,
+    pub edge_type: Option<String>,
+    pub fields: Option<HashMap<String, ValueType>>,
+    pub connection: EdgeConnection,
+    pub from_identifier: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpsertVector {
+    pub loc: Loc,
+    pub vector_type: Option<String>,
+    pub data: Option<VectorData>,
+    pub fields: Option<HashMap<String, ValueType>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpsertNode {
+    pub loc: Loc,
+    pub node_type: Option<String>,
+    pub fields: Option<HashMap<String, ValueType>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpsertEdge {
     pub loc: Loc,
     pub edge_type: Option<String>,
     pub fields: Option<HashMap<String, ValueType>>,

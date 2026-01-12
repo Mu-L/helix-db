@@ -20,8 +20,8 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use tempfile::TempDir;
 
-use crate::helix_engine::storage_core::version_info::VersionInfo;
 use crate::helix_engine::storage_core::HelixGraphStorage;
+use crate::helix_engine::storage_core::version_info::VersionInfo;
 use crate::helix_engine::traversal_core::config::Config;
 use crate::helix_engine::traversal_core::ops::g::G;
 use crate::helix_engine::traversal_core::ops::vectors::insert::InsertVAdapter;
@@ -414,7 +414,9 @@ fn test_entry_point_consistency() {
 
     // Verify results have valid properties
     for result in results.iter() {
-        if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) = result {
+        if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) =
+            result
+        {
             assert!(v.id > 0, "Result ID should be valid");
             assert!(!v.deleted, "Results should not be deleted");
             assert!(!v.data.is_empty(), "Results should have data");
@@ -486,7 +488,9 @@ fn test_graph_connectivity_after_concurrent_inserts() {
 
         // All results should have valid distances
         for result in results {
-            if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) = result {
+            if let crate::helix_engine::traversal_core::traversal_value::TraversalValue::Vector(v) =
+                result
+            {
                 assert!(
                     v.distance.is_some() && v.distance.unwrap() >= 0.0,
                     "Result should have valid distance"

@@ -14,8 +14,7 @@ use crate::helixc::{
     generator::{
         queries::{Parameter as GeneratedParameter, Query as GeneratedQuery},
         return_values::{
-            ReturnFieldInfo, ReturnFieldSource, ReturnFieldType, ReturnValue,
-            ReturnValueStruct,
+            ReturnFieldInfo, ReturnFieldSource, ReturnFieldType, ReturnValue, ReturnValueStruct,
         },
         source_steps::SourceStep,
         statements::Statement as GeneratedStatement,
@@ -434,13 +433,17 @@ fn process_object_literal<'a>(
                             // Handle traversal like app::{name}
                             // Extract variable name from start node
                             let var_name = match &trav.start {
-                                crate::helixc::parser::types::StartNode::Identifier(id) => id.clone(),
+                                crate::helixc::parser::types::StartNode::Identifier(id) => {
+                                    id.clone()
+                                }
                                 _ => "unknown".to_string(),
                             };
 
                             // Check if there's an Object step to extract property name
                             if let Some(step) = trav.steps.first() {
-                                if let crate::helixc::parser::types::StepType::Object(obj) = &step.step {
+                                if let crate::helixc::parser::types::StepType::Object(obj) =
+                                    &step.step
+                                {
                                     // Extract the first field name from the object step
                                     if let Some(field) = obj.fields.first() {
                                         let prop_name = &field.key;
@@ -475,9 +478,7 @@ fn process_object_literal<'a>(
                                 format!("json!({})", id)
                             }
                         }
-                        _ => {
-                            "serde_json::Value::Null".to_string()
-                        }
+                        _ => "serde_json::Value::Null".to_string(),
                     }
                 }
                 ReturnType::Object(nested_obj) => {
@@ -495,7 +496,11 @@ fn process_object_literal<'a>(
                                     ExpressionType::Identifier(id) => {
                                         // Look up the variable type and generate property extraction
                                         if let Some(var_info) = scope.get(id.as_str()) {
-                                            array_parts.push(build_identifier_json(ctx, id, &var_info.ty));
+                                            array_parts.push(build_identifier_json(
+                                                ctx,
+                                                id,
+                                                &var_info.ty,
+                                            ));
                                         } else {
                                             // Fallback
                                             array_parts.push(format!("json!({})", id));
@@ -504,24 +509,37 @@ fn process_object_literal<'a>(
                                     ExpressionType::Traversal(trav) => {
                                         // Handle traversal in array
                                         let var_name = match &trav.start {
-                                            crate::helixc::parser::types::StartNode::Identifier(id) => id.clone(),
+                                            crate::helixc::parser::types::StartNode::Identifier(
+                                                id,
+                                            ) => id.clone(),
                                             _ => "unknown".to_string(),
                                         };
 
                                         // Check for object step
                                         if let Some(step) = trav.steps.first() {
-                                            if let crate::helixc::parser::types::StepType::Object(obj) = &step.step {
+                                            if let crate::helixc::parser::types::StepType::Object(
+                                                obj,
+                                            ) = &step.step
+                                            {
                                                 if let Some(field) = obj.fields.first() {
                                                     let prop_name = &field.key;
                                                     if prop_name == "id" {
-                                                        array_parts.push(format!("uuid_str({}.id(), &arena)", var_name));
+                                                        array_parts.push(format!(
+                                                            "uuid_str({}.id(), &arena)",
+                                                            var_name
+                                                        ));
                                                     } else if prop_name == "label" {
-                                                        array_parts.push(format!("{}.label()", var_name));
+                                                        array_parts
+                                                            .push(format!("{}.label()", var_name));
                                                     } else {
-                                                        array_parts.push(format!("{}.get_property(\"{}\")", var_name, prop_name));
+                                                        array_parts.push(format!(
+                                                            "{}.get_property(\"{}\")",
+                                                            var_name, prop_name
+                                                        ));
                                                     }
                                                 } else {
-                                                    array_parts.push(format!("json!({})", var_name));
+                                                    array_parts
+                                                        .push(format!("json!({})", var_name));
                                                 }
                                             } else {
                                                 array_parts.push(format!("json!({})", var_name));
@@ -571,13 +589,19 @@ fn process_object_literal<'a>(
                         if *prop_name == "id" || *prop_name == "label" {
                             continue;
                         }
-                        props.push(format!("\"{}\":  {}.get_property(\"{}\")", prop_name, var_name, prop_name));
+                        props.push(format!(
+                            "\"{}\":  {}.get_property(\"{}\")",
+                            prop_name, var_name, prop_name
+                        ));
                     }
 
                     format!("json!({{\n        {}\n    }})", props.join(",\n        "))
                 } else {
                     // Fallback if schema not found
-                    format!("json!({{\"id\": uuid_str({}.id(), &arena), \"label\": {}.label()}})", var_name, var_name)
+                    format!(
+                        "json!({{\"id\": uuid_str({}.id(), &arena), \"label\": {}.label()}})",
+                        var_name, var_name
+                    )
                 }
             }
             Type::Edge(Some(label)) => {
@@ -593,12 +617,18 @@ fn process_object_literal<'a>(
                         if *prop_name == "id" || *prop_name == "label" {
                             continue;
                         }
-                        props.push(format!("\"{}\":  {}.get_property(\"{}\")", prop_name, var_name, prop_name));
+                        props.push(format!(
+                            "\"{}\":  {}.get_property(\"{}\")",
+                            prop_name, var_name, prop_name
+                        ));
                     }
 
                     format!("json!({{\n        {}\n    }})", props.join(",\n        "))
                 } else {
-                    format!("json!({{\"id\": uuid_str({}.id(), &arena), \"label\": {}.label()}})", var_name, var_name)
+                    format!(
+                        "json!({{\"id\": uuid_str({}.id(), &arena), \"label\": {}.label()}})",
+                        var_name, var_name
+                    )
                 }
             }
             _ => {
@@ -616,7 +646,10 @@ fn process_object_literal<'a>(
         ReturnValue {
             name: "serde_json::Value".to_string(),
             fields: vec![],
-            literal_value: Some(crate::helixc::generator::utils::GenRef::Std(format!("json!({})", json_code))),
+            literal_value: Some(crate::helixc::generator::utils::GenRef::Std(format!(
+                "json!({})",
+                json_code
+            ))),
         },
     ));
 
@@ -637,6 +670,7 @@ fn process_object_literal<'a>(
         field_infos: vec![],
         aggregate_properties: Vec::new(),
         is_count_aggregate: false,
+        closure_param_name: None,
     }
 }
 
@@ -802,6 +836,7 @@ pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
         }
         // constructs parameters and sub‑parameters for generator
         GeneratedParameter::unwrap_param(
+            &original_query.name,
             param.clone(),
             &mut query.parameters,
             &mut query.sub_parameters,
@@ -867,9 +902,10 @@ pub(crate) fn validate_query<'a>(ctx: &mut Ctx<'a>, original_query: &'a Query) {
                 E401,
                 &query.return_values.len().to_string()
             );
+        } else {
+            let return_name = query.return_values.first().unwrap().0.clone();
+            query.mcp_handler = Some(return_name);
         }
-        let return_name = query.return_values.first().unwrap().0.clone();
-        query.mcp_handler = Some(return_name);
     }
 
     ctx.output.queries.push(query);
@@ -939,11 +975,20 @@ fn analyze_return_expr<'a>(
                                     ShouldCollect::ToVec => {
                                         // Collection - generate iteration code
                                         let iter_code = if property_name == "id" {
-                                            format!("{}.iter().map(|item| uuid_str(item.id(), &arena)).collect::<Vec<_>>()", field_name)
+                                            format!(
+                                                "{}.iter().map(|item| uuid_str(item.id(), &arena)).collect::<Vec<_>>()",
+                                                field_name
+                                            )
                                         } else if property_name == "label" {
-                                            format!("{}.iter().map(|item| item.label()).collect::<Vec<_>>()", field_name)
+                                            format!(
+                                                "{}.iter().map(|item| item.label()).collect::<Vec<_>>()",
+                                                field_name
+                                            )
                                         } else {
-                                            format!("{}.iter().map(|item| item.get_property(\"{}\")).collect::<Vec<_>>()", field_name, property_name)
+                                            format!(
+                                                "{}.iter().map(|item| item.get_property(\"{}\")).collect::<Vec<_>>()",
+                                                field_name, property_name
+                                            )
                                         };
                                         Some(GenRef::Std(iter_code))
                                     }
@@ -1007,6 +1052,7 @@ fn analyze_return_expr<'a>(
                                         is_group_by,
                                         aggregate_properties,
                                         is_count_aggregate,
+                                        traversal.closure_param_name.clone(),
                                     ));
                             }
 
@@ -1075,6 +1121,7 @@ fn analyze_return_expr<'a>(
                                     is_group_by,
                                     aggregate_properties,
                                     is_count_aggregate,
+                                    traversal.closure_param_name.clone(),
                                 ));
 
                             // Generate map closure (direct return, no variable assignment to update)
@@ -1160,6 +1207,7 @@ fn analyze_return_expr<'a>(
                                 is_group_by,
                                 aggregate_properties,
                                 is_count_aggregate,
+                                traversal.closure_param_name.clone(),
                             ));
                     }
 
@@ -1233,14 +1281,7 @@ fn analyze_return_expr<'a>(
             } else {
                 // Complex nested object - use new object literal processing
                 let struct_name = format!("{}ReturnType", capitalize_first(&query.name));
-                process_object_literal(
-                    ctx,
-                    original_query,
-                    scope,
-                    query,
-                    values,
-                    struct_name,
-                );
+                process_object_literal(ctx, original_query, scope, query, values, struct_name);
 
                 // Note: process_object_literal adds to query.return_values
                 // and sets use_struct_returns = false, so no need to push to return_structs
