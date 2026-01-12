@@ -121,12 +121,12 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                         db.delete_one_duplicate(self.txn, &old_serialized, &node.id)
                                     {
                                         result = Err(GraphError::from(e));
-                                        continue;
+                                        break;
                                     }
                                 }
                                 Err(e) => {
                                     result = Err(GraphError::from(e));
-                                    continue;
+                                    break;
                                 }
                             }
 
@@ -306,7 +306,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
         }
     }
 
-    // TODO: better error handling. We're wasting time by doing work after something goes wrong.
     fn upsert_e(
         mut self,
         label: &'arena str,
@@ -519,12 +518,12 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                         &vector.id,
                                     ) {
                                         result = Err(GraphError::from(e));
-                                        continue;
+                                        break;
                                     }
                                 }
                                 Err(e) => {
                                     result = Err(GraphError::from(e));
-                                    continue;
+                                    break;
                                 }
                             }
 

@@ -125,12 +125,12 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                 &node.id,
                                             ) {
                                                 results.push(Err(GraphError::from(e)));
-                                                continue;
+                                                break;
                                             }
                                         }
                                         Err(e) => {
                                             results.push(Err(GraphError::from(e)));
-                                            continue;
+                                            break;
                                         }
                                     }
 

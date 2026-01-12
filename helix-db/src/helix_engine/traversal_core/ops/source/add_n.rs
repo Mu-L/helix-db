@@ -120,15 +120,20 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                                     e
                                 );
                                 result = Err(GraphError::from(e));
+                                break;
                             }
                         }
-                        Err(e) => result = Err(GraphError::from(e)),
+                        Err(e) => {
+                            result = Err(GraphError::from(e));
+                            break;
+                        }
                     }
                 }
                 None => {
                     result = Err(GraphError::New(format!(
                         "Secondary Index {index} not found"
                     )));
+                    break;
                 }
             }
         }
@@ -145,11 +150,8 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
 
         if result.is_ok() {
             result = Ok(TraversalValue::Node(node));
-        } else {
-            result = Err(GraphError::New(
-                "Failed to add node to secondary indices".to_string(),
-            ));
         }
+        // Preserve original error - don't overwrite with generic message
 
         RwTraversalIterator {
             storage: self.storage,
