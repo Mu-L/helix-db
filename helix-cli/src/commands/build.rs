@@ -538,7 +538,7 @@ fn build_binary_using_cargo(
     Command::new("cargo")
         .arg("build")
         .arg("--target-dir")
-        .arg(&binary_output_path.as_os_str())
+        .arg(binary_output_path.as_os_str())
         .current_dir(current_dir)
         .status()?;
     Ok(())
