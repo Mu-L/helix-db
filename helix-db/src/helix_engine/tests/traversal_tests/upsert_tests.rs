@@ -13,7 +13,7 @@ use crate::{
                 g::G,
                 source::{add_e::AddEAdapter, add_n::AddNAdapter},
                 util::upsert::UpsertAdapter,
-                vectors::insert::InsertVAdapter,
+                vectors::{insert::InsertVAdapter, search::SearchVAdapter},
             },
             traversal_value::TraversalValue,
         },
@@ -949,4 +949,40 @@ fn test_upsert_v_with_bm25_indexing() {
     }
 
     txn.commit().unwrap();
+}
+
+#[test]
+fn test_upsert_v_new_vector_is_searchable() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    let query = [0.1, 0.2, 0.3];
+    let result = G::new_mut_from_iter(
+        &storage,
+        &mut txn,
+        std::iter::empty::<TraversalValue>(),
+        &arena,
+    )
+    .upsert_v(
+        &query,
+        "searchable_embedding",
+        &[("model", Value::from("test"))],
+    )
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
+
+    assert_eq!(result.len(), 1);
+    let inserted_id = result[0].id();
+    txn.commit().unwrap();
+
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let search_results = G::new(&storage, &txn, &arena)
+        .search_v::<Filter, _>(&query, 10, "searchable_embedding", None)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert!(!search_results.is_empty(), "Search should find the upserted vector");
+    assert_eq!(search_results[0].id(), inserted_id, "Should find the same vector");
 }
