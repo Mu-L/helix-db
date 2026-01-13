@@ -130,11 +130,7 @@ impl VectorCore {
             let mut arr = [0u8; 16];
             let len = std::cmp::min(ep_id.len(), 16);
             arr[..len].copy_from_slice(&ep_id[..len]);
-
-            let ep = self
-                .get_raw_vector_data(txn, u128::from_be_bytes(arr), label, arena)
-                .map_err(|_| VectorError::EntryPointNotFound)?;
-            Ok(ep)
+            self.get_raw_vector_data(txn, u128::from_be_bytes(arr), label, arena)
         } else {
             Err(VectorError::EntryPointNotFound)
         }
@@ -442,7 +438,7 @@ impl VectorCore {
         let vector_data_bytes = self
             .vectors_db
             .get(txn, &Self::vector_key(id, 0))?
-            .ok_or(VectorError::VectorNotFound(uuid_str(id, arena).to_string()))?;
+            .ok_or(VectorError::EntryPointNotFound)?;
         HVector::from_raw_vector_data(arena, vector_data_bytes, label, id)
     }
 
