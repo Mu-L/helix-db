@@ -154,14 +154,6 @@ fn main() {
         Some(opts),
     );
 
-    std::thread::spawn(|| {
-        let mut i = 0;
-        loop {
-            info!("Thread Log: {} second(s) elapsed", i);
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            i += 1;
-        }
-    });
 
     gateway.run().expect("Failed to run gateway")
 }
