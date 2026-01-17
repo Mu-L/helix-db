@@ -18,7 +18,7 @@ use ratatui::{
 };
 use std::io;
 use std::time::Duration as StdDuration;
-use tokio::sync::mpsc;
+use flume;
 use tokio::task::JoinHandle;
 
 /// Orange highlight color matching Helix branding
@@ -214,8 +214,8 @@ pub async fn run(log_source: LogSource, instance_name: String) -> Result<()> {
 /// Returns a channel receiver and the task handle.
 fn spawn_live_stream(
     log_source: LogSource,
-) -> (mpsc::UnboundedReceiver<String>, JoinHandle<Result<()>>) {
-    let (tx, rx) = mpsc::unbounded_channel::<String>();
+) -> (flume::Receiver<String>, JoinHandle<Result<()>>) {
+    let (tx, rx) = flume::unbounded::<String>();
 
     let handle = tokio::spawn(async move {
         log_source
@@ -247,7 +247,7 @@ async fn run_app(
 
     // Start SSE streaming for live mode
     let (mut log_rx, mut stream_handle): (
-        mpsc::UnboundedReceiver<String>,
+        flume::Receiver<String>,
         JoinHandle<Result<()>>,
     ) = spawn_live_stream(app.log_source.clone());
 
@@ -438,7 +438,7 @@ async fn run_app(
                 }
             }
             // Check for incoming log messages from SSE stream (only in live mode)
-            Some(line) = log_rx.recv(), if app.mode == LogMode::Live => {
+            Ok(line) = log_rx.recv_async(), if app.mode == LogMode::Live => {
                 let was_at_bottom = app.scroll_offset >= app.max_scroll(size.height as usize);
                 app.logs.push(line);
                 // Clear status message once we start receiving logs
