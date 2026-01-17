@@ -220,7 +220,7 @@ async fn post_handler(
 
     match res {
         Ok(r) => {
-            #[cfg(feature = "dev-instance")]
+            #[cfg(any(feature = "dev-instance", feature = "production"))]
             {
                 let resp_str = String::from_utf8_lossy(&r.body);
                 info!(query = %query_name, response = %resp_str, "Response");
