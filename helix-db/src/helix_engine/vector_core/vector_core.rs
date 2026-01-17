@@ -158,7 +158,7 @@ impl VectorCore {
             )
             .map_err(VectorError::from)?;
         self.vector_properties_db
-            .put(txn, &vector.id, &bincode::serialize(&vector)?)?;
+            .put(txn, &vector.id, bincode::serialize(&[0u8])?.as_ref())?;
         Ok(())
     }
 
@@ -649,8 +649,11 @@ impl HNSW for VectorCore {
                 }
 
                 properties.deleted = true;
-                self.vector_properties_db
-                    .put(txn, &id, &bincode::serialize(&properties)?)?;
+                self.vector_properties_db.put(
+                    txn,
+                    &id,
+                    bincode::serialize(&properties)?.as_ref(),
+                )?;
                 debug_println!("vector deleted with id {}", &id);
                 Ok(())
             }
