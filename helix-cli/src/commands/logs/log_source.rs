@@ -142,7 +142,7 @@ where
     let stderr_handle = if let Some(stderr) = stderr {
         let reader = BufReader::new(stderr);
         Some(std::thread::spawn(move || {
-            reader.lines().filter_map(|l| l.ok()).collect::<Vec<_>>()
+            reader.lines().map_while(Result::ok).collect::<Vec<_>>()
         }))
     } else {
         None
@@ -160,11 +160,11 @@ where
     }
 
     // Collect stderr lines
-    if let Some(handle) = stderr_handle {
-        if let Ok(lines) = handle.join() {
-            for line in lines {
-                on_line(line);
-            }
+    if let Some(handle) = stderr_handle
+        && let Ok(lines) = handle.join()
+    {
+        for line in lines {
+            on_line(line);
         }
     }
 

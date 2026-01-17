@@ -154,7 +154,7 @@ impl App {
 
         *dt = match self.picker_field {
             PickerField::Year => {
-                let new_year = (dt.year() as i32 + delta).clamp(2020, 2030);
+                let new_year = (dt.year() + delta).clamp(2020, 2030);
                 dt.with_year(new_year).unwrap_or(*dt)
             }
             PickerField::Month => {
@@ -259,122 +259,170 @@ async fn run_app(
         tokio::select! {
             // Check for keyboard events (with short timeout for responsiveness)
             _ = tokio::time::sleep(StdDuration::from_millis(50)) => {
-                if event::poll(StdDuration::ZERO)? {
-                    if let Event::Key(key) = event::read()? {
-                        // Handle Ctrl+C globally
-                        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                            stream_handle.abort();
-                            return Ok(());
-                        }
+                if event::poll(StdDuration::ZERO)?
+                    && let Event::Key(key) = event::read()?
+                {
+                    // Handle Ctrl+C globally
+                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                        stream_handle.abort();
+                        return Ok(());
+                    }
 
-                        match app.mode {
-                            LogMode::Live | LogMode::TimeRange => {
-                                // Handle z-prefix commands (zt, zb)
-                                if app.pending_z {
-                                    app.pending_z = false;
-                                    match key.code {
-                                        KeyCode::Char('t') => {
-                                            // zt - scroll to top (oldest logs)
-                                            app.scroll_offset = 0;
-                                        }
-                                        KeyCode::Char('b') => {
-                                            // zb - scroll to bottom (newest logs)
-                                            app.scroll_to_bottom(size.height as usize);
-                                        }
-                                        _ => {} // Any other key cancels the z prefix
+                    match app.mode {
+                        LogMode::Live | LogMode::TimeRange => {
+                            // Handle z-prefix commands (zt, zb)
+                            if app.pending_z {
+                                app.pending_z = false;
+                                match key.code {
+                                    KeyCode::Char('t') => {
+                                        // zt - scroll to top (oldest logs)
+                                        app.scroll_offset = 0;
                                     }
-                                } else {
-                                    match key.code {
-                                        KeyCode::Esc | KeyCode::Char('q') => {
-                                            stream_handle.abort();
-                                            return Ok(());
-                                        }
-                                        KeyCode::Char('z') => {
-                                            app.pending_z = true;
-                                        }
-                                        KeyCode::Char('l') => {
-                                            if app.mode != LogMode::Live {
-                                                // Switch to live mode - restart streaming
-                                                stream_handle.abort();
-                                                app.mode = LogMode::Live;
-                                                app.logs.clear();
-                                                app.scroll_offset = 0;
-                                                app.status_message =
-                                                    Some("Switching to live mode...".to_string());
-                                                fetch_initial_logs(app, size.height as usize).await?;
-                                                // Restart SSE stream
-                                                let (rx, handle) = spawn_live_stream(app.log_source.clone());
-                                                log_rx = rx;
-                                                stream_handle = handle;
-                                            }
-                                        }
-                                        KeyCode::Char('r') => {
-                                            // Entering preset selection - stop streaming
-                                            stream_handle.abort();
-                                            app.mode = LogMode::SelectingPreset;
-                                            app.selected_preset = 0;
-                                        }
-                                        KeyCode::Up => {
-                                            app.scroll_up();
-                                        }
-                                        KeyCode::Down => {
-                                            app.scroll_down(size.height as usize);
-                                        }
-                                        KeyCode::Char('k') | KeyCode::PageUp => {
-                                            // k and PageUp - page up
-                                            let jump = app.visible_log_lines(size.height as usize);
-                                            app.scroll_offset = app.scroll_offset.saturating_sub(jump);
-                                        }
-                                        KeyCode::Char('j') | KeyCode::PageDown => {
-                                            // j and PageDown - page down
-                                            let jump = app.visible_log_lines(size.height as usize);
-                                            let max = app.max_scroll(size.height as usize);
-                                            app.scroll_offset = (app.scroll_offset + jump).min(max);
-                                        }
-                                        KeyCode::Home => {
-                                            app.scroll_offset = 0;
-                                        }
-                                        KeyCode::End => {
-                                            app.scroll_to_bottom(size.height as usize);
-                                        }
-                                        _ => {}
+                                    KeyCode::Char('b') => {
+                                        // zb - scroll to bottom (newest logs)
+                                        app.scroll_to_bottom(size.height as usize);
                                     }
+                                    _ => {} // Any other key cancels the z prefix
+                                }
+                            } else {
+                                match key.code {
+                                    KeyCode::Esc | KeyCode::Char('q') => {
+                                        stream_handle.abort();
+                                        return Ok(());
+                                    }
+                                    KeyCode::Char('z') => {
+                                        app.pending_z = true;
+                                    }
+                                    KeyCode::Char('l') => {
+                                        if app.mode != LogMode::Live {
+                                            // Switch to live mode - restart streaming
+                                            stream_handle.abort();
+                                            app.mode = LogMode::Live;
+                                            app.logs.clear();
+                                            app.scroll_offset = 0;
+                                            app.status_message =
+                                                Some("Switching to live mode...".to_string());
+                                            fetch_initial_logs(app, size.height as usize).await?;
+                                            // Restart SSE stream
+                                            let (rx, handle) = spawn_live_stream(app.log_source.clone());
+                                            log_rx = rx;
+                                            stream_handle = handle;
+                                        }
+                                    }
+                                    KeyCode::Char('r') => {
+                                        // Entering preset selection - stop streaming
+                                        stream_handle.abort();
+                                        app.mode = LogMode::SelectingPreset;
+                                        app.selected_preset = 0;
+                                    }
+                                    KeyCode::Up => {
+                                        app.scroll_up();
+                                    }
+                                    KeyCode::Down => {
+                                        app.scroll_down(size.height as usize);
+                                    }
+                                    KeyCode::Char('k') | KeyCode::PageUp => {
+                                        // k and PageUp - page up
+                                        let jump = app.visible_log_lines(size.height as usize);
+                                        app.scroll_offset = app.scroll_offset.saturating_sub(jump);
+                                    }
+                                    KeyCode::Char('j') | KeyCode::PageDown => {
+                                        // j and PageDown - page down
+                                        let jump = app.visible_log_lines(size.height as usize);
+                                        let max = app.max_scroll(size.height as usize);
+                                        app.scroll_offset = (app.scroll_offset + jump).min(max);
+                                    }
+                                    KeyCode::Home => {
+                                        app.scroll_offset = 0;
+                                    }
+                                    KeyCode::End => {
+                                        app.scroll_to_bottom(size.height as usize);
+                                    }
+                                    _ => {}
                                 }
                             }
-                            LogMode::SelectingPreset => {
-                                match key.code {
-                                    KeyCode::Esc => {
-                                        // Return to live mode - restart streaming
-                                        app.mode = LogMode::Live;
-                                        let (rx, handle) = spawn_live_stream(app.log_source.clone());
-                                        log_rx = rx;
-                                        stream_handle = handle;
+                        }
+                        LogMode::SelectingPreset => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    // Return to live mode - restart streaming
+                                    app.mode = LogMode::Live;
+                                    let (rx, handle) = spawn_live_stream(app.log_source.clone());
+                                    log_rx = rx;
+                                    stream_handle = handle;
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    if app.selected_preset > 0 {
+                                        app.selected_preset -= 1;
                                     }
-                                    KeyCode::Up | KeyCode::Char('k') => {
-                                        if app.selected_preset > 0 {
-                                            app.selected_preset -= 1;
-                                        }
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    if app.selected_preset < PRESETS.len() - 1 {
+                                        app.selected_preset += 1;
                                     }
-                                    KeyCode::Down | KeyCode::Char('j') => {
-                                        if app.selected_preset < PRESETS.len() - 1 {
-                                            app.selected_preset += 1;
-                                        }
+                                }
+                                KeyCode::Enter => {
+                                    if app.selected_preset == PRESETS.len() - 1 {
+                                        // Custom range
+                                        app.mode = LogMode::CustomRangeInput;
+                                        app.picker_field = PickerField::Year;
+                                        app.picker_target = PickerTarget::Start;
+                                        let now = Utc::now();
+                                        app.picker_start = now - Duration::hours(1);
+                                        app.picker_end = now;
+                                    } else {
+                                        // Preset selected - stay in time range mode (no streaming)
+                                        let minutes = PRESETS[app.selected_preset].1;
+                                        let now = Utc::now();
+                                        app.range_start = Some(now - Duration::minutes(minutes));
+                                        app.range_end = Some(now);
+                                        app.mode = LogMode::TimeRange;
+                                        app.logs.clear();
+                                        app.scroll_offset = 0;
+                                        app.status_message = Some("Fetching logs...".to_string());
+                                        fetch_range_logs(app).await?;
                                     }
-                                    KeyCode::Enter => {
-                                        if app.selected_preset == PRESETS.len() - 1 {
-                                            // Custom range
-                                            app.mode = LogMode::CustomRangeInput;
-                                            app.picker_field = PickerField::Year;
-                                            app.picker_target = PickerTarget::Start;
-                                            let now = Utc::now();
-                                            app.picker_start = now - Duration::hours(1);
-                                            app.picker_end = now;
+                                }
+                                _ => {}
+                            }
+                        }
+                        LogMode::CustomRangeInput => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    app.mode = LogMode::SelectingPreset;
+                                }
+                                KeyCode::Left | KeyCode::Char('h') => {
+                                    app.picker_field = app.picker_field.prev();
+                                }
+                                KeyCode::Right | KeyCode::Char('l') => {
+                                    app.picker_field = app.picker_field.next();
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    app.adjust_picker_value(1);
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    app.adjust_picker_value(-1);
+                                }
+                                KeyCode::Tab => {
+                                    app.picker_target = match app.picker_target {
+                                        PickerTarget::Start => PickerTarget::End,
+                                        PickerTarget::End => PickerTarget::Start,
+                                    };
+                                }
+                                KeyCode::Enter => {
+                                    // Validate and fetch
+                                    if app.picker_start >= app.picker_end {
+                                        app.status_message =
+                                            Some("Start time must be before end time".to_string());
+                                    } else {
+                                        let duration =
+                                            app.picker_end.signed_duration_since(app.picker_start);
+                                        if duration > Duration::hours(1) {
+                                            app.status_message =
+                                                Some("Time range cannot exceed 1 hour".to_string());
                                         } else {
-                                            // Preset selected - stay in time range mode (no streaming)
-                                            let minutes = PRESETS[app.selected_preset].1;
-                                            let now = Utc::now();
-                                            app.range_start = Some(now - Duration::minutes(minutes));
-                                            app.range_end = Some(now);
+                                            app.range_start = Some(app.picker_start);
+                                            app.range_end = Some(app.picker_end);
                                             app.mode = LogMode::TimeRange;
                                             app.logs.clear();
                                             app.scroll_offset = 0;
@@ -382,56 +430,8 @@ async fn run_app(
                                             fetch_range_logs(app).await?;
                                         }
                                     }
-                                    _ => {}
                                 }
-                            }
-                            LogMode::CustomRangeInput => {
-                                match key.code {
-                                    KeyCode::Esc => {
-                                        app.mode = LogMode::SelectingPreset;
-                                    }
-                                    KeyCode::Left | KeyCode::Char('h') => {
-                                        app.picker_field = app.picker_field.prev();
-                                    }
-                                    KeyCode::Right | KeyCode::Char('l') => {
-                                        app.picker_field = app.picker_field.next();
-                                    }
-                                    KeyCode::Up | KeyCode::Char('k') => {
-                                        app.adjust_picker_value(1);
-                                    }
-                                    KeyCode::Down | KeyCode::Char('j') => {
-                                        app.adjust_picker_value(-1);
-                                    }
-                                    KeyCode::Tab => {
-                                        app.picker_target = match app.picker_target {
-                                            PickerTarget::Start => PickerTarget::End,
-                                            PickerTarget::End => PickerTarget::Start,
-                                        };
-                                    }
-                                    KeyCode::Enter => {
-                                        // Validate and fetch
-                                        if app.picker_start >= app.picker_end {
-                                            app.status_message =
-                                                Some("Start time must be before end time".to_string());
-                                        } else {
-                                            let duration =
-                                                app.picker_end.signed_duration_since(app.picker_start);
-                                            if duration > Duration::hours(1) {
-                                                app.status_message =
-                                                    Some("Time range cannot exceed 1 hour".to_string());
-                                            } else {
-                                                app.range_start = Some(app.picker_start);
-                                                app.range_end = Some(app.picker_end);
-                                                app.mode = LogMode::TimeRange;
-                                                app.logs.clear();
-                                                app.scroll_offset = 0;
-                                                app.status_message = Some("Fetching logs...".to_string());
-                                                fetch_range_logs(app).await?;
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                }
+                                _ => {}
                             }
                         }
                     }
