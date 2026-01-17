@@ -55,7 +55,7 @@ fn main() {
     };
 
     println!("Running with the following setup:");
-    println!("\tconfig: {config:?}");
+    println!("\tconfig: {config:#?}");
     println!("\tpath: {}", path.display());
     println!("\tport: {port}");
 
@@ -132,23 +132,6 @@ fn main() {
         },
     );
 
-    // collect GET routes
-    // let get_routes: HashMap<(String, String), HandlerFn> = inventory::iter::<HandlerSubmission>
-    //     .into_iter()
-    //     .map(|submission| {
-    //         println!("Processing GET submission for handler: {}", submission.0.name);
-    //         let handler = &submission.0;
-    //         let func: HandlerFn = Arc::new(move |input, response| (handler.func)(input, response));
-    //         (
-    //             (
-    //                 "GET".to_string(),
-    //                 format!("/get/{}", handler.name.to_string()),
-    //             ),
-    //             func,
-    //         )
-    //     })
-    // .collect();
-
     let mcp_routes = inventory::iter::<MCPHandlerSubmission>
         .into_iter()
         .map(|submission| {
@@ -170,6 +153,15 @@ fn main() {
         Some(write_routes),
         Some(opts),
     );
+
+    std::thread::spawn(|| {
+        let mut i = 0;
+        loop {
+            info!("Thread Log: {} second(s) elapsed", i);
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            i += 1;
+        }
+    });
 
     gateway.run().expect("Failed to run gateway")
 }
