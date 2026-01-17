@@ -126,8 +126,6 @@ impl Worker {
         let handle = std::thread::spawn(move || {
             core_setter.set_current();
 
-            trace!("thread started");
-
             // Initialize thread-local metrics buffer
             helix_metrics::init_thread_local();
 
@@ -225,7 +223,6 @@ impl Worker {
         io_rt: Arc<Runtime>,
     ) -> Worker {
         let handle = std::thread::spawn(move || {
-            trace!("writer thread started");
 
             // Initialize thread-local metrics buffer
             helix_metrics::init_thread_local();
