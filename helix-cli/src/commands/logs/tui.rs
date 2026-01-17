@@ -80,6 +80,21 @@ const PRESETS: &[(&str, i64)] = &[
     ("Custom range...", 0),
 ];
 
+fn days_in_month(year: i32, month: u32) -> i32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 28,
+    }
+}
+
 /// Application state
 pub struct App {
     mode: LogMode,
@@ -164,7 +179,8 @@ impl App {
             }
             PickerField::Day => {
                 let current = dt.day() as i32;
-                let new_day = ((current - 1 + delta).rem_euclid(28) + 1) as u32;
+                let max_days = days_in_month(dt.year(), dt.month());
+                let new_day = ((current - 1 + delta).rem_euclid(max_days) + 1) as u32;
                 dt.with_day(new_day).unwrap_or(*dt)
             }
             PickerField::Hour => {
