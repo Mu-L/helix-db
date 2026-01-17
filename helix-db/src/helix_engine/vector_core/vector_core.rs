@@ -158,7 +158,7 @@ impl VectorCore {
             )
             .map_err(VectorError::from)?;
         self.vector_properties_db
-            .put(txn, &vector.id, bincode::serialize(&[0u8])?.as_ref())?;
+            .put(txn, &vector.id, bincode::serialize(&vector)?.as_ref())?;
         Ok(())
     }
 

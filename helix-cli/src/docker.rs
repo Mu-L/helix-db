@@ -127,6 +127,9 @@ impl<'a> DockerManager<'a> {
                 format!("HELIX_PROJECT={project_name}")
             },
         ];
+        if let Ok(core_override) = std::env::var("HELIX_CORES_OVERRIDE") {
+            env_vars.push(format!("HELIX_CORES_OVERRIDE={core_override}"));
+        }
 
         // Add API keys from environment (which includes .env after dotenv() call)
         if let Ok(openai_key) = std::env::var("OPENAI_API_KEY") {
