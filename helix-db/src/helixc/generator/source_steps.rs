@@ -116,7 +116,7 @@ impl Display for AddE {
                 // From is plural - iterate over from, to already has .id()
                 write!(
                     f,
-                    "{}.iter().map(|from_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .add_edge({}, {}, from_val.id(), {}, false, {})\n        .collect_to_obj()\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    "{{\n    let mut edge = Vec::new();\n    for from_val in {}.iter() {{\n        let e = G::new_mut(&db, &arena, &mut txn)\n            .add_edge({}, {}, from_val.id(), {}, false, {})\n            .collect_to_obj()?;\n        edge.push(e);\n    }}\n    edge\n}}",
                     self.from,
                     self.label,
                     write_properties(&self.properties),
@@ -128,7 +128,7 @@ impl Display for AddE {
                 // To is plural - iterate over to, from already has .id()
                 write!(
                     f,
-                    "{}.iter().map(|to_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .add_edge({}, {}, {}, to_val.id(), false, {})\n        .collect_to_obj()\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    "{{\n    let mut edge = Vec::new();\n    for to_val in {}.iter() {{\n        let e = G::new_mut(&db, &arena, &mut txn)\n            .add_edge({}, {}, {}, to_val.id(), false, {})\n            .collect_to_obj()?;\n        edge.push(e);\n    }}\n    edge\n}}",
                     self.to,
                     self.label,
                     write_properties(&self.properties),
@@ -140,7 +140,7 @@ impl Display for AddE {
                 // Both plural - nested iteration
                 write!(
                     f,
-                    "{}.iter().flat_map(|from_val| {{\n        {}.iter().map(move |to_val| {{\n            G::new_mut(&db, &arena, &mut txn)\n            .add_edge({}, {}, from_val.id(), to_val.id(), false, {})\n            .collect_to_obj()\n        }})\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    "{{\n    let mut edge = Vec::new();\n    for from_val in {}.iter() {{\n        for to_val in {}.iter() {{\n            let e = G::new_mut(&db, &arena, &mut txn)\n                .add_edge({}, {}, from_val.id(), to_val.id(), false, {})\n                .collect_to_obj()?;\n            edge.push(e);\n        }}\n    }}\n    edge\n}}",
                     self.from,
                     self.to,
                     self.label,
@@ -217,7 +217,7 @@ impl Display for UpsertE {
                 // From is plural - iterate over from, to already has .id()
                 write!(
                     f,
-                    "{}.iter().map(|from_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .upsert_e({}, from_val.id(), {}, {})\n        .collect_to_obj()\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    "{{\n    let mut edge = Vec::new();\n    for from_val in {}.iter() {{\n        let e = G::new_mut(&db, &arena, &mut txn)\n            .upsert_e({}, from_val.id(), {}, {})\n            .collect_to_obj()?;\n        edge.push(e);\n    }}\n    edge\n}}",
                     self.from,
                     self.label,
                     self.to,
@@ -228,7 +228,7 @@ impl Display for UpsertE {
                 // To is plural - iterate over to, from already has .id()
                 write!(
                     f,
-                    "{}.iter().map(|to_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .upsert_e({}, {}, to_val.id(), {})\n        .collect_to_obj()\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    "{{\n    let mut edge = Vec::new();\n    for to_val in {}.iter() {{\n        let e = G::new_mut(&db, &arena, &mut txn)\n            .upsert_e({}, {}, to_val.id(), {})\n            .collect_to_obj()?;\n        edge.push(e);\n    }}\n    edge\n}}",
                     self.to,
                     self.label,
                     self.from,
@@ -239,7 +239,7 @@ impl Display for UpsertE {
                 // Both plural - nested iteration
                 write!(
                     f,
-                    "{}.iter().flat_map(|from_val| {{\n        {}.iter().map(move |to_val| {{\n            G::new_mut(&db, &arena, &mut txn)\n            .upsert_e({}, from_val.id(), to_val.id(), {})\n            .collect_to_obj()\n        }})\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    "{{\n    let mut edge = Vec::new();\n    for from_val in {}.iter() {{\n        for to_val in {}.iter() {{\n            let e = G::new_mut(&db, &arena, &mut txn)\n                .upsert_e({}, from_val.id(), to_val.id(), {})\n                .collect_to_obj()?;\n            edge.push(e);\n        }}\n    }}\n    edge\n}}",
                     self.from,
                     self.to,
                     self.label,
