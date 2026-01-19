@@ -577,22 +577,35 @@ impl Query {
                                 };
 
                                 // Extract the actual source variable from the traversal type
-                                let source_var = if let Some(trav_type) = traversal_type {
+                                // Resolve "_" and "val" placeholders to actual source variable
+                                let (source_var, is_single_source) = if let Some(trav_type) = traversal_type {
                                     use crate::helixc::generator::traversal_steps::TraversalType;
                                     match trav_type {
-                                        TraversalType::FromSingle(var) | TraversalType::FromIter(var) => {
-                                            var.inner().clone()
+                                        TraversalType::FromSingle(var) => {
+                                            let v = var.inner();
+                                            // Resolve placeholders: both "_" and "val" should use the source variable
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
+                                            (resolved.to_string(), true)
+                                        }
+                                        TraversalType::FromIter(var) => {
+                                            let v = var.inner();
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
+                                            (resolved.to_string(), false)
                                         }
                                         _ => {
-                                            struct_def.source_variable.clone()
+                                            (struct_def.source_variable.clone(), false)
                                         }
                                     }
                                 } else {
-                                    struct_def.source_variable.clone()
+                                    (struct_def.source_variable.clone(), false)
                                 };
 
                                 // Determine if we need iter().cloned() or std::iter::once()
-                                let iterator_expr = format!("{}.iter().cloned()", source_var);
+                                let iterator_expr = if is_single_source {
+                                    format!("std::iter::once({}.clone())", source_var)
+                                } else {
+                                    format!("{}.iter().cloned()", source_var)
+                                };
 
                                 // Determine the closure parameter name to use in .map(|param| ...)
                                 // Prefer own_closure_param (this traversal's closure), otherwise use closure_param_name (parent context)
@@ -1184,22 +1197,35 @@ impl Query {
                                 };
 
                                 // Extract the actual source variable from the traversal type
-                                let source_var = if let Some(trav_type) = traversal_type {
+                                // Resolve "_" and "val" placeholders to actual source variable
+                                let (source_var, is_single_source) = if let Some(trav_type) = traversal_type {
                                     use crate::helixc::generator::traversal_steps::TraversalType;
                                     match trav_type {
-                                        TraversalType::FromSingle(var) | TraversalType::FromIter(var) => {
-                                            var.inner().clone()
+                                        TraversalType::FromSingle(var) => {
+                                            let v = var.inner();
+                                            // Resolve placeholders: both "_" and "val" should use the source variable
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
+                                            (resolved.to_string(), true)
+                                        }
+                                        TraversalType::FromIter(var) => {
+                                            let v = var.inner();
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
+                                            (resolved.to_string(), false)
                                         }
                                         _ => {
-                                            struct_def.source_variable.clone()
+                                            (struct_def.source_variable.clone(), false)
                                         }
                                     }
                                 } else {
-                                    struct_def.source_variable.clone()
+                                    (struct_def.source_variable.clone(), false)
                                 };
 
                                 // Determine if we need iter().cloned() or std::iter::once()
-                                let iterator_expr = format!("{}.iter().cloned()", source_var);
+                                let iterator_expr = if is_single_source {
+                                    format!("std::iter::once({}.clone())", source_var)
+                                } else {
+                                    format!("{}.iter().cloned()", source_var)
+                                };
 
                                 // Determine the closure parameter name to use in .map(|param| ...)
                                 // Prefer own_closure_param (this traversal's closure), otherwise use closure_param_name (parent context)
