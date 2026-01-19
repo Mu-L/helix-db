@@ -18,8 +18,8 @@ use crate::{
             },
             types::{AggregateInfo, Type},
             utils::{
-                field_exists_on_item_type, gen_identifier_or_param, is_valid_identifier,
-                type_in_scope,
+                field_exists_on_item_type, gen_identifier_or_param, get_singular_type,
+                is_valid_identifier, type_in_scope,
             },
         },
         generator::{
@@ -1526,14 +1526,14 @@ pub(crate) fn validate_traversal<'a>(
                 // Update returns the same type (nodes/edges) it started with.
 
                 match &cur_ty {
-                    Type::Node(Some(ty))
-                    | Type::Nodes(Some(ty))
-                    | Type::Edge(Some(ty))
-                    | Type::Edges(Some(ty)) => {
+                    Type::Node(Some(_))
+                    | Type::Nodes(Some(_))
+                    | Type::Edge(Some(_))
+                    | Type::Edges(Some(_)) => {
                         field_exists_on_item_type(
                             ctx,
                             original_query,
-                            Type::Node(Some(ty.clone())),
+                            get_singular_type(cur_ty.clone()),
                             update
                                 .fields
                                 .iter()
@@ -1677,7 +1677,7 @@ pub(crate) fn validate_traversal<'a>(
                         field_exists_on_item_type(
                             ctx,
                             original_query,
-                            Type::Node(Some(ty.clone())),
+                            get_singular_type(cur_ty.clone()),
                             upsert
                                 .fields
                                 .iter()
