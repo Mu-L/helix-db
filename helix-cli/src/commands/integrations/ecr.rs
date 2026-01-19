@@ -94,7 +94,9 @@ impl<'a> EcrManager<'a> {
 
     fn image_name(&self, repository_name: &str, build_mode: BuildMode) -> String {
         let tag = match build_mode {
-            BuildMode::Debug => "debug",
+            BuildMode::Debug => unreachable!(
+                "Please report as a bug. BuildMode::Debug should have been caught in validation."
+            ),
             BuildMode::Release => "latest",
             BuildMode::Dev => "dev",
         };
