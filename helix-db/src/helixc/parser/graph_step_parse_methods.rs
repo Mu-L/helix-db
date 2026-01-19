@@ -6,7 +6,7 @@ use crate::helixc::parser::{
         Expression, ExpressionType, FieldAddition, FieldValue, FieldValueType, GraphStep,
         GraphStepType, GroupBy, IdType, MMRDistance, Object, OrderBy, OrderByType, RerankMMR,
         RerankRRF, ShortestPath, ShortestPathAStar, ShortestPathBFS, ShortestPathDijkstras, Step,
-        StepType, Update, Upsert, UpsertE, UpsertN, UpsertV, VectorData,
+        StepType, Update, UpsertE, UpsertN, UpsertV, VectorData,
     },
     utils::{PairTools, PairsTools},
 };
@@ -125,20 +125,6 @@ impl HelixParser {
     pub(super) fn parse_update(&self, pair: Pair<Rule>) -> Result<Update, ParserError> {
         let fields = self.parse_object_fields(pair.clone())?;
         Ok(Update {
-            fields,
-            loc: pair.loc(),
-        })
-    }
-
-    /// Parses an upsert step
-    ///
-    /// #### Example
-    /// ```rs
-    /// ::UPSERT({name: name, age: new_age})
-    /// ```
-    pub(super) fn parse_upsert(&self, pair: Pair<Rule>) -> Result<Upsert, ParserError> {
-        let fields = self.parse_object_fields(pair.clone())?;
-        Ok(Upsert {
             fields,
             loc: pair.loc(),
         })
