@@ -8,7 +8,5 @@
     "graph_config": {
         "secondary_indices": []
     },
-    "db_max_size_gb": 20,
-    "mcp": true,
-    "bm25": true
+    "db_max_size_gb": 20
 }

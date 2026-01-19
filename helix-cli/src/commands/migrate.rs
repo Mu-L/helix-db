@@ -430,7 +430,7 @@ fn create_v2_config(ctx: &MigrationContext) -> Result<()> {
     // Create local instance config
     let local_config = LocalInstanceConfig {
         port: Some(ctx.port),
-        build_mode: BuildMode::Debug,
+        build_mode: BuildMode::Dev,
         db_config,
     };
 
