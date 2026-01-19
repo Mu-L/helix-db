@@ -363,7 +363,7 @@ impl HelixConfig {
         let config: HelixConfig =
             toml::from_str(&content).map_err(|e| eyre!("Failed to parse helix.toml: {}", e))?;
 
-        config.validate()?;
+        config.validate(path)?;
         Ok(config)
     }
 
@@ -376,26 +376,34 @@ impl HelixConfig {
         Ok(())
     }
 
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, path: &Path) -> Result<()> {
+        // Compute relative path for error messages
+        let relative_path = std::env::current_dir()
+            .ok()
+            .and_then(|cwd| path.strip_prefix(&cwd).ok())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| path.to_path_buf());
+
         // Validate project config
         if self.project.name.is_empty() {
-            return Err(eyre!("Project name cannot be empty"));
+            return Err(eyre!("Project name cannot be empty in {}", relative_path.display()));
         }
 
         // Validate instances
         if self.local.is_empty() && self.cloud.is_empty() {
-            return Err(eyre!("At least one instance must be defined"));
+            return Err(eyre!("At least one instance must be defined in {}", relative_path.display()));
         }
 
         // Validate local instances
         for (name, config) in &self.local {
             if name.is_empty() {
-                return Err(eyre!("Instance name cannot be empty"));
+                return Err(eyre!("Instance name cannot be empty in {}", relative_path.display()));
             }
 
             if config.build_mode == BuildMode::Debug {
                 return Err(eyre!(
-                    "`build_mode = \"debug\"` is removed in favour of dev mode.\nPlease update it to `build_mode = \"dev\"`"
+                    "`build_mode = \"debug\"` is removed in favour of dev mode.\nPlease update `build_mode = \"debug\"` to `build_mode = \"dev\"` in {}",
+                    relative_path.display()
                 ));
             }
         }
@@ -403,19 +411,21 @@ impl HelixConfig {
         // Validate cloud instances
         for (name, config) in &self.cloud {
             if name.is_empty() {
-                return Err(eyre!("Instance name cannot be empty"));
+                return Err(eyre!("Instance name cannot be empty in {}", relative_path.display()));
             }
 
             if config.get_cluster_id().is_none() {
                 return Err(eyre!(
-                    "Cloud instance '{}' must have a non-empty cluster_id",
-                    name
+                    "Cloud instance '{}' must have a non-empty cluster_id in {}",
+                    name,
+                    relative_path.display()
                 ));
             }
 
             if config.build_mode() == BuildMode::Debug {
                 return Err(eyre!(
-                    "`build_mode = \"debug\"` is removed in favour of dev mode.\nPlease update it to `build_mode = \"dev\"`"
+                    "`build_mode = \"debug\"` is removed in favour of dev mode.\nPlease update `build_mode = \"debug\"` to `build_mode = \"dev\"` in {}",
+                    relative_path.display()
                 ));
             }
         }
