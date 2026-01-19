@@ -65,8 +65,8 @@ get_stmt            = { identifier ~ "<-" ~ evaluates_to_anything }
 traversal           = { (start_node | start_edge | search_vector | start_vector) ~ step* ~ last_step? }
 id_traversal        = { identifier ~ ((step+ ~ last_step?) | last_step) }
 anonymous_traversal = { "_"  ~ ((step+ ~ last_step?) | last_step)? }
-step                = { "::" ~ (graph_step | order_by| aggregate | group_by | where_step | closure_step | object_step | exclude_field | count | ID | range_step | AddE | UpsertE | rerank_rrf | rerank_mmr) }
-last_step           = { "::" ~ (bool_operations | update | first) }
+step                = { "::" ~ (graph_step | order_by| aggregate | group_by | where_step | closure_step | object_step | exclude_field | count | ID | range_step | AddE | rerank_rrf | rerank_mmr) }
+last_step           = { "::" ~ (bool_operations | update | upsert_v | upsert_e | upsert_n | first) }
 // change this for loop to be able to take traversals etc in the future.
 for_loop            = { "FOR" ~ for_argument ~ "IN" ~ identifier ~ "{" ~ query_body ~ "}" }
 for_argument        = { object_access | object_destructuring | identifier }
@@ -81,9 +81,6 @@ creation_stmt = {
   | AddV
   | BatchAddV
   | AddE
-  | UpsertN
-  | UpsertE
-  | UpsertV
 }
 
 evaluates_to_anything = {
@@ -91,9 +88,6 @@ evaluates_to_anything = {
   | AddV
   | BatchAddV
   | AddE
-  | UpsertN
-  | UpsertE
-  | UpsertV
   | exists
   | none
   | traversal
@@ -154,9 +148,6 @@ vector_data = { vec_literal | embed_method | identifier }
 AddN          = { "AddN" ~ ("<" ~ identifier_upper ~ ">") ~ ("(" ~ create_field? ~ ")")? }
 AddE          = { "AddE" ~ ("<" ~ identifier_upper ~ ">") ~ ("(" ~ create_field? ~ ")")? ~ to_from }
 AddV          = { "AddV" ~ ("<" ~ identifier_upper ~ ">") ~ ("(" ~ vector_data ~ ("," ~ create_field)* ~ ")") }
-UpsertN       = { "UpsertN" ~ ("<" ~ identifier_upper ~ ">") ~ ("(" ~ create_field? ~ ")")? }
-UpsertE       = { "UpsertE" ~ ("<" ~ identifier_upper ~ ">") ~ ("(" ~ create_field? ~ ")")? ~ to_from }
-UpsertV       = { "UpsertV" ~ ("<" ~ identifier_upper ~ ">") ~ ("(" ~ vector_data ~ ("," ~ create_field)* ~ ")") }
 
 // ---------------------------------------------------------------------
 // Source steps
@@ -213,7 +204,10 @@ count        = { "COUNT" }
 none         = { "NONE" }
 ID           = { "ID" }
 update_field = { identifier ~ ":" ~ (evaluates_to_anything | anonymous_traversal) }
-update       = { "UPDATE" ~ "(" ~ "{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" }
+update       = { ("UPDATE"|"Update") ~ "(" ~ "{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" }
+upsert_n       = { "UpsertN" ~ "(" ~ "{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" }
+upsert_e       = { "UpsertE" ~ "(" ~ "{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" ~  to_from}
+upsert_v       = { "UpsertV" ~ "(" ~ vector_data? ~ "," ~"{" ~ update_field ~ ("," ~ update_field)* ~ "}" ~ ")" }
 drop = { "DROP" ~ evaluates_to_anything }
 first = { "FIRST" }
 aggregate = { "AGGREGATE_BY" ~ "(" ~ (identifier ~ ("," ~ identifier)*) ~ ")" }
