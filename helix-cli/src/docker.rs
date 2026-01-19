@@ -84,9 +84,7 @@ impl<'a> DockerManager<'a> {
     /// Get the image name for an instance
     pub(crate) fn image_name(&self, instance_name: &str, build_mode: BuildMode) -> String {
         let tag = match build_mode {
-            BuildMode::Debug => unreachable!(
-                "Please report as a bug. BuildMode::Debug should have been caught in validation."
-            ),
+            BuildMode::Debug => "debug",
             BuildMode::Release => "latest",
             BuildMode::Dev => "dev",
         };

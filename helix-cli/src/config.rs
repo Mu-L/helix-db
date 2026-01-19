@@ -481,7 +481,7 @@ impl HelixConfig {
             "dev".to_string(),
             LocalInstanceConfig {
                 port: Some(6969),
-                build_mode: BuildMode::Debug,
+                build_mode: BuildMode::Dev,
                 db_config: DbConfig::default(),
             },
         );
