@@ -43,6 +43,10 @@ QUERY upsertPersonFromVar(id: ID, new_age: U32) =>
     person <- existing::UpsertN({age: new_age})
     RETURN person
 
+QUERY getNode(id: ID) => 
+    node <- N<Person>(id)
+    RETURN node
+
 
 // =============================================================================
 // UpsertE - Edge upsert operations (with From/To)
@@ -64,6 +68,10 @@ QUERY upsertFilteredEdge(id1: ID, id2: ID, since: String) =>
     edge <- existing::UpsertE({since: since})::From(person1)::To(person2)
     RETURN edge
 
+QUERY getEdge(id: ID) => 
+    edge <- E<Knows>(id)
+    RETURN edge
+
 
 // =============================================================================
 // UpsertV - Vector upsert operations
@@ -79,4 +87,8 @@ QUERY upsertDocEmbed(text: String) =>
 QUERY upsertDocLiteral(vec: [F64], content: String) =>
     existing <- V<Document>::WHERE(_::{content}::EQ(content))
     doc <- existing::UpsertV(vec, {content: content})
+    RETURN doc
+
+QUERY getDoc(id: ID) => 
+    doc <- V<Document>(id)
     RETURN doc
