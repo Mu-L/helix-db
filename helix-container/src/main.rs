@@ -26,6 +26,7 @@ fn main() {
                         && !target.starts_with("hyper")
                         && !target.starts_with("tower")
                         && !target.starts_with("h2")
+                        && !target.starts_with("reqwest")
                 },
             )),
         )

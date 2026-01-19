@@ -2,10 +2,11 @@ use crate::helixc::parser::{
     HelixParser, ParserError, Rule,
     location::HasLoc,
     types::{
-        Aggregate, BooleanOp, BooleanOpType, Closure, Exclude, Expression, ExpressionType,
-        FieldAddition, FieldValue, FieldValueType, GraphStep, GraphStepType, GroupBy, IdType,
-        MMRDistance, Object, OrderBy, OrderByType, RerankMMR, RerankRRF, ShortestPath,
-        ShortestPathAStar, ShortestPathBFS, ShortestPathDijkstras, Step, StepType, Update,
+        Aggregate, BooleanOp, BooleanOpType, Closure, Embed, EvaluatesToString, Exclude,
+        Expression, ExpressionType, FieldAddition, FieldValue, FieldValueType, GraphStep,
+        GraphStepType, GroupBy, IdType, MMRDistance, Object, OrderBy, OrderByType, RerankMMR,
+        RerankRRF, ShortestPath, ShortestPathAStar, ShortestPathBFS, ShortestPathDijkstras, Step,
+        StepType, Update, UpsertE, UpsertN, UpsertV, VectorData,
     },
     utils::{PairTools, PairsTools},
 };
@@ -125,6 +126,139 @@ impl HelixParser {
         let fields = self.parse_object_fields(pair.clone())?;
         Ok(Update {
             fields,
+            loc: pair.loc(),
+        })
+    }
+
+    /// Parses an UpsertN step (node upsert)
+    ///
+    /// #### Example
+    /// ```rs
+    /// ::UpsertN({name: name, age: new_age})
+    /// ```
+    pub(super) fn parse_upsert_n(&self, pair: Pair<Rule>) -> Result<UpsertN, ParserError> {
+        let fields = self.parse_object_fields(pair.clone())?;
+        Ok(UpsertN {
+            fields,
+            loc: pair.loc(),
+        })
+    }
+
+    /// Parses an UpsertE step (edge upsert with From/To)
+    ///
+    /// #### Example
+    /// ```rs
+    /// ::UpsertE({since: "2024"})::From(person1)::To(person2)
+    /// ```
+    pub(super) fn parse_upsert_e(&self, pair: Pair<Rule>) -> Result<UpsertE, ParserError> {
+        let mut fields = Vec::new();
+        let mut connection = None;
+
+        for p in pair.clone().into_inner() {
+            match p.as_rule() {
+                Rule::update_field => {
+                    let field = self.parse_update_field(p)?;
+                    fields.push(field);
+                }
+                Rule::to_from => {
+                    connection = Some(self.parse_to_from(p)?);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(UpsertE {
+            fields,
+            connection: connection.ok_or_else(|| {
+                ParserError::from("UpsertE requires ::From() and ::To() connections")
+            })?,
+            loc: pair.loc(),
+        })
+    }
+
+    /// Parses an UpsertV step (vector upsert with optional vector data)
+    ///
+    /// #### Example
+    /// ```rs
+    /// ::UpsertV(Embed(text), {content: text})
+    /// ::UpsertV(vec, {content: content})
+    /// ```
+    pub(super) fn parse_upsert_v(&self, pair: Pair<Rule>) -> Result<UpsertV, ParserError> {
+        let mut fields = Vec::new();
+        let mut data = None;
+
+        for p in pair.clone().into_inner() {
+            match p.as_rule() {
+                Rule::vector_data => {
+                    let vector_data = p.clone().try_inner_next()?;
+                    match vector_data.as_rule() {
+                        Rule::identifier => {
+                            data = Some(VectorData::Identifier(vector_data.as_str().to_string()));
+                        }
+                        Rule::vec_literal => {
+                            data = Some(VectorData::Vector(self.parse_vec_literal(p)?));
+                        }
+                        Rule::embed_method => {
+                            let inner = vector_data.clone().try_inner_next()?;
+                            data = Some(VectorData::Embed(Embed {
+                                loc: vector_data.loc(),
+                                value: match inner.as_rule() {
+                                    Rule::identifier => {
+                                        EvaluatesToString::Identifier(inner.as_str().to_string())
+                                    }
+                                    Rule::string_literal => {
+                                        EvaluatesToString::StringLiteral(inner.as_str().to_string())
+                                    }
+                                    _ => {
+                                        return Err(ParserError::from(format!(
+                                            "Unexpected rule in UpsertV vector_data: {:?}",
+                                            inner.as_rule()
+                                        )));
+                                    }
+                                },
+                            }));
+                        }
+                        _ => {
+                            return Err(ParserError::from(format!(
+                                "Unexpected rule in UpsertV: {:?}",
+                                vector_data.as_rule()
+                            )));
+                        }
+                    }
+                }
+                Rule::update_field => {
+                    let field = self.parse_update_field(p)?;
+                    fields.push(field);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(UpsertV {
+            fields,
+            data,
+            loc: pair.loc(),
+        })
+    }
+
+    /// Parses a single update_field
+    fn parse_update_field(&self, pair: Pair<Rule>) -> Result<FieldAddition, ParserError> {
+        let mut inner = pair.clone().into_inner();
+        let key = inner
+            .next()
+            .ok_or_else(|| ParserError::from("Missing field key"))?
+            .as_str()
+            .to_string();
+
+        let value_pair = inner
+            .next()
+            .ok_or_else(|| ParserError::from("Missing field value"))?;
+
+        let value = self.parse_new_field_value(value_pair)?;
+
+        Ok(FieldAddition {
+            key,
+            value,
             loc: pair.loc(),
         })
     }
@@ -302,6 +436,18 @@ impl HelixParser {
                 loc: step_pair.loc(),
                 step: StepType::Update(self.parse_update(step_pair)?),
             }),
+            Rule::upsert_n => Ok(Step {
+                loc: step_pair.loc(),
+                step: StepType::UpsertN(self.parse_upsert_n(step_pair)?),
+            }),
+            Rule::upsert_e => Ok(Step {
+                loc: step_pair.loc(),
+                step: StepType::UpsertE(self.parse_upsert_e(step_pair)?),
+            }),
+            Rule::upsert_v => Ok(Step {
+                loc: step_pair.loc(),
+                step: StepType::UpsertV(self.parse_upsert_v(step_pair)?),
+            }),
             Rule::exclude_field => Ok(Step {
                 loc: step_pair.loc(),
                 step: StepType::Exclude(self.parse_exclude(step_pair)?),
@@ -309,10 +455,6 @@ impl HelixParser {
             Rule::AddE => Ok(Step {
                 loc: step_pair.loc(),
                 step: StepType::AddEdge(self.parse_add_edge(step_pair, true)?),
-            }),
-            Rule::UpsertE => Ok(Step {
-                loc: step_pair.loc(),
-                step: StepType::UpsertEdge(self.parse_upsert_edge(step_pair, true)?),
             }),
             Rule::order_by => Ok(Step {
                 loc: step_pair.loc(),

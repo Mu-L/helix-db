@@ -31,6 +31,36 @@ pub enum TraversalType {
     Mut,
     Empty,
     Update(Option<Vec<(String, GeneratedValue)>>),
+    /// Upsert - updates existing item if iterator has items, creates new if empty (legacy)
+    Upsert {
+        source: Option<GenRef<String>>,
+        label: String,
+        properties: Option<Vec<(String, GeneratedValue)>>,
+    },
+    /// UpsertN - upsert for nodes
+    UpsertN {
+        source: Option<GenRef<String>>,
+        source_is_plural: bool,
+        label: String,
+        properties: Option<Vec<(String, GeneratedValue)>>,
+    },
+    /// UpsertE - upsert for edges with From/To connection
+    UpsertE {
+        source: Option<GenRef<String>>,
+        source_is_plural: bool,
+        label: String,
+        properties: Option<Vec<(String, GeneratedValue)>>,
+        from: GeneratedValue,
+        to: GeneratedValue,
+    },
+    /// UpsertV - upsert for vectors with optional vector data
+    UpsertV {
+        source: Option<GenRef<String>>,
+        source_is_plural: bool,
+        label: String,
+        properties: Option<Vec<(String, GeneratedValue)>>,
+        vec_data: Option<VecData>,
+    },
     /// Standalone - no G::new wrapper, just the source step (used for plural AddE)
     Standalone,
 }
@@ -158,6 +188,149 @@ impl Display for Traversal {
                 write!(f, "\n    .update({})", write_properties_slice(properties))?;
                 write!(f, "\n    .collect_to_obj()?")?;
                 write!(f, "}}")?;
+            }
+            TraversalType::Upsert { source, label, properties } => {
+                match source {
+                    Some(var) => {
+                        // Use existing variable directly
+                        write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                    }
+                    None => {
+                        // Build traversal from scratch (when starting with N<Type>::WHERE)
+                        write!(f, "{{")?;
+                        write!(f, "let upsert_tr = G::new(&db, &txn, &arena)")?;
+                        write!(f, "{}", self.source_step)?;
+                        for step in &self.steps {
+                            write!(f, "\n{step}")?;
+                        }
+                        write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
+                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                    }
+                }
+                write!(
+                    f,
+                    "\n    .upsert_n(\"{}\", {})",
+                    label,
+                    write_properties_slice(properties)
+                )?;
+                write!(f, "\n    .collect_to_obj()?")?;
+                if source.is_none() {
+                    write!(f, "}}")?;
+                }
+            }
+            TraversalType::UpsertN { source, source_is_plural, label, properties } => {
+                match source {
+                    Some(var) => {
+                        if *source_is_plural {
+                            // Source is a Vec<TraversalValue> from a prior statement
+                            write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                        } else {
+                            // Source is a single TraversalValue
+                            write!(f, "G::new_mut_from(&db, &mut txn, {}.clone(), &arena)", var)?;
+                        }
+                    }
+                    None => {
+                        write!(f, "{{")?;
+                        write!(f, "let upsert_tr = G::new(&db, &txn, &arena)")?;
+                        write!(f, "{}", self.source_step)?;
+                        for step in &self.steps {
+                            write!(f, "\n{step}")?;
+                        }
+                        write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
+                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                    }
+                }
+                write!(
+                    f,
+                    "\n    .upsert_n(\"{}\", {})",
+                    label,
+                    write_properties_slice(properties)
+                )?;
+                write!(f, "\n    .collect_to_obj()?")?;
+                if source.is_none() {
+                    write!(f, "}}")?;
+                }
+            }
+            TraversalType::UpsertE { source, source_is_plural, label, properties, from, to } => {
+                match source {
+                    Some(var) => {
+                        if *source_is_plural {
+                            // Source is a Vec<TraversalValue> from a prior statement
+                            write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                        } else {
+                            // Source is a single TraversalValue
+                            write!(f, "G::new_mut_from(&db, &mut txn, {}.clone(), &arena)", var)?;
+                        }
+                    }
+                    None => {
+                        write!(f, "{{")?;
+                        write!(f, "let upsert_tr = G::new(&db, &txn, &arena)")?;
+                        write!(f, "{}", self.source_step)?;
+                        for step in &self.steps {
+                            write!(f, "\n{step}")?;
+                        }
+                        write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
+                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                    }
+                }
+                write!(
+                    f,
+                    "\n    .upsert_e(\"{}\", {}.id(), {}.id(), {})",
+                    label,
+                    from,
+                    to,
+                    write_properties_slice(properties)
+                )?;
+                write!(f, "\n    .collect_to_obj()?")?;
+                if source.is_none() {
+                    write!(f, "}}")?;
+                }
+            }
+            TraversalType::UpsertV { source, source_is_plural, label, properties, vec_data } => {
+                match source {
+                    Some(var) => {
+                        if *source_is_plural {
+                            // Source is a Vec<TraversalValue> from a prior statement
+                            write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                        } else {
+                            // Source is a single TraversalValue
+                            write!(f, "G::new_mut_from(&db, &mut txn, {}.clone(), &arena)", var)?;
+                        }
+                    }
+                    None => {
+                        write!(f, "{{")?;
+                        write!(f, "let upsert_tr = G::new(&db, &txn, &arena)")?;
+                        write!(f, "{}", self.source_step)?;
+                        for step in &self.steps {
+                            write!(f, "\n{step}")?;
+                        }
+                        write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
+                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                    }
+                }
+                match vec_data {
+                    Some(vd) => {
+                        write!(
+                            f,
+                            "\n    .upsert_v({}, \"{}\", {})",
+                            vd,
+                            label,
+                            write_properties_slice(properties)
+                        )?;
+                    }
+                    None => {
+                        write!(
+                            f,
+                            "\n    .upsert_v(&[], \"{}\", {})",
+                            label,
+                            write_properties_slice(properties)
+                        )?;
+                    }
+                }
+                write!(f, "\n    .collect_to_obj()?")?;
+                if source.is_none() {
+                    write!(f, "}}")?;
+                }
             }
         }
 

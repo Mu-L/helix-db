@@ -20,12 +20,6 @@ pub enum SourceStep {
     AddE(AddE),
     /// Insert a vector
     AddV(AddV),
-    /// Upsert a node
-    UpsertN(UpsertN),
-    /// Upsert an edge
-    UpsertE(UpsertE),
-    /// Upsert a vector
-    UpsertV(UpsertV),
     /// Lookup a node by ID
     NFromID(NFromID),
     /// Lookup a node by index
@@ -217,7 +211,7 @@ impl Display for UpsertE {
                 // From is plural - iterate over from, to already has .id()
                 write!(
                     f,
-                    "{{\n    let mut edge = Vec::new();\n    for from_val in {}.iter() {{\n        let e = G::new_mut(&db, &arena, &mut txn)\n            .upsert_e({}, from_val.id(), {}, {})\n            .collect_to_obj()?;\n        edge.push(e);\n    }}\n    edge\n}}",
+                    "{}.iter().map(|from_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .upsert_e({}, from_val.id(), {}, {})\n        .collect_to_obj()\n    }}).collect::<Result<Vec<_>,_>>()?",
                     self.from,
                     self.label,
                     self.to,
@@ -228,7 +222,7 @@ impl Display for UpsertE {
                 // To is plural - iterate over to, from already has .id()
                 write!(
                     f,
-                    "{{\n    let mut edge = Vec::new();\n    for to_val in {}.iter() {{\n        let e = G::new_mut(&db, &arena, &mut txn)\n            .upsert_e({}, {}, to_val.id(), {})\n            .collect_to_obj()?;\n        edge.push(e);\n    }}\n    edge\n}}",
+                    "{}.iter().map(|to_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .upsert_e({}, {}, to_val.id(), {})\n        .collect_to_obj()\n    }}).collect::<Result<Vec<_>,_>>()?",
                     self.to,
                     self.label,
                     self.from,
@@ -239,7 +233,7 @@ impl Display for UpsertE {
                 // Both plural - nested iteration
                 write!(
                     f,
-                    "{{\n    let mut edge = Vec::new();\n    for from_val in {}.iter() {{\n        for to_val in {}.iter() {{\n            let e = G::new_mut(&db, &arena, &mut txn)\n                .upsert_e({}, from_val.id(), to_val.id(), {})\n                .collect_to_obj()?;\n            edge.push(e);\n        }}\n    }}\n    edge\n}}",
+                    "{}.iter().flat_map(|from_val| {{\n        {}.iter().map(move |to_val| {{\n            G::new_mut(&db, &arena, &mut txn)\n            .upsert_e({}, from_val.id(), to_val.id(), {})\n            .collect_to_obj()\n        }})\n    }}).collect::<Result<Vec<_>,_>>()?",
                     self.from,
                     self.to,
                     self.label,
@@ -407,9 +401,6 @@ impl Display for SourceStep {
             SourceStep::AddN(add_n) => write!(f, "{add_n}"),
             SourceStep::AddE(add_e) => write!(f, "{add_e}"),
             SourceStep::AddV(add_v) => write!(f, "{add_v}"),
-            SourceStep::UpsertN(upsert_n) => write!(f, "{upsert_n}"),
-            SourceStep::UpsertE(upsert_e) => write!(f, "{upsert_e}"),
-            SourceStep::UpsertV(upsert_v) => write!(f, "{upsert_v}"),
             SourceStep::NFromID(n_from_id) => write!(f, "{n_from_id}"),
             SourceStep::NFromIndex(n_from_index) => write!(f, "{n_from_index}"),
             SourceStep::NFromType(n_from_type) => write!(f, "{n_from_type}"),
