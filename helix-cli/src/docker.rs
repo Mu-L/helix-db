@@ -84,7 +84,9 @@ impl<'a> DockerManager<'a> {
     /// Get the image name for an instance
     pub(crate) fn image_name(&self, instance_name: &str, build_mode: BuildMode) -> String {
         let tag = match build_mode {
-            BuildMode::Debug => "debug",
+            BuildMode::Debug => unreachable!(
+                "Please report as a bug. BuildMode::Debug should have been caught in validation."
+            ),
             BuildMode::Release => "latest",
             BuildMode::Dev => "dev",
         };
@@ -471,12 +473,16 @@ impl<'a> DockerManager<'a> {
         instance_config: InstanceInfo<'_>,
     ) -> Result<String> {
         let build_flag = match instance_config.build_mode() {
-            BuildMode::Debug => "",
+            BuildMode::Debug => unreachable!(
+                "Please report as a bug. BuildMode::Debug should have been caught in validation."
+            ),
             BuildMode::Release => "--release",
             BuildMode::Dev => "--features dev",
         };
         let build_mode = match instance_config.build_mode() {
-            BuildMode::Debug => "debug",
+            BuildMode::Debug => unreachable!(
+                "Please report as a bug. BuildMode::Debug should have been caught in validation."
+            ),
             BuildMode::Release => "release",
             BuildMode::Dev => "debug",
         };
@@ -813,10 +819,11 @@ networks:
 
         // Get image names for both debug and release modes
         let debug_image = self.image_name(instance_name, BuildMode::Debug);
+        let dev_image = self.image_name(instance_name, BuildMode::Dev);
         let release_image = self.image_name(instance_name, BuildMode::Release);
 
         // Try to remove both images (ignore errors if they don't exist)
-        for image in [debug_image, release_image] {
+        for image in [debug_image, dev_image, release_image] {
             let output = self.run_docker_command(&["rmi", "-f", &image])?;
             if output.status.success() {
                 print_status(self.runtime.label(), &format!("Removed image: {image}"));
