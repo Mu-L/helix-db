@@ -1,7 +1,9 @@
 use core::fmt;
 use std::fmt::Display;
 
-use crate::helixc::generator::utils::{VecData, write_properties, write_secondary_indices};
+use crate::helixc::generator::utils::{
+    VecData, write_properties, write_properties_slice, write_secondary_indices,
+};
 
 use super::{
     bool_ops::BoExp,
@@ -108,7 +110,7 @@ impl Display for AddE {
                 // From is plural - iterate over from, to already has .id()
                 write!(
                     f,
-                    "{}.iter().map(|from_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .add_edge({}, {}, from_val.id(), {}, false, {})\n        .collect_to_obj()\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    "{{\n    let mut edge = Vec::new();\n    for from_val in {}.iter() {{\n        let e = G::new_mut(&db, &arena, &mut txn)\n            .add_edge({}, {}, from_val.id(), {}, false, {})\n            .collect_to_obj()?;\n        edge.push(e);\n    }}\n    edge\n}}",
                     self.from,
                     self.label,
                     write_properties(&self.properties),
@@ -120,7 +122,7 @@ impl Display for AddE {
                 // To is plural - iterate over to, from already has .id()
                 write!(
                     f,
-                    "{}.iter().map(|to_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .add_edge({}, {}, {}, to_val.id(), false, {})\n        .collect_to_obj()\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    "{{\n    let mut edge = Vec::new();\n    for to_val in {}.iter() {{\n        let e = G::new_mut(&db, &arena, &mut txn)\n            .add_edge({}, {}, {}, to_val.id(), false, {})\n            .collect_to_obj()?;\n        edge.push(e);\n    }}\n    edge\n}}",
                     self.to,
                     self.label,
                     write_properties(&self.properties),
@@ -132,7 +134,7 @@ impl Display for AddE {
                 // Both plural - nested iteration
                 write!(
                     f,
-                    "{}.iter().flat_map(|from_val| {{\n        {}.iter().map(move |to_val| {{\n            G::new_mut(&db, &arena, &mut txn)\n            .add_edge({}, {}, from_val.id(), to_val.id(), false, {})\n            .collect_to_obj()\n        }})\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    "{{\n    let mut edge = Vec::new();\n    for from_val in {}.iter() {{\n        for to_val in {}.iter() {{\n            let e = G::new_mut(&db, &arena, &mut txn)\n                .add_edge({}, {}, from_val.id(), to_val.id(), false, {})\n                .collect_to_obj()?;\n            edge.push(e);\n        }}\n    }}\n    edge\n}}",
                     self.from,
                     self.to,
                     self.label,
@@ -144,6 +146,129 @@ impl Display for AddE {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct UpsertN {
+    /// Label of node
+    pub label: GenRef<String>,
+    /// Properties of node
+    pub properties: Option<Vec<(String, GeneratedValue)>>,
+    /// Names of properties to index on
+    pub secondary_indices: Option<Vec<String>>,
+}
+
+impl Display for UpsertN {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let properties = if self.properties.is_some() {
+            &self.properties
+        } else {
+            &Some(Vec::new())
+        };
+        write!(
+            f,
+            "upsert_n({}, {})",
+            self.label,
+            write_properties_slice(properties)
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct UpsertE {
+    /// Label of edge
+    pub label: GenRef<String>,
+    /// Properties of edge
+    pub properties: Option<Vec<(String, GeneratedValue)>>,
+    /// From node ID
+    pub from: GeneratedValue,
+    /// To node ID
+    pub to: GeneratedValue,
+    /// Whether from is a plural variable (needs iteration)
+    pub from_is_plural: bool,
+    /// Whether to is a plural variable (needs iteration)
+    pub to_is_plural: bool,
+}
+impl Display for UpsertE {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let properties = if self.properties.is_some() {
+            &self.properties
+        } else {
+            &Some(Vec::new())
+        };
+        // If either from or to is plural, we need to generate iteration code
+        match (self.from_is_plural, self.to_is_plural) {
+            (false, false) => {
+                // Both singular - from and to already have .id() appended
+                write!(
+                    f,
+                    "upsert_e({}, {}, {}, {})",
+                    self.label,
+                    self.from,
+                    self.to,
+                    write_properties_slice(properties),
+                )
+            }
+            (true, false) => {
+                // From is plural - iterate over from, to already has .id()
+                write!(
+                    f,
+                    "{}.iter().map(|from_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .upsert_e({}, from_val.id(), {}, {})\n        .collect_to_obj()\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    self.from,
+                    self.label,
+                    self.to,
+                    write_properties_slice(properties),
+                )
+            }
+            (false, true) => {
+                // To is plural - iterate over to, from already has .id()
+                write!(
+                    f,
+                    "{}.iter().map(|to_val| {{\n        G::new_mut(&db, &arena, &mut txn)\n        .upsert_e({}, {}, to_val.id(), {})\n        .collect_to_obj()\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    self.to,
+                    self.label,
+                    self.from,
+                    write_properties_slice(properties),
+                )
+            }
+            (true, true) => {
+                // Both plural - nested iteration
+                write!(
+                    f,
+                    "{}.iter().flat_map(|from_val| {{\n        {}.iter().map(move |to_val| {{\n            G::new_mut(&db, &arena, &mut txn)\n            .upsert_e({}, from_val.id(), to_val.id(), {})\n            .collect_to_obj()\n        }})\n    }}).collect::<Result<Vec<_>,_>>()?",
+                    self.from,
+                    self.to,
+                    self.label,
+                    write_properties_slice(properties),
+                )
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct UpsertV {
+    /// Vector to upsert
+    pub vec: VecData,
+    /// Label of vector
+    pub label: GenRef<String>,
+    /// Properties of vector
+    pub properties: Option<Vec<(String, GeneratedValue)>>,
+}
+impl Display for UpsertV {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let properties = if self.properties.is_some() {
+            &self.properties
+        } else {
+            &Some(Vec::new())
+        };
+        write!(
+            f,
+            "upsert_v({}, {}, {})",
+            self.vec,
+            self.label,
+            write_properties_slice(properties)
+        )
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct AddV {
