@@ -75,10 +75,8 @@ impl<'arena> TraversalValue<'arena> {
         match self {
             TraversalValue::Vector(vector) => vector.data,
             TraversalValue::VectorNodeWithoutVectorData(_) => &[],
-            o => {
-                println!("{:?}", o);
-                unimplemented!()
-            }
+            TraversalValue::Empty => &[],
+            _ => unimplemented!(),
         }
     }
 
@@ -87,6 +85,7 @@ impl<'arena> TraversalValue<'arena> {
             TraversalValue::Vector(vector) => vector.score(),
             TraversalValue::VectorNodeWithoutVectorData(_) => 2f64,
             TraversalValue::NodeWithScore { score, .. } => *score,
+            TraversalValue::Empty => 2f64,
             _ => unimplemented!(),
         }
     }
