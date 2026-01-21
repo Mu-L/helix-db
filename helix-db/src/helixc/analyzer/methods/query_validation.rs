@@ -2,7 +2,8 @@
 
 use crate::generate_error;
 use crate::helixc::analyzer::error_codes::ErrorCode;
-use crate::helixc::generator::utils::GenRef;
+use crate::helixc::generator::return_values::RustFieldType;
+use crate::helixc::generator::utils::{GenRef, RustType};
 use crate::helixc::{
     analyzer::{
         Ctx,
@@ -49,7 +50,7 @@ fn build_return_fields(
         // All aggregates have a key field (the grouping key from HashMap)
         fields.push(ReturnFieldInfo::new_implicit(
             "key".to_string(),
-            "String".to_string(),
+            RustFieldType::Primitive(GenRef::Std(RustType::String)),
         ));
 
         // Add fields for each grouped property
@@ -71,14 +72,14 @@ fn build_return_fields(
         for prop_name in &info.properties {
             fields.push(ReturnFieldInfo::new_schema(
                 prop_name.clone(),
-                "Option<&'a Value>".to_string(),
+                RustFieldType::OptionValue,
             ));
         }
 
         // Add count field
         fields.push(ReturnFieldInfo::new_implicit(
             "count".to_string(),
-            "i32".to_string(),
+            RustFieldType::Primitive(GenRef::Std(RustType::I32)),
         ));
 
         // For non-COUNT aggregates, add items field with nested struct
@@ -139,13 +140,13 @@ fn build_return_fields(
         if should_add_field("id") {
             fields.push(ReturnFieldInfo::new_implicit(
                 "id".to_string(),
-                "&'a str".to_string(),
+                RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
             ));
         }
         if should_add_field("label") {
             fields.push(ReturnFieldInfo::new_implicit(
                 "label".to_string(),
-                "&'a str".to_string(),
+                RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
             ));
         }
 
@@ -154,26 +155,26 @@ fn build_return_fields(
             if should_add_field("from_node") {
                 fields.push(ReturnFieldInfo::new_implicit(
                     "from_node".to_string(),
-                    "&'a str".to_string(),
+                    RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
                 ));
             }
             if should_add_field("to_node") {
                 fields.push(ReturnFieldInfo::new_implicit(
                     "to_node".to_string(),
-                    "&'a str".to_string(),
+                    RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
                 ));
             }
         } else if item_type == "vector" {
             if should_add_field("data") {
                 fields.push(ReturnFieldInfo::new_implicit(
                     "data".to_string(),
-                    "&'a [f64]".to_string(),
+                    RustFieldType::RefArray(RustType::F64),
                 ));
             }
             if should_add_field("score") {
                 fields.push(ReturnFieldInfo::new_implicit(
                     "score".to_string(),
-                    "f64".to_string(),
+                    RustFieldType::Primitive(GenRef::Std(RustType::F64)),
                 ));
             }
         }
@@ -209,7 +210,7 @@ fn build_return_fields(
                     if let Some(_field) = schema_fields.get(field_name.as_str()) {
                         fields.push(ReturnFieldInfo::new_schema(
                             field_name.clone(),
-                            "Option<&'a Value>".to_string(),
+                            RustFieldType::OptionValue,
                         ));
                     }
                 }
@@ -235,9 +236,9 @@ fn build_return_fields(
 
                         if is_implicit_field {
                             let rust_type = match *field_name {
-                                "data" => "&'a [f64]".to_string(),
-                                "score" => "f64".to_string(),
-                                _ => "&'a str".to_string(),
+                                "data" => RustFieldType::RefArray(RustType::F64),
+                                "score" => RustFieldType::Primitive(GenRef::Std(RustType::F64)),
+                                _ => RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
                             };
                             fields.push(ReturnFieldInfo::new_implicit(
                                 field_name.to_string(),
@@ -246,7 +247,7 @@ fn build_return_fields(
                         } else {
                             fields.push(ReturnFieldInfo::new_schema(
                                 field_name.to_string(),
-                                "Option<&'a Value>".to_string(),
+                                RustFieldType::OptionValue,
                             ));
                         }
                     }
@@ -270,7 +271,7 @@ fn build_return_fields(
                     }
                     fields.push(ReturnFieldInfo::new_schema(
                         field_name.to_string(),
-                        "Option<&'a Value>".to_string(),
+                        RustFieldType::OptionValue,
                     ));
                 }
             }
@@ -283,6 +284,25 @@ fn build_return_fields(
         if let Some(ref return_type) = nested_info.return_type {
             // Check if this is a scalar type or needs a struct
             match return_type {
+                Type::Count => {
+                    let trav_code = nested_info.traversal.format_steps_only();
+                    let accessed_field_name = nested_info.traversal.object_fields.first().cloned();
+                    fields.push(ReturnFieldInfo {
+                        name: field_name.clone(),
+                        field_type: ReturnFieldType::Simple(RustFieldType::Value),
+                        source: ReturnFieldSource::NestedTraversal {
+                            traversal_expr: format!("nested_traversal_{}", field_name),
+                            traversal_code: Some(trav_code),
+                            nested_struct_name: None,
+                            traversal_type: Some(nested_info.traversal.traversal_type.clone()),
+                            closure_param_name: nested_info.closure_param_name.clone(),
+                            closure_source_var: nested_info.closure_source_var.clone(),
+                            accessed_field_name,
+                            own_closure_param: nested_info.own_closure_param.clone(),
+                            requires_full_traversal: nested_info.traversal.has_graph_steps(),
+                        },
+                    });
+                }
                 Type::Scalar(_scalar_ty) => {
                     // Check if the traversal is accessing an implicit field
                     // For nested traversals like usr::ID, we need to check what field is actually accessed
@@ -302,20 +322,19 @@ fn build_return_fields(
                         })
                         .unwrap_or(!nested_info.traversal.has_object_step);
 
-                    let rust_type = if nested_info.traversal.has_graph_steps() {
-                        // COUNT and other graph operations return Value
-                        "Value".to_string()
-                    } else if is_implicit {
+                    let rust_type = if is_implicit {
                         // Use the appropriate type based on the implicit field
                         match accessed_field.map(|s| s.as_str()) {
-                            Some("data") => "&'a [f64]".to_string(),
-                            Some("score") => "f64".to_string(),
+                            Some("data") => RustFieldType::RefArray(RustType::F64),
+                            Some("score") => RustFieldType::Primitive(GenRef::Std(RustType::F64)),
                             Some("id") | Some("ID") | Some("label") | Some("Label")
-                            | Some("from_node") | Some("to_node") | None => "&'a str".to_string(),
-                            _ => "Option<&'a Value>".to_string(),
+                            | Some("from_node") | Some("to_node") | None => {
+                                RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str))
+                            }
+                            _ => RustFieldType::OptionValue,
                         }
                     } else {
-                        "Option<&'a Value>".to_string()
+                        RustFieldType::OptionValue
                     };
 
                     let trav_code = nested_info.traversal.format_steps_only();
@@ -346,11 +365,11 @@ fn build_return_fields(
                     // Check if there's property access (object step) - if not, just return TraversalValue
                     if !nested_info.traversal.has_object_step {
                         // No property access - return simple TraversalValue type
-                        let is_plural = matches!(return_type, Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_));
-                        let rust_type = if is_plural {
-                            "Vec<TraversalValue<'a>>".to_string()
-                        } else {
-                            "TraversalValue<'a>".to_string()
+                        let rust_type = match return_type {
+                            Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_) => {
+                                RustFieldType::Vec(Box::new(RustFieldType::TraversalValue))
+                            }
+                            _ => RustFieldType::TraversalValue,
                         };
 
                         fields.push(ReturnFieldInfo {
@@ -401,7 +420,7 @@ fn build_return_fields(
                     // Other types - use placeholder
                     fields.push(ReturnFieldInfo {
                         name: field_name.clone(),
-                        field_type: ReturnFieldType::Simple("Value".to_string()),
+                        field_type: ReturnFieldType::Simple(RustFieldType::Value),
                         source: ReturnFieldSource::NestedTraversal {
                             traversal_expr: format!("nested_traversal_{}", field_name),
                             traversal_code: Some(nested_info.traversal.format_steps_only()),
@@ -421,7 +440,7 @@ fn build_return_fields(
             // This will be filled in during a later pass
             fields.push(ReturnFieldInfo {
                 name: field_name.clone(),
-                field_type: ReturnFieldType::Simple("Value".to_string()),
+                field_type: ReturnFieldType::Simple(RustFieldType::Value),
                 source: ReturnFieldSource::NestedTraversal {
                     traversal_expr: format!("nested_traversal_{}", field_name),
                     traversal_code: None,

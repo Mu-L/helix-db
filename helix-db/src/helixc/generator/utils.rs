@@ -1,15 +1,15 @@
 use crate::helixc::{generator::traversal_steps::Traversal, parser::types::IdType};
 use std::fmt::{self, Debug, Display};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum GenRef<T>
 where
-    T: Display,
+    T: Display + PartialEq,
 {
     Literal(T),
     Mut(T),
     Ref(T),
-    RefLT(String, T),
+    RefLT(&'static str, T),
     DeRef(T),
     MutRef(T),
     MutRefLT(String, T),
@@ -22,7 +22,7 @@ where
 
 impl<T> Display for GenRef<T>
 where
-    T: Display,
+    T: Display + PartialEq,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -44,7 +44,7 @@ where
 
 impl<T> GenRef<T>
 where
-    T: Display,
+    T: Display + PartialEq,
 {
     pub fn inner(&self) -> &T {
         match self {
@@ -76,7 +76,7 @@ where
 }
 impl<T> Debug for GenRef<T>
 where
-    T: Display,
+    T: Display + PartialEq,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -321,9 +321,11 @@ impl Display for GeneratedType {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum RustType {
+    Str,
     String,
+    Usize,
     I8,
     I16,
     I32,
@@ -342,7 +344,9 @@ pub enum RustType {
 impl Display for RustType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            RustType::Str => write!(f, "str"),
             RustType::String => write!(f, "String"),
+            RustType::Usize => write!(f, "usize"),
             RustType::I8 => write!(f, "i8"),
             RustType::I16 => write!(f, "i16"),
             RustType::I32 => write!(f, "i32"),
@@ -363,7 +367,9 @@ impl Display for RustType {
 impl RustType {
     pub fn to_ts(&self) -> String {
         let s = match self {
+            RustType::Str => "str",
             RustType::String => "string",
+            RustType::Usize => "number",
             RustType::I8 => "number",
             RustType::I16 => "number",
             RustType::I32 => "number",
@@ -544,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_genref_ref_with_lifetime() {
-        let genref = GenRef::RefLT("a".to_string(), "value".to_string());
+        let genref = GenRef::RefLT("a", "value".to_string());
         assert_eq!(format!("{}", genref), "&'a value");
     }
 

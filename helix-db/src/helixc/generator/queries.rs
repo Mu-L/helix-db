@@ -1,7 +1,7 @@
 use std::fmt::{self, Display};
 
 use crate::helixc::generator::{
-    return_values::{ReturnValue, ReturnValueStruct},
+    return_values::{ReturnValue, ReturnValueStruct, RustFieldType},
     statements::Statement,
     utils::{EmbedData, GeneratedType},
 };
@@ -354,11 +354,18 @@ impl Query {
                                 // Check if this is a singular TraversalValue (not Vec)
                                 let is_singular_traversal_value = matches!(
                                     &field_info.field_type,
-                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(ty) if ty == "TraversalValue<'a>"
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(ty) if ty == &RustFieldType::TraversalValue
                                 );
+
+                                let is_vec_traversal_value = matches!(                                           
+                                    &field_info.field_type,                                                      
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Vec(inner)) if inner.as_ref() == &RustFieldType::TraversalValue              
+                                );  
 
                                 if is_singular_traversal_value {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.collect_to_obj()?", iterator_expr, trav_code)
+                                } else if is_vec_traversal_value {
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}.collect::<Result<Vec<_>, _>>()?", iterator_expr, trav_code)
                                 } else {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}", iterator_expr, trav_code)
                                 }
@@ -622,11 +629,18 @@ impl Query {
                                 // Check if this is a singular TraversalValue (not Vec)
                                 let is_singular_traversal_value = matches!(
                                     &field_info.field_type,
-                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(ty) if ty == "TraversalValue<'a>"
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(ty) if ty == &RustFieldType::TraversalValue
                                 );
+
+                                let is_vec_traversal_value = matches!(                                           
+                                    &field_info.field_type,                                                      
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Vec(inner)) if inner.as_ref() == &RustFieldType::TraversalValue              
+                                );  
 
                                 if is_singular_traversal_value {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.collect_to_obj()?", iterator_expr, trav_code)
+                                } else if is_vec_traversal_value {
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}.collect::<Result<Vec<_>, _>>()?", iterator_expr, trav_code)
                                 } else {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}", iterator_expr, trav_code)
                                 }

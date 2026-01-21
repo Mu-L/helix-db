@@ -1,6 +1,8 @@
 use core::fmt;
 use std::fmt::Display;
 
+use crate::helixc::generator::utils::RustType;
+
 use super::utils::GenRef;
 
 /// Represents a return value field with enhanced metadata
@@ -230,7 +232,7 @@ impl ReturnValueStruct {
             .iter()
             .map(|field_info| {
                 let (field_type, _is_nested, nested_name) = match &field_info.field_type {
-                    ReturnFieldType::Simple(ty) => (ty.clone(), false, None),
+                    ReturnFieldType::Simple(ty) => (ty.to_string(), false, None),
                     ReturnFieldType::Nested(_) => {
                         // Nested fields become Vec<NestedTypeName> or Vec<NestedTypeName<'a>>
                         // Use the nested_struct_name from the source if available, otherwise fall back to field name
@@ -426,10 +428,33 @@ pub struct ReturnFieldInfo {
     pub source: ReturnFieldSource,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum RustFieldType {
+    OptionValue,
+    Value,
+    TraversalValue,
+    Vec(Box<RustFieldType>),
+    RefArray(RustType),
+    Primitive(GenRef<RustType>),
+}
+
+impl Display for RustFieldType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RustFieldType::OptionValue => write!(f, "Option<&'a Value>"),
+            RustFieldType::Value => write!(f, "Value"),
+            RustFieldType::TraversalValue => write!(f, "TraversalValue<'a>"),
+            RustFieldType::Vec(ty) => write!(f, "Vec<{ty}>"),
+            RustFieldType::RefArray(ty) => write!(f, "&'a [{ty}]"),
+            RustFieldType::Primitive(ty) => write!(f, "{ty}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ReturnFieldType {
     /// Simple type like "&'a str", "Option<&'a Value>", etc.
-    Simple(String),
+    Simple(RustFieldType),
     /// Nested object with its own fields (for nested traversals)
     Nested(Vec<ReturnFieldInfo>),
 }
@@ -457,7 +482,7 @@ pub enum ReturnFieldSource {
 }
 
 impl ReturnFieldInfo {
-    pub fn new_implicit(name: String, field_type: String) -> Self {
+    pub fn new_implicit(name: String, field_type: RustFieldType) -> Self {
         Self {
             name,
             field_type: ReturnFieldType::Simple(field_type),
@@ -465,7 +490,7 @@ impl ReturnFieldInfo {
         }
     }
 
-    pub fn new_schema(name: String, field_type: String) -> Self {
+    pub fn new_schema(name: String, field_type: RustFieldType) -> Self {
         Self {
             name,
             field_type: ReturnFieldType::Simple(field_type),
@@ -491,7 +516,7 @@ impl ReturnFieldInfo {
         }
     }
 
-    pub fn new_user_defined(name: String, field_type: String) -> Self {
+    pub fn new_user_defined(name: String, field_type: RustFieldType) -> Self {
         Self {
             name,
             field_type: ReturnFieldType::Simple(field_type),

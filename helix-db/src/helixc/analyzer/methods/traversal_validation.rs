@@ -713,7 +713,7 @@ pub(crate) fn validate_traversal<'a>(
             }
 
             StepType::Count => {
-                cur_ty = Type::Scalar(FieldType::I64);
+                cur_ty = Type::Count;
                 excluded.clear();
                 gen_traversal
                     .steps
