@@ -367,6 +367,37 @@ impl Traversal {
         }
         result
     }
+
+    /// Check if this traversal has graph navigation steps requiring G::from_iter wrapper
+    pub fn has_graph_steps(&self) -> bool {
+        use super::utils::Separator;
+        self.steps.iter().any(|sep| {
+            let step = match sep {
+                Separator::Period(s)
+                | Separator::Semicolon(s)
+                | Separator::Empty(s)
+                | Separator::Comma(s)
+                | Separator::Newline(s) => s,
+            };
+            matches!(
+                step,
+                Step::Out(_)
+                    | Step::In(_)
+                    | Step::OutE(_)
+                    | Step::InE(_)
+                    | Step::FromN
+                    | Step::ToN
+                    | Step::FromV(_)
+                    | Step::ToV(_)
+                    | Step::Count
+                    | Step::SearchVector(_)
+                    | Step::ShortestPath(_)
+                    | Step::ShortestPathDijkstras(_)
+                    | Step::ShortestPathBFS(_)
+                    | Step::ShortestPathAStar(_)
+            )
+        })
+    }
 }
 
 /// Reserved properties that are accessed directly from struct fields
