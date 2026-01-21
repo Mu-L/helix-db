@@ -334,12 +334,22 @@ fn validate_property_access<'a>(
                             // Validate the nested traversal
                             let mut nested_gen_traversal =
                                 crate::helixc::generator::traversal_steps::Traversal::default();
+
+                            // Convert plural types to singular for nested traversals
+                            // since _/identifier refers to individual items when iterating
+                            let item_type = match cur_ty {
+                                Type::Nodes(label) => Type::Node(label.clone()),
+                                Type::Edges(label) => Type::Edge(label.clone()),
+                                Type::Vectors(label) => Type::Vector(label.clone()),
+                                _ => cur_ty.clone(),
+                            };
+
                             let nested_type = validate_traversal(
                                 ctx,
                                 tr.as_ref(),
                                 scope,
                                 original_query,
-                                Some(cur_ty.clone()),
+                                Some(item_type),
                                 &mut nested_gen_traversal,
                                 gen_query,
                             );
@@ -377,12 +387,22 @@ fn validate_property_access<'a>(
                                 // Nested traversal within expression - validate it
                                 let mut nested_gen_traversal =
                                     crate::helixc::generator::traversal_steps::Traversal::default();
+
+                                // Convert plural types to singular for nested traversals
+                                // since _/identifier refers to individual items when iterating
+                                let item_type = match cur_ty {
+                                    Type::Nodes(label) => Type::Node(label.clone()),
+                                    Type::Edges(label) => Type::Edge(label.clone()),
+                                    Type::Vectors(label) => Type::Vector(label.clone()),
+                                    _ => cur_ty.clone(),
+                                };
+
                                 let nested_type = validate_traversal(
                                     ctx,
                                     tr.as_ref(),
                                     scope,
                                     original_query,
-                                    Some(cur_ty.clone()),
+                                    Some(item_type),
                                     &mut nested_gen_traversal,
                                     gen_query,
                                 );

@@ -106,6 +106,7 @@ fn build_return_fields(
                     closure_source_var: None,
                     accessed_field_name: None,
                     own_closure_param: None,
+                    requires_full_traversal: false,
                 },
             });
         }
@@ -301,7 +302,10 @@ fn build_return_fields(
                         })
                         .unwrap_or(!nested_info.traversal.has_object_step);
 
-                    let rust_type = if is_implicit {
+                    let rust_type = if nested_info.traversal.has_graph_steps() {
+                        // COUNT and other graph operations return Value
+                        "Value".to_string()
+                    } else if is_implicit {
                         // Use the appropriate type based on the implicit field
                         match accessed_field.map(|s| s.as_str()) {
                             Some("data") => "&'a [f64]".to_string(),
@@ -329,6 +333,7 @@ fn build_return_fields(
                             closure_source_var: nested_info.closure_source_var.clone(),
                             accessed_field_name,
                             own_closure_param: nested_info.own_closure_param.clone(),
+                            requires_full_traversal: nested_info.traversal.has_graph_steps(),
                         },
                     });
                 }
@@ -338,31 +343,59 @@ fn build_return_fields(
                 | Type::Nodes(_)
                 | Type::Edges(_)
                 | Type::Vectors(_) => {
-                    // Complex types need nested structs
-                    let nested_prefix =
-                        format!("{}{}", struct_name_prefix, capitalize_first(field_name));
-                    let nested_fields = build_return_fields(
-                        ctx,
-                        return_type,
-                        &nested_info.traversal,
-                        &nested_prefix,
-                    );
-                    let nested_struct_name = format!("{}ReturnType", nested_prefix);
+                    // Check if there's property access (object step) - if not, just return TraversalValue
+                    if !nested_info.traversal.has_object_step {
+                        // No property access - return simple TraversalValue type
+                        let is_plural = matches!(return_type, Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_));
+                        let rust_type = if is_plural {
+                            "Vec<TraversalValue<'a>>".to_string()
+                        } else {
+                            "TraversalValue<'a>".to_string()
+                        };
 
-                    fields.push(ReturnFieldInfo {
-                        name: field_name.clone(),
-                        field_type: ReturnFieldType::Nested(nested_fields),
-                        source: ReturnFieldSource::NestedTraversal {
-                            traversal_expr: format!("nested_traversal_{}", field_name),
-                            traversal_code: Some(nested_info.traversal.format_steps_only()),
-                            nested_struct_name: Some(nested_struct_name),
-                            traversal_type: Some(nested_info.traversal.traversal_type.clone()),
-                            closure_param_name: nested_info.closure_param_name.clone(),
-                            closure_source_var: nested_info.closure_source_var.clone(),
-                            accessed_field_name: None,
-                            own_closure_param: nested_info.own_closure_param.clone(),
-                        },
-                    });
+                        fields.push(ReturnFieldInfo {
+                            name: field_name.clone(),
+                            field_type: ReturnFieldType::Simple(rust_type),
+                            source: ReturnFieldSource::NestedTraversal {
+                                traversal_expr: format!("nested_traversal_{}", field_name),
+                                traversal_code: Some(nested_info.traversal.format_steps_only()),
+                                nested_struct_name: None,
+                                traversal_type: Some(nested_info.traversal.traversal_type.clone()),
+                                closure_param_name: nested_info.closure_param_name.clone(),
+                                closure_source_var: nested_info.closure_source_var.clone(),
+                                accessed_field_name: None,
+                                own_closure_param: nested_info.own_closure_param.clone(),
+                                requires_full_traversal: nested_info.traversal.has_graph_steps(),
+                            },
+                        });
+                    } else {
+                        // Has property access - complex types need nested structs
+                        let nested_prefix =
+                            format!("{}{}", struct_name_prefix, capitalize_first(field_name));
+                        let nested_fields = build_return_fields(
+                            ctx,
+                            return_type,
+                            &nested_info.traversal,
+                            &nested_prefix,
+                        );
+                        let nested_struct_name = format!("{}ReturnType", nested_prefix);
+
+                        fields.push(ReturnFieldInfo {
+                            name: field_name.clone(),
+                            field_type: ReturnFieldType::Nested(nested_fields),
+                            source: ReturnFieldSource::NestedTraversal {
+                                traversal_expr: format!("nested_traversal_{}", field_name),
+                                traversal_code: Some(nested_info.traversal.format_steps_only()),
+                                nested_struct_name: Some(nested_struct_name),
+                                traversal_type: Some(nested_info.traversal.traversal_type.clone()),
+                                closure_param_name: nested_info.closure_param_name.clone(),
+                                closure_source_var: nested_info.closure_source_var.clone(),
+                                accessed_field_name: None,
+                                own_closure_param: nested_info.own_closure_param.clone(),
+                                requires_full_traversal: nested_info.traversal.has_graph_steps(),
+                            },
+                        });
+                    }
                 }
                 _ => {
                     // Other types - use placeholder
@@ -378,6 +411,7 @@ fn build_return_fields(
                             closure_source_var: nested_info.closure_source_var.clone(),
                             accessed_field_name: None,
                             own_closure_param: nested_info.own_closure_param.clone(),
+                            requires_full_traversal: nested_info.traversal.has_graph_steps(),
                         },
                     });
                 }
@@ -397,6 +431,7 @@ fn build_return_fields(
                     closure_source_var: None,
                     accessed_field_name: None,
                     own_closure_param: None,
+                    requires_full_traversal: false,
                 },
             });
         }

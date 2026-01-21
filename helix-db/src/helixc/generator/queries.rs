@@ -317,9 +317,54 @@ impl Query {
                             // Get the nested traversal info from field_infos
                             let field_info = &struct_def.field_infos[field_idx];
 
+                            // Handle scalar nested traversals with graph steps (e.g., _::Out<HasCluster>::COUNT)
+                            // These require full G::from_iter wrapper even though they return scalar values
+                            if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                traversal_code: Some(trav_code),
+                                traversal_type,
+                                requires_full_traversal: true,
+                                nested_struct_name: None,  // Distinguish from nested struct traversals
+                                ..
+                            } = &field_info.source {
+                                let (source_var, is_single_source) = if let Some(trav_type) = traversal_type {
+                                    use crate::helixc::generator::traversal_steps::TraversalType;
+                                    match trav_type {
+                                        TraversalType::FromSingle(var) => {
+                                            let v = var.inner();
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
+                                            (resolved.to_string(), true)
+                                        }
+                                        TraversalType::FromIter(var) => {
+                                            let v = var.inner();
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
+                                            (resolved.to_string(), false)
+                                        }
+                                        _ => (singular_var.to_string(), false)
+                                    }
+                                } else {
+                                    (singular_var.to_string(), false)
+                                };
+
+                                let iterator_expr = if is_single_source {
+                                    format!("std::iter::once({}.clone())", source_var)
+                                } else {
+                                    format!("{}.iter().cloned()", source_var)
+                                };
+
+                                // Check if this is a singular TraversalValue (not Vec)
+                                let is_singular_traversal_value = matches!(
+                                    &field_info.field_type,
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(ty) if ty == "TraversalValue<'a>"
+                                );
+
+                                if is_singular_traversal_value {
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}.collect_to_obj()?", iterator_expr, trav_code)
+                                } else {
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}", iterator_expr, trav_code)
+                                }
                             // Handle scalar nested traversals with closure parameters (e.g., username: u::{name})
                             // or anonymous traversals (e.g., creatorID: _::In<Created>::ID)
-                            if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                            } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                 closure_source_var: Some(_),
                                 accessed_field_name: accessed_field,
                                 nested_struct_name: None,
@@ -540,9 +585,54 @@ impl Query {
                             // Same nested traversal logic as collection case
                             let field_info = &struct_def.field_infos[field_idx];
 
+                            // Handle scalar nested traversals with graph steps (e.g., _::Out<HasCluster>::COUNT)
+                            // These require full G::from_iter wrapper even though they return scalar values
+                            if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                traversal_code: Some(trav_code),
+                                traversal_type,
+                                requires_full_traversal: true,
+                                nested_struct_name: None,  // Distinguish from nested struct traversals
+                                ..
+                            } = &field_info.source {
+                                let (source_var, is_single_source) = if let Some(trav_type) = traversal_type {
+                                    use crate::helixc::generator::traversal_steps::TraversalType;
+                                    match trav_type {
+                                        TraversalType::FromSingle(var) => {
+                                            let v = var.inner();
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
+                                            (resolved.to_string(), true)
+                                        }
+                                        TraversalType::FromIter(var) => {
+                                            let v = var.inner();
+                                            let resolved = if v == "_" || v == "val" { singular_var } else { v.as_str() };
+                                            (resolved.to_string(), false)
+                                        }
+                                        _ => (singular_var.to_string(), false)
+                                    }
+                                } else {
+                                    (singular_var.to_string(), false)
+                                };
+
+                                let iterator_expr = if is_single_source {
+                                    format!("std::iter::once({}.clone())", source_var)
+                                } else {
+                                    format!("{}.iter().cloned()", source_var)
+                                };
+
+                                // Check if this is a singular TraversalValue (not Vec)
+                                let is_singular_traversal_value = matches!(
+                                    &field_info.field_type,
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(ty) if ty == "TraversalValue<'a>"
+                                );
+
+                                if is_singular_traversal_value {
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}.collect_to_obj()?", iterator_expr, trav_code)
+                                } else {
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}", iterator_expr, trav_code)
+                                }
                             // Handle scalar nested traversals with closure parameters (e.g., username: u::{name})
                             // or anonymous traversals (e.g., creatorID: _::In<Created>::ID)
-                            if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                            } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                 closure_source_var: Some(_),
                                 accessed_field_name: accessed_field,
                                 nested_struct_name: None,
