@@ -362,7 +362,7 @@ async fn generate_docker_files(
     fs::write(&dockerfile_path, dockerfile_content)?;
 
     // Generate docker-compose.yml
-    let compose_content = docker.generate_docker_compose(instance_name, instance_config.clone())?;
+    let compose_content = docker.generate_docker_compose(instance_name, instance_config.clone(), None)?;
     let compose_path = project.docker_compose_path(instance_name);
     fs::write(&compose_path, compose_content)?;
 

@@ -550,8 +550,11 @@ CMD ["helix-container"]
         &self,
         instance_name: &str,
         instance_config: InstanceInfo<'_>,
+        port_override: Option<u16>,
     ) -> Result<String> {
-        let port = instance_config.port().unwrap_or(6969);
+        let port = port_override
+            .or_else(|| instance_config.port())
+            .unwrap_or(6969);
 
         // Use centralized naming methods
         let service_name = Self::service_name();
