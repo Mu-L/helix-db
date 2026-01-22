@@ -53,7 +53,7 @@ impl HelixGateway {
         opts: Option<HelixGraphEngineOpts>,
     ) -> HelixGateway {
         let router = Arc::new(HelixRouter::new(routes, mcp_routes, write_routes));
-        let cluster_id = std::env::var("CLUSTER_ID").ok();
+        let cluster_id = std::env::var("HELIX_CLUSTER_ID").ok();
         HelixGateway {
             address: address.to_string(),
             graph_access,
@@ -225,6 +225,9 @@ async fn post_handler(
                 let resp_str = String::from_utf8_lossy(&r.body);
                 info!(query = %query_name, response = %resp_str, "Response");
             }
+            if !*helix_metrics::METRICS_ENABLED {
+                return r.into_response();
+            }
             helix_metrics::log_event(
                 helix_metrics::events::EventType::QuerySuccess,
                 helix_metrics::events::QuerySuccessEvent {
@@ -237,13 +240,16 @@ async fn post_handler(
         }
         Err(e) => {
             info!(query = %query_name, error = ?e, "Error response");
+            if !*helix_metrics::METRICS_ENABLED {
+                return e.into_response();
+            }
             helix_metrics::log_event(
                 helix_metrics::events::EventType::QueryError,
                 helix_metrics::events::QueryErrorEvent {
                     cluster_id: state.cluster_id.clone(),
                     query_name,
                     input_json: sonic_rs::to_string(&body).ok(),
-                    output_json: Some(format!(r#"{{"error":"{e}"}}"#)),
+                    output_json: sonic_rs::to_string(&e).ok(),
                     time_taken_usec: start_time.elapsed().as_micros() as u32,
                 },
             );
