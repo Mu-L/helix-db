@@ -363,11 +363,11 @@ where
             let props = arena.alloc_str(properties);
             let values = stream.collect()?;
             let iter = TraversalStream::from_iter(storage, txn, arena, values.into_iter());
-            let ordered_stream = match order {
-                Order::Asc => iter.map(|iter| iter.order_by_asc(props)),
-                Order::Desc => iter.map(|iter| iter.order_by_desc(props)),
-            };
-            Ok(ordered_stream)
+            // let ordered_stream = match order {
+            //     Order::Asc => iter.map(|iter| iter.order_by_asc(props)),
+            //     Order::Desc => iter.map(|iter| iter.order_by_desc(props)),
+            // };
+            Ok(iter)
         }
         ToolArgs::SearchKeyword { .. } => {
             // SearchKeyword requires special BM25 indexing and connection state
