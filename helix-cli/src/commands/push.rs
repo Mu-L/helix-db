@@ -6,9 +6,10 @@ use crate::commands::integrations::helix::HelixManager;
 use crate::config::{BuildMode, CloudConfig, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
+use crate::port;
 use crate::project::ProjectContext;
 use crate::prompts;
-use crate::utils::{Spinner, print_status, print_success};
+use crate::utils::{Spinner, print_status, print_success, print_warning};
 use eyre::Result;
 use std::time::Instant;
 
@@ -134,19 +135,38 @@ async fn push_local_instance(
     // Check Docker availability
     DockerManager::check_runtime_available(docker.runtime)?;
 
+    // Check port availability before building
+    let instance_config = project.config.get_instance(instance_name)?;
+    let requested_port = instance_config.port().unwrap_or(port::DEFAULT_PORT);
+    let (actual_port, port_changed) = port::ensure_port_available(requested_port)?;
+
+    if port_changed {
+        print_warning(&format!(
+            "Port {} is in use. Using port {} instead.",
+            requested_port, actual_port
+        ));
+    }
+
     // Build the instance first (this ensures it's up to date) and get metrics data
     let metrics_data =
         crate::commands::build::run(Some(instance_name.to_string()), metrics_sender).await?;
 
+    // If port changed, regenerate docker-compose with new port
+    if port_changed {
+        let compose_content = docker.generate_docker_compose(
+            instance_name,
+            instance_config.clone(),
+            Some(actual_port),
+        )?;
+        let compose_path = project.docker_compose_path(instance_name);
+        std::fs::write(&compose_path, compose_content)?;
+    }
+
     // Start the instance
     docker.start_instance(instance_name)?;
 
-    // Get the instance configuration to show connection info
-    let instance_config = project.config.get_instance(instance_name)?;
-    let port = instance_config.port().unwrap_or(6969);
-
     print_success(&format!("Instance '{instance_name}' is now running"));
-    println!("  Local URL: http://localhost:{port}");
+    println!("  Local URL: http://localhost:{actual_port}");
     let project_name = &project.config.project.name;
     println!("  Container: helix_{project_name}_{instance_name}");
     println!(

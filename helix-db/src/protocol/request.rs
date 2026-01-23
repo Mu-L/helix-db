@@ -3,6 +3,7 @@ use reqwest::{
     StatusCode,
     header::{ACCEPT, CONTENT_TYPE},
 };
+use serde::Serialize;
 use tokio::sync::oneshot;
 use tracing::error;
 
@@ -23,7 +24,7 @@ pub struct Request {
     pub out_fmt: Format,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum RequestType {
     Query,
     MCP,
