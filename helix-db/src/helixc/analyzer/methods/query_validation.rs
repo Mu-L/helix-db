@@ -1062,8 +1062,8 @@ fn analyze_return_expr<'a>(
                             ));
 
                             // New unified approach
-                            // Skip struct generation for primitive types (Boolean, Scalar) - they use legacy path only
-                            if !matches!(inferred_type, Type::Boolean | Type::Scalar(_)) {
+                            // Skip struct generation for primitive types (Boolean, Scalar, Count) - they use legacy path only
+                            if !matches!(inferred_type, Type::Boolean | Type::Scalar(_) | Type::Count) {
                                 let struct_name_prefix = format!(
                                     "{}{}",
                                     capitalize_first(&query.name),
@@ -1133,50 +1133,53 @@ fn analyze_return_expr<'a>(
                             ));
 
                             // New unified approach
-                            let struct_name_prefix = format!(
-                                "{}{}",
-                                capitalize_first(&query.name),
-                                capitalize_first(&field_name)
-                            );
-                            let return_fields = build_return_fields(
-                                ctx,
-                                &inferred_type,
-                                &traversal,
-                                &struct_name_prefix,
-                            );
-                            let struct_name = format!("{}ReturnType", struct_name_prefix);
-                            let is_collection = matches!(
-                                inferred_type,
-                                Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_)
-                            );
-                            let (
-                                is_aggregate,
-                                is_group_by,
-                                aggregate_properties,
-                                is_count_aggregate,
-                            ) = match inferred_type {
-                                Type::Aggregate(info) => (
-                                    true,
-                                    info.is_group_by,
-                                    info.properties.clone(),
-                                    info.is_count,
-                                ),
-                                _ => (false, false, Vec::new(), false),
-                            };
-                            query
-                                .return_structs
-                                .push(ReturnValueStruct::from_return_fields(
-                                    struct_name.clone(),
-                                    return_fields.clone(),
-                                    field_name.clone(),
-                                    is_collection,
-                                    traversal.is_reused_variable,
+                            // Skip struct generation for primitive types (Boolean, Scalar, Count) - they use legacy path only
+                            if !matches!(inferred_type, Type::Boolean | Type::Scalar(_) | Type::Count) {
+                                let struct_name_prefix = format!(
+                                    "{}{}",
+                                    capitalize_first(&query.name),
+                                    capitalize_first(&field_name)
+                                );
+                                let return_fields = build_return_fields(
+                                    ctx,
+                                    &inferred_type,
+                                    &traversal,
+                                    &struct_name_prefix,
+                                );
+                                let struct_name = format!("{}ReturnType", struct_name_prefix);
+                                let is_collection = matches!(
+                                    inferred_type,
+                                    Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_)
+                                );
+                                let (
                                     is_aggregate,
                                     is_group_by,
                                     aggregate_properties,
                                     is_count_aggregate,
-                                    traversal.closure_param_name.clone(),
-                                ));
+                                ) = match inferred_type {
+                                    Type::Aggregate(info) => (
+                                        true,
+                                        info.is_group_by,
+                                        info.properties.clone(),
+                                        info.is_count,
+                                    ),
+                                    _ => (false, false, Vec::new(), false),
+                                };
+                                query
+                                    .return_structs
+                                    .push(ReturnValueStruct::from_return_fields(
+                                        struct_name.clone(),
+                                        return_fields.clone(),
+                                        field_name.clone(),
+                                        is_collection,
+                                        traversal.is_reused_variable,
+                                        is_aggregate,
+                                        is_group_by,
+                                        aggregate_properties,
+                                        is_count_aggregate,
+                                        traversal.closure_param_name.clone(),
+                                    ));
+                            }
 
                             // Generate map closure (direct return, no variable assignment to update)
                             // Map closure will be used during return generation phase
@@ -1218,8 +1221,8 @@ fn analyze_return_expr<'a>(
                     ));
 
                     // New unified approach
-                    // Skip struct generation for primitive types (Boolean, Scalar) - they use legacy path only
-                    if !matches!(identifier_end_type, Type::Boolean | Type::Scalar(_)) {
+                    // Skip struct generation for primitive types (Boolean, Scalar, Count) - they use legacy path only
+                    if !matches!(identifier_end_type, Type::Boolean | Type::Scalar(_) | Type::Count) {
                         // For identifier returns, we need to create a traversal to build fields from
                         let var_info = scope.get(id.inner().as_str());
                         let is_reused = var_info.is_some_and(|v| v.reference_count > 1);
