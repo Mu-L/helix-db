@@ -92,13 +92,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                 &v_serialized,
                                                 &node.id,
                                             ),
-                                        crate::helix_engine::types::SecondaryIndex::Index(_) => db
-                                            .put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &node.id,
-                                            ),
+                                        crate::helix_engine::types::SecondaryIndex::Index(_) => {
+                                            db.put(self.txn, &v_serialized, &node.id)
+                                        }
                                         crate::helix_engine::types::SecondaryIndex::None => {
                                             unreachable!()
                                         }
@@ -158,13 +154,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                 &v_serialized,
                                                 &node.id,
                                             ),
-                                        crate::helix_engine::types::SecondaryIndex::Index(_) => db
-                                            .put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &node.id,
-                                            ),
+                                        crate::helix_engine::types::SecondaryIndex::Index(_) => {
+                                            db.put(self.txn, &v_serialized, &node.id)
+                                        }
                                         crate::helix_engine::types::SecondaryIndex::None => {
                                             unreachable!()
                                         }
@@ -198,13 +190,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                 &v_serialized,
                                                 &node.id,
                                             ),
-                                        crate::helix_engine::types::SecondaryIndex::Index(_) => db
-                                            .put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &node.id,
-                                            ),
+                                        crate::helix_engine::types::SecondaryIndex::Index(_) => {
+                                            db.put(self.txn, &v_serialized, &node.id)
+                                        }
                                         crate::helix_engine::types::SecondaryIndex::None => {
                                             unreachable!()
                                         }
@@ -543,13 +531,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                 &v_serialized,
                                                 &vector.id,
                                             ),
-                                        crate::helix_engine::types::SecondaryIndex::Index(_) => db
-                                            .put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &vector.id,
-                                            ),
+                                        crate::helix_engine::types::SecondaryIndex::Index(_) => {
+                                            db.put(self.txn, &v_serialized, &vector.id)
+                                        }
                                         crate::helix_engine::types::SecondaryIndex::None => {
                                             unreachable!()
                                         }
@@ -611,13 +595,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                 &v_serialized,
                                                 &vector.id,
                                             ),
-                                        crate::helix_engine::types::SecondaryIndex::Index(_) => db
-                                            .put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &vector.id,
-                                            ),
+                                        crate::helix_engine::types::SecondaryIndex::Index(_) => {
+                                            db.put(self.txn, &v_serialized, &vector.id)
+                                        }
                                         crate::helix_engine::types::SecondaryIndex::None => {
                                             unreachable!()
                                         }
@@ -651,13 +631,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                 &v_serialized,
                                                 &vector.id,
                                             ),
-                                        crate::helix_engine::types::SecondaryIndex::Index(_) => db
-                                            .put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &vector.id,
-                                            ),
+                                        crate::helix_engine::types::SecondaryIndex::Index(_) => {
+                                            db.put(self.txn, &v_serialized, &vector.id)
+                                        }
                                         crate::helix_engine::types::SecondaryIndex::None => {
                                             unreachable!()
                                         }
@@ -818,13 +794,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                 &v_serialized,
                                                 &vector.id,
                                             ),
-                                        crate::helix_engine::types::SecondaryIndex::Index(_) => db
-                                            .put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &vector.id,
-                                            ),
+                                        crate::helix_engine::types::SecondaryIndex::Index(_) => {
+                                            db.put(self.txn, &v_serialized, &vector.id)
+                                        }
                                         crate::helix_engine::types::SecondaryIndex::None => {
                                             unreachable!()
                                         }
@@ -886,13 +858,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                 &v_serialized,
                                                 &vector.id,
                                             ),
-                                        crate::helix_engine::types::SecondaryIndex::Index(_) => db
-                                            .put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &vector.id,
-                                            ),
+                                        crate::helix_engine::types::SecondaryIndex::Index(_) => {
+                                            db.put(self.txn, &v_serialized, &vector.id)
+                                        }
                                         crate::helix_engine::types::SecondaryIndex::None => {
                                             unreachable!()
                                         }
@@ -926,13 +894,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                 &v_serialized,
                                                 &vector.id,
                                             ),
-                                        crate::helix_engine::types::SecondaryIndex::Index(_) => db
-                                            .put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &vector.id,
-                                            ),
+                                        crate::helix_engine::types::SecondaryIndex::Index(_) => {
+                                            db.put(self.txn, &v_serialized, &vector.id)
+                                        }
                                         crate::helix_engine::types::SecondaryIndex::None => {
                                             unreachable!()
                                         }

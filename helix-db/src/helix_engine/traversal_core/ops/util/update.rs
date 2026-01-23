@@ -79,9 +79,8 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                                      )
                                                  }
                                                 crate::helix_engine::types::SecondaryIndex::Index(_) => {
-                                                    db.put_with_flags(
+                                                    db.put(
                                                         self.txn,
-                                                        PutFlags::APPEND_DUP,
                                                         &v_serialized,
                                                         &node.id,
                                                 )
@@ -137,12 +136,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                     // create new secondary indexes for the props changed
                                     match bincode::serialize(v) {
                                         Ok(v_serialized) => {
-                                            if let Err(e) = db.put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &node.id,
-                                            ) {
+                                            if let Err(e) =
+                                                db.put(self.txn, &v_serialized, &node.id)
+                                            {
                                                 results.push(Err(GraphError::from(e)));
                                             }
                                         }

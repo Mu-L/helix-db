@@ -189,11 +189,19 @@ impl Display for Traversal {
                 write!(f, "\n    .collect_to_obj()?")?;
                 write!(f, "}}")?;
             }
-            TraversalType::Upsert { source, label, properties } => {
+            TraversalType::Upsert {
+                source,
+                label,
+                properties,
+            } => {
                 match source {
                     Some(var) => {
                         // Use existing variable directly
-                        write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                        write!(
+                            f,
+                            "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)",
+                            var
+                        )?;
                     }
                     None => {
                         // Build traversal from scratch (when starting with N<Type>::WHERE)
@@ -204,7 +212,10 @@ impl Display for Traversal {
                             write!(f, "\n{step}")?;
                         }
                         write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
-                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                        write!(
+                            f,
+                            "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)"
+                        )?;
                     }
                 }
                 write!(
@@ -218,12 +229,21 @@ impl Display for Traversal {
                     write!(f, "}}")?;
                 }
             }
-            TraversalType::UpsertN { source, source_is_plural, label, properties } => {
+            TraversalType::UpsertN {
+                source,
+                source_is_plural,
+                label,
+                properties,
+            } => {
                 match source {
                     Some(var) => {
                         if *source_is_plural {
                             // Source is a Vec<TraversalValue> from a prior statement
-                            write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                            write!(
+                                f,
+                                "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)",
+                                var
+                            )?;
                         } else {
                             // Source is a single TraversalValue
                             write!(f, "G::new_mut_from(&db, &mut txn, {}.clone(), &arena)", var)?;
@@ -237,7 +257,10 @@ impl Display for Traversal {
                             write!(f, "\n{step}")?;
                         }
                         write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
-                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                        write!(
+                            f,
+                            "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)"
+                        )?;
                     }
                 }
                 write!(
@@ -251,12 +274,23 @@ impl Display for Traversal {
                     write!(f, "}}")?;
                 }
             }
-            TraversalType::UpsertE { source, source_is_plural, label, properties, from, to } => {
+            TraversalType::UpsertE {
+                source,
+                source_is_plural,
+                label,
+                properties,
+                from,
+                to,
+            } => {
                 match source {
                     Some(var) => {
                         if *source_is_plural {
                             // Source is a Vec<TraversalValue> from a prior statement
-                            write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                            write!(
+                                f,
+                                "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)",
+                                var
+                            )?;
                         } else {
                             // Source is a single TraversalValue
                             write!(f, "G::new_mut_from(&db, &mut txn, {}.clone(), &arena)", var)?;
@@ -270,7 +304,10 @@ impl Display for Traversal {
                             write!(f, "\n{step}")?;
                         }
                         write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
-                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                        write!(
+                            f,
+                            "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)"
+                        )?;
                     }
                 }
                 write!(
@@ -286,12 +323,22 @@ impl Display for Traversal {
                     write!(f, "}}")?;
                 }
             }
-            TraversalType::UpsertV { source, source_is_plural, label, properties, vec_data } => {
+            TraversalType::UpsertV {
+                source,
+                source_is_plural,
+                label,
+                properties,
+                vec_data,
+            } => {
                 match source {
                     Some(var) => {
                         if *source_is_plural {
                             // Source is a Vec<TraversalValue> from a prior statement
-                            write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                            write!(
+                                f,
+                                "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)",
+                                var
+                            )?;
                         } else {
                             // Source is a single TraversalValue
                             write!(f, "G::new_mut_from(&db, &mut txn, {}.clone(), &arena)", var)?;
@@ -305,7 +352,10 @@ impl Display for Traversal {
                             write!(f, "\n{step}")?;
                         }
                         write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
-                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                        write!(
+                            f,
+                            "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)"
+                        )?;
                     }
                 }
                 match vec_data {
@@ -478,14 +528,13 @@ impl Display for Step {
                 ),
                 ReservedProp::Label => {
                     write!(f, "map(|item| item.map(|v| Value::from(v.label())))")
-                }
-                // ReservedProp::Version => write!(f, "map(|item| Ok(Value::from(item.version)))"),
-                // ReservedProp::FromNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.from_node, &arena))))"),
-                // ReservedProp::ToNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.to_node, &arena))))"),
-                // ReservedProp::Deleted => write!(f, "map(|item| Ok(Value::from(item.deleted)))"),
-                // ReservedProp::Level => write!(f, "map(|item| Ok(Value::from(item.level)))"),
-                // ReservedProp::Distance => write!(f, "map(|item| Ok(item.distance.map(Value::from).unwrap_or(Value::Empty)))"),
-                // ReservedProp::Data => write!(f, "map(|item| Ok(Value::from(item.data)))"),
+                } // ReservedProp::Version => write!(f, "map(|item| Ok(Value::from(item.version)))"),
+                  // ReservedProp::FromNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.from_node, &arena))))"),
+                  // ReservedProp::ToNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.to_node, &arena))))"),
+                  // ReservedProp::Deleted => write!(f, "map(|item| Ok(Value::from(item.deleted)))"),
+                  // ReservedProp::Level => write!(f, "map(|item| Ok(Value::from(item.level)))"),
+                  // ReservedProp::Distance => write!(f, "map(|item| Ok(item.distance.map(Value::from).unwrap_or(Value::Empty)))"),
+                  // ReservedProp::Data => write!(f, "map(|item| Ok(Value::from(item.data)))"),
             },
 
             Step::Out(out) => write!(f, "{out}"),
@@ -767,14 +816,14 @@ impl Display for Range {
 
 #[derive(Clone)]
 pub struct OrderBy {
-    pub property: GenRef<String>,
+    pub traversal: Traversal,
     pub order: Order,
 }
 impl Display for OrderBy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.order {
-            Order::Asc => write!(f, "order_by_asc({})", self.property),
-            Order::Desc => write!(f, "order_by_desc({})", self.property),
+            Order::Asc => write!(f, "order_by_asc(|val| {})", self.traversal),
+            Order::Desc => write!(f, "order_by_desc(|val| {})", self.traversal),
         }
     }
 }
