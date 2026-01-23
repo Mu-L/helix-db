@@ -54,8 +54,6 @@ pub struct DockerManager<'a> {
     pub(crate) runtime: ContainerRuntime,
 }
 
-pub const HELIX_DATA_DIR: &str = "/data";
-
 impl<'a> DockerManager<'a> {
     pub fn new(project: &'a ProjectContext) -> Self {
         Self {
@@ -92,6 +90,11 @@ impl<'a> DockerManager<'a> {
         format!("{project_name}:{tag}")
     }
 
+    #[inline]
+    pub(crate) fn data_dir(&self, instance_name: &str) -> String {
+        std::env::var("HELIX_DATA_DIR").unwrap_or_else(|_| format!("../.volumes/{instance_name}"))
+    }
+
     /// Get environment variables for an instance
     pub(crate) fn environment_variables(&self, instance_name: &str) -> Vec<String> {
         // Load .env from project root first (base configuration)
@@ -108,6 +111,7 @@ impl<'a> DockerManager<'a> {
             let _ = dotenvy::from_path_override(&db_env);
             print_info(&format!("Overriding environment from {}", db_env.display()));
         }
+        let data_dir = self.data_dir(instance_name);
 
         let mut env_vars = vec![
             {
@@ -120,7 +124,7 @@ impl<'a> DockerManager<'a> {
                     .unwrap_or(6969);
                 format!("HELIX_PORT={port}")
             },
-            format!("HELIX_DATA_DIR={HELIX_DATA_DIR}"),
+            format!("HELIX_DATA_DIR={data_dir}"),
             format!("HELIX_INSTANCE={instance_name}"),
             {
                 let project_name = &self.project.config.project.name;
@@ -581,7 +585,7 @@ services:
     ports:
       - "{port}:{port}"
     volumes:
-      - ../.volumes/{instance_name}:/data
+      - {data_dir}:/data
     environment:
 {env_section}
     restart: unless-stopped
@@ -595,6 +599,7 @@ networks:
             platform = instance_config
                 .docker_build_target()
                 .map_or("".to_string(), |p| format!("platforms:\n        - {p}")),
+            data_dir = self.data_dir(instance_name)
         );
 
         Ok(compose)
