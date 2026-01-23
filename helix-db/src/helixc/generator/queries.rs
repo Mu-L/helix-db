@@ -453,6 +453,7 @@ impl Query {
                                     .unwrap_or(singular_var);
 
                                 let mut nested_field_assigns = String::new();
+                                let mut has_vec_traversal_value = false;
                                 for nested_field in nested_fields {
                                     // Check if this nested field is itself a nested traversal with a nested struct
                                     let nested_val = if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
@@ -497,6 +498,44 @@ impl Query {
                                             ".collect::<Vec<_>>()".to_string()
                                         };
                                         format!("G::from_iter(&db, &txn, std::iter::once({}.clone()), &arena){}{}", closure_param, inner_trav_code, inner_fields_str)
+                                    } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                        traversal_code: Some(inner_trav_code),
+                                        traversal_type: inner_traversal_type,
+                                        requires_full_traversal: true,
+                                        nested_struct_name: None,  // No nested struct = Vec<TraversalValue>
+                                        ..
+                                    } = &nested_field.source {
+                                        // Handle traversals returning Vec<TraversalValue> (no object step)
+                                        // e.g., instances: cluster::Out<CreatedInstance>
+                                        has_vec_traversal_value = true;
+
+                                        // Extract source variable from traversal type
+                                        let (inner_source_var, is_single_source) = if let Some(inner_trav_type) = inner_traversal_type {
+                                            use crate::helixc::generator::traversal_steps::TraversalType;
+                                            match inner_trav_type {
+                                                TraversalType::FromSingle(var) => {
+                                                    let v = var.inner();
+                                                    let resolved = if v == "_" || v == "val" { closure_param } else { v.as_str() };
+                                                    (resolved.to_string(), true)
+                                                }
+                                                TraversalType::FromIter(var) => {
+                                                    let v = var.inner();
+                                                    let resolved = if v == "_" || v == "val" { closure_param } else { v.as_str() };
+                                                    (resolved.to_string(), false)
+                                                }
+                                                _ => (closure_param.to_string(), false)
+                                            }
+                                        } else {
+                                            (closure_param.to_string(), false)
+                                        };
+
+                                        let inner_iterator_expr = if is_single_source {
+                                            format!("std::iter::once({}.clone())", inner_source_var)
+                                        } else {
+                                            format!("{}.iter().cloned()", inner_source_var)
+                                        };
+
+                                        format!("G::from_iter(&db, &txn, {}, &arena){}.collect::<Result<Vec<_>, _>>()?", inner_iterator_expr, inner_trav_code)
                                     } else {
                                         // Check if this field itself is a nested traversal that accesses the closure parameter
                                         // Extract both the access variable and the actual field being accessed
@@ -539,7 +578,7 @@ impl Query {
                                     }
                                 ));
 
-                                if has_deeply_nested {
+                                if has_deeply_nested || has_vec_traversal_value {
                                     // Use and_then so the closure can return Result and use ?
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.and_then(|{}| Ok({} {{{}\n                    }}))).collect::<Result<Vec<_>, _>>()?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
@@ -723,6 +762,7 @@ impl Query {
                                 let _closure_context_var = closure_source_var.as_ref().map(|s| s.as_str()).unwrap_or(&struct_def.source_variable);
 
                                 let mut nested_field_assigns = String::new();
+                                let mut has_vec_traversal_value = false;
                                 for nested_field in nested_fields {
                                     // Check if this nested field is itself a nested traversal with a nested struct
                                     let nested_val = if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
@@ -767,6 +807,44 @@ impl Query {
                                             ".collect::<Vec<_>>()".to_string()
                                         };
                                         format!("G::from_iter(&db, &txn, std::iter::once({}.clone()), &arena){}{}", closure_param, inner_trav_code, inner_fields_str)
+                                    } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                        traversal_code: Some(inner_trav_code),
+                                        traversal_type: inner_traversal_type,
+                                        requires_full_traversal: true,
+                                        nested_struct_name: None,  // No nested struct = Vec<TraversalValue>
+                                        ..
+                                    } = &nested_field.source {
+                                        // Handle traversals returning Vec<TraversalValue> (no object step)
+                                        // e.g., instances: cluster::Out<CreatedInstance>
+                                        has_vec_traversal_value = true;
+
+                                        // Extract source variable from traversal type
+                                        let (inner_source_var, is_single_source) = if let Some(inner_trav_type) = inner_traversal_type {
+                                            use crate::helixc::generator::traversal_steps::TraversalType;
+                                            match inner_trav_type {
+                                                TraversalType::FromSingle(var) => {
+                                                    let v = var.inner();
+                                                    let resolved = if v == "_" || v == "val" { closure_param } else { v.as_str() };
+                                                    (resolved.to_string(), true)
+                                                }
+                                                TraversalType::FromIter(var) => {
+                                                    let v = var.inner();
+                                                    let resolved = if v == "_" || v == "val" { closure_param } else { v.as_str() };
+                                                    (resolved.to_string(), false)
+                                                }
+                                                _ => (closure_param.to_string(), false)
+                                            }
+                                        } else {
+                                            (closure_param.to_string(), false)
+                                        };
+
+                                        let inner_iterator_expr = if is_single_source {
+                                            format!("std::iter::once({}.clone())", inner_source_var)
+                                        } else {
+                                            format!("{}.iter().cloned()", inner_source_var)
+                                        };
+
+                                        format!("G::from_iter(&db, &txn, {}, &arena){}.collect::<Result<Vec<_>, _>>()?", inner_iterator_expr, inner_trav_code)
                                     } else {
                                         // Check if this field itself is a nested traversal that accesses the closure parameter
                                         // Extract both the access variable and the actual field being accessed
@@ -809,7 +887,7 @@ impl Query {
                                     }
                                 ));
 
-                                if has_deeply_nested {
+                                if has_deeply_nested || has_vec_traversal_value {
                                     // Use and_then so the closure can return Result and use ?
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.and_then(|{}| Ok({} {{{}\n                    }}))).collect::<Result<Vec<_>, _>>()?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
@@ -1125,6 +1203,7 @@ impl Query {
                                     .unwrap_or(singular_var);
 
                                 let mut nested_field_assigns = String::new();
+                                let mut has_vec_traversal_value = false;
                                 for nested_field in nested_fields {
                                     // Check if this nested field is itself a nested traversal with a nested struct
                                     let nested_val = if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
@@ -1169,6 +1248,44 @@ impl Query {
                                             ".collect::<Vec<_>>()".to_string()
                                         };
                                         format!("G::from_iter(&db, &txn, std::iter::once({}.clone()), &arena){}{}", closure_param, inner_trav_code, inner_fields_str)
+                                    } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                        traversal_code: Some(inner_trav_code),
+                                        traversal_type: inner_traversal_type,
+                                        requires_full_traversal: true,
+                                        nested_struct_name: None,  // No nested struct = Vec<TraversalValue>
+                                        ..
+                                    } = &nested_field.source {
+                                        // Handle traversals returning Vec<TraversalValue> (no object step)
+                                        // e.g., instances: cluster::Out<CreatedInstance>
+                                        has_vec_traversal_value = true;
+
+                                        // Extract source variable from traversal type
+                                        let (inner_source_var, is_single_source) = if let Some(inner_trav_type) = inner_traversal_type {
+                                            use crate::helixc::generator::traversal_steps::TraversalType;
+                                            match inner_trav_type {
+                                                TraversalType::FromSingle(var) => {
+                                                    let v = var.inner();
+                                                    let resolved = if v == "_" || v == "val" { closure_param } else { v.as_str() };
+                                                    (resolved.to_string(), true)
+                                                }
+                                                TraversalType::FromIter(var) => {
+                                                    let v = var.inner();
+                                                    let resolved = if v == "_" || v == "val" { closure_param } else { v.as_str() };
+                                                    (resolved.to_string(), false)
+                                                }
+                                                _ => (closure_param.to_string(), false)
+                                            }
+                                        } else {
+                                            (closure_param.to_string(), false)
+                                        };
+
+                                        let inner_iterator_expr = if is_single_source {
+                                            format!("std::iter::once({}.clone())", inner_source_var)
+                                        } else {
+                                            format!("{}.iter().cloned()", inner_source_var)
+                                        };
+
+                                        format!("G::from_iter(&db, &txn, {}, &arena){}.collect::<Result<Vec<_>, _>>()?", inner_iterator_expr, inner_trav_code)
                                     } else {
                                         // Check if this field itself is a nested traversal that accesses the closure parameter
                                         // Extract both the access variable and the actual field being accessed
@@ -1211,7 +1328,7 @@ impl Query {
                                     }
                                 ));
 
-                                if has_deeply_nested {
+                                if has_deeply_nested || has_vec_traversal_value {
                                     // Use and_then so the closure can return Result and use ?
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.and_then(|{}| Ok({} {{{}\n                    }}))).collect::<Result<Vec<_>, _>>()?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
