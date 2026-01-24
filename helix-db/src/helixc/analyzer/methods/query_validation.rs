@@ -347,9 +347,12 @@ fn build_return_fields(
                 // If has_spread, add all remaining schema fields
                 if traversal.has_spread {
                     for (field_name, _field) in schema_fields.iter() {
-                        // Skip if already added
+                        // Skip if output name already exists
                         let already_exists = fields.iter().any(|f| f.name == *field_name);
-                        if already_exists {
+                        // Skip if this source property was remapped to a different output name
+                        let already_remapped = traversal.field_name_mappings.values()
+                            .any(|source_prop| source_prop == field_name);
+                        if already_exists || already_remapped {
                             continue;
                         }
                         // Skip if excluded

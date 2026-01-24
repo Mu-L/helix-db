@@ -401,7 +401,7 @@ impl Query {
                                 nested_struct_name: Some(nested_name),
                                 traversal_type,
                                 closure_source_var,
-                                closure_param_name,
+                                closure_param_name: _,
                                 own_closure_param,
                                 ..
                             } = &field_info.source {
@@ -445,9 +445,8 @@ impl Query {
                                 };
 
                                 // Determine the closure parameter name to use in .map(|param| ...)
-                                // Prefer own_closure_param (this traversal's closure), otherwise use closure_param_name (parent context)
+                                // Only use own_closure_param (this traversal's closure), not parent context
                                 let closure_param = own_closure_param.as_ref()
-                                    .or(closure_param_name.as_ref())
                                     .map(|s| s.as_str())
                                     .filter(|s| !s.is_empty() && *s != "_" && *s != "val")
                                     .unwrap_or("item");
@@ -546,17 +545,30 @@ impl Query {
                                         // Check if this field itself is a nested traversal that accesses the closure parameter
                                         // Extract both the access variable and the actual field being accessed
                                         let (access_var, accessed_field_name) = if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
-                                            closure_source_var: Some(_),
+                                            closure_source_var: Some(source_var),
                                             accessed_field_name: accessed_field,
                                             ..
                                         } = &nested_field.source {
-                                            // Use the accessed_field_name from the metadata if available,
-                                            // otherwise fall back to the field name
+                                            // Case 1: Accessing a closure variable's field (e.g., usr::ID)
                                             let field_to_access = accessed_field.as_ref()
                                                 .map(|s| s.as_str())
                                                 .unwrap_or(nested_field.name.as_str());
-                                            (closure_param, field_to_access)
+                                            (source_var.as_str(), field_to_access)
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                            closure_source_var: None,
+                                            accessed_field_name: Some(accessed_field),
+                                            ..
+                                        } = &nested_field.source {
+                                            // Case 2: NestedTraversal with remapped field name (e.g., postID: id)
+                                            (closure_param, accessed_field.as_str())
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name: Some(prop) } = &nested_field.source {
+                                            // Case 3: Implicit field with remapped name (e.g., postID: id)
+                                            (closure_param, prop.as_str())
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name: Some(prop) } = &nested_field.source {
+                                            // Case 4: Schema field with remapped name (e.g., post: content)
+                                            (closure_param, prop.as_str())
                                         } else {
+                                            // Case 5: Default - use the field name as-is
                                             (closure_param, nested_field.name.as_str())
                                         };
 
@@ -736,7 +748,7 @@ impl Query {
                                 nested_struct_name: Some(nested_name),
                                 traversal_type,
                                 closure_source_var,
-                                closure_param_name,
+                                closure_param_name: _,
                                 own_closure_param,
                                 ..
                             } = &field_info.source {
@@ -778,9 +790,8 @@ impl Query {
                                 };
 
                                 // Determine the closure parameter name to use in .map(|param| ...)
-                                // Prefer own_closure_param (this traversal's closure), otherwise use closure_param_name (parent context)
+                                // Only use own_closure_param (this traversal's closure), not parent context
                                 let closure_param = own_closure_param.as_ref()
-                                    .or(closure_param_name.as_ref())
                                     .map(|s| s.as_str())
                                     .filter(|s| !s.is_empty() && *s != "_" && *s != "val")
                                     .unwrap_or("item");
@@ -876,17 +887,30 @@ impl Query {
                                         // Check if this field itself is a nested traversal that accesses the closure parameter
                                         // Extract both the access variable and the actual field being accessed
                                         let (access_var, accessed_field_name) = if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
-                                            closure_source_var: Some(_),
+                                            closure_source_var: Some(source_var),
                                             accessed_field_name: accessed_field,
                                             ..
                                         } = &nested_field.source {
-                                            // Use the accessed_field_name from the metadata if available,
-                                            // otherwise fall back to the field name
+                                            // Case 1: Accessing a closure variable's field (e.g., usr::ID)
                                             let field_to_access = accessed_field.as_ref()
                                                 .map(|s| s.as_str())
                                                 .unwrap_or(nested_field.name.as_str());
-                                            (closure_param, field_to_access)
+                                            (source_var.as_str(), field_to_access)
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                            closure_source_var: None,
+                                            accessed_field_name: Some(accessed_field),
+                                            ..
+                                        } = &nested_field.source {
+                                            // Case 2: NestedTraversal with remapped field name (e.g., postID: id)
+                                            (closure_param, accessed_field.as_str())
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name: Some(prop) } = &nested_field.source {
+                                            // Case 3: Implicit field with remapped name (e.g., postID: id)
+                                            (closure_param, prop.as_str())
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name: Some(prop) } = &nested_field.source {
+                                            // Case 4: Schema field with remapped name (e.g., post: content)
+                                            (closure_param, prop.as_str())
                                         } else {
+                                            // Case 5: Default - use the field name as-is
                                             (closure_param, nested_field.name.as_str())
                                         };
 
@@ -1188,7 +1212,7 @@ impl Query {
                                 nested_struct_name: Some(nested_name),
                                 traversal_type,
                                 closure_source_var,
-                                closure_param_name,
+                                closure_param_name: _,
                                 own_closure_param,
                                 ..
                             } = &field_info.source {
@@ -1232,9 +1256,8 @@ impl Query {
                                 };
 
                                 // Determine the closure parameter name to use in .map(|param| ...)
-                                // Prefer own_closure_param (this traversal's closure), otherwise use closure_param_name (parent context)
+                                // Only use own_closure_param (this traversal's closure), not parent context
                                 let closure_param = own_closure_param.as_ref()
-                                    .or(closure_param_name.as_ref())
                                     .map(|s| s.as_str())
                                     .filter(|s| !s.is_empty() && *s != "_" && *s != "val")
                                     .unwrap_or("item");
@@ -1333,17 +1356,30 @@ impl Query {
                                         // Check if this field itself is a nested traversal that accesses the closure parameter
                                         // Extract both the access variable and the actual field being accessed
                                         let (access_var, accessed_field_name) = if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
-                                            closure_source_var: Some(_),
+                                            closure_source_var: Some(source_var),
                                             accessed_field_name: accessed_field,
                                             ..
                                         } = &nested_field.source {
-                                            // Use the accessed_field_name from the metadata if available,
-                                            // otherwise fall back to the field name
+                                            // Case 1: Accessing a closure variable's field (e.g., usr::ID)
                                             let field_to_access = accessed_field.as_ref()
                                                 .map(|s| s.as_str())
                                                 .unwrap_or(nested_field.name.as_str());
-                                            (closure_param, field_to_access)
+                                            (source_var.as_str(), field_to_access)
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                            closure_source_var: None,
+                                            accessed_field_name: Some(accessed_field),
+                                            ..
+                                        } = &nested_field.source {
+                                            // Case 2: NestedTraversal with remapped field name (e.g., postID: id)
+                                            (closure_param, accessed_field.as_str())
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name: Some(prop) } = &nested_field.source {
+                                            // Case 3: Implicit field with remapped name (e.g., postID: id)
+                                            (closure_param, prop.as_str())
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name: Some(prop) } = &nested_field.source {
+                                            // Case 4: Schema field with remapped name (e.g., post: content)
+                                            (closure_param, prop.as_str())
                                         } else {
+                                            // Case 5: Default - use the field name as-is
                                             (closure_param, nested_field.name.as_str())
                                         };
 
@@ -1465,7 +1501,7 @@ impl Query {
                                 nested_struct_name: Some(nested_name),
                                 traversal_type,
                                 closure_source_var,
-                                closure_param_name,
+                                closure_param_name: _,
                                 own_closure_param,
                                 ..
                             } = &field_info.source {
@@ -1507,9 +1543,8 @@ impl Query {
                                 };
 
                                 // Determine the closure parameter name to use in .map(|param| ...)
-                                // Prefer own_closure_param (this traversal's closure), otherwise use closure_param_name (parent context)
+                                // Only use own_closure_param (this traversal's closure), not parent context
                                 let closure_param = own_closure_param.as_ref()
-                                    .or(closure_param_name.as_ref())
                                     .map(|s| s.as_str())
                                     .filter(|s| !s.is_empty() && *s != "_" && *s != "val")
                                     .unwrap_or("item");
@@ -1566,17 +1601,30 @@ impl Query {
                                         // Check if this field itself is a nested traversal that accesses the closure parameter
                                         // Extract both the access variable and the actual field being accessed
                                         let (access_var, accessed_field_name) = if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
-                                            closure_source_var: Some(_),
+                                            closure_source_var: Some(source_var),
                                             accessed_field_name: accessed_field,
                                             ..
                                         } = &nested_field.source {
-                                            // Use the accessed_field_name from the metadata if available,
-                                            // otherwise fall back to the field name
+                                            // Case 1: Accessing a closure variable's field (e.g., usr::ID)
                                             let field_to_access = accessed_field.as_ref()
                                                 .map(|s| s.as_str())
                                                 .unwrap_or(nested_field.name.as_str());
-                                            (closure_param, field_to_access)
+                                            (source_var.as_str(), field_to_access)
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
+                                            closure_source_var: None,
+                                            accessed_field_name: Some(accessed_field),
+                                            ..
+                                        } = &nested_field.source {
+                                            // Case 2: NestedTraversal with remapped field name (e.g., postID: id)
+                                            (closure_param, accessed_field.as_str())
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name: Some(prop) } = &nested_field.source {
+                                            // Case 3: Implicit field with remapped name (e.g., postID: id)
+                                            (closure_param, prop.as_str())
+                                        } else if let crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name: Some(prop) } = &nested_field.source {
+                                            // Case 4: Schema field with remapped name (e.g., post: content)
+                                            (closure_param, prop.as_str())
                                         } else {
+                                            // Case 5: Default - use the field name as-is
                                             (closure_param, nested_field.name.as_str())
                                         };
 
