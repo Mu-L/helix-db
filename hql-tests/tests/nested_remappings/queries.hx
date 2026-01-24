@@ -19,7 +19,7 @@ QUERY GetUserPosts (user_id: ID) =>
     posts <- user::Out<HasPost>
     RETURN user::|usr|{
         posts: posts::{
-            postID: id,
+            postID: ID,
             creatorID: usr::ID,
             creatorName: usr::{name},
             ..
