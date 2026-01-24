@@ -125,6 +125,24 @@ fn build_return_fields(
 
     // Step 1: Add implicit fields if this is a schema type
     if let Some((label, item_type)) = schema_type {
+        // Helper to find which output field name maps to a given property
+        // e.g., for property "id", might return Some("file_id") if there's a mapping file_id -> ID
+        let find_output_for_property = |property: &str| -> Option<String> {
+            // First check if any object_field maps to this property via field_name_mappings
+            for output_name in &traversal.object_fields {
+                if let Some(prop) = traversal.field_name_mappings.get(output_name) {
+                    if prop.to_lowercase() == property.to_lowercase() {
+                        return Some(output_name.clone());
+                    }
+                }
+                // Also check if the output_name itself matches (identity mapping)
+                if output_name.to_lowercase() == property.to_lowercase() {
+                    return Some(output_name.clone());
+                }
+            }
+            None
+        };
+
         // If has_object_step, only add implicit fields if they're explicitly selected
         // Otherwise, add all implicit fields (default behavior)
         let should_add_field = |field_name: &str| {
@@ -132,50 +150,147 @@ fn build_return_fields(
             if traversal.excluded_fields.contains(&field_name.to_string()) {
                 return false;
             }
-            // If has object step, only include if explicitly selected
-            !traversal.has_object_step || traversal.object_fields.contains(&field_name.to_string())
+            // If has object step, only include if explicitly selected (possibly with remapping)
+            if traversal.has_object_step {
+                find_output_for_property(field_name).is_some()
+            } else {
+                true
+            }
         };
 
         // Add id and label if no object step OR if explicitly selected
         if should_add_field("id") {
-            fields.push(ReturnFieldInfo::new_implicit(
-                "id".to_string(),
-                RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
-            ));
+            // Check if id is remapped to a different output name
+            if let Some(output_name) = find_output_for_property("id") {
+                if output_name != "id" {
+                    // Remapped: e.g., file_id: ID
+                    fields.push(ReturnFieldInfo::new_implicit_with_property(
+                        output_name,
+                        "id".to_string(),
+                        RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                    ));
+                } else {
+                    fields.push(ReturnFieldInfo::new_implicit(
+                        "id".to_string(),
+                        RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                    ));
+                }
+            } else if !traversal.has_object_step {
+                // No object step means return all fields
+                fields.push(ReturnFieldInfo::new_implicit(
+                    "id".to_string(),
+                    RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                ));
+            }
         }
         if should_add_field("label") {
-            fields.push(ReturnFieldInfo::new_implicit(
-                "label".to_string(),
-                RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
-            ));
+            if let Some(output_name) = find_output_for_property("label") {
+                if output_name != "label" {
+                    fields.push(ReturnFieldInfo::new_implicit_with_property(
+                        output_name,
+                        "label".to_string(),
+                        RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                    ));
+                } else {
+                    fields.push(ReturnFieldInfo::new_implicit(
+                        "label".to_string(),
+                        RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                    ));
+                }
+            } else if !traversal.has_object_step {
+                fields.push(ReturnFieldInfo::new_implicit(
+                    "label".to_string(),
+                    RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                ));
+            }
         }
 
         // Add type-specific implicit fields
         if item_type == "edge" {
             if should_add_field("from_node") {
-                fields.push(ReturnFieldInfo::new_implicit(
-                    "from_node".to_string(),
-                    RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
-                ));
+                if let Some(output_name) = find_output_for_property("from_node") {
+                    if output_name != "from_node" {
+                        fields.push(ReturnFieldInfo::new_implicit_with_property(
+                            output_name,
+                            "from_node".to_string(),
+                            RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                        ));
+                    } else {
+                        fields.push(ReturnFieldInfo::new_implicit(
+                            "from_node".to_string(),
+                            RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                        ));
+                    }
+                } else if !traversal.has_object_step {
+                    fields.push(ReturnFieldInfo::new_implicit(
+                        "from_node".to_string(),
+                        RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                    ));
+                }
             }
             if should_add_field("to_node") {
-                fields.push(ReturnFieldInfo::new_implicit(
-                    "to_node".to_string(),
-                    RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
-                ));
+                if let Some(output_name) = find_output_for_property("to_node") {
+                    if output_name != "to_node" {
+                        fields.push(ReturnFieldInfo::new_implicit_with_property(
+                            output_name,
+                            "to_node".to_string(),
+                            RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                        ));
+                    } else {
+                        fields.push(ReturnFieldInfo::new_implicit(
+                            "to_node".to_string(),
+                            RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                        ));
+                    }
+                } else if !traversal.has_object_step {
+                    fields.push(ReturnFieldInfo::new_implicit(
+                        "to_node".to_string(),
+                        RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
+                    ));
+                }
             }
         } else if item_type == "vector" {
             if should_add_field("data") {
-                fields.push(ReturnFieldInfo::new_implicit(
-                    "data".to_string(),
-                    RustFieldType::RefArray(RustType::F64),
-                ));
+                if let Some(output_name) = find_output_for_property("data") {
+                    if output_name != "data" {
+                        fields.push(ReturnFieldInfo::new_implicit_with_property(
+                            output_name,
+                            "data".to_string(),
+                            RustFieldType::RefArray(RustType::F64),
+                        ));
+                    } else {
+                        fields.push(ReturnFieldInfo::new_implicit(
+                            "data".to_string(),
+                            RustFieldType::RefArray(RustType::F64),
+                        ));
+                    }
+                } else if !traversal.has_object_step {
+                    fields.push(ReturnFieldInfo::new_implicit(
+                        "data".to_string(),
+                        RustFieldType::RefArray(RustType::F64),
+                    ));
+                }
             }
             if should_add_field("score") {
-                fields.push(ReturnFieldInfo::new_implicit(
-                    "score".to_string(),
-                    RustFieldType::Primitive(GenRef::Std(RustType::F64)),
-                ));
+                if let Some(output_name) = find_output_for_property("score") {
+                    if output_name != "score" {
+                        fields.push(ReturnFieldInfo::new_implicit_with_property(
+                            output_name,
+                            "score".to_string(),
+                            RustFieldType::Primitive(GenRef::Std(RustType::F64)),
+                        ));
+                    } else {
+                        fields.push(ReturnFieldInfo::new_implicit(
+                            "score".to_string(),
+                            RustFieldType::Primitive(GenRef::Std(RustType::F64)),
+                        ));
+                    }
+                } else if !traversal.has_object_step {
+                    fields.push(ReturnFieldInfo::new_implicit(
+                        "score".to_string(),
+                        RustFieldType::Primitive(GenRef::Std(RustType::F64)),
+                    ));
+                }
             }
         }
 
@@ -187,6 +302,12 @@ fn build_return_fields(
             _ => None,
         };
 
+        // Helper to check if a property is an implicit field
+        let is_implicit_field = |prop: &str| -> bool {
+            let lower = prop.to_lowercase();
+            matches!(lower.as_str(), "id" | "label" | "from_node" | "to_node" | "data" | "score")
+        };
+
         if let Some(schema_fields) = schema_fields {
             if traversal.has_object_step {
                 // Projection mode - only include selected fields
@@ -196,22 +317,30 @@ fn build_return_fields(
                         continue;
                     }
 
-                    // Skip implicit fields (already added)
-                    if field_name == "id"
-                        || field_name == "label"
-                        || field_name == "from_node"
-                        || field_name == "to_node"
-                        || field_name == "data"
-                        || field_name == "score"
-                    {
+                    // Look up the actual property name from the mapping
+                    let property_name = traversal.field_name_mappings
+                        .get(field_name)
+                        .unwrap_or(field_name);
+
+                    // Skip implicit fields (already handled above)
+                    if is_implicit_field(property_name) {
                         continue;
                     }
 
-                    if let Some(_field) = schema_fields.get(field_name.as_str()) {
-                        fields.push(ReturnFieldInfo::new_schema(
-                            field_name.clone(),
-                            RustFieldType::OptionValue,
-                        ));
+                    if let Some(_field) = schema_fields.get(property_name.as_str()) {
+                        // If property_name != field_name, we need to track the mapping
+                        if property_name != field_name {
+                            fields.push(ReturnFieldInfo::new_schema_with_property(
+                                field_name.clone(),      // output field name ("post")
+                                property_name.clone(),   // source property name ("content")
+                                RustFieldType::OptionValue,
+                            ));
+                        } else {
+                            fields.push(ReturnFieldInfo::new_schema(
+                                field_name.clone(),
+                                RustFieldType::OptionValue,
+                            ));
+                        }
                     }
                 }
 
@@ -322,7 +451,10 @@ fn build_return_fields(
                         })
                         .unwrap_or(!nested_info.traversal.has_object_step);
 
-                    let rust_type = if is_implicit {
+                    // If this traversal has graph steps, it will be collected into a Vec
+                    let rust_type = if nested_info.traversal.has_graph_steps() {
+                        RustFieldType::Vec(Box::new(RustFieldType::Value))
+                    } else if is_implicit {
                         // Use the appropriate type based on the implicit field
                         match accessed_field.map(|s| s.as_str()) {
                             Some("data") => RustFieldType::RefArray(RustType::F64),

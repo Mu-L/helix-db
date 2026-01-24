@@ -357,14 +357,20 @@ impl Query {
                                     crate::helixc::generator::return_values::ReturnFieldType::Simple(ty) if ty == &RustFieldType::TraversalValue
                                 );
 
-                                let is_vec_traversal_value = matches!(                                           
-                                    &field_info.field_type,                                                      
-                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Vec(inner)) if inner.as_ref() == &RustFieldType::TraversalValue              
-                                );  
+                                let is_vec_traversal_value = matches!(
+                                    &field_info.field_type,
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Vec(inner)) if inner.as_ref() == &RustFieldType::TraversalValue
+                                );
+
+                                // Check if this is a Vec<Value> (from graph navigation returning mapped values)
+                                let is_vec_value = matches!(
+                                    &field_info.field_type,
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Vec(inner)) if inner.as_ref() == &RustFieldType::Value
+                                );
 
                                 if is_singular_traversal_value {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.collect_to_obj()?", iterator_expr, trav_code)
-                                } else if is_vec_traversal_value {
+                                } else if is_vec_traversal_value || is_vec_value {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.collect::<Result<Vec<_>, _>>()?", iterator_expr, trav_code)
                                 } else {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}", iterator_expr, trav_code)
@@ -589,21 +595,36 @@ impl Query {
                             } else {
                                 "Vec::new()".to_string()
                             }
-                        } else if field.name == "id" {
-                            format!("uuid_str({}.id(), &arena)", singular_var)
-                        } else if field.name == "label" {
-                            format!("{}.label()", singular_var)
-                        } else if field.name == "from_node" {
-                            format!("uuid_str({}.from_node(), &arena)", singular_var)
-                        } else if field.name == "to_node" {
-                            format!("uuid_str({}.to_node(), &arena)", singular_var)
-                        } else if field.name == "data" {
-                            format!("{}.data()", singular_var)
-                        } else if field.name == "score" {
-                            format!("{}.score()", singular_var)
                         } else {
-                            // Regular schema field
-                            format!("{}.get_property(\"{}\")", singular_var, field.name)
+                            // Get property name from source if available (for field remapping)
+                            let field_info = &struct_def.field_infos[field_idx];
+                            let property_name = match &field_info.source {
+                                crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name } => {
+                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                },
+                                crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name } => {
+                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                },
+                                _ => &field.name,
+                            };
+
+                            // Use property_name to determine access method
+                            if property_name == "id" {
+                                format!("uuid_str({}.id(), &arena)", singular_var)
+                            } else if property_name == "label" {
+                                format!("{}.label()", singular_var)
+                            } else if property_name == "from_node" {
+                                format!("uuid_str({}.from_node(), &arena)", singular_var)
+                            } else if property_name == "to_node" {
+                                format!("uuid_str({}.to_node(), &arena)", singular_var)
+                            } else if property_name == "data" {
+                                format!("{}.data()", singular_var)
+                            } else if property_name == "score" {
+                                format!("{}.score()", singular_var)
+                            } else {
+                                // Regular schema field - use property_name for get_property
+                                format!("{}.get_property(\"{}\")", singular_var, property_name)
+                            }
                         };
                         writeln!(f, "        {}: {},", field.name, field_value)?;
                     }
@@ -671,14 +692,20 @@ impl Query {
                                     crate::helixc::generator::return_values::ReturnFieldType::Simple(ty) if ty == &RustFieldType::TraversalValue
                                 );
 
-                                let is_vec_traversal_value = matches!(                                           
-                                    &field_info.field_type,                                                      
-                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Vec(inner)) if inner.as_ref() == &RustFieldType::TraversalValue              
-                                );  
+                                let is_vec_traversal_value = matches!(
+                                    &field_info.field_type,
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Vec(inner)) if inner.as_ref() == &RustFieldType::TraversalValue
+                                );
+
+                                // Check if this is a Vec<Value> (from graph navigation returning mapped values)
+                                let is_vec_value = matches!(
+                                    &field_info.field_type,
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Vec(inner)) if inner.as_ref() == &RustFieldType::Value
+                                );
 
                                 if is_singular_traversal_value {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.collect_to_obj()?", iterator_expr, trav_code)
-                                } else if is_vec_traversal_value {
+                                } else if is_vec_traversal_value || is_vec_value {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.collect::<Result<Vec<_>, _>>()?", iterator_expr, trav_code)
                                 } else {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}", iterator_expr, trav_code)
@@ -898,26 +925,42 @@ impl Query {
                             } else {
                                 "Vec::new()".to_string()
                             }
-                        } else if field.name == "id" {
-                            format!("uuid_str({}.id(), &arena)", struct_def.source_variable)
-                        } else if field.name == "label" {
-                            format!("{}.label()", struct_def.source_variable)
-                        } else if field.name == "from_node" {
-                            format!(
-                                "uuid_str({}.from_node(), &arena)",
-                                struct_def.source_variable
-                            )
-                        } else if field.name == "to_node" {
-                            format!("uuid_str({}.to_node(), &arena)", struct_def.source_variable)
-                        } else if field.name == "data" {
-                            format!("{}.data()", struct_def.source_variable)
-                        } else if field.name == "score" {
-                            format!("{}.score()", struct_def.source_variable)
                         } else {
-                            format!(
-                                "{}.get_property(\"{}\")",
-                                struct_def.source_variable, field.name
-                            )
+                            // Get property name from source if available (for field remapping)
+                            let field_info = &struct_def.field_infos[field_idx];
+                            let property_name = match &field_info.source {
+                                crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name } => {
+                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                },
+                                crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name } => {
+                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                },
+                                _ => &field.name,
+                            };
+
+                            // Use property_name to determine access method
+                            if property_name == "id" {
+                                format!("uuid_str({}.id(), &arena)", struct_def.source_variable)
+                            } else if property_name == "label" {
+                                format!("{}.label()", struct_def.source_variable)
+                            } else if property_name == "from_node" {
+                                format!(
+                                    "uuid_str({}.from_node(), &arena)",
+                                    struct_def.source_variable
+                                )
+                            } else if property_name == "to_node" {
+                                format!("uuid_str({}.to_node(), &arena)", struct_def.source_variable)
+                            } else if property_name == "data" {
+                                format!("{}.data()", struct_def.source_variable)
+                            } else if property_name == "score" {
+                                format!("{}.score()", struct_def.source_variable)
+                            } else {
+                                // Regular schema field - use property_name for get_property
+                                format!(
+                                    "{}.get_property(\"{}\")",
+                                    struct_def.source_variable, property_name
+                                )
+                            }
                         };
                         writeln!(f, "        {}: {},", field.name, field_value)?;
                     }
@@ -1339,21 +1382,36 @@ impl Query {
                             } else {
                                 "Vec::new()".to_string()
                             }
-                        } else if field.name == "id" {
-                            format!("uuid_str({}.id(), &arena)", singular_var)
-                        } else if field.name == "label" {
-                            format!("{}.label()", singular_var)
-                        } else if field.name == "from_node" {
-                            format!("uuid_str({}.from_node(), &arena)", singular_var)
-                        } else if field.name == "to_node" {
-                            format!("uuid_str({}.to_node(), &arena)", singular_var)
-                        } else if field.name == "data" {
-                            format!("{}.data()", singular_var)
-                        } else if field.name == "score" {
-                            format!("{}.score()", singular_var)
                         } else {
-                            // Regular schema field
-                            format!("{}.get_property(\"{}\")", singular_var, field.name)
+                            // Get property name from source if available (for field remapping)
+                            let field_info = &struct_def.field_infos[field_idx];
+                            let property_name = match &field_info.source {
+                                crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name } => {
+                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                },
+                                crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name } => {
+                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                },
+                                _ => &field.name,
+                            };
+
+                            // Use property_name to determine access method
+                            if property_name == "id" {
+                                format!("uuid_str({}.id(), &arena)", singular_var)
+                            } else if property_name == "label" {
+                                format!("{}.label()", singular_var)
+                            } else if property_name == "from_node" {
+                                format!("uuid_str({}.from_node(), &arena)", singular_var)
+                            } else if property_name == "to_node" {
+                                format!("uuid_str({}.to_node(), &arena)", singular_var)
+                            } else if property_name == "data" {
+                                format!("{}.data()", singular_var)
+                            } else if property_name == "score" {
+                                format!("{}.score()", singular_var)
+                            } else {
+                                // Regular schema field - use property_name for get_property
+                                format!("{}.get_property(\"{}\")", singular_var, property_name)
+                            }
                         };
                         writeln!(f, "        {}: {},", field.name, field_value)?;
                     }
@@ -1557,26 +1615,42 @@ impl Query {
                             } else {
                                 "Vec::new()".to_string()
                             }
-                        } else if field.name == "id" {
-                            format!("uuid_str({}.id(), &arena)", struct_def.source_variable)
-                        } else if field.name == "label" {
-                            format!("{}.label()", struct_def.source_variable)
-                        } else if field.name == "from_node" {
-                            format!(
-                                "uuid_str({}.from_node(), &arena)",
-                                struct_def.source_variable
-                            )
-                        } else if field.name == "to_node" {
-                            format!("uuid_str({}.to_node(), &arena)", struct_def.source_variable)
-                        } else if field.name == "data" {
-                            format!("{}.data()", struct_def.source_variable)
-                        } else if field.name == "score" {
-                            format!("{}.score()", struct_def.source_variable)
                         } else {
-                            format!(
-                                "{}.get_property(\"{}\")",
-                                struct_def.source_variable, field.name
-                            )
+                            // Get property name from source if available (for field remapping)
+                            let field_info = &struct_def.field_infos[field_idx];
+                            let property_name = match &field_info.source {
+                                crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name } => {
+                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                },
+                                crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name } => {
+                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                },
+                                _ => &field.name,
+                            };
+
+                            // Use property_name to determine access method
+                            if property_name == "id" {
+                                format!("uuid_str({}.id(), &arena)", struct_def.source_variable)
+                            } else if property_name == "label" {
+                                format!("{}.label()", struct_def.source_variable)
+                            } else if property_name == "from_node" {
+                                format!(
+                                    "uuid_str({}.from_node(), &arena)",
+                                    struct_def.source_variable
+                                )
+                            } else if property_name == "to_node" {
+                                format!("uuid_str({}.to_node(), &arena)", struct_def.source_variable)
+                            } else if property_name == "data" {
+                                format!("{}.data()", struct_def.source_variable)
+                            } else if property_name == "score" {
+                                format!("{}.score()", struct_def.source_variable)
+                            } else {
+                                // Regular schema field - use property_name for get_property
+                                format!(
+                                    "{}.get_property(\"{}\")",
+                                    struct_def.source_variable, property_name
+                                )
+                            }
                         };
                         writeln!(f, "        {}: {},", field.name, field_value)?;
                     }

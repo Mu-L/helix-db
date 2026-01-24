@@ -301,7 +301,13 @@ fn validate_property_access<'a>(
                 for field_addition in &obj.fields {
                     match &field_addition.value.value {
                         FieldValueType::Identifier(id) => {
-                            gen_traversal.object_fields.push(id.clone());
+                            // Use the key (output field name), not the id (source property name)
+                            gen_traversal.object_fields.push(field_addition.key.clone());
+                            // Track the mapping from output name to source property name
+                            gen_traversal.field_name_mappings.insert(
+                                field_addition.key.clone(),
+                                id.clone(),
+                            );
                         }
                         FieldValueType::Traversal(tr) => {
                             // Nested traversal - validate it now to get the type
@@ -432,6 +438,15 @@ fn validate_property_access<'a>(
                             } else {
                                 // Other expression types (identifiers, literals, etc.)
                                 gen_traversal.object_fields.push(field_addition.key.clone());
+
+                                // If this is an identifier expression, track the mapping
+                                // e.g., "post: content" where content is parsed as Expression(Identifier("content"))
+                                if let ExpressionType::Identifier(id) = &expr.expr {
+                                    gen_traversal.field_name_mappings.insert(
+                                        field_addition.key.clone(),
+                                        id.clone(),
+                                    );
+                                }
                             }
                         }
                         _ => {

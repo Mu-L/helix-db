@@ -126,6 +126,9 @@ pub struct Traversal {
     pub nested_traversals: std::collections::HashMap<String, NestedTraversalInfo>,
     pub is_reused_variable: bool,
     pub closure_param_name: Option<String>, // HQL closure parameter name (e.g., "e" from entries::|e|)
+    /// Maps output field name -> source property name for renamed fields
+    /// e.g., "post" -> "content" for `post: content`, "file_id" -> "ID"
+    pub field_name_mappings: std::collections::HashMap<String, String>,
 }
 
 impl Display for Traversal {
@@ -402,6 +405,7 @@ impl Default for Traversal {
             nested_traversals: std::collections::HashMap::new(),
             is_reused_variable: false,
             closure_param_name: None,
+            field_name_mappings: std::collections::HashMap::new(),
         }
     }
 }
@@ -819,11 +823,66 @@ pub struct OrderBy {
     pub traversal: Traversal,
     pub order: Order,
 }
+impl OrderBy {
+    /// Check if this is a simple property access pattern that can be optimized.
+    /// Returns the optimized closure body if the pattern is:
+    /// - TraversalType::FromSingle("val")
+    /// - SourceStep::Anonymous
+    /// - Exactly one step that is PropertyFetch or ReservedPropertyAccess
+    fn is_simple_property_access(&self) -> Option<String> {
+        // Check if traversal type is FromSingle with "val"
+        let is_val = match &self.traversal.traversal_type {
+            TraversalType::FromSingle(var) => {
+                matches!(var, GenRef::Std(s) | GenRef::Literal(s) if s == "val")
+            }
+            _ => false,
+        };
+
+        if !is_val {
+            return None;
+        }
+
+        // Check if source step is Anonymous
+        let is_anonymous = matches!(self.traversal.source_step.inner(), SourceStep::Anonymous);
+        if !is_anonymous {
+            return None;
+        }
+
+        // Check if we have exactly one step that is PropertyFetch or ReservedPropertyAccess
+        if self.traversal.steps.len() != 1 {
+            return None;
+        }
+
+        let step = self.traversal.steps.first()?.inner();
+        match step {
+            Step::PropertyFetch(prop) => {
+                Some(format!(
+                    "val.get_property({}).cloned().unwrap_or(Value::Empty)",
+                    prop
+                ))
+            }
+            Step::ReservedPropertyAccess(reserved_prop) => {
+                let value_expr = match reserved_prop {
+                    ReservedProp::Id => "Value::Id(ID::from(val.id()))".to_string(),
+                    ReservedProp::Label => "Value::from(val.label())".to_string(),
+                };
+                Some(value_expr)
+            }
+            _ => None,
+        }
+    }
+}
 impl Display for OrderBy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.order {
-            Order::Asc => write!(f, "order_by_asc(|val| {})", self.traversal),
-            Order::Desc => write!(f, "order_by_desc(|val| {})", self.traversal),
+        let method = match self.order {
+            Order::Asc => "order_by_asc",
+            Order::Desc => "order_by_desc",
+        };
+
+        if let Some(optimized_body) = self.is_simple_property_access() {
+            write!(f, "{}(|val| {})", method, optimized_body)
+        } else {
+            write!(f, "{}(|val| {})", method, self.traversal)
         }
     }
 }

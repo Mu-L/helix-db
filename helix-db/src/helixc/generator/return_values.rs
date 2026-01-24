@@ -261,7 +261,7 @@ impl ReturnValueStruct {
                 ReturnValueField {
                     name: field_info.name.clone(),
                     field_type,
-                    is_implicit: matches!(field_info.source, ReturnFieldSource::ImplicitField),
+                    is_implicit: matches!(field_info.source, ReturnFieldSource::ImplicitField { .. }),
                     is_nested_traversal: matches!(
                         field_info.source,
                         ReturnFieldSource::NestedTraversal { .. }
@@ -462,9 +462,11 @@ pub enum ReturnFieldType {
 #[derive(Clone, Debug)]
 pub enum ReturnFieldSource {
     /// Field from the schema (node/edge/vector properties)
-    SchemaField,
+    /// property_name is the source property name if different from output field name
+    SchemaField { property_name: Option<String> },
     /// Implicit field (id, label, from_node, to_node, data, score)
-    ImplicitField,
+    /// property_name is the source property name if different from output field name
+    ImplicitField { property_name: Option<String> },
     /// User-defined field in custom object
     UserDefined,
     /// Result of a nested traversal expression
@@ -486,7 +488,17 @@ impl ReturnFieldInfo {
         Self {
             name,
             field_type: ReturnFieldType::Simple(field_type),
-            source: ReturnFieldSource::ImplicitField,
+            source: ReturnFieldSource::ImplicitField { property_name: None },
+        }
+    }
+
+    /// Create an implicit field with a different source property name
+    /// e.g., output "file_id" from property "ID"
+    pub fn new_implicit_with_property(name: String, property_name: String, field_type: RustFieldType) -> Self {
+        Self {
+            name,
+            field_type: ReturnFieldType::Simple(field_type),
+            source: ReturnFieldSource::ImplicitField { property_name: Some(property_name) },
         }
     }
 
@@ -494,7 +506,17 @@ impl ReturnFieldInfo {
         Self {
             name,
             field_type: ReturnFieldType::Simple(field_type),
-            source: ReturnFieldSource::SchemaField,
+            source: ReturnFieldSource::SchemaField { property_name: None },
+        }
+    }
+
+    /// Create a schema field with a different source property name
+    /// e.g., output "post" from property "content"
+    pub fn new_schema_with_property(name: String, property_name: String, field_type: RustFieldType) -> Self {
+        Self {
+            name,
+            field_type: ReturnFieldType::Simple(field_type),
+            source: ReturnFieldSource::SchemaField { property_name: Some(property_name) },
         }
     }
 
