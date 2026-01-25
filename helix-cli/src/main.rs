@@ -10,6 +10,7 @@ mod docker;
 mod errors;
 mod github_issue;
 mod metrics_sender;
+mod output;
 mod port;
 mod project;
 mod prompts;
@@ -21,6 +22,14 @@ mod utils;
 #[command(name = "Helix CLI")]
 #[command(version)]
 struct Cli {
+    /// Suppress output (errors and final result only)
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
+    /// Show detailed output with timing information
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     #[clap(subcommand)]
     command: Commands,
 }
@@ -235,6 +244,9 @@ async fn main() -> Result<()> {
     update::check_for_updates().await?;
 
     let cli = Cli::parse();
+
+    // Set verbosity level from flags
+    output::Verbosity::set(output::Verbosity::from_flags(cli.quiet, cli.verbose));
 
     let result = match cli.command {
         Commands::Init {
