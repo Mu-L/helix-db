@@ -125,7 +125,7 @@ impl Operation {
     /// Create a new operation with verb and target
     ///
     /// Prints the operation header in normal/verbose mode:
-    /// `Building 'dev'...`
+    /// `Building 'dev'`
     pub fn new(verb: &str, target: &str) -> Self {
         let op = Self {
             verb: verb.to_string(),
@@ -141,6 +141,7 @@ impl Operation {
     }
 
     /// Create a step within this operation
+    #[allow(dead_code)]
     pub fn step(&self, description: &str) -> Step {
         Step::new(description)
     }
@@ -238,6 +239,7 @@ pub struct Step {
 
 impl Step {
     /// Create a new step with the same message for progress and completion
+    #[allow(dead_code)]
     fn new(description: &str) -> Self {
         Self {
             progress_message: description.to_string(),
@@ -379,6 +381,7 @@ impl LiveSpinner {
     }
 
     /// Update the spinner message
+    #[allow(dead_code)]
     pub fn update(&self, message: &str) {
         if std::io::stdout().is_terminal() {
             self.progress_bar.set_message(message.to_string());
@@ -415,6 +418,7 @@ pub fn info(message: &str) {
 }
 
 /// Print a verbose-only message
+#[allow(dead_code)]
 pub fn verbose(message: &str) {
     if Verbosity::current().show_verbose() {
         println!("  {}", message.dimmed());

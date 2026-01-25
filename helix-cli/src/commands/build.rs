@@ -142,7 +142,7 @@ pub async fn run_build_steps(
         }
         Err(_) => {
             compile_step.fail();
-            return Err(compile_result.unwrap_err().into());
+            return Err(compile_result.unwrap_err());
         }
     }
 
