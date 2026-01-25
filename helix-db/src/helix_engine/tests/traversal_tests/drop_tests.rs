@@ -202,6 +202,8 @@ fn test_drop_traversal() {
             .collect_to_obj()
             .unwrap();
         neighbor_ids.push(neighbor_id);
+        // sleep for 1 ms
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     txn.commit().unwrap();
 

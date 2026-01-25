@@ -175,7 +175,10 @@ impl Display for Traversal {
                 }
             }
 
-            TraversalType::Empty => panic!("Should not be empty"),
+            TraversalType::Empty => {
+                debug_assert!(false, "TraversalType::Empty should not reach generator");
+                write!(f, "/* ERROR: empty traversal type */")?;
+            }
             TraversalType::Update(properties) => {
                 write!(f, "{{")?;
                 write!(f, "let update_tr = G::new(&db, &txn, &arena)")?;
@@ -767,9 +770,11 @@ impl Display for WhereRef {
                         BoolOp::Contains(contains) => format!("{}{}", value_expr, contains),
                         BoolOp::IsIn(is_in) => format!("{}{}", value_expr, is_in),
                         BoolOp::PropertyEq(_) | BoolOp::PropertyNeq(_) => {
-                            unreachable!(
+                            debug_assert!(
+                                false,
                                 "PropertyEq/PropertyNeq should not be used with reserved properties"
-                            )
+                            );
+                            "compile_error!(\"PropertyEq/PropertyNeq cannot be used with reserved properties\")".to_string()
                         }
                     };
                     return write!(

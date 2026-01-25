@@ -493,7 +493,16 @@ pub(crate) fn validate_traversal<'a>(
         }
         // anonymous will be the traversal type rather than the start type
         StartNode::Anonymous => {
-            let parent = parent_ty.clone().unwrap();
+            let Some(parent) = parent_ty.clone() else {
+                generate_error!(
+                    ctx,
+                    original_query,
+                    tr.loc.clone(),
+                    E601,
+                    "anonymous traversal requires parent type"
+                );
+                return None;
+            };
             gen_traversal.traversal_type =
                 TraversalType::FromSingle(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
             gen_traversal.source_step = Separator::Empty(SourceStep::Anonymous);
@@ -666,8 +675,23 @@ pub(crate) fn validate_traversal<'a>(
 
             gen_traversal.traversal_type = TraversalType::Ref;
             gen_traversal.should_collect = ShouldCollect::ToVec;
+
+            let label = match &sv.vector_type {
+                Some(vt) => GenRef::Literal(vt.clone()),
+                None => {
+                    generate_error!(
+                        ctx,
+                        original_query,
+                        sv.loc.clone(),
+                        E601,
+                        "search vector requires vector_type"
+                    );
+                    return None;
+                }
+            };
+
             gen_traversal.source_step = Separator::Period(SourceStep::SearchVector(SearchVector {
-                label: GenRef::Literal(sv.vector_type.clone().unwrap()),
+                label,
                 vec,
                 k,
                 pre_filter,
