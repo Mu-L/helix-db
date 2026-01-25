@@ -770,9 +770,11 @@ impl Display for WhereRef {
                         BoolOp::Contains(contains) => format!("{}{}", value_expr, contains),
                         BoolOp::IsIn(is_in) => format!("{}{}", value_expr, is_in),
                         BoolOp::PropertyEq(_) | BoolOp::PropertyNeq(_) => {
-                            unreachable!(
+                            debug_assert!(
+                                false,
                                 "PropertyEq/PropertyNeq should not be used with reserved properties"
-                            )
+                            );
+                            "compile_error!(\"PropertyEq/PropertyNeq cannot be used with reserved properties\")".to_string()
                         }
                     };
                     return write!(
