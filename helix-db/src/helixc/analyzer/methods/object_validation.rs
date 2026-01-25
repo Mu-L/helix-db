@@ -176,6 +176,13 @@ fn extract_fields_from_object<'a>(
 
                 // Validate the field exists
                 is_valid_identifier(ctx, original_query, value.loc.clone(), identifier.as_str());
+                validate_field_name_existence_for_item_type(
+                    ctx,
+                    original_query,
+                    value.loc.clone(),
+                    parent_ty,
+                    identifier.as_str(),
+                );
 
                 // Get the field type from the schema
                 if let Some(field_type) =
