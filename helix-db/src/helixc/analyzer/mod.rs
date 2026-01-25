@@ -40,12 +40,12 @@ pub fn analyze(src: &Source) -> Result<(Vec<Diagnostic>, GeneratedSource), Parse
     Ok((ctx.diagnostics, ctx.output))
 }
 
+pub mod ariadne_render;
 pub mod diagnostic;
 pub mod error_codes;
 pub mod errors;
 pub mod fix;
 pub mod methods;
-pub mod pretty;
 pub mod types;
 pub mod utils;
 

@@ -157,6 +157,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ariadne"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36f5e3dca4e09a6f340a61a0e9c7b61e030c69fc27bf29d73218f7e5e3b7638f"
+dependencies = [
+ "unicode-width 0.1.14",
+ "yansi",
+]
+
+[[package]]
 name = "array-init-cursor"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1477,6 +1487,7 @@ dependencies = [
 name = "helix-db"
 version = "1.2.5"
 dependencies = [
+ "ariadne",
  "async-trait",
  "axum",
  "bincode",
@@ -1509,6 +1520,7 @@ dependencies = [
  "sonic-rs",
  "subtle",
  "tempfile",
+ "textwrap",
  "thiserror 2.0.12",
  "tokio",
  "tokio-test",
@@ -5883,6 +5895,12 @@ name = "xxhash-rust"
 version = "0.8.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
+
+[[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yoke"

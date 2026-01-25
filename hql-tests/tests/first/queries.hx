@@ -7,7 +7,7 @@ QUERY GetAppsByUserId(user_id: ID) =>
     apps <- user::Out<User_Has_Access_To>
     RETURN apps::{
         access_modified_at2: _::{description},
-        access_modified_at: _::InE<User_Has_Access_To>::{modified_at, created_at}::FIRST,
+        access_modified_at: _::InE<User_Has_Access_To>::{modified_at, created}::FIRST,
         access_modified_at_vec: _::InE<User_Has_Access_To>::{modified_at, created_at},
         name,
         description,
@@ -16,3 +16,5 @@ QUERY GetAppsByUserId(user_id: ID) =>
         archived,
         id,
     } 
+
+
