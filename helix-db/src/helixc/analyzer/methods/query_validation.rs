@@ -131,10 +131,10 @@ fn build_return_fields(
         let find_output_for_property = |property: &str| -> Option<String> {
             // First check if any object_field maps to this property via field_name_mappings
             for output_name in &traversal.object_fields {
-                if let Some(prop) = traversal.field_name_mappings.get(output_name) {
-                    if prop.to_lowercase() == property.to_lowercase() {
-                        return Some(output_name.clone());
-                    }
+                if let Some(prop) = traversal.field_name_mappings.get(output_name)
+                    && prop.to_lowercase() == property.to_lowercase()
+                {
+                    return Some(output_name.clone());
                 }
                 // Also check if the output_name itself matches (identity mapping)
                 if output_name.to_lowercase() == property.to_lowercase() {
@@ -306,7 +306,10 @@ fn build_return_fields(
         // Helper to check if a property is an implicit field
         let is_implicit_field = |prop: &str| -> bool {
             let lower = prop.to_lowercase();
-            matches!(lower.as_str(), "id" | "label" | "from_node" | "to_node" | "data" | "score")
+            matches!(
+                lower.as_str(),
+                "id" | "label" | "from_node" | "to_node" | "data" | "score"
+            )
         };
 
         if let Some(schema_fields) = schema_fields {
@@ -319,7 +322,8 @@ fn build_return_fields(
                     }
 
                     // Look up the actual property name from the mapping
-                    let property_name = traversal.field_name_mappings
+                    let property_name = traversal
+                        .field_name_mappings
                         .get(field_name)
                         .unwrap_or(field_name);
 
@@ -332,8 +336,8 @@ fn build_return_fields(
                         // If property_name != field_name, we need to track the mapping
                         if property_name != field_name {
                             fields.push(ReturnFieldInfo::new_schema_with_property(
-                                field_name.clone(),      // output field name ("post")
-                                property_name.clone(),   // source property name ("content")
+                                field_name.clone(),    // output field name ("post")
+                                property_name.clone(), // source property name ("content")
                                 RustFieldType::OptionValue,
                             ));
                         } else {
@@ -351,7 +355,9 @@ fn build_return_fields(
                         // Skip if output name already exists
                         let already_exists = fields.iter().any(|f| f.name == *field_name);
                         // Skip if this source property was remapped to a different output name
-                        let already_remapped = traversal.field_name_mappings.values()
+                        let already_remapped = traversal
+                            .field_name_mappings
+                            .values()
                             .any(|source_prop| source_prop == field_name);
                         if already_exists || already_remapped {
                             continue;
@@ -457,7 +463,9 @@ fn build_return_fields(
                         .unwrap_or(!nested_info.traversal.has_object_step);
 
                     // Check if this has graph steps AND object step - if so, generate nested struct like Node/Edge case
-                    if nested_info.traversal.has_graph_steps() && nested_info.traversal.has_object_step {
+                    if nested_info.traversal.has_graph_steps()
+                        && nested_info.traversal.has_object_step
+                    {
                         // Generate nested struct for single-field object access with graph navigation
                         let nested_prefix =
                             format!("{}{}", struct_name_prefix, capitalize_first(field_name));
@@ -482,11 +490,21 @@ fn build_return_fields(
                             // Determine if this is an implicit or schema field
                             let source = if matches!(
                                 obj_field.as_str(),
-                                "id" | "ID" | "label" | "Label" | "from_node" | "to_node" | "data" | "score"
+                                "id" | "ID"
+                                    | "label"
+                                    | "Label"
+                                    | "from_node"
+                                    | "to_node"
+                                    | "data"
+                                    | "score"
                             ) {
-                                ReturnFieldSource::ImplicitField { property_name: None }
+                                ReturnFieldSource::ImplicitField {
+                                    property_name: None,
+                                }
                             } else {
-                                ReturnFieldSource::SchemaField { property_name: None }
+                                ReturnFieldSource::SchemaField {
+                                    property_name: None,
+                                }
                             };
 
                             nested_field_infos.push(ReturnFieldInfo {
@@ -497,7 +515,8 @@ fn build_return_fields(
                         }
 
                         let nested_struct_name = format!("{}ReturnType", nested_prefix);
-                        let is_first = matches!(nested_info.traversal.should_collect, ShouldCollect::ToObj);
+                        let is_first =
+                            matches!(nested_info.traversal.should_collect, ShouldCollect::ToObj);
 
                         fields.push(ReturnFieldInfo {
                             name: field_name.clone(),
@@ -506,7 +525,9 @@ fn build_return_fields(
                                 traversal_expr: format!("nested_traversal_{}", field_name),
                                 // Use format_steps_without_property_fetch for scalar types so the
                                 // property access is handled in the struct mapping, not as a traversal step
-                                traversal_code: Some(nested_info.traversal.format_steps_without_property_fetch()),
+                                traversal_code: Some(
+                                    nested_info.traversal.format_steps_without_property_fetch(),
+                                ),
                                 nested_struct_name: Some(nested_struct_name),
                                 traversal_type: Some(nested_info.traversal.traversal_type.clone()),
                                 closure_param_name: nested_info.closure_param_name.clone(),
@@ -522,8 +543,9 @@ fn build_return_fields(
                         // If this traversal has graph steps, check if ::FIRST was used
                         let rust_type = if nested_info.traversal.has_graph_steps() {
                             // Check if ::FIRST was used (should_collect is ToObj)
-                            if matches!(nested_info.traversal.should_collect, ShouldCollect::ToObj) {
-                                RustFieldType::OptionValue  // ::FIRST returns Option<&'a Value>
+                            if matches!(nested_info.traversal.should_collect, ShouldCollect::ToObj)
+                            {
+                                RustFieldType::OptionValue // ::FIRST returns Option<&'a Value>
                             } else {
                                 RustFieldType::Vec(Box::new(RustFieldType::Value))
                             }
@@ -531,7 +553,9 @@ fn build_return_fields(
                             // Use the appropriate type based on the implicit field
                             match accessed_field.map(|s| s.as_str()) {
                                 Some("data") => RustFieldType::RefArray(RustType::F64),
-                                Some("score") => RustFieldType::Primitive(GenRef::Std(RustType::F64)),
+                                Some("score") => {
+                                    RustFieldType::Primitive(GenRef::Std(RustType::F64))
+                                }
                                 Some("id") | Some("ID") | Some("label") | Some("Label")
                                 | Some("from_node") | Some("to_node") | None => {
                                     RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str))
@@ -544,7 +568,8 @@ fn build_return_fields(
 
                         let trav_code = nested_info.traversal.format_steps_only();
                         // Extract the accessed field name from object_fields
-                        let accessed_field_name = nested_info.traversal.object_fields.first().cloned();
+                        let accessed_field_name =
+                            nested_info.traversal.object_fields.first().cloned();
                         fields.push(ReturnFieldInfo {
                             name: field_name.clone(),
                             field_type: ReturnFieldType::Simple(rust_type),
@@ -606,7 +631,8 @@ fn build_return_fields(
                             &nested_prefix,
                         );
                         let nested_struct_name = format!("{}ReturnType", nested_prefix);
-                        let is_first = matches!(nested_info.traversal.should_collect, ShouldCollect::ToObj);
+                        let is_first =
+                            matches!(nested_info.traversal.should_collect, ShouldCollect::ToObj);
 
                         fields.push(ReturnFieldInfo {
                             name: field_name.clone(),
@@ -1275,7 +1301,10 @@ fn analyze_return_expr<'a>(
 
                             // New unified approach
                             // Skip struct generation for primitive types (Boolean, Scalar, Count) - they use legacy path only
-                            if !matches!(inferred_type, Type::Boolean | Type::Scalar(_) | Type::Count) {
+                            if !matches!(
+                                inferred_type,
+                                Type::Boolean | Type::Scalar(_) | Type::Count
+                            ) {
                                 let struct_name_prefix = format!(
                                     "{}{}",
                                     capitalize_first(&query.name),
@@ -1346,7 +1375,10 @@ fn analyze_return_expr<'a>(
 
                             // New unified approach
                             // Skip struct generation for primitive types (Boolean, Scalar, Count) - they use legacy path only
-                            if !matches!(inferred_type, Type::Boolean | Type::Scalar(_) | Type::Count) {
+                            if !matches!(
+                                inferred_type,
+                                Type::Boolean | Type::Scalar(_) | Type::Count
+                            ) {
                                 let struct_name_prefix = format!(
                                     "{}{}",
                                     capitalize_first(&query.name),
@@ -1434,7 +1466,10 @@ fn analyze_return_expr<'a>(
 
                     // New unified approach
                     // Skip struct generation for primitive types (Boolean, Scalar, Count) - they use legacy path only
-                    if !matches!(identifier_end_type, Type::Boolean | Type::Scalar(_) | Type::Count) {
+                    if !matches!(
+                        identifier_end_type,
+                        Type::Boolean | Type::Scalar(_) | Type::Count
+                    ) {
                         // For identifier returns, we need to create a traversal to build fields from
                         let var_info = scope.get(id.inner().as_str());
                         let is_reused = var_info.is_some_and(|v| v.reference_count > 1);
