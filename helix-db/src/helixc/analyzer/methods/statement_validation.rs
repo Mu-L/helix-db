@@ -202,8 +202,22 @@ pub(crate) fn validate_statements<'a>(
                     scope.insert(name.as_str(), VariableInfo::new(field_type, true));
                     for_variable = ForVariable::Identifier(GenRef::Std(name.clone()));
                 }
-                ForLoopVars::ObjectAccess { .. } => {
-                    todo!()
+                ForLoopVars::ObjectAccess { name, field, loc } => {
+                    // Object access syntax (e.g., `obj.field`) is not yet supported in for loops
+                    generate_error!(
+                        ctx,
+                        original_query,
+                        loc.clone(),
+                        E654,
+                        [&name, &field],
+                        [&field]
+                    );
+                    // Continue with Unknown type to allow analysis to proceed
+                    body_scope.insert(
+                        field.as_str(),
+                        VariableInfo::new(Type::Unknown, true),
+                    );
+                    for_variable = ForVariable::Identifier(GenRef::Std(field.clone()));
                 }
                 ForLoopVars::ObjectDestructuring { fields, loc: _ } => {
                     match &param {
@@ -221,7 +235,9 @@ pub(crate) fn validate_statements<'a>(
                                 FieldType::Array(inner) => match inner.as_ref() {
                                     FieldType::Object(param_fields) => {
                                         for (field_loc, field_name) in fields {
-                                            if !param_fields.contains_key(field_name.as_str()) {
+                                            let Some(param_field_type) =
+                                                param_fields.get(field_name.as_str())
+                                            else {
                                                 generate_error!(
                                                     ctx,
                                                     original_query,
@@ -230,9 +246,9 @@ pub(crate) fn validate_statements<'a>(
                                                     [field_name, &fl.in_variable.1],
                                                     [field_name, &fl.in_variable.1]
                                                 );
-                                            }
-                                            let param_field_type =
-                                                param_fields.get(field_name.as_str()).unwrap();
+                                                continue;
+                                            };
+                                            let param_field_type = param_field_type;
                                             let field_type = Type::from(param_field_type.clone());
                                             // Check if the field is an Array(Object) and compute struct name for nested loops
                                             let field_struct_name = match param_field_type {
@@ -302,11 +318,21 @@ pub(crate) fn validate_statements<'a>(
                                                 let mut obj_dest_fields =
                                                     Vec::with_capacity(fields.len());
                                                 let object = object.clone();
-                                                for (_, field_name) in fields {
+                                                for (field_loc, field_name) in fields {
                                                     let name = field_name.as_str();
                                                     // adds non-param fields to scope
-                                                    let field_type =
-                                                        object.get(name).unwrap().clone();
+                                                    let Some(field_type) = object.get(name).cloned()
+                                                    else {
+                                                        generate_error!(
+                                                            ctx,
+                                                            original_query,
+                                                            field_loc.clone(),
+                                                            E658,
+                                                            name
+                                                        );
+                                                        continue;
+                                                    };
+                                                    let field_type = field_type;
                                                     // Check if the field is an Array(Object) and compute struct name for nested loops
                                                     let field_struct_name = match &field_type {
                                                         Type::Array(inner) => {

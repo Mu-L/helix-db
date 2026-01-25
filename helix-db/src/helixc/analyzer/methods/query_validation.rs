@@ -1533,9 +1533,15 @@ fn analyze_return_expr<'a>(
                 }
                 GeneratedStatement::Empty => query.return_values = vec![],
 
-                // given all erroneous statements are caught by the analyzer, this should never happen
-                // all malformed statements (not gramatically correct) should be caught by the parser
-                _ => unreachable!(),
+                // These statement types are not valid in return expressions
+                // ForEach, Drop, Assignment, BoExp, and Array cannot be returned directly
+                GeneratedStatement::ForEach(_)
+                | GeneratedStatement::Drop(_)
+                | GeneratedStatement::Assignment(_)
+                | GeneratedStatement::BoExp(_)
+                | GeneratedStatement::Array(_) => {
+                    // Silently ignore - error should have been caught earlier
+                }
             }
         }
         ReturnType::Array(values) => {

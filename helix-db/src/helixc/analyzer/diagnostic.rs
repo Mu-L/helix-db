@@ -74,6 +74,17 @@ impl Diagnostic {
             self.message.clone()
         }
     }
+
+    /// Get a string representation of the severity level.
+    pub fn severity_str(&self) -> &'static str {
+        match self.severity {
+            DiagnosticSeverity::Error => "error",
+            DiagnosticSeverity::Warning => "warning",
+            DiagnosticSeverity::Info => "info",
+            DiagnosticSeverity::Hint => "hint",
+            DiagnosticSeverity::Empty => "note",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

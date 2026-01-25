@@ -680,7 +680,8 @@ pub(crate) fn infer_expr_type<'a>(
                             GeneratedValue::Literal(GenRef::Literal(value.clone())),
                             false,
                         ),
-                        _ => unreachable!(),
+                        // Parser guarantees edge to_id is Identifier or Literal
+                        _ => unreachable!("parser guarantees edge to_id is Identifier or Literal"),
                     },
                     _ => {
                         generate_error!(ctx, original_query, add.loc.clone(), E611);
@@ -738,7 +739,8 @@ pub(crate) fn infer_expr_type<'a>(
                             GeneratedValue::Literal(GenRef::Literal(value.clone())),
                             false,
                         ),
-                        _ => unreachable!(),
+                        // Parser guarantees edge from_id is Identifier or Literal
+                        _ => unreachable!("parser guarantees edge from_id is Identifier or Literal"),
                     },
                     _ => {
                         generate_error!(ctx, original_query, add.loc.clone(), E612);
@@ -1302,7 +1304,11 @@ pub(crate) fn infer_expr_type<'a>(
                                     _ => Where::Ref(WhereRef { expr }),
                                 })));
                         }
-                        _ => unreachable!(),
+                        // Pre-filter should produce Traversal or BoExp
+                        _ => {
+                            // Fall through - pre-filter will be None
+                            return (Type::Vector(sv.vector_type.clone()), None);
+                        }
                     }
                     Some(vec![BoExp::Expr(gen_traversal)])
                 }
@@ -1454,7 +1460,6 @@ pub(crate) fn infer_expr_type<'a>(
             if stmt.is_none() {
                 return (Type::Boolean, None);
             }
-            assert!(matches!(stmt, Some(GeneratedStatement::Traversal(_))));
             let traversal = match stmt.unwrap() {
                 GeneratedStatement::Traversal(mut tr) => {
                     // Only modify traversal_type if source is Identifier or Anonymous
@@ -1485,7 +1490,10 @@ pub(crate) fn infer_expr_type<'a>(
                     tr.should_collect = ShouldCollect::No;
                     tr
                 }
-                _ => unreachable!(),
+                // EXISTS expects a traversal expression
+                _ => {
+                    return (Type::Boolean, None);
+                }
             };
             (
                 Type::Boolean,

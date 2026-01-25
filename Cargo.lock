@@ -1520,7 +1520,6 @@ dependencies = [
  "sonic-rs",
  "subtle",
  "tempfile",
- "textwrap",
  "thiserror 2.0.12",
  "tokio",
  "tokio-test",

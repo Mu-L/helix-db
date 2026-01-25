@@ -126,6 +126,16 @@ pub enum ErrorCode {
     E652,
     /// `E653` - `inner type of in variable is not an object`
     E653,
+    /// `E654` - `object access in for loop not supported`
+    E654,
+    /// `E655` - `internal analyzer error`
+    E655,
+    /// `E656` - `unsupported type conversion`
+    E656,
+    /// `E657` - `step requires a previous step`
+    E657,
+    /// `E658` - `field not found in object type`
+    E658,
 
     /// `W101` - `query has no return`
     W101,
@@ -197,6 +207,11 @@ impl ErrorCode {
             ErrorCode::E651 => "in variable is not iterable",
             ErrorCode::E652 => "variable is not a field of the inner type",
             ErrorCode::E653 => "inner type of in variable is not an object",
+            ErrorCode::E654 => "object access in for loop not supported",
+            ErrorCode::E655 => "internal analyzer error",
+            ErrorCode::E656 => "unsupported type conversion",
+            ErrorCode::E657 => "step requires a previous step",
+            ErrorCode::E658 => "field not found in object type",
             // Warnings
             ErrorCode::W101 => "query has no return",
         }
@@ -260,6 +275,11 @@ impl std::fmt::Display for ErrorCode {
             ErrorCode::E651 => write!(f, "E651"),
             ErrorCode::E652 => write!(f, "E652"),
             ErrorCode::E653 => write!(f, "E653"),
+            ErrorCode::E654 => write!(f, "E654"),
+            ErrorCode::E655 => write!(f, "E655"),
+            ErrorCode::E656 => write!(f, "E656"),
+            ErrorCode::E657 => write!(f, "E657"),
+            ErrorCode::E658 => write!(f, "E658"),
             ErrorCode::W101 => write!(f, "W101"),
         }
     }
@@ -362,6 +382,11 @@ implement_error_code!(E646, "field value is empty" => {}, "field value must be a
 implement_error_code!(E651, "`IN` variable `{}` is not iterable" => { in_variable }, "ensure the `in` variable is iterable" => {});
 implement_error_code!(E652, "variable `{}` is not a field of the inner object of the `IN` variable `{}`" => { variable, in_variable }, "ensure `{}` is a field of `{}`" => { variable, in_variable });
 implement_error_code!(E653, "inner object of `IN` variable `{}` is not an object" => { in_variable }, "ensure the inner type of `{}` is an object" => { in_variable });
+implement_error_code!(E654, "object access syntax `{}.{}` in for loop is not yet supported" => { object_name, field_name }, "use object destructuring syntax `{{{}}}` instead" => { field_name });
+implement_error_code!(E655, "internal analyzer error: {}" => { message }, "this is a bug in the analyzer, please report it" => {});
+implement_error_code!(E656, "unsupported type conversion from `{}`" => { type_name }, "use a supported type" => {});
+implement_error_code!(E657, "step `{}` requires a previous step but none was found" => { step_name }, "ensure this step follows a property access" => {});
+implement_error_code!(E658, "field `{}` not found in object type" => { field_name }, "check the field name or use a valid field" => {});
 
 #[macro_export]
 macro_rules! generate_error {

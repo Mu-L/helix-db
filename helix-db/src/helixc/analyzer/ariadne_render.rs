@@ -28,6 +28,24 @@ pub fn render(diag: &Diagnostic, src: &str, filepath: &str) -> String {
 
     let byte_range = diag.location.byte_range();
 
+    // Validate byte range to prevent panics
+    let src_len = src.len();
+    if byte_range.is_empty() {
+        // Empty range - return a simple text error
+        return format!("[{}] {}: {}", diag.error_code, diag.severity_str(), diag.message);
+    }
+    if byte_range.start > src_len || byte_range.end > src_len {
+        // Range exceeds source length - return a simple text error
+        return format!(
+            "[{}] {}: {} (at byte {}..{})",
+            diag.error_code, diag.severity_str(), diag.message, byte_range.start, byte_range.end
+        );
+    }
+    if byte_range.start > byte_range.end {
+        // Inverted range - return a simple text error
+        return format!("[{}] {}: {}", diag.error_code, diag.severity_str(), diag.message);
+    }
+
     // Build the primary label - uses message without context suffix
     let label = Label::new((filepath, byte_range.clone()))
         .with_message(diag.label_message())
@@ -49,8 +67,11 @@ pub fn render(diag: &Diagnostic, src: &str, filepath: &str) -> String {
         if let Some(to_add) = &fix.to_add {
             if let Some(span) = &fix.span {
                 let fix_range = span.byte_range();
-                // Only add if range is valid
-                if fix_range.start < fix_range.end {
+                // Only add if range is valid and within source bounds
+                if fix_range.start < fix_range.end
+                    && fix_range.start <= src_len
+                    && fix_range.end <= src_len
+                {
                     let fix_label = Label::new((filepath, fix_range))
                         .with_message(format!("suggestion: {}", to_add))
                         .with_color(Color::Green);
@@ -64,10 +85,15 @@ pub fn render(diag: &Diagnostic, src: &str, filepath: &str) -> String {
     let mut output = Cursor::new(Vec::new());
     let source = Source::from(src);
 
-    report
-        .finish()
-        .write((filepath, source), &mut output)
-        .unwrap_or_default();
+    if let Err(e) = report.finish().write((filepath, source), &mut output) {
+        // If rendering fails, return a simple text error
+        return format!(
+            "[Render Error: {}] {}: {}",
+            e, diag.error_code, diag.message
+        );
+    }
 
-    String::from_utf8(output.into_inner()).unwrap_or_default()
+    String::from_utf8(output.into_inner()).unwrap_or_else(|_| {
+        format!("[{}] {}", diag.error_code, diag.message)
+    })
 }
