@@ -10,6 +10,7 @@ mod docker;
 mod errors;
 mod github_issue;
 mod metrics_sender;
+mod port;
 mod project;
 mod prompts;
 mod sse_client;

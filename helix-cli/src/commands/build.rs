@@ -362,7 +362,7 @@ async fn generate_docker_files(
     fs::write(&dockerfile_path, dockerfile_content)?;
 
     // Generate docker-compose.yml
-    let compose_content = docker.generate_docker_compose(instance_name, instance_config.clone())?;
+    let compose_content = docker.generate_docker_compose(instance_name, instance_config.clone(), None)?;
     let compose_path = project.docker_compose_path(instance_name);
     fs::write(&compose_path, compose_content)?;
 
@@ -405,7 +405,11 @@ pub(crate) fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
     let files: Vec<HxFile> = files
         .iter()
         .map(|file| {
-            let name = file.path().to_string_lossy().into_owned();
+            let name = file.path()
+                .canonicalize()
+                .unwrap_or_else(|_| file.path())
+                .to_string_lossy()
+                .into_owned();
             let content = fs::read_to_string(file.path())
                 .map_err(|e| eyre::eyre!("Failed to read file {name}: {e}"))?;
             Ok(HxFile { name, content })

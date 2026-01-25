@@ -1,15 +1,15 @@
 use crate::helixc::{generator::traversal_steps::Traversal, parser::types::IdType};
 use std::fmt::{self, Debug, Display};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum GenRef<T>
 where
-    T: Display,
+    T: Display + PartialEq,
 {
     Literal(T),
     Mut(T),
     Ref(T),
-    RefLT(String, T),
+    RefLT(&'static str, T),
     DeRef(T),
     MutRef(T),
     MutRefLT(String, T),
@@ -22,7 +22,7 @@ where
 
 impl<T> Display for GenRef<T>
 where
-    T: Display,
+    T: Display + PartialEq,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -44,7 +44,7 @@ where
 
 impl<T> GenRef<T>
 where
-    T: Display,
+    T: Display + PartialEq,
 {
     pub fn inner(&self) -> &T {
         match self {
@@ -59,24 +59,22 @@ where
             GenRef::RefLiteral(t) => t,
             GenRef::Unknown => {
                 // This should have been caught during analysis
-                // For now, panic with a descriptive message
-                panic!(
-                    "Code generation error: Unknown reference type encountered. This indicates a bug in the analyzer."
-                )
+                debug_assert!(false, "Code generation error: Unknown reference type encountered. This indicates a bug in the analyzer.");
+                // Return a placeholder that will cause a compile error downstream
+                unreachable!("GenRef::Unknown should have been caught by analyzer")
             }
             GenRef::Std(t) => t,
             GenRef::Id(_) => {
                 // Id doesn't have an inner T, it's just a String identifier
-                panic!(
-                    "Code generation error: Cannot get inner value of Id type. Use the identifier directly."
-                )
+                debug_assert!(false, "Code generation error: Cannot get inner value of Id type. Use the identifier directly.");
+                unreachable!("GenRef::Id does not have an inner T")
             }
         }
     }
 }
 impl<T> Debug for GenRef<T>
 where
-    T: Display,
+    T: Display + PartialEq,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -217,7 +215,10 @@ pub fn write_properties_slice(properties: &Option<Vec<(String, GeneratedValue)>>
                     .join(", ")
             )
         }
-        None => unreachable!(),
+        None => {
+            debug_assert!(false, "write_properties_slice called with None - should be caught by analyzer");
+            "&[]".to_string()
+        }
     }
 }
 
@@ -259,15 +260,13 @@ impl GeneratedValue {
             GeneratedValue::Traversal(_) => {
                 // This should not be called for traversals
                 // The caller should handle traversals specially
-                panic!(
-                    "Code generation error: Cannot get inner value of Traversal. Traversals should be handled specially."
-                )
+                debug_assert!(false, "Code generation error: Cannot get inner value of Traversal. Traversals should be handled specially.");
+                unreachable!("GeneratedValue::Traversal does not have an inner GenRef")
             }
             GeneratedValue::Unknown => {
                 // This indicates a bug in the analyzer
-                panic!(
-                    "Code generation error: Unknown GeneratedValue encountered. This indicates incomplete type inference in the analyzer."
-                )
+                debug_assert!(false, "Code generation error: Unknown GeneratedValue encountered. This indicates incomplete type inference in the analyzer.");
+                unreachable!("GeneratedValue::Unknown should have been caught by analyzer")
             }
         }
     }
@@ -321,9 +320,11 @@ impl Display for GeneratedType {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum RustType {
+    Str,
     String,
+    Usize,
     I8,
     I16,
     I32,
@@ -342,7 +343,9 @@ pub enum RustType {
 impl Display for RustType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            RustType::Str => write!(f, "str"),
             RustType::String => write!(f, "String"),
+            RustType::Usize => write!(f, "usize"),
             RustType::I8 => write!(f, "i8"),
             RustType::I16 => write!(f, "i16"),
             RustType::I32 => write!(f, "i32"),
@@ -363,7 +366,9 @@ impl Display for RustType {
 impl RustType {
     pub fn to_ts(&self) -> String {
         let s = match self {
+            RustType::Str => "str",
             RustType::String => "string",
+            RustType::Usize => "number",
             RustType::I8 => "number",
             RustType::I16 => "number",
             RustType::I32 => "number",
@@ -544,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_genref_ref_with_lifetime() {
-        let genref = GenRef::RefLT("a".to_string(), "value".to_string());
+        let genref = GenRef::RefLT("a", "value".to_string());
         assert_eq!(format!("{}", genref), "&'a value");
     }
 

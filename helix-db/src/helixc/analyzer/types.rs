@@ -202,15 +202,10 @@ impl From<FieldType> for GeneratedType {
             FieldType::Date => GeneratedType::RustType(GeneratedRustType::Date),
             FieldType::Array(inner) => GeneratedType::Vec(Box::new(GeneratedType::from(*inner))),
             FieldType::Identifier(ref id) => GeneratedType::Variable(GenRef::Std(id.clone())),
-            // FieldType::Object(obj) => GeneratedType::Object(
-            //     obj.iter()
-            //         .map(|(name, field_type)| {
-            //             (name.clone(), GeneratedType::from(field_type.clone()))
-            //         })
-            //         .collect(),
-            // ),
-            _ => {
-                unimplemented!()
+            FieldType::Object(_) => {
+                // Objects are handled separately in parameter unwrapping
+                // Return a placeholder type for now
+                GeneratedType::Variable(GenRef::Std("Value".to_string()))
             }
         }
     }
@@ -263,6 +258,7 @@ pub enum Type {
     Object(HashMap<String, Type>),
     Array(Box<Type>),
     Anonymous(Box<Type>),
+    Count,
     Boolean,
     Unknown,
 }
@@ -280,6 +276,7 @@ impl Type {
             Type::Scalar(_) => "scalar",
             Type::Object(_) => "object",
             Type::Array(_) => "array",
+            Type::Count => "count",
             Type::Boolean => "boolean",
             Type::Unknown => "unknown",
             Type::Anonymous(ty) => ty.kind_str(),
@@ -298,6 +295,7 @@ impl Type {
             Type::Scalar(ft) => ft.to_string(),
             Type::Anonymous(ty) => ty.get_type_name(),
             Type::Array(ty) => ty.get_type_name(),
+            Type::Count => "count".to_string(),
             Type::Boolean => "boolean".to_string(),
             Type::Unknown => "unknown".to_string(),
             Type::Object(fields) => {
@@ -346,7 +344,7 @@ impl Type {
                     | FieldType::U128
                     | FieldType::F32
                     | FieldType::F64,
-            )
+            ) | Type::Count
         )
     }
 
@@ -363,7 +361,7 @@ impl Type {
                     | FieldType::U32
                     | FieldType::U64
                     | FieldType::U128
-            )
+            ) | Type::Count
         )
     }
 
@@ -371,6 +369,7 @@ impl Type {
         match self {
             Type::Scalar(ft) => Type::Scalar(ft),
             Type::Object(fields) => Type::Object(fields),
+            Type::Count => Type::Count,
             Type::Boolean => Type::Boolean,
             Type::Unknown => Type::Unknown,
             Type::Anonymous(inner) => Type::Anonymous(Box::new(inner.into_single())),
@@ -389,6 +388,10 @@ impl Type {
 impl PartialEq for Type {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Type::Count, Type::Count) => true,
+            (Type::Count, Type::Scalar(ft)) | (Type::Scalar(ft), Type::Count) => {
+                &FieldType::I64 == ft
+            }
             (Type::Scalar(ft), Type::Scalar(other_ft)) => ft == other_ft,
             (Type::Object(fields), Type::Object(other_fields)) => fields == other_fields,
             (Type::Boolean, Type::Boolean) => true,

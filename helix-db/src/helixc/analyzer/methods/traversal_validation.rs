@@ -241,8 +241,10 @@ pub(crate) fn validate_traversal<'a>(
                                         label: GenRef::Literal(node_type.clone()),
                                         index: GenRef::Literal(match *index {
                                             IdType::Identifier { value, loc: _ } => value,
-                                            // would be caught by the parser
-                                            _ => unreachable!(),
+                                            // Parser guarantees index in ByIndex is always an Identifier
+                                            _ => unreachable!(
+                                                "parser guarantees index is Identifier"
+                                            ),
                                         }),
                                         key: match *value {
                                             ValueType::Identifier { value, loc } => {
@@ -276,7 +278,10 @@ pub(crate) fn validate_traversal<'a>(
                                                     },
                                                 ))
                                             }
-                                            _ => unreachable!(),
+                                            // Parser guarantees value in ByIndex is Identifier or Literal
+                                            _ => unreachable!(
+                                                "parser guarantees value is Identifier or Literal"
+                                            ),
                                         },
                                     }));
                                 gen_traversal.should_collect = ShouldCollect::ToObj;
@@ -374,7 +379,8 @@ pub(crate) fn validate_traversal<'a>(
                                 value.inner().clone()
                             }
                             IdType::Literal { value: s, loc: _ } => GenRef::Std(s),
-                            _ => unreachable!(),
+                            // Parser guarantees edge IDs are Identifier or Literal
+                            _ => unreachable!("parser guarantees edge ID is Identifier or Literal"),
                         },
                         None => {
                             generate_error!(
@@ -428,7 +434,10 @@ pub(crate) fn validate_traversal<'a>(
                                 value.inner().clone()
                             }
                             IdType::Literal { value: s, loc: _ } => GenRef::Std(s),
-                            _ => unreachable!(),
+                            // Parser guarantees vector IDs are Identifier or Literal
+                            _ => {
+                                unreachable!("parser guarantees vector ID is Identifier or Literal")
+                            }
                         },
                         None => {
                             generate_error!(
@@ -493,7 +502,16 @@ pub(crate) fn validate_traversal<'a>(
         }
         // anonymous will be the traversal type rather than the start type
         StartNode::Anonymous => {
-            let parent = parent_ty.clone().unwrap();
+            let Some(parent) = parent_ty.clone() else {
+                generate_error!(
+                    ctx,
+                    original_query,
+                    tr.loc.clone(),
+                    E601,
+                    "anonymous traversal requires parent type"
+                );
+                return None;
+            };
             gen_traversal.traversal_type =
                 TraversalType::FromSingle(GenRef::Std(DEFAULT_VAR_NAME.to_string()));
             gen_traversal.source_step = Separator::Empty(SourceStep::Anonymous);
@@ -666,8 +684,23 @@ pub(crate) fn validate_traversal<'a>(
 
             gen_traversal.traversal_type = TraversalType::Ref;
             gen_traversal.should_collect = ShouldCollect::ToVec;
+
+            let label = match &sv.vector_type {
+                Some(vt) => GenRef::Literal(vt.clone()),
+                None => {
+                    generate_error!(
+                        ctx,
+                        original_query,
+                        sv.loc.clone(),
+                        E601,
+                        "search vector requires vector_type"
+                    );
+                    return None;
+                }
+            };
+
             gen_traversal.source_step = Separator::Period(SourceStep::SearchVector(SearchVector {
-                label: GenRef::Literal(sv.vector_type.clone().unwrap()),
+                label,
                 vec,
                 k,
                 pre_filter,
@@ -713,7 +746,7 @@ pub(crate) fn validate_traversal<'a>(
             }
 
             StepType::Count => {
-                cur_ty = Type::Scalar(FieldType::I64);
+                cur_ty = Type::Count;
                 excluded.clear();
                 gen_traversal
                     .steps
@@ -810,11 +843,29 @@ pub(crate) fn validate_traversal<'a>(
                             .steps
                             .push(Separator::Period(GeneratedStep::Where(where_expr)));
                     }
-                    _ => unreachable!(),
+                    _ => {
+                        // Where clause should only produce Traversal or BoExp statements
+                        generate_error!(
+                            ctx,
+                            original_query,
+                            expr.loc.clone(),
+                            E655,
+                            "unexpected statement type in Where clause"
+                        );
+                    }
                 }
             }
             StepType::BooleanOperation(b_op) => {
-                let step = previous_step.unwrap();
+                let Some(step) = previous_step else {
+                    generate_error!(
+                        ctx,
+                        original_query,
+                        b_op.loc.clone(),
+                        E657,
+                        "BooleanOperation"
+                    );
+                    return Some(cur_ty.clone());
+                };
                 let property_type = match &b_op.op {
                     BooleanOpType::LessThanOrEqual(expr)
                     | BooleanOpType::LessThan(expr)
@@ -1145,7 +1196,19 @@ pub(crate) fn validate_traversal<'a>(
                                 );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
-                            _ => unreachable!("Cannot reach here"),
+                            other => {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    E655,
+                                    &format!(
+                                        "unexpected expression type in comparison: {:?}",
+                                        other
+                                    )
+                                );
+                                GeneratedValue::Unknown
+                            }
                         };
                         BoolOp::Lte(Lte {
                             left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
@@ -1176,7 +1239,19 @@ pub(crate) fn validate_traversal<'a>(
                                 );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
-                            _ => unreachable!("Cannot reach here"),
+                            other => {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    E655,
+                                    &format!(
+                                        "unexpected expression type in comparison: {:?}",
+                                        other
+                                    )
+                                );
+                                GeneratedValue::Unknown
+                            }
                         };
                         BoolOp::Lt(Lt {
                             left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
@@ -1207,7 +1282,19 @@ pub(crate) fn validate_traversal<'a>(
                                 );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
-                            _ => unreachable!("Cannot reach here"),
+                            other => {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    E655,
+                                    &format!(
+                                        "unexpected expression type in comparison: {:?}",
+                                        other
+                                    )
+                                );
+                                GeneratedValue::Unknown
+                            }
                         };
                         BoolOp::Gte(Gte {
                             left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
@@ -1238,7 +1325,19 @@ pub(crate) fn validate_traversal<'a>(
                                 );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
-                            _ => unreachable!("Cannot reach here"),
+                            other => {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    E655,
+                                    &format!(
+                                        "unexpected expression type in comparison: {:?}",
+                                        other
+                                    )
+                                );
+                                GeneratedValue::Unknown
+                            }
                         };
                         BoolOp::Gt(Gt {
                             left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
@@ -1300,8 +1399,18 @@ pub(crate) fn validate_traversal<'a>(
                                     );
                                     gen_identifier_or_param(original_query, i.as_str(), false, true)
                                 }
-                                _ => {
-                                    unreachable!("Cannot reach here");
+                                other => {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        expr.loc.clone(),
+                                        E655,
+                                        &format!(
+                                            "unexpected expression type in equality: {:?}",
+                                            other
+                                        )
+                                    );
+                                    GeneratedValue::Unknown
                                 }
                             };
                             BoolOp::Eq(Eq {
@@ -1365,7 +1474,19 @@ pub(crate) fn validate_traversal<'a>(
                                     );
                                     gen_identifier_or_param(original_query, i.as_str(), false, true)
                                 }
-                                _ => unreachable!("Cannot reach here"),
+                                other => {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        expr.loc.clone(),
+                                        E655,
+                                        &format!(
+                                            "unexpected expression type in inequality: {:?}",
+                                            other
+                                        )
+                                    );
+                                    GeneratedValue::Unknown
+                                }
                             };
                             BoolOp::Neq(Neq {
                                 left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
@@ -1403,7 +1524,16 @@ pub(crate) fn validate_traversal<'a>(
                             ExpressionType::StringLiteral(s) => {
                                 GeneratedValue::Primitive(GenRef::Literal(s.to_string()))
                             }
-                            _ => unreachable!("Cannot reach here"),
+                            other => {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    E655,
+                                    &format!("unexpected expression type in contains: {:?}", other)
+                                );
+                                GeneratedValue::Unknown
+                            }
                         };
                         BoolOp::Contains(Contains { value: v })
                     }
@@ -1449,18 +1579,38 @@ pub(crate) fn validate_traversal<'a>(
                                                     s.to_string(),
                                                 ))
                                             }
-                                            _ => unreachable!("Cannot reach here"),
+                                            // Other expression types in arrays are not supported for IS_IN
+                                            _ => GeneratedValue::Unknown,
                                         };
                                         v.to_string()
                                     })
                                     .collect::<Vec<_>>()
                                     .join(", "),
                             )),
-                            _ => unreachable!("Cannot reach here"),
+                            other => {
+                                generate_error!(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    E655,
+                                    &format!("unexpected expression type in IS_IN: {:?}", other)
+                                );
+                                GeneratedValue::Unknown
+                            }
                         };
                         BoolOp::IsIn(IsIn { value: v })
                     }
-                    _ => unreachable!("shouldve been caught earlier"),
+                    other => {
+                        // Other boolean operations should have been handled above
+                        generate_error!(
+                            ctx,
+                            original_query,
+                            b_op.loc.clone(),
+                            E655,
+                            &format!("unexpected boolean operation type: {:?}", other)
+                        );
+                        return Some(cur_ty.clone());
+                    }
                 };
                 gen_traversal
                     .steps
@@ -1612,7 +1762,7 @@ pub(crate) fn validate_traversal<'a>(
                                             )
                                         }
                                         ExpressionType::StringLiteral(i) => {
-                                            GeneratedValue::Primitive(GenRef::Std(i.to_string()))
+                                            GeneratedValue::Literal(GenRef::Literal(i.to_string()))
                                         }
 
                                         ExpressionType::IntegerLiteral(i) => {
@@ -1760,7 +1910,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 )
                                             }
                                             ExpressionType::StringLiteral(i) => {
-                                                GeneratedValue::Primitive(GenRef::Std(
+                                                GeneratedValue::Literal(GenRef::Literal(
                                                     i.to_string(),
                                                 ))
                                             }
@@ -1913,7 +2063,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 )
                                             }
                                             ExpressionType::StringLiteral(i) => {
-                                                GeneratedValue::Primitive(GenRef::Std(
+                                                GeneratedValue::Literal(GenRef::Literal(
                                                     i.to_string(),
                                                 ))
                                             }
@@ -2113,7 +2263,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 )
                                             }
                                             ExpressionType::StringLiteral(i) => {
-                                                GeneratedValue::Primitive(GenRef::Std(
+                                                GeneratedValue::Literal(GenRef::Literal(
                                                     i.to_string(),
                                                 ))
                                             }
@@ -2353,7 +2503,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 )
                                             }
                                             ExpressionType::StringLiteral(i) => {
-                                                GeneratedValue::Primitive(GenRef::Std(
+                                                GeneratedValue::Literal(GenRef::Literal(
                                                     i.to_string(),
                                                 ))
                                             }
@@ -2538,7 +2688,18 @@ pub(crate) fn validate_traversal<'a>(
                         );
                         return Some(cur_ty.clone());
                     }
-                    _ => unreachable!("shouldve been caught eariler"),
+                    (start_expr, end_expr) => {
+                        // Both start and end must be integers or identifiers
+                        generate_error!(
+                            ctx,
+                            original_query,
+                            start.loc.clone(),
+                            E633,
+                            [&format!("({}, {})", start_expr, end_expr), "non-integer"],
+                            ["start and end"]
+                        );
+                        return Some(cur_ty.clone());
+                    }
                 };
                 gen_traversal
                     .steps
@@ -2563,17 +2724,10 @@ pub(crate) fn validate_traversal<'a>(
                 }
                 match stmt.unwrap() {
                     GeneratedStatement::Traversal(traversal) => {
-                        let property = match &traversal.steps.last() {
-                            Some(step) => match &step.inner() {
-                                GeneratedStep::PropertyFetch(property) => property.clone(),
-                                _ => unreachable!("Cannot reach here"),
-                            },
-                            None => unreachable!("Cannot reach here"),
-                        };
                         gen_traversal
                             .steps
                             .push(Separator::Period(GeneratedStep::OrderBy(OrderBy {
-                                property,
+                                traversal,
                                 order: match order_by.order_by_type {
                                     OrderByType::Asc => Order::Asc,
                                     OrderByType::Desc => Order::Desc,
@@ -2581,7 +2735,16 @@ pub(crate) fn validate_traversal<'a>(
                             })));
                         gen_traversal.should_collect = ShouldCollect::ToVec;
                     }
-                    _ => unreachable!("Cannot reach here"),
+                    _ => {
+                        // OrderBy requires a traversal expression
+                        generate_error!(
+                            ctx,
+                            original_query,
+                            order_by.expression.loc.clone(),
+                            E655,
+                            "OrderBy expected traversal expression"
+                        );
+                    }
                 }
             }
             StepType::Closure(cl) => {
@@ -2764,7 +2927,13 @@ pub(crate) fn validate_traversal<'a>(
                         MMRDistance::DotProduct => {
                             crate::helixc::generator::traversal_steps::MMRDistanceMethod::DotProduct
                         }
-                        MMRDistance::Identifier(_) => unreachable!(),
+                        // Identifier case is handled by the `if let` above, so this arm
+                        // should never be reached - but handle gracefully just in case
+                        MMRDistance::Identifier(id) => {
+                            crate::helixc::generator::traversal_steps::MMRDistanceMethod::Identifier(
+                                id.clone(),
+                            )
+                        }
                     })
                 };
 

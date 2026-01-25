@@ -202,7 +202,10 @@ pub(super) fn get_singular_type(ty: Type) -> Type {
         Type::Node(_) => ty,
         Type::Edge(_) => ty,
         Type::Vector(_) => ty,
-        _ => unreachable!("shouldve been caught eariler"),
+        _ => {
+            debug_assert!(false, "get_singular_type called with unexpected type: {:?}", ty);
+            Type::Unknown
+        }
     }
 }
 
@@ -365,7 +368,10 @@ impl FieldLookup for Type {
                     _ => fields.contains_key(key),
                 })
                 .unwrap_or(true),
-            _ => unreachable!("shouldve been caught eariler"),
+            _ => {
+                debug_assert!(false, "item_fields_contains_key called with unexpected type: {:?}", self);
+                false
+            }
         }
     }
 
@@ -401,7 +407,10 @@ impl FieldLookup for Type {
                     .unwrap_or(true),
                 vector_type.as_str(),
             ),
-            _ => unreachable!("shouldve been caught eariler"),
+            _ => {
+                debug_assert!(false, "item_fields_contains_key_with_type called with unexpected type: {:?}", self);
+                (false, "unknown")
+            }
         };
 
         (is_valid_field, item_type.to_string())
@@ -449,7 +458,10 @@ impl FieldLookup for Type {
                         .unwrap_or(None),
                 })
                 .unwrap_or(None),
-            _ => unreachable!("shouldve been caught eariler"),
+            _ => {
+                debug_assert!(false, "get_field_type_from_item_fields called with unexpected type: {:?}", self);
+                None
+            }
         }
     }
 }
