@@ -259,6 +259,9 @@ fn validate_property_access<'a>(
                         // Store the field name so nested traversal code generation can access it
                         gen_traversal.object_fields.push(lit.as_str().to_string());
 
+                        // Mark that this traversal has an object step (for nested struct generation)
+                        gen_traversal.has_object_step = true;
+
                         match cur_ty {
                             Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_) => {
                                 gen_traversal.should_collect = ShouldCollect::ToVec;
@@ -301,7 +304,13 @@ fn validate_property_access<'a>(
                 for field_addition in &obj.fields {
                     match &field_addition.value.value {
                         FieldValueType::Identifier(id) => {
-                            gen_traversal.object_fields.push(id.clone());
+                            // Use the key (output field name), not the id (source property name)
+                            gen_traversal.object_fields.push(field_addition.key.clone());
+                            // Track the mapping from output name to source property name
+                            gen_traversal.field_name_mappings.insert(
+                                field_addition.key.clone(),
+                                id.clone(),
+                            );
                         }
                         FieldValueType::Traversal(tr) => {
                             // Nested traversal - validate it now to get the type
@@ -334,12 +343,22 @@ fn validate_property_access<'a>(
                             // Validate the nested traversal
                             let mut nested_gen_traversal =
                                 crate::helixc::generator::traversal_steps::Traversal::default();
+
+                            // Convert plural types to singular for nested traversals
+                            // since _/identifier refers to individual items when iterating
+                            let item_type = match cur_ty {
+                                Type::Nodes(label) => Type::Node(label.clone()),
+                                Type::Edges(label) => Type::Edge(label.clone()),
+                                Type::Vectors(label) => Type::Vector(label.clone()),
+                                _ => cur_ty.clone(),
+                            };
+
                             let nested_type = validate_traversal(
                                 ctx,
                                 tr.as_ref(),
                                 scope,
                                 original_query,
-                                Some(cur_ty.clone()),
+                                Some(item_type),
                                 &mut nested_gen_traversal,
                                 gen_query,
                             );
@@ -377,12 +396,22 @@ fn validate_property_access<'a>(
                                 // Nested traversal within expression - validate it
                                 let mut nested_gen_traversal =
                                     crate::helixc::generator::traversal_steps::Traversal::default();
+
+                                // Convert plural types to singular for nested traversals
+                                // since _/identifier refers to individual items when iterating
+                                let item_type = match cur_ty {
+                                    Type::Nodes(label) => Type::Node(label.clone()),
+                                    Type::Edges(label) => Type::Edge(label.clone()),
+                                    Type::Vectors(label) => Type::Vector(label.clone()),
+                                    _ => cur_ty.clone(),
+                                };
+
                                 let nested_type = validate_traversal(
                                     ctx,
                                     tr.as_ref(),
                                     scope,
                                     original_query,
-                                    Some(cur_ty.clone()),
+                                    Some(item_type),
                                     &mut nested_gen_traversal,
                                     gen_query,
                                 );
@@ -412,6 +441,15 @@ fn validate_property_access<'a>(
                             } else {
                                 // Other expression types (identifiers, literals, etc.)
                                 gen_traversal.object_fields.push(field_addition.key.clone());
+
+                                // If this is an identifier expression, track the mapping
+                                // e.g., "post: content" where content is parsed as Expression(Identifier("content"))
+                                if let ExpressionType::Identifier(id) = &expr.expr {
+                                    gen_traversal.field_name_mappings.insert(
+                                        field_addition.key.clone(),
+                                        id.clone(),
+                                    );
+                                }
                             }
                         }
                         _ => {

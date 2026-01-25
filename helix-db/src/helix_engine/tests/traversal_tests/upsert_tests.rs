@@ -986,3 +986,225 @@ fn test_upsert_v_new_vector_is_searchable() {
     assert!(!search_results.is_empty(), "Search should find the upserted vector");
     assert_eq!(search_results[0].id(), inserted_id, "Should find the same vector");
 }
+
+// ============================================================================
+// Regression Tests - Property Update and Revert
+// ============================================================================
+
+#[test]
+fn test_upsert_n_update_property_then_revert() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    // Create initial node with a property
+    let original = G::new_mut_from_iter(
+        &storage,
+        &mut txn,
+        std::iter::empty::<TraversalValue>(),
+        &arena,
+    )
+    .upsert_n("email", &[("message_id", Value::from("original_msg_id"))])
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()[0]
+        .clone();
+
+    let node_id = original.id();
+
+    // Update property to a new value
+    let updated = G::new_mut_from_iter(&storage, &mut txn, std::iter::once(original), &arena)
+        .upsert_n("email", &[("message_id", Value::from("changed_msg_id"))])
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
+        .clone();
+
+    assert_eq!(updated.id(), node_id);
+    if let TraversalValue::Node(node) = &updated {
+        assert_eq!(node.get_property("message_id").unwrap(), &Value::from("changed_msg_id"));
+    }
+
+    // Revert property back to original value - THIS IS THE REGRESSION TEST
+    let reverted = G::new_mut_from_iter(&storage, &mut txn, std::iter::once(updated), &arena)
+        .upsert_n("email", &[("message_id", Value::from("original_msg_id"))])
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(reverted.len(), 1);
+    assert_eq!(reverted[0].id(), node_id);
+    if let TraversalValue::Node(node) = &reverted[0] {
+        assert_eq!(node.get_property("message_id").unwrap(), &Value::from("original_msg_id"));
+    }
+
+    txn.commit().unwrap();
+}
+
+#[test]
+fn test_upsert_n_multiple_nodes_same_property_value() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    // Create first node with a property value
+    let node1 = G::new_mut_from_iter(
+        &storage,
+        &mut txn,
+        std::iter::empty::<TraversalValue>(),
+        &arena,
+    )
+    .upsert_n("email", &[
+        ("email_id", Value::from("email_001")),
+        ("message_id", Value::from("shared_msg_id")),
+    ])
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()[0]
+        .clone();
+
+    // Create second node with SAME message_id (should succeed - not unique)
+    let node2 = G::new_mut_from_iter(
+        &storage,
+        &mut txn,
+        std::iter::empty::<TraversalValue>(),
+        &arena,
+    )
+    .upsert_n("email", &[
+        ("email_id", Value::from("email_002")),
+        ("message_id", Value::from("shared_msg_id")),
+    ])
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()[0]
+        .clone();
+
+    // Create third node with same message_id
+    let node3 = G::new_mut_from_iter(
+        &storage,
+        &mut txn,
+        std::iter::empty::<TraversalValue>(),
+        &arena,
+    )
+    .upsert_n("email", &[
+        ("email_id", Value::from("email_003")),
+        ("message_id", Value::from("shared_msg_id")),
+    ])
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()[0]
+        .clone();
+
+    // Verify all three nodes were created with different IDs
+    assert_ne!(node1.id(), node2.id());
+    assert_ne!(node2.id(), node3.id());
+    assert_ne!(node1.id(), node3.id());
+
+    // All should have the same message_id
+    for node in [&node1, &node2, &node3] {
+        if let TraversalValue::Node(n) = node {
+            assert_eq!(n.get_property("message_id").unwrap(), &Value::from("shared_msg_id"));
+        }
+    }
+
+    txn.commit().unwrap();
+}
+
+#[test]
+fn test_upsert_n_update_one_node_preserves_others_with_same_value() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    // Create two nodes with same message_id
+    let node1 = G::new_mut_from_iter(
+        &storage,
+        &mut txn,
+        std::iter::empty::<TraversalValue>(),
+        &arena,
+    )
+    .upsert_n("email", &[
+        ("email_id", Value::from("email_001")),
+        ("message_id", Value::from("shared_msg")),
+    ])
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()[0]
+        .clone();
+
+    let node2 = G::new_mut_from_iter(
+        &storage,
+        &mut txn,
+        std::iter::empty::<TraversalValue>(),
+        &arena,
+    )
+    .upsert_n("email", &[
+        ("email_id", Value::from("email_002")),
+        ("message_id", Value::from("shared_msg")),
+    ])
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()[0]
+        .clone();
+
+    let node1_id = node1.id();
+    let _node2_id = node2.id();
+
+    // Update node1's message_id to a different value
+    let node1_updated = G::new_mut_from_iter(&storage, &mut txn, std::iter::once(node1), &arena)
+        .upsert_n("email", &[("message_id", Value::from("unique_msg"))])
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
+        .clone();
+
+    // Verify node1 was updated
+    if let TraversalValue::Node(n) = &node1_updated {
+        assert_eq!(n.id, node1_id);
+        assert_eq!(n.get_property("message_id").unwrap(), &Value::from("unique_msg"));
+    }
+
+    // Now revert node1 back to shared_msg - should succeed
+    let node1_reverted = G::new_mut_from_iter(&storage, &mut txn, std::iter::once(node1_updated), &arena)
+        .upsert_n("email", &[("message_id", Value::from("shared_msg"))])
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(node1_reverted.len(), 1);
+    if let TraversalValue::Node(n) = &node1_reverted[0] {
+        assert_eq!(n.id, node1_id);
+        assert_eq!(n.get_property("message_id").unwrap(), &Value::from("shared_msg"));
+    }
+
+    txn.commit().unwrap();
+}
+
+#[test]
+fn test_upsert_n_sequential_property_updates() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    // Create initial node
+    let mut current = G::new_mut_from_iter(
+        &storage,
+        &mut txn,
+        std::iter::empty::<TraversalValue>(),
+        &arena,
+    )
+    .upsert_n("email", &[("status", Value::from("draft"))])
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()[0]
+        .clone();
+
+    let node_id = current.id();
+
+    // Sequence of updates: draft -> sent -> read -> archived -> draft (back to original)
+    let statuses = ["sent", "read", "archived", "draft"];
+
+    for status in statuses {
+        current = G::new_mut_from_iter(&storage, &mut txn, std::iter::once(current), &arena)
+            .upsert_n("email", &[("status", Value::from(status))])
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()[0]
+            .clone();
+
+        assert_eq!(current.id(), node_id);
+        if let TraversalValue::Node(n) = &current {
+            assert_eq!(n.get_property("status").unwrap(), &Value::from(status));
+        }
+    }
+
+    txn.commit().unwrap();
+}

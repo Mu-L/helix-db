@@ -126,6 +126,9 @@ pub struct Traversal {
     pub nested_traversals: std::collections::HashMap<String, NestedTraversalInfo>,
     pub is_reused_variable: bool,
     pub closure_param_name: Option<String>, // HQL closure parameter name (e.g., "e" from entries::|e|)
+    /// Maps output field name -> source property name for renamed fields
+    /// e.g., "post" -> "content" for `post: content`, "file_id" -> "ID"
+    pub field_name_mappings: std::collections::HashMap<String, String>,
 }
 
 impl Display for Traversal {
@@ -189,11 +192,19 @@ impl Display for Traversal {
                 write!(f, "\n    .collect_to_obj()?")?;
                 write!(f, "}}")?;
             }
-            TraversalType::Upsert { source, label, properties } => {
+            TraversalType::Upsert {
+                source,
+                label,
+                properties,
+            } => {
                 match source {
                     Some(var) => {
                         // Use existing variable directly
-                        write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                        write!(
+                            f,
+                            "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)",
+                            var
+                        )?;
                     }
                     None => {
                         // Build traversal from scratch (when starting with N<Type>::WHERE)
@@ -204,7 +215,10 @@ impl Display for Traversal {
                             write!(f, "\n{step}")?;
                         }
                         write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
-                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                        write!(
+                            f,
+                            "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)"
+                        )?;
                     }
                 }
                 write!(
@@ -218,12 +232,21 @@ impl Display for Traversal {
                     write!(f, "}}")?;
                 }
             }
-            TraversalType::UpsertN { source, source_is_plural, label, properties } => {
+            TraversalType::UpsertN {
+                source,
+                source_is_plural,
+                label,
+                properties,
+            } => {
                 match source {
                     Some(var) => {
                         if *source_is_plural {
                             // Source is a Vec<TraversalValue> from a prior statement
-                            write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                            write!(
+                                f,
+                                "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)",
+                                var
+                            )?;
                         } else {
                             // Source is a single TraversalValue
                             write!(f, "G::new_mut_from(&db, &mut txn, {}.clone(), &arena)", var)?;
@@ -237,7 +260,10 @@ impl Display for Traversal {
                             write!(f, "\n{step}")?;
                         }
                         write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
-                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                        write!(
+                            f,
+                            "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)"
+                        )?;
                     }
                 }
                 write!(
@@ -251,12 +277,23 @@ impl Display for Traversal {
                     write!(f, "}}")?;
                 }
             }
-            TraversalType::UpsertE { source, source_is_plural, label, properties, from, to } => {
+            TraversalType::UpsertE {
+                source,
+                source_is_plural,
+                label,
+                properties,
+                from,
+                to,
+            } => {
                 match source {
                     Some(var) => {
                         if *source_is_plural {
                             // Source is a Vec<TraversalValue> from a prior statement
-                            write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                            write!(
+                                f,
+                                "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)",
+                                var
+                            )?;
                         } else {
                             // Source is a single TraversalValue
                             write!(f, "G::new_mut_from(&db, &mut txn, {}.clone(), &arena)", var)?;
@@ -270,7 +307,10 @@ impl Display for Traversal {
                             write!(f, "\n{step}")?;
                         }
                         write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
-                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                        write!(
+                            f,
+                            "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)"
+                        )?;
                     }
                 }
                 write!(
@@ -286,12 +326,22 @@ impl Display for Traversal {
                     write!(f, "}}")?;
                 }
             }
-            TraversalType::UpsertV { source, source_is_plural, label, properties, vec_data } => {
+            TraversalType::UpsertV {
+                source,
+                source_is_plural,
+                label,
+                properties,
+                vec_data,
+            } => {
                 match source {
                     Some(var) => {
                         if *source_is_plural {
                             // Source is a Vec<TraversalValue> from a prior statement
-                            write!(f, "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)", var)?;
+                            write!(
+                                f,
+                                "G::new_mut_from_iter(&db, &mut txn, {}.iter().cloned(), &arena)",
+                                var
+                            )?;
                         } else {
                             // Source is a single TraversalValue
                             write!(f, "G::new_mut_from(&db, &mut txn, {}.clone(), &arena)", var)?;
@@ -305,7 +355,10 @@ impl Display for Traversal {
                             write!(f, "\n{step}")?;
                         }
                         write!(f, "\n    .collect::<Result<Vec<_>, _>>()?;")?;
-                        write!(f, "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)")?;
+                        write!(
+                            f,
+                            "G::new_mut_from_iter(&db, &mut txn, upsert_tr.iter().cloned(), &arena)"
+                        )?;
                     }
                 }
                 match vec_data {
@@ -352,6 +405,7 @@ impl Default for Traversal {
             nested_traversals: std::collections::HashMap::new(),
             is_reused_variable: false,
             closure_param_name: None,
+            field_name_mappings: std::collections::HashMap::new(),
         }
     }
 }
@@ -366,6 +420,61 @@ impl Traversal {
             result.push_str(&format!("\n{}", step));
         }
         result
+    }
+
+    /// Format steps without the final PropertyFetch step
+    /// This is used when generating nested struct code where the property access is handled separately
+    pub fn format_steps_without_property_fetch(&self) -> String {
+        use super::utils::Separator;
+        let mut result = String::new();
+        result.push_str(&format!("{}", self.source_step));
+
+        // Filter out PropertyFetch and ReservedPropertyAccess steps
+        for step in &self.steps {
+            let inner_step = match step {
+                Separator::Period(s)
+                | Separator::Semicolon(s)
+                | Separator::Empty(s)
+                | Separator::Comma(s)
+                | Separator::Newline(s) => s,
+            };
+            // Skip PropertyFetch and ReservedPropertyAccess steps
+            if !matches!(inner_step, Step::PropertyFetch(_) | Step::ReservedPropertyAccess(_)) {
+                result.push_str(&format!("\n{}", step));
+            }
+        }
+        result
+    }
+
+    /// Check if this traversal has graph navigation steps requiring G::from_iter wrapper
+    pub fn has_graph_steps(&self) -> bool {
+        use super::utils::Separator;
+        self.steps.iter().any(|sep| {
+            let step = match sep {
+                Separator::Period(s)
+                | Separator::Semicolon(s)
+                | Separator::Empty(s)
+                | Separator::Comma(s)
+                | Separator::Newline(s) => s,
+            };
+            matches!(
+                step,
+                Step::Out(_)
+                    | Step::In(_)
+                    | Step::OutE(_)
+                    | Step::InE(_)
+                    | Step::FromN
+                    | Step::ToN
+                    | Step::FromV(_)
+                    | Step::ToV(_)
+                    | Step::Count
+                    | Step::SearchVector(_)
+                    | Step::ShortestPath(_)
+                    | Step::ShortestPathDijkstras(_)
+                    | Step::ShortestPathBFS(_)
+                    | Step::ShortestPathAStar(_)
+            )
+        })
     }
 }
 
@@ -447,14 +556,13 @@ impl Display for Step {
                 ),
                 ReservedProp::Label => {
                     write!(f, "map(|item| item.map(|v| Value::from(v.label())))")
-                }
-                // ReservedProp::Version => write!(f, "map(|item| Ok(Value::from(item.version)))"),
-                // ReservedProp::FromNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.from_node, &arena))))"),
-                // ReservedProp::ToNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.to_node, &arena))))"),
-                // ReservedProp::Deleted => write!(f, "map(|item| Ok(Value::from(item.deleted)))"),
-                // ReservedProp::Level => write!(f, "map(|item| Ok(Value::from(item.level)))"),
-                // ReservedProp::Distance => write!(f, "map(|item| Ok(item.distance.map(Value::from).unwrap_or(Value::Empty)))"),
-                // ReservedProp::Data => write!(f, "map(|item| Ok(Value::from(item.data)))"),
+                } // ReservedProp::Version => write!(f, "map(|item| Ok(Value::from(item.version)))"),
+                  // ReservedProp::FromNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.from_node, &arena))))"),
+                  // ReservedProp::ToNode => write!(f, "map(|item| Ok(Value::from(uuid_str(item.to_node, &arena))))"),
+                  // ReservedProp::Deleted => write!(f, "map(|item| Ok(Value::from(item.deleted)))"),
+                  // ReservedProp::Level => write!(f, "map(|item| Ok(Value::from(item.level)))"),
+                  // ReservedProp::Distance => write!(f, "map(|item| Ok(item.distance.map(Value::from).unwrap_or(Value::Empty)))"),
+                  // ReservedProp::Data => write!(f, "map(|item| Ok(Value::from(item.data)))"),
             },
 
             Step::Out(out) => write!(f, "{out}"),
@@ -736,14 +844,69 @@ impl Display for Range {
 
 #[derive(Clone)]
 pub struct OrderBy {
-    pub property: GenRef<String>,
+    pub traversal: Traversal,
     pub order: Order,
+}
+impl OrderBy {
+    /// Check if this is a simple property access pattern that can be optimized.
+    /// Returns the optimized closure body if the pattern is:
+    /// - TraversalType::FromSingle("val")
+    /// - SourceStep::Anonymous
+    /// - Exactly one step that is PropertyFetch or ReservedPropertyAccess
+    fn is_simple_property_access(&self) -> Option<String> {
+        // Check if traversal type is FromSingle with "val"
+        let is_val = match &self.traversal.traversal_type {
+            TraversalType::FromSingle(var) => {
+                matches!(var, GenRef::Std(s) | GenRef::Literal(s) if s == "val")
+            }
+            _ => false,
+        };
+
+        if !is_val {
+            return None;
+        }
+
+        // Check if source step is Anonymous
+        let is_anonymous = matches!(self.traversal.source_step.inner(), SourceStep::Anonymous);
+        if !is_anonymous {
+            return None;
+        }
+
+        // Check if we have exactly one step that is PropertyFetch or ReservedPropertyAccess
+        if self.traversal.steps.len() != 1 {
+            return None;
+        }
+
+        let step = self.traversal.steps.first()?.inner();
+        match step {
+            Step::PropertyFetch(prop) => {
+                Some(format!(
+                    "val.get_property({}).cloned().unwrap_or(Value::Empty)",
+                    prop
+                ))
+            }
+            Step::ReservedPropertyAccess(reserved_prop) => {
+                let value_expr = match reserved_prop {
+                    ReservedProp::Id => "Value::Id(ID::from(val.id()))".to_string(),
+                    ReservedProp::Label => "Value::from(val.label())".to_string(),
+                };
+                Some(value_expr)
+            }
+            _ => None,
+        }
+    }
 }
 impl Display for OrderBy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.order {
-            Order::Asc => write!(f, "order_by_asc({})", self.property),
-            Order::Desc => write!(f, "order_by_desc({})", self.property),
+        let method = match self.order {
+            Order::Asc => "order_by_asc",
+            Order::Desc => "order_by_desc",
+        };
+
+        if let Some(optimized_body) = self.is_simple_property_access() {
+            write!(f, "{}(|val| {})", method, optimized_body)
+        } else {
+            write!(f, "{}(|val| {})", method, self.traversal)
         }
     }
 }

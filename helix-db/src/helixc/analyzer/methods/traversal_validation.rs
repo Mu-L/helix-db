@@ -713,7 +713,7 @@ pub(crate) fn validate_traversal<'a>(
             }
 
             StepType::Count => {
-                cur_ty = Type::Scalar(FieldType::I64);
+                cur_ty = Type::Count;
                 excluded.clear();
                 gen_traversal
                     .steps
@@ -2563,17 +2563,14 @@ pub(crate) fn validate_traversal<'a>(
                 }
                 match stmt.unwrap() {
                     GeneratedStatement::Traversal(traversal) => {
-                        let property = match &traversal.steps.last() {
-                            Some(step) => match &step.inner() {
-                                GeneratedStep::PropertyFetch(property) => property.clone(),
-                                _ => unreachable!("Cannot reach here"),
-                            },
-                            None => unreachable!("Cannot reach here"),
-                        };
+                        // let step = match &traversal.steps.last() {
+                        //     Some(step) => step.inner().clone(),
+                        //     None => unreachable!("Cannot reach here"), // TODO handle error
+                        // };
                         gen_traversal
                             .steps
                             .push(Separator::Period(GeneratedStep::OrderBy(OrderBy {
-                                property,
+                                traversal,
                                 order: match order_by.order_by_type {
                                     OrderByType::Asc => Order::Asc,
                                     OrderByType::Desc => Order::Desc,

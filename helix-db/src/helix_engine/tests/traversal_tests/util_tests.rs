@@ -14,6 +14,7 @@ use crate::{
         vector_core::vector::HVector,
     },
     props,
+    protocol::value::Value,
 };
 
 use bumpalo::Bump;
@@ -57,7 +58,7 @@ fn test_order_node_by_asc() {
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
-        .order_by_asc("age")
+        .order_by_asc(|tv| tv.get_property("age").cloned().unwrap_or(Value::Empty))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
@@ -93,7 +94,7 @@ fn test_order_node_by_desc() {
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
-        .order_by_desc("age")
+        .order_by_desc(|tv| tv.get_property("age").cloned().unwrap_or(Value::Empty))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
@@ -154,7 +155,7 @@ fn test_order_edge_by_asc() {
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .out_e("knows")
-        .order_by_asc("since")
+        .order_by_asc(|tv| tv.get_property("since").cloned().unwrap_or(Value::Empty))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
@@ -214,7 +215,7 @@ fn test_order_edge_by_desc() {
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .out_e("knows")
-        .order_by_desc("since")
+        .order_by_desc(|tv| tv.get_property("since").cloned().unwrap_or(Value::Empty))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
@@ -262,7 +263,7 @@ fn test_order_vector_by_asc() {
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(&storage, &txn, &arena)
         .search_v::<FnTy, _>(&[1.0, 2.0, 3.0], 10, "vector", None)
-        .order_by_asc("age")
+        .order_by_asc(|tv| tv.get_property("age").cloned().unwrap_or(Value::Empty))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
@@ -311,7 +312,7 @@ fn test_order_vector_by_desc() {
     let txn = storage.graph_env.read_txn().unwrap();
     let traversal = G::new(&storage, &txn, &arena)
         .search_v::<FnTy, _>(&[1.0, 2.0, 3.0], 10, "vector", None)
-        .order_by_desc("age")
+        .order_by_desc(|tv| tv.get_property("age").cloned().unwrap_or(Value::Empty))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 

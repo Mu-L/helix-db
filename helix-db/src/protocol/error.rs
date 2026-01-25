@@ -26,6 +26,15 @@ pub enum HelixError {
     InvalidApiKey,
 }
 
+impl Serialize for HelixError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_str(&self.to_string())
+    }
+}
+
 impl HelixError {
     fn code(&self) -> &'static str {
         match self {
