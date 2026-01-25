@@ -16,3 +16,5 @@ QUERY GetAppsByUserId(user_id: ID) =>
         archived,
         id,
     } 
+
+

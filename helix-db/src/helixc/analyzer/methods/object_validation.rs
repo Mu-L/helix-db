@@ -176,6 +176,13 @@ fn extract_fields_from_object<'a>(
 
                 // Validate the field exists
                 is_valid_identifier(ctx, original_query, value.loc.clone(), identifier.as_str());
+                validate_field_name_existence_for_item_type(
+                    ctx,
+                    original_query,
+                    value.loc.clone(),
+                    parent_ty,
+                    identifier.as_str(),
+                );
 
                 // Get the field type from the schema
                 if let Some(field_type) =
@@ -269,8 +276,12 @@ fn validate_property_access<'a>(
                             Type::Node(_) | Type::Edge(_) | Type::Vector(_) => {
                                 gen_traversal.should_collect = ShouldCollect::ToObj;
                             }
-                            _ => {
-                                unreachable!()
+                            other => {
+                                // Property access requires Node, Edge, or Vector type
+                                return Err(ParserError::ParseError(format!(
+                                    "cannot access property on type '{}'",
+                                    other.kind_str()
+                                )));
                             }
                         }
                         let field_type = get_field_type_from_item_fields(ctx, cur_ty, lit.as_str());
@@ -278,7 +289,14 @@ fn validate_property_access<'a>(
                             "field is none".to_string(),
                         ))?))
                     }
-                    _ => unreachable!(),
+                    // This branch is guarded by the outer `if` which checks for Identifier
+                    // but add defensive handling in case the match pattern changes
+                    other => {
+                        Err(ParserError::ParseError(format!(
+                            "expected identifier in property access, got: {:?}",
+                            other
+                        )))
+                    }
                 }
             } else if !obj.fields.is_empty() {
                 // Multiple fields selected - extract them for return value generation

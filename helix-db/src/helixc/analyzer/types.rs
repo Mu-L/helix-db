@@ -202,15 +202,10 @@ impl From<FieldType> for GeneratedType {
             FieldType::Date => GeneratedType::RustType(GeneratedRustType::Date),
             FieldType::Array(inner) => GeneratedType::Vec(Box::new(GeneratedType::from(*inner))),
             FieldType::Identifier(ref id) => GeneratedType::Variable(GenRef::Std(id.clone())),
-            // FieldType::Object(obj) => GeneratedType::Object(
-            //     obj.iter()
-            //         .map(|(name, field_type)| {
-            //             (name.clone(), GeneratedType::from(field_type.clone()))
-            //         })
-            //         .collect(),
-            // ),
-            _ => {
-                unimplemented!()
+            FieldType::Object(_) => {
+                // Objects are handled separately in parameter unwrapping
+                // Return a placeholder type for now
+                GeneratedType::Variable(GenRef::Std("Value".to_string()))
             }
         }
     }
