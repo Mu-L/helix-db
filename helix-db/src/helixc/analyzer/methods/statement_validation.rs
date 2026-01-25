@@ -248,7 +248,6 @@ pub(crate) fn validate_statements<'a>(
                                                 );
                                                 continue;
                                             };
-                                            let param_field_type = param_field_type;
                                             let field_type = Type::from(param_field_type.clone());
                                             // Check if the field is an Array(Object) and compute struct name for nested loops
                                             let field_struct_name = match param_field_type {
@@ -332,7 +331,6 @@ pub(crate) fn validate_statements<'a>(
                                                         );
                                                         continue;
                                                     };
-                                                    let field_type = field_type;
                                                     // Check if the field is an Array(Object) and compute struct name for nested loops
                                                     let field_struct_name = match &field_type {
                                                         Type::Array(inner) => {

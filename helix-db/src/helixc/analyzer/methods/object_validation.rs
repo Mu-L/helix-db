@@ -292,10 +292,10 @@ fn validate_property_access<'a>(
                     // This branch is guarded by the outer `if` which checks for Identifier
                     // but add defensive handling in case the match pattern changes
                     other => {
-                        return Err(ParserError::ParseError(format!(
+                        Err(ParserError::ParseError(format!(
                             "expected identifier in property access, got: {:?}",
                             other
-                        )));
+                        )))
                     }
                 }
             } else if !obj.fields.is_empty() {

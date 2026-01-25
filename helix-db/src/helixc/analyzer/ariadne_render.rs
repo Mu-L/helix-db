@@ -63,21 +63,20 @@ pub fn render(diag: &Diagnostic, src: &str, filepath: &str) -> String {
     }
 
     // Handle fix suggestions
-    if let Some(fix) = &diag.fix {
-        if let Some(to_add) = &fix.to_add {
-            if let Some(span) = &fix.span {
-                let fix_range = span.byte_range();
-                // Only add if range is valid and within source bounds
-                if fix_range.start < fix_range.end
-                    && fix_range.start <= src_len
-                    && fix_range.end <= src_len
-                {
-                    let fix_label = Label::new((filepath, fix_range))
-                        .with_message(format!("suggestion: {}", to_add))
-                        .with_color(Color::Green);
-                    report = report.with_label(fix_label);
-                }
-            }
+    if let Some(fix) = &diag.fix
+        && let Some(to_add) = &fix.to_add
+        && let Some(span) = &fix.span
+    {
+        let fix_range = span.byte_range();
+        // Only add if range is valid and within source bounds
+        if fix_range.start < fix_range.end
+            && fix_range.start <= src_len
+            && fix_range.end <= src_len
+        {
+            let fix_label = Label::new((filepath, fix_range))
+                .with_message(format!("suggestion: {}", to_add))
+                .with_color(Color::Green);
+            report = report.with_label(fix_label);
         }
     }
 
