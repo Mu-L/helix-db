@@ -81,8 +81,8 @@ enum Commands {
         /// Instance name to build (interactive selection if not provided)
         #[clap(short, long)]
         instance: Option<String>,
-        /// Should build HelixDB into at binary at the specified file location
-        #[clap(long, default_value = "./")]
+        /// Should build HelixDB into a binary at the specified directory location
+        #[clap(long)]
         bin: Option<String>,
     },
 

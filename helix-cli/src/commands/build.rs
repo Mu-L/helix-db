@@ -119,7 +119,13 @@ pub async fn run(
         let mut spinner = Spinner::new("CARGO", "Building HelixDB binary...");
         spinner.start();
 
-        build_binary_using_cargo(&project, &instance_name, &binary_output)?;
+        match build_binary_using_cargo(&project, &instance_name, &binary_output) {
+            Ok(()) => spinner.stop(),
+            Err(e) => {
+                spinner.stop();
+                return Err(e);
+            }
+        }
     } else if instance_config.should_build_docker_image() {
         // For local instances, build Docker image
         // Generate Docker files
@@ -524,9 +530,7 @@ fn build_binary_using_cargo(
     binary_output: &str,
 ) -> Result<()> {
     let binary_output_path = std::path::Path::new(binary_output);
-    if !binary_output_path.exists() {
-        return Err(eyre!("Binary output path should exist"));
-    }
+    std::fs::create_dir_all(binary_output_path)?;
 
     // <path-to-.helix>/<instance_name>/helix-repo-copy/helix-container/
     let current_dir = project
@@ -535,11 +539,18 @@ fn build_binary_using_cargo(
         .join("helix-repo-copy")
         .join("helix-container");
 
-    Command::new("cargo")
+    let status = Command::new("cargo")
         .arg("build")
         .arg("--target-dir")
         .arg(binary_output_path.as_os_str())
         .current_dir(current_dir)
         .status()?;
+
+    if !status.success() {
+        return Err(eyre!(
+            "Cargo build failed with exit code: {:?}",
+            status.code()
+        ));
+    }
     Ok(())
 }
