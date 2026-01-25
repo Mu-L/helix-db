@@ -1612,7 +1612,7 @@ pub(crate) fn validate_traversal<'a>(
                                             )
                                         }
                                         ExpressionType::StringLiteral(i) => {
-                                            GeneratedValue::Primitive(GenRef::Std(i.to_string()))
+                                            GeneratedValue::Literal(GenRef::Literal(i.to_string()))
                                         }
 
                                         ExpressionType::IntegerLiteral(i) => {
@@ -1760,7 +1760,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 )
                                             }
                                             ExpressionType::StringLiteral(i) => {
-                                                GeneratedValue::Primitive(GenRef::Std(
+                                                GeneratedValue::Literal(GenRef::Literal(
                                                     i.to_string(),
                                                 ))
                                             }
@@ -1913,7 +1913,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 )
                                             }
                                             ExpressionType::StringLiteral(i) => {
-                                                GeneratedValue::Primitive(GenRef::Std(
+                                                GeneratedValue::Literal(GenRef::Literal(
                                                     i.to_string(),
                                                 ))
                                             }
@@ -2113,7 +2113,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 )
                                             }
                                             ExpressionType::StringLiteral(i) => {
-                                                GeneratedValue::Primitive(GenRef::Std(
+                                                GeneratedValue::Literal(GenRef::Literal(
                                                     i.to_string(),
                                                 ))
                                             }
@@ -2353,7 +2353,7 @@ pub(crate) fn validate_traversal<'a>(
                                                 )
                                             }
                                             ExpressionType::StringLiteral(i) => {
-                                                GeneratedValue::Primitive(GenRef::Std(
+                                                GeneratedValue::Literal(GenRef::Literal(
                                                     i.to_string(),
                                                 ))
                                             }
