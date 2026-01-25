@@ -340,7 +340,11 @@ pub mod helixc_utils {
         let hx_files: Vec<HxFile> = files
             .iter()
             .map(|file| {
-                let name = file.path().to_string_lossy().into_owned();
+                let name = file.path()
+                    .canonicalize()
+                    .unwrap_or_else(|_| file.path())
+                    .to_string_lossy()
+                    .into_owned();
                 let content = fs::read_to_string(file.path())
                     .map_err(|e| eyre::eyre!("Failed to read file {name}: {e}"))?;
                 Ok(HxFile { name, content })
