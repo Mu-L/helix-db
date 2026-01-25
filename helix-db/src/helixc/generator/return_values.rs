@@ -110,7 +110,7 @@ impl ReturnValueStruct {
         let mut output = String::new();
 
         // Generate derive attributes
-        output.push_str("#[derive(Serialize)]\n");
+        output.push_str("#[derive(Serialize, Default)]\n");
 
         // Generate struct declaration
         if self.has_lifetime {
@@ -234,22 +234,30 @@ impl ReturnValueStruct {
                 let (field_type, _is_nested, nested_name) = match &field_info.field_type {
                     ReturnFieldType::Simple(ty) => (ty.to_string(), false, None),
                     ReturnFieldType::Nested(_) => {
-                        // Nested fields become Vec<NestedTypeName> or Vec<NestedTypeName<'a>>
+                        // Nested fields become Vec<NestedTypeName> or NestedTypeName (if is_first)
                         // Use the nested_struct_name from the source if available, otherwise fall back to field name
-                        let nested_type_name = if let ReturnFieldSource::NestedTraversal {
+                        let (nested_type_name, is_first) = if let ReturnFieldSource::NestedTraversal {
                             nested_struct_name: Some(name),
+                            is_first,
                             ..
                         } = &field_info.source
                         {
-                            name.clone()
+                            (name.clone(), *is_first)
                         } else {
-                            format!("{}ReturnType", capitalize_first(&field_info.name))
+                            (format!("{}ReturnType", capitalize_first(&field_info.name)), false)
                         };
                         let has_lt = nested_has_lifetime
                             .get(&nested_type_name)
                             .copied()
                             .unwrap_or(false);
-                        let type_ref = if has_lt {
+                        // For ::FIRST, use single struct type; otherwise use Vec
+                        let type_ref = if is_first {
+                            if has_lt {
+                                format!("{}<'a>", nested_type_name)
+                            } else {
+                                nested_type_name.clone()
+                            }
+                        } else if has_lt {
                             format!("Vec<{}<'a>>", nested_type_name)
                         } else {
                             format!("Vec<{}>", nested_type_name)
@@ -480,6 +488,7 @@ pub enum ReturnFieldSource {
         accessed_field_name: Option<String>, // For simple property access, the field being accessed (e.g., "name" for usr::{name})
         own_closure_param: Option<String>, // This traversal's own closure parameter if it ends with a Closure step
         requires_full_traversal: bool, // True if traversal has graph navigation steps (Out, In, COUNT, etc.)
+        is_first: bool, // True if ::FIRST was used (should_collect = ToObj)
     },
 }
 
@@ -534,6 +543,7 @@ impl ReturnFieldInfo {
                 accessed_field_name: None,
                 own_closure_param: None,
                 requires_full_traversal: false,
+                is_first: false,
             },
         }
     }

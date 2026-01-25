@@ -259,6 +259,9 @@ fn validate_property_access<'a>(
                         // Store the field name so nested traversal code generation can access it
                         gen_traversal.object_fields.push(lit.as_str().to_string());
 
+                        // Mark that this traversal has an object step (for nested struct generation)
+                        gen_traversal.has_object_step = true;
+
                         match cur_ty {
                             Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_) => {
                                 gen_traversal.should_collect = ShouldCollect::ToVec;

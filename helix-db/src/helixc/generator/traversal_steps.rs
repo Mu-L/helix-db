@@ -422,6 +422,30 @@ impl Traversal {
         result
     }
 
+    /// Format steps without the final PropertyFetch step
+    /// This is used when generating nested struct code where the property access is handled separately
+    pub fn format_steps_without_property_fetch(&self) -> String {
+        use super::utils::Separator;
+        let mut result = String::new();
+        result.push_str(&format!("{}", self.source_step));
+
+        // Filter out PropertyFetch and ReservedPropertyAccess steps
+        for step in &self.steps {
+            let inner_step = match step {
+                Separator::Period(s)
+                | Separator::Semicolon(s)
+                | Separator::Empty(s)
+                | Separator::Comma(s)
+                | Separator::Newline(s) => s,
+            };
+            // Skip PropertyFetch and ReservedPropertyAccess steps
+            if !matches!(inner_step, Step::PropertyFetch(_) | Step::ReservedPropertyAccess(_)) {
+                result.push_str(&format!("\n{}", step));
+            }
+        }
+        result
+    }
+
     /// Check if this traversal has graph navigation steps requiring G::from_iter wrapper
     pub fn has_graph_steps(&self) -> bool {
         use super::utils::Separator;

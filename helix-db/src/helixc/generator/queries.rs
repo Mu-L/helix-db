@@ -368,8 +368,17 @@ impl Query {
                                     crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Vec(inner)) if inner.as_ref() == &RustFieldType::Value
                                 );
 
+                                // Check if this is an Option<Value> (from ::FIRST)
+                                let is_option_value = matches!(
+                                    &field_info.field_type,
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::OptionValue)
+                                );
+
                                 if is_singular_traversal_value {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.collect_to_obj()?", iterator_expr, trav_code)
+                                } else if is_option_value {
+                                    // For ::FIRST, take the first element from the iterator
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}.next().transpose()?", iterator_expr, trav_code)
                                 } else if is_vec_traversal_value || is_vec_value {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.collect::<Result<Vec<_>, _>>()?", iterator_expr, trav_code)
                                 } else {
@@ -403,6 +412,7 @@ impl Query {
                                 closure_source_var,
                                 closure_param_name: _,
                                 own_closure_param,
+                                is_first,
                                 ..
                             } = &field_info.source {
                                 // Generate nested traversal code
@@ -596,7 +606,11 @@ impl Query {
                                     }
                                 ));
 
-                                if has_deeply_nested || has_vec_traversal_value {
+                                // For ::FIRST, use .next().unwrap_or(Ok(Default::default()))? instead of .collect()
+                                if *is_first {
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.map(|{}| {} {{{}\n                    }})).next().unwrap_or(Ok(Default::default()))?",
+                                        iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
+                                } else if has_deeply_nested || has_vec_traversal_value {
                                     // Use and_then so the closure can return Result and use ?
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.and_then(|{}| Ok({} {{{}\n                    }}))).collect::<Result<Vec<_>, _>>()?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
@@ -715,8 +729,17 @@ impl Query {
                                     crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Vec(inner)) if inner.as_ref() == &RustFieldType::Value
                                 );
 
+                                // Check if this is an Option<Value> (from ::FIRST)
+                                let is_option_value = matches!(
+                                    &field_info.field_type,
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::OptionValue)
+                                );
+
                                 if is_singular_traversal_value {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.collect_to_obj()?", iterator_expr, trav_code)
+                                } else if is_option_value {
+                                    // For ::FIRST, take the first element from the iterator
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}.next().transpose()?", iterator_expr, trav_code)
                                 } else if is_vec_traversal_value || is_vec_value {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.collect::<Result<Vec<_>, _>>()?", iterator_expr, trav_code)
                                 } else {
@@ -750,6 +773,7 @@ impl Query {
                                 closure_source_var,
                                 closure_param_name: _,
                                 own_closure_param,
+                                is_first,
                                 ..
                             } = &field_info.source {
                                 let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
@@ -938,7 +962,11 @@ impl Query {
                                     }
                                 ));
 
-                                if has_deeply_nested || has_vec_traversal_value {
+                                // For ::FIRST, use .next().unwrap_or(Ok(Default::default()))? instead of .collect()
+                                if *is_first {
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.map(|{}| {} {{{}\n                    }})).next().unwrap_or(Ok(Default::default()))?",
+                                        iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
+                                } else if has_deeply_nested || has_vec_traversal_value {
                                     // Use and_then so the closure can return Result and use ?
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.and_then(|{}| Ok({} {{{}\n                    }}))).collect::<Result<Vec<_>, _>>()?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
@@ -1214,6 +1242,7 @@ impl Query {
                                 closure_source_var,
                                 closure_param_name: _,
                                 own_closure_param,
+                                is_first,
                                 ..
                             } = &field_info.source {
                                 // Generate nested traversal code
@@ -1407,7 +1436,11 @@ impl Query {
                                     }
                                 ));
 
-                                if has_deeply_nested || has_vec_traversal_value {
+                                // For ::FIRST, use .next().unwrap_or(Ok(Default::default()))? instead of .collect()
+                                if *is_first {
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.map(|{}| {} {{{}\n                    }})).next().unwrap_or(Ok(Default::default()))?",
+                                        iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
+                                } else if has_deeply_nested || has_vec_traversal_value {
                                     // Use and_then so the closure can return Result and use ?
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.and_then(|{}| Ok({} {{{}\n                    }}))).collect::<Result<Vec<_>, _>>()?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
@@ -1503,6 +1536,7 @@ impl Query {
                                 closure_source_var,
                                 closure_param_name: _,
                                 own_closure_param,
+                                is_first,
                                 ..
                             } = &field_info.source {
                                 let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
@@ -1652,7 +1686,11 @@ impl Query {
                                     }
                                 ));
 
-                                if has_deeply_nested {
+                                // For ::FIRST, use .next().unwrap_or(Ok(Default::default()))? instead of .collect()
+                                if *is_first {
+                                    format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.map(|{}| {} {{{}\n                    }})).next().unwrap_or(Ok(Default::default()))?",
+                                        iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
+                                } else if has_deeply_nested {
                                     // Use and_then so the closure can return Result and use ?
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.and_then(|{}| Ok({} {{{}\n                    }}))).collect::<Result<Vec<_>, _>>()?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)

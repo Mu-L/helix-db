@@ -108,6 +108,7 @@ fn build_return_fields(
                     accessed_field_name: None,
                     own_closure_param: None,
                     requires_full_traversal: false,
+                    is_first: false,
                 },
             });
         }
@@ -432,6 +433,7 @@ fn build_return_fields(
                             accessed_field_name,
                             own_closure_param: nested_info.own_closure_param.clone(),
                             requires_full_traversal: nested_info.traversal.has_graph_steps(),
+                            is_first: false,
                         },
                     });
                 }
@@ -454,42 +456,112 @@ fn build_return_fields(
                         })
                         .unwrap_or(!nested_info.traversal.has_object_step);
 
-                    // If this traversal has graph steps, it will be collected into a Vec
-                    let rust_type = if nested_info.traversal.has_graph_steps() {
-                        RustFieldType::Vec(Box::new(RustFieldType::Value))
-                    } else if is_implicit {
-                        // Use the appropriate type based on the implicit field
-                        match accessed_field.map(|s| s.as_str()) {
-                            Some("data") => RustFieldType::RefArray(RustType::F64),
-                            Some("score") => RustFieldType::Primitive(GenRef::Std(RustType::F64)),
-                            Some("id") | Some("ID") | Some("label") | Some("Label")
-                            | Some("from_node") | Some("to_node") | None => {
-                                RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str))
-                            }
-                            _ => RustFieldType::OptionValue,
-                        }
-                    } else {
-                        RustFieldType::OptionValue
-                    };
+                    // Check if this has graph steps AND object step - if so, generate nested struct like Node/Edge case
+                    if nested_info.traversal.has_graph_steps() && nested_info.traversal.has_object_step {
+                        // Generate nested struct for single-field object access with graph navigation
+                        let nested_prefix =
+                            format!("{}{}", struct_name_prefix, capitalize_first(field_name));
 
-                    let trav_code = nested_info.traversal.format_steps_only();
-                    // Extract the accessed field name from object_fields
-                    let accessed_field_name = nested_info.traversal.object_fields.first().cloned();
-                    fields.push(ReturnFieldInfo {
-                        name: field_name.clone(),
-                        field_type: ReturnFieldType::Simple(rust_type),
-                        source: ReturnFieldSource::NestedTraversal {
-                            traversal_expr: format!("nested_traversal_{}", field_name),
-                            traversal_code: Some(trav_code),
-                            nested_struct_name: None,
-                            traversal_type: Some(nested_info.traversal.traversal_type.clone()),
-                            closure_param_name: nested_info.closure_param_name.clone(),
-                            closure_source_var: nested_info.closure_source_var.clone(),
-                            accessed_field_name,
-                            own_closure_param: nested_info.own_closure_param.clone(),
-                            requires_full_traversal: nested_info.traversal.has_graph_steps(),
-                        },
-                    });
+                        // Build the nested fields from the object_fields
+                        let mut nested_field_infos = Vec::new();
+                        for obj_field in &nested_info.traversal.object_fields {
+                            // Check if it's an implicit field
+                            let field_type = if matches!(
+                                obj_field.as_str(),
+                                "id" | "ID" | "label" | "Label" | "from_node" | "to_node"
+                            ) {
+                                RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str))
+                            } else if obj_field == "data" {
+                                RustFieldType::RefArray(RustType::F64)
+                            } else if obj_field == "score" {
+                                RustFieldType::Primitive(GenRef::Std(RustType::F64))
+                            } else {
+                                RustFieldType::OptionValue
+                            };
+
+                            // Determine if this is an implicit or schema field
+                            let source = if matches!(
+                                obj_field.as_str(),
+                                "id" | "ID" | "label" | "Label" | "from_node" | "to_node" | "data" | "score"
+                            ) {
+                                ReturnFieldSource::ImplicitField { property_name: None }
+                            } else {
+                                ReturnFieldSource::SchemaField { property_name: None }
+                            };
+
+                            nested_field_infos.push(ReturnFieldInfo {
+                                name: obj_field.clone(),
+                                field_type: ReturnFieldType::Simple(field_type),
+                                source,
+                            });
+                        }
+
+                        let nested_struct_name = format!("{}ReturnType", nested_prefix);
+                        let is_first = matches!(nested_info.traversal.should_collect, ShouldCollect::ToObj);
+
+                        fields.push(ReturnFieldInfo {
+                            name: field_name.clone(),
+                            field_type: ReturnFieldType::Nested(nested_field_infos),
+                            source: ReturnFieldSource::NestedTraversal {
+                                traversal_expr: format!("nested_traversal_{}", field_name),
+                                // Use format_steps_without_property_fetch for scalar types so the
+                                // property access is handled in the struct mapping, not as a traversal step
+                                traversal_code: Some(nested_info.traversal.format_steps_without_property_fetch()),
+                                nested_struct_name: Some(nested_struct_name),
+                                traversal_type: Some(nested_info.traversal.traversal_type.clone()),
+                                closure_param_name: nested_info.closure_param_name.clone(),
+                                closure_source_var: nested_info.closure_source_var.clone(),
+                                accessed_field_name: None,
+                                own_closure_param: nested_info.own_closure_param.clone(),
+                                requires_full_traversal: true,
+                                is_first,
+                            },
+                        });
+                    } else {
+                        // Simple property access - no graph steps OR no object step
+                        // If this traversal has graph steps, check if ::FIRST was used
+                        let rust_type = if nested_info.traversal.has_graph_steps() {
+                            // Check if ::FIRST was used (should_collect is ToObj)
+                            if matches!(nested_info.traversal.should_collect, ShouldCollect::ToObj) {
+                                RustFieldType::OptionValue  // ::FIRST returns Option<&'a Value>
+                            } else {
+                                RustFieldType::Vec(Box::new(RustFieldType::Value))
+                            }
+                        } else if is_implicit {
+                            // Use the appropriate type based on the implicit field
+                            match accessed_field.map(|s| s.as_str()) {
+                                Some("data") => RustFieldType::RefArray(RustType::F64),
+                                Some("score") => RustFieldType::Primitive(GenRef::Std(RustType::F64)),
+                                Some("id") | Some("ID") | Some("label") | Some("Label")
+                                | Some("from_node") | Some("to_node") | None => {
+                                    RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str))
+                                }
+                                _ => RustFieldType::OptionValue,
+                            }
+                        } else {
+                            RustFieldType::OptionValue
+                        };
+
+                        let trav_code = nested_info.traversal.format_steps_only();
+                        // Extract the accessed field name from object_fields
+                        let accessed_field_name = nested_info.traversal.object_fields.first().cloned();
+                        fields.push(ReturnFieldInfo {
+                            name: field_name.clone(),
+                            field_type: ReturnFieldType::Simple(rust_type),
+                            source: ReturnFieldSource::NestedTraversal {
+                                traversal_expr: format!("nested_traversal_{}", field_name),
+                                traversal_code: Some(trav_code),
+                                nested_struct_name: None,
+                                traversal_type: Some(nested_info.traversal.traversal_type.clone()),
+                                closure_param_name: nested_info.closure_param_name.clone(),
+                                closure_source_var: nested_info.closure_source_var.clone(),
+                                accessed_field_name,
+                                own_closure_param: nested_info.own_closure_param.clone(),
+                                requires_full_traversal: nested_info.traversal.has_graph_steps(),
+                                is_first: false,
+                            },
+                        });
+                    }
                 }
                 Type::Node(_)
                 | Type::Edge(_)
@@ -520,6 +592,7 @@ fn build_return_fields(
                                 accessed_field_name: None,
                                 own_closure_param: nested_info.own_closure_param.clone(),
                                 requires_full_traversal: nested_info.traversal.has_graph_steps(),
+                                is_first: false,
                             },
                         });
                     } else {
@@ -533,6 +606,7 @@ fn build_return_fields(
                             &nested_prefix,
                         );
                         let nested_struct_name = format!("{}ReturnType", nested_prefix);
+                        let is_first = matches!(nested_info.traversal.should_collect, ShouldCollect::ToObj);
 
                         fields.push(ReturnFieldInfo {
                             name: field_name.clone(),
@@ -547,6 +621,7 @@ fn build_return_fields(
                                 accessed_field_name: None,
                                 own_closure_param: nested_info.own_closure_param.clone(),
                                 requires_full_traversal: nested_info.traversal.has_graph_steps(),
+                                is_first,
                             },
                         });
                     }
@@ -566,6 +641,7 @@ fn build_return_fields(
                             accessed_field_name: None,
                             own_closure_param: nested_info.own_closure_param.clone(),
                             requires_full_traversal: nested_info.traversal.has_graph_steps(),
+                            is_first: false,
                         },
                     });
                 }
@@ -586,6 +662,7 @@ fn build_return_fields(
                     accessed_field_name: None,
                     own_closure_param: None,
                     requires_full_traversal: false,
+                    is_first: false,
                 },
             });
         }
