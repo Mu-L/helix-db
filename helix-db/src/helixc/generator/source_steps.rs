@@ -410,7 +410,10 @@ impl Display for SourceStep {
             SourceStep::SearchBM25(search_bm25) => write!(f, "{search_bm25}"),
             SourceStep::Upsert(upsert) => write!(f, "upsert({:?})", upsert),
             SourceStep::Anonymous => write!(f, ""),
-            SourceStep::Empty => panic!("Should not be empty"),
+            SourceStep::Empty => {
+                debug_assert!(false, "SourceStep::Empty should not reach generator");
+                write!(f, "/* ERROR: empty source step */")
+            }
             SourceStep::VFromID(v_from_id) => write!(f, "{v_from_id}"),
             SourceStep::VFromType(v_from_type) => write!(f, "{v_from_type}"),
         }

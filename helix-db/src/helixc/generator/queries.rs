@@ -207,10 +207,13 @@ impl Query {
                                 crate::helixc::generator::return_values::ReturnFieldType::Nested(_)
                             ) => {
                                 // Nested struct or object - need to construct recursively
-                                let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
-                                    fields
-                                } else {
-                                    panic!("Expected nested field type");
+                                let nested_fields = match &field_info.field_type {
+                                    crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) => fields,
+                                    _ => {
+                                        debug_assert!(false, "Type invariant: expected Nested field type after matches! guard");
+                                        static EMPTY: Vec<crate::helixc::generator::return_values::ReturnFieldInfo> = Vec::new();
+                                        &EMPTY
+                                    }
                                 };
 
                                 // Extract nested struct name and source var from field info
@@ -416,10 +419,13 @@ impl Query {
                                 ..
                             } = &field_info.source {
                                 // Generate nested traversal code
-                                let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
-                                    fields
-                                } else {
-                                    panic!("Nested traversal must have Nested field type");
+                                let nested_fields = match &field_info.field_type {
+                                    crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) => fields,
+                                    _ => {
+                                        debug_assert!(false, "Type invariant: Nested traversal must have Nested field type");
+                                        static EMPTY: Vec<crate::helixc::generator::return_values::ReturnFieldInfo> = Vec::new();
+                                        &EMPTY
+                                    }
                                 };
 
                                 // Extract the actual source variable from the traversal type
@@ -776,10 +782,13 @@ impl Query {
                                 is_first,
                                 ..
                             } = &field_info.source {
-                                let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
-                                    fields
-                                } else {
-                                    panic!("Nested traversal must have Nested field type");
+                                let nested_fields = match &field_info.field_type {
+                                    crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) => fields,
+                                    _ => {
+                                        debug_assert!(false, "Type invariant: Nested traversal must have Nested field type");
+                                        static EMPTY: Vec<crate::helixc::generator::return_values::ReturnFieldInfo> = Vec::new();
+                                        &EMPTY
+                                    }
                                 };
 
                                 // Extract the actual source variable from the traversal type
@@ -1246,10 +1255,13 @@ impl Query {
                                 ..
                             } = &field_info.source {
                                 // Generate nested traversal code
-                                let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
-                                    fields
-                                } else {
-                                    panic!("Nested traversal must have Nested field type");
+                                let nested_fields = match &field_info.field_type {
+                                    crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) => fields,
+                                    _ => {
+                                        debug_assert!(false, "Type invariant: Nested traversal must have Nested field type");
+                                        static EMPTY: Vec<crate::helixc::generator::return_values::ReturnFieldInfo> = Vec::new();
+                                        &EMPTY
+                                    }
                                 };
 
                                 // Extract the actual source variable from the traversal type
@@ -1539,10 +1551,13 @@ impl Query {
                                 is_first,
                                 ..
                             } = &field_info.source {
-                                let nested_fields = if let crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) = &field_info.field_type {
-                                    fields
-                                } else {
-                                    panic!("Nested traversal must have Nested field type");
+                                let nested_fields = match &field_info.field_type {
+                                    crate::helixc::generator::return_values::ReturnFieldType::Nested(fields) => fields,
+                                    _ => {
+                                        debug_assert!(false, "Type invariant: Nested traversal must have Nested field type");
+                                        static EMPTY: Vec<crate::helixc::generator::return_values::ReturnFieldInfo> = Vec::new();
+                                        &EMPTY
+                                    }
                                 };
 
                                 // Extract the actual source variable from the traversal type

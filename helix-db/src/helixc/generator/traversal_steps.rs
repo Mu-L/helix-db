@@ -175,7 +175,10 @@ impl Display for Traversal {
                 }
             }
 
-            TraversalType::Empty => panic!("Should not be empty"),
+            TraversalType::Empty => {
+                debug_assert!(false, "TraversalType::Empty should not reach generator");
+                write!(f, "/* ERROR: empty traversal type */")?;
+            }
             TraversalType::Update(properties) => {
                 write!(f, "{{")?;
                 write!(f, "let update_tr = G::new(&db, &txn, &arena)")?;

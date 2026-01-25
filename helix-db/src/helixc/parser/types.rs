@@ -50,13 +50,11 @@ pub struct Source {
 
 impl Source {
     pub fn get_latest_schema(&self) -> Result<&Schema, ParserError> {
-        let latest_schema = self
-            .schema
+        self.schema
             .iter()
             .max_by(|a, b| a.1.version.1.cmp(&b.1.version.1))
-            .map(|(_, schema)| schema);
-        assert!(latest_schema.is_some());
-        latest_schema.ok_or_else(|| ParserError::from("No latest schema found"))
+            .map(|(_, schema)| schema)
+            .ok_or_else(|| ParserError::from("No latest schema found"))
     }
 
     /// Gets the schemas in order of version, from oldest to newest.
@@ -869,7 +867,7 @@ impl GraphStep {
             GraphStepType::In(s) => Some(s.clone()),
             GraphStepType::OutE(s) => Some(s.clone()),
             GraphStepType::InE(s) => Some(s.clone()),
-            GraphStepType::SearchVector(s) => Some(s.vector_type.clone().unwrap()),
+            GraphStepType::SearchVector(s) => s.vector_type.clone(),
             _ => None,
         }
     }
