@@ -77,7 +77,14 @@ pub async fn run(
     let op = Operation::new("Building", &instance_name);
 
     // Run the build steps
-    let result = run_build_steps(&op, &project, &instance_name, bin.as_deref(), metrics_sender).await;
+    let result = run_build_steps(
+        &op,
+        &project,
+        &instance_name,
+        bin.as_deref(),
+        metrics_sender,
+    )
+    .await;
 
     match &result {
         Ok(_) => op.success(),
