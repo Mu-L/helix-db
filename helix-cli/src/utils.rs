@@ -94,7 +94,10 @@ pub fn command_exists(command: &str) -> bool {
 }
 
 /// Print a status message with a prefix
-#[deprecated(since = "2.3.0", note = "Use output::Operation or output::Step instead")]
+#[deprecated(
+    since = "2.3.0",
+    note = "Use output::Operation or output::Step instead"
+)]
 #[allow(dead_code)]
 pub fn print_status(prefix: &str, message: &str) {
     println!("{} {message}", format!("[{prefix}]").blue().bold());
@@ -168,7 +171,10 @@ pub fn print_error_with_hint(message: &str, hint: &str) {
 }
 
 /// Print a success message
-#[deprecated(since = "2.3.0", note = "Use output::Operation::success() or output::success() instead")]
+#[deprecated(
+    since = "2.3.0",
+    note = "Use output::Operation::success() or output::success() instead"
+)]
 #[allow(dead_code)]
 pub fn print_success(message: &str) {
     println!("{} {message}", "[SUCCESS]".green().bold());
@@ -345,7 +351,8 @@ pub mod helixc_utils {
         let hx_files: Vec<HxFile> = files
             .iter()
             .map(|file| {
-                let name = file.path()
+                let name = file
+                    .path()
                     .canonicalize()
                     .unwrap_or_else(|_| file.path())
                     .to_string_lossy()
@@ -469,7 +476,10 @@ pub mod helixc_utils {
     }
 }
 
-#[deprecated(since = "2.3.0", note = "Use output::LiveSpinner or output::Step instead")]
+#[deprecated(
+    since = "2.3.0",
+    note = "Use output::LiveSpinner or output::Step instead"
+)]
 #[allow(dead_code)]
 pub struct Spinner {
     message: std::sync::Arc<std::sync::Mutex<String>>,

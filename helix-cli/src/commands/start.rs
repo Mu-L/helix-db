@@ -79,8 +79,14 @@ async fn start_local_instance(project: &ProjectContext, instance_name: &str) -> 
     if Verbosity::current().show_normal() {
         Operation::print_details(&[
             ("Local URL", &format!("http://localhost:{port}")),
-            ("Container", &format!("helix_{project_name}_{instance_name}")),
-            ("Data volume", &project.instance_volume(instance_name).display().to_string()),
+            (
+                "Container",
+                &format!("helix_{project_name}_{instance_name}"),
+            ),
+            (
+                "Data volume",
+                &project.instance_volume(instance_name).display().to_string(),
+            ),
         ]);
     }
 

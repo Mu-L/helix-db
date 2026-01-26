@@ -74,7 +74,11 @@ async fn show_metrics_status() -> Result<()> {
     let config = load_metrics_config().unwrap_or_default();
 
     println!("\n{}", "Metrics Status".bold().underline());
-    println!("  {}: {:?}", "Metrics Level".bright_white().bold(), config.level);
+    println!(
+        "  {}: {:?}",
+        "Metrics Level".bright_white().bold(),
+        config.level
+    );
 
     if let Some(user_id) = &config.user_id {
         println!("  {}: {user_id}", "User ID".bright_white().bold());

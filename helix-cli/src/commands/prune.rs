@@ -40,7 +40,8 @@ async fn prune_instance(project: &ProjectContext, instance_name: &str) -> Result
     // Check Docker availability
     let runtime = project.config.project.container_runtime;
     if DockerManager::check_runtime_available(runtime).is_ok() {
-        let mut docker_step = Step::with_messages("Removing Docker resources", "Docker resources removed");
+        let mut docker_step =
+            Step::with_messages("Removing Docker resources", "Docker resources removed");
         docker_step.start();
         let docker = DockerManager::new(project);
 

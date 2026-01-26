@@ -102,7 +102,8 @@ async fn start(
             details.push(("Instance", instance_name.clone()));
         }
         details.push(("Mode", display_info.mode.clone()));
-        let details_refs: Vec<(&str, &str)> = details.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let details_refs: Vec<(&str, &str)> =
+            details.iter().map(|(k, v)| (*k, v.as_str())).collect();
         Operation::print_details(&details_refs);
         println!();
         output::info("Run 'helix dashboard stop' to stop the dashboard");
@@ -363,7 +364,10 @@ async fn check_instance_running(project: &ProjectContext, instance_name: &str) -
     }
 
     // Push (build and start) the instance
-    output::info(&format!("Building and starting instance '{}'...", instance_name));
+    output::info(&format!(
+        "Building and starting instance '{}'...",
+        instance_name
+    ));
     let metrics_sender = MetricsSender::new()?;
     crate::commands::push::run(Some(instance_name.to_string()), false, &metrics_sender).await?;
     output::success(&format!("Instance '{}' built and started", instance_name));

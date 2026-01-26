@@ -52,12 +52,10 @@ async fn pull_from_cloud_instance(
 ) -> Result<()> {
     let op = Operation::new("Pulling", instance_name);
 
-    let cluster_id = instance_config
-        .cluster_id()
-        .ok_or_else(|| {
-            op.failure();
-            eyre::eyre!("Cloud instance '{instance_name}' must have a cluster_id")
-        })?;
+    let cluster_id = instance_config.cluster_id().ok_or_else(|| {
+        op.failure();
+        eyre::eyre!("Cloud instance '{instance_name}' must have a cluster_id")
+    })?;
 
     crate::output::Step::verbose_substep(&format!("Downloading from cluster: {cluster_id}"));
 

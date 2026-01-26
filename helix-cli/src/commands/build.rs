@@ -205,7 +205,9 @@ fn needs_cache_recreation(repo_cache: &std::path::Path) -> Result<bool> {
             Ok(true)
         }
         (false, false) => {
-            Step::verbose_substep("Cache is copy but production mode requires git repo - recreating...");
+            Step::verbose_substep(
+                "Cache is copy but production mode requires git repo - recreating...",
+            );
             Ok(true)
         }
         _ => Ok(false),
@@ -317,7 +319,10 @@ pub(crate) async fn prepare_instance_workspace(
     // Copy cached repo to instance workspace
     copy_dir_recursive_excluding(&repo_cache, &repo_copy_path)?;
 
-    Step::verbose_substep(&format!("Copied cached repo to {}", repo_copy_path.display()));
+    Step::verbose_substep(&format!(
+        "Copied cached repo to {}",
+        repo_copy_path.display()
+    ));
 
     Ok(())
 }
@@ -368,7 +373,10 @@ async fn generate_docker_files(
 
     let docker = DockerManager::new(project);
 
-    Step::verbose_substep(&format!("{} configuration generated", docker.runtime.label()));
+    Step::verbose_substep(&format!(
+        "{} configuration generated",
+        docker.runtime.label()
+    ));
 
     // Generate Dockerfile
     let dockerfile_content = docker.generate_dockerfile(instance_name, instance_config.clone())?;
@@ -376,7 +384,8 @@ async fn generate_docker_files(
     fs::write(&dockerfile_path, dockerfile_content)?;
 
     // Generate docker-compose.yml
-    let compose_content = docker.generate_docker_compose(instance_name, instance_config.clone(), None)?;
+    let compose_content =
+        docker.generate_docker_compose(instance_name, instance_config.clone(), None)?;
     let compose_path = project.docker_compose_path(instance_name);
     fs::write(&compose_path, compose_content)?;
 
@@ -418,7 +427,8 @@ pub(crate) fn generate_content(files: &[std::fs::DirEntry]) -> Result<Content> {
     let files: Vec<HxFile> = files
         .iter()
         .map(|file| {
-            let name = file.path()
+            let name = file
+                .path()
                 .canonicalize()
                 .unwrap_or_else(|_| file.path())
                 .to_string_lossy()

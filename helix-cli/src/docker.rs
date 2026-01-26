@@ -380,7 +380,10 @@ impl<'a> DockerManager<'a> {
     }
 
     fn wait_for_runtime(runtime: ContainerRuntime, timeout_secs: u64) -> Result<()> {
-        Step::verbose_substep(&format!("{}: Waiting for daemon to start...", runtime.label()));
+        Step::verbose_substep(&format!(
+            "{}: Waiting for daemon to start...",
+            runtime.label()
+        ));
 
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(timeout_secs);
@@ -630,7 +633,10 @@ networks:
 
             return Err(eyre!("{} build failed:\n{stderr}", self.runtime.binary()));
         }
-        Step::verbose_substep(&format!("{}: Image built successfully", self.runtime.label()));
+        Step::verbose_substep(&format!(
+            "{}: Image built successfully",
+            self.runtime.label()
+        ));
 
         Ok(())
     }
@@ -868,12 +874,18 @@ networks:
 
     /// Remove all Helix-related images from the system
     pub fn clean_all_helix_images(runtime: ContainerRuntime) -> Result<()> {
-        Step::verbose_substep(&format!("{}: Finding all Helix images on system...", runtime.label()));
+        Step::verbose_substep(&format!(
+            "{}: Finding all Helix images on system...",
+            runtime.label()
+        ));
 
         let images = Self::get_helix_images(runtime)?;
 
         if images.is_empty() {
-            Step::verbose_substep(&format!("{}: No Helix images found to clean", runtime.label()));
+            Step::verbose_substep(&format!(
+                "{}: No Helix images found to clean",
+                runtime.label()
+            ));
             return Ok(());
         }
 

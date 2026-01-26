@@ -45,7 +45,8 @@ fn run_sync(force: bool) -> Result<()> {
         check_step.done_with_info("force update");
     }
 
-    let mut install_step = Step::with_messages("Downloading and installing", "Downloaded and installed");
+    let mut install_step =
+        Step::with_messages("Downloading and installing", "Downloaded and installed");
     install_step.start();
 
     match status.update() {
@@ -53,9 +54,10 @@ fn run_sync(force: bool) -> Result<()> {
             install_step.done();
             op.success();
             if Verbosity::current().show_normal() {
-                Operation::print_details(&[
-                    ("Note", "Please restart your terminal to use the new version"),
-                ]);
+                Operation::print_details(&[(
+                    "Note",
+                    "Please restart your terminal to use the new version",
+                )]);
             }
         }
         Err(e) => {

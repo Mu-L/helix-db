@@ -157,11 +157,7 @@ impl Operation {
 
         match Verbosity::current() {
             Verbosity::Quiet => {
-                println!(
-                    "{} '{}'",
-                    verb_past,
-                    self.target
-                );
+                println!("{} '{}'", verb_past, self.target);
             }
             Verbosity::Normal => {
                 println!();
@@ -271,11 +267,7 @@ impl Step {
                 self.spinner = Some(LiveSpinner::new(&self.progress_message));
             }
             Verbosity::Verbose => {
-                println!(
-                    "  {} {}...",
-                    symbols::INFO.blue(),
-                    self.progress_message
-                );
+                println!("  {} {}...", symbols::INFO.blue(), self.progress_message);
             }
         }
     }
@@ -321,7 +313,12 @@ impl Step {
 
         let duration_str = if verbosity == Verbosity::Verbose {
             self.start_time
-                .map(|t| format!(" {}", format!("({})", format_duration(t.elapsed())).dimmed()))
+                .map(|t| {
+                    format!(
+                        " {}",
+                        format!("({})", format_duration(t.elapsed())).dimmed()
+                    )
+                })
                 .unwrap_or_default()
         } else {
             String::new()
@@ -333,10 +330,7 @@ impl Step {
 
         println!(
             "  {} {}{}{}",
-            symbol,
-            self.completion_message,
-            info_str,
-            duration_str
+            symbol, self.completion_message, info_str, duration_str
         );
     }
 

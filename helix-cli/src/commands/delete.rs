@@ -44,7 +44,8 @@ pub async fn run(instance_name: String) -> Result<()> {
     // Stop and remove Docker containers and volumes
     let runtime = project.config.project.container_runtime;
     if DockerManager::check_runtime_available(runtime).is_ok() {
-        let mut docker_step = Step::with_messages("Removing Docker resources", "Docker resources removed");
+        let mut docker_step =
+            Step::with_messages("Removing Docker resources", "Docker resources removed");
         docker_step.start();
         let docker = DockerManager::new(&project);
 
@@ -81,7 +82,8 @@ pub async fn run(instance_name: String) -> Result<()> {
             fly_step.done();
         }
         InstanceInfo::Ecr(config) => {
-            let mut ecr_step = Step::with_messages("Deleting ECR repository", "ECR repository deleted");
+            let mut ecr_step =
+                Step::with_messages("Deleting ECR repository", "ECR repository deleted");
             ecr_step.start();
             let ecr = EcrManager::new(&project, config.auth_type.clone()).await?;
             ecr.delete_repository(&instance_name).await?;

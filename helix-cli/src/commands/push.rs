@@ -146,7 +146,8 @@ async fn push_local_instance(
 
     // Build the instance first (this ensures it's up to date) and get metrics data
     let metrics_data =
-        crate::commands::build::run_build_steps(&op, project, instance_name, metrics_sender).await?;
+        crate::commands::build::run_build_steps(&op, project, instance_name, metrics_sender)
+            .await?;
 
     // If port changed, regenerate docker-compose with new port
     if port_changed {
@@ -171,8 +172,14 @@ async fn push_local_instance(
     if Verbosity::current().show_normal() {
         Operation::print_details(&[
             ("Local URL", &format!("http://localhost:{actual_port}")),
-            ("Container", &format!("helix_{project_name}_{instance_name}")),
-            ("Data volume", &project.instance_volume(instance_name).display().to_string()),
+            (
+                "Container",
+                &format!("helix_{project_name}_{instance_name}"),
+            ),
+            (
+                "Data volume",
+                &project.instance_volume(instance_name).display().to_string(),
+            ),
         ]);
     }
 

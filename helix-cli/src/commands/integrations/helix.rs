@@ -65,9 +65,14 @@ impl<'a> HelixManager<'a> {
         // Check authentication first
         require_auth().await?;
 
-        output::info(&format!("Initializing Helix cloud cluster: {}", config.cluster_id));
+        output::info(&format!(
+            "Initializing Helix cloud cluster: {}",
+            config.cluster_id
+        ));
         output::info("Note: Cluster provisioning API is not yet implemented");
-        output::info("This will create the configuration locally and provision the cluster when the API is ready");
+        output::info(
+            "This will create the configuration locally and provision the cluster when the API is ready",
+        );
 
         // TODO: When the backend API is ready, implement actual cluster creation
         // let credentials = Credentials::read_from_file(&self.credentials_path());
@@ -107,7 +112,9 @@ impl<'a> HelixManager<'a> {
         //     }
         // }
 
-        output::success(&format!("Cloud instance '{instance_name}' configuration created"));
+        output::success(&format!(
+            "Cloud instance '{instance_name}' configuration created"
+        ));
         output::info("Run 'helix build <instance>' to compile your project for this instance");
 
         Ok(())

@@ -101,9 +101,7 @@ pub async fn run(output: Option<PathBuf>, instance_name: String) -> Result<()> {
     op.success();
 
     if Verbosity::current().show_normal() {
-        Operation::print_details(&[
-            ("Backup location", &backup_dir.display().to_string()),
-        ]);
+        Operation::print_details(&[("Backup location", &backup_dir.display().to_string())]);
     }
 
     Ok(())

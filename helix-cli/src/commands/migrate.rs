@@ -252,13 +252,29 @@ fn find_hx_files(project_dir: &Path) -> Result<Vec<PathBuf>> {
 
 fn show_migration_plan(ctx: &MigrationContext) -> Result<()> {
     println!();
-    println!("{}", format!("📋 Migration Plan for '{}':", ctx.project_name).bold().underline());
-    println!("  {}: {}", "Project directory".bright_white().bold(), ctx.project_dir.display());
+    println!(
+        "{}",
+        format!("📋 Migration Plan for '{}':", ctx.project_name)
+            .bold()
+            .underline()
+    );
+    println!(
+        "  {}: {}",
+        "Project directory".bright_white().bold(),
+        ctx.project_dir.display()
+    );
     println!();
 
     println!("{}", "📁 File Structure Changes:".bold().underline());
-    println!("  {}: {}", "Create directory".bright_white().bold(), ctx.queries_dir);
-    println!("  {}: .helix/v1-backup/", "Create directory".bright_white().bold());
+    println!(
+        "  {}: {}",
+        "Create directory".bright_white().bold(),
+        ctx.queries_dir
+    );
+    println!(
+        "  {}: .helix/v1-backup/",
+        "Create directory".bright_white().bold()
+    );
     for hx_file in &ctx.hx_files {
         let file_name = hx_file.file_name().unwrap().to_string_lossy();
         let dest_path = PathBuf::from(&ctx.queries_dir).join(&*file_name);
@@ -272,7 +288,10 @@ fn show_migration_plan(ctx: &MigrationContext) -> Result<()> {
     println!("  {}: helix.toml", "Create file".bright_white().bold());
 
     if !ctx.no_backup {
-        println!("  {}: .helix/v1-backup/config.hx.json", "Create backup".bright_white().bold());
+        println!(
+            "  {}: .helix/v1-backup/config.hx.json",
+            "Create backup".bright_white().bold()
+        );
     } else {
         println!("  {}: config.hx.json", "Remove file".bright_white().bold());
     }
@@ -290,7 +309,10 @@ fn show_migration_plan(ctx: &MigrationContext) -> Result<()> {
                 "Already migrated".bright_white().bold()
             );
         } else {
-            println!("  {}: ~/.helix → ~/.helix-v1-backup", "Create backup".bright_white().bold());
+            println!(
+                "  {}: ~/.helix → ~/.helix-v1-backup",
+                "Create backup".bright_white().bold()
+            );
             if v1_helix_dir.join("dockerdev").exists() {
                 println!(
                     "  {}: Stop/remove helix-dockerdev containers and images",
@@ -302,20 +324,36 @@ fn show_migration_plan(ctx: &MigrationContext) -> Result<()> {
                 "Clean directory".bright_white().bold()
             );
             if v1_helix_dir.join("credentials").exists() {
-                println!("  {}: ~/.helix/credentials", "Preserve file".bright_white().bold());
+                println!(
+                    "  {}: ~/.helix/credentials",
+                    "Preserve file".bright_white().bold()
+                );
             }
             if v1_helix_dir.join("repo").exists() {
-                println!("  {}: ~/.helix/repo", "Preserve directory".bright_white().bold());
+                println!(
+                    "  {}: ~/.helix/repo",
+                    "Preserve directory".bright_white().bold()
+                );
             }
-            println!("  {}: Create ~/.helix/.v2 marker file", "Mark migrated".bright_white().bold());
+            println!(
+                "  {}: Create ~/.helix/.v2 marker file",
+                "Mark migrated".bright_white().bold()
+            );
         }
     } else {
-        println!("  {}: ~/.helix directory not found", "No action needed".bright_white().bold());
+        println!(
+            "  {}: ~/.helix directory not found",
+            "No action needed".bright_white().bold()
+        );
     }
 
     println!();
     println!("{}", "⚙️  Configuration Migration:".bold().underline());
-    println!("  {}: {}", "Instance name".bright_white().bold(), ctx.instance_name);
+    println!(
+        "  {}: {}",
+        "Instance name".bright_white().bold(),
+        ctx.instance_name
+    );
     println!("  {}: {}", "Instance port".bright_white().bold(), ctx.port);
     println!(
         "  {}: m={}, ef_construction={}, ef_search={}",
@@ -329,8 +367,16 @@ fn show_migration_plan(ctx: &MigrationContext) -> Result<()> {
         "Database max size".bright_white().bold(),
         ctx.v1_config.db_max_size_gb
     );
-    println!("  {}: {}", "MCP enabled".bright_white().bold(), ctx.v1_config.mcp);
-    println!("  {}: {}", "BM25 enabled".bright_white().bold(), ctx.v1_config.bm25);
+    println!(
+        "  {}: {}",
+        "MCP enabled".bright_white().bold(),
+        ctx.v1_config.mcp
+    );
+    println!(
+        "  {}: {}",
+        "BM25 enabled".bright_white().bold(),
+        ctx.v1_config.bm25
+    );
     println!(
         "  {}: {}",
         "Secondary indices".bright_white().bold(),
