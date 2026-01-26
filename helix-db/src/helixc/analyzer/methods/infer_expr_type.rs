@@ -129,7 +129,7 @@ pub(crate) fn infer_expr_type<'a>(
             });
             match result {
                 Ok(stmts) => (
-                    Type::Array(Box::new(inner_array_ty.unwrap())),
+                    Type::Array(Box::new(inner_array_ty.unwrap_or(Type::Unknown))),
                     Some(GeneratedStatement::Array(stmts)),
                 ),
                 Err(()) => (Type::Unknown, Some(GeneratedStatement::Empty)),
@@ -364,8 +364,7 @@ pub(crate) fn infer_expr_type<'a>(
                                 .properties
                                 .iter()
                                 .filter_map(|p| {
-                                    matches!(p.is_index, FieldPrefix::Index)
-                                        .then_some(p.name.clone())
+                                    p.field_prefix.is_indexed().then_some(p.name.clone())
                                 })
                                 .collect::<Vec<_>>();
                             match secondary_indices.is_empty() {
@@ -681,7 +680,8 @@ pub(crate) fn infer_expr_type<'a>(
                             GeneratedValue::Literal(GenRef::Literal(value.clone())),
                             false,
                         ),
-                        _ => unreachable!(),
+                        // Parser guarantees edge to_id is Identifier or Literal
+                        _ => unreachable!("parser guarantees edge to_id is Identifier or Literal"),
                     },
                     _ => {
                         generate_error!(ctx, original_query, add.loc.clone(), E611);
@@ -739,7 +739,10 @@ pub(crate) fn infer_expr_type<'a>(
                             GeneratedValue::Literal(GenRef::Literal(value.clone())),
                             false,
                         ),
-                        _ => unreachable!(),
+                        // Parser guarantees edge from_id is Identifier or Literal
+                        _ => {
+                            unreachable!("parser guarantees edge from_id is Identifier or Literal")
+                        }
                     },
                     _ => {
                         generate_error!(ctx, original_query, add.loc.clone(), E612);
@@ -753,6 +756,7 @@ pub(crate) fn infer_expr_type<'a>(
                     properties,
                     from_is_plural,
                     to_is_plural,
+                    is_unique: edge_in_schema.is_unique,
                 };
                 // If either from or to is plural, use Standalone (no G::new_mut wrapper),
                 // Empty separator (no period before it), and No collection (already done in iteration)
@@ -1111,6 +1115,7 @@ pub(crate) fn infer_expr_type<'a>(
             );
             (Type::Vector(None), None)
         }
+
         // BatchAddVector(add) => {
         //     if let Some(ref ty) = add.vector_type {
         //         if !ctx.vector_set.contains(ty.as_str()) {
@@ -1301,7 +1306,11 @@ pub(crate) fn infer_expr_type<'a>(
                                     _ => Where::Ref(WhereRef { expr }),
                                 })));
                         }
-                        _ => unreachable!(),
+                        // Pre-filter should produce Traversal or BoExp
+                        _ => {
+                            // Fall through - pre-filter will be None
+                            return (Type::Vector(sv.vector_type.clone()), None);
+                        }
                     }
                     Some(vec![BoExp::Expr(gen_traversal)])
                 }
@@ -1317,7 +1326,7 @@ pub(crate) fn infer_expr_type<'a>(
                     should_collect: ShouldCollect::ToVec,
                     source_step: Separator::Period(SourceStep::SearchVector(
                         GeneratedSearchVector {
-                            label: GenRef::Literal(sv.vector_type.clone().unwrap()),
+                            label: GenRef::Literal(sv.vector_type.clone().unwrap_or_default()),
                             vec,
                             k,
                             pre_filter,
@@ -1340,7 +1349,10 @@ pub(crate) fn infer_expr_type<'a>(
                         gen_query,
                     );
 
-                    match stmt.unwrap() {
+                    let Some(stmt) = stmt else {
+                        return BoExp::Empty;
+                    };
+                    match stmt {
                         GeneratedStatement::BoExp(expr) => match expr {
                             BoExp::Exists(mut traversal) => {
                                 traversal.should_collect = ShouldCollect::No;
@@ -1388,7 +1400,10 @@ pub(crate) fn infer_expr_type<'a>(
                         gen_query,
                     );
 
-                    match stmt.unwrap() {
+                    let Some(stmt) = stmt else {
+                        return BoExp::Empty;
+                    };
+                    match stmt {
                         GeneratedStatement::BoExp(expr) => match expr {
                             BoExp::Exists(mut traversal) => {
                                 traversal.should_collect = ShouldCollect::No;
@@ -1427,7 +1442,10 @@ pub(crate) fn infer_expr_type<'a>(
             let (ty, stmt) =
                 infer_expr_type(ctx, expr, scope, original_query, parent_ty, gen_query);
 
-            match stmt.unwrap() {
+            let Some(stmt) = stmt else {
+                return (Type::Unknown, None);
+            };
+            match stmt {
                 GeneratedStatement::BoExp(expr) => (
                     Type::Boolean,
                     Some(GeneratedStatement::BoExp(BoExp::Not(Box::new(expr)))),
@@ -1444,7 +1462,6 @@ pub(crate) fn infer_expr_type<'a>(
             if stmt.is_none() {
                 return (Type::Boolean, None);
             }
-            assert!(matches!(stmt, Some(GeneratedStatement::Traversal(_))));
             let traversal = match stmt.unwrap() {
                 GeneratedStatement::Traversal(mut tr) => {
                     // Only modify traversal_type if source is Identifier or Anonymous
@@ -1475,7 +1492,10 @@ pub(crate) fn infer_expr_type<'a>(
                     tr.should_collect = ShouldCollect::No;
                     tr
                 }
-                _ => unreachable!(),
+                // EXISTS expects a traversal expression
+                _ => {
+                    return (Type::Boolean, None);
+                }
             };
             (
                 Type::Boolean,
@@ -1606,7 +1626,7 @@ pub(crate) fn infer_expr_type<'a>(
             };
 
             let search_bm25 = SearchBM25 {
-                type_arg: GenRef::Literal(bm25_search.type_arg.clone().unwrap()),
+                type_arg: GenRef::Literal(bm25_search.type_arg.clone().unwrap_or_default()),
                 query: vec,
                 k,
             };
@@ -1687,6 +1707,28 @@ mod tests {
                 edge <- AddE<Knows>::From(person1)::To(person2)
                 RETURN edge
         "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_add_edge_with_unique_index_valid() {
+        let source = r#"
+                N::Person { name: String }
+                E::Knows UNIQUE { From: Person, To: Person }
+
+                QUERY test(id1: ID, id2: ID) =>
+                    person1 <- N<Person>(id1)
+                    person2 <- N<Person>(id2)
+                    edge <- AddE<Knows>::From(person1)::To(person2)
+                    RETURN edge
+            "#;
 
         let content = write_to_temp_file(vec![source]);
         let parsed = HelixParser::parse_source(&content).unwrap();

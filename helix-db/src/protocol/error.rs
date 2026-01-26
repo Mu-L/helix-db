@@ -26,6 +26,15 @@ pub enum HelixError {
     InvalidApiKey,
 }
 
+impl Serialize for HelixError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_str(&self.to_string())
+    }
+}
+
 impl HelixError {
     fn code(&self) -> &'static str {
         match self {
@@ -50,8 +59,9 @@ impl IntoResponse for HelixError {
             code: self.code(),
         };
 
-        let body = sonic_rs::to_vec(&error_response)
-            .unwrap_or_else(|_| br#"{"error":"Internal serialization error","code":"INTERNAL_ERROR"}"#.to_vec());
+        let body = sonic_rs::to_vec(&error_response).unwrap_or_else(|_| {
+            br#"{"error":"Internal serialization error","code":"INTERNAL_ERROR"}"#.to_vec()
+        });
 
         axum::response::Response::builder()
             .status(status)

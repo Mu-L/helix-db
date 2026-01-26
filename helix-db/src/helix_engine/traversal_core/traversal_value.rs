@@ -9,7 +9,7 @@ use std::{borrow::Cow, hash::Hash};
 
 pub type Variable<'arena> = Cow<'arena, TraversalValue<'arena>>;
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, Default)]
 #[serde(untagged)]
 pub enum TraversalValue<'arena> {
     /// A node in the graph
@@ -29,6 +29,7 @@ pub enum TraversalValue<'arena> {
     /// Item With Score
     NodeWithScore { node: Node<'arena>, score: f64 },
     /// An empty traversal value
+    #[default]
     Empty,
 }
 
@@ -75,6 +76,7 @@ impl<'arena> TraversalValue<'arena> {
         match self {
             TraversalValue::Vector(vector) => vector.data,
             TraversalValue::VectorNodeWithoutVectorData(_) => &[],
+            TraversalValue::Empty => &[],
             _ => unimplemented!(),
         }
     }
@@ -84,6 +86,7 @@ impl<'arena> TraversalValue<'arena> {
             TraversalValue::Vector(vector) => vector.score(),
             TraversalValue::VectorNodeWithoutVectorData(_) => 2f64,
             TraversalValue::NodeWithScore { score, .. } => *score,
+            TraversalValue::Empty => 2f64,
             _ => unimplemented!(),
         }
     }

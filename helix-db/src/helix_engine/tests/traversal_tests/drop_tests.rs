@@ -32,7 +32,8 @@ use crate::{
 
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
-fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
+    let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -40,7 +41,7 @@ fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
         Default::default(),
     )
     .unwrap();
-    Arc::new(storage)
+    (temp_dir, Arc::new(storage))
 }
 
 fn to_result_iter(
@@ -65,8 +66,7 @@ fn edge_id(value: TraversalValue) -> u128 {
 
 #[test]
 fn test_drop_edge() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -84,7 +84,7 @@ fn test_drop_edge() {
     );
     let edge_id = edge_id(
         G::new_mut(&storage, &arena, &mut txn)
-            .add_edge("knows", None, node1_id, node2_id, false)
+            .add_edge("knows", None, node1_id, node2_id, false, false)
             .collect_to_obj()
             .unwrap(),
     );
@@ -126,8 +126,7 @@ fn test_drop_edge() {
 
 #[test]
 fn test_drop_node() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -144,7 +143,7 @@ fn test_drop_node() {
             .unwrap(),
     );
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("knows", None, node1_id, node2_id, false)
+        .add_edge("knows", None, node1_id, node2_id, false, false)
         .collect_to_obj()
         .unwrap();
     txn.commit().unwrap();
@@ -179,8 +178,7 @@ fn test_drop_node() {
 
 #[test]
 fn test_drop_traversal() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -200,10 +198,12 @@ fn test_drop_traversal() {
                 .unwrap(),
         );
         G::new_mut(&storage, &arena, &mut txn)
-            .add_edge("knows", None, origin_id, neighbor_id, false)
+            .add_edge("knows", None, origin_id, neighbor_id, false, false)
             .collect_to_obj()
             .unwrap();
         neighbor_ids.push(neighbor_id);
+        // sleep for 1 ms
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     txn.commit().unwrap();
 
@@ -240,8 +240,7 @@ fn test_drop_traversal() {
 
 #[test]
 fn test_node_deletion_in_existing_graph() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -266,15 +265,15 @@ fn test_node_deletion_in_existing_graph() {
     for &other in &others {
         let random = others[rand::rng().random_range(0..others.len())];
         G::new_mut(&storage, &arena, &mut txn)
-            .add_edge("knows", None, random, other, false)
+            .add_edge("knows", None, random, other, false, false)
             .collect_to_obj()
             .unwrap();
         G::new_mut(&storage, &arena, &mut txn)
-            .add_edge("knows", None, source_id, other, false)
+            .add_edge("knows", None, source_id, other, false, false)
             .collect_to_obj()
             .unwrap();
         G::new_mut(&storage, &arena, &mut txn)
-            .add_edge("knows", None, other, source_id, false)
+            .add_edge("knows", None, other, source_id, false, false)
             .collect_to_obj()
             .unwrap();
     }
@@ -325,8 +324,7 @@ fn test_node_deletion_in_existing_graph() {
 
 #[test]
 fn test_edge_deletion_in_existing_graph() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -345,13 +343,13 @@ fn test_edge_deletion_in_existing_graph() {
 
     let edge1_id = edge_id(
         G::new_mut(&storage, &arena, &mut txn)
-            .add_edge("knows", None, node1_id, node2_id, false)
+            .add_edge("knows", None, node1_id, node2_id, false, false)
             .collect_to_obj()
             .unwrap(),
     );
     let edge2_id = edge_id(
         G::new_mut(&storage, &arena, &mut txn)
-            .add_edge("knows", None, node2_id, node1_id, false)
+            .add_edge("knows", None, node2_id, node1_id, false, false)
             .collect_to_obj()
             .unwrap(),
     );
@@ -381,8 +379,7 @@ fn test_edge_deletion_in_existing_graph() {
 
 #[test]
 fn test_vector_deletion_in_existing_graph() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -420,15 +417,15 @@ fn test_vector_deletion_in_existing_graph() {
     for &other in &vector_ids {
         let random = vector_ids[rand::rng().random_range(0..vector_ids.len())];
         G::new_mut(&storage, &arena, &mut txn)
-            .add_edge("knows", None, other, random, false)
+            .add_edge("knows", None, other, random, false, false)
             .collect_to_obj()
             .unwrap();
         G::new_mut(&storage, &arena, &mut txn)
-            .add_edge("knows", None, node_id, target_vector_id, false)
+            .add_edge("knows", None, node_id, target_vector_id, false, false)
             .collect_to_obj()
             .unwrap();
         G::new_mut(&storage, &arena, &mut txn)
-            .add_edge("knows", None, target_vector_id, node_id, false)
+            .add_edge("knows", None, target_vector_id, node_id, false, false)
             .collect_to_obj()
             .unwrap();
     }

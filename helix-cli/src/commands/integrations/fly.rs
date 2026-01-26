@@ -2,8 +2,8 @@ use crate::config::default_release_build_mode;
 use crate::{
     config::{self, BuildMode},
     docker::DockerManager,
+    output,
     project::ProjectContext,
-    utils::print_status,
 };
 use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
@@ -358,7 +358,10 @@ impl<'a> FlyManager<'a> {
         }
 
         // Check if fly.toml already exists for this instance
-        let fly_toml_path = self.project.instance_workspace(instance_name).join("fly.toml");
+        let fly_toml_path = self
+            .project
+            .instance_workspace(instance_name)
+            .join("fly.toml");
         if let Some(existing_app_name) = Self::read_app_name_from_fly_toml(&fly_toml_path)? {
             // Check if the app in fly.toml exists on Fly.io
             if self.app_exists(&existing_app_name).await? {
@@ -382,7 +385,7 @@ impl<'a> FlyManager<'a> {
             ));
         }
 
-        print_status("FLY", &format!("Creating Fly.io app '{app_name}'"));
+        output::info(&format!("Creating Fly.io app '{app_name}'"));
 
         match &self.auth {
             FlyAuth::ApiKey(api_key) => {
@@ -478,7 +481,7 @@ impl<'a> FlyManager<'a> {
             .display()
             .to_string();
 
-        print_status("FLY", &format!("Deploying '{app_name}' to Fly.io"));
+        output::info(&format!("Deploying '{app_name}' to Fly.io"));
         println!("\tImage: {image_name}");
 
         match &self.auth {
@@ -487,7 +490,7 @@ impl<'a> FlyManager<'a> {
             )),
             FlyAuth::Cli => {
                 // Tag image for Fly.io registry
-                print_status("FLY", "Tagging image for Fly.io registry");
+                output::info("Tagging image for Fly.io registry");
 
                 // authenticate docker
                 let auth_args = vec!["auth", "docker"];
@@ -499,10 +502,7 @@ impl<'a> FlyManager<'a> {
                 docker.tag(image_name, FLY_REGISTRY_URL)?;
 
                 // Push image to registry
-                print_status(
-                    "FLY",
-                    &format!("Pushing image '{image_name}' to Fly.io registry"),
-                );
+                output::info(&format!("Pushing image '{image_name}' to Fly.io registry"));
                 docker.push(image_name, FLY_REGISTRY_URL)?;
 
                 // Get environment variables first to ensure they live long enough
@@ -526,7 +526,7 @@ impl<'a> FlyManager<'a> {
                 }
 
                 // Deploy image
-                print_status("FLY", "Deploying image to Fly.io");
+                output::info("Deploying image to Fly.io");
                 let deploy_status = self.run_fly_command_async(&deploy_args).await?;
 
                 if !deploy_status.status.success() {
@@ -616,7 +616,7 @@ impl<'a> FlyManager<'a> {
     pub async fn delete_app(&self, instance_name: &str) -> Result<()> {
         let app_name = self.app_name(instance_name);
 
-        print_status("FLY", &format!("Deleting Fly.io app '{app_name}'"));
+        output::info(&format!("Deleting Fly.io app '{app_name}'"));
 
         let delete_status = self
             .run_fly_command_async(&["apps", "destroy", &app_name, "--yes"])

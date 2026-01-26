@@ -1730,8 +1730,8 @@ mod tests {
         assert_eq!(Value::F64(1.0), Value::F64(1.0));
         assert_eq!(Value::I64(1), Value::U64(1));
         assert_eq!(Value::U64(1), Value::I64(1));
-        assert_eq!(Value::I32(1), 1 as i32);
-        assert_eq!(Value::U32(1), 1 as i32);
+        assert_eq!(Value::I32(1), 1_i32);
+        assert_eq!(Value::U32(1), 1_i32);
     }
 
     #[test]
@@ -1991,7 +1991,7 @@ mod tests {
 
         let val = Value::Boolean(true);
         let b: bool = val.into();
-        assert_eq!(b, true);
+        assert!(b);
 
         let val = Value::String("test".to_string());
         let s: String = val.into();
@@ -2068,7 +2068,7 @@ mod tests {
 
         let val = Value::Boolean(true);
         let b: &bool = val.into_primitive();
-        assert_eq!(*b, true);
+        assert!(*b);
 
         let val = Value::String("test".to_string());
         let s = val.as_str();
@@ -2227,7 +2227,10 @@ mod tests {
         assert_eq!(&*Value::U8(255).inner_str(), "255");
         assert_eq!(&*Value::U16(65535).inner_str(), "65535");
         assert_eq!(&*Value::U32(4294967295).inner_str(), "4294967295");
-        assert_eq!(&*Value::U64(18446744073709551615).inner_str(), "18446744073709551615");
+        assert_eq!(
+            &*Value::U64(18446744073709551615).inner_str(),
+            "18446744073709551615"
+        );
         assert_eq!(&*Value::U128(u128::MAX).inner_str(), u128::MAX.to_string());
     }
 
@@ -2363,7 +2366,10 @@ mod tests {
         assert_eq!(Value::U16(65535).inner_stringify(), "65535");
         assert_eq!(Value::U32(u32::MAX).inner_stringify(), u32::MAX.to_string());
         assert_eq!(Value::U64(u64::MAX).inner_stringify(), u64::MAX.to_string());
-        assert_eq!(Value::U128(u128::MAX).inner_stringify(), u128::MAX.to_string());
+        assert_eq!(
+            Value::U128(u128::MAX).inner_stringify(),
+            u128::MAX.to_string()
+        );
     }
 
     // ============================================================================

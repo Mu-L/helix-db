@@ -91,8 +91,8 @@ static METRICS_STATE: LazyLock<MetricsState> = LazyLock::new(|| {
 });
 
 // Configuration constants
-const THREAD_LOCAL_EVENT_BUFFER_LENGTH: usize = 65536;
-const THREAD_LOCAL_FLUSH_THRESHOLD: usize = 65536;
+const THREAD_LOCAL_EVENT_BUFFER_LENGTH: usize = 4096;
+const THREAD_LOCAL_FLUSH_THRESHOLD: usize = 2048;
 const BATCH_TIMEOUT_SECS: u64 = 1;
 const THREAD_LOCAL_FLUSH_INTERVAL_SECS: u64 = 1; // Flush thread-local buffers every second
 
@@ -257,7 +257,7 @@ async fn process_batch(
     Some(tokio::spawn(async move {
         // Serialize as NDJSON (newline-delimited JSON)
         // Each event is a separate JSON object on its own line
-        let mut ndjson = String::new();
+        let mut ndjson = String::with_capacity(events.len() * 256);
         for event in &events {
             match sonic_rs::to_string(event) {
                 Ok(json) => {
@@ -602,7 +602,6 @@ mod tests {
 
             // Channel should have fewer or equal batches
             let _final_count = METRICS_STATE.events_rx.len();
-            
         }
     }
 
@@ -684,12 +683,11 @@ mod tests {
 
         // Should be able to serialize batch
         let json_bytes = sonic_rs::to_vec(&events).unwrap();
-        assert!(json_bytes.len() > 0);
+        assert!(!json_bytes.is_empty());
 
         // Should be valid JSON array
         let json_str = String::from_utf8(json_bytes).unwrap();
         assert!(json_str.starts_with('['));
         assert!(json_str.ends_with(']'));
     }
-
 }

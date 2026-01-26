@@ -18,7 +18,8 @@ use crate::{
 use bumpalo::Bump;
 use tempfile::TempDir;
 
-fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
+    let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -26,26 +27,28 @@ fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
         Default::default(),
     )
     .unwrap();
-    Arc::new(storage)
+    (temp_dir, Arc::new(storage))
 }
 
 #[test]
 fn test_filter_nodes() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     // Create nodes with different properties
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 25 }), None)
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
     let person3 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 35 }), None)
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -67,15 +70,15 @@ fn test_filter_nodes() {
                 Ok(false)
             }
         })
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(traversal.len(), 1);
     assert_eq!(traversal[0].id(), person3.id());
 }
 
 #[test]
 fn test_filter_macro_single_argument() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -85,14 +88,16 @@ fn test_filter_macro_single_argument() {
             props_option(&arena, props! { "name" => "Alice" }),
             None,
         )
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n(
             "person",
             props_option(&arena, props! { "name" => "Bob" }),
             None,
         )
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
 
     fn has_name(val: &Result<TraversalValue, GraphError>) -> Result<bool, GraphError> {
         if let Ok(TraversalValue::Node(node)) = val {
@@ -107,7 +112,8 @@ fn test_filter_macro_single_argument() {
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .filter_ref(|val, _| has_name(val))
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(traversal.len(), 2);
     assert!(
         traversal
@@ -126,17 +132,18 @@ fn test_filter_macro_single_argument() {
 
 #[test]
 fn test_filter_macro_multiple_arguments() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 25 }), None)
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 30 }), None)
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
     txn.commit().unwrap();
 
     fn age_greater_than(
@@ -162,7 +169,8 @@ fn test_filter_macro_multiple_arguments() {
     let traversal = G::new(&storage, &txn, &arena)
         .n_from_type("person")
         .filter_ref(|val, _| age_greater_than(val, 27))
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
 
     assert_eq!(traversal.len(), 1);
     assert_eq!(traversal[0].id(), person2.id());
@@ -170,17 +178,18 @@ fn test_filter_macro_multiple_arguments() {
 
 #[test]
 fn test_filter_edges() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let person1 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
     let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
 
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
@@ -189,8 +198,10 @@ fn test_filter_edges() {
             person1.id(),
             person2.id(),
             false,
+            false,
         )
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     let edge2 = G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
             "knows",
@@ -198,8 +209,10 @@ fn test_filter_edges() {
             person2.id(),
             person1.id(),
             false,
+            false,
         )
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -226,7 +239,8 @@ fn test_filter_edges() {
     let traversal = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
         .filter_ref(|val, _| recent_edge(val, 2021))
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
 
     assert_eq!(traversal.len(), 1);
     assert_eq!(traversal[0].id(), edge2.id());
@@ -234,14 +248,14 @@ fn test_filter_edges() {
 
 #[test]
 fn test_filter_empty_result() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 25 }), None)
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -262,14 +276,14 @@ fn test_filter_empty_result() {
                 Ok(false)
             }
         })
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert!(traversal.is_empty());
 }
 
 #[test]
 fn test_filter_chain() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -279,17 +293,20 @@ fn test_filter_chain() {
             props_option(&arena, props! { "age" => 25, "name" => "Alice" }),
             None,
         )
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
     let person2 = G::new_mut(&storage, &arena, &mut txn)
         .add_n(
             "person",
             props_option(&arena, props! { "age" => 30, "name" => "Bob" }),
             None,
         )
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
     let _ = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", props_option(&arena, props! { "age" => 35 }), None)
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
 
     txn.commit().unwrap();
     let txn = storage.graph_env.read_txn().unwrap();
@@ -325,7 +342,8 @@ fn test_filter_chain() {
         .n_from_type("person")
         .filter_ref(|val, _| has_name(val))
         .filter_ref(|val, _| age_greater_than(val, 27))
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
 
     assert_eq!(traversal.len(), 1);
     assert_eq!(traversal[0].id(), person2.id());

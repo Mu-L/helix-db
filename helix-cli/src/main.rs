@@ -10,6 +10,8 @@ mod docker;
 mod errors;
 mod github_issue;
 mod metrics_sender;
+mod output;
+mod port;
 mod project;
 mod prompts;
 mod sse_client;
@@ -20,6 +22,14 @@ mod utils;
 #[command(name = "Helix CLI")]
 #[command(version)]
 struct Cli {
+    /// Suppress output (errors and final result only)
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
+    /// Show detailed output with timing information
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     #[clap(subcommand)]
     command: Commands,
 }
@@ -115,6 +125,28 @@ enum Commands {
 
     /// Show status of all instances
     Status,
+
+    /// View logs for an instance
+    Logs {
+        /// Instance name (interactive selection if not provided)
+        instance: Option<String>,
+
+        /// Stream live logs (non-interactive)
+        #[clap(long, short = 'l')]
+        live: bool,
+
+        /// Query historical logs with time range
+        #[clap(long, short = 'r')]
+        range: bool,
+
+        /// Start time (ISO 8601: 2024-01-15T10:00:00Z)
+        #[clap(long, requires = "range")]
+        start: Option<String>,
+
+        /// End time (ISO 8601: 2024-01-15T11:00:00Z)
+        #[clap(long, requires = "range")]
+        end: Option<String>,
+    },
 
     /// Cloud operations (login, keys, etc.)
     Auth {
@@ -217,6 +249,9 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // Set verbosity level from flags
+    output::Verbosity::set(output::Verbosity::from_flags(cli.quiet, cli.verbose));
+
     let result = match cli.command {
         Commands::Init {
             path,
@@ -240,6 +275,13 @@ async fn main() -> Result<()> {
         Commands::Start { instance } => commands::start::run(instance).await,
         Commands::Stop { instance } => commands::stop::run(instance).await,
         Commands::Status => commands::status::run().await,
+        Commands::Logs {
+            instance,
+            live,
+            range,
+            start,
+            end,
+        } => commands::logs::run(instance, live, range, start, end).await,
         Commands::Auth { action } => commands::auth::run(action).await,
         Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
         Commands::Delete { instance } => commands::delete::run(instance).await,

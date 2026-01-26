@@ -19,7 +19,8 @@ use crate::{
     props,
 };
 
-fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
+    let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -27,13 +28,12 @@ fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
         Default::default(),
     )
     .unwrap();
-    Arc::new(storage)
+    (temp_dir, Arc::new(storage))
 }
 
 #[test]
 fn test_shortest_path_simple_chain() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -49,15 +49,15 @@ fn test_shortest_path_simple_chain() {
         .collect();
 
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("knows", None, node_ids[0], node_ids[1], false)
+        .add_edge("knows", None, node_ids[0], node_ids[1], false, false)
         .collect_to_obj()
         .unwrap();
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("knows", None, node_ids[1], node_ids[2], false)
+        .add_edge("knows", None, node_ids[1], node_ids[2], false, false)
         .collect_to_obj()
         .unwrap();
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("knows", None, node_ids[2], node_ids[3], false)
+        .add_edge("knows", None, node_ids[2], node_ids[3], false, false)
         .collect_to_obj()
         .unwrap();
     txn.commit().unwrap();
@@ -80,8 +80,7 @@ fn test_shortest_path_simple_chain() {
 
 #[test]
 fn test_dijkstra_shortest_path_weighted_graph() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -117,6 +116,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             start,
             end,
             false,
+            false,
         )
         .collect_to_obj()
         .unwrap();
@@ -127,6 +127,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             start,
             mid1,
             false,
+            false,
         )
         .collect_to_obj()
         .unwrap();
@@ -137,6 +138,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             mid1,
             mid2,
             false,
+            false,
         )
         .collect_to_obj()
         .unwrap();
@@ -146,6 +148,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
             props_option(&arena, props!("weight" => 4.0)),
             mid2,
             end,
+            false,
             false,
         )
         .collect_to_obj()
@@ -193,8 +196,7 @@ fn test_dijkstra_shortest_path_weighted_graph() {
 fn test_dijkstra_custom_weight_function() {
     use crate::protocol::value::Value;
 
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -226,6 +228,7 @@ fn test_dijkstra_custom_weight_function() {
             start,
             end,
             false,
+            false,
         )
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -238,6 +241,7 @@ fn test_dijkstra_custom_weight_function() {
             start,
             mid,
             false,
+            false,
         )
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -247,6 +251,7 @@ fn test_dijkstra_custom_weight_function() {
             props_option(&arena, props!("distance" => 3.0)),
             mid,
             end,
+            false,
             false,
         )
         .collect::<Result<Vec<_>, _>>()
@@ -299,8 +304,7 @@ fn test_dijkstra_custom_weight_function() {
 fn test_dijkstra_multi_context_weight() {
     use crate::protocol::value::Value;
 
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -352,6 +356,7 @@ fn test_dijkstra_multi_context_weight() {
             start,
             mid1,
             false,
+            false,
         )
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -361,6 +366,7 @@ fn test_dijkstra_multi_context_weight() {
             props_option(&arena, props!("distance" => 5.0)),
             mid1,
             end,
+            false,
             false,
         )
         .collect::<Result<Vec<_>, _>>()
@@ -376,6 +382,7 @@ fn test_dijkstra_multi_context_weight() {
             start,
             mid2,
             false,
+            false,
         )
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -385,6 +392,7 @@ fn test_dijkstra_multi_context_weight() {
             props_option(&arena, props!("distance" => 6.0)),
             mid2,
             end,
+            false,
             false,
         )
         .collect::<Result<Vec<_>, _>>()
@@ -519,8 +527,7 @@ fn test_default_weight_fn_unit() {
 
 #[test]
 fn test_shortest_path_with_constant_weight() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -546,17 +553,17 @@ fn test_shortest_path_with_constant_weight() {
 
     // Direct route
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("link", None, start, end, false)
+        .add_edge("link", None, start, end, false, false)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
     // Route through mid (2 hops)
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("link", None, start, mid, false)
+        .add_edge("link", None, start, mid, false, false)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("link", None, mid, end, false)
+        .add_edge("link", None, mid, end, false, false)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     txn.commit().unwrap();
@@ -593,8 +600,7 @@ fn test_shortest_path_with_constant_weight() {
 fn test_astar_with_property_heuristic() {
     use crate::helix_engine::traversal_core::ops::util::paths::property_heuristic;
 
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -653,6 +659,7 @@ fn test_astar_with_property_heuristic() {
             start,
             mid1,
             false,
+            false,
         )
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -663,6 +670,7 @@ fn test_astar_with_property_heuristic() {
             props_option(&arena, props!("weight" => 5.0)),
             mid1,
             goal,
+            false,
             false,
         )
         .collect::<Result<Vec<_>, _>>()
@@ -675,6 +683,7 @@ fn test_astar_with_property_heuristic() {
             start,
             mid2,
             false,
+            false,
         )
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -685,6 +694,7 @@ fn test_astar_with_property_heuristic() {
             props_option(&arena, props!("weight" => 15.0)),
             mid2,
             goal,
+            false,
             false,
         )
         .collect::<Result<Vec<_>, _>>()
@@ -727,8 +737,7 @@ fn test_astar_with_property_heuristic() {
 
 #[test]
 fn test_astar_matches_dijkstra_with_zero_heuristic() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -769,6 +778,7 @@ fn test_astar_matches_dijkstra_with_zero_heuristic() {
             start,
             mid,
             false,
+            false,
         )
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -779,6 +789,7 @@ fn test_astar_matches_dijkstra_with_zero_heuristic() {
             props_option(&arena, props!("weight" => 3.0)),
             mid,
             end,
+            false,
             false,
         )
         .collect::<Result<Vec<_>, _>>()
@@ -836,8 +847,7 @@ fn test_astar_matches_dijkstra_with_zero_heuristic() {
 fn test_astar_custom_weight_and_heuristic() {
     use crate::helix_engine::traversal_core::ops::util::paths::property_heuristic;
 
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -867,6 +877,7 @@ fn test_astar_custom_weight_and_heuristic() {
             props_option(&arena, props!("distance" => 100.0, "traffic" => 0.5)),
             start,
             end,
+            false,
             false,
         )
         .collect::<Result<Vec<_>, _>>()

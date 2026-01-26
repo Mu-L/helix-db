@@ -32,14 +32,15 @@ use crate::helix_engine::traversal_core::ops::source::{
 };
 
 /// Setup storage with appropriate configuration for stress testing
-fn setup_stress_storage(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
+fn setup_stress_storage() -> (Arc<HelixGraphStorage>, TempDir) {
+    let temp_dir = tempfile::tempdir().unwrap();
     let path = temp_dir.path().to_str().unwrap();
 
     let mut config = Config::default();
     config.db_max_size_gb = Some(20); // Large size for stress tests
 
     let storage = HelixGraphStorage::new(path, config, Default::default()).unwrap();
-    Arc::new(storage)
+    (Arc::new(storage), temp_dir)
 }
 
 #[test]
@@ -49,8 +50,7 @@ fn test_stress_mixed_read_write_operations() {
     //
     // EXPECTED: Both operations function correctly under load
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_stress_storage(&temp_dir);
+    let (storage, _temp_dir) = setup_stress_storage();
 
     let duration = Duration::from_secs(3);
     let start = std::time::Instant::now();
@@ -87,8 +87,9 @@ fn test_stress_mixed_read_write_operations() {
                     .id();
 
                 G::new_mut(&storage, &arena, &mut wtxn)
-                    .add_edge("connects", None, id1, id2, false)
-                    .collect_to_obj().unwrap();
+                    .add_edge("connects", None, id1, id2, false, false)
+                    .collect_to_obj()
+                    .unwrap();
 
                 wtxn.commit().unwrap();
                 write_ops.fetch_add(1, Ordering::Relaxed);
@@ -144,8 +145,7 @@ fn test_stress_rapid_graph_growth() {
     //
     // EXPECTED: Graph remains traversable and consistent
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_stress_storage(&temp_dir);
+    let (storage, _temp_dir) = setup_stress_storage();
 
     // Create root nodes
     let root_ids: Vec<u128> = {
@@ -199,8 +199,9 @@ fn test_stress_rapid_graph_growth() {
                 // Connect to random root
                 let root_idx = local_count % root_ids.len();
                 G::new_mut(&storage, &arena, &mut wtxn)
-                    .add_edge("child_of", None, root_ids[root_idx], new_id, false)
-                    .collect_to_obj().unwrap();
+                    .add_edge("child_of", None, root_ids[root_idx], new_id, false, false)
+                    .collect_to_obj()
+                    .unwrap();
 
                 wtxn.commit().unwrap();
                 write_count.fetch_add(1, Ordering::Relaxed);
@@ -277,8 +278,7 @@ fn test_stress_transaction_contention() {
     //
     // EXPECTED: LMDB single-writer enforced, no corruption
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_stress_storage(&temp_dir);
+    let (storage, _temp_dir) = setup_stress_storage();
 
     let num_threads = 8;
     let duration = Duration::from_secs(2);
@@ -352,8 +352,7 @@ fn test_stress_long_running_transactions() {
     //
     // EXPECTED: MVCC snapshot isolation maintained, no blocking
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_stress_storage(&temp_dir);
+    let (storage, _temp_dir) = setup_stress_storage();
 
     // Create initial data
     {
@@ -448,8 +447,7 @@ fn test_stress_memory_stability() {
     //
     // EXPECTED: System remains stable, no unbounded growth
 
-    let temp_dir = tempfile::tempdir().unwrap();
-    let storage = setup_stress_storage(&temp_dir);
+    let (storage, _temp_dir) = setup_stress_storage();
 
     let duration = Duration::from_secs(3);
     let iterations = 3;

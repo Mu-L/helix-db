@@ -31,7 +31,8 @@ use heed3::RoTxn;
 
 type Filter = fn(&HVector, &RoTxn) -> bool;
 
-fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
+fn setup_test_db() -> (TempDir, Arc<HelixGraphStorage>) {
+    let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let storage = HelixGraphStorage::new(
         db_path,
@@ -39,7 +40,7 @@ fn setup_test_db(temp_dir: &TempDir) -> Arc<HelixGraphStorage> {
         Default::default(),
     )
     .unwrap();
-    Arc::new(storage)
+    (temp_dir, Arc::new(storage))
 }
 
 fn edge_id(value: &TraversalValue) -> u128 {
@@ -51,52 +52,98 @@ fn edge_id(value: &TraversalValue) -> u128 {
 
 #[test]
 fn test_add_edge_creates_relationship() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let source_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     let target_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
 
     let edge = G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("knows", None, source_id, target_id, false)
-        .collect_to_obj().unwrap();
+        .add_edge("knows", None, source_id, target_id, false, false)
+        .collect_to_obj()
+        .unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
     let fetched = G::new(&storage, &txn, &arena)
         .e_from_id(&edge.id())
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(fetched.len(), 1);
     assert_eq!(edge_id(&fetched[0]), edge.id());
 }
 
 #[test]
-fn test_out_e_returns_edge() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+fn test_add_edge_creates_unique_relationship() {
+    let (_, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let source_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     let target_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
+        .id();
+
+    let edge = G::new_mut(&storage, &arena, &mut txn)
+        .add_edge("knows", None, source_id, target_id, false, true)
+        .collect_to_obj()
+        .unwrap();
+    txn.commit().unwrap();
+
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let fetched = G::new(&storage, &txn, &arena)
+        .e_from_id(&edge.id())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(fetched.len(), 1);
+    assert_eq!(edge_id(&fetched[0]), edge.id());
+
+    // Testing failure on duplicate insert
+    let mut write_txn = storage.graph_env.write_txn().unwrap();
+    let edge = G::new_mut(&storage, &arena, &mut write_txn)
+        .add_edge("knows", None, source_id, target_id, false, true)
+        .collect_to_obj();
+
+    assert!(edge.is_err())
+}
+
+#[test]
+fn test_out_e_returns_edge() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    let source_id = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", None, None)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
+        .id();
+    let target_id = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", None, None)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("knows", None, source_id, target_id, false)
-        .collect_to_obj().unwrap();
+        .add_edge("knows", None, source_id, target_id, false, false)
+        .collect_to_obj()
+        .unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -104,29 +151,32 @@ fn test_out_e_returns_edge() {
     let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&source_id)
         .out_e("knows")
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(edges.len(), 1);
     assert_eq!(edges[0].id(), edge_id(&edges[0]));
 }
 
 #[test]
 fn test_in_e_returns_edge() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let source_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     let target_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("knows", None, source_id, target_id, false)
-        .collect_to_obj().unwrap();
+        .add_edge("knows", None, source_id, target_id, false, false)
+        .collect_to_obj()
+        .unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -134,29 +184,32 @@ fn test_in_e_returns_edge() {
     let edges = G::new(&storage, &txn, &arena)
         .n_from_id(&target_id)
         .in_e("knows")
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(edges.len(), 1);
     assert_eq!(edge_id(&edges[0]), edges[0].id());
 }
 
 #[test]
 fn test_out_node_returns_neighbor() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let source_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     let neighbor_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("knows", None, source_id, neighbor_id, false)
-        .collect_to_obj().unwrap();
+        .add_edge("knows", None, source_id, neighbor_id, false, false)
+        .collect_to_obj()
+        .unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -164,25 +217,27 @@ fn test_out_node_returns_neighbor() {
     let neighbors = G::new(&storage, &txn, &arena)
         .n_from_id(&source_id)
         .out_node("knows")
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(neighbors.len(), 1);
     assert_eq!(neighbors[0].id(), neighbor_id);
 }
 
 #[test]
 fn test_edge_properties_can_be_read() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let source_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     let target_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("person", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     G::new_mut(&storage, &arena, &mut txn)
         .add_edge(
@@ -191,15 +246,18 @@ fn test_edge_properties_can_be_read() {
             source_id,
             target_id,
             false,
+            false,
         )
-        .collect_to_obj().unwrap();
+        .collect_to_obj()
+        .unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
     let edge = G::new(&storage, &txn, &arena)
         .e_from_type("knows")
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(edge.len(), 1);
     if let TraversalValue::Edge(edge) = &edge[0] {
         match edge.properties.as_ref().unwrap().get("since").unwrap() {
@@ -214,26 +272,28 @@ fn test_edge_properties_can_be_read() {
 
 #[test]
 fn test_vector_edges_roundtrip() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
     let node_id = G::new_mut(&storage, &arena, &mut txn)
         .add_n("doc", None, None)
-        .collect::<Result<Vec<_>,_>>().unwrap()[0]
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
         .id();
     let vector_id = match G::new_mut(&storage, &arena, &mut txn)
         .insert_v::<Filter>(&[1.0, 0.0, 0.0], "embedding", None)
-        .collect_to_obj().unwrap()
+        .collect_to_obj()
+        .unwrap()
     {
         TraversalValue::Vector(vector) => vector.id,
         TraversalValue::VectorNodeWithoutVectorData(vector) => *vector.id(),
         other => panic!("unexpected traversal value: {other:?}"),
     };
     G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("has_vector", None, node_id, vector_id, false)
-        .collect_to_obj().unwrap();
+        .add_edge("has_vector", None, node_id, vector_id, false, false)
+        .collect_to_obj()
+        .unwrap();
     txn.commit().unwrap();
 
     let arena = Bump::new();
@@ -241,7 +301,8 @@ fn test_vector_edges_roundtrip() {
     let vectors = G::new(&storage, &txn, &arena)
         .n_from_id(&node_id)
         .out_vec("has_vector", true)
-        .collect::<Result<Vec<_>,_>>().unwrap();
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(vectors.len(), 1);
     match &vectors[0] {
         TraversalValue::Vector(vec) => assert_eq!(*vec.id(), vector_id),
@@ -256,8 +317,7 @@ fn test_vector_edges_roundtrip() {
 
 #[test]
 fn test_e_from_id_with_nonexistent_id() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -275,8 +335,7 @@ fn test_e_from_id_with_nonexistent_id() {
 
 #[test]
 fn test_e_from_id_with_deleted_edge() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
@@ -293,7 +352,7 @@ fn test_e_from_id_with_deleted_edge() {
         .id();
 
     let edge = G::new_mut(&storage, &arena, &mut txn)
-        .add_edge("knows", None, source_id, target_id, false)
+        .add_edge("knows", None, source_id, target_id, false, false)
         .collect_to_obj()
         .unwrap();
     let edge_id = edge.id();
@@ -331,8 +390,7 @@ fn test_e_from_id_with_deleted_edge() {
 
 #[test]
 fn test_e_from_id_with_zero_id() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
@@ -347,8 +405,7 @@ fn test_e_from_id_with_zero_id() {
 
 #[test]
 fn test_e_from_id_with_max_id() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = setup_test_db(&temp_dir);
+    let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let txn = storage.graph_env.read_txn().unwrap();
 
