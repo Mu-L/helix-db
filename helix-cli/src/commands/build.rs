@@ -10,7 +10,8 @@ use crate::utils::{
     helixc_utils::{collect_hx_contents, collect_hx_files},
     print_confirm, print_error, print_warning,
 };
-use eyre::Result;
+use eyre::{Result, eyre};
+use std::process::Command;
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -40,6 +41,7 @@ const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 pub async fn run(
     instance_name: Option<String>,
+    bin: Option<String>,
     metrics_sender: &MetricsSender,
 ) -> Result<MetricsData> {
     // Load project context
@@ -75,7 +77,14 @@ pub async fn run(
     let op = Operation::new("Building", &instance_name);
 
     // Run the build steps
-    let result = run_build_steps(&op, &project, &instance_name, metrics_sender).await;
+    let result = run_build_steps(
+        &op,
+        &project,
+        &instance_name,
+        bin.as_deref(),
+        metrics_sender,
+    )
+    .await;
 
     match &result {
         Ok(_) => op.success(),
@@ -90,6 +99,7 @@ pub async fn run_build_steps(
     _op: &Operation,
     project: &ProjectContext,
     instance_name: &str,
+    bin: Option<&str>,
     metrics_sender: &MetricsSender,
 ) -> Result<MetricsData> {
     let start_time = Instant::now();
@@ -146,11 +156,20 @@ pub async fn run_build_steps(
         }
     }
 
-    // Generate Docker files
-    generate_docker_files(project, instance_name, instance_config.clone()).await?;
-
-    // For local instances, build Docker image
-    if instance_config.should_build_docker_image() {
+    // Binary output or Docker build
+    if let Some(binary_output) = bin {
+        let mut cargo_step = Step::with_messages("Building binary", "Binary built");
+        cargo_step.start();
+        match build_binary_using_cargo(project, instance_name, binary_output) {
+            Ok(()) => cargo_step.done(),
+            Err(e) => {
+                cargo_step.fail();
+                return Err(e);
+            }
+        }
+    } else if instance_config.should_build_docker_image() {
+        // Generate Docker files
+        generate_docker_files(project, instance_name, instance_config.clone()).await?;
         let runtime = project.config.project.container_runtime;
         DockerManager::check_runtime_available(runtime)?;
         let docker = DockerManager::new(project);
@@ -536,5 +555,36 @@ fn handle_docker_rust_compilation_failure(
 
     crate::output::success("GitHub issue page opened in your browser");
 
+    Ok(())
+}
+
+fn build_binary_using_cargo(
+    project: &ProjectContext,
+    instance_name: &str,
+    binary_output: &str,
+) -> Result<()> {
+    let binary_output_path = std::path::Path::new(binary_output);
+    std::fs::create_dir_all(binary_output_path)?;
+
+    // <path-to-.helix>/<instance_name>/helix-repo-copy/helix-container/
+    let current_dir = project
+        .helix_dir
+        .join(instance_name)
+        .join("helix-repo-copy")
+        .join("helix-container");
+
+    let status = Command::new("cargo")
+        .arg("build")
+        .arg("--target-dir")
+        .arg(binary_output_path.as_os_str())
+        .current_dir(current_dir)
+        .status()?;
+
+    if !status.success() {
+        return Err(eyre!(
+            "Cargo build failed with exit code: {:?}",
+            status.code()
+        ));
+    }
     Ok(())
 }
