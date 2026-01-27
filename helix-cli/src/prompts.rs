@@ -332,3 +332,20 @@ pub fn input_feedback_message() -> Result<String> {
 
     Ok(message)
 }
+
+/// Prompt user to enter their workspace ID
+#[allow(dead_code)]
+pub fn input_workspace_id() -> Result<String> {
+    let workspace_id: String = cliclack::input("Enter your workspace ID")
+        .placeholder("ws_abc123...")
+        .validate(|input: &String| {
+            if input.trim().is_empty() {
+                Err("Workspace ID cannot be empty")
+            } else {
+                Ok(())
+            }
+        })
+        .interact()?;
+
+    Ok(workspace_id.trim().to_string())
+}

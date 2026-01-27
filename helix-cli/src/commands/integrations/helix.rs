@@ -184,13 +184,27 @@ impl<'a> HelixManager<'a> {
 
         let dev_profile = build_mode == BuildMode::Dev;
 
+        // Read helix.toml if it exists
+        let helix_toml_content = if helix_toml_path.exists() {
+            match std::fs::read_to_string(&helix_toml_path) {
+                Ok(content) => Some(content),
+                Err(e) => {
+                    output::warning(&format!("Failed to read helix.toml: {}", e));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         // Prepare deployment payload
         let payload = json!({
             "schema": schema_content,
             "queries": queries_map,
             "env_vars": cluster_info.env_vars,
             "instance_name": cluster_name,
-            "dev_profile": dev_profile
+            "dev_profile": dev_profile,
+            "helix_toml": helix_toml_content
         });
 
         // Initiate deployment with SSE streaming
