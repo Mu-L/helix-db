@@ -398,8 +398,9 @@ impl Query {
                                 let field_to_access = accessed_field.as_ref()
                                     .map(|s| s.as_str())
                                     .unwrap_or(field.name.as_str());
-                                // Use source_var for scope variables (project, workspace), fall back to singular_var for closure iteration vars (_, val)
-                                let access_var = if source_var == "_" || source_var == "val" { singular_var } else { source_var.as_str() };
+                                // Use singular_var (closure iteration variable) when source_var matches the collection variable,
+                                // or is a placeholder like _ or val. Use source_var directly only for scope variables (project, workspace).
+                                let access_var = if source_var == "_" || source_var == "val" || *source_var == struct_def.source_variable { singular_var } else { source_var.as_str() };
 
                                 if field_to_access == "id" || field_to_access == "ID" {
                                     format!("uuid_str({}.id(), &arena)", access_var)
@@ -762,8 +763,9 @@ impl Query {
                                 let field_to_access = accessed_field.as_ref()
                                     .map(|s| s.as_str())
                                     .unwrap_or(field.name.as_str());
-                                // Use source_var for scope variables (project, workspace), fall back to singular_var for closure iteration vars (_, val)
-                                let access_var = if source_var == "_" || source_var == "val" { singular_var } else { source_var.as_str() };
+                                // Use singular_var (closure iteration variable) when source_var matches the collection variable,
+                                // or is a placeholder like _ or val. Use source_var directly only for scope variables (project, workspace).
+                                let access_var = if source_var == "_" || source_var == "val" || *source_var == struct_def.source_variable { singular_var } else { source_var.as_str() };
 
                                 if field_to_access == "id" || field_to_access == "ID" {
                                     format!("uuid_str({}.id(), &arena)", access_var)
@@ -1237,8 +1239,9 @@ impl Query {
                                 let field_to_access = accessed_field.as_ref()
                                     .map(|s| s.as_str())
                                     .unwrap_or(field.name.as_str());
-                                // Use source_var for scope variables (project, workspace), fall back to singular_var for closure iteration vars (_, val)
-                                let access_var = if source_var == "_" || source_var == "val" { singular_var } else { source_var.as_str() };
+                                // Use singular_var (closure iteration variable) when source_var matches the collection variable,
+                                // or is a placeholder like _ or val. Use source_var directly only for scope variables (project, workspace).
+                                let access_var = if source_var == "_" || source_var == "val" || *source_var == struct_def.source_variable { singular_var } else { source_var.as_str() };
 
                                 if field_to_access == "id" || field_to_access == "ID" {
                                     format!("uuid_str({}.id(), &arena)", access_var)
@@ -1534,8 +1537,9 @@ impl Query {
                                 let field_to_access = accessed_field.as_ref()
                                     .map(|s| s.as_str())
                                     .unwrap_or(field.name.as_str());
-                                // Use source_var for scope variables (project, workspace), fall back to singular_var for closure iteration vars (_, val)
-                                let access_var = if source_var == "_" || source_var == "val" { singular_var } else { source_var.as_str() };
+                                // Use singular_var (closure iteration variable) when source_var matches the collection variable,
+                                // or is a placeholder like _ or val. Use source_var directly only for scope variables (project, workspace).
+                                let access_var = if source_var == "_" || source_var == "val" || *source_var == struct_def.source_variable { singular_var } else { source_var.as_str() };
 
                                 if field_to_access == "id" || field_to_access == "ID" {
                                     format!("uuid_str({}.id(), &arena)", access_var)
