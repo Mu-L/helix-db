@@ -347,20 +347,6 @@ pub fn select_workspace(workspaces: &[crate::commands::sync::CliWorkspace]) -> R
     Ok(selected)
 }
 
-/// Prompt user to select a project from a list
-pub fn select_project(projects: &[(String, String)]) -> Result<String> {
-    if projects.len() == 1 {
-        return Ok(projects[0].0.clone());
-    }
-
-    let mut select = cliclack::select("Select a project");
-    for (id, name) in projects {
-        select = select.item(id.clone(), name.as_str(), "");
-    }
-    let selected = select.interact()?;
-    Ok(selected)
-}
-
 /// Prompt user to input a project name
 pub fn input_project_name(default: &str) -> Result<String> {
     let name: String = cliclack::input("Project name")
@@ -566,21 +552,5 @@ pub fn select_cluster_from_workspace(
     Ok((items[idx].0.clone(), items[idx].3))
 }
 
-/// Prompt user to select a cluster from a list
-pub fn select_cluster(clusters: &[crate::commands::sync::CliCluster]) -> Result<String> {
-    if clusters.len() == 1 {
-        return Ok(clusters[0].cluster_id.clone());
-    }
 
-    let mut select = cliclack::select("Select a cluster");
-    for c in clusters {
-        select = select.item(
-            c.cluster_id.clone(),
-            c.cluster_name.as_str(),
-            c.project_name.as_str(),
-        );
-    }
-    let selected = select.interact()?;
-    Ok(selected)
-}
 

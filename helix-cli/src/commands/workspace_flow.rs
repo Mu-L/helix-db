@@ -213,27 +213,25 @@ async fn match_or_create_project(
 
     // Try to find matching project by name
     if let Some(existing) = projects.iter().find(|p| p.name == project_name) {
-        let use_existing = prompts::confirm(&format!(
-            "Use existing project '{}'?",
-            existing.name
-        ))?;
+        let use_existing = prompts::confirm(&format!("Use existing project '{}'?", existing.name))?;
 
         if use_existing {
             return Ok(existing.id.clone());
         }
 
         // User doesn't want existing — prompt for new name
-        crate::output::warn("Note: choosing a different name will overwrite the project name in your helix.toml to avoid conflicts.");
+        crate::output::warning(
+            "Note: choosing a different name will overwrite the project name in your helix.toml to avoid conflicts.",
+        );
         let new_name = prompts::input_project_name(project_name)?;
-        let project_id = create_project(client, base_url, credentials, workspace_id, &new_name).await?;
+        let project_id =
+            create_project(client, base_url, credentials, workspace_id, &new_name).await?;
         return Ok(project_id);
     }
 
     // Project not found — offer to create
-    let should_create = prompts::confirm(&format!(
-        "Project '{}' not found. Create it?",
-        project_name
-    ))?;
+    let should_create =
+        prompts::confirm(&format!("Project '{}' not found. Create it?", project_name))?;
 
     if !should_create {
         return Err(eyre!("Project creation cancelled"));
@@ -347,10 +345,7 @@ async fn create_enterprise_cluster_flow(
     crate::output::info(&format!("Gateway: {}", gateway_node_type));
     crate::output::info(&format!("DB: {}", db_node_type));
     if is_ha {
-        crate::output::info(&format!(
-            "Instances: {} - {}",
-            min_instances, max_instances
-        ));
+        crate::output::info(&format!("Instances: {} - {}", min_instances, max_instances));
     }
     println!();
 

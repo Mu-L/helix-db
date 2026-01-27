@@ -389,10 +389,6 @@ impl<'a> InstanceInfo<'a> {
         matches!(self, InstanceInfo::Local(_))
     }
 
-    pub fn is_enterprise(&self) -> bool {
-        matches!(self, InstanceInfo::Enterprise(_))
-    }
-
     pub fn should_build_docker_image(&self) -> bool {
         matches!(self, InstanceInfo::Local(_) | InstanceInfo::FlyIo(_))
     }
