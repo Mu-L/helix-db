@@ -95,6 +95,9 @@ pub async fn run(instance_name: String) -> Result<()> {
         InstanceInfo::Local(_) => {
             // Local instances don't have cloud resources to delete
         }
+        InstanceInfo::Enterprise(_config) => {
+            todo!("Enterprise cluster deletion not yet implemented")
+        }
     }
 
     op.success();

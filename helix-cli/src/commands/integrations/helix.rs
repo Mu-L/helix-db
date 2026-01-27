@@ -35,6 +35,7 @@ impl<'a> HelixManager<'a> {
         Self { project }
     }
 
+    #[allow(dead_code)]
     pub async fn create_instance_config(
         &self,
         _instance_name: &str,
@@ -200,6 +201,7 @@ impl<'a> HelixManager<'a> {
                     );
                     m
                 },
+                enterprise: HashMap::new(),
             };
             match toml::to_string_pretty(&pruned) {
                 Ok(s) => Some(s),
@@ -426,6 +428,151 @@ impl<'a> HelixManager<'a> {
         }
 
         output::success("Queries deployed successfully");
+        Ok(())
+    }
+
+    /// Deploy .rs files to an enterprise cluster
+    pub(crate) async fn deploy_enterprise(
+        &self,
+        path: Option<String>,
+        cluster_name: String,
+        config: &crate::config::EnterpriseInstanceConfig,
+    ) -> Result<()> {
+        let credentials = require_auth().await?;
+        let path = match get_path_or_cwd(path.as_ref()) {
+            Ok(path) => path,
+            Err(e) => {
+                return Err(eyre!("Error: failed to get path: {e}"));
+            }
+        };
+
+        // Collect .rs files from queries directory
+        let queries_dir = path.join(&self.project.config.project.queries);
+        let mut rs_files: HashMap<String, String> = HashMap::new();
+
+        if queries_dir.exists() {
+            for entry in std::fs::read_dir(&queries_dir)? {
+                let entry = entry?;
+                let file_path = entry.path();
+                if file_path.is_file()
+                    && file_path.extension().map(|e| e == "rs").unwrap_or(false)
+                {
+                    let filename = file_path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string();
+                    let content = std::fs::read_to_string(&file_path)
+                        .map_err(|e| eyre!("Failed to read {}: {}", filename, e))?;
+                    rs_files.insert(filename, content);
+                }
+            }
+        }
+
+        if rs_files.is_empty() {
+            return Err(eyre!(
+                "No .rs files found in queries directory: {}",
+                queries_dir.display()
+            ));
+        }
+
+        // Build pruned helix.toml
+        let helix_toml_content = {
+            use crate::config::HelixConfig;
+            let pruned = HelixConfig {
+                project: self.project.config.project.clone(),
+                local: HashMap::new(),
+                cloud: HashMap::new(),
+                enterprise: {
+                    let mut m = HashMap::new();
+                    m.insert(cluster_name.clone(), config.clone());
+                    m
+                },
+            };
+            toml::to_string_pretty(&pruned).ok()
+        };
+
+        let payload = json!({
+            "rs_files": rs_files,
+            "instance_name": cluster_name,
+            "helix_toml": helix_toml_content,
+        });
+
+        // Send to enterprise deploy endpoint
+        let client = reqwest::Client::new();
+        let deploy_url = format!(
+            "https://{}/api/cli/enterprise-clusters/{}/deploy",
+            *CLOUD_AUTHORITY, config.cluster_id
+        );
+
+        let mut event_source = client
+            .post(&deploy_url)
+            .header("x-api-key", &credentials.helix_admin_key)
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .eventsource()?;
+
+        let progress = SseProgressHandler::new("Deploying enterprise cluster...");
+        let mut deployment_success = false;
+
+        use futures_util::StreamExt;
+
+        while let Some(event) = event_source.next().await {
+            match event {
+                Ok(reqwest_eventsource::Event::Open) => {}
+                Ok(reqwest_eventsource::Event::Message(message)) => {
+                    let sse_event: SseEvent = match serde_json::from_str(&message.data) {
+                        Ok(event) => event,
+                        Err(e) => {
+                            progress.println(&format!("Failed to parse event: {}", e));
+                            continue;
+                        }
+                    };
+
+                    match sse_event {
+                        SseEvent::Progress { percentage, message } => {
+                            progress.set_progress(percentage);
+                            if let Some(msg) = message {
+                                progress.set_message(&msg);
+                            }
+                        }
+                        SseEvent::Log { message, .. } => {
+                            progress.println(&message);
+                        }
+                        SseEvent::Success { .. } => {
+                            deployment_success = true;
+                            progress.finish("Enterprise deployment completed!");
+                            event_source.close();
+                            break;
+                        }
+                        SseEvent::Error { error } => {
+                            progress.finish_error(&format!("Error: {}", error));
+                            event_source.close();
+                            return Err(eyre!("Enterprise deployment failed: {}", error));
+                        }
+                        SseEvent::Deployed { url, auth_key } => {
+                            deployment_success = true;
+                            progress.finish("Enterprise deployment completed!");
+                            output::success(&format!("Deployed to: {}", url));
+                            output::info(&format!("Your auth key: {}", auth_key));
+                            event_source.close();
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                Err(err) => {
+                    progress.finish_error(&format!("Stream error: {}", err));
+                    return Err(eyre!("Enterprise deployment stream error: {}", err));
+                }
+            }
+        }
+
+        if !deployment_success {
+            return Err(eyre!("Enterprise deployment did not complete successfully"));
+        }
+
+        output::success("Enterprise cluster deployed successfully");
         Ok(())
     }
 

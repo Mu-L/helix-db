@@ -493,6 +493,7 @@ fn create_v2_config(ctx: &MigrationContext) -> Result<()> {
         project: project_config,
         local,
         cloud: HashMap::new(),
+        enterprise: HashMap::new(),
     };
 
     // Save to file

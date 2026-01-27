@@ -59,16 +59,6 @@ enum Commands {
         cloud: Option<CloudDeploymentTypeCommand>,
     },
 
-    /// Create a new Helix Cloud cluster
-    CreateCluster {
-        /// Instance name
-        instance: String,
-
-        /// Region for cluster (defaults to us-east-1)
-        #[clap(short, long)]
-        region: Option<String>,
-    },
-
     /// Validate project configuration and queries
     Check {
         /// Instance to check (defaults to all instances)
@@ -260,9 +250,6 @@ async fn main() -> Result<()> {
             cloud,
         } => commands::init::run(path, template, queries_path, cloud).await,
         Commands::Add { cloud } => commands::add::run(cloud).await,
-        Commands::CreateCluster { instance, region } => {
-            commands::create_cluster::run(&instance, region).await
-        }
         Commands::Check { instance } => commands::check::run(instance, &metrics_sender).await,
         Commands::Compile { output, path } => commands::compile::run(output, path).await,
         Commands::Build { instance, bin } => commands::build::run(instance, bin, &metrics_sender)

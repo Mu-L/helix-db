@@ -429,6 +429,10 @@ fn get_cloud_url(instance_config: &InstanceInfo) -> Result<String> {
             "ECR instances are not yet supported for the dashboard"
         )),
         InstanceInfo::Local(_) => Err(eyre!("Local instances should not call get_cloud_url")),
+        InstanceInfo::Enterprise(config) => Ok(format!(
+            "https://{}/enterprise-clusters/{}",
+            *CLOUD_AUTHORITY, config.cluster_id
+        )),
     }
 }
 

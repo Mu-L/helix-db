@@ -52,8 +52,8 @@ pub async fn run(
     // Get instance config
     let instance_config = project.config.get_instance(&instance_name)?;
 
-    // Check auth early for Helix Cloud instances
-    if let InstanceInfo::Helix(_) = &instance_config {
+    // Check auth early for Helix Cloud / Enterprise instances
+    if matches!(&instance_config, InstanceInfo::Helix(_) | InstanceInfo::Enterprise(_)) {
         require_auth().await?;
     }
 
@@ -195,6 +195,19 @@ async fn push_cloud_instance(
 ) -> Result<MetricsData> {
     let op = Operation::new("Deploying", instance_name);
 
+    // Handle enterprise instances separately
+    if let InstanceInfo::Enterprise(config) = &instance_config {
+        let helix = HelixManager::new(project);
+        helix
+            .deploy_enterprise(None, instance_name.to_string(), config)
+            .await?;
+        op.success();
+        return Ok(MetricsData {
+            queries_string: String::new(),
+            num_of_queries: 0,
+        });
+    }
+
     let cluster_id = instance_config
         .cluster_id()
         .ok_or_else(|| eyre::eyre!("Cloud instance '{instance_name}' must have a cluster_id"))?;
@@ -203,7 +216,7 @@ async fn push_cloud_instance(
     if cluster_id == "YOUR_CLUSTER_ID" {
         op.failure();
         return Err(eyre::eyre!(
-            "Cluster for instance '{instance_name}' has not been created yet.\nRun 'helix create-cluster {instance_name}' to create the cluster first."
+            "Cluster for instance '{instance_name}' has not been created yet.\nRun 'helix push' to set up a cluster."
         ));
     }
 

@@ -63,6 +63,8 @@ pub struct HelixConfig {
     pub local: HashMap<String, LocalInstanceConfig>,
     #[serde(default)]
     pub cloud: HashMap<String, CloudConfig>,
+    #[serde(default)]
+    pub enterprise: HashMap<String, EnterpriseInstanceConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,6 +199,24 @@ pub enum CloudConfig {
     Ecr(EcrConfig),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnterpriseInstanceConfig {
+    pub cluster_id: String,
+    pub availability_mode: AvailabilityMode,
+    pub gateway_node_type: String,
+    pub db_node_type: String,
+    #[serde(default = "default_min_instances")]
+    pub min_instances: u64,
+    #[serde(default = "default_min_instances")]
+    pub max_instances: u64,
+    #[serde(flatten)]
+    pub db_config: DbConfig,
+}
+
+fn default_min_instances() -> u64 {
+    1
+}
+
 impl CloudConfig {
     pub fn get_cluster_id(&self) -> Option<&str> {
         match self {
@@ -214,7 +234,23 @@ impl CloudConfig {
         }
     }
 }
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AvailabilityMode {
+    Dev,
+    Ha,
+}
+
+impl std::fmt::Display for AvailabilityMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AvailabilityMode::Dev => write!(f, "dev"),
+            AvailabilityMode::Ha => write!(f, "ha"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum BuildMode {
     #[default]
@@ -305,6 +341,7 @@ pub enum InstanceInfo<'a> {
     Helix(&'a CloudInstanceConfig),
     FlyIo(&'a FlyInstanceConfig),
     Ecr(&'a EcrConfig),
+    Enterprise(&'a EnterpriseInstanceConfig),
 }
 
 impl<'a> InstanceInfo<'a> {
@@ -314,13 +351,17 @@ impl<'a> InstanceInfo<'a> {
             | InstanceInfo::Helix(CloudInstanceConfig { build_mode, .. })
             | InstanceInfo::FlyIo(FlyInstanceConfig { build_mode, .. })
             | InstanceInfo::Ecr(EcrConfig { build_mode, .. }) => *build_mode,
+            InstanceInfo::Enterprise(_) => BuildMode::Release,
         }
     }
 
     pub fn port(&self) -> Option<u16> {
         match self {
             InstanceInfo::Local(config) => config.port,
-            InstanceInfo::Helix(_) | InstanceInfo::FlyIo(_) | InstanceInfo::Ecr(_) => None,
+            InstanceInfo::Helix(_)
+            | InstanceInfo::FlyIo(_)
+            | InstanceInfo::Ecr(_)
+            | InstanceInfo::Enterprise(_) => None,
         }
     }
 
@@ -329,7 +370,8 @@ impl<'a> InstanceInfo<'a> {
             InstanceInfo::Local(_) => None,
             InstanceInfo::Helix(config) => Some(&config.cluster_id),
             InstanceInfo::FlyIo(_) => Some("flyio"),
-            InstanceInfo::Ecr(_) => Some("ecr"), // ECR doesn't use cluster_id
+            InstanceInfo::Ecr(_) => Some("ecr"),
+            InstanceInfo::Enterprise(config) => Some(&config.cluster_id),
         }
     }
 
@@ -338,12 +380,17 @@ impl<'a> InstanceInfo<'a> {
             InstanceInfo::Local(LocalInstanceConfig { db_config, .. })
             | InstanceInfo::Helix(CloudInstanceConfig { db_config, .. })
             | InstanceInfo::FlyIo(FlyInstanceConfig { db_config, .. })
-            | InstanceInfo::Ecr(EcrConfig { db_config, .. }) => db_config,
+            | InstanceInfo::Ecr(EcrConfig { db_config, .. })
+            | InstanceInfo::Enterprise(EnterpriseInstanceConfig { db_config, .. }) => db_config,
         }
     }
 
     pub fn is_local(&self) -> bool {
         matches!(self, InstanceInfo::Local(_))
+    }
+
+    pub fn is_enterprise(&self) -> bool {
+        matches!(self, InstanceInfo::Enterprise(_))
     }
 
     pub fn should_build_docker_image(&self) -> bool {
@@ -352,7 +399,7 @@ impl<'a> InstanceInfo<'a> {
 
     pub fn docker_build_target(&self) -> Option<&str> {
         match self {
-            InstanceInfo::Local(_) | InstanceInfo::Helix(_) => None,
+            InstanceInfo::Local(_) | InstanceInfo::Helix(_) | InstanceInfo::Enterprise(_) => None,
             InstanceInfo::FlyIo(_) | InstanceInfo::Ecr(_) => Some("linux/amd64"),
         }
     }
@@ -399,7 +446,7 @@ impl From<InstanceInfo<'_>> for CloudConfig {
             InstanceInfo::Helix(config) => CloudConfig::Helix(config.clone()),
             InstanceInfo::FlyIo(config) => CloudConfig::FlyIo(config.clone()),
             InstanceInfo::Ecr(config) => CloudConfig::Ecr(config.clone()),
-            InstanceInfo::Local(_) => unimplemented!(),
+            InstanceInfo::Local(_) | InstanceInfo::Enterprise(_) => unimplemented!(),
         }
     }
 }
@@ -442,7 +489,7 @@ impl HelixConfig {
         }
 
         // Validate instances
-        if self.local.is_empty() && self.cloud.is_empty() {
+        if self.local.is_empty() && self.cloud.is_empty() && self.enterprise.is_empty() {
             return Err(eyre!(
                 "At least one instance must be defined in {}",
                 relative_path.display()
@@ -513,6 +560,10 @@ impl HelixConfig {
             }
         }
 
+        if let Some(enterprise_config) = self.enterprise.get(name) {
+            return Ok(InstanceInfo::Enterprise(enterprise_config));
+        }
+
         Err(eyre!("Instance '{}' not found in helix.toml", name))
     }
 
@@ -520,6 +571,7 @@ impl HelixConfig {
         let mut instances = Vec::new();
         instances.extend(self.local.keys());
         instances.extend(self.cloud.keys());
+        instances.extend(self.enterprise.keys());
         instances
     }
 
@@ -539,6 +591,10 @@ impl HelixConfig {
                 CloudConfig::Ecr(_) => "AWS ECR",
             };
             instances.push((name, type_hint));
+        }
+
+        for name in self.enterprise.keys() {
+            instances.push((name, "Enterprise"));
         }
 
         instances.sort_by(|a, b| a.0.cmp(b.0));
@@ -564,6 +620,7 @@ impl HelixConfig {
             },
             local,
             cloud: HashMap::new(),
+            enterprise: HashMap::new(),
         }
     }
 }

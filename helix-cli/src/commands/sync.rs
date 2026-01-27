@@ -16,6 +16,27 @@ struct SyncResponse {
 }
 
 #[derive(Deserialize)]
+struct EnterpriseSyncResponse {
+    rs_files: HashMap<String, String>,
+    helix_toml: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CliEnterpriseCluster {
+    pub cluster_id: String,
+    pub cluster_name: String,
+    pub project_name: String,
+    #[allow(dead_code)]
+    pub availability_mode: String,
+}
+
+#[derive(Deserialize)]
+struct CliWorkspaceClusters {
+    standard: Vec<CliCluster>,
+    enterprise: Vec<CliEnterpriseCluster>,
+}
+
+#[derive(Deserialize)]
 pub struct CliWorkspace {
     pub id: String,
     pub name: String,
@@ -121,8 +142,8 @@ async fn run_workspace_sync_flow() -> Result<()> {
         selected
     };
 
-    // Fetch clusters for workspace
-    let clusters: Vec<CliCluster> = client
+    // Fetch clusters for workspace (both standard and enterprise)
+    let workspace_clusters: CliWorkspaceClusters = client
         .get(format!(
             "{}/api/cli/workspaces/{}/clusters",
             base_url, workspace_id
@@ -137,16 +158,46 @@ async fn run_workspace_sync_flow() -> Result<()> {
         .await
         .map_err(|e| eyre!("Failed to parse clusters response: {}", e))?;
 
-    if clusters.is_empty() {
+    if workspace_clusters.standard.is_empty() && workspace_clusters.enterprise.is_empty() {
         return Err(eyre!(
             "No clusters found in this workspace. Deploy a cluster first with 'helix push'."
         ));
     }
 
-    let cluster_id = prompts::select_cluster(&clusters)?;
+    // Build prompt data
+    let standard_items: Vec<(String, String, String)> = workspace_clusters
+        .standard
+        .iter()
+        .map(|c| {
+            (
+                c.cluster_id.clone(),
+                c.cluster_name.clone(),
+                c.project_name.clone(),
+            )
+        })
+        .collect();
+    let enterprise_items: Vec<(String, String, String)> = workspace_clusters
+        .enterprise
+        .iter()
+        .map(|c| {
+            (
+                c.cluster_id.clone(),
+                c.cluster_name.clone(),
+                c.project_name.clone(),
+            )
+        })
+        .collect();
 
-    // Sync from the selected cluster (no project context needed)
-    sync_from_cluster_id(&credentials.helix_admin_key, &cluster_id).await
+    let (cluster_id, is_enterprise) =
+        prompts::select_cluster_from_workspace(&standard_items, &enterprise_items)?;
+
+    if is_enterprise {
+        // Enterprise sync
+        sync_enterprise_from_cluster_id(&credentials.helix_admin_key, &cluster_id).await
+    } else {
+        // Standard sync
+        sync_from_cluster_id(&credentials.helix_admin_key, &cluster_id).await
+    }
 }
 
 /// Sync directly from a cluster ID without a project context.
@@ -275,6 +326,105 @@ async fn sync_from_cluster_id(api_key: &str, cluster_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Sync .rs files from an enterprise cluster by ID (no project context).
+async fn sync_enterprise_from_cluster_id(api_key: &str, cluster_id: &str) -> Result<()> {
+    let op = Operation::new("Syncing", cluster_id);
+
+    let client = reqwest::Client::new();
+    let sync_url = format!(
+        "https://{}/api/cli/enterprise-clusters/{}/sync",
+        *CLOUD_AUTHORITY, cluster_id
+    );
+
+    let mut sync_step = Step::with_messages("Fetching .rs files", ".rs files fetched");
+    sync_step.start();
+
+    let response = match client
+        .get(&sync_url)
+        .header("x-api-key", api_key)
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!("Failed to connect to Helix Cloud: {}", e));
+        }
+    };
+
+    match response.status() {
+        reqwest::StatusCode::OK => {}
+        status => {
+            let error_text = response.text().await.unwrap_or_default();
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!("Enterprise sync failed ({}): {}", status, error_text));
+        }
+    }
+
+    let sync_response: EnterpriseSyncResponse = match response.json().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!("Failed to parse sync response: {}", e));
+        }
+    };
+
+    sync_step.done();
+
+    let cwd = std::env::current_dir()?;
+    let queries_dir = if let Some(ref remote_toml) = sync_response.helix_toml {
+        if let Ok(remote_config) = toml::from_str::<crate::config::HelixConfig>(remote_toml) {
+            cwd.join(&remote_config.project.queries)
+        } else {
+            cwd.join("db")
+        }
+    } else {
+        cwd.join("db")
+    };
+
+    if !queries_dir.exists() {
+        std::fs::create_dir_all(&queries_dir)?;
+    }
+
+    let mut write_step = Step::with_messages("Writing .rs files", ".rs files written");
+    write_step.start();
+
+    let mut files_written = 0;
+    for (filename, content) in &sync_response.rs_files {
+        let file_path = queries_dir.join(filename);
+        if let Some(parent) = file_path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&file_path, content)
+            .map_err(|e| eyre!("Failed to write {}: {}", filename, e))?;
+        files_written += 1;
+        Step::verbose_substep(&format!("  Wrote {}", filename));
+    }
+
+    if let Some(ref remote_toml) = sync_response.helix_toml {
+        let helix_toml_path = cwd.join("helix.toml");
+        std::fs::write(&helix_toml_path, remote_toml)
+            .map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
+        files_written += 1;
+        Step::verbose_substep("  Wrote helix.toml");
+    }
+
+    write_step.done_with_info(&format!("{} files", files_written));
+    op.success();
+
+    crate::output::info(&format!(
+        "Synced {} .rs files from enterprise cluster '{}'",
+        files_written, cluster_id
+    ));
+
+    Ok(())
+}
+
 async fn pull_from_local_instance(project: &ProjectContext, instance_name: &str) -> Result<()> {
     let op = Operation::new("Syncing", instance_name);
 
@@ -309,6 +459,11 @@ async fn pull_from_cloud_instance(
 ) -> Result<()> {
     let op = Operation::new("Syncing", instance_name);
 
+    // Handle enterprise instances separately
+    if let InstanceInfo::Enterprise(config) = &instance_config {
+        return pull_from_enterprise_instance(project, instance_name, config).await;
+    }
+
     // Verify this is a Helix Cloud instance
     let cluster_id = match &instance_config {
         InstanceInfo::Helix(config) => &config.cluster_id,
@@ -324,7 +479,7 @@ async fn pull_from_cloud_instance(
                 "Sync is only supported for Helix Cloud instances, not ECR deployments"
             ));
         }
-        InstanceInfo::Local(_) => {
+        InstanceInfo::Local(_) | InstanceInfo::Enterprise(_) => {
             op.failure();
             return Err(eyre!("Sync is only supported for cloud instances"));
         }
@@ -512,6 +667,7 @@ async fn pull_from_cloud_instance(
                 project: remote_config.project.clone(),
                 local: HashMap::new(),
                 cloud: HashMap::new(),
+                enterprise: HashMap::new(),
             }
         };
 
@@ -555,6 +711,104 @@ async fn pull_from_cloud_instance(
             println!("  - {}", filename);
         }
     }
+
+    Ok(())
+}
+
+async fn pull_from_enterprise_instance(
+    project: &ProjectContext,
+    instance_name: &str,
+    config: &crate::config::EnterpriseInstanceConfig,
+) -> Result<()> {
+    let op = Operation::new("Syncing", instance_name);
+    let credentials = require_auth().await?;
+
+    Step::verbose_substep(&format!(
+        "Downloading .rs files from enterprise cluster: {}",
+        config.cluster_id
+    ));
+
+    let client = reqwest::Client::new();
+    let sync_url = format!(
+        "https://{}/api/cli/enterprise-clusters/{}/sync",
+        *CLOUD_AUTHORITY, config.cluster_id
+    );
+
+    let mut sync_step = Step::with_messages("Fetching source files", "Source files fetched");
+    sync_step.start();
+
+    let response = match client
+        .get(&sync_url)
+        .header("x-api-key", &credentials.helix_admin_key)
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!("Failed to connect to Helix Cloud: {}", e));
+        }
+    };
+
+    match response.status() {
+        reqwest::StatusCode::OK => {}
+        status => {
+            let error_text = response.text().await.unwrap_or_default();
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!("Enterprise sync failed ({}): {}", status, error_text));
+        }
+    }
+
+    let sync_response: EnterpriseSyncResponse = match response.json().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!("Failed to parse sync response: {}", e));
+        }
+    };
+
+    sync_step.done();
+
+    let queries_dir = project.root.join(&project.config.project.queries);
+    if !queries_dir.exists() {
+        std::fs::create_dir_all(&queries_dir)?;
+    }
+
+    let mut write_step = Step::with_messages("Writing source files", "Source files written");
+    write_step.start();
+
+    let mut files_written = 0;
+    for (filename, content) in &sync_response.rs_files {
+        let file_path = queries_dir.join(filename);
+        if let Some(parent) = file_path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&file_path, content)
+            .map_err(|e| eyre!("Failed to write {}: {}", filename, e))?;
+        files_written += 1;
+        Step::verbose_substep(&format!("  Wrote {}", filename));
+    }
+
+    if let Some(ref remote_toml) = sync_response.helix_toml {
+        let helix_toml_path = project.root.join("helix.toml");
+        std::fs::write(&helix_toml_path, remote_toml)
+            .map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
+        files_written += 1;
+        Step::verbose_substep("  Wrote helix.toml");
+    }
+
+    write_step.done_with_info(&format!("{} files", files_written));
+    op.success();
+
+    crate::output::info(&format!(
+        "Synced {} .rs files from enterprise cluster '{}'",
+        files_written, config.cluster_id
+    ));
 
     Ok(())
 }
