@@ -10,7 +10,6 @@ use std::collections::HashMap;
 
 #[derive(Deserialize)]
 struct SyncResponse {
-    #[allow(dead_code)]
     helix_toml: Option<String>,
     hx_files: HashMap<String, String>,
     #[allow(dead_code)]
@@ -167,6 +166,72 @@ async fn pull_from_cloud_instance(
         std::fs::create_dir_all(&queries_dir)?;
     }
 
+    // Collect files that differ from local
+    let mut differing_files: Vec<String> = Vec::new();
+    for (filename, content) in &sync_response.hx_files {
+        let file_path = queries_dir.join(filename);
+        if file_path.exists() {
+            if let Ok(local_content) = std::fs::read_to_string(&file_path) {
+                if local_content != *content {
+                    differing_files.push(filename.clone());
+                }
+            }
+        }
+    }
+
+    // Check if helix.toml would change
+    let helix_toml_path = project.root.join("helix.toml");
+    let helix_toml_differs = if let Some(ref remote_toml) = sync_response.helix_toml {
+        if helix_toml_path.exists() {
+            // Parse remote and see if merge would change anything
+            if let (Ok(remote_config), Ok(local_content)) = (
+                toml::from_str::<crate::config::HelixConfig>(remote_toml),
+                std::fs::read_to_string(&helix_toml_path),
+            ) {
+                if let Ok(local_config) = toml::from_str::<crate::config::HelixConfig>(&local_content) {
+                    // Check if project section or the cloud instance entry differs
+                    let project_differs = toml::to_string(&remote_config.project).ok()
+                        != toml::to_string(&local_config.project).ok();
+                    let cloud_differs = remote_config.cloud.iter().any(|(k, v)| {
+                        local_config.cloud.get(k).map(|lv| {
+                            toml::to_string(lv).ok() != toml::to_string(v).ok()
+                        }).unwrap_or(true)
+                    });
+                    project_differs || cloud_differs
+                } else {
+                    true
+                }
+            } else {
+                false
+            }
+        } else {
+            true // new file
+        }
+    } else {
+        false
+    };
+
+    if helix_toml_differs {
+        differing_files.push("helix.toml".to_string());
+    }
+
+    // Prompt for confirmation if files differ
+    if !differing_files.is_empty() {
+        println!();
+        println!("The following files differ from remote:");
+        for f in &differing_files {
+            println!("  - {}", f);
+        }
+        println!();
+        if !crate::prompts::confirm(&format!(
+            "Overwrite {} files that differ from remote?",
+            differing_files.len()
+        ))? {
+            op.failure();
+            return Err(eyre!("Sync aborted by user"));
+        }
+    }
+
     // Write .hx files
     let mut write_step = Step::with_messages("Writing source files", "Source files written");
     write_step.start();
@@ -187,6 +252,40 @@ async fn pull_from_cloud_instance(
 
         files_written += 1;
         Step::verbose_substep(&format!("  Wrote {}", filename));
+    }
+
+    // Merge helix.toml if remote provided one
+    if let Some(ref remote_toml) = sync_response.helix_toml {
+        if let Ok(remote_config) = toml::from_str::<crate::config::HelixConfig>(remote_toml) {
+            let mut merged = if helix_toml_path.exists() {
+                let local_content = std::fs::read_to_string(&helix_toml_path)
+                    .map_err(|e| eyre!("Failed to read helix.toml: {}", e))?;
+                toml::from_str::<crate::config::HelixConfig>(&local_content)
+                    .map_err(|e| eyre!("Failed to parse local helix.toml: {}", e))?
+            } else {
+                crate::config::HelixConfig {
+                    project: remote_config.project.clone(),
+                    local: HashMap::new(),
+                    cloud: HashMap::new(),
+                }
+            };
+
+            // Update project section
+            merged.project = remote_config.project;
+
+            // Merge cloud instance entries (insert/update only those from remote)
+            for (name, cloud_config) in remote_config.cloud {
+                merged.cloud.insert(name, cloud_config);
+            }
+
+            let merged_toml = toml::to_string_pretty(&merged)
+                .map_err(|e| eyre!("Failed to serialize merged helix.toml: {}", e))?;
+            std::fs::write(&helix_toml_path, &merged_toml)
+                .map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
+
+            files_written += 1;
+            Step::verbose_substep("  Wrote helix.toml (merged)");
+        }
     }
 
     write_step.done_with_info(&format!("{} files", files_written));

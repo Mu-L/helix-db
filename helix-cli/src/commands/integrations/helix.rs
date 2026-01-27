@@ -184,17 +184,30 @@ impl<'a> HelixManager<'a> {
 
         let dev_profile = build_mode == BuildMode::Dev;
 
-        // Read helix.toml if it exists
-        let helix_toml_content = if helix_toml_path.exists() {
-            match std::fs::read_to_string(&helix_toml_path) {
-                Ok(content) => Some(content),
+        // Build a pruned HelixConfig containing only [project] and the deployed [cloud.<instance>]
+        let helix_toml_content = {
+            use crate::config::HelixConfig;
+            let pruned = HelixConfig {
+                project: self.project.config.project.clone(),
+                local: HashMap::new(),
+                cloud: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        cluster_name.clone(),
+                        crate::config::CloudConfig::from(
+                            self.project.config.get_instance(&cluster_name)?,
+                        ),
+                    );
+                    m
+                },
+            };
+            match toml::to_string_pretty(&pruned) {
+                Ok(s) => Some(s),
                 Err(e) => {
-                    output::warning(&format!("Failed to read helix.toml: {}", e));
+                    output::warning(&format!("Failed to serialize pruned helix.toml: {}", e));
                     None
                 }
             }
-        } else {
-            None
         };
 
         // Prepare deployment payload
