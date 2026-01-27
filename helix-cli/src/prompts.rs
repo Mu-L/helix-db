@@ -333,8 +333,39 @@ pub fn input_feedback_message() -> Result<String> {
     Ok(message)
 }
 
+/// Prompt user to select a workspace from a list
+pub fn select_workspace(workspaces: &[crate::commands::sync::CliWorkspace]) -> Result<String> {
+    if workspaces.len() == 1 {
+        return Ok(workspaces[0].id.clone());
+    }
+
+    let mut select = cliclack::select("Select a workspace");
+    for ws in workspaces {
+        select = select.item(ws.id.clone(), ws.name.as_str(), "");
+    }
+    let selected = select.interact()?;
+    Ok(selected)
+}
+
+/// Prompt user to select a cluster from a list
+pub fn select_cluster(clusters: &[crate::commands::sync::CliCluster]) -> Result<String> {
+    if clusters.len() == 1 {
+        return Ok(clusters[0].cluster_id.clone());
+    }
+
+    let mut select = cliclack::select("Select a cluster");
+    for c in clusters {
+        select = select.item(
+            c.cluster_id.clone(),
+            c.cluster_name.as_str(),
+            c.project_name.as_str(),
+        );
+    }
+    let selected = select.interact()?;
+    Ok(selected)
+}
+
 /// Prompt user to enter their workspace ID
-#[allow(dead_code)]
 pub fn input_workspace_id() -> Result<String> {
     let workspace_id: String = cliclack::input("Enter your workspace ID")
         .placeholder("ws_abc123...")

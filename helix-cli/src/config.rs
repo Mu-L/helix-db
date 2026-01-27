@@ -9,12 +9,10 @@ use crate::commands::integrations::fly::FlyInstanceConfig;
 
 /// Global workspace configuration stored in ~/.helix/config
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[allow(dead_code)]
 pub struct WorkspaceConfig {
     pub workspace_id: Option<String>,
 }
 
-#[allow(dead_code)]
 impl WorkspaceConfig {
     /// Get the path to the global config file
     pub fn config_path() -> Result<PathBuf> {
@@ -527,7 +525,6 @@ impl HelixConfig {
 
     /// List all instances with their type labels for display
     /// Returns tuples of (name, type_hint) e.g. ("dev", "local"), ("prod", "Helix Cloud")
-    #[allow(dead_code)]
     pub fn list_instances_with_types(&self) -> Vec<(&String, &'static str)> {
         let mut instances = Vec::new();
 

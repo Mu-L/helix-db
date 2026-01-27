@@ -1,8 +1,9 @@
 use crate::commands::auth::require_auth;
 use crate::commands::integrations::helix::CLOUD_AUTHORITY;
-use crate::config::InstanceInfo;
+use crate::config::{InstanceInfo, WorkspaceConfig};
 use crate::output::{Operation, Step};
 use crate::project::ProjectContext;
+use crate::prompts;
 use crate::utils::print_warning;
 use eyre::{Result, eyre};
 use serde::Deserialize;
@@ -16,9 +17,56 @@ struct SyncResponse {
     instance_name: String,
 }
 
-pub async fn run(instance_name: String) -> Result<()> {
-    // Load project context
-    let project = ProjectContext::find_and_load(None)?;
+#[derive(Deserialize)]
+pub struct CliWorkspace {
+    pub id: String,
+    pub name: String,
+    #[allow(dead_code)]
+    pub url_slug: String,
+}
+
+#[derive(Deserialize)]
+pub struct CliCluster {
+    pub cluster_id: String,
+    pub cluster_name: String,
+    pub project_name: String,
+}
+
+pub async fn run(instance_name: Option<String>) -> Result<()> {
+    // Try to load project context
+    let project = ProjectContext::find_and_load(None).ok();
+
+    // Resolve instance name
+    let instance_name = match instance_name {
+        Some(name) => name,
+        None if prompts::is_interactive() => {
+            if let Some(ref project) = project {
+                let instances = project.config.list_instances_with_types();
+                if !instances.is_empty() {
+                    prompts::intro(
+                        "helix sync",
+                        Some("Sync .hx source files and config from a deployed instance."),
+                    )?;
+                    prompts::select_instance(&instances)?
+                } else {
+                    // No instances in helix.toml, fall through to workspace flow
+                    return run_workspace_sync_flow().await;
+                }
+            } else {
+                // No helix.toml found, use workspace flow
+                return run_workspace_sync_flow().await;
+            }
+        }
+        None => {
+            return Err(eyre!(
+                "No instance specified. Run 'helix sync <instance>' or run interactively in a project directory."
+            ));
+        }
+    };
+
+    let project = project.ok_or_else(|| {
+        eyre!("No helix.toml found. Run 'helix init' to create a project first.")
+    })?;
 
     // Get instance config
     let instance_config = project.config.get_instance(&instance_name)?;
@@ -28,6 +76,205 @@ pub async fn run(instance_name: String) -> Result<()> {
     } else {
         pull_from_cloud_instance(&project, &instance_name, instance_config).await
     }
+}
+
+/// Interactive flow when no project/instance is available: prompt workspace → cluster selection.
+async fn run_workspace_sync_flow() -> Result<()> {
+    prompts::intro(
+        "helix sync",
+        Some("No helix.toml found. Select a workspace and cluster to sync from."),
+    )?;
+
+    let credentials = require_auth().await?;
+    let client = reqwest::Client::new();
+    let base_url = format!("https://{}", *CLOUD_AUTHORITY);
+
+    // Load or prompt for workspace
+    let mut workspace_config = WorkspaceConfig::load()?;
+
+    let workspace_id = if workspace_config.has_workspace_id() {
+        workspace_config.workspace_id.clone().unwrap()
+    } else {
+        // Fetch workspaces
+        let workspaces: Vec<CliWorkspace> = client
+            .get(format!("{}/api/cli/workspaces", base_url))
+            .header("x-api-key", &credentials.helix_admin_key)
+            .send()
+            .await
+            .map_err(|e| eyre!("Failed to fetch workspaces: {}", e))?
+            .error_for_status()
+            .map_err(|e| eyre!("Failed to fetch workspaces: {}", e))?
+            .json()
+            .await
+            .map_err(|e| eyre!("Failed to parse workspaces response: {}", e))?;
+
+        if workspaces.is_empty() {
+            return Err(eyre!(
+                "No workspaces found. Create a workspace at https://app.helixdb.cloud first."
+            ));
+        }
+
+        let selected = prompts::select_workspace(&workspaces)?;
+
+        // Save workspace selection
+        workspace_config.workspace_id = Some(selected.clone());
+        workspace_config.save()?;
+
+        selected
+    };
+
+    // Fetch clusters for workspace
+    let clusters: Vec<CliCluster> = client
+        .get(format!(
+            "{}/api/cli/workspaces/{}/clusters",
+            base_url, workspace_id
+        ))
+        .header("x-api-key", &credentials.helix_admin_key)
+        .send()
+        .await
+        .map_err(|e| eyre!("Failed to fetch clusters: {}", e))?
+        .error_for_status()
+        .map_err(|e| eyre!("Failed to fetch clusters: {}", e))?
+        .json()
+        .await
+        .map_err(|e| eyre!("Failed to parse clusters response: {}", e))?;
+
+    if clusters.is_empty() {
+        return Err(eyre!(
+            "No clusters found in this workspace. Deploy a cluster first with 'helix push'."
+        ));
+    }
+
+    let cluster_id = prompts::select_cluster(&clusters)?;
+
+    // Sync from the selected cluster (no project context needed)
+    sync_from_cluster_id(&credentials.helix_admin_key, &cluster_id).await
+}
+
+/// Sync directly from a cluster ID without a project context.
+async fn sync_from_cluster_id(api_key: &str, cluster_id: &str) -> Result<()> {
+    let op = Operation::new("Syncing", cluster_id);
+
+    let client = reqwest::Client::new();
+    let sync_url = format!("https://{}/api/clusters/{}/sync", *CLOUD_AUTHORITY, cluster_id);
+
+    let mut sync_step = Step::with_messages("Fetching source files", "Source files fetched");
+    sync_step.start();
+
+    let response = match client
+        .get(&sync_url)
+        .header("x-api-key", api_key)
+        .header("x-cluster-id", cluster_id)
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!("Failed to connect to Helix Cloud: {}", e));
+        }
+    };
+
+    match response.status() {
+        reqwest::StatusCode::OK => {}
+        reqwest::StatusCode::NOT_FOUND => {
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!(
+                "No source files found for cluster '{}'. Make sure you have deployed at least once with `helix push`.",
+                cluster_id
+            ));
+        }
+        reqwest::StatusCode::UNAUTHORIZED => {
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!(
+                "Authentication failed. Run 'helix auth login' to re-authenticate."
+            ));
+        }
+        reqwest::StatusCode::FORBIDDEN => {
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!(
+                "Access denied to cluster '{}'. Make sure you have permission to access this cluster.",
+                cluster_id
+            ));
+        }
+        status => {
+            let error_text = response.text().await.unwrap_or_default();
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!("Sync failed ({}): {}", status, error_text));
+        }
+    }
+
+    let sync_response: SyncResponse = match response.json().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            sync_step.fail();
+            op.failure();
+            return Err(eyre!("Failed to parse sync response: {}", e));
+        }
+    };
+
+    sync_step.done();
+
+    // Write files to current directory
+    let cwd = std::env::current_dir()?;
+    let queries_dir = if let Some(ref remote_toml) = sync_response.helix_toml {
+        if let Ok(remote_config) = toml::from_str::<crate::config::HelixConfig>(remote_toml) {
+            cwd.join(&remote_config.project.queries)
+        } else {
+            cwd.join("db")
+        }
+    } else {
+        cwd.join("db")
+    };
+
+    if !queries_dir.exists() {
+        std::fs::create_dir_all(&queries_dir)?;
+    }
+
+    let mut write_step = Step::with_messages("Writing source files", "Source files written");
+    write_step.start();
+
+    let mut files_written = 0;
+    for (filename, content) in &sync_response.hx_files {
+        let file_path = queries_dir.join(filename);
+        if let Some(parent) = file_path.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        std::fs::write(&file_path, content)
+            .map_err(|e| eyre!("Failed to write {}: {}", filename, e))?;
+        files_written += 1;
+        Step::verbose_substep(&format!("  Wrote {}", filename));
+    }
+
+    if let Some(ref remote_toml) = sync_response.helix_toml {
+        let helix_toml_path = cwd.join("helix.toml");
+        std::fs::write(&helix_toml_path, remote_toml)
+            .map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
+        files_written += 1;
+        Step::verbose_substep("  Wrote helix.toml");
+    }
+
+    write_step.done_with_info(&format!("{} files", files_written));
+    op.success();
+
+    println!();
+    crate::output::info(&format!(
+        "Synced {} files from cluster '{}'",
+        files_written, cluster_id
+    ));
+    crate::output::info(&format!(
+        "Files saved to: {}",
+        queries_dir.display()
+    ));
+
+    Ok(())
 }
 
 async fn pull_from_local_instance(project: &ProjectContext, instance_name: &str) -> Result<()> {
@@ -314,3 +561,4 @@ async fn pull_from_cloud_instance(
 
     Ok(())
 }
+

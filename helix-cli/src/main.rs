@@ -107,8 +107,8 @@ enum Commands {
 
     /// Sync .hx source files and config from a deployed Helix Cloud instance
     Sync {
-        /// Instance name to sync from
-        instance: String,
+        /// Instance name to sync from (interactive selection if not provided)
+        instance: Option<String>,
     },
 
     /// Start an instance (doesn't rebuild)
