@@ -13,8 +13,6 @@ use std::collections::HashMap;
 struct SyncResponse {
     helix_toml: Option<String>,
     hx_files: HashMap<String, String>,
-    #[allow(dead_code)]
-    instance_name: String,
 }
 
 #[derive(Deserialize)]
