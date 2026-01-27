@@ -242,10 +242,10 @@ async fn sync_from_cluster_id(api_key: &str, cluster_id: &str) -> Result<()> {
     let mut files_written = 0;
     for (filename, content) in &sync_response.hx_files {
         let file_path = queries_dir.join(filename);
-        if let Some(parent) = file_path.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = file_path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&file_path, content)
             .map_err(|e| eyre!("Failed to write {}: {}", filename, e))?;
@@ -417,12 +417,11 @@ async fn pull_from_cloud_instance(
     let mut differing_files: Vec<String> = Vec::new();
     for (filename, content) in &sync_response.hx_files {
         let file_path = queries_dir.join(filename);
-        if file_path.exists() {
-            if let Ok(local_content) = std::fs::read_to_string(&file_path) {
-                if local_content != *content {
-                    differing_files.push(filename.clone());
-                }
-            }
+        if file_path.exists()
+            && let Ok(local_content) = std::fs::read_to_string(&file_path)
+            && local_content != *content
+        {
+            differing_files.push(filename.clone());
         }
     }
 
@@ -488,10 +487,10 @@ async fn pull_from_cloud_instance(
         let file_path = queries_dir.join(filename);
 
         // Create parent directories if needed
-        if let Some(parent) = file_path.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = file_path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)?;
         }
 
         std::fs::write(&file_path, content)
@@ -502,37 +501,37 @@ async fn pull_from_cloud_instance(
     }
 
     // Merge helix.toml if remote provided one
-    if let Some(ref remote_toml) = sync_response.helix_toml {
-        if let Ok(remote_config) = toml::from_str::<crate::config::HelixConfig>(remote_toml) {
-            let mut merged = if helix_toml_path.exists() {
-                let local_content = std::fs::read_to_string(&helix_toml_path)
-                    .map_err(|e| eyre!("Failed to read helix.toml: {}", e))?;
-                toml::from_str::<crate::config::HelixConfig>(&local_content)
-                    .map_err(|e| eyre!("Failed to parse local helix.toml: {}", e))?
-            } else {
-                crate::config::HelixConfig {
-                    project: remote_config.project.clone(),
-                    local: HashMap::new(),
-                    cloud: HashMap::new(),
-                }
-            };
-
-            // Update project section
-            merged.project = remote_config.project;
-
-            // Merge cloud instance entries (insert/update only those from remote)
-            for (name, cloud_config) in remote_config.cloud {
-                merged.cloud.insert(name, cloud_config);
+    if let Some(ref remote_toml) = sync_response.helix_toml
+        && let Ok(remote_config) = toml::from_str::<crate::config::HelixConfig>(remote_toml)
+    {
+        let mut merged = if helix_toml_path.exists() {
+            let local_content = std::fs::read_to_string(&helix_toml_path)
+                .map_err(|e| eyre!("Failed to read helix.toml: {}", e))?;
+            toml::from_str::<crate::config::HelixConfig>(&local_content)
+                .map_err(|e| eyre!("Failed to parse local helix.toml: {}", e))?
+        } else {
+            crate::config::HelixConfig {
+                project: remote_config.project.clone(),
+                local: HashMap::new(),
+                cloud: HashMap::new(),
             }
+        };
 
-            let merged_toml = toml::to_string_pretty(&merged)
-                .map_err(|e| eyre!("Failed to serialize merged helix.toml: {}", e))?;
-            std::fs::write(&helix_toml_path, &merged_toml)
-                .map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
+        // Update project section
+        merged.project = remote_config.project;
 
-            files_written += 1;
-            Step::verbose_substep("  Wrote helix.toml (merged)");
+        // Merge cloud instance entries (insert/update only those from remote)
+        for (name, cloud_config) in remote_config.cloud {
+            merged.cloud.insert(name, cloud_config);
         }
+
+        let merged_toml = toml::to_string_pretty(&merged)
+            .map_err(|e| eyre!("Failed to serialize merged helix.toml: {}", e))?;
+        std::fs::write(&helix_toml_path, &merged_toml)
+            .map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
+
+        files_written += 1;
+        Step::verbose_substep("  Wrote helix.toml (merged)");
     }
 
     write_step.done_with_info(&format!("{} files", files_written));
