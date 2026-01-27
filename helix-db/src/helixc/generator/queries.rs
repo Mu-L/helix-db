@@ -390,23 +390,23 @@ impl Query {
                             // Handle scalar nested traversals with closure parameters (e.g., username: u::{name})
                             // or anonymous traversals (e.g., creatorID: _::In<Created>::ID)
                             } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
-                                closure_source_var: Some(_),
+                                closure_source_var: Some(source_var),
                                 accessed_field_name: accessed_field,
                                 nested_struct_name: None,
                                 ..
                             } = &field_info.source {
-                                // Use singular_var which is the actual closure parameter (e.g., "e" from entries::|e|)
-                                // This is a scalar field accessing a closure parameter or anonymous variable
                                 let field_to_access = accessed_field.as_ref()
                                     .map(|s| s.as_str())
                                     .unwrap_or(field.name.as_str());
+                                // Use source_var for scope variables (project, workspace), fall back to singular_var for closure iteration vars (_, val)
+                                let access_var = if source_var == "_" || source_var == "val" { singular_var } else { source_var.as_str() };
 
                                 if field_to_access == "id" || field_to_access == "ID" {
-                                    format!("uuid_str({}.id(), &arena)", singular_var)
+                                    format!("uuid_str({}.id(), &arena)", access_var)
                                 } else if field_to_access == "label" || field_to_access == "Label" {
-                                    format!("{}.label()", singular_var)
+                                    format!("{}.label()", access_var)
                                 } else {
-                                    format!("{}.get_property(\"{}\")", singular_var, field_to_access)
+                                    format!("{}.get_property(\"{}\")", access_var, field_to_access)
                                 }
                             } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                 traversal_code: Some(trav_code),
@@ -754,23 +754,23 @@ impl Query {
                             // Handle scalar nested traversals with closure parameters (e.g., username: u::{name})
                             // or anonymous traversals (e.g., creatorID: _::In<Created>::ID)
                             } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
-                                closure_source_var: Some(_),
+                                closure_source_var: Some(source_var),
                                 accessed_field_name: accessed_field,
                                 nested_struct_name: None,
                                 ..
                             } = &field_info.source {
-                                // Use singular_var which is the actual closure parameter (e.g., "e" from entries::|e|)
-                                // This is a scalar field accessing a closure parameter or anonymous variable
                                 let field_to_access = accessed_field.as_ref()
                                     .map(|s| s.as_str())
                                     .unwrap_or(field.name.as_str());
+                                // Use source_var for scope variables (project, workspace), fall back to singular_var for closure iteration vars (_, val)
+                                let access_var = if source_var == "_" || source_var == "val" { singular_var } else { source_var.as_str() };
 
                                 if field_to_access == "id" || field_to_access == "ID" {
-                                    format!("uuid_str({}.id(), &arena)", singular_var)
+                                    format!("uuid_str({}.id(), &arena)", access_var)
                                 } else if field_to_access == "label" || field_to_access == "Label" {
-                                    format!("{}.label()", singular_var)
+                                    format!("{}.label()", access_var)
                                 } else {
-                                    format!("{}.get_property(\"{}\")", singular_var, field_to_access)
+                                    format!("{}.get_property(\"{}\")", access_var, field_to_access)
                                 }
                             } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                 traversal_code: Some(trav_code),
@@ -1229,23 +1229,23 @@ impl Query {
                             // Handle scalar nested traversals with closure parameters (e.g., username: u::{name})
                             // or anonymous traversals (e.g., creatorID: _::In<Created>::ID)
                             if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
-                                closure_source_var: Some(_),
+                                closure_source_var: Some(source_var),
                                 accessed_field_name: accessed_field,
                                 nested_struct_name: None,
                                 ..
                             } = &field_info.source {
-                                // Use singular_var which is the actual closure parameter (e.g., "e" from entries::|e|)
-                                // This is a scalar field accessing a closure parameter or anonymous variable
                                 let field_to_access = accessed_field.as_ref()
                                     .map(|s| s.as_str())
                                     .unwrap_or(field.name.as_str());
+                                // Use source_var for scope variables (project, workspace), fall back to singular_var for closure iteration vars (_, val)
+                                let access_var = if source_var == "_" || source_var == "val" { singular_var } else { source_var.as_str() };
 
                                 if field_to_access == "id" || field_to_access == "ID" {
-                                    format!("uuid_str({}.id(), &arena)", singular_var)
+                                    format!("uuid_str({}.id(), &arena)", access_var)
                                 } else if field_to_access == "label" || field_to_access == "Label" {
-                                    format!("{}.label()", singular_var)
+                                    format!("{}.label()", access_var)
                                 } else {
-                                    format!("{}.get_property(\"{}\")", singular_var, field_to_access)
+                                    format!("{}.get_property(\"{}\")", access_var, field_to_access)
                                 }
                             } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                 traversal_code: Some(trav_code),
@@ -1526,23 +1526,23 @@ impl Query {
                             // Handle scalar nested traversals with closure parameters (e.g., username: u::{name})
                             // or anonymous traversals (e.g., creatorID: _::In<Created>::ID)
                             if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
-                                closure_source_var: Some(_),
+                                closure_source_var: Some(source_var),
                                 accessed_field_name: accessed_field,
                                 nested_struct_name: None,
                                 ..
                             } = &field_info.source {
-                                // Use singular_var which is the actual closure parameter (e.g., "e" from entries::|e|)
-                                // This is a scalar field accessing a closure parameter or anonymous variable
                                 let field_to_access = accessed_field.as_ref()
                                     .map(|s| s.as_str())
                                     .unwrap_or(field.name.as_str());
+                                // Use source_var for scope variables (project, workspace), fall back to singular_var for closure iteration vars (_, val)
+                                let access_var = if source_var == "_" || source_var == "val" { singular_var } else { source_var.as_str() };
 
                                 if field_to_access == "id" || field_to_access == "ID" {
-                                    format!("uuid_str({}.id(), &arena)", singular_var)
+                                    format!("uuid_str({}.id(), &arena)", access_var)
                                 } else if field_to_access == "label" || field_to_access == "Label" {
-                                    format!("{}.label()", singular_var)
+                                    format!("{}.label()", access_var)
                                 } else {
-                                    format!("{}.get_property(\"{}\")", singular_var, field_to_access)
+                                    format!("{}.get_property(\"{}\")", access_var, field_to_access)
                                 }
                             } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                 traversal_code: Some(trav_code),
