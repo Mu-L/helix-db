@@ -365,18 +365,3 @@ pub fn select_cluster(clusters: &[crate::commands::sync::CliCluster]) -> Result<
     Ok(selected)
 }
 
-/// Prompt user to enter their workspace ID
-pub fn input_workspace_id() -> Result<String> {
-    let workspace_id: String = cliclack::input("Enter your workspace ID")
-        .placeholder("ws_abc123...")
-        .validate(|input: &String| {
-            if input.trim().is_empty() {
-                Err("Workspace ID cannot be empty")
-            } else {
-                Ok(())
-            }
-        })
-        .interact()?;
-
-    Ok(workspace_id.trim().to_string())
-}
