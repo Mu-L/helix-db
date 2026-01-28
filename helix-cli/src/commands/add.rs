@@ -81,7 +81,10 @@ async fn run_add_inner(
     // Check if instance already exists
     if project_context.config.local.contains_key(&instance_name)
         || project_context.config.cloud.contains_key(&instance_name)
-        || project_context.config.enterprise.contains_key(&instance_name)
+        || project_context
+            .config
+            .enterprise
+            .contains_key(&instance_name)
     {
         return Err(project_error(format!(
             "Instance '{instance_name}' already exists in helix.toml"
@@ -103,11 +106,9 @@ async fn run_add_inner(
             // Authenticate and run workspace/project/cluster flow
             let credentials = crate::commands::auth::require_auth().await?;
             let project_name = &project_context.config.project.name;
-            let result = workspace_flow::run_workspace_project_cluster_flow(
-                project_name,
-                &credentials,
-            )
-            .await?;
+            let result =
+                workspace_flow::run_workspace_project_cluster_flow(project_name, &credentials)
+                    .await?;
 
             match result {
                 ClusterResult::Standard(std_result) => {
@@ -118,10 +119,10 @@ async fn run_add_inner(
                         env_vars: HashMap::new(),
                         db_config: DbConfig::default(),
                     };
-                    project_context.config.cloud.insert(
-                        std_result.instance_name,
-                        CloudConfig::Helix(cloud_config),
-                    );
+                    project_context
+                        .config
+                        .cloud
+                        .insert(std_result.instance_name, CloudConfig::Helix(cloud_config));
                 }
                 ClusterResult::Enterprise(ent_result) => {
                     let enterprise_config = EnterpriseInstanceConfig {

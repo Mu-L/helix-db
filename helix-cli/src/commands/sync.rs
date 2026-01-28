@@ -83,9 +83,8 @@ pub async fn run(instance_name: Option<String>) -> Result<()> {
         }
     };
 
-    let project = project.ok_or_else(|| {
-        eyre!("No helix.toml found. Run 'helix init' to create a project first.")
-    })?;
+    let project = project
+        .ok_or_else(|| eyre!("No helix.toml found. Run 'helix init' to create a project first."))?;
 
     // Get instance config
     let instance_config = project.config.get_instance(&instance_name)?;
@@ -205,7 +204,10 @@ async fn sync_from_cluster_id(api_key: &str, cluster_id: &str) -> Result<()> {
     let op = Operation::new("Syncing", cluster_id);
 
     let client = reqwest::Client::new();
-    let sync_url = format!("https://{}/api/clusters/{}/sync", *CLOUD_AUTHORITY, cluster_id);
+    let sync_url = format!(
+        "https://{}/api/clusters/{}/sync",
+        *CLOUD_AUTHORITY, cluster_id
+    );
 
     let mut sync_step = Step::with_messages("Fetching source files", "Source files fetched");
     sync_step.start();
@@ -318,10 +320,7 @@ async fn sync_from_cluster_id(api_key: &str, cluster_id: &str) -> Result<()> {
         "Synced {} files from cluster '{}'",
         files_written, cluster_id
     ));
-    crate::output::info(&format!(
-        "Files saved to: {}",
-        queries_dir.display()
-    ));
+    crate::output::info(&format!("Files saved to: {}", queries_dir.display()));
 
     Ok(())
 }
@@ -492,7 +491,10 @@ async fn pull_from_cloud_instance(
 
     // Make API request to sync endpoint
     let client = reqwest::Client::new();
-    let sync_url = format!("https://{}/api/clusters/{}/sync", *CLOUD_AUTHORITY, cluster_id);
+    let sync_url = format!(
+        "https://{}/api/clusters/{}/sync",
+        *CLOUD_AUTHORITY, cluster_id
+    );
 
     let mut sync_step = Step::with_messages("Fetching source files", "Source files fetched");
     sync_step.start();
@@ -587,14 +589,18 @@ async fn pull_from_cloud_instance(
                 toml::from_str::<crate::config::HelixConfig>(remote_toml),
                 std::fs::read_to_string(&helix_toml_path),
             ) {
-                if let Ok(local_config) = toml::from_str::<crate::config::HelixConfig>(&local_content) {
+                if let Ok(local_config) =
+                    toml::from_str::<crate::config::HelixConfig>(&local_content)
+                {
                     // Check if project section or the cloud instance entry differs
                     let project_differs = toml::to_string(&remote_config.project).ok()
                         != toml::to_string(&local_config.project).ok();
                     let cloud_differs = remote_config.cloud.iter().any(|(k, v)| {
-                        local_config.cloud.get(k).map(|lv| {
-                            toml::to_string(lv).ok() != toml::to_string(v).ok()
-                        }).unwrap_or(true)
+                        local_config
+                            .cloud
+                            .get(k)
+                            .map(|lv| toml::to_string(lv).ok() != toml::to_string(v).ok())
+                            .unwrap_or(true)
                     });
                     project_differs || cloud_differs
                 } else {
@@ -698,10 +704,7 @@ async fn pull_from_cloud_instance(
         "Synced {} files from cluster '{}'",
         files_written, cluster_id
     ));
-    crate::output::info(&format!(
-        "Files saved to: {}",
-        queries_dir.display()
-    ));
+    crate::output::info(&format!("Files saved to: {}", queries_dir.display()));
 
     // List files that were synced
     if !sync_response.hx_files.is_empty() {
@@ -812,4 +815,3 @@ async fn pull_from_enterprise_instance(
 
     Ok(())
 }
-

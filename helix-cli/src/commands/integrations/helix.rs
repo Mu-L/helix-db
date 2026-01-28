@@ -454,14 +454,9 @@ impl<'a> HelixManager<'a> {
             for entry in std::fs::read_dir(&queries_dir)? {
                 let entry = entry?;
                 let file_path = entry.path();
-                if file_path.is_file()
-                    && file_path.extension().map(|e| e == "rs").unwrap_or(false)
+                if file_path.is_file() && file_path.extension().map(|e| e == "rs").unwrap_or(false)
                 {
-                    let filename = file_path
-                        .file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .to_string();
+                    let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
                     let content = std::fs::read_to_string(&file_path)
                         .map_err(|e| eyre!("Failed to read {}: {}", filename, e))?;
                     rs_files.insert(filename, content);
@@ -530,7 +525,10 @@ impl<'a> HelixManager<'a> {
                     };
 
                     match sse_event {
-                        SseEvent::Progress { percentage, message } => {
+                        SseEvent::Progress {
+                            percentage,
+                            message,
+                        } => {
                             progress.set_progress(percentage);
                             if let Some(msg) = message {
                                 progress.set_message(&msg);

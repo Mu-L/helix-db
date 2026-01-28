@@ -135,10 +135,9 @@ async fn run_init_inner(
                                 env_vars: HashMap::new(),
                                 db_config: DbConfig::default(),
                             };
-                            config.cloud.insert(
-                                std_result.instance_name,
-                                CloudConfig::Helix(cloud_config),
-                            );
+                            config
+                                .cloud
+                                .insert(std_result.instance_name, CloudConfig::Helix(cloud_config));
                         }
                         ClusterResult::Enterprise(ent_result) => {
                             let enterprise_config = EnterpriseInstanceConfig {

@@ -53,7 +53,10 @@ pub async fn run(
     let instance_config = project.config.get_instance(&instance_name)?;
 
     // Check auth early for Helix Cloud / Enterprise instances
-    if matches!(&instance_config, InstanceInfo::Helix(_) | InstanceInfo::Enterprise(_)) {
+    if matches!(
+        &instance_config,
+        InstanceInfo::Helix(_) | InstanceInfo::Enterprise(_)
+    ) {
         require_auth().await?;
     }
 

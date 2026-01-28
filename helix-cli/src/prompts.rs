@@ -424,26 +424,23 @@ pub fn select_build_mode() -> Result<crate::config::BuildMode> {
 
 /// Prompt user to select availability mode for enterprise clusters
 pub fn select_availability_mode() -> Result<crate::config::AvailabilityMode> {
-    let selected: crate::config::AvailabilityMode =
-        cliclack::select("Select availability mode")
-            .item(
-                crate::config::AvailabilityMode::Dev,
-                "Dev",
-                "Single instance, lower cost",
-            )
-            .item(
-                crate::config::AvailabilityMode::Ha,
-                "HA (High Availability)",
-                "Multi-instance, auto-scaling",
-            )
-            .interact()?;
+    let selected: crate::config::AvailabilityMode = cliclack::select("Select availability mode")
+        .item(
+            crate::config::AvailabilityMode::Dev,
+            "Dev",
+            "Single instance, lower cost",
+        )
+        .item(
+            crate::config::AvailabilityMode::Ha,
+            "HA (High Availability)",
+            "Multi-instance, auto-scaling",
+        )
+        .interact()?;
     Ok(selected)
 }
 
 /// Prompt user to select gateway node type
-pub fn select_gateway_node_type(
-    is_ha: bool,
-) -> Result<String> {
+pub fn select_gateway_node_type(is_ha: bool) -> Result<String> {
     if is_ha {
         let selected: String = cliclack::select("Select gateway node type")
             .item("GW-40".to_string(), "GW-40", "40 GB RAM")
@@ -551,6 +548,3 @@ pub fn select_cluster_from_workspace(
     let idx = select.interact()?;
     Ok((items[idx].0.clone(), items[idx].3))
 }
-
-
-
