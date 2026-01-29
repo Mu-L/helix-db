@@ -337,7 +337,7 @@ pub mod helixc_utils {
         collect_from_dir(&queries_path, &mut files)?;
 
         // Sort files by path for deterministic ordering across platforms
-        files.sort_by(|a, b| a.path().cmp(&b.path()));
+        files.sort_by_key(|a| a.path());
 
         if files.is_empty() {
             return Err(eyre::eyre!(
