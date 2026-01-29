@@ -147,15 +147,16 @@ async fn test_compile_with_multiple_hx_files() {
     let queries_dir = ctx.project_path.join("db");
     fs::create_dir_all(&queries_dir).expect("Failed to create queries directory");
 
-    // Create schema in one file
+    // Create schema in one file (named 1_ to sort first alphabetically)
     let schema_content = r#"
 N::User {
     name: String,
 }
 "#;
-    fs::write(queries_dir.join("schema.hx"), schema_content).expect("Failed to write schema.hx");
+    fs::write(queries_dir.join("1_schema.hx"), schema_content)
+        .expect("Failed to write 1_schema.hx");
 
-    // Create additional schema in another file
+    // Create additional schema in another file (named 2_ to sort second)
     let more_schema = r#"
 N::Post {
     title: String,
@@ -166,16 +167,16 @@ E::Authored {
     To: Post,
 }
 "#;
-    fs::write(queries_dir.join("more_schema.hx"), more_schema)
-        .expect("Failed to write more_schema.hx");
+    fs::write(queries_dir.join("2_more_schema.hx"), more_schema)
+        .expect("Failed to write 2_more_schema.hx");
 
-    // Create queries in yet another file
+    // Create queries in yet another file (named 3_ to sort last)
     let queries = r#"
 QUERY GetUser(id: ID) =>
     user <- N<User>(id)
     RETURN user
 "#;
-    fs::write(queries_dir.join("queries.hx"), queries).expect("Failed to write queries.hx");
+    fs::write(queries_dir.join("3_queries.hx"), queries).expect("Failed to write 3_queries.hx");
 
     let result = run(None, Some(ctx.project_path.to_str().unwrap().to_string())).await;
     assert!(

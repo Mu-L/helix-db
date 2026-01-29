@@ -296,18 +296,26 @@ async fn test_status_with_multiple_instances() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_delete_fails_without_helix_project() {
+async fn test_delete_fails_with_nonexistent_instance_dev() {
     use crate::commands::delete;
 
     let ctx = TestContext::new();
-    // Don't set up any project
+
+    // Create helix.toml but clear all instances - this prevents the test from
+    // walking up directories and finding another test's helix.toml
+    let mut config = HelixConfig::default_config("test-project");
+    config.local.clear(); // Remove the default "dev" instance
+    config
+        .save_to_file(&ctx.project_path.join("helix.toml"))
+        .expect("Failed to save config");
+    fs::create_dir_all(ctx.project_path.join(".helix")).expect("Failed to create .helix");
 
     let _guard = std::env::set_current_dir(&ctx.project_path);
 
     let result = delete::run("dev".to_string()).await;
     assert!(
         result.is_err(),
-        "Delete should fail when not in a helix project"
+        "Delete should fail when instance doesn't exist"
     );
 }
 
