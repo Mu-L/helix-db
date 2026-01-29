@@ -359,7 +359,14 @@ fn build_return_fields(
                             .field_name_mappings
                             .values()
                             .any(|source_prop| source_prop == field_name);
-                        if already_exists || already_remapped {
+                        let already_covered_by_nested =
+                            traversal.nested_traversals.values().any(|info| {
+                                info.traversal
+                                    .object_fields
+                                    .iter()
+                                    .any(|f| f.to_lowercase() == field_name.to_lowercase())
+                            });
+                        if already_exists || already_remapped || already_covered_by_nested {
                             continue;
                         }
                         // Skip if excluded
@@ -424,7 +431,17 @@ fn build_return_fields(
             // Check if this is a scalar type or needs a struct
             match return_type {
                 Type::Count => {
-                    let trav_code = nested_info.traversal.format_steps_only();
+                    // Check if this is a variable reference (e.g., `count: count_var`)
+                    // Variable references have closure_source_var set but no graph steps and no object step
+                    let is_variable_reference = nested_info.closure_source_var.is_some()
+                        && !nested_info.traversal.has_graph_steps()
+                        && !nested_info.traversal.has_object_step;
+
+                    let trav_code = if is_variable_reference {
+                        String::new()
+                    } else {
+                        nested_info.traversal.format_steps_only()
+                    };
                     let accessed_field_name = nested_info.traversal.object_fields.first().cloned();
                     fields.push(ReturnFieldInfo {
                         name: field_name.clone(),
@@ -566,7 +583,17 @@ fn build_return_fields(
                             RustFieldType::OptionValue
                         };
 
-                        let trav_code = nested_info.traversal.format_steps_only();
+                        // Check if this is a variable reference (e.g., `scalar: scalar_var`)
+                        // Variable references have closure_source_var set but no graph steps and no object step
+                        let is_variable_reference = nested_info.closure_source_var.is_some()
+                            && !nested_info.traversal.has_graph_steps()
+                            && !nested_info.traversal.has_object_step;
+
+                        let trav_code = if is_variable_reference {
+                            String::new()
+                        } else {
+                            nested_info.traversal.format_steps_only()
+                        };
                         // Extract the accessed field name from object_fields
                         let accessed_field_name =
                             nested_info.traversal.object_fields.first().cloned();
@@ -594,8 +621,14 @@ fn build_return_fields(
                 | Type::Nodes(_)
                 | Type::Edges(_)
                 | Type::Vectors(_) => {
+                    // Check if this is a variable reference (e.g., `user: u` in a closure)
+                    // Variable references have closure_source_var set but no graph steps and no object step
+                    let is_variable_reference = nested_info.closure_source_var.is_some()
+                        && !nested_info.traversal.has_graph_steps()
+                        && !nested_info.traversal.has_object_step;
+
                     // Check if there's property access (object step) - if not, just return TraversalValue
-                    if !nested_info.traversal.has_object_step {
+                    if !nested_info.traversal.has_object_step && !is_variable_reference {
                         // No property access - return simple TraversalValue type
                         let rust_type = match return_type {
                             Type::Nodes(_) | Type::Edges(_) | Type::Vectors(_) => {
@@ -621,7 +654,7 @@ fn build_return_fields(
                             },
                         });
                     } else {
-                        // Has property access - complex types need nested structs
+                        // Has property access or variable reference - complex types need nested structs
                         let nested_prefix =
                             format!("{}{}", struct_name_prefix, capitalize_first(field_name));
                         let nested_fields = build_return_fields(
@@ -634,12 +667,19 @@ fn build_return_fields(
                         let is_first =
                             matches!(nested_info.traversal.should_collect, ShouldCollect::ToObj);
 
+                        // For variable references (empty source step), use empty string for traversal_code
+                        let traversal_code = if is_variable_reference {
+                            String::new()
+                        } else {
+                            nested_info.traversal.format_steps_only()
+                        };
+
                         fields.push(ReturnFieldInfo {
                             name: field_name.clone(),
                             field_type: ReturnFieldType::Nested(nested_fields),
                             source: ReturnFieldSource::NestedTraversal {
                                 traversal_expr: format!("nested_traversal_{}", field_name),
-                                traversal_code: Some(nested_info.traversal.format_steps_only()),
+                                traversal_code: Some(traversal_code),
                                 nested_struct_name: Some(nested_struct_name),
                                 traversal_type: Some(nested_info.traversal.traversal_type.clone()),
                                 closure_param_name: nested_info.closure_param_name.clone(),
@@ -959,6 +999,7 @@ fn process_object_literal<'a>(
         is_group_by: false,
         source_variable: String::new(),
         is_reused_variable: false,
+        is_primitive: false,
         field_infos: vec![],
         aggregate_properties: Vec::new(),
         is_count_aggregate: false,
@@ -1300,11 +1341,16 @@ fn analyze_return_expr<'a>(
                             ));
 
                             // New unified approach
-                            // Skip struct generation for primitive types (Boolean, Scalar, Count) - they use legacy path only
-                            if !matches!(
+                            if matches!(
                                 inferred_type,
                                 Type::Boolean | Type::Scalar(_) | Type::Count
                             ) {
+                                // Primitive types: emit variable directly, no struct needed
+                                let mut prim_struct = ReturnValueStruct::new(field_name.clone());
+                                prim_struct.source_variable = field_name.clone();
+                                prim_struct.is_primitive = true;
+                                query.return_structs.push(prim_struct);
+                            } else {
                                 let struct_name_prefix = format!(
                                     "{}{}",
                                     capitalize_first(&query.name),
@@ -1374,11 +1420,15 @@ fn analyze_return_expr<'a>(
                             ));
 
                             // New unified approach
-                            // Skip struct generation for primitive types (Boolean, Scalar, Count) - they use legacy path only
-                            if !matches!(
+                            if matches!(
                                 inferred_type,
                                 Type::Boolean | Type::Scalar(_) | Type::Count
                             ) {
+                                let mut prim_struct = ReturnValueStruct::new(field_name.clone());
+                                prim_struct.source_variable = field_name.clone();
+                                prim_struct.is_primitive = true;
+                                query.return_structs.push(prim_struct);
+                            } else {
                                 let struct_name_prefix = format!(
                                     "{}{}",
                                     capitalize_first(&query.name),
@@ -1465,18 +1515,37 @@ fn analyze_return_expr<'a>(
                     ));
 
                     // New unified approach
-                    // Skip struct generation for primitive types (Boolean, Scalar, Count) - they use legacy path only
-                    if !matches!(
+                    if matches!(
                         identifier_end_type,
                         Type::Boolean | Type::Scalar(_) | Type::Count
                     ) {
+                        // Primitive types: emit variable directly, no struct needed
+                        let mut prim_struct = ReturnValueStruct::new(field_name.clone());
+                        prim_struct.source_variable = field_name.clone();
+                        prim_struct.is_primitive = true;
+                        query.return_structs.push(prim_struct);
+                    } else {
                         // For identifier returns, we need to create a traversal to build fields from
                         let var_info = scope.get(id.inner().as_str());
                         let is_reused = var_info.is_some_and(|v| v.reference_count > 1);
                         let is_collection = var_info.is_some_and(|v| !v.is_single);
-                        let traversal = GeneratedTraversal {
-                            is_reused_variable: is_reused,
-                            ..Default::default()
+                        // Copy projection metadata from the original variable's binding
+                        let traversal = if let Some(vi) = var_info {
+                            GeneratedTraversal {
+                                is_reused_variable: is_reused,
+                                has_object_step: vi.has_object_step,
+                                object_fields: vi.object_fields.clone(),
+                                field_name_mappings: vi.field_name_mappings.clone(),
+                                excluded_fields: vi.excluded_fields.clone(),
+                                has_spread: vi.has_spread,
+                                nested_traversals: vi.nested_traversals.clone(),
+                                ..Default::default()
+                            }
+                        } else {
+                            GeneratedTraversal {
+                                is_reused_variable: is_reused,
+                                ..Default::default()
+                            }
                         };
                         let struct_name_prefix = format!(
                             "{}{}",
@@ -1517,7 +1586,7 @@ fn analyze_return_expr<'a>(
 
                     // Note: Map closures are no longer injected here.
                     // Mapping will happen at response construction time instead.
-                }
+                }  // end GeneratedStatement::Identifier
                 GeneratedStatement::Literal(l) => {
                     let field_name = "data".to_string();
                     let rust_type = "Value".to_string();

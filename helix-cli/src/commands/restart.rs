@@ -1,7 +1,7 @@
 use crate::commands::integrations::fly::FlyManager;
 use crate::config::CloudConfig;
 use crate::docker::DockerManager;
-use crate::output::{Operation, Step, Verbosity};
+use crate::output::{Operation, Step};
 use crate::project::ProjectContext;
 use crate::prompts;
 use eyre::{OptionExt, Result};
@@ -34,14 +34,14 @@ pub async fn run(instance_name: Option<String>) -> Result<()> {
     let instance_config = project.config.get_instance(&instance_name)?;
 
     if instance_config.is_local() {
-        start_local_instance(&project, &instance_name).await
+        restart_local_instance(&project, &instance_name).await
     } else {
-        start_cloud_instance(&project, &instance_name, instance_config.into()).await
+        restart_cloud_instance(&project, &instance_name, instance_config.into()).await
     }
 }
 
-async fn start_local_instance(project: &ProjectContext, instance_name: &str) -> Result<()> {
-    let op = Operation::new("Starting", instance_name);
+async fn restart_local_instance(project: &ProjectContext, instance_name: &str) -> Result<()> {
+    let op = Operation::new("Restarting", instance_name);
 
     let docker = DockerManager::new(project);
 
@@ -63,55 +63,39 @@ async fn start_local_instance(project: &ProjectContext, instance_name: &str) -> 
         return Err(eyre::eyre!("{}", error.render()));
     }
 
-    // Start the instance
-    let mut start_step = Step::with_messages("Starting container", "Container started");
-    start_step.start();
-    docker.start_instance(instance_name)?;
-    start_step.done();
-
-    // Get the instance configuration to show connection info
-    let instance_config = project.config.get_instance(instance_name)?;
-    let port = instance_config.port().unwrap_or(6969);
+    // Restart the instance
+    let mut restart_step = Step::with_messages("Restarting container", "Container restarted");
+    restart_step.start();
+    docker.restart_instance(instance_name)?;
+    restart_step.done();
 
     op.success();
-
-    let project_name = &project.config.project.name;
-    if Verbosity::current().show_normal() {
-        Operation::print_details(&[
-            ("Local URL", &format!("http://localhost:{port}")),
-            (
-                "Container",
-                &format!("helix_{project_name}_{instance_name}"),
-            ),
-            (
-                "Data volume",
-                &project.instance_volume(instance_name).display().to_string(),
-            ),
-        ]);
-    }
 
     Ok(())
 }
 
-async fn start_cloud_instance(
+async fn restart_cloud_instance(
     project: &ProjectContext,
     instance_name: &str,
-    cloud_config: CloudConfig,
+    instance_config: CloudConfig,
 ) -> Result<()> {
-    let op = Operation::new("Starting", instance_name);
+    let op = Operation::new("Restarting", instance_name);
 
-    let cluster_id = cloud_config
-        .get_cluster_id()
-        .ok_or_eyre("Cloud instance '{instance_name}' must have a cluster_id")?;
+    let _cluster_id = instance_config.get_cluster_id().ok_or_eyre(format!(
+        "Cloud instance '{instance_name}' must have a cluster_id"
+    ))?;
 
-    let mut start_step = Step::with_messages("Starting cloud instance", "Cloud instance started");
-    start_step.start();
+    let mut restart_step =
+        Step::with_messages("Restarting cloud instance", "Cloud instance restarted");
+    restart_step.start();
 
-    Step::verbose_substep(&format!("Starting instance on cluster: {cluster_id}"));
-
-    match cloud_config {
+    match instance_config {
         CloudConfig::FlyIo(config) => {
+            Step::verbose_substep("Stopping Fly.io instance...");
             let fly = FlyManager::new(project, config.auth_type.clone()).await?;
+            fly.stop_instance(instance_name).await?;
+
+            Step::verbose_substep("Starting Fly.io instance...");
             fly.start_instance(instance_name).await?;
         }
         CloudConfig::Helix(_config) => {
@@ -122,7 +106,7 @@ async fn start_cloud_instance(
         }
     }
 
-    start_step.done();
+    restart_step.done();
     op.success();
 
     Ok(())
