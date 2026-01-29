@@ -24,8 +24,9 @@ use crate::{
         parser::types::*,
     },
 };
+use indexmap::IndexMap;
 use paste::paste;
-use std::{borrow::Cow, collections::HashMap};
+use std::borrow::Cow;
 
 /// Marks all Out/In steps with EdgeType::Vec in the traversal to fetch vector data
 /// This should be called when the 'data' field is accessed on a Vector type
@@ -217,7 +218,7 @@ fn validate_property_access<'a>(
     original_query: &'a Query,
     gen_traversal: &mut GeneratedTraversal,
     cur_ty: &Type,
-    fields: Option<HashMap<&'a str, Cow<'a, Field>>>,
+    fields: Option<IndexMap<&'a str, Cow<'a, Field>>>,
     fields_out: &mut Vec<ReturnValueField>,
     scope: &mut std::collections::HashMap<&'a str, crate::helixc::analyzer::utils::VariableInfo>,
     gen_query: &mut crate::helixc::generator::queries::Query,

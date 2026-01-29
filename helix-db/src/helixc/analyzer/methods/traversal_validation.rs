@@ -37,6 +37,7 @@ use crate::{
     },
     protocol::value::Value,
 };
+use indexmap::IndexMap;
 use paste::paste;
 use std::collections::HashMap;
 
@@ -191,7 +192,7 @@ pub(crate) fn validate_traversal<'a>(
                                             E201,
                                             node_type
                                         );
-                                        HashMap::default()
+                                        IndexMap::default()
                                     });
 
                                 match corresponding_field
