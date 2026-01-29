@@ -30,8 +30,8 @@ async fn test_add_fails_without_helix_project() {
 
 #[tokio::test]
 async fn test_add_local_instance_succeeds() {
-    use crate::commands::add;
     use crate::CloudDeploymentTypeCommand;
+    use crate::commands::add;
 
     let ctx = TestContext::new();
     ctx.setup_valid_project();
@@ -61,8 +61,8 @@ async fn test_add_local_instance_succeeds() {
 
 #[tokio::test]
 async fn test_add_rejects_duplicate_instance_name() {
-    use crate::commands::add;
     use crate::CloudDeploymentTypeCommand;
+    use crate::commands::add;
 
     let ctx = TestContext::new();
     ctx.setup_valid_project();
@@ -75,7 +75,10 @@ async fn test_add_rejects_duplicate_instance_name() {
     }))
     .await;
 
-    assert!(result.is_err(), "Add should fail for duplicate instance name");
+    assert!(
+        result.is_err(),
+        "Add should fail for duplicate instance name"
+    );
     let error_msg = format!("{:?}", result.err().unwrap());
     assert!(
         error_msg.contains("already exists"),
@@ -143,10 +146,7 @@ async fn test_prune_all_fails_outside_project() {
 
     // Prune --all should fail outside project
     let result = prune::run(None, true).await;
-    assert!(
-        result.is_err(),
-        "Prune --all should fail outside project"
-    );
+    assert!(result.is_err(), "Prune --all should fail outside project");
 }
 
 #[tokio::test]
@@ -177,8 +177,8 @@ async fn test_prune_nonexistent_instance_fails() {
 
 #[tokio::test]
 async fn test_metrics_status_succeeds() {
-    use crate::commands::metrics;
     use crate::MetricsAction;
+    use crate::commands::metrics;
 
     // Metrics status should succeed regardless of project
     let result = metrics::run(MetricsAction::Status).await;
@@ -187,9 +187,9 @@ async fn test_metrics_status_succeeds() {
 
 #[tokio::test]
 async fn test_metrics_basic_enables_collection() {
-    use crate::commands::metrics;
     use crate::MetricsAction;
-    use crate::metrics_sender::{load_metrics_config, MetricsLevel};
+    use crate::commands::metrics;
+    use crate::metrics_sender::{MetricsLevel, load_metrics_config};
 
     let _ctx = TestContext::new();
 
@@ -219,9 +219,9 @@ async fn test_metrics_basic_enables_collection() {
 
 #[tokio::test]
 async fn test_metrics_off_disables_collection() {
-    use crate::commands::metrics;
     use crate::MetricsAction;
-    use crate::metrics_sender::{load_metrics_config, MetricsLevel};
+    use crate::commands::metrics;
+    use crate::metrics_sender::{MetricsLevel, load_metrics_config};
 
     let _ctx = TestContext::new();
 
@@ -300,8 +300,11 @@ async fn test_migrate_fails_if_v2_exists() {
         .expect("Failed to write v1 config");
 
     // Create schema.hx
-    fs::write(ctx.project_path.join("schema.hx"), "N::User { name: String }")
-        .expect("Failed to write schema");
+    fs::write(
+        ctx.project_path.join("schema.hx"),
+        "N::User { name: String }",
+    )
+    .expect("Failed to write schema");
 
     // Create queries.hx
     fs::write(
@@ -311,8 +314,11 @@ async fn test_migrate_fails_if_v2_exists() {
     .expect("Failed to write queries");
 
     // Also create helix.toml (v2 marker)
-    fs::write(ctx.project_path.join("helix.toml"), "[project]\nname = \"test\"")
-        .expect("Failed to write helix.toml");
+    fs::write(
+        ctx.project_path.join("helix.toml"),
+        "[project]\nname = \"test\"",
+    )
+    .expect("Failed to write helix.toml");
 
     let result = migrate::run(
         Some(ctx.project_path.to_str().unwrap().to_string()),
@@ -357,8 +363,11 @@ async fn test_migrate_dry_run_shows_plan() {
         .expect("Failed to write v1 config");
 
     // Create schema.hx
-    fs::write(ctx.project_path.join("schema.hx"), "N::User { name: String }")
-        .expect("Failed to write schema");
+    fs::write(
+        ctx.project_path.join("schema.hx"),
+        "N::User { name: String }",
+    )
+    .expect("Failed to write schema");
 
     // Create queries.hx
     fs::write(

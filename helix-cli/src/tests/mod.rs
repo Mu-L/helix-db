@@ -1,7 +1,5 @@
 // CLI test modules
 #[cfg(test)]
-pub mod test_utils;
-#[cfg(test)]
 pub mod check_tests;
 #[cfg(test)]
 pub mod compile_tests;
@@ -11,6 +9,8 @@ pub mod docker_tests;
 pub mod init_tests;
 #[cfg(test)]
 pub mod lifecycle_tests;
+#[cfg(test)]
+pub mod test_utils;
 #[cfg(test)]
 pub mod utility_tests;
 // #[cfg(test)]
