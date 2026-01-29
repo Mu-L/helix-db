@@ -411,7 +411,7 @@ impl Query {
                                 // Variable references have empty traversal code and don't require full traversal
                                 let is_value_variable_ref = matches!(&field_info.field_type,
                                     crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Value))
-                                    && traversal_code.as_ref().map_or(true, |s| s.is_empty())
+                                    && traversal_code.as_ref().is_none_or(|s| s.is_empty())
                                     && !*requires_full_traversal;
 
                                 if is_value_variable_ref {
@@ -820,7 +820,7 @@ impl Query {
                                 // Variable references have empty traversal code and don't require full traversal
                                 let is_value_variable_ref = matches!(&field_info.field_type,
                                     crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Value))
-                                    && traversal_code.as_ref().map_or(true, |s| s.is_empty())
+                                    && traversal_code.as_ref().is_none_or(|s| s.is_empty())
                                     && !*requires_full_traversal;
 
                                 if is_value_variable_ref {
