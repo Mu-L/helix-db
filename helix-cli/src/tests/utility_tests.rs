@@ -5,6 +5,7 @@
 
 use crate::config::HelixConfig;
 use crate::tests::test_utils::TestContext;
+use serial_test::serial;
 use std::fs;
 
 // ============================================================================
@@ -176,9 +177,12 @@ async fn test_prune_nonexistent_instance_fails() {
 // ============================================================================
 
 #[tokio::test]
+#[serial]
 async fn test_metrics_status_succeeds() {
     use crate::MetricsAction;
     use crate::commands::metrics;
+
+    let _ctx = TestContext::new();
 
     // Metrics status should succeed regardless of project
     let result = metrics::run(MetricsAction::Status).await;
@@ -186,6 +190,7 @@ async fn test_metrics_status_succeeds() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_metrics_basic_enables_collection() {
     use crate::MetricsAction;
     use crate::commands::metrics;
@@ -218,6 +223,7 @@ async fn test_metrics_basic_enables_collection() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_metrics_off_disables_collection() {
     use crate::MetricsAction;
     use crate::commands::metrics;

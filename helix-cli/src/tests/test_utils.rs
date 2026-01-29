@@ -11,9 +11,10 @@ use tempfile::TempDir;
 /// TestContext creates:
 /// - A temporary project directory
 /// - A temporary cache directory (set via HELIX_CACHE_DIR env var)
+/// - A temporary helix home directory (set via HELIX_HOME env var)
 ///
-/// The HELIX_CACHE_DIR environment variable is automatically set when
-/// the context is created and restored when it is dropped.
+/// The HELIX_CACHE_DIR and HELIX_HOME environment variables are automatically
+/// set when the context is created and restored when it is dropped.
 pub struct TestContext {
     /// The temporary directory containing everything
     pub _temp_dir: TempDir,
@@ -21,8 +22,10 @@ pub struct TestContext {
     pub project_path: PathBuf,
     /// The cache directory within the temp directory
     pub cache_dir: PathBuf,
-    /// Guard to restore the env var on drop
-    _env_guard: EnvGuard,
+    /// Guard to restore the HELIX_CACHE_DIR env var on drop
+    _cache_env_guard: EnvGuard,
+    /// Guard to restore the HELIX_HOME env var on drop
+    _home_env_guard: EnvGuard,
 }
 
 /// Guard that restores an environment variable to its previous state on drop.
@@ -51,32 +54,41 @@ impl TestContext {
     ///
     /// This will:
     /// 1. Create a temporary directory
-    /// 2. Create project and cache subdirectories
+    /// 2. Create project, cache, and helix home subdirectories
     /// 3. Set the HELIX_CACHE_DIR environment variable to the cache directory
+    /// 4. Set the HELIX_HOME environment variable to the helix home directory
     pub fn new() -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let project_path = temp_dir.path().join("project");
         let cache_dir = temp_dir.path().join("cache");
+        let helix_home = temp_dir.path().join(".helix");
 
         std::fs::create_dir_all(&project_path).expect("Failed to create project dir");
         std::fs::create_dir_all(&cache_dir).expect("Failed to create cache dir");
+        std::fs::create_dir_all(&helix_home).expect("Failed to create helix home dir");
 
-        // Save old value and set new one
-        let old_value = std::env::var("HELIX_CACHE_DIR").ok();
-        // SAFETY: We're setting an environment variable for test isolation.
+        // Save old values and set new ones
+        let old_cache_value = std::env::var("HELIX_CACHE_DIR").ok();
+        let old_home_value = std::env::var("HELIX_HOME").ok();
+        // SAFETY: We're setting environment variables for test isolation.
         // Each test creates its own unique temp directory, so there are no
-        // data races on the actual cache directory contents.
+        // data races on the actual directory contents.
         unsafe {
             std::env::set_var("HELIX_CACHE_DIR", &cache_dir);
+            std::env::set_var("HELIX_HOME", &helix_home);
         }
 
         Self {
             _temp_dir: temp_dir,
             project_path,
             cache_dir,
-            _env_guard: EnvGuard {
+            _cache_env_guard: EnvGuard {
                 key: "HELIX_CACHE_DIR",
-                old_value,
+                old_value: old_cache_value,
+            },
+            _home_env_guard: EnvGuard {
+                key: "HELIX_HOME",
+                old_value: old_home_value,
             },
         }
     }
