@@ -112,7 +112,6 @@ impl<'a> DockerManager<'a> {
             let _ = dotenvy::from_path_override(&db_env);
             print_info(&format!("Overriding environment from {}", db_env.display()));
         }
-        let data_dir = self.data_dir(instance_name);
 
         let mut env_vars = vec![
             {
@@ -125,7 +124,7 @@ impl<'a> DockerManager<'a> {
                     .unwrap_or(6969);
                 format!("HELIX_PORT={port}")
             },
-            format!("HELIX_DATA_DIR={data_dir}"),
+            format!("HELIX_DATA_DIR=/data"),
             format!("HELIX_INSTANCE={instance_name}"),
             {
                 let project_name = &self.project.config.project.name;
@@ -678,6 +677,28 @@ networks:
 
         Step::verbose_substep(&format!(
             "{}: Instance '{instance_name}' stopped successfully",
+            self.runtime.label()
+        ));
+        Ok(())
+    }
+
+    /// Restart instance using docker/podman compose
+    /// This is more efficient than stop+start as it preserves the container
+    pub fn restart_instance(&self, instance_name: &str) -> Result<()> {
+        Step::verbose_substep(&format!(
+            "{}: Restarting instance '{instance_name}'...",
+            self.runtime.label()
+        ));
+
+        let output = self.run_compose_command(instance_name, vec!["restart"])?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(eyre!("Failed to restart instance:\n{stderr}"));
+        }
+
+        Step::verbose_substep(&format!(
+            "{}: Instance '{instance_name}' restarted successfully",
             self.runtime.label()
         ));
         Ok(())

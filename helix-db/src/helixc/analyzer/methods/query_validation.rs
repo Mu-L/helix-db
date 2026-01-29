@@ -359,9 +359,13 @@ fn build_return_fields(
                             .field_name_mappings
                             .values()
                             .any(|source_prop| source_prop == field_name);
-                        let already_covered_by_nested = traversal.nested_traversals.values().any(|info| {
-                            info.traversal.object_fields.iter().any(|f| f.to_lowercase() == field_name.to_lowercase())
-                        });
+                        let already_covered_by_nested =
+                            traversal.nested_traversals.values().any(|info| {
+                                info.traversal
+                                    .object_fields
+                                    .iter()
+                                    .any(|f| f.to_lowercase() == field_name.to_lowercase())
+                            });
                         if already_exists || already_remapped || already_covered_by_nested {
                             continue;
                         }
