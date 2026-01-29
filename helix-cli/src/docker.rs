@@ -112,7 +112,6 @@ impl<'a> DockerManager<'a> {
             let _ = dotenvy::from_path_override(&db_env);
             print_info(&format!("Overriding environment from {}", db_env.display()));
         }
-        let data_dir = self.data_dir(instance_name);
 
         let mut env_vars = vec![
             {
@@ -125,7 +124,7 @@ impl<'a> DockerManager<'a> {
                     .unwrap_or(6969);
                 format!("HELIX_PORT={port}")
             },
-            format!("HELIX_DATA_DIR={data_dir}"),
+            format!("HELIX_DATA_DIR=/data"),
             format!("HELIX_INSTANCE={instance_name}"),
             {
                 let project_name = &self.project.config.project.name;

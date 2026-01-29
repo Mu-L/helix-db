@@ -4,6 +4,8 @@ pub mod check_tests;
 #[cfg(test)]
 pub mod compile_tests;
 #[cfg(test)]
+pub mod docker_tests;
+#[cfg(test)]
 pub mod init_tests;
 // #[cfg(test)]
 // pub mod build_tests;
