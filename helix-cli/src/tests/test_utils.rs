@@ -22,6 +22,8 @@ pub struct TestContext {
     pub project_path: PathBuf,
     /// The cache directory within the temp directory
     pub cache_dir: PathBuf,
+    /// The helix home directory within the temp directory
+    pub helix_home: PathBuf,
     /// Guard to restore the HELIX_CACHE_DIR env var on drop
     _cache_env_guard: EnvGuard,
     /// Guard to restore the HELIX_HOME env var on drop
@@ -82,6 +84,7 @@ impl TestContext {
             _temp_dir: temp_dir,
             project_path,
             cache_dir,
+            helix_home,
             _cache_env_guard: EnvGuard {
                 key: "HELIX_CACHE_DIR",
                 old_value: old_cache_value,
