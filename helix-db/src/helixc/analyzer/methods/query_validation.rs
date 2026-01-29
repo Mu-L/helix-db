@@ -427,7 +427,17 @@ fn build_return_fields(
             // Check if this is a scalar type or needs a struct
             match return_type {
                 Type::Count => {
-                    let trav_code = nested_info.traversal.format_steps_only();
+                    // Check if this is a variable reference (e.g., `count: count_var`)
+                    // Variable references have closure_source_var set but no graph steps and no object step
+                    let is_variable_reference = nested_info.closure_source_var.is_some()
+                        && !nested_info.traversal.has_graph_steps()
+                        && !nested_info.traversal.has_object_step;
+
+                    let trav_code = if is_variable_reference {
+                        String::new()
+                    } else {
+                        nested_info.traversal.format_steps_only()
+                    };
                     let accessed_field_name = nested_info.traversal.object_fields.first().cloned();
                     fields.push(ReturnFieldInfo {
                         name: field_name.clone(),
@@ -569,7 +579,17 @@ fn build_return_fields(
                             RustFieldType::OptionValue
                         };
 
-                        let trav_code = nested_info.traversal.format_steps_only();
+                        // Check if this is a variable reference (e.g., `scalar: scalar_var`)
+                        // Variable references have closure_source_var set but no graph steps and no object step
+                        let is_variable_reference = nested_info.closure_source_var.is_some()
+                            && !nested_info.traversal.has_graph_steps()
+                            && !nested_info.traversal.has_object_step;
+
+                        let trav_code = if is_variable_reference {
+                            String::new()
+                        } else {
+                            nested_info.traversal.format_steps_only()
+                        };
                         // Extract the accessed field name from object_fields
                         let accessed_field_name =
                             nested_info.traversal.object_fields.first().cloned();
