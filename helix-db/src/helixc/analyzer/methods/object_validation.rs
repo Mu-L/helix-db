@@ -457,12 +457,35 @@ fn validate_property_access<'a>(
                                 // Other expression types (identifiers, literals, etc.)
                                 gen_traversal.object_fields.push(field_addition.key.clone());
 
-                                // If this is an identifier expression, track the mapping
-                                // e.g., "post: content" where content is parsed as Expression(Identifier("content"))
+                                // If this is an identifier expression, check if it's a scope variable
+                                // (e.g., closure parameter) vs a schema property
                                 if let ExpressionType::Identifier(id) = &expr.expr {
-                                    gen_traversal
-                                        .field_name_mappings
-                                        .insert(field_addition.key.clone(), id.clone());
+                                    if let Some(var_info) = scope.get(id.as_str()) {
+                                        // This is a scope variable (e.g., closure param `u`)
+                                        // Create a nested traversal that represents the full variable
+                                        use crate::helixc::generator::traversal_steps::NestedTraversalInfo;
+                                        let source_var = var_info
+                                            .source_var
+                                            .clone()
+                                            .unwrap_or_else(|| id.clone());
+                                        let nested_info = NestedTraversalInfo {
+                                            traversal: Box::new(crate::helixc::generator::traversal_steps::Traversal::default()),
+                                            return_type: Some(var_info.ty.clone()),
+                                            field_name: field_addition.key.clone(),
+                                            parsed_traversal: None,
+                                            closure_param_name: Some(id.clone()),
+                                            closure_source_var: Some(source_var),
+                                            own_closure_param: None,
+                                        };
+                                        gen_traversal
+                                            .nested_traversals
+                                            .insert(field_addition.key.clone(), nested_info);
+                                    } else {
+                                        // Not a scope variable - treat as schema property mapping
+                                        gen_traversal
+                                            .field_name_mappings
+                                            .insert(field_addition.key.clone(), id.clone());
+                                    }
                                 }
                             }
                         }

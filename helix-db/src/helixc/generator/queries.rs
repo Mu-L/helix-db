@@ -45,6 +45,9 @@ impl Query {
         if self.use_struct_returns {
             // Generate struct definitions for new approach (including nested structs)
             for struct_def in &self.return_structs {
+                if struct_def.is_primitive {
+                    continue; // Primitive types don't need struct definitions
+                }
                 write!(f, "{}", struct_def.generate_all_struct_defs())?;
                 writeln!(f)?;
             }
@@ -167,7 +170,14 @@ impl Query {
                 }
                 writeln!(f)?;
 
-                if struct_def.is_aggregate {
+                if struct_def.is_primitive {
+                    // Primitive type (Count/Boolean/Scalar) - emit variable directly
+                    writeln!(
+                        f,
+                        "    \"{}\": {}",
+                        struct_def.source_variable, struct_def.source_variable
+                    )?;
+                } else if struct_def.is_aggregate {
                     // Aggregate/GroupBy - return the enum directly (it already implements Serialize)
                     writeln!(
                         f,
@@ -393,21 +403,35 @@ impl Query {
                                 closure_source_var: Some(source_var),
                                 accessed_field_name: accessed_field,
                                 nested_struct_name: None,
+                                traversal_code,
+                                requires_full_traversal,
                                 ..
                             } = &field_info.source {
-                                let field_to_access = accessed_field.as_ref()
-                                    .map(|s| s.as_str())
-                                    .unwrap_or(field.name.as_str());
-                                // Use singular_var (closure iteration variable) when source_var matches the collection variable,
-                                // or is a placeholder like _ or val. Use source_var directly only for scope variables (project, workspace).
-                                let access_var = if source_var == "_" || source_var == "val" || *source_var == struct_def.source_variable { singular_var } else { source_var.as_str() };
+                                // Check if this is a direct variable reference for Count/Scalar type
+                                // Variable references have empty traversal code and don't require full traversal
+                                let is_value_variable_ref = matches!(&field_info.field_type,
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Value))
+                                    && traversal_code.as_ref().is_none_or(|s| s.is_empty())
+                                    && !*requires_full_traversal;
 
-                                if field_to_access == "id" || field_to_access == "ID" {
-                                    format!("uuid_str({}.id(), &arena)", access_var)
-                                } else if field_to_access == "label" || field_to_access == "Label" {
-                                    format!("{}.label()", access_var)
+                                if is_value_variable_ref {
+                                    // Direct variable reference to a Count type - just clone the value
+                                    format!("{}.clone()", source_var)
                                 } else {
-                                    format!("{}.get_property(\"{}\")", access_var, field_to_access)
+                                    let field_to_access = accessed_field.as_ref()
+                                        .map(|s| s.as_str())
+                                        .unwrap_or(field.name.as_str());
+                                    // Use singular_var (closure iteration variable) when source_var matches the collection variable,
+                                    // or is a placeholder like _ or val. Use source_var directly only for scope variables (project, workspace).
+                                    let access_var = if source_var == "_" || source_var == "val" || *source_var == struct_def.source_variable { singular_var } else { source_var.as_str() };
+
+                                    if field_to_access == "id" || field_to_access == "ID" {
+                                        format!("uuid_str({}.id(), &arena)", access_var)
+                                    } else if field_to_access == "label" || field_to_access == "Label" {
+                                        format!("{}.label()", access_var)
+                                    } else {
+                                        format!("{}.get_property(\"{}\")", access_var, field_to_access)
+                                    }
                                 }
                             } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                 traversal_code: Some(trav_code),
@@ -613,8 +637,38 @@ impl Query {
                                     }
                                 ));
 
-                                // For ::FIRST, use .next().unwrap_or(Ok(Default::default()))? instead of .collect()
-                                if *is_first {
+                                // Check if this is a variable reference (empty traversal code, just a direct variable)
+                                // e.g., `user: u` in a closure - construct struct directly from the variable
+                                let is_variable_ref = trav_code.trim().is_empty()
+                                    && (traversal_type.is_none() || matches!(traversal_type, Some(crate::helixc::generator::traversal_steps::TraversalType::Empty | crate::helixc::generator::traversal_steps::TraversalType::Ref)));
+
+                                if is_variable_ref {
+                                    // Direct variable reference - construct struct from the closure variable
+                                    let var_name = closure_source_var.as_ref()
+                                        .map(|s| if s == "_" || s == "val" || *s == struct_def.source_variable { singular_var } else { s.as_str() })
+                                        .unwrap_or(singular_var);
+                                    // Build field assignments using the actual variable
+                                    let mut var_ref_fields = String::new();
+                                    for nf in nested_fields {
+                                        let val = if nf.name == "id" {
+                                            format!("uuid_str({}.id(), &arena)", var_name)
+                                        } else if nf.name == "label" {
+                                            format!("{}.label()", var_name)
+                                        } else if nf.name == "from_node" {
+                                            format!("uuid_str({}.from_node(), &arena)", var_name)
+                                        } else if nf.name == "to_node" {
+                                            format!("uuid_str({}.to_node(), &arena)", var_name)
+                                        } else if nf.name == "data" {
+                                            format!("{}.data()", var_name)
+                                        } else if nf.name == "score" {
+                                            format!("{}.score()", var_name)
+                                        } else {
+                                            format!("{}.get_property(\"{}\")", var_name, nf.name)
+                                        };
+                                        var_ref_fields.push_str(&format!("\n                        {}: {},", nf.name, val));
+                                    }
+                                    format!("{} {{{}\n                    }}", nested_name, var_ref_fields)
+                                } else if *is_first {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.map(|{}| {} {{{}\n                    }})).next().unwrap_or(Ok(Default::default()))?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
                                 } else if has_deeply_nested || has_vec_traversal_value {
@@ -758,21 +812,35 @@ impl Query {
                                 closure_source_var: Some(source_var),
                                 accessed_field_name: accessed_field,
                                 nested_struct_name: None,
+                                traversal_code,
+                                requires_full_traversal,
                                 ..
                             } = &field_info.source {
-                                let field_to_access = accessed_field.as_ref()
-                                    .map(|s| s.as_str())
-                                    .unwrap_or(field.name.as_str());
-                                // Use singular_var (closure iteration variable) when source_var matches the collection variable,
-                                // or is a placeholder like _ or val. Use source_var directly only for scope variables (project, workspace).
-                                let access_var = if source_var == "_" || source_var == "val" || *source_var == struct_def.source_variable { singular_var } else { source_var.as_str() };
+                                // Check if this is a direct variable reference for Count/Scalar type
+                                // Variable references have empty traversal code and don't require full traversal
+                                let is_value_variable_ref = matches!(&field_info.field_type,
+                                    crate::helixc::generator::return_values::ReturnFieldType::Simple(RustFieldType::Value))
+                                    && traversal_code.as_ref().is_none_or(|s| s.is_empty())
+                                    && !*requires_full_traversal;
 
-                                if field_to_access == "id" || field_to_access == "ID" {
-                                    format!("uuid_str({}.id(), &arena)", access_var)
-                                } else if field_to_access == "label" || field_to_access == "Label" {
-                                    format!("{}.label()", access_var)
+                                if is_value_variable_ref {
+                                    // Direct variable reference to a Count type - just clone the value
+                                    format!("{}.clone()", source_var)
                                 } else {
-                                    format!("{}.get_property(\"{}\")", access_var, field_to_access)
+                                    let field_to_access = accessed_field.as_ref()
+                                        .map(|s| s.as_str())
+                                        .unwrap_or(field.name.as_str());
+                                    // Use singular_var (closure iteration variable) when source_var matches the collection variable,
+                                    // or is a placeholder like _ or val. Use source_var directly only for scope variables (project, workspace).
+                                    let access_var = if source_var == "_" || source_var == "val" || *source_var == struct_def.source_variable { singular_var } else { source_var.as_str() };
+
+                                    if field_to_access == "id" || field_to_access == "ID" {
+                                        format!("uuid_str({}.id(), &arena)", access_var)
+                                    } else if field_to_access == "label" || field_to_access == "Label" {
+                                        format!("{}.label()", access_var)
+                                    } else {
+                                        format!("{}.get_property(\"{}\")", access_var, field_to_access)
+                                    }
                                 }
                             } else if let crate::helixc::generator::return_values::ReturnFieldSource::NestedTraversal {
                                 traversal_code: Some(trav_code),
@@ -973,8 +1041,38 @@ impl Query {
                                     }
                                 ));
 
-                                // For ::FIRST, use .next().unwrap_or(Ok(Default::default()))? instead of .collect()
-                                if *is_first {
+                                // Check if this is a variable reference (empty traversal code, just a direct variable)
+                                // e.g., `user: u` in a closure - construct struct directly from the variable
+                                let is_variable_ref = trav_code.trim().is_empty()
+                                    && (traversal_type.is_none() || matches!(traversal_type, Some(crate::helixc::generator::traversal_steps::TraversalType::Empty | crate::helixc::generator::traversal_steps::TraversalType::Ref)));
+
+                                if is_variable_ref {
+                                    // Direct variable reference - construct struct from the closure variable
+                                    let var_name = closure_source_var.as_ref()
+                                        .map(|s| if s == "_" || s == "val" || *s == struct_def.source_variable { singular_var } else { s.as_str() })
+                                        .unwrap_or(singular_var);
+                                    // Build field assignments using the actual variable
+                                    let mut var_ref_fields = String::new();
+                                    for nf in nested_fields {
+                                        let val = if nf.name == "id" {
+                                            format!("uuid_str({}.id(), &arena)", var_name)
+                                        } else if nf.name == "label" {
+                                            format!("{}.label()", var_name)
+                                        } else if nf.name == "from_node" {
+                                            format!("uuid_str({}.from_node(), &arena)", var_name)
+                                        } else if nf.name == "to_node" {
+                                            format!("uuid_str({}.to_node(), &arena)", var_name)
+                                        } else if nf.name == "data" {
+                                            format!("{}.data()", var_name)
+                                        } else if nf.name == "score" {
+                                            format!("{}.score()", var_name)
+                                        } else {
+                                            format!("{}.get_property(\"{}\")", var_name, nf.name)
+                                        };
+                                        var_ref_fields.push_str(&format!("\n                        {}: {},", nf.name, val));
+                                    }
+                                    format!("{} {{{}\n                    }}", nested_name, var_ref_fields)
+                                } else if *is_first {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.map(|{}| {} {{{}\n                    }})).next().unwrap_or(Ok(Default::default()))?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
                                 } else if has_deeply_nested || has_vec_traversal_value {
@@ -1454,8 +1552,38 @@ impl Query {
                                     }
                                 ));
 
-                                // For ::FIRST, use .next().unwrap_or(Ok(Default::default()))? instead of .collect()
-                                if *is_first {
+                                // Check if this is a variable reference (empty traversal code, just a direct variable)
+                                // e.g., `user: u` in a closure - construct struct directly from the variable
+                                let is_variable_ref = trav_code.trim().is_empty()
+                                    && (traversal_type.is_none() || matches!(traversal_type, Some(crate::helixc::generator::traversal_steps::TraversalType::Empty | crate::helixc::generator::traversal_steps::TraversalType::Ref)));
+
+                                if is_variable_ref {
+                                    // Direct variable reference - construct struct from the closure variable
+                                    let var_name = closure_source_var.as_ref()
+                                        .map(|s| if s == "_" || s == "val" || *s == struct_def.source_variable { singular_var } else { s.as_str() })
+                                        .unwrap_or(singular_var);
+                                    // Build field assignments using the actual variable
+                                    let mut var_ref_fields = String::new();
+                                    for nf in nested_fields {
+                                        let val = if nf.name == "id" {
+                                            format!("uuid_str({}.id(), &arena)", var_name)
+                                        } else if nf.name == "label" {
+                                            format!("{}.label()", var_name)
+                                        } else if nf.name == "from_node" {
+                                            format!("uuid_str({}.from_node(), &arena)", var_name)
+                                        } else if nf.name == "to_node" {
+                                            format!("uuid_str({}.to_node(), &arena)", var_name)
+                                        } else if nf.name == "data" {
+                                            format!("{}.data()", var_name)
+                                        } else if nf.name == "score" {
+                                            format!("{}.score()", var_name)
+                                        } else {
+                                            format!("{}.get_property(\"{}\")", var_name, nf.name)
+                                        };
+                                        var_ref_fields.push_str(&format!("\n                        {}: {},", nf.name, val));
+                                    }
+                                    format!("{} {{{}\n                    }}", nested_name, var_ref_fields)
+                                } else if *is_first {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.map(|{}| {} {{{}\n                    }})).next().unwrap_or(Ok(Default::default()))?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
                                 } else if has_deeply_nested || has_vec_traversal_value {
@@ -1708,8 +1836,38 @@ impl Query {
                                     }
                                 ));
 
-                                // For ::FIRST, use .next().unwrap_or(Ok(Default::default()))? instead of .collect()
-                                if *is_first {
+                                // Check if this is a variable reference (empty traversal code, just a direct variable)
+                                // e.g., `user: u` in a closure - construct struct directly from the variable
+                                let is_variable_ref = trav_code.trim().is_empty()
+                                    && (traversal_type.is_none() || matches!(traversal_type, Some(crate::helixc::generator::traversal_steps::TraversalType::Empty | crate::helixc::generator::traversal_steps::TraversalType::Ref)));
+
+                                if is_variable_ref {
+                                    // Direct variable reference - construct struct from the closure variable
+                                    let var_name = closure_source_var.as_ref()
+                                        .map(|s| if s == "_" || s == "val" || *s == struct_def.source_variable { singular_var } else { s.as_str() })
+                                        .unwrap_or(singular_var);
+                                    // Build field assignments using the actual variable
+                                    let mut var_ref_fields = String::new();
+                                    for nf in nested_fields {
+                                        let val = if nf.name == "id" {
+                                            format!("uuid_str({}.id(), &arena)", var_name)
+                                        } else if nf.name == "label" {
+                                            format!("{}.label()", var_name)
+                                        } else if nf.name == "from_node" {
+                                            format!("uuid_str({}.from_node(), &arena)", var_name)
+                                        } else if nf.name == "to_node" {
+                                            format!("uuid_str({}.to_node(), &arena)", var_name)
+                                        } else if nf.name == "data" {
+                                            format!("{}.data()", var_name)
+                                        } else if nf.name == "score" {
+                                            format!("{}.score()", var_name)
+                                        } else {
+                                            format!("{}.get_property(\"{}\")", var_name, nf.name)
+                                        };
+                                        var_ref_fields.push_str(&format!("\n                        {}: {},", nf.name, val));
+                                    }
+                                    format!("{} {{{}\n                    }}", nested_name, var_ref_fields)
+                                } else if *is_first {
                                     format!("G::from_iter(&db, &txn, {}, &arena){}.map(|{}| {}.map(|{}| {} {{{}\n                    }})).next().unwrap_or(Ok(Default::default()))?",
                                         iterator_expr, trav_code, closure_param, closure_param, closure_param, nested_name, nested_field_assigns)
                                 } else if has_deeply_nested {
