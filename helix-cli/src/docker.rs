@@ -683,6 +683,28 @@ networks:
         Ok(())
     }
 
+    /// Restart instance using docker/podman compose
+    /// This is more efficient than stop+start as it preserves the container
+    pub fn restart_instance(&self, instance_name: &str) -> Result<()> {
+        Step::verbose_substep(&format!(
+            "{}: Restarting instance '{instance_name}'...",
+            self.runtime.label()
+        ));
+
+        let output = self.run_compose_command(instance_name, vec!["restart"])?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(eyre!("Failed to restart instance:\n{stderr}"));
+        }
+
+        Step::verbose_substep(&format!(
+            "{}: Instance '{instance_name}' restarted successfully",
+            self.runtime.label()
+        ));
+        Ok(())
+    }
+
     /// Check if an instance container exists (running or stopped)
     pub fn instance_exists(&self, instance_name: &str) -> Result<bool> {
         let statuses = self.get_project_status()?;
