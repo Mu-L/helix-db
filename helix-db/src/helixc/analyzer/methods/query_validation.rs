@@ -1004,6 +1004,7 @@ fn process_object_literal<'a>(
         aggregate_properties: Vec::new(),
         is_count_aggregate: false,
         closure_param_name: None,
+        primitive_literal_value: None,
     }
 }
 
@@ -1336,7 +1337,7 @@ fn analyze_return_expr<'a>(
                                 ReturnValue {
                                     name: rust_type,
                                     fields,
-                                    literal_value,
+                                    literal_value: literal_value.clone(),
                                 },
                             ));
 
@@ -1349,6 +1350,7 @@ fn analyze_return_expr<'a>(
                                 let mut prim_struct = ReturnValueStruct::new(field_name.clone());
                                 prim_struct.source_variable = field_name.clone();
                                 prim_struct.is_primitive = true;
+                                prim_struct.primitive_literal_value = literal_value;
                                 query.return_structs.push(prim_struct);
                             } else {
                                 let struct_name_prefix = format!(

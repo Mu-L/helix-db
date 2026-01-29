@@ -55,6 +55,7 @@ pub struct ReturnValueStruct {
     pub is_count_aggregate: bool,   // True for COUNT mode aggregates
     pub closure_param_name: Option<String>, // HQL closure parameter name (e.g., "e" from entries::|e|)
     pub is_primitive: bool,                 // True for Count/Boolean/Scalar - emit variable directly
+    pub primitive_literal_value: Option<GenRef<String>>, // For primitives with field access (e.g., user::ID)
 }
 
 impl ReturnValueStruct {
@@ -74,6 +75,7 @@ impl ReturnValueStruct {
             is_count_aggregate: false,
             closure_param_name: None,
             is_primitive: false,
+            primitive_literal_value: None,
         }
     }
 

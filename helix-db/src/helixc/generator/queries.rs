@@ -171,12 +171,16 @@ impl Query {
                 writeln!(f)?;
 
                 if struct_def.is_primitive {
-                    // Primitive type (Count/Boolean/Scalar) - emit variable directly
-                    writeln!(
-                        f,
-                        "    \"{}\": {}",
-                        struct_def.source_variable, struct_def.source_variable
-                    )?;
+                    // Primitive type (Count/Boolean/Scalar) - use literal_value if present (for field access like ::ID)
+                    if let Some(ref lit) = struct_def.primitive_literal_value {
+                        writeln!(f, "    \"{}\": {}", struct_def.source_variable, lit)?;
+                    } else {
+                        writeln!(
+                            f,
+                            "    \"{}\": {}",
+                            struct_def.source_variable, struct_def.source_variable
+                        )?;
+                    }
                 } else if struct_def.is_aggregate {
                     // Aggregate/GroupBy - return the enum directly (it already implements Serialize)
                     writeln!(
