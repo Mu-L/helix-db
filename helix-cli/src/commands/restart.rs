@@ -81,9 +81,9 @@ async fn restart_cloud_instance(
 ) -> Result<()> {
     let op = Operation::new("Restarting", instance_name);
 
-    let _cluster_id = instance_config
-        .get_cluster_id()
-        .ok_or_eyre("Cloud instance '{instance_name}' must have a cluster_id")?;
+    let _cluster_id = instance_config.get_cluster_id().ok_or_eyre(format!(
+        "Cloud instance '{instance_name}' must have a cluster_id"
+    ))?;
 
     let mut restart_step =
         Step::with_messages("Restarting cloud instance", "Cloud instance restarted");
