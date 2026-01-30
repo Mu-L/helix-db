@@ -145,22 +145,21 @@ fn generate_traversal_value(
     // - No graph traversal steps (Out/In/OutE/InE)
     // This generates direct property access like `item.get_property("price")`
     // instead of wrapping in G::from_iter()
-    if traversal.steps.len() == 1 {
-        if let StepType::Object(obj) = &traversal.steps[0].step {
-            if obj.fields.len() == 1 {
-                let field = &obj.fields[0];
-                let prop_name = &field.key;
-                if prop_name == "id" || prop_name == "ID" {
-                    return format!("Value::from(uuid_str({}.id(), &arena))", source_var);
-                } else if prop_name == "label" || prop_name == "Label" {
-                    return format!("Value::from({}.label())", source_var);
-                } else {
-                    return format!(
-                        "{}.get_property(\"{}\").expect(\"property not found\").clone()",
-                        source_var, prop_name
-                    );
-                }
-            }
+    if traversal.steps.len() == 1
+        && let StepType::Object(obj) = &traversal.steps[0].step
+        && obj.fields.len() == 1
+    {
+        let field = &obj.fields[0];
+        let prop_name = &field.key;
+        if prop_name == "id" || prop_name == "ID" {
+            return format!("Value::from(uuid_str({}.id(), &arena))", source_var);
+        } else if prop_name == "label" || prop_name == "Label" {
+            return format!("Value::from({}.label())", source_var);
+        } else {
+            return format!(
+                "{}.get_property(\"{}\").expect(\"property not found\").clone()",
+                source_var, prop_name
+            );
         }
     }
 
