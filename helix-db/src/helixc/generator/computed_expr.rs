@@ -92,14 +92,14 @@ pub fn generate_computed_expression(expression: &Expression, item_var: &str) -> 
                 }
                 MathFunction::Min => {
                     if args.len() == 2 {
-                        format!("({}).min(&({}))", args[0], args[1])
+                        format!("({}).min(({}))", args[0], args[1])
                     } else {
                         "Value::Empty".to_string()
                     }
                 }
                 MathFunction::Max => {
                     if args.len() == 2 {
-                        format!("({}).max(&({}))", args[0], args[1])
+                        format!("({}).max(({}))", args[0], args[1])
                     } else {
                         "Value::Empty".to_string()
                     }
