@@ -144,16 +144,16 @@ fn build_return_fields(
             None
         };
 
-        // If has_object_step, only add implicit fields if they're explicitly selected
+        // If has_object_step, only add implicit fields if they're explicitly selected OR has_spread
         // Otherwise, add all implicit fields (default behavior)
         let should_add_field = |field_name: &str| {
             // Exclude if field is in excluded_fields
             if traversal.excluded_fields.contains(&field_name.to_string()) {
                 return false;
             }
-            // If has object step, only include if explicitly selected (possibly with remapping)
+            // If has object step, only include if explicitly selected (possibly with remapping) OR has_spread
             if traversal.has_object_step {
-                find_output_for_property(field_name).is_some()
+                find_output_for_property(field_name).is_some() || traversal.has_spread
             } else {
                 true
             }
@@ -176,8 +176,8 @@ fn build_return_fields(
                         RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
                     ));
                 }
-            } else if !traversal.has_object_step {
-                // No object step means return all fields
+            } else if !traversal.has_object_step || traversal.has_spread {
+                // No object step or has spread means return all fields
                 fields.push(ReturnFieldInfo::new_implicit(
                     "id".to_string(),
                     RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
@@ -198,7 +198,7 @@ fn build_return_fields(
                         RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
                     ));
                 }
-            } else if !traversal.has_object_step {
+            } else if !traversal.has_object_step || traversal.has_spread {
                 fields.push(ReturnFieldInfo::new_implicit(
                     "label".to_string(),
                     RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
@@ -222,7 +222,7 @@ fn build_return_fields(
                             RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
                         ));
                     }
-                } else if !traversal.has_object_step {
+                } else if !traversal.has_object_step || traversal.has_spread {
                     fields.push(ReturnFieldInfo::new_implicit(
                         "from_node".to_string(),
                         RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
@@ -243,7 +243,7 @@ fn build_return_fields(
                             RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
                         ));
                     }
-                } else if !traversal.has_object_step {
+                } else if !traversal.has_object_step || traversal.has_spread {
                     fields.push(ReturnFieldInfo::new_implicit(
                         "to_node".to_string(),
                         RustFieldType::Primitive(GenRef::RefLT("a", RustType::Str)),
@@ -265,7 +265,7 @@ fn build_return_fields(
                             RustFieldType::RefArray(RustType::F64),
                         ));
                     }
-                } else if !traversal.has_object_step {
+                } else if !traversal.has_object_step || traversal.has_spread {
                     fields.push(ReturnFieldInfo::new_implicit(
                         "data".to_string(),
                         RustFieldType::RefArray(RustType::F64),
@@ -286,7 +286,7 @@ fn build_return_fields(
                             RustFieldType::Primitive(GenRef::Std(RustType::F64)),
                         ));
                     }
-                } else if !traversal.has_object_step {
+                } else if !traversal.has_object_step || traversal.has_spread {
                     fields.push(ReturnFieldInfo::new_implicit(
                         "score".to_string(),
                         RustFieldType::Primitive(GenRef::Std(RustType::F64)),
@@ -318,6 +318,11 @@ fn build_return_fields(
                 for field_name in &traversal.object_fields {
                     // Skip if it's a nested traversal (handled separately)
                     if traversal.nested_traversals.contains_key(field_name) {
+                        continue;
+                    }
+
+                    // Skip if it's a computed expression (handled separately)
+                    if traversal.computed_expressions.contains_key(field_name) {
                         continue;
                     }
 
@@ -734,6 +739,17 @@ fn build_return_fields(
         }
     }
 
+    // Step 4: Add computed expression fields
+    for (field_name, computed_info) in &traversal.computed_expressions {
+        fields.push(ReturnFieldInfo {
+            name: field_name.clone(),
+            field_type: ReturnFieldType::Simple(RustFieldType::Value),
+            source: ReturnFieldSource::ComputedExpression {
+                expression: computed_info.expression.clone(),
+            },
+        });
+    }
+
     fields
 }
 
@@ -1004,6 +1020,7 @@ fn process_object_literal<'a>(
         aggregate_properties: Vec::new(),
         is_count_aggregate: false,
         closure_param_name: None,
+        primitive_literal_value: None,
     }
 }
 
@@ -1336,7 +1353,7 @@ fn analyze_return_expr<'a>(
                                 ReturnValue {
                                     name: rust_type,
                                     fields,
-                                    literal_value,
+                                    literal_value: literal_value.clone(),
                                 },
                             ));
 
@@ -1349,6 +1366,7 @@ fn analyze_return_expr<'a>(
                                 let mut prim_struct = ReturnValueStruct::new(field_name.clone());
                                 prim_struct.source_variable = field_name.clone();
                                 prim_struct.is_primitive = true;
+                                prim_struct.primitive_literal_value = literal_value;
                                 query.return_structs.push(prim_struct);
                             } else {
                                 let struct_name_prefix = format!(
