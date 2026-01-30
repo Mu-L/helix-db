@@ -519,6 +519,11 @@ pub enum ReturnFieldSource {
         requires_full_traversal: bool, // True if traversal has graph navigation steps (Out, In, COUNT, etc.)
         is_first: bool,                // True if ::FIRST was used (should_collect = ToObj)
     },
+    /// Computed expression field (e.g., ADD, COUNT operations)
+    /// Used for fields like `num_clusters: ADD(_::Out<HasRailwayCluster>::COUNT, _::Out<HasObjectCluster>::COUNT)`
+    ComputedExpression {
+        expression: Box<crate::helixc::parser::types::Expression>,
+    },
 }
 
 impl ReturnFieldInfo {

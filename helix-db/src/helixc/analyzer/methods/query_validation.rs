@@ -321,6 +321,11 @@ fn build_return_fields(
                         continue;
                     }
 
+                    // Skip if it's a computed expression (handled separately)
+                    if traversal.computed_expressions.contains_key(field_name) {
+                        continue;
+                    }
+
                     // Look up the actual property name from the mapping
                     let property_name = traversal
                         .field_name_mappings
@@ -732,6 +737,17 @@ fn build_return_fields(
                 },
             });
         }
+    }
+
+    // Step 4: Add computed expression fields
+    for (field_name, computed_info) in &traversal.computed_expressions {
+        fields.push(ReturnFieldInfo {
+            name: field_name.clone(),
+            field_type: ReturnFieldType::Simple(RustFieldType::Value),
+            source: ReturnFieldSource::ComputedExpression {
+                expression: computed_info.expression.clone(),
+            },
+        });
     }
 
     fields

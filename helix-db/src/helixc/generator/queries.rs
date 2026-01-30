@@ -689,32 +689,39 @@ impl Query {
                         } else {
                             // Get property name from source if available (for field remapping)
                             let field_info = &struct_def.field_infos[field_idx];
-                            let property_name = match &field_info.source {
-                                crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name } => {
-                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
-                                },
-                                crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name } => {
-                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
-                                },
-                                _ => &field.name,
-                            };
 
-                            // Use property_name to determine access method
-                            if property_name == "id" {
-                                format!("uuid_str({}.id(), &arena)", singular_var)
-                            } else if property_name == "label" {
-                                format!("{}.label()", singular_var)
-                            } else if property_name == "from_node" {
-                                format!("uuid_str({}.from_node(), &arena)", singular_var)
-                            } else if property_name == "to_node" {
-                                format!("uuid_str({}.to_node(), &arena)", singular_var)
-                            } else if property_name == "data" {
-                                format!("{}.data()", singular_var)
-                            } else if property_name == "score" {
-                                format!("{}.score()", singular_var)
+                            // Handle computed expressions (e.g., ADD, COUNT operations)
+                            if let crate::helixc::generator::return_values::ReturnFieldSource::ComputedExpression { expression } = &field_info.source {
+                                use crate::helixc::generator::computed_expr::generate_computed_expression;
+                                generate_computed_expression(expression, singular_var)
                             } else {
-                                // Regular schema field - use property_name for get_property
-                                format!("{}.get_property(\"{}\")", singular_var, property_name)
+                                let property_name = match &field_info.source {
+                                    crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name } => {
+                                        property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                    },
+                                    crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name } => {
+                                        property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                    },
+                                    _ => &field.name,
+                                };
+
+                                // Use property_name to determine access method
+                                if property_name == "id" {
+                                    format!("uuid_str({}.id(), &arena)", singular_var)
+                                } else if property_name == "label" {
+                                    format!("{}.label()", singular_var)
+                                } else if property_name == "from_node" {
+                                    format!("uuid_str({}.from_node(), &arena)", singular_var)
+                                } else if property_name == "to_node" {
+                                    format!("uuid_str({}.to_node(), &arena)", singular_var)
+                                } else if property_name == "data" {
+                                    format!("{}.data()", singular_var)
+                                } else if property_name == "score" {
+                                    format!("{}.score()", singular_var)
+                                } else {
+                                    // Regular schema field - use property_name for get_property
+                                    format!("{}.get_property(\"{}\")", singular_var, property_name)
+                                }
                             }
                         };
                         writeln!(f, "        {}: {},", field.name, field_value)?;
@@ -1093,41 +1100,48 @@ impl Query {
                         } else {
                             // Get property name from source if available (for field remapping)
                             let field_info = &struct_def.field_infos[field_idx];
-                            let property_name = match &field_info.source {
-                                crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name } => {
-                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
-                                },
-                                crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name } => {
-                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
-                                },
-                                _ => &field.name,
-                            };
 
-                            // Use property_name to determine access method
-                            if property_name == "id" {
-                                format!("uuid_str({}.id(), &arena)", struct_def.source_variable)
-                            } else if property_name == "label" {
-                                format!("{}.label()", struct_def.source_variable)
-                            } else if property_name == "from_node" {
-                                format!(
-                                    "uuid_str({}.from_node(), &arena)",
-                                    struct_def.source_variable
-                                )
-                            } else if property_name == "to_node" {
-                                format!(
-                                    "uuid_str({}.to_node(), &arena)",
-                                    struct_def.source_variable
-                                )
-                            } else if property_name == "data" {
-                                format!("{}.data()", struct_def.source_variable)
-                            } else if property_name == "score" {
-                                format!("{}.score()", struct_def.source_variable)
+                            // Handle computed expressions (e.g., ADD, COUNT operations)
+                            if let crate::helixc::generator::return_values::ReturnFieldSource::ComputedExpression { expression } = &field_info.source {
+                                use crate::helixc::generator::computed_expr::generate_computed_expression;
+                                generate_computed_expression(expression, &struct_def.source_variable)
                             } else {
-                                // Regular schema field - use property_name for get_property
-                                format!(
-                                    "{}.get_property(\"{}\")",
-                                    struct_def.source_variable, property_name
-                                )
+                                let property_name = match &field_info.source {
+                                    crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name } => {
+                                        property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                    },
+                                    crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name } => {
+                                        property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                    },
+                                    _ => &field.name,
+                                };
+
+                                // Use property_name to determine access method
+                                if property_name == "id" {
+                                    format!("uuid_str({}.id(), &arena)", struct_def.source_variable)
+                                } else if property_name == "label" {
+                                    format!("{}.label()", struct_def.source_variable)
+                                } else if property_name == "from_node" {
+                                    format!(
+                                        "uuid_str({}.from_node(), &arena)",
+                                        struct_def.source_variable
+                                    )
+                                } else if property_name == "to_node" {
+                                    format!(
+                                        "uuid_str({}.to_node(), &arena)",
+                                        struct_def.source_variable
+                                    )
+                                } else if property_name == "data" {
+                                    format!("{}.data()", struct_def.source_variable)
+                                } else if property_name == "score" {
+                                    format!("{}.score()", struct_def.source_variable)
+                                } else {
+                                    // Regular schema field - use property_name for get_property
+                                    format!(
+                                        "{}.get_property(\"{}\")",
+                                        struct_def.source_variable, property_name
+                                    )
+                                }
                             }
                         };
                         writeln!(f, "        {}: {},", field.name, field_value)?;
@@ -1888,41 +1902,48 @@ impl Query {
                         } else {
                             // Get property name from source if available (for field remapping)
                             let field_info = &struct_def.field_infos[field_idx];
-                            let property_name = match &field_info.source {
-                                crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name } => {
-                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
-                                },
-                                crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name } => {
-                                    property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
-                                },
-                                _ => &field.name,
-                            };
 
-                            // Use property_name to determine access method
-                            if property_name == "id" {
-                                format!("uuid_str({}.id(), &arena)", struct_def.source_variable)
-                            } else if property_name == "label" {
-                                format!("{}.label()", struct_def.source_variable)
-                            } else if property_name == "from_node" {
-                                format!(
-                                    "uuid_str({}.from_node(), &arena)",
-                                    struct_def.source_variable
-                                )
-                            } else if property_name == "to_node" {
-                                format!(
-                                    "uuid_str({}.to_node(), &arena)",
-                                    struct_def.source_variable
-                                )
-                            } else if property_name == "data" {
-                                format!("{}.data()", struct_def.source_variable)
-                            } else if property_name == "score" {
-                                format!("{}.score()", struct_def.source_variable)
+                            // Handle computed expressions (e.g., ADD, COUNT operations)
+                            if let crate::helixc::generator::return_values::ReturnFieldSource::ComputedExpression { expression } = &field_info.source {
+                                use crate::helixc::generator::computed_expr::generate_computed_expression;
+                                generate_computed_expression(expression, &struct_def.source_variable)
                             } else {
-                                // Regular schema field - use property_name for get_property
-                                format!(
-                                    "{}.get_property(\"{}\")",
-                                    struct_def.source_variable, property_name
-                                )
+                                let property_name = match &field_info.source {
+                                    crate::helixc::generator::return_values::ReturnFieldSource::ImplicitField { property_name } => {
+                                        property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                    },
+                                    crate::helixc::generator::return_values::ReturnFieldSource::SchemaField { property_name } => {
+                                        property_name.as_ref().map(|s| s.as_str()).unwrap_or(&field.name)
+                                    },
+                                    _ => &field.name,
+                                };
+
+                                // Use property_name to determine access method
+                                if property_name == "id" {
+                                    format!("uuid_str({}.id(), &arena)", struct_def.source_variable)
+                                } else if property_name == "label" {
+                                    format!("{}.label()", struct_def.source_variable)
+                                } else if property_name == "from_node" {
+                                    format!(
+                                        "uuid_str({}.from_node(), &arena)",
+                                        struct_def.source_variable
+                                    )
+                                } else if property_name == "to_node" {
+                                    format!(
+                                        "uuid_str({}.to_node(), &arena)",
+                                        struct_def.source_variable
+                                    )
+                                } else if property_name == "data" {
+                                    format!("{}.data()", struct_def.source_variable)
+                                } else if property_name == "score" {
+                                    format!("{}.score()", struct_def.source_variable)
+                                } else {
+                                    // Regular schema field - use property_name for get_property
+                                    format!(
+                                        "{}.get_property(\"{}\")",
+                                        struct_def.source_variable, property_name
+                                    )
+                                }
                             }
                         };
                         writeln!(f, "        {}: {},", field.name, field_value)?;
