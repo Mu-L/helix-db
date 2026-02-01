@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
+use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
 use helix_cli::{AuthAction, CloudDeploymentTypeCommand, DashboardAction, MetricsAction};
+use std::io::IsTerminal;
 use std::path::PathBuf;
+use tui_banner::{Align, Banner, ColorMode, Fill, Gradient, Palette};
 
 mod cleanup;
 mod commands;
@@ -23,7 +26,7 @@ mod utils;
 #[command(version)]
 struct Cli {
     /// Suppress output (errors and final result only)
-    #[arg(short, long, global = true)]
+    #[arg(long, global = true)]
     quiet: bool,
 
     /// Show detailed output with timing information
@@ -31,7 +34,7 @@ struct Cli {
     verbose: bool,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -46,7 +49,7 @@ enum Commands {
         template: String,
 
         /// Queries directory path (defaults to ./db/)
-        #[arg(short = 'q', long = "queries-path", default_value = "./db/")]
+        #[arg(short, long = "queries-path", default_value = "./db/")]
         queries_path: String,
 
         #[command(subcommand)]
@@ -186,7 +189,7 @@ enum Commands {
         path: Option<String>,
 
         /// Directory to move .hx files to (defaults to ./db/)
-        #[arg(short = 'q', long = "queries-dir", default_value = "./db/")]
+        #[arg(short, long = "queries-dir", default_value = "./db/")]
         queries_dir: String,
 
         /// Name for the default local instance (defaults to "dev")
@@ -223,6 +226,125 @@ enum Commands {
     },
 }
 
+/// Display the welcome banner and getting started guide
+fn display_welcome() {
+    let use_color = std::io::stdout().is_terminal();
+
+    // Generate ASCII art banner using tui-banner
+
+    if let Ok(banner) = Banner::new("> HELIX DB") {
+        let banner = banner
+            .color_mode(ColorMode::TrueColor)
+            .gradient(Gradient::vertical(Palette::from_hex(&[
+                "#ff7f17", // light orange
+                "#e36600", // orange
+                "#8f4000", // dark orange
+            ])))
+            .fill(Fill::Keep)
+            .dither()
+            .targets("░▒▓")
+            .checker(3)
+            .align(Align::Center)
+            .padding(3)
+            .render();
+
+        println!("{banner}");
+    }
+
+    // Version info
+    let version = env!("CARGO_PKG_VERSION");
+    if use_color {
+        println!(
+            "  {} {}\n",
+            "Helix DB CLI".bold(),
+            format!("v{}", version).dimmed()
+        );
+    } else {
+        println!("  Helix DB CLI v{}\n", version);
+    }
+
+    // Getting Started section
+    println!(
+        "{}",
+        if use_color {
+            "Getting Started".bold().to_string()
+        } else {
+            "Getting Started".to_string()
+        }
+    );
+    println!();
+    print_command("helix init", "Create a new Helix project", use_color);
+    print_command(
+        "helix init cloud",
+        "Create a cloud-deployed project",
+        use_color,
+    );
+    print_command("helix build", "Build your project", use_color);
+    print_command("helix push", "Deploy/start an instance", use_color);
+
+    println!();
+    println!(
+        "{}",
+        if use_color {
+            "Common Commands".bold().to_string()
+        } else {
+            "Common Commands".to_string()
+        }
+    );
+    println!();
+    print_command("helix status", "Show status of all instances", use_color);
+    print_command("helix logs", "View logs for an instance", use_color);
+    print_command(
+        "helix dashboard start",
+        "Launch the Helix Dashboard",
+        use_color,
+    );
+    print_command("helix auth login", "Login to Helix Cloud", use_color);
+
+    println!();
+    println!(
+        "{}",
+        if use_color {
+            "Help & Info".bold().to_string()
+        } else {
+            "Help & Info".to_string()
+        }
+    );
+    println!();
+    print_command("helix --help", "Show all available commands", use_color);
+    print_command(
+        "helix <command> --help",
+        "Show help for a specific command",
+        use_color,
+    );
+
+    println!();
+    if use_color {
+        println!(
+            "  {} {}",
+            "Docs:".dimmed(),
+            "https://docs.helix-db.com"
+                .truecolor(253, 169, 66)
+                .underline()
+        );
+    } else {
+        println!("  Docs: https://docs.helix-db.com");
+    }
+    println!();
+}
+
+fn print_command(cmd: &str, desc: &str, use_color: bool) {
+    if use_color {
+        println!(
+            "  {}  {}",
+            cmd.truecolor(255, 165, 54).bold(),
+            desc.dimmed()
+        );
+    } else {
+        println!("  {:30} {}", cmd, desc);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize error reporting
@@ -243,50 +365,59 @@ async fn main() -> Result<()> {
     output::Verbosity::set(output::Verbosity::from_flags(cli.quiet, cli.verbose));
 
     let result = match cli.command {
-        Commands::Init {
-            path,
-            template,
-            queries_path,
-            cloud,
-        } => commands::init::run(path, template, queries_path, cloud).await,
-        Commands::Add { cloud } => commands::add::run(cloud).await,
-        Commands::Check { instance } => commands::check::run(instance, &metrics_sender).await,
-        Commands::Compile { output, path } => commands::compile::run(output, path).await,
-        Commands::Build { instance, bin } => commands::build::run(instance, bin, &metrics_sender)
-            .await
-            .map(|_| ()),
-        Commands::Push { instance, dev } => {
-            commands::push::run(instance, dev, &metrics_sender).await
+        None => {
+            display_welcome();
+            Ok(())
         }
-        Commands::Sync { instance } => commands::sync::run(instance).await,
-        Commands::Start { instance } => commands::start::run(instance).await,
-        Commands::Stop { instance } => commands::stop::run(instance).await,
-        Commands::Status => commands::status::run().await,
-        Commands::Logs {
-            instance,
-            live,
-            range,
-            start,
-            end,
-        } => commands::logs::run(instance, live, range, start, end).await,
-        Commands::Auth { action } => commands::auth::run(action).await,
-        Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
-        Commands::Delete { instance } => commands::delete::run(instance).await,
-        Commands::Metrics { action } => commands::metrics::run(action).await,
-        Commands::Dashboard { action } => commands::dashboard::run(action).await,
-        Commands::Update { force } => commands::update::run(force).await,
-        Commands::Migrate {
-            path,
-            queries_dir,
-            instance_name,
-            port,
-            dry_run,
-            no_backup,
-        } => {
-            commands::migrate::run(path, queries_dir, instance_name, port, dry_run, no_backup).await
-        }
-        Commands::Backup { instance, output } => commands::backup::run(output, instance).await,
-        Commands::Feedback { message } => commands::feedback::run(message).await,
+        Some(cmd) => match cmd {
+            Commands::Init {
+                path,
+                template,
+                queries_path,
+                cloud,
+            } => commands::init::run(path, template, queries_path, cloud).await,
+            Commands::Add { cloud } => commands::add::run(cloud).await,
+            Commands::Check { instance } => commands::check::run(instance, &metrics_sender).await,
+            Commands::Compile { output, path } => commands::compile::run(output, path).await,
+            Commands::Build { instance, bin } => {
+                commands::build::run(instance, bin, &metrics_sender)
+                    .await
+                    .map(|_| ())
+            }
+            Commands::Push { instance, dev } => {
+                commands::push::run(instance, dev, &metrics_sender).await
+            }
+            Commands::Sync { instance } => commands::sync::run(instance).await,
+            Commands::Start { instance } => commands::start::run(instance).await,
+            Commands::Stop { instance } => commands::stop::run(instance).await,
+            Commands::Status => commands::status::run().await,
+            Commands::Logs {
+                instance,
+                live,
+                range,
+                start,
+                end,
+            } => commands::logs::run(instance, live, range, start, end).await,
+            Commands::Auth { action } => commands::auth::run(action).await,
+            Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
+            Commands::Delete { instance } => commands::delete::run(instance).await,
+            Commands::Metrics { action } => commands::metrics::run(action).await,
+            Commands::Dashboard { action } => commands::dashboard::run(action).await,
+            Commands::Update { force } => commands::update::run(force).await,
+            Commands::Migrate {
+                path,
+                queries_dir,
+                instance_name,
+                port,
+                dry_run,
+                no_backup,
+            } => {
+                commands::migrate::run(path, queries_dir, instance_name, port, dry_run, no_backup)
+                    .await
+            }
+            Commands::Backup { instance, output } => commands::backup::run(output, instance).await,
+            Commands::Feedback { message } => commands::feedback::run(message).await,
+        },
     };
 
     // Shutdown metrics sender
