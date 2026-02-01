@@ -227,7 +227,7 @@ enum Commands {
 }
 
 /// Display the welcome banner and getting started guide
-fn display_welcome() {
+fn display_welcome(update_available: Option<String>) {
     let use_color = std::io::stdout().is_terminal();
 
     // Generate ASCII art banner using tui-banner
@@ -252,7 +252,7 @@ fn display_welcome() {
     }
 
     // Version info
-    let version = env!("CARGO_PKG_VERSION");
+    let version = update::current_version();
     if use_color {
         println!(
             "  {} {}\n",
@@ -261,6 +261,28 @@ fn display_welcome() {
         );
     } else {
         println!("  Helix DB CLI v{}\n", version);
+    }
+
+    // Update notification (after banner and version)
+    if let Some(latest_version) = update_available {
+        if use_color {
+            println!(
+                "  │ {} {} {} {}",
+                "Update available:",
+                format!("v{}", version),
+                "➜",
+                format!("v{}", latest_version)
+                    .green()
+                    .bold()
+            );
+            println!(
+                "  │ Run '{}' to upgrade\n",
+                "helix update".truecolor(255, 165, 54).bold()
+            );
+        } else {
+            println!("  | Update available: v{} ➜ v{}", version, latest_version);
+            println!("  | Run 'helix update' to upgrade\n");
+        }
     }
 
     // Getting Started section
@@ -357,7 +379,7 @@ async fn main() -> Result<()> {
     metrics_sender.send_cli_install_event_if_first_time();
 
     // Check for updates before processing commands
-    update::check_for_updates().await?;
+    let update_available = update::check_for_updates().await?;
 
     let cli = Cli::parse();
 
@@ -366,7 +388,7 @@ async fn main() -> Result<()> {
 
     let result = match cli.command {
         None => {
-            display_welcome();
+            display_welcome(update_available);
             Ok(())
         }
         Some(cmd) => match cmd {
