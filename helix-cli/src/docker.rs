@@ -707,11 +707,11 @@ networks:
     /// Check if an instance container exists (running or stopped)
     pub fn instance_exists(&self, instance_name: &str) -> Result<bool> {
         let statuses = self.get_project_status()?;
-        let target_container_name = format!("helix_{instance_name}_app");
+        let target_container_name = self.container_name(instance_name);
 
         Ok(statuses
             .iter()
-            .any(|status| status.container_name.contains(&target_container_name)))
+            .any(|status| status.container_name == target_container_name))
     }
 
     /// Get status of all Docker/Podman containers for this project
