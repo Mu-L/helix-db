@@ -1,6 +1,6 @@
 use crate::helixc::analyzer::error_codes::*;
 use crate::helixc::analyzer::utils::{
-    DEFAULT_VAR_NAME, VariableInfo, check_identifier_is_fieldtype,
+    DEFAULT_VAR_NAME, VariableInfo, check_identifier_is_fieldtype, validate_embed_string_type,
 };
 use crate::helixc::generator::bool_ops::{Contains, IsIn, PropertyEq, PropertyNeq};
 use crate::helixc::generator::source_steps::{SearchVector, VFromID, VFromType};
@@ -549,6 +549,7 @@ pub(crate) fn validate_traversal<'a>(
                     let embed_data = match &e.value {
                         EvaluatesToString::Identifier(i) => {
                             type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
+                            validate_embed_string_type(ctx, original_query, sv.loc.clone(), scope, i.as_str());
                             EmbedData {
                                 data: gen_identifier_or_param(
                                     original_query,
@@ -2441,6 +2442,7 @@ pub(crate) fn validate_traversal<'a>(
                                     scope,
                                     id.as_str(),
                                 );
+                                validate_embed_string_type(ctx, original_query, embed.loc.clone(), scope, id.as_str());
                                 EmbedData {
                                     data: gen_identifier_or_param(
                                         original_query,

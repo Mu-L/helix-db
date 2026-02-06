@@ -138,6 +138,8 @@ pub enum ErrorCode {
     E658,
     /// `E659` - `WHERE clause expression does not evaluate to a boolean`
     E659,
+    /// `E660` - `Embed() argument must be a String`
+    E660,
 
     /// `W101` - `query has no return`
     W101,
@@ -215,6 +217,7 @@ impl ErrorCode {
             ErrorCode::E657 => "step requires a previous step",
             ErrorCode::E658 => "field not found in object type",
             ErrorCode::E659 => "WHERE clause expression is not a boolean",
+            ErrorCode::E660 => "Embed() argument must be a String",
             // Warnings
             ErrorCode::W101 => "query has no return",
         }
@@ -284,6 +287,7 @@ impl std::fmt::Display for ErrorCode {
             ErrorCode::E657 => write!(f, "E657"),
             ErrorCode::E658 => write!(f, "E658"),
             ErrorCode::E659 => write!(f, "E659"),
+            ErrorCode::E660 => write!(f, "E660"),
             ErrorCode::W101 => write!(f, "W101"),
         }
     }
@@ -392,6 +396,7 @@ implement_error_code!(E656, "unsupported type conversion from `{}`" => { type_na
 implement_error_code!(E657, "step `{}` requires a previous step but none was found" => { step_name }, "ensure this step follows a property access" => {});
 implement_error_code!(E658, "field `{}` not found in object type" => { field_name }, "check the field name or use a valid field" => {});
 implement_error_code!(E659, "WHERE clause expression should evaluate to a boolean, but got a `{}` traversal" => { expression_type }, "wrap the traversal with `EXISTS(...)` to check if any results exist" => {});
+implement_error_code!(E660, "Embed() requires a String argument, but got `{}`" => { actual_type }, "ensure the argument passed to Embed() is of type String" => {});
 
 #[macro_export]
 macro_rules! generate_error {
