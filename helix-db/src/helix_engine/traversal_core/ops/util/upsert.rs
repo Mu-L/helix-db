@@ -311,31 +311,30 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
         'txn,
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
-        let result = (|| -> Result<TraversalValue<'arena>, GraphError> {
-            let label_hash = hash_label(label, None);
-            let out_key = HelixGraphStorage::out_edge_key(&from_node, &label_hash);
-            let existing_edge: Option<Edge> = self
+        let label_hash = hash_label(label, None);
+        let out_key = HelixGraphStorage::out_edge_key(&from_node, &label_hash);
+        let existing_edge: Result<Option<Edge>, GraphError> = (|| {
+            let Some(iter) = self
                 .storage
                 .out_edges_db
                 .lazily_decode_data()
-                .get_duplicates(self.txn, &out_key)
-                .ok()
-                .flatten()
-                .and_then(|iter| {
-                    iter.filter_map(|item| item.ok()).find_map(|(_, data)| {
-                        let data = data.decode().ok()?;
-                        let (edge_id, node_id) =
-                            HelixGraphStorage::unpack_adj_edge_data(data).ok()?;
-                        if node_id == to_node {
-                            self.storage.get_edge(self.txn, &edge_id, self.arena).ok()
-                        } else {
-                            None
-                        }
-                    })
-                });
-
+                .get_duplicates(self.txn, &out_key)?
+            else {
+                return Ok(None);
+            };
+            for item in iter {
+                let (_, data) = item?;
+                let data = data.decode().map_err(|e| GraphError::DecodeError(e.to_string()))?;
+                let (edge_id, node_id) = HelixGraphStorage::unpack_adj_edge_data(data)?;
+                if node_id == to_node {
+                    return Ok(Some(self.storage.get_edge(self.txn, &edge_id, self.arena)?));
+                }
+            }
+            Ok(None)
+        })();
+        let result = (|| -> Result<TraversalValue<'arena>, GraphError> {
             match existing_edge {
-                Some(mut edge) => {
+                Ok(Some(mut edge)) => {
                     // Update existing edge - merge properties
                     match edge.properties {
                         None => {
@@ -385,7 +384,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     )?;
                     Ok(TraversalValue::Edge(edge))
                 }
-                None => {
+                Ok(None) => {
                     // Create new edge
                     let version = self.storage.version_info.get_latest(label);
                     let properties = if props.is_empty() {
@@ -428,6 +427,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     )?;
                     Ok(TraversalValue::Edge(edge))
                 }
+                Err(e) => Err(e),
             }
         })();
 
