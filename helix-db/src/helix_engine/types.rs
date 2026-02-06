@@ -85,8 +85,13 @@ impl fmt::Display for GraphError {
 impl From<HeedError> for GraphError {
     fn from(error: HeedError) -> Self {
         match error {
-            HeedError::Mdb(MdbError::KeyExist) => GraphError::DuplicateKey(error.to_string()),
-            _ => GraphError::StorageError(error.to_string()),
+            // HeedError::Mdb(MdbError::KeyExist) => GraphError::DuplicateKey(error.to_string()),
+            HeedError::Decoding(e) | HeedError::Encoding(e) => {
+                GraphError::ConversionError(e.to_string())
+            }
+            HeedError::Io(e) => GraphError::Io(e),
+            HeedError::Mdb(e) => GraphError::StorageError(e.to_string()),
+            HeedError::EnvAlreadyOpened => GraphError::StorageError("Env already open".to_string()),
         }
     }
 }
