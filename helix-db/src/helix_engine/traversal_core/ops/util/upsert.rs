@@ -193,7 +193,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                             |v| (old_k, v.clone()),
                                         )
                                 })
-                                .chain(diff.into_iter());
+                                .chain(diff);
 
                             // make new props, updated by current props
                             let new_map = ImmutablePropertiesMap::new(
@@ -311,32 +311,29 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
         'txn,
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
-        // Look up existing edge by from_node + to_node + label (ignore source iterator)
-        // This fixes issue #850 where UpsertE was incorrectly using the first edge
-        // from the source iterator instead of finding the edge by its endpoints.
-        let label_hash = hash_label(label, None);
-        let out_key = HelixGraphStorage::out_edge_key(&from_node, &label_hash);
-
-        let existing_edge: Option<Edge> = self
-            .storage
-            .out_edges_db
-            .lazily_decode_data()
-            .get_duplicates(self.txn, &out_key)
-            .ok()
-            .flatten()
-            .and_then(|iter| {
-                iter.filter_map(|item| item.ok()).find_map(|(_, data)| {
-                    let data = data.decode().ok()?;
-                    let (edge_id, node_id) = HelixGraphStorage::unpack_adj_edge_data(data).ok()?;
-                    if node_id == to_node {
-                        self.storage.get_edge(self.txn, &edge_id, self.arena).ok()
-                    } else {
-                        None
-                    }
-                })
-            });
-
         let result = (|| -> Result<TraversalValue<'arena>, GraphError> {
+            let label_hash = hash_label(label, None);
+            let out_key = HelixGraphStorage::out_edge_key(&from_node, &label_hash);
+            let existing_edge: Option<Edge> = self
+                .storage
+                .out_edges_db
+                .lazily_decode_data()
+                .get_duplicates(self.txn, &out_key)
+                .ok()
+                .flatten()
+                .and_then(|iter| {
+                    iter.filter_map(|item| item.ok()).find_map(|(_, data)| {
+                        let data = data.decode().ok()?;
+                        let (edge_id, node_id) =
+                            HelixGraphStorage::unpack_adj_edge_data(data).ok()?;
+                        if node_id == to_node {
+                            self.storage.get_edge(self.txn, &edge_id, self.arena).ok()
+                        } else {
+                            None
+                        }
+                    })
+                });
+
             match existing_edge {
                 Some(mut edge) => {
                     // Update existing edge - merge properties
@@ -369,7 +366,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                             |v| (old_k, v.clone()),
                                         )
                                 })
-                                .chain(diff.into_iter());
+                                .chain(diff);
 
                             let new_map = ImmutablePropertiesMap::new(
                                 old.len() + len_diff,
@@ -577,7 +574,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                             |v| (old_k, v.clone()),
                                         )
                                 })
-                                .chain(diff.into_iter());
+                                .chain(diff);
 
                             // make new props, updated by current props
                             let new_map = ImmutablePropertiesMap::new(
@@ -787,7 +784,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                             |v| (old_k, v.clone()),
                                         )
                                 })
-                                .chain(diff.into_iter());
+                                .chain(diff);
 
                             // make new props, updated by current props
                             let new_map = ImmutablePropertiesMap::new(

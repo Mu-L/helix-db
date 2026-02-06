@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use core::fmt;
-use heed3::{Error as HeedError, MdbError};
+use heed3::Error as HeedError;
 use serde::{Deserialize, Serialize};
 use sonic_rs::Error as SonicError;
 use std::{fmt::Display, net::AddrParseError, str::Utf8Error, string::FromUtf8Error};
