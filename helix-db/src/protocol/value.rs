@@ -211,6 +211,19 @@ impl Ord for Value {
                     _ => unreachable!(),
                 },
             },
+            (Value::Date(d), Value::String(s)) | (Value::String(s), Value::Date(d)) => {
+                match Date::new(&Value::String(s.clone())) {
+                    Ok(parsed) => {
+                        let cmp = d.cmp(&parsed);
+                        if matches!((self, other), (Value::String(_), Value::Date(_))) {
+                            cmp.reverse()
+                        } else {
+                            cmp
+                        }
+                    }
+                    Err(_) => Ordering::Equal,
+                }
+            }
             (_, _) => Ordering::Equal,
         }
     }
@@ -280,6 +293,12 @@ impl PartialEq<Value> for Value {
                 }
                 _ => false,
             },
+
+            (Value::Date(d), Value::String(s)) | (Value::String(s), Value::Date(d)) => {
+                Date::new(&Value::String(s.clone()))
+                    .map(|parsed| d == &parsed)
+                    .unwrap_or(false)
+            }
 
             _ => false,
         }
@@ -1932,7 +1951,7 @@ where
 impl From<chrono::DateTime<Utc>> for Value {
     #[inline]
     fn from(dt: chrono::DateTime<Utc>) -> Self {
-        Value::String(dt.to_rfc3339())
+        Value::Date(dt.into())
     }
 }
 
@@ -2590,7 +2609,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_value_from_datetime() {
         let dt = Utc::now();
         let val = Value::from(dt);
