@@ -4,7 +4,7 @@ use itertools::Itertools;
 use crate::{
     helix_engine::{
         bm25::bm25::{BM25, BM25Flatten},
-        storage_core::HelixGraphStorage,
+        storage_core::{storage_methods::StorageMethods, HelixGraphStorage},
         traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
         vector_core::{hnsw::HNSW, vector::HVector},
@@ -351,7 +351,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
     }
 
     fn upsert_e(
-        mut self,
+        self,
         label: &'arena str,
         from_node: u128,
         to_node: u128,
@@ -364,8 +364,37 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
     > {
         let mut result: Result<TraversalValue, GraphError> = Ok(TraversalValue::Empty);
 
-        match self.inner.next() {
-            Some(Ok(TraversalValue::Edge(mut edge))) => {
+        // Look up existing edge by from_node + to_node + label (ignore source iterator)
+        // This fixes issue #850 where UpsertE was incorrectly using the first edge
+        // from the source iterator instead of finding the edge by its endpoints.
+        let label_hash = hash_label(label, None);
+        let out_key = HelixGraphStorage::out_edge_key(&from_node, &label_hash);
+
+        let existing_edge: Option<Edge> = self
+            .storage
+            .out_edges_db
+            .lazily_decode_data()
+            .get_duplicates(self.txn, &out_key)
+            .ok()
+            .flatten()
+            .and_then(|iter| {
+                iter.filter_map(|item| item.ok())
+                    .find_map(|(_, data)| {
+                        let data = data.decode().ok()?;
+                        let (edge_id, node_id) =
+                            HelixGraphStorage::unpack_adj_edge_data(data).ok()?;
+                        if node_id == to_node {
+                            self.storage
+                                .get_edge(self.txn, &edge_id, self.arena)
+                                .ok()
+                        } else {
+                            None
+                        }
+                    })
+            });
+
+        match existing_edge {
+            Some(mut edge) => {
                 // Update existing edge - merge properties
                 match edge.properties {
                     None => {
@@ -419,9 +448,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     Err(e) => result = Err(GraphError::from(e)),
                 }
             }
-            Some(Err(e)) => {
-                result = Err(e);
-            }
             None => {
                 // Create new edge
                 let version = self.storage.version_info.get_latest(label);
@@ -460,7 +486,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                 }
 
                 // Insert into out_edges_db
-                let label_hash = hash_label(edge.label, None);
                 if let Err(e) = self.storage.out_edges_db.put_with_flags(
                     self.txn,
                     PutFlags::APPEND_DUP,
@@ -483,9 +508,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                 if result.is_ok() {
                     result = Ok(TraversalValue::Edge(edge));
                 }
-            }
-            Some(Ok(_)) => {
-                // Non-edge value in iterator - ignore
             }
         }
 
