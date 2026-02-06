@@ -180,7 +180,7 @@ impl<'a> DockerManager<'a> {
         let workspace = self.project.instance_workspace(instance_name);
         let project_name = self.compose_project_name(instance_name);
 
-        let mut full_args = vec!["--project-name", &project_name];
+        let mut full_args = vec!["-p", &project_name];
         full_args.extend(args);
 
         let output = Command::new(self.runtime.binary())
