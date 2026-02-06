@@ -297,10 +297,11 @@ pub(crate) fn infer_expr_type<'a>(
                                                         match field.field_type == FieldType::Date {
                                                             true => match Date::new(value) {
                                                                 Ok(date) => {
-                                                                    GeneratedValue::Literal(
-                                                                        GenRef::Literal(
-                                                                            date.to_rfc3339(),
-                                                                        ),
+                                                                    GeneratedValue::Primitive(
+                                                                        GenRef::Std(format!(
+                                                                            "DateTime::parse_from_rfc3339(\"{}\").unwrap().with_timezone(&Utc)",
+                                                                            date.to_rfc3339()
+                                                                        )),
                                                                     )
                                                                 }
                                                                 Err(_) => {
@@ -553,10 +554,11 @@ pub(crate) fn infer_expr_type<'a>(
                                                         match field.field_type == FieldType::Date {
                                                             true => match Date::new(value) {
                                                                 Ok(date) => {
-                                                                    GeneratedValue::Literal(
-                                                                        GenRef::Literal(
-                                                                            date.to_rfc3339(),
-                                                                        ),
+                                                                    GeneratedValue::Primitive(
+                                                                        GenRef::Std(format!(
+                                                                            "DateTime::parse_from_rfc3339(\"{}\").unwrap().with_timezone(&Utc)",
+                                                                            date.to_rfc3339()
+                                                                        )),
                                                                     )
                                                                 }
                                                                 Err(_) => {
@@ -939,10 +941,11 @@ pub(crate) fn infer_expr_type<'a>(
                                                         match field.field_type == FieldType::Date {
                                                             true => match Date::new(value) {
                                                                 Ok(date) => {
-                                                                    GeneratedValue::Literal(
-                                                                        GenRef::Literal(
-                                                                            date.to_rfc3339(),
-                                                                        ),
+                                                                    GeneratedValue::Primitive(
+                                                                        GenRef::Std(format!(
+                                                                            "DateTime::parse_from_rfc3339(\"{}\").unwrap().with_timezone(&Utc)",
+                                                                            date.to_rfc3339()
+                                                                        )),
                                                                     )
                                                                 }
                                                                 Err(_) => {
@@ -1988,5 +1991,34 @@ mod tests {
         assert!(result.is_ok());
         let (diagnostics, _) = result.unwrap();
         assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E202));
+    }
+
+    // ============================================================================
+    // WHERE Clause Boolean Check Tests
+    // ============================================================================
+
+    #[test]
+    fn test_where_clause_non_boolean_traversal() {
+        let source = r#"
+            N::Indicator { name: String }
+            N::TimeParameter { value: String }
+            E::HasTimeParameter { From: Indicator, To: TimeParameter }
+
+            QUERY GetIndicators(time_vals: [String]) =>
+                indicators <- N<Indicator>
+                    ::WHERE(
+                        _::Out<HasTimeParameter>
+                        ::WHERE(_::{value}::IS_IN(time_vals))
+                    )
+                RETURN indicators
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E659));
     }
 }

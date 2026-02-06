@@ -776,7 +776,7 @@ pub(crate) fn validate_traversal<'a>(
                 // For intermediate object steps, we don't track fields for return values
                 // Fields are only tracked when this traversal is used in a RETURN statement
                 let mut fields_out = vec![];
-                cur_ty = validate_object(
+                match validate_object(
                     ctx,
                     &cur_ty,
                     obj,
@@ -785,12 +785,18 @@ pub(crate) fn validate_traversal<'a>(
                     &mut fields_out,
                     scope,
                     gen_query,
-                )
-                .ok()?;
+                ) {
+                    Ok(new_ty) => cur_ty = new_ty,
+                    Err(_) => {
+                        // Error already recorded (e.g. E202 for invalid field).
+                        // Continue with Unknown so we don't emit a redundant E601.
+                        cur_ty = Type::Unknown;
+                    }
+                }
             }
 
             StepType::Where(expr) => {
-                let (_, stmt) = infer_expr_type(
+                let (ty, stmt) = infer_expr_type(
                     ctx,
                     expr,
                     scope,
@@ -806,13 +812,28 @@ pub(crate) fn validate_traversal<'a>(
                 let stmt = stmt.unwrap();
                 match stmt {
                     GeneratedStatement::Traversal(tr) => {
-                        gen_traversal
-                            .steps
-                            .push(Separator::Period(GeneratedStep::Where(Where::Ref(
-                                WhereRef {
-                                    expr: BoExp::Expr(tr),
-                                },
-                            ))));
+                        // Check that the traversal ends with a boolean operation.
+                        // If it doesn't (e.g., ends with Out, In, Where, etc.), it returns
+                        // nodes/edges rather than a boolean — user likely needs EXISTS(...).
+                        let last_is_bool_op = tr.steps.last()
+                            .is_some_and(|s| matches!(s.inner(), GeneratedStep::BoolOp(_)));
+                        if !last_is_bool_op {
+                            generate_error!(
+                                ctx,
+                                original_query,
+                                expr.loc.clone(),
+                                E659,
+                                ty.kind_str()
+                            );
+                        } else {
+                            gen_traversal
+                                .steps
+                                .push(Separator::Period(GeneratedStep::Where(Where::Ref(
+                                    WhereRef {
+                                        expr: BoExp::Expr(tr),
+                                    },
+                                ))));
+                        }
                     }
                     GeneratedStatement::BoExp(expr) => {
                         // if Not(Exists()) or Exits() need to modify the traversal to not collect
@@ -2792,7 +2813,7 @@ pub(crate) fn validate_traversal<'a>(
                 let obj = &cl.object;
                 let mut fields_out = vec![];
                 // Pass the singular type to validate_object so nested traversals use the correct type
-                cur_ty = validate_object(
+                match validate_object(
                     ctx,
                     &closure_param_type,
                     obj,
@@ -2801,8 +2822,14 @@ pub(crate) fn validate_traversal<'a>(
                     &mut fields_out,
                     scope,
                     gen_query,
-                )
-                .ok()?;
+                ) {
+                    Ok(new_ty) => cur_ty = new_ty,
+                    Err(_) => {
+                        // Error already recorded (e.g. E202 for invalid field).
+                        // Continue with Unknown so we don't emit a redundant E601.
+                        cur_ty = Type::Unknown;
+                    }
+                }
 
                 // Tag the main traversal with the closure parameter name
                 gen_traversal.closure_param_name = Some(cl.identifier.clone());
