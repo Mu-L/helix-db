@@ -15,6 +15,6 @@ V::File19Vec {
 
 
 
-QUERY file19() =>
-    vec <- N<File19>::Out<Follows>::SearchV<File19Vec>(Embed("hello"), 10)
+QUERY file19(item: String) =>
+    vec <- N<File19>::Out<Follows>::SearchV<File19Vec>(Embed(item), 10)
     RETURN vec

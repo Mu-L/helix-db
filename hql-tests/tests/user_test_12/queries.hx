@@ -61,12 +61,6 @@ QUERY LinkIndicatorToTimeParameter(
     RETURN link
 
 QUERY GetIndicatorsWithTimeParams(time_vals: [String]) =>
-    // Find indicators that have at least one matching time parameter node
-    indicators <- N<Indicator>
-        ::WHERE(
-            EXISTS(
-                _::Out<HasTimeParameter>
-                ::WHERE(_::{value}::IS_IN(time_vals))
-            )
-        )
+    // Find indicators connected to ALL matching time parameters (set intersection)
+    indicators <- N<TimeParameter>::WHERE(_::{value}::IS_IN(time_vals))::INTERSECT(_::In<HasTimeParameter>)
     RETURN indicators
