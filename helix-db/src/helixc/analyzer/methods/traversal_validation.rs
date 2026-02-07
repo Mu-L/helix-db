@@ -878,6 +878,42 @@ pub(crate) fn validate_traversal<'a>(
                     }
                 }
             }
+            StepType::Intersect(expr) => {
+                let (ty, stmt) = infer_expr_type(
+                    ctx,
+                    expr,
+                    scope,
+                    original_query,
+                    Some(cur_ty.clone()),
+                    gen_query,
+                );
+                if stmt.is_none() {
+                    return Some(cur_ty.clone());
+                }
+                let stmt = stmt.unwrap();
+                match stmt {
+                    GeneratedStatement::Traversal(tr) => {
+                        gen_traversal
+                            .steps
+                            .push(Separator::Period(GeneratedStep::Intersect(
+                                crate::helixc::generator::traversal_steps::Intersect {
+                                    traversal: tr,
+                                },
+                            )));
+                        // The result type changes to whatever the sub-traversal returns
+                        cur_ty = ty;
+                    }
+                    _ => {
+                        generate_error!(
+                            ctx,
+                            original_query,
+                            expr.loc.clone(),
+                            E655,
+                            "INTERSECT requires a traversal expression"
+                        );
+                    }
+                }
+            }
             StepType::BooleanOperation(b_op) => {
                 let Some(step) = previous_step else {
                     generate_error!(

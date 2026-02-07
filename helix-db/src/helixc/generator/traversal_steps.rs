@@ -555,6 +555,9 @@ pub enum Step {
     // rerankers
     RerankRRF(RerankRRF),
     RerankMMR(RerankMMR),
+
+    // set operations
+    Intersect(Intersect),
 }
 impl Display for Step {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -601,6 +604,7 @@ impl Display for Step {
             Step::AggregateBy(aggregate_by) => write!(f, "{aggregate_by}"),
             Step::RerankRRF(rerank_rrf) => write!(f, "{rerank_rrf}"),
             Step::RerankMMR(rerank_mmr) => write!(f, "{rerank_mmr}"),
+            Step::Intersect(intersect) => write!(f, "{intersect}"),
         }
     }
 }
@@ -632,6 +636,7 @@ impl Debug for Step {
             Step::AggregateBy(_) => write!(f, "AggregateBy"),
             Step::RerankRRF(_) => write!(f, "RerankRRF"),
             Step::RerankMMR(_) => write!(f, "RerankMMR"),
+            Step::Intersect(_) => write!(f, "Intersect"),
         }
     }
 }
@@ -1346,5 +1351,23 @@ impl Display for RerankMMR {
             ),
             None => write!(f, "rerank(MMRReranker::new({lambda}).unwrap(), None)"),
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct Intersect {
+    pub traversal: Traversal,
+}
+impl Display for Intersect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "intersect(|val, db, txn, arena| {{\
+                G::from_iter(&db, &txn, std::iter::once(val), &arena)\
+                    {}\
+                    .filter_map(|r| r.ok()).collect::<Vec<_>>()\
+            }})",
+            self.traversal.format_steps_only()
+        )
     }
 }
