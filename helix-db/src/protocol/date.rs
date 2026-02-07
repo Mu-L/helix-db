@@ -74,7 +74,7 @@ impl Date {
         }
     }
 
-    pub fn from_str(value: String) -> Result<Self, DateError> {
+    pub fn parse_from_string(value: String) -> Result<Self, DateError> {
         let date = match value.parse::<DateTime<Utc>>() {
             Ok(date) => date.with_timezone(&Utc),
             Err(e) => match value.parse::<NaiveDate>() {

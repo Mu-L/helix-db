@@ -175,16 +175,16 @@ pub(super) fn validate_embed_string_type(
     }
 
     // Check if it's a scope variable
-    if let Some(var_info) = scope.get(identifier_name) {
-        if var_info.ty != Type::Scalar(FieldType::String) {
-            generate_error!(
-                ctx,
-                original_query,
-                loc,
-                E660,
-                &var_info.ty.to_string()
-            );
-        }
+    if let Some(var_info) = scope.get(identifier_name)
+        && var_info.ty != Type::Scalar(FieldType::String)
+    {
+        generate_error!(
+            ctx,
+            original_query,
+            loc,
+            E660,
+            &var_info.ty.to_string()
+        );
     }
 }
 
