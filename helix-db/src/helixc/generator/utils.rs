@@ -500,6 +500,7 @@ use helix_db::{
     protocol::{
         response::Response,
         value::{casting::{cast, CastType}, Value},
+        date::Date,
         format::Format,
     },
     utils::{
