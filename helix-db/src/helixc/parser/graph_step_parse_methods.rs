@@ -404,6 +404,10 @@ impl HelixParser {
                 loc: step_pair.loc(),
                 step: StepType::Where(Box::new(self.parse_expression(step_pair)?)),
             }),
+            Rule::intersect_step => Ok(Step {
+                loc: step_pair.loc(),
+                step: StepType::Intersect(Box::new(self.parse_expression(step_pair)?)),
+            }),
             Rule::range_step => Ok(Step {
                 loc: step_pair.loc(),
                 step: StepType::Range(self.parse_range(step_pair)?),
