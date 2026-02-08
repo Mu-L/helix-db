@@ -41,6 +41,29 @@ pub enum Value {
 }
 
 impl Value {
+    fn variant_order(&self) -> u8 {
+        match self {
+            Value::String(_) => 0,
+            Value::F32(_) => 1,
+            Value::F64(_) => 2,
+            Value::I8(_) => 3,
+            Value::I16(_) => 4,
+            Value::I32(_) => 5,
+            Value::I64(_) => 6,
+            Value::U8(_) => 7,
+            Value::U16(_) => 8,
+            Value::U32(_) => 9,
+            Value::U64(_) => 10,
+            Value::U128(_) => 11,
+            Value::Date(_) => 12,
+            Value::Boolean(_) => 13,
+            Value::Id(_) => 14,
+            Value::Array(_) => 15,
+            Value::Object(_) => 16,
+            Value::Empty => 17,
+        }
+    }
+
     pub fn inner_stringify(&self) -> String {
         match self {
             Value::String(s) => s.to_string(),
@@ -221,10 +244,10 @@ impl Ord for Value {
                             cmp
                         }
                     }
-                    Err(_) => Ordering::Equal,
+                    Err(_) => self.variant_order().cmp(&other.variant_order()),
                 }
             }
-            (_, _) => Ordering::Equal,
+            (_, _) => self.variant_order().cmp(&other.variant_order()),
         }
     }
 }
@@ -2725,12 +2748,21 @@ mod tests {
 
     #[test]
     fn test_value_ordering_mixed_types() {
-        // Non-comparable types should return Equal
-        assert_eq!(
-            Value::String("test".to_string()).cmp(&Value::I32(42)),
-            Ordering::Equal
-        );
-        assert_eq!(Value::Boolean(true).cmp(&Value::F64(3.14)), Ordering::Equal);
+        // Non-comparable types should return a consistent ordering based on variant
+        // discriminant, not Equal (which would violate the Ord contract since
+        // PartialEq returns false for these pairs).
+        let s = Value::String("test".to_string());
+        let i = Value::I32(42);
+        let b = Value::Boolean(true);
+        let f = Value::F64(3.14);
+
+        // Ordering must be consistent (antisymmetric)
+        assert_eq!(s.cmp(&i), i.cmp(&s).reverse());
+        assert_eq!(b.cmp(&f), f.cmp(&b).reverse());
+
+        // Ordering must not be Equal for different variant types
+        assert_ne!(s.cmp(&i), Ordering::Equal);
+        assert_ne!(b.cmp(&f), Ordering::Equal);
     }
 
     #[test]
