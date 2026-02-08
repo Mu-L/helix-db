@@ -2748,12 +2748,21 @@ mod tests {
 
     #[test]
     fn test_value_ordering_mixed_types() {
-        // Non-comparable types should return Equal
-        assert_eq!(
-            Value::String("test".to_string()).cmp(&Value::I32(42)),
-            Ordering::Equal
-        );
-        assert_eq!(Value::Boolean(true).cmp(&Value::F64(3.14)), Ordering::Equal);
+        // Non-comparable types should return a consistent ordering based on variant
+        // discriminant, not Equal (which would violate the Ord contract since
+        // PartialEq returns false for these pairs).
+        let s = Value::String("test".to_string());
+        let i = Value::I32(42);
+        let b = Value::Boolean(true);
+        let f = Value::F64(3.14);
+
+        // Ordering must be consistent (antisymmetric)
+        assert_eq!(s.cmp(&i), i.cmp(&s).reverse());
+        assert_eq!(b.cmp(&f), f.cmp(&b).reverse());
+
+        // Ordering must not be Equal for different variant types
+        assert_ne!(s.cmp(&i), Ordering::Equal);
+        assert_ne!(b.cmp(&f), Ordering::Equal);
     }
 
     #[test]
