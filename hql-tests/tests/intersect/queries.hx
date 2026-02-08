@@ -14,3 +14,7 @@ QUERY TagArticle(article_id: ID, tag_id: ID) =>
 QUERY ArticlesByAllTags(tag_names: [String]) =>
     articles <- N<Tag>::WHERE(_::{name}::IS_IN(tag_names))::INTERSECT(_::In<HasTag>)
     RETURN articles
+
+QUERY ArticlesByAllTagsTitle(tag_names: [String],name: String) =>
+    articles <- N<Tag>::WHERE(_::{name}::IS_IN(tag_names))::INTERSECT(_::In<HasTag>)::WHERE(_::{title}::EQ(name))
+    RETURN articles

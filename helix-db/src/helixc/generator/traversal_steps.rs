@@ -1365,7 +1365,7 @@ impl Display for Intersect {
             "intersect(|val, db, txn, arena| {{\
                 G::from_iter(&db, &txn, std::iter::once(val), &arena)\
                     {}\
-                    .filter_map(|r| r.ok()).collect::<Vec<_>>()\
+                    .collect::<Result<Vec<_>, _>>()\
             }})",
             self.traversal.format_steps_only()
         )

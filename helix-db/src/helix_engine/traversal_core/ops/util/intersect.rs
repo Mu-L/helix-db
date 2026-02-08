@@ -27,7 +27,7 @@ pub trait IntersectAdapter<'db, 'arena, 'txn>: Iterator {
             &'db HelixGraphStorage,
             &'txn RoTxn<'db>,
             &'arena bumpalo::Bump,
-        ) -> Vec<TraversalValue<'arena>>;
+        ) -> Result<Vec<TraversalValue<'arena>>, GraphError>;
 }
 
 impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphError>>>
@@ -48,17 +48,27 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             &'db HelixGraphStorage,
             &'txn RoTxn<'db>,
             &'arena bumpalo::Bump,
-        ) -> Vec<TraversalValue<'arena>>,
+        ) -> Result<Vec<TraversalValue<'arena>>, GraphError>,
     {
         let storage = self.storage;
         let txn = self.txn;
         let arena = self.arena;
 
-        // Collect all upstream items
-        let upstream: Vec<TraversalValue<'arena>> = self
-            .inner
-            .filter_map(|item| item.ok())
-            .collect();
+        // Collect all upstream items, propagating errors
+        let mut upstream: Vec<TraversalValue<'arena>> = Vec::new();
+        for item in self.inner {
+            match item {
+                Ok(val) => upstream.push(val),
+                Err(e) => {
+                    return RoTraversalIterator {
+                        storage,
+                        arena,
+                        txn,
+                        inner: vec![Err(e)].into_iter(),
+                    };
+                }
+            }
+        }
 
         if upstream.is_empty() {
             return RoTraversalIterator {
@@ -69,11 +79,21 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             };
         }
 
-        // Run all sub-traversals
-        let mut all_results: Vec<Vec<TraversalValue<'arena>>> = upstream
-            .into_iter()
-            .map(|item| f(item, storage, txn, arena))
-            .collect();
+        // Run all sub-traversals, propagating errors
+        let mut all_results: Vec<Vec<TraversalValue<'arena>>> = Vec::new();
+        for item in upstream {
+            match f(item, storage, txn, arena) {
+                Ok(results) => all_results.push(results),
+                Err(e) => {
+                    return RoTraversalIterator {
+                        storage,
+                        arena,
+                        txn,
+                        inner: vec![Err(e)].into_iter(),
+                    };
+                }
+            }
+        }
 
         // Sort by size — smallest first so intersection shrinks fastest
         all_results.sort_by_key(|r| r.len());

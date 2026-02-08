@@ -141,8 +141,7 @@ fn test_intersect_user_scenario() {
         .intersect(|val, db, txn, arena| {
             G::from_iter(db, txn, std::iter::once(val), arena)
                 .out_node("links")
-                .filter_map(|r| r.ok())
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -230,8 +229,7 @@ fn test_intersect_basic() {
         .intersect(|val, db, txn, arena| {
             G::from_iter(db, txn, std::iter::once(val), arena)
                 .out_node("rel")
-                .filter_map(|r| r.ok())
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -295,8 +293,7 @@ fn test_intersect_empty_result() {
         .intersect(|val, db, txn, arena| {
             G::from_iter(db, txn, std::iter::once(val), arena)
                 .out_node("rel")
-                .filter_map(|r| r.ok())
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -351,8 +348,7 @@ fn test_intersect_single_upstream() {
         .intersect(|val, db, txn, arena| {
             G::from_iter(db, txn, std::iter::once(val), arena)
                 .out_node("rel")
-                .filter_map(|r| r.ok())
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -386,8 +382,7 @@ fn test_intersect_empty_upstream() {
         .intersect(|val, db, txn, arena| {
             G::from_iter(db, txn, std::iter::once(val), arena)
                 .out_node("rel")
-                .filter_map(|r| r.ok())
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -445,8 +440,7 @@ fn test_intersect_all_same_targets() {
         .intersect(|val, db, txn, arena| {
             G::from_iter(db, txn, std::iter::once(val), arena)
                 .out_node("rel")
-                .filter_map(|r| r.ok())
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -521,8 +515,7 @@ fn test_intersect_one_upstream_has_no_edges() {
         .intersect(|val, db, txn, arena| {
             G::from_iter(db, txn, std::iter::once(val), arena)
                 .out_node("rel")
-                .filter_map(|r| r.ok())
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -607,8 +600,7 @@ fn test_intersect_with_in_edges() {
         .intersect(|val, db, txn, arena| {
             G::from_iter(db, txn, std::iter::once(val), arena)
                 .in_node("points_to")
-                .filter_map(|r| r.ok())
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
