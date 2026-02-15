@@ -23,6 +23,14 @@ pub struct NestedTraversalInfo {
     pub own_closure_param: Option<String>, // This traversal's own closure parameter if it ends with a Closure step (e.g., "cluster")
 }
 
+/// Information about a computed expression field in an object selection
+/// Used for fields like `num_clusters: ADD(_::Out<HasRailwayCluster>::COUNT, _::Out<HasObjectCluster>::COUNT)`
+#[derive(Clone, Debug)]
+pub struct ComputedExpressionInfo {
+    pub field_name: String,
+    pub expression: Box<crate::helixc::parser::types::Expression>,
+}
+
 #[derive(Clone)]
 pub enum TraversalType {
     FromSingle(GenRef<String>),
@@ -129,6 +137,8 @@ pub struct Traversal {
     /// Maps output field name -> source property name for renamed fields
     /// e.g., "post" -> "content" for `post: content`, "file_id" -> "ID"
     pub field_name_mappings: std::collections::HashMap<String, String>,
+    /// Maps output field name -> computed expression info for fields like `num_clusters: ADD(...)`
+    pub computed_expressions: std::collections::HashMap<String, ComputedExpressionInfo>,
 }
 
 impl Display for Traversal {
@@ -409,6 +419,7 @@ impl Default for Traversal {
             is_reused_variable: false,
             closure_param_name: None,
             field_name_mappings: std::collections::HashMap::new(),
+            computed_expressions: std::collections::HashMap::new(),
         }
     }
 }
@@ -820,6 +831,108 @@ impl Display for WhereRef {
             }})",
                         prop, bool_expr
                     );
+                }
+            }
+
+            // Handle traversals with prefix steps before property access + BoolOp
+            // Pattern: [traversal steps...] + [PropertyFetch or ReservedPropertyAccess] + BoolOp
+            if is_val && traversal.steps.len() > 2 {
+                let last_idx = traversal.steps.len() - 1;
+                let second_last_idx = traversal.steps.len() - 2;
+
+                let last_step = traversal.steps[last_idx].inner();
+                let second_last_step = traversal.steps[second_last_idx].inner();
+
+                // Check if pattern matches: [...] + PropertyAccess + BoolOp
+                if let Step::BoolOp(bool_op) = last_step {
+                    // Build the prefix traversal steps (all steps except the last 2)
+                    let prefix_steps = &traversal.steps[..second_last_idx];
+
+                    // Generate the traversal chain for prefix steps
+                    let traversal_chain = prefix_steps
+                        .iter()
+                        .map(|sep| format!("{}", sep))
+                        .collect::<Vec<_>>()
+                        .join("");
+
+                    match second_last_step {
+                        // Case 1: PropertyFetch (e.g., _::ToN::{age}::EQ(id))
+                        Step::PropertyFetch(prop) => {
+                            let bool_expr = match bool_op {
+                                BoolOp::Eq(eq) => format!("{eq}"),
+                                BoolOp::Neq(neq) => format!("{neq}"),
+                                BoolOp::Gt(gt) => format!("{gt}"),
+                                BoolOp::Gte(gte) => format!("{gte}"),
+                                BoolOp::Lt(lt) => format!("{lt}"),
+                                BoolOp::Lte(lte) => format!("{lte}"),
+                                BoolOp::Contains(c) => format!("v{c}"),
+                                BoolOp::IsIn(i) => format!("v{i}"),
+                                BoolOp::PropertyEq(p) => format!("{p}"),
+                                BoolOp::PropertyNeq(p) => format!("{p}"),
+                            };
+
+                            return write!(
+                                f,
+                                "filter_ref(|val, txn|{{
+                if let Ok(val) = val {{
+                    Ok(G::from_iter(&db, &txn, std::iter::once(val.clone()), &arena)
+                        {}
+                        .next()
+                        .map_or(false, |res| {{
+                            res.map_or(false, |node| {{
+                                node.get_property({}).map_or(false, |v| {})
+                            }})
+                        }}))
+                }} else {{
+                    Ok(false)
+                }}
+            }})",
+                                traversal_chain, prop, bool_expr
+                            );
+                        }
+
+                        // Case 2: ReservedPropertyAccess (e.g., _::ToN::ID::EQ(id))
+                        Step::ReservedPropertyAccess(reserved_prop) => {
+                            let value_expr = match reserved_prop {
+                                ReservedProp::Id => "Value::Id(ID::from(node.id()))".to_string(),
+                                ReservedProp::Label => "Value::from(node.label())".to_string(),
+                            };
+                            let bool_expr = match bool_op {
+                                BoolOp::Eq(eq) => format!("{} == {}", value_expr, eq.right),
+                                BoolOp::Neq(neq) => format!("{} != {}", value_expr, neq.right),
+                                BoolOp::Gt(gt) => format!("{} > {}", value_expr, gt.right),
+                                BoolOp::Gte(gte) => format!("{} >= {}", value_expr, gte.right),
+                                BoolOp::Lt(lt) => format!("{} < {}", value_expr, lt.right),
+                                BoolOp::Lte(lte) => format!("{} <= {}", value_expr, lte.right),
+                                BoolOp::Contains(c) => format!("{}{}", value_expr, c),
+                                BoolOp::IsIn(i) => format!("{}{}", value_expr, i),
+                                BoolOp::PropertyEq(_) | BoolOp::PropertyNeq(_) => {
+                                    "compile_error!(\"PropertyEq/PropertyNeq cannot be used with reserved properties\")".to_string()
+                                }
+                            };
+
+                            return write!(
+                                f,
+                                "filter_ref(|val, txn|{{
+                if let Ok(val) = val {{
+                    Ok(G::from_iter(&db, &txn, std::iter::once(val.clone()), &arena)
+                        {}
+                        .next()
+                        .map_or(false, |res| {{
+                            res.map_or(false, |node| {{
+                                {}
+                            }})
+                        }}))
+                }} else {{
+                    Ok(false)
+                }}
+            }})",
+                                traversal_chain, bool_expr
+                            );
+                        }
+
+                        _ => {} // Fall through to default
+                    }
                 }
             }
         }

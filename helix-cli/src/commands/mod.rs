@@ -14,6 +14,7 @@ pub mod metrics;
 pub mod migrate;
 pub mod prune;
 pub mod push;
+pub mod restart;
 pub mod start;
 pub mod status;
 pub mod stop;

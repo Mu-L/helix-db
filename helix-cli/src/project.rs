@@ -117,6 +117,13 @@ fn find_project_root(start: &Path) -> Result<PathBuf, ProjectError> {
 }
 
 pub fn get_helix_cache_dir() -> Result<PathBuf, ProjectError> {
+    // Allow override for testing - tests can set HELIX_CACHE_DIR to use isolated directories
+    if let Ok(override_dir) = std::env::var("HELIX_CACHE_DIR") {
+        let helix_dir = PathBuf::from(override_dir);
+        std::fs::create_dir_all(&helix_dir)?;
+        return Ok(helix_dir);
+    }
+
     let home = dirs::home_dir().ok_or(ProjectError::HomeDirNotFound)?;
     let helix_dir = home.join(".helix");
 

@@ -116,6 +116,12 @@ enum Commands {
         instance: Option<String>,
     },
 
+    /// Restart an instance (stop then start)
+    Restart {
+        /// Instance name to restart (interactive selection if not provided)
+        instance: Option<String>,
+    },
+
     /// Show status of all instances
     Status,
 
@@ -412,7 +418,8 @@ async fn main() -> Result<()> {
             Commands::Sync { instance } => commands::sync::run(instance).await,
             Commands::Start { instance } => commands::start::run(instance).await,
             Commands::Stop { instance } => commands::stop::run(instance).await,
-            Commands::Status => commands::status::run().await,
+            Commands::Restart { instance } => commands::restart::run(instance).await,
+        Commands::Status => commands::status::run().await,
             Commands::Logs {
                 instance,
                 live,
