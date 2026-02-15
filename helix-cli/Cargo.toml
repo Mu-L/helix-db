@@ -34,6 +34,8 @@ heed3 = "0.22.0"
 open = "5.3"
 ratatui = "0.29"
 crossterm = "0.28"
+tui-banner = "0.2.3"
+
 
 [dev-dependencies]
 tempfile = "3.23.0"

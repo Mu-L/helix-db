@@ -106,11 +106,19 @@ async fn run_add_inner(
             // Authenticate and run workspace/project/cluster flow
             let credentials = crate::commands::auth::require_auth().await?;
             let project_name = &project_context.config.project.name;
-            let result =
+            let flow_result =
                 workspace_flow::run_workspace_project_cluster_flow(project_name, &credentials)
                     .await?;
 
-            match result {
+            if flow_result.resolved_project_name != project_context.config.project.name {
+                crate::output::info(&format!(
+                    "Updating project name in helix.toml to '{}' to match cloud project.",
+                    flow_result.resolved_project_name
+                ));
+                project_context.config.project.name = flow_result.resolved_project_name;
+            }
+
+            match flow_result.cluster {
                 ClusterResult::Standard(std_result) => {
                     let cloud_config = CloudInstanceConfig {
                         cluster_id: std_result.cluster_id,

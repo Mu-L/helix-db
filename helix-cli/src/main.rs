@@ -102,6 +102,10 @@ enum Commands {
     Sync {
         /// Instance name to sync from (interactive selection if not provided)
         instance: Option<String>,
+
+        /// Overwrite local files without confirmation prompts
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Start an instance (doesn't rebuild)
@@ -277,9 +281,7 @@ fn display_welcome(update_available: Option<String>) {
                 "Update available:",
                 format!("v{}", version),
                 "➜",
-                format!("v{}", latest_version)
-                    .green()
-                    .bold()
+                format!("v{}", latest_version).green().bold()
             );
             println!(
                 "  │ Run '{}' to upgrade\n",
@@ -415,11 +417,11 @@ async fn main() -> Result<()> {
             Commands::Push { instance, dev } => {
                 commands::push::run(instance, dev, &metrics_sender).await
             }
-            Commands::Sync { instance } => commands::sync::run(instance).await,
+            Commands::Sync { instance, yes } => commands::sync::run(instance, yes).await,
             Commands::Start { instance } => commands::start::run(instance).await,
             Commands::Stop { instance } => commands::stop::run(instance).await,
             Commands::Restart { instance } => commands::restart::run(instance).await,
-        Commands::Status => commands::status::run().await,
+            Commands::Status => commands::status::run().await,
             Commands::Logs {
                 instance,
                 live,

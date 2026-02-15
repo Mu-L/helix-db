@@ -50,6 +50,12 @@ pub async fn run(
     // Get instance config
     let instance_config = project.config.get_instance(&instance_name)?;
 
+    if let InstanceInfo::Enterprise(_) = &instance_config {
+        return Err(eyre!(
+            "Logs are not yet supported for enterprise instances. Use your infrastructure logs for now."
+        ));
+    }
+
     // Check auth early for Helix Cloud instances
     let credentials = if let InstanceInfo::Helix(_) = &instance_config {
         Some(require_auth().await?)

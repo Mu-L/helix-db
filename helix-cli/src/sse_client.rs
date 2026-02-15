@@ -51,12 +51,6 @@ pub enum SseEvent {
         message: Option<String>,
     },
 
-    /// Cluster creation: Checkout required (Stripe)
-    CheckoutRequired { url: String },
-
-    /// Cluster creation: Payment confirmed
-    PaymentConfirmed,
-
     /// Cluster creation: Creating project
     CreatingProject,
 
@@ -78,6 +72,12 @@ pub enum SseEvent {
 
     /// Deploy: Successfully redeployed (existing instance)
     Redeployed { url: String },
+
+    /// Deploy: Unified done event (dashboard/CLI parity path)
+    Done {
+        url: String,
+        auth_key: Option<String>,
+    },
 
     /// Deploy: Bad request error
     BadRequest { error: String },
@@ -150,8 +150,7 @@ impl SseClient {
                 }
                 Ok(Event::Message(message)) => {
                     // Parse the SSE event
-                    let sse_event: SseEvent = serde_json::from_str(&message.data)
-                        .map_err(|e| eyre!("Failed to parse SSE event: {}", e))?;
+                    let sse_event = parse_sse_event(&message.data)?;
 
                     // Call handler - if it returns false, stop processing
                     if !handler(sse_event)? {
@@ -167,6 +166,130 @@ impl SseClient {
         }
 
         Ok(())
+    }
+}
+
+pub(crate) fn parse_sse_event(payload: &str) -> Result<SseEvent> {
+    if let Ok(event) = serde_json::from_str::<SseEvent>(payload) {
+        return Ok(event);
+    }
+
+    let value: serde_json::Value = serde_json::from_str(payload)
+        .map_err(|e| eyre!("Failed to parse SSE event JSON: {}", e))?;
+
+    let event_type = value
+        .get("type")
+        .and_then(|t| t.as_str())
+        .ok_or_else(|| eyre!("Failed to parse SSE event: unsupported format"))?;
+
+    match event_type {
+        "progress" => Ok(SseEvent::Progress {
+            percentage: value
+                .get("percentage")
+                .and_then(|v| v.as_f64())
+                .unwrap_or_default(),
+            message: value
+                .get("message")
+                .and_then(|m| m.as_str())
+                .map(str::to_string),
+        }),
+        "log" => Ok(SseEvent::Log {
+            message: value
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            severity: value
+                .get("severity")
+                .and_then(|s| s.as_str())
+                .map(str::to_string),
+            timestamp: value
+                .get("timestamp")
+                .and_then(|t| t.as_str())
+                .map(str::to_string),
+        }),
+        "backfill_complete" => Ok(SseEvent::BackfillComplete),
+        "status_transition" => Ok(SseEvent::StatusTransition {
+            from: value
+                .get("from")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            to: value
+                .get("to")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            message: value
+                .get("message")
+                .and_then(|m| m.as_str())
+                .map(str::to_string),
+        }),
+        "success" => Ok(SseEvent::Success {
+            data: value
+                .get("data")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        }),
+        "validating_queries" => Ok(SseEvent::ValidatingQueries),
+        "building" => Ok(SseEvent::Building {
+            estimated_percentage: value
+                .get("estimated_percentage")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_default() as u16,
+        }),
+        "deploying" => Ok(SseEvent::Deploying),
+        "deployed" => Ok(SseEvent::Deployed {
+            url: value
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            auth_key: value
+                .get("auth_key")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        }),
+        "redeployed" => Ok(SseEvent::Redeployed {
+            url: value
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        }),
+        "done" => Ok(SseEvent::Done {
+            url: value
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            auth_key: value
+                .get("auth_key")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+        }),
+        "bad_request" => Ok(SseEvent::BadRequest {
+            error: value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Bad request")
+                .to_string(),
+        }),
+        "query_validation_error" => Ok(SseEvent::QueryValidationError {
+            error: value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Query validation failed")
+                .to_string(),
+        }),
+        "error" => Ok(SseEvent::Error {
+            error: value
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("Unknown SSE error")
+                .to_string(),
+        }),
+        other => Err(eyre!("Failed to parse SSE event type: {}", other)),
     }
 }
 
@@ -250,6 +373,42 @@ mod tests {
                 assert_eq!(percentage, 45.5);
             }
             _ => panic!("Wrong event type"),
+        }
+
+        // Internal-tagged logs event format used by /logs/live endpoints
+        let json = r#"{
+            "type": "log",
+            "message": "hello",
+            "severity": "info",
+            "timestamp": "2026-02-13T00:00:00Z"
+        }"#;
+        let event = parse_sse_event(json).unwrap();
+        match event {
+            SseEvent::Log {
+                message,
+                severity,
+                timestamp,
+            } => {
+                assert_eq!(message, "hello");
+                assert_eq!(severity.as_deref(), Some("info"));
+                assert_eq!(timestamp.as_deref(), Some("2026-02-13T00:00:00Z"));
+            }
+            _ => panic!("Wrong internal-tagged event type"),
+        }
+
+        // Internal-tagged deploy event format compatibility
+        let json = r#"{
+            "type": "building",
+            "estimated_percentage": 42
+        }"#;
+        let event = parse_sse_event(json).unwrap();
+        match event {
+            SseEvent::Building {
+                estimated_percentage,
+            } => {
+                assert_eq!(estimated_percentage, 42);
+            }
+            _ => panic!("Wrong internal-tagged deploy event type"),
         }
     }
 }

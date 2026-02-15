@@ -1,3 +1,5 @@
+use eyre::{Result, eyre};
+
 use crate::config::HelixConfig;
 use crate::errors::ProjectError;
 use std::env;
@@ -116,7 +118,7 @@ fn find_project_root(start: &Path) -> Result<PathBuf, ProjectError> {
     })
 }
 
-pub fn get_helix_cache_dir() -> Result<PathBuf, ProjectError> {
+pub fn get_helix_cache_dir() -> Result<PathBuf> {
     // Allow override for testing - tests can set HELIX_CACHE_DIR to use isolated directories
     if let Ok(override_dir) = std::env::var("HELIX_CACHE_DIR") {
         let helix_dir = PathBuf::from(override_dir);
@@ -124,30 +126,24 @@ pub fn get_helix_cache_dir() -> Result<PathBuf, ProjectError> {
         return Ok(helix_dir);
     }
 
-    let home = dirs::home_dir().ok_or(ProjectError::HomeDirNotFound)?;
+    let home = dirs::home_dir().ok_or_else(|| eyre!("Cannot find home directory"))?;
     let helix_dir = home.join(".helix");
 
     // Check if this is a fresh installation (no .helix directory exists)
     let is_fresh_install = !helix_dir.exists();
 
-    std::fs::create_dir_all(&helix_dir).map_err(|source| ProjectError::CreateDir {
-        path: helix_dir.clone(),
-        source,
-    })?;
+    std::fs::create_dir_all(&helix_dir)?;
 
     // For fresh installations, create .v2 marker to indicate this is a v2 helix directory
     if is_fresh_install {
         let v2_marker = helix_dir.join(".v2");
-        std::fs::write(&v2_marker, "").map_err(|source| ProjectError::WriteCacheMarker {
-            path: v2_marker,
-            source,
-        })?;
+        std::fs::write(&v2_marker, "")?;
     }
 
     Ok(helix_dir)
 }
 
-pub fn get_helix_repo_cache() -> Result<PathBuf, ProjectError> {
+pub fn get_helix_repo_cache() -> Result<PathBuf> {
     let helix_dir = get_helix_cache_dir()?;
     Ok(helix_dir.join("repo"))
 }

@@ -2,7 +2,7 @@
 
 use crate::DashboardAction;
 use crate::commands::auth::require_auth;
-use crate::commands::integrations::helix::CLOUD_AUTHORITY;
+use crate::commands::integrations::helix::cloud_base_url;
 use crate::config::{BuildMode, ContainerRuntime, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::metrics_sender::MetricsSender;
@@ -305,7 +305,8 @@ async fn check_dev_mode_requirement(
         // Reload the project context and push
         crate::commands::push::run(Some(instance_name.to_string()), false, &metrics_sender).await?;
     } else {
-        // For cloud instances, use the --dev flag
+        // For cloud instances, use a one-time --dev deploy override.
+        output::info("Using a one-time dev override for this redeploy; helix.toml is unchanged.");
         crate::commands::push::run(Some(instance_name.to_string()), true, &metrics_sender).await?;
     }
 
@@ -419,8 +420,9 @@ async fn prepare_environment_vars(
 fn get_cloud_url(instance_config: &InstanceInfo) -> Result<String> {
     match instance_config {
         InstanceInfo::Helix(config) => Ok(format!(
-            "https://{}/clusters/{}",
-            *CLOUD_AUTHORITY, config.cluster_id
+            "{}/clusters/{}",
+            cloud_base_url(),
+            config.cluster_id
         )),
         InstanceInfo::FlyIo(_) => Err(eyre!(
             "Fly.io instances are not yet supported for the dashboard"
@@ -430,8 +432,9 @@ fn get_cloud_url(instance_config: &InstanceInfo) -> Result<String> {
         )),
         InstanceInfo::Local(_) => Err(eyre!("Local instances should not call get_cloud_url")),
         InstanceInfo::Enterprise(config) => Ok(format!(
-            "https://{}/enterprise-clusters/{}",
-            *CLOUD_AUTHORITY, config.cluster_id
+            "{}/enterprise-clusters/{}",
+            cloud_base_url(),
+            config.cluster_id
         )),
     }
 }

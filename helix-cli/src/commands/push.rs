@@ -257,17 +257,19 @@ async fn push_cloud_instance(
             ecr.deploy_image(&docker, config, instance_name, &image_name)
                 .await?;
         }
-        CloudConfig::Helix(config) => {
+        CloudConfig::Helix(_) => {
             let helix = HelixManager::new(project);
-            // CLI --dev flag takes precedence, otherwise use build_mode from config
-            let build_mode = if dev {
-                BuildMode::Dev
+            let build_mode_override = if dev {
+                crate::output::warning(
+                    "Using one-time dev build override for this deploy; helix.toml build_mode is unchanged.",
+                );
+                Some(BuildMode::Dev)
             } else {
-                config.build_mode
+                None
             };
 
             helix
-                .deploy(None, instance_name.to_string(), build_mode)
+                .deploy(None, instance_name.to_string(), build_mode_override)
                 .await?;
         }
     }

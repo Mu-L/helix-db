@@ -123,10 +123,12 @@ async fn run_init_inner(
                     )
                     .await?;
 
+                    config.project.name = result.resolved_project_name;
+
                     // Backup config before saving
                     cleanup_tracker.backup_config(&config, config_path.clone());
 
-                    match result {
+                    match result.cluster {
                         ClusterResult::Standard(std_result) => {
                             let cloud_config = CloudInstanceConfig {
                                 cluster_id: std_result.cluster_id,

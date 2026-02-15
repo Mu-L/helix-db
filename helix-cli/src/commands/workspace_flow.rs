@@ -1,5 +1,5 @@
 use crate::commands::auth::Credentials;
-use crate::commands::integrations::helix::CLOUD_AUTHORITY;
+use crate::commands::integrations::helix::cloud_base_url;
 use crate::config::{AvailabilityMode, BuildMode, WorkspaceConfig};
 use crate::prompts;
 use eyre::{Result, eyre};
@@ -30,6 +30,16 @@ pub enum ClusterResult {
     Enterprise(EnterpriseClusterResult),
 }
 
+pub struct WorkspaceProjectClusterFlowResult {
+    pub cluster: ClusterResult,
+    pub resolved_project_name: String,
+}
+
+struct ResolvedProject {
+    id: String,
+    name: String,
+}
+
 // ============================================================================
 // API response types
 // ============================================================================
@@ -40,11 +50,23 @@ struct CliWorkspace {
     name: String,
     #[allow(dead_code)]
     url_slug: String,
+    #[serde(default = "default_workspace_type")]
+    workspace_type: String,
+}
+
+fn default_workspace_type() -> String {
+    "organization".to_string()
+}
+
+struct SelectedWorkspace {
+    id: String,
+    workspace_type: String,
 }
 
 #[derive(Deserialize)]
 struct CliBillingResponse {
     has_billing: bool,
+    #[allow(dead_code)]
     workspace_type: String,
     #[allow(dead_code)]
     plan: String,
@@ -77,35 +99,51 @@ struct CreateClusterResponse {
 pub async fn run_workspace_project_cluster_flow(
     project_name: &str,
     credentials: &Credentials,
-) -> Result<ClusterResult> {
+) -> Result<WorkspaceProjectClusterFlowResult> {
     let client = reqwest::Client::new();
-    let base_url = format!("https://{}", *CLOUD_AUTHORITY);
+    let base_url = cloud_base_url();
 
     // Step 1: Workspace selection
-    let workspace_id = select_or_load_workspace(&client, &base_url, credentials).await?;
+    let workspace = select_or_load_workspace(&client, &base_url, credentials).await?;
 
     // Step 2: Billing check
-    let billing = check_billing(&client, &base_url, credentials, &workspace_id).await?;
+    check_billing(&client, &base_url, credentials, &workspace.id).await?;
 
     // Step 3: Project matching
-    let project_id =
-        match_or_create_project(&client, &base_url, credentials, &workspace_id, project_name)
+    let resolved_project =
+        match_or_create_project(&client, &base_url, credentials, &workspace.id, project_name)
             .await?;
 
     // Step 4: Cluster type selection
-    let is_enterprise = billing.workspace_type == "enterprise";
-    let cluster_type = if is_enterprise {
+    let cluster_type = if workspace.workspace_type == "enterprise" {
         prompts::select_cluster_type()?
     } else {
+        crate::output::info("Selected workspace is not enterprise; creating a standard cluster.");
         "standard"
     };
 
     // Step 5/6: Configure and create cluster
     match cluster_type {
-        "enterprise" => {
-            create_enterprise_cluster_flow(&client, &base_url, credentials, &project_id).await
-        }
-        _ => create_standard_cluster_flow(&client, &base_url, credentials, &project_id).await,
+        "enterprise" => Ok(WorkspaceProjectClusterFlowResult {
+            cluster: create_enterprise_cluster_flow(
+                &client,
+                &base_url,
+                credentials,
+                &resolved_project.id,
+            )
+            .await?,
+            resolved_project_name: resolved_project.name,
+        }),
+        _ => Ok(WorkspaceProjectClusterFlowResult {
+            cluster: create_standard_cluster_flow(
+                &client,
+                &base_url,
+                credentials,
+                &resolved_project.id,
+            )
+            .await?,
+            resolved_project_name: resolved_project.name,
+        }),
     }
 }
 
@@ -113,12 +151,8 @@ async fn select_or_load_workspace(
     client: &reqwest::Client,
     base_url: &str,
     credentials: &Credentials,
-) -> Result<String> {
+) -> Result<SelectedWorkspace> {
     let mut workspace_config = WorkspaceConfig::load()?;
-
-    if workspace_config.has_workspace_id() {
-        return Ok(workspace_config.workspace_id.clone().unwrap());
-    }
 
     // Fetch workspaces
     let workspaces: Vec<CliWorkspace> = client
@@ -139,6 +173,21 @@ async fn select_or_load_workspace(
         ));
     }
 
+    if let Some(cached_workspace_id) = workspace_config.workspace_id.clone() {
+        if let Some(workspace) = workspaces.iter().find(|w| w.id == cached_workspace_id) {
+            return Ok(SelectedWorkspace {
+                id: workspace.id.clone(),
+                workspace_type: workspace.workspace_type.clone(),
+            });
+        }
+
+        crate::output::warning(
+            "Saved workspace selection is no longer available. Please select a workspace again.",
+        );
+        workspace_config.workspace_id = None;
+        workspace_config.save()?;
+    }
+
     // Convert for prompt
     let ws_for_prompt: Vec<crate::commands::sync::CliWorkspace> = workspaces
         .iter()
@@ -155,7 +204,15 @@ async fn select_or_load_workspace(
     workspace_config.workspace_id = Some(selected.clone());
     workspace_config.save()?;
 
-    Ok(selected)
+    let selected_workspace = workspaces
+        .iter()
+        .find(|w| w.id == selected)
+        .ok_or_else(|| eyre!("Selected workspace was not found in response"))?;
+
+    Ok(SelectedWorkspace {
+        id: selected_workspace.id.clone(),
+        workspace_type: selected_workspace.workspace_type.clone(),
+    })
 }
 
 async fn check_billing(
@@ -194,7 +251,7 @@ async fn match_or_create_project(
     credentials: &Credentials,
     workspace_id: &str,
     project_name: &str,
-) -> Result<String> {
+) -> Result<ResolvedProject> {
     // Fetch projects
     let projects: Vec<CliProject> = client
         .get(format!(
@@ -213,23 +270,18 @@ async fn match_or_create_project(
 
     // Try to find matching project by name
     if let Some(existing) = projects.iter().find(|p| p.name == project_name) {
-        let use_existing = prompts::confirm(&format!("Use existing project '{}'?", existing.name))?;
+        crate::output::info(&format!(
+            "Using existing project '{}' from your selected workspace.",
+            existing.name
+        ));
 
-        if use_existing {
-            return Ok(existing.id.clone());
-        }
-
-        // User doesn't want existing — prompt for new name
-        crate::output::warning(
-            "Note: choosing a different name will overwrite the project name in your helix.toml to avoid conflicts.",
-        );
-        let new_name = prompts::input_project_name(project_name)?;
-        let project_id =
-            create_project(client, base_url, credentials, workspace_id, &new_name).await?;
-        return Ok(project_id);
+        return Ok(ResolvedProject {
+            id: existing.id.clone(),
+            name: existing.name.clone(),
+        });
     }
 
-    // Project not found — offer to create
+    // Project not found — offer to create (with optional rename)
     let should_create =
         prompts::confirm(&format!("Project '{}' not found. Create it?", project_name))?;
 
@@ -237,9 +289,14 @@ async fn match_or_create_project(
         return Err(eyre!("Project creation cancelled"));
     }
 
+    let chosen_name = prompts::input_project_name(project_name)?;
     let project_id =
-        create_project(client, base_url, credentials, workspace_id, project_name).await?;
-    Ok(project_id)
+        create_project(client, base_url, credentials, workspace_id, &chosen_name).await?;
+
+    Ok(ResolvedProject {
+        id: project_id,
+        name: chosen_name,
+    })
 }
 
 async fn create_project(
