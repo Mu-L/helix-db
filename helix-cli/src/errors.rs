@@ -242,7 +242,13 @@ pub enum ProjectError {
         source: std::io::Error,
     },
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(Box<ConfigError>),
+}
+
+impl From<ConfigError> for ProjectError {
+    fn from(e: ConfigError) -> Self {
+        ProjectError::Config(Box::new(e))
+    }
 }
 
 #[derive(Debug, Error)]
