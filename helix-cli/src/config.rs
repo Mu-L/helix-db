@@ -58,10 +58,6 @@ impl WorkspaceConfig {
         Ok(())
     }
 
-    /// Check if workspace_id is set
-    pub fn has_workspace_id(&self) -> bool {
-        self.workspace_id.as_ref().is_some_and(|id| !id.is_empty())
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

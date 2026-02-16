@@ -277,10 +277,8 @@ fn display_welcome(update_available: Option<String>) {
     if let Some(latest_version) = update_available {
         if use_color {
             println!(
-                "  │ {} {} {} {}",
-                "Update available:",
-                format!("v{}", version),
-                "➜",
+                "  │ Update available: v{} ➜ {}",
+                version,
                 format!("v{}", latest_version).green().bold()
             );
             println!(

@@ -241,14 +241,6 @@ pub enum ProjectError {
         #[source]
         source: std::io::Error,
     },
-    #[error("failed to write cache marker at {path}: {source}")]
-    WriteCacheMarker {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("cannot find home directory")]
-    HomeDirNotFound,
     #[error(transparent)]
     Config(#[from] ConfigError),
 }
@@ -358,12 +350,6 @@ impl ProjectError {
                 CliError::new(format!("failed to create directory at {}", path.display()))
                     .with_caused_by(source.to_string())
             }
-            ProjectError::WriteCacheMarker { path, source } => CliError::new(format!(
-                "failed to write cache marker at {}",
-                path.display()
-            ))
-            .with_caused_by(source.to_string()),
-            ProjectError::HomeDirNotFound => CliError::new("cannot find home directory"),
             ProjectError::Config(config_error) => config_error.to_cli_error(),
         }
     }
