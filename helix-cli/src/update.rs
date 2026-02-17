@@ -114,7 +114,9 @@ fn is_newer_version(current: &str, latest: &str) -> bool {
     false
 }
 
-pub async fn check_for_updates() -> Result<()> {
+/// Check for updates and return the latest version if an update is available.
+/// Returns `Some(latest_version)` when an update is available, `None` otherwise.
+pub async fn check_for_updates() -> Result<Option<String>> {
     // Skip update check if not needed (to avoid slowing down every command)
     if !should_check_for_updates().unwrap_or(true) {
         // Still check cache for any previously found updates
@@ -123,21 +125,21 @@ pub async fn check_for_updates() -> Result<()> {
         let update_cache: UpdateCache = toml::from_str(&cache_content)?;
 
         let Some(latest) = update_cache.latest_version else {
-            return Ok(());
+            return Ok(None);
         };
 
         if is_newer_version(CURRENT_VERSION, &latest) {
-            print_update_available(&latest);
+            return Ok(Some(latest));
         }
-        return Ok(());
+        return Ok(None);
     }
 
     // Perform actual update check
     match fetch_latest_version().await {
         Ok(latest_version) => {
             if is_newer_version(CURRENT_VERSION, &latest_version) {
-                print_update_available(&latest_version);
-                save_update_check(Some(latest_version))?;
+                save_update_check(Some(latest_version.clone()))?;
+                return Ok(Some(latest_version));
             } else {
                 save_update_check(Some(latest_version))?;
             }
@@ -148,11 +150,10 @@ pub async fn check_for_updates() -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(None)
 }
 
-fn print_update_available(latest_version: &str) {
-    eprintln!("[UPDATE] New version available: v{CURRENT_VERSION} -> v{latest_version}",);
-    eprintln!("         Run 'helix update' to upgrade");
-    eprintln!();
+/// Get the current version of the CLI.
+pub const fn current_version() -> &'static str {
+    CURRENT_VERSION
 }

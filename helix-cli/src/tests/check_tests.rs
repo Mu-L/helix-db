@@ -61,7 +61,7 @@ async fn test_check_nonexistent_instance_fails() {
         result.is_err(),
         "Check should fail for nonexistent instance"
     );
-    let error_msg = format!("{:?}", result.err().unwrap());
+    let error_msg = result.err().unwrap().to_string();
     assert!(
         error_msg.contains("not found") || error_msg.contains("nonexistent"),
         "Error should mention instance not found"
@@ -78,7 +78,7 @@ async fn test_check_fails_without_schema() {
 
     let result = run(None, &metrics_sender).await;
     assert!(result.is_err(), "Check should fail without schema");
-    let error_msg = format!("{:?}", result.err().unwrap());
+    let error_msg = result.err().unwrap().to_string();
     assert!(
         error_msg.contains("schema") || error_msg.contains("N::") || error_msg.contains("E::"),
         "Error should mention missing schema definitions"
@@ -110,7 +110,7 @@ async fn test_check_fails_without_helix_toml() {
         result.is_err(),
         "Check should fail without helix.toml in project"
     );
-    let error_msg = format!("{:?}", result.err().unwrap());
+    let error_msg = result.err().unwrap().to_string();
     assert!(
         error_msg.contains("not found") || error_msg.contains("helix.toml"),
         "Error should mention missing helix.toml"

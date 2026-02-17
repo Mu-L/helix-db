@@ -1,7 +1,7 @@
 //! Log source abstraction for local Docker and cloud instances.
 
 use crate::commands::auth::Credentials;
-use crate::commands::integrations::helix::CLOUD_AUTHORITY;
+use crate::commands::integrations::helix::cloud_base_url;
 use crate::config::ContainerRuntime;
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
@@ -209,19 +209,20 @@ fn query_local_logs(
 /// Stream live logs from Helix Cloud via SSE.
 async fn stream_cloud_logs<F>(
     cluster_id: &str,
-    user_id: &str,
+    _user_id: &str,
     api_key: &str,
     on_line: &mut F,
 ) -> Result<()>
 where
     F: FnMut(String),
 {
-    let url = format!("https://{}/logs/live", *CLOUD_AUTHORITY);
+    let url = format!(
+        "{}/api/cli/clusters/{}/logs/live",
+        cloud_base_url(),
+        cluster_id
+    );
 
-    let client = SseClient::new(url)
-        .header("x-api-key", api_key)
-        .header("x-cluster-id", cluster_id)
-        .header("x-user-id", user_id);
+    let client = SseClient::new(url).header("x-api-key", api_key);
 
     client
         .connect(|event| {
@@ -241,7 +242,7 @@ where
 /// Query historical logs from Helix Cloud.
 async fn query_cloud_logs(
     cluster_id: &str,
-    user_id: &str,
+    _user_id: &str,
     api_key: &str,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
@@ -251,18 +252,15 @@ async fn query_cloud_logs(
     let end_ts = end.timestamp();
 
     let url = format!(
-        "https://{}/logs/range?start_time={}&end_time={}",
-        *CLOUD_AUTHORITY, start_ts, end_ts
+        "{}/api/cli/clusters/{}/logs/range?start_time={}&end_time={}",
+        cloud_base_url(),
+        cluster_id,
+        start_ts,
+        end_ts
     );
 
     let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .header("x-api-key", api_key)
-        .header("x-cluster-id", cluster_id)
-        .header("x-user-id", user_id)
-        .send()
-        .await?;
+    let response = client.get(&url).header("x-api-key", api_key).send().await?;
 
     if !response.status().is_success() {
         let error = response.text().await.unwrap_or_default();

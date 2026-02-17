@@ -1,6 +1,6 @@
 use crate::{
     AuthAction,
-    commands::integrations::helix::CLOUD_AUTHORITY,
+    commands::integrations::helix::cloud_base_url,
     metrics_sender::{load_metrics_config, save_metrics_config},
     output,
     sse_client::{SseClient, SseEvent},
@@ -201,7 +201,7 @@ pub async fn require_auth() -> Result<Credentials> {
 }
 
 pub async fn github_login() -> Result<(String, String)> {
-    let url = format!("https://{}/github-login", *CLOUD_AUTHORITY);
+    let url = format!("{}/github-login", cloud_base_url());
     let client = SseClient::new(url).post();
 
     let mut api_key: Option<String> = None;

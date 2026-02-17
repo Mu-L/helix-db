@@ -62,7 +62,8 @@ Instead of the `helix` command in the commands below, use `cargo run -- <args pa
 
 ## Data Operations
 
-- `helix pull my-instance` to sync .hql files from remote; verify local queries updated from instance
+- `helix sync my-instance` to sync source files from remote; verify local queries updated from instance
+- `helix sync` in a workspace without helix.toml; ensure standard and enterprise clusters are selectable
 
 ## Authentication
 

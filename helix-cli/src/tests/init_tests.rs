@@ -153,7 +153,7 @@ async fn test_init_fails_if_helix_toml_exists() {
     .await;
 
     assert!(result.is_err(), "Init should fail if helix.toml exists");
-    let error_msg = format!("{:?}", result.err().unwrap());
+    let error_msg = result.err().unwrap().to_string();
     assert!(
         error_msg.contains("already exists"),
         "Error should mention file already exists"
