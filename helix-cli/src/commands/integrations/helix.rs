@@ -2,7 +2,7 @@ use crate::commands::auth::require_auth;
 use crate::config::{BuildMode, CloudInstanceConfig, DbConfig, InstanceInfo};
 use crate::output;
 use crate::project::ProjectContext;
-use crate::sse_client::{SseEvent, SseProgressHandler};
+use crate::sse_client::{SseEvent, SseProgressHandler, parse_sse_event};
 use crate::utils::helixc_utils::{collect_hx_files, generate_content};
 use crate::utils::print_error;
 use eyre::{Result, eyre};
@@ -11,7 +11,7 @@ use reqwest_eventsource::RequestBuilderExt;
 use serde_json::json;
 use std::collections::HashMap;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 // use uuid::Uuid;
 
@@ -19,12 +19,24 @@ const DEFAULT_CLOUD_AUTHORITY: &str = "cloud.helix-db.com";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
     std::env::var("CLOUD_AUTHORITY").unwrap_or_else(|_| {
         if cfg!(debug_assertions) {
-            "localhost:3000".to_string()
+            "localhost:8080".to_string()
         } else {
             DEFAULT_CLOUD_AUTHORITY.to_string()
         }
     })
 });
+
+pub fn cloud_base_url() -> String {
+    let authority = CLOUD_AUTHORITY.as_str();
+
+    if authority.starts_with("http://") || authority.starts_with("https://") {
+        authority.to_string()
+    } else if authority.starts_with("localhost") || authority.starts_with("127.0.0.1") {
+        format!("http://{authority}")
+    } else {
+        format!("https://{authority}")
+    }
+}
 
 pub struct HelixManager<'a> {
     project: &'a ProjectContext,
@@ -35,6 +47,7 @@ impl<'a> HelixManager<'a> {
         Self { project }
     }
 
+    #[allow(dead_code)]
     pub async fn create_instance_config(
         &self,
         _instance_name: &str,
@@ -124,7 +137,7 @@ impl<'a> HelixManager<'a> {
         &self,
         path: Option<String>,
         cluster_name: String,
-        build_mode: BuildMode,
+        build_mode_override: Option<BuildMode>,
     ) -> Result<()> {
         let credentials = require_auth().await?;
         let path = match get_path_or_cwd(path.as_ref()) {
@@ -174,33 +187,88 @@ impl<'a> HelixManager<'a> {
         let mut schema_content = String::new();
         let mut queries_map: HashMap<String, String> = HashMap::new();
 
+        let queries_root = path
+            .join(&self.project.config.project.queries)
+            .canonicalize()
+            .unwrap_or_else(|_| path.join(&self.project.config.project.queries));
+
         for file in &content.files {
-            if file.name.ends_with("schema.hx") {
+            let file_path = Path::new(&file.name);
+            let relative_name = file_path
+                .strip_prefix(&queries_root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| {
+                    file_path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| file.name.clone())
+                });
+
+            if relative_name.ends_with("schema.hx") {
                 schema_content = file.content.clone();
             } else {
-                queries_map.insert(file.name.clone(), file.content.clone());
+                queries_map.insert(relative_name, file.content.clone());
             }
         }
 
-        let dev_profile = build_mode == BuildMode::Dev;
+        // Build a pruned HelixConfig containing only [project] and the deployed [cloud.<instance>]
+        let helix_toml_content = {
+            use crate::config::HelixConfig;
+            let pruned = HelixConfig {
+                project: self.project.config.project.clone(),
+                local: HashMap::new(),
+                cloud: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        cluster_name.clone(),
+                        crate::config::CloudConfig::from(
+                            self.project.config.get_instance(&cluster_name)?,
+                        ),
+                    );
+                    m
+                },
+                enterprise: HashMap::new(),
+            };
+            match toml::to_string_pretty(&pruned) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    output::warning(&format!("Failed to serialize pruned helix.toml: {}", e));
+                    None
+                }
+            }
+        };
 
         // Prepare deployment payload
+        let build_mode_override = build_mode_override
+            .map(|mode| match mode {
+                BuildMode::Dev => Ok("dev"),
+                BuildMode::Release => Ok("release"),
+                BuildMode::Debug => {
+                    Err(eyre!("debug build mode is not supported for cloud deploys"))
+                }
+            })
+            .transpose()?;
+
         let payload = json!({
             "schema": schema_content,
             "queries": queries_map,
             "env_vars": cluster_info.env_vars,
             "instance_name": cluster_name,
-            "dev_profile": dev_profile
+            "helix_toml": helix_toml_content,
+            "build_mode_override": build_mode_override
         });
 
         // Initiate deployment with SSE streaming
         let client = reqwest::Client::new();
-        let deploy_url = format!("https://{}/deploy", *CLOUD_AUTHORITY);
+        let deploy_url = format!(
+            "{}/api/cli/clusters/{}/deploy",
+            cloud_base_url(),
+            cluster_info.cluster_id
+        );
 
         let mut event_source = client
             .post(&deploy_url)
             .header("x-api-key", &credentials.helix_admin_key)
-            .header("x-cluster-id", &cluster_info.cluster_id)
             .header("Content-Type", "application/json")
             .json(&payload)
             .eventsource()?;
@@ -218,7 +286,7 @@ impl<'a> HelixManager<'a> {
                 }
                 Ok(reqwest_eventsource::Event::Message(message)) => {
                     // Parse the SSE event
-                    let sse_event: SseEvent = match serde_json::from_str(&message.data) {
+                    let sse_event: SseEvent = match parse_sse_event(&message.data) {
                         Ok(event) => event,
                         Err(e) => {
                             progress.println(&format!("Failed to parse event: {}", e));
@@ -372,6 +440,21 @@ impl<'a> HelixManager<'a> {
                             event_source.close();
                             break;
                         }
+                        SseEvent::Done { url, auth_key } => {
+                            deployment_success = true;
+
+                            if let Some(auth_key) = auth_key {
+                                progress.finish("Deployment completed!");
+                                output::success(&format!("Deployed to: {}", url));
+                                output::info(&format!("Your auth key: {}", auth_key));
+                            } else {
+                                progress.finish("Redeployment completed!");
+                                output::success(&format!("Redeployed to: {}", url));
+                            }
+
+                            event_source.close();
+                            break;
+                        }
                         SseEvent::BadRequest { error } => {
                             progress.finish_error(&format!("Bad request: {}", error));
                             event_source.close();
@@ -402,6 +485,150 @@ impl<'a> HelixManager<'a> {
         Ok(())
     }
 
+    /// Deploy .rs files to an enterprise cluster
+    pub(crate) async fn deploy_enterprise(
+        &self,
+        path: Option<String>,
+        cluster_name: String,
+        config: &crate::config::EnterpriseInstanceConfig,
+    ) -> Result<()> {
+        let credentials = require_auth().await?;
+        let path = match get_path_or_cwd(path.as_ref()) {
+            Ok(path) => path,
+            Err(e) => {
+                return Err(eyre!("Error: failed to get path: {e}"));
+            }
+        };
+
+        // Collect .rs files from queries directory
+        let queries_dir = path.join(&self.project.config.project.queries);
+        let mut rs_files: HashMap<String, String> = HashMap::new();
+
+        if queries_dir.exists() {
+            for entry in std::fs::read_dir(&queries_dir)? {
+                let entry = entry?;
+                let file_path = entry.path();
+                if file_path.is_file() && file_path.extension().map(|e| e == "rs").unwrap_or(false)
+                {
+                    let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
+                    let content = std::fs::read_to_string(&file_path)
+                        .map_err(|e| eyre!("Failed to read {}: {}", filename, e))?;
+                    rs_files.insert(filename, content);
+                }
+            }
+        }
+
+        if rs_files.is_empty() {
+            return Err(eyre!(
+                "No .rs files found in queries directory: {}",
+                queries_dir.display()
+            ));
+        }
+
+        // Build pruned helix.toml
+        let helix_toml_content = {
+            use crate::config::HelixConfig;
+            let pruned = HelixConfig {
+                project: self.project.config.project.clone(),
+                local: HashMap::new(),
+                cloud: HashMap::new(),
+                enterprise: {
+                    let mut m = HashMap::new();
+                    m.insert(cluster_name.clone(), config.clone());
+                    m
+                },
+            };
+            toml::to_string_pretty(&pruned).ok()
+        };
+
+        let payload = json!({
+            "rs_files": rs_files,
+            "instance_name": cluster_name,
+            "helix_toml": helix_toml_content,
+        });
+
+        // Send to enterprise deploy endpoint
+        let client = reqwest::Client::new();
+        let deploy_url = format!(
+            "{}/api/cli/enterprise-clusters/{}/deploy",
+            cloud_base_url(),
+            config.cluster_id
+        );
+
+        let mut event_source = client
+            .post(&deploy_url)
+            .header("x-api-key", &credentials.helix_admin_key)
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .eventsource()?;
+
+        let progress = SseProgressHandler::new("Deploying enterprise cluster...");
+        let mut deployment_success = false;
+
+        use futures_util::StreamExt;
+
+        while let Some(event) = event_source.next().await {
+            match event {
+                Ok(reqwest_eventsource::Event::Open) => {}
+                Ok(reqwest_eventsource::Event::Message(message)) => {
+                    let sse_event: SseEvent = match parse_sse_event(&message.data) {
+                        Ok(event) => event,
+                        Err(e) => {
+                            progress.println(&format!("Failed to parse event: {}", e));
+                            continue;
+                        }
+                    };
+
+                    match sse_event {
+                        SseEvent::Progress {
+                            percentage,
+                            message,
+                        } => {
+                            progress.set_progress(percentage);
+                            if let Some(msg) = message {
+                                progress.set_message(&msg);
+                            }
+                        }
+                        SseEvent::Log { message, .. } => {
+                            progress.println(&message);
+                        }
+                        SseEvent::Success { .. } => {
+                            deployment_success = true;
+                            progress.finish("Enterprise deployment completed!");
+                            event_source.close();
+                            break;
+                        }
+                        SseEvent::Error { error } => {
+                            progress.finish_error(&format!("Error: {}", error));
+                            event_source.close();
+                            return Err(eyre!("Enterprise deployment failed: {}", error));
+                        }
+                        SseEvent::Deployed { url, auth_key } => {
+                            deployment_success = true;
+                            progress.finish("Enterprise deployment completed!");
+                            output::success(&format!("Deployed to: {}", url));
+                            output::info(&format!("Your auth key: {}", auth_key));
+                            event_source.close();
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                Err(err) => {
+                    progress.finish_error(&format!("Stream error: {}", err));
+                    return Err(eyre!("Enterprise deployment stream error: {}", err));
+                }
+            }
+        }
+
+        if !deployment_success {
+            return Err(eyre!("Enterprise deployment did not complete successfully"));
+        }
+
+        output::success("Enterprise cluster deployed successfully");
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub(crate) async fn redeploy(
         &self,
@@ -415,7 +642,7 @@ impl<'a> HelixManager<'a> {
 
         // Call deploy with the same logic
         // In the future, this could use a different endpoint or add a "redeploy" flag
-        self.deploy(path, cluster_name, build_mode).await
+        self.deploy(path, cluster_name, Some(build_mode)).await
     }
 }
 

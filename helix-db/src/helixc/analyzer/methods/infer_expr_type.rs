@@ -1,7 +1,8 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
 use crate::helixc::analyzer::utils::{
-    DEFAULT_VAR_NAME, VariableInfo, is_in_scope, is_param, validate_id_type,
+    DEFAULT_VAR_NAME, VariableInfo, is_in_scope, is_param, validate_embed_string_type,
+    validate_id_type,
 };
 use crate::helixc::generator::utils::EmbedData;
 use crate::{
@@ -297,10 +298,11 @@ pub(crate) fn infer_expr_type<'a>(
                                                         match field.field_type == FieldType::Date {
                                                             true => match Date::new(value) {
                                                                 Ok(date) => {
-                                                                    GeneratedValue::Literal(
-                                                                        GenRef::Literal(
-                                                                            date.to_rfc3339(),
-                                                                        ),
+                                                                    GeneratedValue::Primitive(
+                                                                        GenRef::Std(format!(
+                                                                            "DateTime::parse_from_rfc3339(\"{}\").unwrap().with_timezone(&Utc)",
+                                                                            date.to_rfc3339()
+                                                                        )),
                                                                     )
                                                                 }
                                                                 Err(_) => {
@@ -553,10 +555,11 @@ pub(crate) fn infer_expr_type<'a>(
                                                         match field.field_type == FieldType::Date {
                                                             true => match Date::new(value) {
                                                                 Ok(date) => {
-                                                                    GeneratedValue::Literal(
-                                                                        GenRef::Literal(
-                                                                            date.to_rfc3339(),
-                                                                        ),
+                                                                    GeneratedValue::Primitive(
+                                                                        GenRef::Std(format!(
+                                                                            "DateTime::parse_from_rfc3339(\"{}\").unwrap().with_timezone(&Utc)",
+                                                                            date.to_rfc3339()
+                                                                        )),
                                                                     )
                                                                 }
                                                                 Err(_) => {
@@ -939,10 +942,11 @@ pub(crate) fn infer_expr_type<'a>(
                                                         match field.field_type == FieldType::Date {
                                                             true => match Date::new(value) {
                                                                 Ok(date) => {
-                                                                    GeneratedValue::Literal(
-                                                                        GenRef::Literal(
-                                                                            date.to_rfc3339(),
-                                                                        ),
+                                                                    GeneratedValue::Primitive(
+                                                                        GenRef::Std(format!(
+                                                                            "DateTime::parse_from_rfc3339(\"{}\").unwrap().with_timezone(&Utc)",
+                                                                            date.to_rfc3339()
+                                                                        )),
                                                                     )
                                                                 }
                                                                 Err(_) => {
@@ -1070,6 +1074,7 @@ pub(crate) fn infer_expr_type<'a>(
                                         scope,
                                         i.as_str(),
                                     );
+                                    validate_embed_string_type(ctx, original_query, add.loc.clone(), scope, i.as_str());
                                     EmbedData {
                                         data: gen_identifier_or_param(
                                             original_query,
@@ -1177,6 +1182,7 @@ pub(crate) fn infer_expr_type<'a>(
                     let embed_data = match &e.value {
                         EvaluatesToString::Identifier(i) => {
                             type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
+                            validate_embed_string_type(ctx, original_query, sv.loc.clone(), scope, i.as_str());
                             EmbedData {
                                 data: gen_identifier_or_param(
                                     original_query,
@@ -1988,5 +1994,114 @@ mod tests {
         assert!(result.is_ok());
         let (diagnostics, _) = result.unwrap();
         assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E202));
+    }
+
+    // ============================================================================
+    // WHERE Clause Boolean Check Tests
+    // ============================================================================
+
+    #[test]
+    fn test_where_clause_non_boolean_traversal() {
+        let source = r#"
+            N::Indicator { name: String }
+            N::TimeParameter { value: String }
+            E::HasTimeParameter { From: Indicator, To: TimeParameter }
+
+            QUERY GetIndicators(time_vals: [String]) =>
+                indicators <- N<Indicator>
+                    ::WHERE(
+                        _::Out<HasTimeParameter>
+                        ::WHERE(_::{value}::IS_IN(time_vals))
+                    )
+                RETURN indicators
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E659));
+    }
+
+    // ============================================================================
+    // Embed() String Type Check Tests (E660)
+    // ============================================================================
+
+    #[test]
+    fn test_add_vector_embed_with_string_param_valid() {
+        let source = r#"
+            V::Document { content: String }
+
+            QUERY test(text: String) =>
+                doc <- AddV<Document>(Embed(text), {content: text})
+                RETURN doc
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E660));
+    }
+
+    #[test]
+    fn test_add_vector_embed_with_string_literal_valid() {
+        let source = r#"
+            V::Document { content: String }
+
+            QUERY test() =>
+                doc <- AddV<Document>(Embed("hello world"), {content: "hello world"})
+                RETURN doc
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(!diagnostics.iter().any(|d| d.error_code == ErrorCode::E660));
+    }
+
+    #[test]
+    fn test_add_vector_embed_with_non_string_param_emits_e660() {
+        let source = r#"
+            V::Document { content: String }
+
+            QUERY test(num: I32) =>
+                doc <- AddV<Document>(Embed(num), {content: "test"})
+                RETURN doc
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E660));
+    }
+
+    #[test]
+    fn test_search_vector_embed_with_non_string_param_emits_e660() {
+        let source = r#"
+            V::Document { content: String }
+
+            QUERY test(num: I32) =>
+                docs <- SearchV<Document>(Embed(num), 10)
+                RETURN docs
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, _) = result.unwrap();
+        assert!(diagnostics.iter().any(|d| d.error_code == ErrorCode::E660));
     }
 }

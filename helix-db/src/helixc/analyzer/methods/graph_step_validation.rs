@@ -1,6 +1,6 @@
 //! Semantic analyzer for Helix‑QL.
 use crate::helixc::analyzer::error_codes::ErrorCode;
-use crate::helixc::analyzer::utils::{VariableInfo, type_in_scope};
+use crate::helixc::analyzer::utils::{VariableInfo, type_in_scope, validate_embed_string_type};
 use crate::helixc::generator::traversal_steps::EdgeType;
 use crate::helixc::generator::utils::EmbedData;
 use crate::{
@@ -675,10 +675,14 @@ pub(crate) fn apply_graph_step<'a>(
                 }
                 Some(VectorData::Embed(e)) => {
                     let embed_data = match &e.value {
-                        EvaluatesToString::Identifier(i) => EmbedData {
-                            data: gen_identifier_or_param(original_query, i.as_str(), true, false),
-                            model_name: gen_query.embedding_model_to_use.clone(),
-                        },
+                        EvaluatesToString::Identifier(i) => {
+                            type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
+                            validate_embed_string_type(ctx, original_query, sv.loc.clone(), scope, i.as_str());
+                            EmbedData {
+                                data: gen_identifier_or_param(original_query, i.as_str(), true, false),
+                                model_name: gen_query.embedding_model_to_use.clone(),
+                            }
+                        }
                         EvaluatesToString::StringLiteral(s) => EmbedData {
                             data: GeneratedValue::Literal(GenRef::Ref(s.clone())),
                             model_name: gen_query.embedding_model_to_use.clone(),

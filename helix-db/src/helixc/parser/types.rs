@@ -781,6 +781,7 @@ pub enum StepType {
     First,
     RerankRRF(RerankRRF),
     RerankMMR(RerankMMR),
+    Intersect(Box<Expression>),
 }
 impl PartialEq<StepType> for StepType {
     fn eq(&self, other: &StepType) -> bool {
@@ -809,6 +810,7 @@ impl PartialEq<StepType> for StepType {
                 | (&StepType::GroupBy(_), &StepType::GroupBy(_))
                 | (&StepType::RerankRRF(_), &StepType::RerankRRF(_))
                 | (&StepType::RerankMMR(_), &StepType::RerankMMR(_))
+                | (&StepType::Intersect(_), &StepType::Intersect(_))
         )
     }
 }

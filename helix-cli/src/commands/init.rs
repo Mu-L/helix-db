@@ -2,8 +2,10 @@ use crate::CloudDeploymentTypeCommand;
 use crate::cleanup::CleanupTracker;
 use crate::commands::integrations::ecr::{EcrAuthType, EcrManager};
 use crate::commands::integrations::fly::{FlyAuthType, FlyManager, VmSize};
-use crate::commands::integrations::helix::HelixManager;
-use crate::config::{CloudConfig, HelixConfig};
+use crate::commands::workspace_flow::{self, ClusterResult};
+use crate::config::{
+    CloudConfig, CloudInstanceConfig, DbConfig, EnterpriseInstanceConfig, HelixConfig,
+};
 use crate::docker::DockerManager;
 use crate::errors::project_error;
 use crate::output::{Operation, Step};
@@ -11,6 +13,7 @@ use crate::project::ProjectContext;
 use crate::prompts;
 use crate::utils::print_instructions;
 use eyre::Result;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -111,59 +114,51 @@ async fn run_init_inner(
     match deployment_type {
         Some(deployment) => {
             match deployment {
-                CloudDeploymentTypeCommand::Helix { region, .. } => {
-                    // Initialize Helix deployment
-                    let cwd = env::current_dir()?;
-                    let project_context = ProjectContext::find_and_load(Some(&cwd))?;
+                CloudDeploymentTypeCommand::Helix { .. } => {
+                    // Authenticate and run workspace/project/cluster flow
+                    let credentials = crate::commands::auth::require_auth().await?;
+                    let result = workspace_flow::run_workspace_project_cluster_flow(
+                        project_name,
+                        &credentials,
+                    )
+                    .await?;
 
-                    // Create Helix manager
-                    let helix_manager = HelixManager::new(&project_context);
-
-                    // Create cloud instance configuration (without cluster_id yet)
-                    let cloud_config = helix_manager
-                        .create_instance_config(project_name, region.clone())
-                        .await?;
-
-                    // Insert into config first
-                    config.cloud.insert(
-                        project_name.to_string(),
-                        CloudConfig::Helix(cloud_config.clone()),
-                    );
+                    config.project.name = result.resolved_project_name;
 
                     // Backup config before saving
                     cleanup_tracker.backup_config(&config, config_path.clone());
 
-                    // Save config
-                    config.save_to_file(&config_path)?;
-
-                    // Prompt user to create cluster now
-                    println!();
-                    Step::verbose_substep("Helix Cloud instance configuration saved");
-                    println!("This will open Stripe for payment and provision your cluster.");
-
-                    let should_create = if prompts::is_interactive() {
-                        prompts::confirm("Create cluster now?")?
-                    } else {
-                        // Fallback to raw stdin for non-interactive terminals
-                        use std::io::{self, Write};
-                        print!("Create cluster now? [Y/n]: ");
-                        io::stdout().flush()?;
-                        let mut input = String::new();
-                        io::stdin().read_line(&mut input)?;
-                        let input = input.trim().to_lowercase();
-                        input.is_empty() || input == "y" || input == "yes"
-                    };
-
-                    if should_create {
-                        // Run create-cluster flow
-                        crate::commands::create_cluster::run(project_name, region).await?;
-                    } else {
-                        println!();
-                        crate::output::info(&format!(
-                            "Cluster creation skipped. Run 'helix create-cluster {}' when ready.",
-                            project_name
-                        ));
+                    match result.cluster {
+                        ClusterResult::Standard(std_result) => {
+                            let cloud_config = CloudInstanceConfig {
+                                cluster_id: std_result.cluster_id,
+                                region: Some("us-east-1".to_string()),
+                                build_mode: std_result.build_mode,
+                                env_vars: HashMap::new(),
+                                db_config: DbConfig::default(),
+                            };
+                            config
+                                .cloud
+                                .insert(std_result.instance_name, CloudConfig::Helix(cloud_config));
+                        }
+                        ClusterResult::Enterprise(ent_result) => {
+                            let enterprise_config = EnterpriseInstanceConfig {
+                                cluster_id: ent_result.cluster_id,
+                                availability_mode: ent_result.availability_mode,
+                                gateway_node_type: ent_result.gateway_node_type,
+                                db_node_type: ent_result.db_node_type,
+                                min_instances: ent_result.min_instances,
+                                max_instances: ent_result.max_instances,
+                                db_config: DbConfig::default(),
+                            };
+                            config
+                                .enterprise
+                                .insert(ent_result.instance_name, enterprise_config);
+                        }
                     }
+
+                    config.save_to_file(&config_path)?;
+                    Step::verbose_substep("Helix Cloud configuration saved to helix.toml");
                 }
                 CloudDeploymentTypeCommand::Ecr { .. } => {
                     let cwd = env::current_dir()?;

@@ -76,7 +76,7 @@ async fn test_compile_fails_without_schema() {
 
     let result = run(None, Some(ctx.project_path.to_str().unwrap().to_string())).await;
     assert!(result.is_err(), "Compile should fail without schema");
-    let error_msg = format!("{:?}", result.err().unwrap());
+    let error_msg = result.err().unwrap().to_string();
     assert!(
         error_msg.contains("schema") || error_msg.contains("N::") || error_msg.contains("E::"),
         "Error should mention missing schema definitions"
@@ -102,7 +102,7 @@ async fn test_compile_fails_without_helix_toml() {
         result.is_err(),
         "Compile should fail without helix.toml in project"
     );
-    let error_msg = format!("{:?}", result.err().unwrap());
+    let error_msg = result.err().unwrap().to_string();
     assert!(
         error_msg.contains("not found") || error_msg.contains("helix.toml"),
         "Error should mention missing helix.toml"

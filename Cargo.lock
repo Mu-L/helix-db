@@ -1426,7 +1426,7 @@ dependencies = [
 
 [[package]]
 name = "helix-cli"
-version = "2.2.8"
+version = "2.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1454,9 +1454,11 @@ dependencies = [
  "serde_json",
  "serial_test",
  "tempfile",
+ "thiserror 2.0.12",
  "tokio",
  "tokio-tungstenite",
  "toml",
+ "tui-banner",
  "uuid",
  "webbrowser",
 ]
@@ -1486,7 +1488,7 @@ dependencies = [
 
 [[package]]
 name = "helix-db"
-version = "1.2.8"
+version = "1.2.9"
 dependencies = [
  "ariadne",
  "async-trait",
@@ -5067,6 +5069,12 @@ dependencies = [
  "termcolor",
  "toml",
 ]
+
+[[package]]
+name = "tui-banner"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1b7ab5b95cec8f101330c65e98ae299d1a406bce12b9b5bf5208e35e1a40b8"
 
 [[package]]
 name = "tungstenite"

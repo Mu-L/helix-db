@@ -332,3 +332,219 @@ pub fn input_feedback_message() -> Result<String> {
 
     Ok(message)
 }
+
+/// Prompt user to select a workspace from a list
+pub fn select_workspace(workspaces: &[crate::commands::sync::CliWorkspace]) -> Result<String> {
+    if workspaces.len() == 1 {
+        return Ok(workspaces[0].id.clone());
+    }
+
+    let mut select = cliclack::select("Select a workspace");
+    for ws in workspaces {
+        select = select.item(ws.id.clone(), ws.name.as_str(), "");
+    }
+    let selected = select.interact()?;
+    Ok(selected)
+}
+
+/// Prompt user to input a project name
+pub fn input_project_name(default: &str) -> Result<String> {
+    let name: String = cliclack::input("Project name")
+        .default_input(default)
+        .placeholder(default)
+        .validate(|input: &String| {
+            if input.is_empty() {
+                Err("Project name cannot be empty")
+            } else if input.len() > 64 {
+                Err("Project name must be 64 characters or less")
+            } else {
+                Ok(())
+            }
+        })
+        .interact()?;
+    Ok(name)
+}
+
+/// Prompt user to input a cluster name
+pub fn input_cluster_name(default: &str) -> Result<String> {
+    let name: String = cliclack::input("Cluster name")
+        .default_input(default)
+        .placeholder(default)
+        .validate(|input: &String| {
+            if input.is_empty() {
+                Err("Cluster name cannot be empty")
+            } else if input.len() > 32 {
+                Err("Cluster name must be 32 characters or less")
+            } else if !input
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+            {
+                Err("Cluster name can only contain letters, numbers, hyphens, and underscores")
+            } else {
+                Ok(())
+            }
+        })
+        .interact()?;
+    Ok(name)
+}
+
+/// Prompt user to select cluster type (standard vs enterprise)
+pub fn select_cluster_type() -> Result<&'static str> {
+    let selected: &str = cliclack::select("Select cluster type")
+        .item(
+            "standard",
+            "Standard",
+            "Railway-based cluster for .hx queries",
+        )
+        .item(
+            "enterprise",
+            "Object Storage (Enterprise)",
+            "Enterprise cluster for .rs source files",
+        )
+        .interact()?;
+    Ok(selected)
+}
+
+/// Prompt user to select build mode
+pub fn select_build_mode() -> Result<crate::config::BuildMode> {
+    let selected: crate::config::BuildMode = cliclack::select("Select build mode")
+        .item(
+            crate::config::BuildMode::Dev,
+            "dev",
+            "Fast builds, no optimizations",
+        )
+        .item(
+            crate::config::BuildMode::Release,
+            "release",
+            "Optimized builds for production",
+        )
+        .interact()?;
+    Ok(selected)
+}
+
+/// Prompt user to select availability mode for enterprise clusters
+pub fn select_availability_mode() -> Result<crate::config::AvailabilityMode> {
+    let selected: crate::config::AvailabilityMode = cliclack::select("Select availability mode")
+        .item(
+            crate::config::AvailabilityMode::Dev,
+            "Dev",
+            "Single instance, lower cost",
+        )
+        .item(
+            crate::config::AvailabilityMode::Ha,
+            "HA (High Availability)",
+            "Multi-instance, auto-scaling",
+        )
+        .interact()?;
+    Ok(selected)
+}
+
+/// Prompt user to select gateway node type
+pub fn select_gateway_node_type(is_ha: bool) -> Result<String> {
+    if is_ha {
+        let selected: String = cliclack::select("Select gateway node type")
+            .item("GW-40".to_string(), "GW-40", "40 GB RAM")
+            .item("GW-80".to_string(), "GW-80", "80 GB RAM")
+            .item("GW-160".to_string(), "GW-160", "160 GB RAM")
+            .interact()?;
+        Ok(selected)
+    } else {
+        let selected: String = cliclack::select("Select gateway node type")
+            .item("GW-20".to_string(), "GW-20", "20 GB RAM")
+            .item("GW-80".to_string(), "GW-80", "80 GB RAM")
+            .interact()?;
+        Ok(selected)
+    }
+}
+
+/// Prompt user to select DB node type
+pub fn select_db_node_type(is_ha: bool) -> Result<String> {
+    if is_ha {
+        let selected: String = cliclack::select("Select DB node type")
+            .item("HLX-160".to_string(), "HLX-160", "160 GB")
+            .item("HLX-320".to_string(), "HLX-320", "320 GB")
+            .item("HLX-640".to_string(), "HLX-640", "640 GB")
+            .item("HLX-1280".to_string(), "HLX-1280", "1280 GB")
+            .interact()?;
+        Ok(selected)
+    } else {
+        let selected: String = cliclack::select("Select DB node type")
+            .item("HLX-40".to_string(), "HLX-40", "40 GB")
+            .item("HLX-80".to_string(), "HLX-80", "80 GB")
+            .item("HLX-160".to_string(), "HLX-160", "160 GB")
+            .item("HLX-320".to_string(), "HLX-320", "320 GB")
+            .interact()?;
+        Ok(selected)
+    }
+}
+
+/// Prompt user to input min instances for HA mode
+pub fn input_min_instances() -> Result<u64> {
+    let val: String = cliclack::input("Minimum instances")
+        .default_input("3")
+        .placeholder("3")
+        .validate(|input: &String| match input.parse::<u64>() {
+            Ok(n) if (3..=100).contains(&n) => Ok(()),
+            Ok(_) => Err("Must be between 3 and 100"),
+            Err(_) => Err("Please enter a valid number"),
+        })
+        .interact()?;
+    Ok(val.parse().unwrap_or(3))
+}
+
+/// Prompt user to input max instances for HA mode
+pub fn input_max_instances(min: u64) -> Result<u64> {
+    let default = min.to_string();
+    let val: String = cliclack::input("Maximum instances")
+        .default_input(&default)
+        .placeholder(&default)
+        .validate(move |input: &String| match input.parse::<u64>() {
+            Ok(n) if n >= min && n <= 100 => Ok(()),
+            Ok(_) => Err("Must be between min instances and 100"),
+            Err(_) => Err("Please enter a valid number"),
+        })
+        .interact()?;
+    Ok(val.parse().unwrap_or(min))
+}
+
+/// Prompt user to select a cluster from a list (standard or enterprise)
+pub fn select_cluster_from_workspace(
+    standard: &[(String, String, String)],
+    enterprise: &[(String, String, String)],
+) -> Result<(String, bool)> {
+    // Build combined list: (cluster_id, display_name, is_enterprise)
+    let mut items: Vec<(String, String, String, bool)> = Vec::new();
+
+    for (id, name, project) in standard {
+        items.push((
+            id.clone(),
+            name.clone(),
+            format!("{} (Standard)", project),
+            false,
+        ));
+    }
+    for (id, name, project) in enterprise {
+        items.push((
+            id.clone(),
+            name.clone(),
+            format!("{} (Enterprise)", project),
+            true,
+        ));
+    }
+
+    if items.is_empty() {
+        return Err(eyre::eyre!("No clusters found"));
+    }
+
+    if items.len() == 1 {
+        return Ok((items[0].0.clone(), items[0].3));
+    }
+
+    // Use index as value since we need to return both cluster_id and is_enterprise
+    let mut select = cliclack::select("Select a cluster");
+    for (i, (_, name, hint, _)) in items.iter().enumerate() {
+        select = select.item(i, name.as_str(), hint.as_str());
+    }
+    let idx = select.interact()?;
+    Ok((items[idx].0.clone(), items[idx].3))
+}

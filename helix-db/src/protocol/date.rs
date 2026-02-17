@@ -13,7 +13,7 @@ use sonic_rs::Deserialize;
 
 use super::value::Value;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct Date(DateTime<Utc>);
 impl Date {
@@ -72,6 +72,22 @@ impl Date {
                 "Date must be a valid date".to_string(),
             )),
         }
+    }
+
+    pub fn parse_from_string(value: String) -> Result<Self, DateError> {
+        let date = match value.parse::<DateTime<Utc>>() {
+            Ok(date) => date.with_timezone(&Utc),
+            Err(e) => match value.parse::<NaiveDate>() {
+                Ok(date) => match date.and_hms_opt(0, 0, 0) {
+                    Some(date) => date.and_utc(),
+                    None => return Err(DateError::ParseError("invalid hour minute or second".to_string())),
+                },
+                Err(_) => {
+                    return Err(DateError::ParseError(e.to_string()));
+                }
+            },
+        };
+        Ok(Date(date))
     }
 }
 
@@ -157,6 +173,12 @@ impl fmt::Display for DateError {
         match self {
             DateError::ParseError(error) => write!(f, "{error}"),
         }
+    }
+}
+
+impl From<DateTime<Utc>> for Date {
+    fn from(dt: DateTime<Utc>) -> Self {
+        Date(dt)
     }
 }
 

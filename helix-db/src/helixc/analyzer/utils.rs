@@ -152,6 +152,42 @@ pub(super) fn validate_id_type(
     }
 }
 
+/// Validates that an identifier used in Embed() is of type String.
+pub(super) fn validate_embed_string_type(
+    ctx: &mut Ctx,
+    original_query: &Query,
+    loc: Loc,
+    scope: &HashMap<&str, VariableInfo>,
+    identifier_name: &str,
+) {
+    // Check if it's a parameter
+    if let Some(param) = is_param(original_query, identifier_name) {
+        if param.param_type.1 != FieldType::String {
+            generate_error!(
+                ctx,
+                original_query,
+                loc,
+                E660,
+                &param.param_type.1.to_string()
+            );
+        }
+        return;
+    }
+
+    // Check if it's a scope variable
+    if let Some(var_info) = scope.get(identifier_name)
+        && var_info.ty != Type::Scalar(FieldType::String)
+    {
+        generate_error!(
+            ctx,
+            original_query,
+            loc,
+            E660,
+            &var_info.ty.to_string()
+        );
+    }
+}
+
 pub(super) fn is_in_scope(scope: &HashMap<&str, VariableInfo>, name: &str) -> bool {
     scope.contains_key(name)
 }

@@ -475,7 +475,7 @@ use helix_db::{
                 },
                 util::{
                     dedup::DedupAdapter, drop::Drop, exist::Exist, filter_mut::FilterMut,
-                    filter_ref::FilterRefAdapter, map::MapAdapter, paths::{PathAlgorithm, ShortestPathAdapter},
+                    filter_ref::FilterRefAdapter, intersect::IntersectAdapter, map::MapAdapter, paths::{PathAlgorithm, ShortestPathAdapter},
                     range::RangeAdapter, update::UpdateAdapter, order::OrderByAdapter,
                     aggregate::AggregateAdapter, group_by::GroupByAdapter, count::CountAdapter,
                     upsert::UpsertAdapter,
@@ -500,6 +500,7 @@ use helix_db::{
     protocol::{
         response::Response,
         value::{casting::{cast, CastType}, Value},
+        date::Date,
         format::Format,
     },
     utils::{

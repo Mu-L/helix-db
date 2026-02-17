@@ -1,6 +1,6 @@
 [package]
 name = "helix-cli"
-version = "2.2.8"
+version = "2.3.0"
 edition = "2024"
 
 [dependencies]
@@ -17,6 +17,7 @@ serde_json = "1.0.143"
 color-eyre = "0.6.5"
 cliclack = "0.3.7"
 async-trait = "0.1.89"
+thiserror = "2.0.12"
 iota = "0.2.3"
 self_update = "0.42.0"
 uuid = { version = "1.18.1", features = ["v4", "v6", "fast-rng"] }
@@ -33,6 +34,8 @@ heed3 = "0.22.0"
 open = "5.3"
 ratatui = "0.29"
 crossterm = "0.28"
+tui-banner = "0.2.3"
+
 
 [dev-dependencies]
 tempfile = "3.23.0"
