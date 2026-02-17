@@ -490,7 +490,8 @@ fn reconcile_project_config_from_cloud(
         .map_err(|e| eyre!("Failed to load helix.toml: {}", e))?;
 
     config.project.name = project_clusters.project_name.clone();
-    config.cloud.clear();
+    // Remove only Helix-managed cloud entries; preserve FlyIo, Ecr
+    config.cloud.retain(|_name, entry| !matches!(entry, CloudConfig::Helix(_)));
     config.enterprise.clear();
 
     for cluster in &project_clusters.standard {
