@@ -7,6 +7,7 @@ use crate::{
 };
 use color_eyre::owo_colors::OwoColorize;
 use eyre::{OptionExt, Result, eyre};
+use serde::Deserialize;
 use std::{
     fs::{self, File},
     path::PathBuf,
@@ -37,7 +38,7 @@ async fn login() -> Result<()> {
     // not needed?
     if Credentials::try_read_from_file(&cred_path).is_some() {
         println!(
-            "You have an existing key which may be valid, only continue if it doesn't work or you want to switch accounts. (Key checking is WIP)"
+            "You already have saved credentials. Running login rotates your user key and revokes previous user keys."
         );
     }
 
@@ -79,16 +80,63 @@ async fn logout() -> Result<()> {
 }
 
 async fn create_key(cluster: &str) -> Result<()> {
-    output::info(&format!("Creating API key for cluster: {cluster}"));
+    #[derive(Deserialize)]
+    struct CreateKeyResponse {
+        key: String,
+        warning: Option<String>,
+    }
 
-    // TODO: Implement API key creation
-    // This would:
-    // 1. Authenticate with cloud
-    // 2. Create new API key for specified cluster
-    // 3. Display the key to the user
+    #[derive(Deserialize)]
+    struct ErrorResponse {
+        error: String,
+    }
 
-    output::warning("API key creation not yet implemented");
-    println!("  This will create a new API key for cluster: {cluster}");
+    output::info(&format!("Rotating API key for cluster: {cluster}"));
+
+    let credentials = require_auth().await?;
+    let url = format!("{}/api/cli/clusters/{cluster}/key", cloud_base_url());
+
+    let response = reqwest::Client::new()
+        .post(&url)
+        .header("x-api-key", &credentials.helix_admin_key)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_body = response.text().await.unwrap_or_default();
+        let error_message = serde_json::from_str::<ErrorResponse>(&error_body)
+            .map(|error| error.error)
+            .unwrap_or_else(|_| {
+                if error_body.is_empty() {
+                    format!("request failed with status {status}")
+                } else {
+                    error_body
+                }
+            });
+
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(eyre!(
+                "Authentication failed. Run 'helix auth login' to re-authenticate."
+            ));
+        }
+
+        return Err(eyre!("Failed to rotate API key: {error_message}"));
+    }
+
+    let body: CreateKeyResponse = response.json().await?;
+
+    output::success("Cluster API key refresh completed");
+    if let Some(warning) = body.warning.as_deref() {
+        output::warning(warning);
+    } else {
+        output::info("Previous cluster keys were revoked after successful redeploy.");
+    }
+    println!();
+    println!("Cluster: {}", cluster.bold());
+    println!("New API key (shown once): {}", body.key.bold());
+
+    output::info("Update HELIX_API_KEY in your environment before running queries.");
 
     Ok(())
 }
