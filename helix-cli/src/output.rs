@@ -11,6 +11,16 @@ use std::io::IsTerminal;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
+const STANDARD_SPINNER_TICKS: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+pub(crate) const STANDARD_SPINNER_TICK_MILLIS: u64 = 80;
+
+pub(crate) fn standard_spinner_style() -> ProgressStyle {
+    ProgressStyle::default_spinner()
+        .tick_strings(&STANDARD_SPINNER_TICKS)
+        .template("  {spinner:.blue} {msg}")
+        .expect("valid template")
+}
+
 // ============================================================================
 // Verbosity Control
 // ============================================================================
@@ -356,14 +366,9 @@ impl LiveSpinner {
     pub fn new(message: &str) -> Self {
         let pb = if std::io::stdout().is_terminal() {
             let pb = ProgressBar::new_spinner();
-            pb.set_style(
-                ProgressStyle::default_spinner()
-                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-                    .template("  {spinner:.blue} {msg}")
-                    .expect("valid template"),
-            );
+            pb.set_style(standard_spinner_style());
             pb.set_message(message.to_string());
-            pb.enable_steady_tick(Duration::from_millis(80));
+            pb.enable_steady_tick(Duration::from_millis(STANDARD_SPINNER_TICK_MILLIS));
             pb
         } else {
             // Non-TTY: just print the message

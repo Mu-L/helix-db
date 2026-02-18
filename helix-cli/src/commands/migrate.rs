@@ -483,6 +483,7 @@ fn create_v2_config(ctx: &MigrationContext) -> Result<()> {
 
     // Create project config
     let project_config = ProjectConfig {
+        id: None,
         name: ctx.project_name.clone(),
         queries: PathBuf::from(&ctx.queries_dir),
         container_runtime: ContainerRuntime::Docker,

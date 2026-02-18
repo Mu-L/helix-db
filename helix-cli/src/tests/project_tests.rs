@@ -314,3 +314,42 @@ fn test_find_project_root_stops_at_filesystem_root() {
         "Should fail after reaching filesystem root"
     );
 }
+
+#[test]
+fn test_legacy_helix_toml_without_project_id_still_loads() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let project_path = temp_dir.path().to_path_buf();
+    let config_path = project_path.join("helix.toml");
+
+    let legacy_config = r#"
+[project]
+name = "legacy-project"
+queries = "./db/"
+
+[local.dev]
+port = 6969
+"#;
+
+    fs::write(&config_path, legacy_config).expect("Failed to write legacy config");
+
+    let loaded = HelixConfig::from_file(&config_path).expect("Legacy config should load");
+    assert_eq!(loaded.project.id, None);
+    assert_eq!(loaded.project.name, "legacy-project");
+}
+
+#[test]
+fn test_project_id_persists_round_trip() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let project_path = temp_dir.path().to_path_buf();
+    let config_path = project_path.join("helix.toml");
+
+    let mut config = HelixConfig::default_config("persisted-project");
+    config.project.id = Some("proj_12345".to_string());
+    config
+        .save_to_file(&config_path)
+        .expect("Failed to save config with project id");
+
+    let loaded = HelixConfig::from_file(&config_path).expect("Failed to reload saved config");
+    assert_eq!(loaded.project.id.as_deref(), Some("proj_12345"));
+    assert_eq!(loaded.project.name, "persisted-project");
+}

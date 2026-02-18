@@ -1,5 +1,5 @@
 use crate::commands::auth::require_auth;
-use crate::config::{BuildMode, CloudInstanceConfig, DbConfig, InstanceInfo};
+use crate::config::{BuildMode, CloudConfig, CloudInstanceConfig, DbConfig, InstanceInfo};
 use crate::output;
 use crate::project::ProjectContext;
 use crate::sse_client::{SseEvent, SseProgressHandler, parse_sse_event};
@@ -289,7 +289,10 @@ impl<'a> HelixManager<'a> {
                     let sse_event: SseEvent = match parse_sse_event(&message.data) {
                         Ok(event) => event,
                         Err(e) => {
-                            progress.println(&format!("Failed to parse event: {}", e));
+                            output::verbose(&format!(
+                                "Ignoring unrecognized deploy SSE payload: {}",
+                                e
+                            ));
                             continue;
                         }
                     };
@@ -485,6 +488,35 @@ impl<'a> HelixManager<'a> {
         Ok(())
     }
 
+    pub(crate) async fn deploy_by_cluster_id(
+        &self,
+        path: Option<String>,
+        cluster_id: &str,
+        cluster_name_hint: &str,
+        build_mode_override: Option<BuildMode>,
+    ) -> Result<()> {
+        if let Some(instance_name) =
+            self.project
+                .config
+                .cloud
+                .iter()
+                .find_map(|(instance_name, cloud_config)| match cloud_config {
+                    CloudConfig::Helix(config) if config.cluster_id == cluster_id => {
+                        Some(instance_name.clone())
+                    }
+                    _ => None,
+                })
+        {
+            return self.deploy(path, instance_name, build_mode_override).await;
+        }
+
+        Err(eyre!(
+            "Cluster '{}' is not configured in helix.toml. Run 'helix sync' to refresh cluster metadata, then retry syncing cluster '{}'.",
+            cluster_id,
+            cluster_name_hint
+        ))
+    }
+
     /// Deploy .rs files to an enterprise cluster
     pub(crate) async fn deploy_enterprise(
         &self,
@@ -574,7 +606,10 @@ impl<'a> HelixManager<'a> {
                     let sse_event: SseEvent = match parse_sse_event(&message.data) {
                         Ok(event) => event,
                         Err(e) => {
-                            progress.println(&format!("Failed to parse event: {}", e));
+                            output::verbose(&format!(
+                                "Ignoring unrecognized deploy SSE payload: {}",
+                                e
+                            ));
                             continue;
                         }
                     };
