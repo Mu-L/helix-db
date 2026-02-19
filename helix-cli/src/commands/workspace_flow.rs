@@ -33,6 +33,7 @@ pub enum ClusterResult {
 pub struct WorkspaceProjectClusterFlowResult {
     pub cluster: ClusterResult,
     pub resolved_project_name: String,
+    pub resolved_project_id: String,
 }
 
 struct ResolvedProject {
@@ -98,6 +99,7 @@ struct CreateClusterResponse {
 /// Returns a ClusterResult describing the created cluster.
 pub async fn run_workspace_project_cluster_flow(
     project_name: &str,
+    project_id_hint: Option<&str>,
     credentials: &Credentials,
 ) -> Result<WorkspaceProjectClusterFlowResult> {
     let client = reqwest::Client::new();
@@ -110,9 +112,15 @@ pub async fn run_workspace_project_cluster_flow(
     check_billing(&client, &base_url, credentials, &workspace.id).await?;
 
     // Step 3: Project matching
-    let resolved_project =
-        match_or_create_project(&client, &base_url, credentials, &workspace.id, project_name)
-            .await?;
+    let resolved_project = match_or_create_project(
+        &client,
+        &base_url,
+        credentials,
+        &workspace.id,
+        project_name,
+        project_id_hint,
+    )
+    .await?;
 
     // Step 4: Cluster type selection
     let cluster_type = if workspace.workspace_type == "enterprise" {
@@ -133,6 +141,7 @@ pub async fn run_workspace_project_cluster_flow(
             )
             .await?,
             resolved_project_name: resolved_project.name,
+            resolved_project_id: resolved_project.id,
         }),
         _ => Ok(WorkspaceProjectClusterFlowResult {
             cluster: create_standard_cluster_flow(
@@ -143,6 +152,7 @@ pub async fn run_workspace_project_cluster_flow(
             )
             .await?,
             resolved_project_name: resolved_project.name,
+            resolved_project_id: resolved_project.id,
         }),
     }
 }
@@ -251,6 +261,7 @@ async fn match_or_create_project(
     credentials: &Credentials,
     workspace_id: &str,
     project_name: &str,
+    project_id_hint: Option<&str>,
 ) -> Result<ResolvedProject> {
     // Fetch projects
     let projects: Vec<CliProject> = client
@@ -268,7 +279,22 @@ async fn match_or_create_project(
         .await
         .map_err(|e| eyre!("Failed to parse projects: {}", e))?;
 
-    // Try to find matching project by name
+    // Try to find matching project by ID first (canonical identity)
+    if let Some(expected_project_id) = project_id_hint
+        && let Some(existing) = projects.iter().find(|p| p.id == expected_project_id)
+    {
+        crate::output::info(&format!(
+            "Using project '{}' from your selected workspace.",
+            existing.name
+        ));
+
+        return Ok(ResolvedProject {
+            id: existing.id.clone(),
+            name: existing.name.clone(),
+        });
+    }
+
+    // Fallback to matching by display name
     if let Some(existing) = projects.iter().find(|p| p.name == project_name) {
         crate::output::info(&format!(
             "Using existing project '{}' from your selected workspace.",
@@ -281,22 +307,45 @@ async fn match_or_create_project(
         });
     }
 
-    // Project not found — offer to create (with optional rename)
-    let should_create =
-        prompts::confirm(&format!("Project '{}' not found. Create it?", project_name))?;
+    match prompts::select_missing_project_choice(project_name)? {
+        prompts::MissingProjectChoice::ChooseExisting => {
+            if projects.is_empty() {
+                return Err(eyre!(
+                    "No projects exist in this workspace yet. Create one to continue."
+                ));
+            }
 
-    if !should_create {
-        return Err(eyre!("Project creation cancelled"));
+            let project_choices: Vec<(String, String)> = projects
+                .iter()
+                .map(|p| (p.id.clone(), p.name.clone()))
+                .collect();
+            let selected_project_id = prompts::select_project(&project_choices)?;
+            let selected_project = projects
+                .iter()
+                .find(|p| p.id == selected_project_id)
+                .ok_or_else(|| eyre!("Selected project was not found in response"))?;
+
+            crate::output::info(&format!(
+                "Using existing project '{}' from your selected workspace.",
+                selected_project.name
+            ));
+
+            Ok(ResolvedProject {
+                id: selected_project.id.clone(),
+                name: selected_project.name.clone(),
+            })
+        }
+        prompts::MissingProjectChoice::Create => {
+            let chosen_name = prompts::input_project_name(project_name)?;
+            let project_id =
+                create_project(client, base_url, credentials, workspace_id, &chosen_name).await?;
+
+            Ok(ResolvedProject {
+                id: project_id,
+                name: chosen_name,
+            })
+        }
     }
-
-    let chosen_name = prompts::input_project_name(project_name)?;
-    let project_id =
-        create_project(client, base_url, credentials, workspace_id, &chosen_name).await?;
-
-    Ok(ResolvedProject {
-        id: project_id,
-        name: chosen_name,
-    })
 }
 
 async fn create_project(

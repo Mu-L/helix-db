@@ -1,4 +1,5 @@
 use crate::commands::auth::require_auth;
+use crate::commands::integrations::helix::HelixManager;
 use crate::commands::integrations::helix::cloud_base_url;
 use crate::config::{
     AvailabilityMode, BuildMode, CloudConfig, CloudInstanceConfig, DbConfig,
@@ -7,16 +8,35 @@ use crate::config::{
 use crate::output::{Operation, Step};
 use crate::project::ProjectContext;
 use crate::prompts;
+use crate::utils::helixc_utils::{
+    analyze_source, collect_hx_files, generate_content, parse_content,
+};
 use crate::utils::print_warning;
+use color_eyre::owo_colors::OwoColorize;
 use eyre::{Result, eyre};
 use serde::Deserialize;
-use std::collections::HashMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeSet, HashMap};
+use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct SyncResponse {
+    #[serde(default)]
     helix_toml: Option<String>,
+    #[serde(default)]
     hx_files: HashMap<String, String>,
+    #[serde(default)]
+    file_metadata: HashMap<String, SyncFileMetadata>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+struct SyncFileMetadata {
+    #[serde(default)]
+    sha256: Option<String>,
+    #[serde(default)]
+    last_modified_ms: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -29,6 +49,8 @@ struct EnterpriseSyncResponse {
 struct CliEnterpriseCluster {
     pub cluster_id: String,
     pub cluster_name: String,
+    #[allow(dead_code)]
+    pub project_id: String,
     pub project_name: String,
     #[allow(dead_code)]
     pub availability_mode: String,
@@ -52,6 +74,8 @@ pub struct CliWorkspace {
 pub struct CliCluster {
     pub cluster_id: String,
     pub cluster_name: String,
+    #[allow(dead_code)]
+    pub project_id: String,
     pub project_name: String,
 }
 
@@ -68,7 +92,6 @@ struct CreateProjectResponse {
 
 #[derive(Deserialize)]
 struct CliProjectClusters {
-    #[allow(dead_code)]
     project_id: String,
     project_name: String,
     standard: Vec<CliProjectStandardCluster>,
@@ -109,6 +132,246 @@ struct CliClusterProject {
 }
 
 const DEFAULT_QUERIES_DIR: &str = "db";
+const CLOCK_SKEW_WINDOW_MS: i64 = 5_000;
+
+#[derive(Clone, Debug)]
+struct ManifestEntry {
+    sha256: String,
+    last_modified_ms: Option<i64>,
+    content: String,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ManifestDiff {
+    local_only: Vec<String>,
+    remote_only: Vec<String>,
+    changed: Vec<String>,
+}
+
+impl ManifestDiff {
+    fn all_files(&self) -> Vec<String> {
+        let mut files = Vec::new();
+        files.extend(self.local_only.iter().cloned());
+        files.extend(self.remote_only.iter().cloned());
+        files.extend(self.changed.iter().cloned());
+        files.sort();
+        files.dedup();
+        files
+    }
+
+    fn is_empty(&self) -> bool {
+        self.local_only.is_empty() && self.remote_only.is_empty() && self.changed.is_empty()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DivergenceAuthority {
+    LocalNewer,
+    RemoteNewer,
+    TieOrUnknown,
+}
+
+#[derive(Clone, Debug)]
+enum SnapshotComparison {
+    BothEmpty,
+    LocalOnly,
+    RemoteOnly,
+    InSync,
+    Diverged {
+        authority: DivergenceAuthority,
+        diff: ManifestDiff,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SyncDirection {
+    Pull,
+    Push,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SyncActionPlan {
+    to_create: Vec<String>,
+    to_change: Vec<String>,
+    to_delete: Vec<String>,
+}
+
+fn compute_sha256(content: &str) -> String {
+    format!("{:x}", Sha256::digest(content.as_bytes()))
+}
+
+fn system_time_to_ms(timestamp: SystemTime) -> Option<i64> {
+    timestamp
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+}
+
+fn collect_local_hx_manifest(queries_dir: &Path) -> Result<HashMap<String, ManifestEntry>> {
+    fn walk(dir: &Path, root: &Path, manifest: &mut HashMap<String, ManifestEntry>) -> Result<()> {
+        for entry in fs::read_dir(dir)
+            .map_err(|e| eyre!("Failed to read directory {}: {}", dir.display(), e))?
+        {
+            let entry = entry.map_err(|e| eyre!("Failed to read directory entry: {}", e))?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                walk(&path, root, manifest)?;
+                continue;
+            }
+
+            let is_hx = path.extension().map(|ext| ext == "hx").unwrap_or(false);
+            if !is_hx {
+                continue;
+            }
+
+            let relative_path = path
+                .strip_prefix(root)
+                .map_err(|_| eyre!("Failed to compute relative path for {}", path.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let content = fs::read_to_string(&path)
+                .map_err(|e| eyre!("Failed to read local file {}: {}", path.display(), e))?;
+            let last_modified_ms = entry
+                .metadata()
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(system_time_to_ms);
+
+            manifest.insert(
+                relative_path,
+                ManifestEntry {
+                    sha256: compute_sha256(&content),
+                    last_modified_ms,
+                    content,
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    let mut manifest = HashMap::new();
+    if !queries_dir.exists() {
+        return Ok(manifest);
+    }
+
+    walk(queries_dir, queries_dir, &mut manifest)?;
+    Ok(manifest)
+}
+
+fn build_remote_hx_manifest(sync_response: &SyncResponse) -> HashMap<String, ManifestEntry> {
+    let mut manifest = HashMap::new();
+
+    for (raw_path, content) in &sync_response.hx_files {
+        let safe_path = match sanitize_relative_path(Path::new(raw_path)) {
+            Ok(path) => path,
+            Err(e) => {
+                print_warning(&format!(
+                    "Skipping remote file '{}' due to unsafe path: {}",
+                    raw_path, e
+                ));
+                continue;
+            }
+        };
+        let normalized_path = safe_path.to_string_lossy().replace('\\', "/");
+
+        let metadata = sync_response
+            .file_metadata
+            .get(raw_path)
+            .or_else(|| sync_response.file_metadata.get(&normalized_path));
+
+        manifest.insert(
+            normalized_path,
+            ManifestEntry {
+                sha256: metadata
+                    .and_then(|entry| entry.sha256.clone())
+                    .unwrap_or_else(|| compute_sha256(content)),
+                last_modified_ms: metadata.and_then(|entry| entry.last_modified_ms),
+                content: content.clone(),
+            },
+        );
+    }
+
+    manifest
+}
+
+fn compute_manifest_diff(
+    local: &HashMap<String, ManifestEntry>,
+    remote: &HashMap<String, ManifestEntry>,
+) -> ManifestDiff {
+    let mut diff = ManifestDiff::default();
+    let mut all_paths = BTreeSet::new();
+    all_paths.extend(local.keys().cloned());
+    all_paths.extend(remote.keys().cloned());
+
+    for path in all_paths {
+        match (local.get(&path), remote.get(&path)) {
+            (Some(_), None) => diff.local_only.push(path),
+            (None, Some(_)) => diff.remote_only.push(path),
+            (Some(local_entry), Some(remote_entry)) => {
+                if local_entry.sha256 != remote_entry.sha256 {
+                    diff.changed.push(path);
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    diff
+}
+
+fn newest_timestamp_for_paths(
+    manifest: &HashMap<String, ManifestEntry>,
+    paths: &[String],
+) -> Option<i64> {
+    paths
+        .iter()
+        .filter_map(|path| manifest.get(path).and_then(|entry| entry.last_modified_ms))
+        .max()
+}
+
+fn compare_manifests(
+    local: &HashMap<String, ManifestEntry>,
+    remote: &HashMap<String, ManifestEntry>,
+) -> SnapshotComparison {
+    if local.is_empty() && remote.is_empty() {
+        return SnapshotComparison::BothEmpty;
+    }
+
+    if !local.is_empty() && remote.is_empty() {
+        return SnapshotComparison::LocalOnly;
+    }
+
+    if local.is_empty() && !remote.is_empty() {
+        return SnapshotComparison::RemoteOnly;
+    }
+
+    let diff = compute_manifest_diff(local, remote);
+    if diff.is_empty() {
+        return SnapshotComparison::InSync;
+    }
+
+    let differing_paths = diff.all_files();
+    let local_latest = newest_timestamp_for_paths(local, &differing_paths);
+    let remote_latest = newest_timestamp_for_paths(remote, &differing_paths);
+
+    let authority = match (local_latest, remote_latest) {
+        (Some(local_ms), Some(remote_ms)) => {
+            let delta = local_ms - remote_ms;
+            if delta.abs() <= CLOCK_SKEW_WINDOW_MS {
+                DivergenceAuthority::TieOrUnknown
+            } else if delta > 0 {
+                DivergenceAuthority::LocalNewer
+            } else {
+                DivergenceAuthority::RemoteNewer
+            }
+        }
+        _ => DivergenceAuthority::TieOrUnknown,
+    };
+
+    SnapshotComparison::Diverged { authority, diff }
+}
 
 fn sanitize_relative_path(relative_path: &Path) -> Result<PathBuf> {
     let relative = relative_path;
@@ -214,38 +477,417 @@ fn resolve_remote_queries_dir(
     }
 }
 
-fn confirm_overwrite_or_abort(
-    differing_files: &[String],
-    assume_yes: bool,
-    prompt: &str,
-) -> Result<()> {
-    if differing_files.is_empty() {
-        return Ok(());
-    }
+async fn fetch_sync_response_with_remote_empty_fallback(
+    client: &reqwest::Client,
+    api_key: &str,
+    cluster_id: &str,
+) -> Result<SyncResponse> {
+    let sync_url = format!("{}/api/cli/clusters/{}/sync", cloud_base_url(), cluster_id);
+    let response = client
+        .get(&sync_url)
+        .header("x-api-key", api_key)
+        .send()
+        .await
+        .map_err(|e| eyre!("Failed to connect to Helix Cloud: {}", e))?;
 
-    println!();
-    println!("The following local files will be overwritten:");
-    for file in differing_files {
-        println!("  - {}", file);
+    match response.status() {
+        reqwest::StatusCode::OK => {
+            let parsed: SyncResponse = response
+                .json()
+                .await
+                .map_err(|e| eyre!("Failed to parse sync response: {}", e))?;
+            Ok(parsed)
+        }
+        reqwest::StatusCode::NOT_FOUND => {
+            print_warning(&format!(
+                "No remote source files found for cluster '{}'. Treating cloud changes as empty.",
+                cluster_id
+            ));
+            Ok(SyncResponse::default())
+        }
+        reqwest::StatusCode::UNAUTHORIZED => Err(eyre!(
+            "Authentication failed. Run 'helix auth login' to re-authenticate."
+        )),
+        reqwest::StatusCode::FORBIDDEN => Err(eyre!(
+            "Access denied to cluster '{}'. Make sure you have permission to access this cluster.",
+            cluster_id
+        )),
+        status => {
+            let error_text = response.text().await.unwrap_or_default();
+            Err(eyre!("Sync failed ({}): {}", status, error_text))
+        }
     }
-    println!();
+}
 
+fn confirm_sync_action(assume_yes: bool, prompt: &str) -> Result<bool> {
     if assume_yes {
-        crate::output::info("Proceeding with overwrite because --yes was provided.");
-        return Ok(());
+        crate::output::info("Proceeding because --yes was provided.");
+        return Ok(true);
     }
 
     if !prompts::is_interactive() {
         return Err(eyre!(
-            "Sync would overwrite {} files. Re-run with '--yes' to continue in non-interactive mode.",
-            differing_files.len()
+            "Sync requires confirmation. Re-run with '--yes' in non-interactive mode."
         ));
     }
 
-    if !crate::prompts::confirm(prompt)? {
-        return Err(eyre!("Sync aborted by user"));
+    prompts::confirm(prompt)
+}
+
+fn validate_local_hx_queries_for_push(project: &ProjectContext) -> Result<()> {
+    let hx_files =
+        collect_hx_files(&project.root, &project.config.project.queries).map_err(|e| {
+            eyre!(
+                "Local .hx queries failed validation. Fix errors before pushing to cloud.\n\n{}",
+                e
+            )
+        })?;
+    let content = generate_content(&hx_files).map_err(|e| {
+        eyre!(
+            "Local .hx queries failed validation. Fix errors before pushing to cloud.\n\n{}",
+            e
+        )
+    })?;
+    let source = parse_content(&content).map_err(|e| {
+        eyre!(
+            "Local .hx queries failed validation. Fix errors before pushing to cloud.\n\n{}",
+            e
+        )
+    })?;
+    analyze_source(source, &content.files).map_err(|e| {
+        eyre!(
+            "Local .hx queries failed validation. Fix errors before pushing to cloud.\n\n{}",
+            e
+        )
+    })?;
+
+    Ok(())
+}
+
+fn build_sync_action_plan(diff: &ManifestDiff, direction: SyncDirection) -> SyncActionPlan {
+    let (mut to_create, mut to_delete) = match direction {
+        SyncDirection::Pull => (diff.remote_only.clone(), diff.local_only.clone()),
+        SyncDirection::Push => (diff.local_only.clone(), diff.remote_only.clone()),
+    };
+    let mut to_change = diff.changed.clone();
+
+    to_create.sort();
+    to_change.sort();
+    to_delete.sort();
+
+    SyncActionPlan {
+        to_create,
+        to_change,
+        to_delete,
+    }
+}
+
+fn styled_plan_marker(marker: &str) -> String {
+    match marker {
+        "+" => marker.green().bold().to_string(),
+        "-" => marker.red().bold().to_string(),
+        "=" => marker.yellow().bold().to_string(),
+        _ => marker.bold().to_string(),
+    }
+}
+
+fn print_plan_section(marker: &str, files: &[String]) {
+    for file in files {
+        println!("  {} {}", styled_plan_marker(marker), file);
+    }
+}
+
+fn print_sync_action_plan(direction: SyncDirection, plan: &SyncActionPlan) {
+    let target = match direction {
+        SyncDirection::Pull => "Local",
+        SyncDirection::Push => "Cloud",
+    };
+
+    let mut printed_any = false;
+
+    if !plan.to_delete.is_empty() {
+        println!();
+        println!("{} files to be deleted ({})", target, plan.to_delete.len());
+        print_plan_section("-", &plan.to_delete);
+        printed_any = true;
     }
 
+    if !plan.to_change.is_empty() {
+        println!();
+        println!("{} files to be changed ({})", target, plan.to_change.len());
+        print_plan_section("=", &plan.to_change);
+        printed_any = true;
+    }
+
+    if !plan.to_create.is_empty() {
+        println!();
+        println!("{} files to be created ({})", target, plan.to_create.len());
+        print_plan_section("+", &plan.to_create);
+        printed_any = true;
+    }
+
+    if !printed_any {
+        crate::output::info("No file changes to apply.");
+    }
+}
+
+fn print_plan_for_direction(diff: &ManifestDiff, direction: SyncDirection) {
+    let plan = build_sync_action_plan(diff, direction);
+    print_sync_action_plan(direction, &plan);
+}
+
+fn pull_remote_snapshot_into_local(
+    project: &ProjectContext,
+    local_manifest: &HashMap<String, ManifestEntry>,
+    remote_manifest: &HashMap<String, ManifestEntry>,
+) -> Result<()> {
+    let queries_dir = project.root.join(&project.config.project.queries);
+    fs::create_dir_all(&queries_dir)?;
+
+    for (relative_path, remote_entry) in remote_manifest {
+        let destination = safe_join_relative(&queries_dir, relative_path)?;
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&destination, &remote_entry.content)
+            .map_err(|e| eyre!("Failed to write {}: {}", relative_path, e))?;
+    }
+
+    for local_only_path in local_manifest
+        .keys()
+        .filter(|path| !remote_manifest.contains_key(*path))
+    {
+        let local_path = safe_join_relative(&queries_dir, local_only_path)?;
+        if local_path.exists() {
+            fs::remove_file(&local_path)
+                .map_err(|e| eyre!("Failed to remove local file {}: {}", local_only_path, e))?;
+            Step::verbose_substep(&format!("  Removed {}", local_only_path));
+        }
+    }
+
+    Ok(())
+}
+
+async fn push_local_snapshot_to_cluster(
+    project: &ProjectContext,
+    cluster_id: &str,
+    cluster_name: &str,
+) -> Result<()> {
+    let refreshed_project = ProjectContext::find_and_load(Some(&project.root))
+        .map_err(|e| eyre!("Failed to reload project context: {}", e))?;
+    let helix = HelixManager::new(&refreshed_project);
+
+    helix
+        .deploy_by_cluster_id(None, cluster_id, cluster_name, None)
+        .await
+}
+
+#[derive(Clone, Copy)]
+enum TieResolutionAction {
+    NoOp,
+    Pull,
+    Push,
+}
+
+fn resolve_tie_action(assume_yes: bool, allow_push: bool) -> Result<TieResolutionAction> {
+    if assume_yes || !prompts::is_interactive() {
+        print_warning(
+            "Local and cloud changes appear near-simultaneous. Leaving files unchanged by default.",
+        );
+        return Ok(TieResolutionAction::NoOp);
+    }
+
+    let mut select = cliclack::select(
+        "Local and cloud changes happened at nearly the same time. Choose a sync action",
+    )
+    .item("noop", "Keep unchanged", "Safe default")
+    .item("pull", "Pull cloud", "Overwrite local from cloud");
+
+    if allow_push {
+        select = select.item("push", "Push local", "Push local changes to cloud");
+    }
+
+    let selection: &'static str = select.interact()?;
+
+    Ok(match selection {
+        "pull" => TieResolutionAction::Pull,
+        "push" => TieResolutionAction::Push,
+        _ => TieResolutionAction::NoOp,
+    })
+}
+
+async fn reconcile_standard_cluster_snapshot(
+    project: &ProjectContext,
+    api_key: &str,
+    cluster_id: &str,
+    cluster_name: &str,
+    assume_yes: bool,
+) -> Result<()> {
+    let op = Operation::new("Syncing", cluster_name);
+    let client = reqwest::Client::new();
+
+    let mut fetch_step = Step::with_messages("Fetching cloud changes", "Cloud changes fetched");
+    fetch_step.start();
+    let sync_response =
+        match fetch_sync_response_with_remote_empty_fallback(&client, api_key, cluster_id).await {
+            Ok(response) => {
+                fetch_step.done();
+                response
+            }
+            Err(error) => {
+                fetch_step.fail();
+                return Err(error);
+            }
+        };
+
+    let queries_dir = project.root.join(&project.config.project.queries);
+    let local_manifest = collect_local_hx_manifest(&queries_dir)?;
+    let remote_manifest = build_remote_hx_manifest(&sync_response);
+    let comparison = compare_manifests(&local_manifest, &remote_manifest);
+
+    let mut changed = false;
+
+    match comparison {
+        SnapshotComparison::BothEmpty | SnapshotComparison::InSync => {
+            crate::output::info("Local and cloud changes are already in sync.");
+        }
+        SnapshotComparison::LocalOnly => {
+            if let Err(error) = validate_local_hx_queries_for_push(project) {
+                op.failure();
+                return Err(eyre!(
+                    "your Cloud cluster has no queries, but local .hx queries failed validation. Fix errors before pushing to cloud.\n\n{}",
+                    error
+                ));
+            }
+
+            if confirm_sync_action(
+                assume_yes,
+                "your Cloud cluster has no queries! Push your local files to cloud now?",
+            )? {
+                let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
+                print_plan_for_direction(&diff, SyncDirection::Push);
+                push_local_snapshot_to_cluster(project, cluster_id, cluster_name).await?;
+                changed = true;
+            } else {
+                crate::output::info("Left local and cloud changes unchanged.");
+            }
+        }
+        SnapshotComparison::RemoteOnly => {
+            if confirm_sync_action(
+                assume_yes,
+                "Local source is empty while cloud has files. Pull cloud files to local?",
+            )? {
+                let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
+                print_plan_for_direction(&diff, SyncDirection::Pull);
+                pull_remote_snapshot_into_local(project, &local_manifest, &remote_manifest)?;
+                changed = true;
+            } else {
+                crate::output::info("Left local and cloud changes unchanged.");
+            }
+        }
+        SnapshotComparison::Diverged { authority, diff } => match authority {
+            DivergenceAuthority::LocalNewer => {
+                let push_allowed = match validate_local_hx_queries_for_push(project) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        print_warning(
+                            "Local .hx queries failed validation, so pushing local files is unavailable.",
+                        );
+                        print_warning(&error.to_string());
+                        false
+                    }
+                };
+
+                if push_allowed {
+                    if confirm_sync_action(
+                        assume_yes,
+                        "Local changes are newer. Push your local files to cloud?",
+                    )? {
+                        print_plan_for_direction(&diff, SyncDirection::Push);
+                        push_local_snapshot_to_cluster(project, cluster_id, cluster_name).await?;
+                        changed = true;
+                    } else if confirm_sync_action(
+                        false,
+                        "Overwrite local files with cloud changes instead?",
+                    )? {
+                        print_plan_for_direction(&diff, SyncDirection::Pull);
+                        pull_remote_snapshot_into_local(
+                            project,
+                            &local_manifest,
+                            &remote_manifest,
+                        )?;
+                        changed = true;
+                    } else {
+                        crate::output::info("Left local and cloud changes unchanged.");
+                    }
+                } else if assume_yes || !prompts::is_interactive() {
+                    crate::output::info(
+                        "Local push skipped because .hx queries failed validation.",
+                    );
+                    crate::output::info("Left local and cloud changes unchanged.");
+                } else if confirm_sync_action(
+                    false,
+                    "Overwrite local files with cloud changes instead?",
+                )? {
+                    print_plan_for_direction(&diff, SyncDirection::Pull);
+                    pull_remote_snapshot_into_local(project, &local_manifest, &remote_manifest)?;
+                    changed = true;
+                } else {
+                    crate::output::info("Left local and cloud changes unchanged.");
+                }
+            }
+            DivergenceAuthority::RemoteNewer => {
+                if confirm_sync_action(
+                    assume_yes,
+                    "Cloud changes are newer. Pull cloud files to local?",
+                )? {
+                    print_plan_for_direction(&diff, SyncDirection::Pull);
+                    pull_remote_snapshot_into_local(project, &local_manifest, &remote_manifest)?;
+                    changed = true;
+                } else {
+                    crate::output::info("Left local and cloud changes unchanged.");
+                }
+            }
+            DivergenceAuthority::TieOrUnknown => {
+                let allow_push = match validate_local_hx_queries_for_push(project) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        print_warning(
+                            "Local .hx queries failed validation, so pushing local files is unavailable.",
+                        );
+                        print_warning(&error.to_string());
+                        false
+                    }
+                };
+
+                match resolve_tie_action(assume_yes, allow_push)? {
+                    TieResolutionAction::NoOp => {
+                        crate::output::info("Left local and cloud changes unchanged.");
+                    }
+                    TieResolutionAction::Pull => {
+                        print_plan_for_direction(&diff, SyncDirection::Pull);
+                        pull_remote_snapshot_into_local(
+                            project,
+                            &local_manifest,
+                            &remote_manifest,
+                        )?;
+                        changed = true;
+                    }
+                    TieResolutionAction::Push => {
+                        print_plan_for_direction(&diff, SyncDirection::Push);
+                        push_local_snapshot_to_cluster(project, cluster_id, cluster_name).await?;
+                        changed = true;
+                    }
+                }
+            }
+        },
+    }
+
+    if changed {
+        crate::output::success("Sync reconciliation applied.");
+    }
+
+    op.success();
     Ok(())
 }
 
@@ -301,15 +943,24 @@ async fn resolve_workspace_id(
     Ok(selected)
 }
 
-fn update_project_name_in_helix_toml(project_root: &Path, new_project_name: &str) -> Result<()> {
+fn update_project_identity_in_helix_toml(
+    project_root: &Path,
+    new_project_name: &str,
+    project_id: &str,
+) -> Result<()> {
     let helix_toml_path = project_root.join("helix.toml");
-    let mut config = HelixConfig::from_file(&helix_toml_path)
-        .map_err(|e| eyre!("Failed to load helix.toml for project rename: {}", e))?;
+    let mut config = HelixConfig::from_file(&helix_toml_path).map_err(|e| {
+        eyre!(
+            "Failed to load helix.toml for project identity update: {}",
+            e
+        )
+    })?;
 
     config.project.name = new_project_name.to_string();
+    config.project.id = Some(project_id.to_string());
     config
         .save_to_file(&helix_toml_path)
-        .map_err(|e| eyre!("Failed to update project name in helix.toml: {}", e))?;
+        .map_err(|e| eyre!("Failed to update project identity in helix.toml: {}", e))?;
 
     Ok(())
 }
@@ -320,7 +971,7 @@ async fn resolve_or_create_project_for_sync(
     api_key: &str,
     workspace_id: &str,
     project_name_from_toml: &str,
-    project_root: &Path,
+    project_id_from_toml: Option<&str>,
 ) -> Result<CliProject> {
     let projects: Vec<CliProject> = client
         .get(format!(
@@ -337,6 +988,16 @@ async fn resolve_or_create_project_for_sync(
         .await
         .map_err(|e| eyre!("Failed to parse projects response: {}", e))?;
 
+    if let Some(project_id_hint) = project_id_from_toml
+        && let Some(existing) = projects.iter().find(|p| p.id == project_id_hint).cloned()
+    {
+        crate::output::info(&format!(
+            "Using project '{}' from your selected workspace.",
+            existing.name
+        ));
+        return Ok(existing);
+    }
+
     if let Some(existing) = projects
         .iter()
         .find(|p| p.name == project_name_from_toml)
@@ -349,45 +1010,56 @@ async fn resolve_or_create_project_for_sync(
         return Ok(existing);
     }
 
-    let should_create = prompts::confirm(&format!(
-        "Project '{}' was not found. Create it?",
-        project_name_from_toml
-    ))?;
+    match prompts::select_missing_project_choice(project_name_from_toml)? {
+        prompts::MissingProjectChoice::ChooseExisting => {
+            if projects.is_empty() {
+                return Err(eyre!(
+                    "No projects exist in this workspace yet. Create one to continue."
+                ));
+            }
 
-    if !should_create {
-        return Err(eyre!("Project selection cancelled"));
+            let project_choices: Vec<(String, String)> = projects
+                .iter()
+                .map(|p| (p.id.clone(), p.name.clone()))
+                .collect();
+            let selected_project_id = prompts::select_project(&project_choices)?;
+            let selected_project = projects
+                .into_iter()
+                .find(|p| p.id == selected_project_id)
+                .ok_or_else(|| eyre!("Selected project was not found in response"))?;
+
+            crate::output::info(&format!(
+                "Using existing project '{}' from your selected workspace.",
+                selected_project.name
+            ));
+
+            Ok(selected_project)
+        }
+        prompts::MissingProjectChoice::Create => {
+            let chosen_name = prompts::input_project_name(project_name_from_toml)?;
+            let created: CreateProjectResponse = client
+                .post(format!(
+                    "{}/api/cli/workspaces/{}/projects",
+                    base_url, workspace_id
+                ))
+                .header("x-api-key", api_key)
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({ "name": chosen_name }))
+                .send()
+                .await
+                .map_err(|e| eyre!("Failed to create project: {}", e))?
+                .error_for_status()
+                .map_err(|e| eyre!("Failed to create project: {}", e))?
+                .json()
+                .await
+                .map_err(|e| eyre!("Failed to parse create project response: {}", e))?;
+
+            Ok(CliProject {
+                id: created.id,
+                name: chosen_name,
+            })
+        }
     }
-
-    let chosen_name = prompts::input_project_name(project_name_from_toml)?;
-    let created: CreateProjectResponse = client
-        .post(format!(
-            "{}/api/cli/workspaces/{}/projects",
-            base_url, workspace_id
-        ))
-        .header("x-api-key", api_key)
-        .header("Content-Type", "application/json")
-        .json(&serde_json::json!({ "name": chosen_name }))
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to create project: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to create project: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse create project response: {}", e))?;
-
-    if chosen_name != project_name_from_toml {
-        update_project_name_in_helix_toml(project_root, &chosen_name)?;
-        crate::output::info(&format!(
-            "Updated helix.toml project name to '{}' to match your selected cloud project name.",
-            chosen_name
-        ));
-    }
-
-    Ok(CliProject {
-        id: created.id,
-        name: chosen_name,
-    })
 }
 
 async fn fetch_project_clusters(
@@ -490,8 +1162,11 @@ fn reconcile_project_config_from_cloud(
         .map_err(|e| eyre!("Failed to load helix.toml: {}", e))?;
 
     config.project.name = project_clusters.project_name.clone();
+    config.project.id = Some(project_clusters.project_id.clone());
     // Remove only Helix-managed cloud entries; preserve FlyIo, Ecr
-    config.cloud.retain(|_name, entry| !matches!(entry, CloudConfig::Helix(_)));
+    config
+        .cloud
+        .retain(|_name, entry| !matches!(entry, CloudConfig::Helix(_)));
     config.enterprise.clear();
 
     for cluster in &project_clusters.standard {
@@ -540,117 +1215,12 @@ fn reconcile_project_config_from_cloud(
 async fn sync_cluster_into_project(
     api_key: &str,
     cluster_id: &str,
+    cluster_name: &str,
     project: &ProjectContext,
     assume_yes: bool,
 ) -> Result<()> {
-    let op = Operation::new("Syncing", cluster_id);
-    let client = reqwest::Client::new();
-    let sync_url = format!("{}/api/cli/clusters/{}/sync", cloud_base_url(), cluster_id);
-
-    let mut sync_step = Step::with_messages("Fetching source files", "Source files fetched");
-    sync_step.start();
-
-    let response = client
-        .get(&sync_url)
-        .header("x-api-key", api_key)
-        .send()
+    reconcile_standard_cluster_snapshot(project, api_key, cluster_id, cluster_name, assume_yes)
         .await
-        .map_err(|e| eyre!("Failed to connect to Helix Cloud: {}", e))?;
-
-    match response.status() {
-        reqwest::StatusCode::OK => {}
-        reqwest::StatusCode::NOT_FOUND => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!(
-                "No source files found for cluster '{}'. Make sure you have deployed at least once with `helix push`.",
-                cluster_id
-            ));
-        }
-        reqwest::StatusCode::UNAUTHORIZED => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!(
-                "Authentication failed. Run 'helix auth login' to re-authenticate."
-            ));
-        }
-        reqwest::StatusCode::FORBIDDEN => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!(
-                "Access denied to cluster '{}'. Make sure you have permission to access this cluster.",
-                cluster_id
-            ));
-        }
-        status => {
-            let error_text = response.text().await.unwrap_or_default();
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Sync failed ({}): {}", status, error_text));
-        }
-    }
-
-    let sync_response: SyncResponse = response
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse sync response: {}", e))?;
-
-    sync_step.done();
-
-    let queries_dir = project.root.join(&project.config.project.queries);
-    if !queries_dir.exists() {
-        std::fs::create_dir_all(&queries_dir)?;
-    }
-
-    let mut differing_files: Vec<String> = Vec::new();
-    for (filename, content) in &sync_response.hx_files {
-        let file_path = safe_join_relative(&queries_dir, filename)?;
-        if file_path.exists()
-            && let Ok(local_content) = std::fs::read_to_string(&file_path)
-            && local_content != *content
-        {
-            differing_files.push(filename.clone());
-        }
-    }
-
-    if let Err(e) = confirm_overwrite_or_abort(
-        &differing_files,
-        assume_yes,
-        "Local changes in these files will be lost. Continue with overwrite?",
-    ) {
-        op.failure();
-        return Err(e);
-    }
-
-    let mut write_step = Step::with_messages("Writing source files", "Source files written");
-    write_step.start();
-
-    let mut files_written = 0;
-    for (filename, content) in &sync_response.hx_files {
-        let file_path = safe_join_relative(&queries_dir, filename)?;
-        if let Some(parent) = file_path.parent()
-            && !parent.exists()
-        {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        std::fs::write(&file_path, content)
-            .map_err(|e| eyre!("Failed to write {}: {}", filename, e))?;
-        files_written += 1;
-        Step::verbose_substep(&format!("  Wrote {}", filename));
-    }
-
-    write_step.done_with_info(&format!("{} files", files_written));
-    op.success();
-
-    println!();
-    crate::output::info(&format!(
-        "Synced {} files from cluster '{}'",
-        files_written, cluster_id
-    ));
-    crate::output::info(&format!("Files saved to: {}", queries_dir.display()));
-
-    Ok(())
 }
 
 async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Result<()> {
@@ -681,9 +1251,23 @@ async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Re
         &credentials.helix_admin_key,
         &workspace_id,
         &project.config.project.name,
-        &project.root,
+        project.config.project.id.as_deref(),
     )
     .await?;
+
+    if project.config.project.name != resolved_project.name
+        || project.config.project.id.as_deref() != Some(resolved_project.id.as_str())
+    {
+        update_project_identity_in_helix_toml(
+            &project.root,
+            &resolved_project.name,
+            &resolved_project.id,
+        )?;
+        crate::output::info(&format!(
+            "Updated helix.toml project identity to '{}' ({})",
+            resolved_project.name, resolved_project.id
+        ));
+    }
 
     let project_clusters = fetch_project_clusters(
         &client,
@@ -699,6 +1283,11 @@ async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Re
             resolved_project.name
         ));
     }
+
+    reconcile_project_config_from_cloud(project, &project_clusters)?;
+    crate::output::info(
+        "Updated helix.toml with canonical project and cluster metadata from Helix Cloud.",
+    );
 
     let standard_items: Vec<(String, String, String)> = project_clusters
         .standard
@@ -730,19 +1319,22 @@ async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Re
     if is_enterprise {
         sync_enterprise_from_cluster_id(&credentials.helix_admin_key, &cluster_id).await?;
     } else {
+        let cluster_name = project_clusters
+            .standard
+            .iter()
+            .find(|cluster| cluster.cluster_id == cluster_id)
+            .map(|cluster| cluster.cluster_name.as_str())
+            .unwrap_or(cluster_id.as_str());
+
         sync_cluster_into_project(
             &credentials.helix_admin_key,
             &cluster_id,
+            cluster_name,
             project,
             assume_yes,
         )
         .await?;
     }
-
-    reconcile_project_config_from_cloud(project, &project_clusters)?;
-    crate::output::info(
-        "Updated helix.toml with canonical project and cluster metadata from Helix Cloud.",
-    );
 
     Ok(())
 }
@@ -863,66 +1455,19 @@ async fn sync_from_cluster_id(api_key: &str, cluster_id: &str) -> Result<()> {
     let op = Operation::new("Syncing", cluster_id);
 
     let client = reqwest::Client::new();
-    let sync_url = format!("{}/api/cli/clusters/{}/sync", cloud_base_url(), cluster_id);
 
     let mut sync_step = Step::with_messages("Fetching source files", "Source files fetched");
     sync_step.start();
 
-    let response = match client
-        .get(&sync_url)
-        .header("x-api-key", api_key)
-        .send()
-        .await
-    {
-        Ok(resp) => resp,
-        Err(e) => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Failed to connect to Helix Cloud: {}", e));
-        }
-    };
-
-    match response.status() {
-        reqwest::StatusCode::OK => {}
-        reqwest::StatusCode::NOT_FOUND => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!(
-                "No source files found for cluster '{}'. Make sure you have deployed at least once with `helix push`.",
-                cluster_id
-            ));
-        }
-        reqwest::StatusCode::UNAUTHORIZED => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!(
-                "Authentication failed. Run 'helix auth login' to re-authenticate."
-            ));
-        }
-        reqwest::StatusCode::FORBIDDEN => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!(
-                "Access denied to cluster '{}'. Make sure you have permission to access this cluster.",
-                cluster_id
-            ));
-        }
-        status => {
-            let error_text = response.text().await.unwrap_or_default();
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Sync failed ({}): {}", status, error_text));
-        }
-    }
-
-    let sync_response: SyncResponse = match response.json().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Failed to parse sync response: {}", e));
-        }
-    };
+    let sync_response =
+        match fetch_sync_response_with_remote_empty_fallback(&client, api_key, cluster_id).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                sync_step.fail();
+                op.failure();
+                return Err(e);
+            }
+        };
 
     sync_step.done();
 
@@ -1108,8 +1653,6 @@ async fn pull_from_cloud_instance(
     instance_config: InstanceInfo<'_>,
     assume_yes: bool,
 ) -> Result<()> {
-    let op = Operation::new("Syncing", instance_name);
-
     // Handle enterprise instances separately
     if let InstanceInfo::Enterprise(config) = &instance_config {
         return pull_from_enterprise_instance(project, instance_name, config, assume_yes).await;
@@ -1119,19 +1662,16 @@ async fn pull_from_cloud_instance(
     let cluster_id = match &instance_config {
         InstanceInfo::Helix(config) => &config.cluster_id,
         InstanceInfo::FlyIo(_) => {
-            op.failure();
             return Err(eyre!(
                 "Sync is only supported for Helix Cloud instances, not Fly.io deployments"
             ));
         }
         InstanceInfo::Ecr(_) => {
-            op.failure();
             return Err(eyre!(
                 "Sync is only supported for Helix Cloud instances, not ECR deployments"
             ));
         }
         InstanceInfo::Local(_) | InstanceInfo::Enterprise(_) => {
-            op.failure();
             return Err(eyre!("Sync is only supported for cloud instances"));
         }
     };
@@ -1139,74 +1679,18 @@ async fn pull_from_cloud_instance(
     // Check auth
     let credentials = require_auth().await?;
 
-    Step::verbose_substep(&format!("Downloading from cluster: {cluster_id}"));
+    Step::verbose_substep(&format!("Reconciling against cluster: {cluster_id}"));
 
-    // Make API request to sync endpoint
+    reconcile_standard_cluster_snapshot(
+        project,
+        &credentials.helix_admin_key,
+        cluster_id,
+        instance_name,
+        assume_yes,
+    )
+    .await?;
+
     let client = reqwest::Client::new();
-    let sync_url = format!("{}/api/cli/clusters/{}/sync", cloud_base_url(), cluster_id);
-
-    let mut sync_step = Step::with_messages("Fetching source files", "Source files fetched");
-    sync_step.start();
-
-    let response = match client
-        .get(&sync_url)
-        .header("x-api-key", &credentials.helix_admin_key)
-        .send()
-        .await
-    {
-        Ok(resp) => resp,
-        Err(e) => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Failed to connect to Helix Cloud: {}", e));
-        }
-    };
-
-    // Handle response status
-    match response.status() {
-        reqwest::StatusCode::OK => {}
-        reqwest::StatusCode::NOT_FOUND => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!(
-                "No source files found for cluster '{}'. Make sure you have deployed at least once with `helix push`.",
-                cluster_id
-            ));
-        }
-        reqwest::StatusCode::UNAUTHORIZED => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!(
-                "Authentication failed. Run 'helix auth login' to re-authenticate."
-            ));
-        }
-        reqwest::StatusCode::FORBIDDEN => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!(
-                "Access denied to cluster '{}'. Make sure you have permission to access this cluster.",
-                cluster_id
-            ));
-        }
-        status => {
-            let error_text = response.text().await.unwrap_or_default();
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Sync failed ({}): {}", status, error_text));
-        }
-    }
-
-    // Parse response
-    let sync_response: SyncResponse = match response.json().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Failed to parse sync response: {}", e));
-        }
-    };
-
-    sync_step.done();
 
     let cluster_project = fetch_cluster_project(
         &client,
@@ -1223,81 +1707,8 @@ async fn pull_from_cloud_instance(
     )
     .await?;
 
-    // Get the queries directory from project config
-    let queries_dir = project.root.join(&project.config.project.queries);
-
-    // Create queries directory if it doesn't exist
-    if !queries_dir.exists() {
-        std::fs::create_dir_all(&queries_dir)?;
-    }
-
-    // Collect files that differ from local
-    let mut differing_files: Vec<String> = Vec::new();
-    for (filename, content) in &sync_response.hx_files {
-        let file_path = safe_join_relative(&queries_dir, filename)?;
-        if file_path.exists()
-            && let Ok(local_content) = std::fs::read_to_string(&file_path)
-            && local_content != *content
-        {
-            differing_files.push(filename.clone());
-        }
-    }
-
-    if let Err(e) = confirm_overwrite_or_abort(
-        &differing_files,
-        assume_yes,
-        "Overwrite local files that differ from remote?",
-    ) {
-        op.failure();
-        return Err(e);
-    }
-
-    // Write .hx files
-    let mut write_step = Step::with_messages("Writing source files", "Source files written");
-    write_step.start();
-
-    let mut files_written = 0;
-    for (filename, content) in &sync_response.hx_files {
-        let file_path = safe_join_relative(&queries_dir, filename)?;
-
-        // Create parent directories if needed
-        if let Some(parent) = file_path.parent()
-            && !parent.exists()
-        {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        std::fs::write(&file_path, content)
-            .map_err(|e| eyre!("Failed to write {}: {}", filename, e))?;
-
-        files_written += 1;
-        Step::verbose_substep(&format!("  Wrote {}", filename));
-    }
-
     reconcile_project_config_from_cloud(project, &project_clusters)?;
-    files_written += 1;
     Step::verbose_substep("  Wrote helix.toml (canonical cloud metadata)");
-
-    write_step.done_with_info(&format!("{} files", files_written));
-
-    op.success();
-
-    // Print summary
-    println!();
-    crate::output::info(&format!(
-        "Synced {} files from cluster '{}'",
-        files_written, cluster_id
-    ));
-    crate::output::info(&format!("Files saved to: {}", queries_dir.display()));
-
-    // List files that were synced
-    if !sync_response.hx_files.is_empty() {
-        println!();
-        println!("Files synced:");
-        for filename in sync_response.hx_files.keys() {
-            println!("  - {}", filename);
-        }
-    }
 
     Ok(())
 }
@@ -1407,4 +1818,167 @@ async fn pull_from_enterprise_instance(
     ));
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest_entry(hash: &str, last_modified_ms: Option<i64>) -> ManifestEntry {
+        ManifestEntry {
+            sha256: hash.to_string(),
+            last_modified_ms,
+            content: String::new(),
+        }
+    }
+
+    #[test]
+    fn compare_manifests_both_empty() {
+        let local = HashMap::new();
+        let remote = HashMap::new();
+        assert!(matches!(
+            compare_manifests(&local, &remote),
+            SnapshotComparison::BothEmpty
+        ));
+    }
+
+    #[test]
+    fn compare_manifests_local_only() {
+        let mut local = HashMap::new();
+        local.insert("schema.hx".to_string(), manifest_entry("a", Some(100)));
+        let remote = HashMap::new();
+
+        assert!(matches!(
+            compare_manifests(&local, &remote),
+            SnapshotComparison::LocalOnly
+        ));
+    }
+
+    #[test]
+    fn compare_manifests_remote_only() {
+        let local = HashMap::new();
+        let mut remote = HashMap::new();
+        remote.insert("schema.hx".to_string(), manifest_entry("a", Some(100)));
+
+        assert!(matches!(
+            compare_manifests(&local, &remote),
+            SnapshotComparison::RemoteOnly
+        ));
+    }
+
+    #[test]
+    fn compare_manifests_in_sync_when_hashes_match() {
+        let mut local = HashMap::new();
+        local.insert("schema.hx".to_string(), manifest_entry("same", Some(1000)));
+
+        let mut remote = HashMap::new();
+        remote.insert("schema.hx".to_string(), manifest_entry("same", Some(2000)));
+
+        assert!(matches!(
+            compare_manifests(&local, &remote),
+            SnapshotComparison::InSync
+        ));
+    }
+
+    #[test]
+    fn compare_manifests_prefers_local_when_local_is_newer() {
+        let mut local = HashMap::new();
+        local.insert(
+            "schema.hx".to_string(),
+            manifest_entry("local", Some(10_000)),
+        );
+
+        let mut remote = HashMap::new();
+        remote.insert(
+            "schema.hx".to_string(),
+            manifest_entry("remote", Some(1_000)),
+        );
+
+        let comparison = compare_manifests(&local, &remote);
+        assert!(matches!(
+            comparison,
+            SnapshotComparison::Diverged {
+                authority: DivergenceAuthority::LocalNewer,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn compare_manifests_prefers_remote_when_remote_is_newer() {
+        let mut local = HashMap::new();
+        local.insert(
+            "schema.hx".to_string(),
+            manifest_entry("local", Some(1_000)),
+        );
+
+        let mut remote = HashMap::new();
+        remote.insert(
+            "schema.hx".to_string(),
+            manifest_entry("remote", Some(10_000)),
+        );
+
+        let comparison = compare_manifests(&local, &remote);
+        assert!(matches!(
+            comparison,
+            SnapshotComparison::Diverged {
+                authority: DivergenceAuthority::RemoteNewer,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn compare_manifests_uses_tie_safety_window() {
+        let mut local = HashMap::new();
+        local.insert(
+            "schema.hx".to_string(),
+            manifest_entry("local", Some(10_000)),
+        );
+
+        let mut remote = HashMap::new();
+        remote.insert(
+            "schema.hx".to_string(),
+            manifest_entry("remote", Some(10_000 + CLOCK_SKEW_WINDOW_MS - 1)),
+        );
+
+        let comparison = compare_manifests(&local, &remote);
+        assert!(matches!(
+            comparison,
+            SnapshotComparison::Diverged {
+                authority: DivergenceAuthority::TieOrUnknown,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn build_sync_action_plan_for_pull_maps_to_local_file_operations() {
+        let diff = ManifestDiff {
+            local_only: vec!["local-only.hx".to_string()],
+            remote_only: vec!["remote-only.hx".to_string()],
+            changed: vec!["changed.hx".to_string()],
+        };
+
+        let plan = build_sync_action_plan(&diff, SyncDirection::Pull);
+
+        assert_eq!(plan.to_create, vec!["remote-only.hx".to_string()]);
+        assert_eq!(plan.to_change, vec!["changed.hx".to_string()]);
+        assert_eq!(plan.to_delete, vec!["local-only.hx".to_string()]);
+    }
+
+    #[test]
+    fn build_sync_action_plan_for_push_maps_to_cloud_file_operations() {
+        let diff = ManifestDiff {
+            local_only: vec!["local-only.hx".to_string()],
+            remote_only: vec!["remote-only.hx".to_string()],
+            changed: vec!["changed.hx".to_string()],
+        };
+
+        let plan = build_sync_action_plan(&diff, SyncDirection::Push);
+
+        assert_eq!(plan.to_create, vec!["local-only.hx".to_string()]);
+        assert_eq!(plan.to_change, vec!["changed.hx".to_string()]);
+        assert_eq!(plan.to_delete, vec!["remote-only.hx".to_string()]);
+    }
 }

@@ -106,9 +106,12 @@ async fn run_add_inner(
             // Authenticate and run workspace/project/cluster flow
             let credentials = crate::commands::auth::require_auth().await?;
             let project_name = &project_context.config.project.name;
-            let flow_result =
-                workspace_flow::run_workspace_project_cluster_flow(project_name, &credentials)
-                    .await?;
+            let flow_result = workspace_flow::run_workspace_project_cluster_flow(
+                project_name,
+                project_context.config.project.id.as_deref(),
+                &credentials,
+            )
+            .await?;
 
             if flow_result.resolved_project_name != project_context.config.project.name {
                 crate::output::info(&format!(
@@ -116,6 +119,12 @@ async fn run_add_inner(
                     flow_result.resolved_project_name
                 ));
                 project_context.config.project.name = flow_result.resolved_project_name;
+            }
+
+            if project_context.config.project.id.as_deref()
+                != Some(flow_result.resolved_project_id.as_str())
+            {
+                project_context.config.project.id = Some(flow_result.resolved_project_id.clone());
             }
 
             match flow_result.cluster {
