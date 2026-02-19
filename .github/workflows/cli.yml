@@ -2,6 +2,16 @@ name: Build and Upload Binaries
 
 on:
   workflow_dispatch:
+    inputs:
+      release_type:
+        description: Version bump type
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write  
@@ -25,7 +35,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          auto_increment_type: patch
+          auto_increment_type: ${{ inputs.release_type }}
           prerelease: false
           draft: false
           tag_schema: semantic
