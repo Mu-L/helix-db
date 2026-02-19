@@ -57,7 +57,6 @@ impl WorkspaceConfig {
 
         Ok(())
     }
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +72,8 @@ pub struct HelixConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub name: String,
     #[serde(
         default = "default_queries_path",
@@ -632,6 +633,7 @@ impl HelixConfig {
 
         HelixConfig {
             project: ProjectConfig {
+                id: None,
                 name: project_name.to_string(),
                 queries: default_queries_path(),
                 container_runtime: default_container_runtime(),

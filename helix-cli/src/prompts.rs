@@ -347,6 +347,54 @@ pub fn select_workspace(workspaces: &[crate::commands::sync::CliWorkspace]) -> R
     Ok(selected)
 }
 
+/// Prompt user to select a project from a list
+pub fn select_project(projects: &[(String, String)]) -> Result<String> {
+    if projects.is_empty() {
+        return Err(eyre::eyre!("No projects found in this workspace"));
+    }
+
+    if projects.len() == 1 {
+        return Ok(projects[0].0.clone());
+    }
+
+    let mut select = cliclack::select("Which project would you like to use?");
+    for (id, name) in projects {
+        let short_id = if id.len() > 8 { &id[..8] } else { id.as_str() };
+        let hint = format!("id: {}", short_id);
+        select = select.item(id.clone(), name.as_str(), hint.as_str());
+    }
+
+    let selected = select.interact()?;
+    Ok(selected)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingProjectChoice {
+    Create,
+    ChooseExisting,
+}
+
+pub fn select_missing_project_choice(project_name: &str) -> Result<MissingProjectChoice> {
+    let prompt = format!(
+        "Project '{}' was not found. Would you like to create it or choose an existing project?",
+        project_name
+    );
+
+    let selected: &str = cliclack::select(prompt)
+        .item("create", "create", "Create a new project")
+        .item(
+            "choose_existing",
+            "choose existing",
+            "Pick an existing project",
+        )
+        .interact()?;
+
+    Ok(match selected {
+        "create" => MissingProjectChoice::Create,
+        _ => MissingProjectChoice::ChooseExisting,
+    })
+}
+
 /// Prompt user to input a project name
 pub fn input_project_name(default: &str) -> Result<String> {
     let name: String = cliclack::input("Project name")

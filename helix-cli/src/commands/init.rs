@@ -119,11 +119,13 @@ async fn run_init_inner(
                     let credentials = crate::commands::auth::require_auth().await?;
                     let result = workspace_flow::run_workspace_project_cluster_flow(
                         project_name,
+                        config.project.id.as_deref(),
                         &credentials,
                     )
                     .await?;
 
                     config.project.name = result.resolved_project_name;
+                    config.project.id = Some(result.resolved_project_id);
 
                     // Backup config before saving
                     cleanup_tracker.backup_config(&config, config_path.clone());

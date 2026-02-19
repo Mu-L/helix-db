@@ -1,8 +1,10 @@
+use crate::output::{STANDARD_SPINNER_TICK_MILLIS, standard_spinner_style};
 use eyre::{Result, eyre};
 use futures_util::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressBar;
 use reqwest_eventsource::{Event, RequestBuilderExt};
 use serde::{Deserialize, Serialize};
+use std::io::IsTerminal;
 use std::time::Duration;
 
 /// SSE event types from Helix Cloud backend
@@ -62,7 +64,10 @@ pub enum SseEvent {
     ValidatingQueries,
 
     /// Deploy: Building with progress
-    Building { estimated_percentage: u16 },
+    Building {
+        #[serde(default)]
+        estimated_percentage: u16,
+    },
 
     /// Deploy: Deploying to infrastructure
     Deploying,
@@ -301,21 +306,22 @@ pub struct SseProgressHandler {
 impl SseProgressHandler {
     /// Create a new progress handler with a message
     pub fn new(message: &str) -> Self {
-        let progress_bar = ProgressBar::new(100);
-        progress_bar.set_style(
-            ProgressStyle::default_bar()
-                .template("{msg}\n{bar:40.cyan/blue} {pos}%")
-                .expect("Invalid progress bar template")
-                .progress_chars("=>-"),
-        );
-        progress_bar.set_message(message.to_string());
+        let progress_bar = if std::io::stdout().is_terminal() {
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(standard_spinner_style());
+            pb.enable_steady_tick(Duration::from_millis(STANDARD_SPINNER_TICK_MILLIS));
+            pb.set_message(message.to_string());
+            pb
+        } else {
+            ProgressBar::hidden()
+        };
 
         Self { progress_bar }
     }
 
     /// Update progress percentage
-    pub fn set_progress(&self, percentage: f64) {
-        self.progress_bar.set_position(percentage as u64);
+    pub fn set_progress(&self, _percentage: f64) {
+        // Spinner mode does not render a numeric progress bar.
     }
 
     /// Update progress message
@@ -407,6 +413,34 @@ mod tests {
                 estimated_percentage,
             } => {
                 assert_eq!(estimated_percentage, 42);
+            }
+            _ => panic!("Wrong internal-tagged deploy event type"),
+        }
+
+        // External-tagged building event with missing percentage should default to 0
+        let json = r#"{
+            "building": {}
+        }"#;
+        let event = parse_sse_event(json).unwrap();
+        match event {
+            SseEvent::Building {
+                estimated_percentage,
+            } => {
+                assert_eq!(estimated_percentage, 0);
+            }
+            _ => panic!("Wrong external-tagged deploy event type"),
+        }
+
+        // Internal-tagged building event with missing percentage should default to 0
+        let json = r#"{
+            "type": "building"
+        }"#;
+        let event = parse_sse_event(json).unwrap();
+        match event {
+            SseEvent::Building {
+                estimated_percentage,
+            } => {
+                assert_eq!(estimated_percentage, 0);
             }
             _ => panic!("Wrong internal-tagged deploy event type"),
         }
