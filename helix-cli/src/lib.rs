@@ -22,7 +22,7 @@ pub enum AuthAction {
     Login,
     /// Logout from Helix cloud
     Logout,
-    /// Create a new API key
+    /// Rotate a cluster API key
     CreateKey {
         /// Cluster ID
         cluster: String,
