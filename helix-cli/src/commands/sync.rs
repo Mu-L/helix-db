@@ -323,7 +323,7 @@ fn should_include_enterprise_source_file(relative_path: &Path) -> bool {
     }
 
     let normalized = relative_path.to_string_lossy().replace('\\', "/");
-    if normalized == "queries.bin" {
+    if normalized == "queries.json" {
         return false;
     }
 
@@ -492,7 +492,7 @@ async fn fetch_enterprise_sync_response_with_remote_empty_fallback(
     }
 }
 
-fn regenerate_enterprise_queries_bin(queries_dir: &Path) -> Result<PathBuf> {
+fn regenerate_enterprise_queries_json(queries_dir: &Path) -> Result<PathBuf> {
     let manifest_path = queries_dir.join("Cargo.toml");
     if !manifest_path.exists() {
         return Err(eyre!(
@@ -519,29 +519,29 @@ fn regenerate_enterprise_queries_bin(queries_dir: &Path) -> Result<PathBuf> {
         ));
     }
 
-    let query_bin_path = queries_dir.join("queries.bin");
-    if !query_bin_path.exists() {
+    let query_json_path = queries_dir.join("queries.json");
+    if !query_json_path.exists() {
         return Err(eyre!(
-            "Enterprise query project did not generate queries.bin at {}",
-            query_bin_path.display()
+            "Enterprise query project did not generate queries.json at {}",
+            query_json_path.display()
         ));
     }
 
-    let metadata = fs::metadata(&query_bin_path)
-        .map_err(|e| eyre!("Failed to read queries.bin metadata: {}", e))?;
+    let metadata = fs::metadata(&query_json_path)
+        .map_err(|e| eyre!("Failed to read queries.json metadata: {}", e))?;
     if metadata.len() == 0 {
         return Err(eyre!(
-            "Generated queries.bin is empty ({})",
-            query_bin_path.display()
+            "Generated queries.json is empty ({})",
+            query_json_path.display()
         ));
     }
 
-    Ok(query_bin_path)
+    Ok(query_json_path)
 }
 
 fn validate_local_enterprise_queries_for_push(project: &ProjectContext) -> Result<()> {
     let queries_dir = project.root.join(&project.config.project.queries);
-    regenerate_enterprise_queries_bin(&queries_dir).map(|_| ())
+    regenerate_enterprise_queries_json(&queries_dir).map(|_| ())
 }
 
 fn compute_manifest_diff(
@@ -1227,8 +1227,8 @@ async fn reconcile_enterprise_cluster_snapshot(
 
     let apply_pull = || -> Result<()> {
         pull_remote_enterprise_snapshot_into_local(project, &local_manifest, &remote_manifest)?;
-        let query_bin_path = regenerate_enterprise_queries_bin(&queries_dir)?;
-        Step::verbose_substep(&format!("  Regenerated {}", query_bin_path.display()));
+        let query_json_path = regenerate_enterprise_queries_json(&queries_dir)?;
+        Step::verbose_substep(&format!("  Regenerated {}", query_json_path.display()));
         Ok(())
     };
 
@@ -2134,7 +2134,7 @@ async fn sync_enterprise_from_cluster_id(api_key: &str, cluster_id: &str) -> Res
     }
 
     if queries_dir.join("Cargo.toml").exists() {
-        let generated = regenerate_enterprise_queries_bin(&queries_dir)?;
+        let generated = regenerate_enterprise_queries_json(&queries_dir)?;
         Step::verbose_substep(&format!("  Regenerated {}", generated.display()));
     }
 
@@ -2457,15 +2457,25 @@ mod tests {
 
     #[test]
     fn enterprise_source_allowlist_filters_non_project_files() {
-        assert!(should_include_enterprise_source_file(Path::new("Cargo.toml")));
-        assert!(should_include_enterprise_source_file(Path::new("src/main.rs")));
+        assert!(should_include_enterprise_source_file(Path::new(
+            "Cargo.toml"
+        )));
+        assert!(should_include_enterprise_source_file(Path::new(
+            "src/main.rs"
+        )));
         assert!(should_include_enterprise_source_file(Path::new(
             ".cargo/config.toml"
         )));
 
-        assert!(!should_include_enterprise_source_file(Path::new("queries.bin")));
-        assert!(!should_include_enterprise_source_file(Path::new("README.md")));
-        assert!(!should_include_enterprise_source_file(Path::new("target/tmp.rs")));
+        assert!(!should_include_enterprise_source_file(Path::new(
+            "queries.json"
+        )));
+        assert!(!should_include_enterprise_source_file(Path::new(
+            "README.md"
+        )));
+        assert!(!should_include_enterprise_source_file(Path::new(
+            "target/tmp.rs"
+        )));
     }
 
     #[test]
@@ -2480,7 +2490,7 @@ mod tests {
             "src\\nested\\query.rs".to_string(),
             "pub fn query() {}\n".to_string(),
         );
-        source_files.insert("queries.bin".to_string(), "ignore".to_string());
+        source_files.insert("queries.json".to_string(), "ignore".to_string());
         source_files.insert("../escape.rs".to_string(), "ignore".to_string());
         source_files.insert("README.md".to_string(), "ignore".to_string());
 
@@ -2504,7 +2514,7 @@ mod tests {
         assert!(manifest.contains_key("Cargo.toml"));
         assert!(manifest.contains_key("src/main.rs"));
         assert!(manifest.contains_key("src/nested/query.rs"));
-        assert!(!manifest.contains_key("queries.bin"));
+        assert!(!manifest.contains_key("queries.json"));
         assert!(!manifest.contains_key("README.md"));
         assert!(!manifest.contains_key("../escape.rs"));
 

@@ -107,23 +107,23 @@ fn run_enterprise_compile(
         ));
     }
 
-    let generated_bin = queries_project_dir.join("queries.bin");
-    if !generated_bin.exists() {
+    let generated_json = queries_project_dir.join("queries.json");
+    if !generated_json.exists() {
         return Err(eyre::eyre!(
-            "Enterprise query project did not generate queries.bin at {}",
-            generated_bin.display()
+            "Enterprise query project did not generate queries.json at {}",
+            generated_json.display()
         ));
     }
 
-    let target_path = resolve_enterprise_output_path(output_path, &generated_bin);
-    if target_path != generated_bin {
+    let target_path = resolve_enterprise_output_path(output_path, &generated_json);
+    if target_path != generated_json {
         if let Some(parent) = target_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::copy(&generated_bin, &target_path).map_err(|e| {
+        std::fs::copy(&generated_json, &target_path).map_err(|e| {
             eyre::eyre!(
-                "Failed to copy generated queries.bin from {} to {}: {}",
-                generated_bin.display(),
+                "Failed to copy generated queries.json from {} to {}: {}",
+                generated_json.display(),
                 target_path.display(),
                 e
             )
@@ -133,15 +133,15 @@ fn run_enterprise_compile(
     Ok(target_path)
 }
 
-fn resolve_enterprise_output_path(output_path: Option<&str>, generated_bin: &Path) -> PathBuf {
+fn resolve_enterprise_output_path(output_path: Option<&str>, generated_json: &Path) -> PathBuf {
     let Some(raw_output) = output_path else {
-        return generated_bin.to_path_buf();
+        return generated_json.to_path_buf();
     };
 
     let output = PathBuf::from(raw_output);
     if output.exists() {
         if output.is_dir() {
-            return output.join("queries.bin");
+            return output.join("queries.json");
         }
         return output;
     }
@@ -149,6 +149,6 @@ fn resolve_enterprise_output_path(output_path: Option<&str>, generated_bin: &Pat
     if output.extension().is_some() {
         output
     } else {
-        output.join("queries.bin")
+        output.join("queries.json")
     }
 }

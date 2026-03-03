@@ -20,7 +20,7 @@ const DEFAULT_CLOUD_AUTHORITY: &str = "cloud.helix-db.com";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
     std::env::var("CLOUD_AUTHORITY").unwrap_or_else(|_| {
         if cfg!(debug_assertions) {
-            "localhost:8080".to_string()
+            "http://helix-cloud-build-staging-gw-alb-72217854.us-east-1.elb.amazonaws.com".to_string()
         } else {
             DEFAULT_CLOUD_AUTHORITY.to_string()
         }
@@ -586,25 +586,25 @@ impl<'a> HelixManager<'a> {
             ));
         }
 
-        let query_bin_path = queries_project_dir.join("queries.bin");
-        if !query_bin_path.exists() {
+        let query_json_path = queries_project_dir.join("queries.json");
+        if !query_json_path.exists() {
             return Err(eyre!(
-                "Enterprise query project did not generate queries.bin at {}",
-                query_bin_path.display()
+                "Enterprise query project did not generate queries.json at {}",
+                query_json_path.display()
             ));
         }
 
-        let query_bin_bytes = std::fs::read(&query_bin_path).map_err(|e| {
+        let query_json_bytes = std::fs::read(&query_json_path).map_err(|e| {
             eyre!(
-                "Failed to read generated queries.bin ({}): {e}",
-                query_bin_path.display()
+                "Failed to read generated queries.json ({}): {e}",
+                query_json_path.display()
             )
         })?;
 
-        if query_bin_bytes.is_empty() {
+        if query_json_bytes.is_empty() {
             return Err(eyre!(
-                "Generated queries.bin is empty ({})",
-                query_bin_path.display()
+                "Generated queries.json is empty ({})",
+                query_json_path.display()
             ));
         }
 
@@ -616,7 +616,7 @@ impl<'a> HelixManager<'a> {
             ));
         }
 
-        let query_bin_b64 = BASE64_STANDARD.encode(&query_bin_bytes);
+        let query_json_b64 = BASE64_STANDARD.encode(&query_json_bytes);
 
         // Build pruned helix.toml
         let helix_toml_content = {
@@ -635,8 +635,8 @@ impl<'a> HelixManager<'a> {
         };
 
         let payload = json!({
-            "queries_bin_b64": query_bin_b64,
-            "queries_bin_size_bytes": query_bin_bytes.len(),
+            "queries_json_b64": query_json_b64,
+            "queries_json_size_bytes": query_json_bytes.len(),
             "source_files": source_files,
             "instance_name": cluster_name,
             "helix_toml": helix_toml_content,
@@ -671,7 +671,7 @@ impl<'a> HelixManager<'a> {
             .map_err(|e| eyre!("Failed to parse enterprise deploy response: {e}"))?;
 
         if let Some(s3_key) = response_payload.get("s3_key").and_then(|v| v.as_str()) {
-            output::info(&format!("Uploaded queries.bin to {s3_key}"));
+            output::info(&format!("Uploaded queries.json to {s3_key}"));
         }
 
         output::success("Enterprise cluster deployed successfully");
@@ -713,7 +713,7 @@ fn should_include_enterprise_source_file(relative_path: &Path) -> bool {
     }
 
     let normalized = relative_path.to_string_lossy().replace('\\', "/");
-    if normalized == "queries.bin" {
+    if normalized == "queries.json" {
         return false;
     }
 
@@ -815,25 +815,45 @@ mod tests {
 
     #[test]
     fn include_rules_allow_only_expected_enterprise_project_files() {
-        assert!(should_include_enterprise_source_file(Path::new("Cargo.toml")));
-        assert!(should_include_enterprise_source_file(Path::new("Cargo.lock")));
+        assert!(should_include_enterprise_source_file(Path::new(
+            "Cargo.toml"
+        )));
+        assert!(should_include_enterprise_source_file(Path::new(
+            "Cargo.lock"
+        )));
         assert!(should_include_enterprise_source_file(Path::new("build.rs")));
-        assert!(should_include_enterprise_source_file(Path::new("rust-toolchain")));
+        assert!(should_include_enterprise_source_file(Path::new(
+            "rust-toolchain"
+        )));
         assert!(should_include_enterprise_source_file(Path::new(
             "rust-toolchain.toml"
         )));
-        assert!(should_include_enterprise_source_file(Path::new("src/main.rs")));
-        assert!(should_include_enterprise_source_file(Path::new("src/nested/lib.rs")));
+        assert!(should_include_enterprise_source_file(Path::new(
+            "src/main.rs"
+        )));
+        assert!(should_include_enterprise_source_file(Path::new(
+            "src/nested/lib.rs"
+        )));
         assert!(should_include_enterprise_source_file(Path::new(
             ".cargo/config.toml"
         )));
 
-        assert!(!should_include_enterprise_source_file(Path::new("queries.bin")));
-        assert!(!should_include_enterprise_source_file(Path::new("README.md")));
+        assert!(!should_include_enterprise_source_file(Path::new(
+            "queries.json"
+        )));
+        assert!(!should_include_enterprise_source_file(Path::new(
+            "README.md"
+        )));
         assert!(!should_include_enterprise_source_file(Path::new("src")));
-        assert!(!should_include_enterprise_source_file(Path::new("target/debug/main")));
-        assert!(!should_include_enterprise_source_file(Path::new(".git/config")));
-        assert!(!should_include_enterprise_source_file(Path::new(".cargo/config")));
+        assert!(!should_include_enterprise_source_file(Path::new(
+            "target/debug/main"
+        )));
+        assert!(!should_include_enterprise_source_file(Path::new(
+            ".git/config"
+        )));
+        assert!(!should_include_enterprise_source_file(Path::new(
+            ".cargo/config"
+        )));
     }
 
     #[test]
@@ -849,7 +869,7 @@ mod tests {
         write_text_file(root, "README.md", "ignore me\n");
         write_text_file(root, "target/debug/generated.rs", "ignore target\n");
         write_text_file(root, ".git/config", "ignore git\n");
-        fs::write(root.join("queries.bin"), [0_u8, 1, 2, 3]).expect("write binary file");
+        fs::write(root.join("queries.json"), [0_u8, 1, 2, 3]).expect("write binary file");
 
         let files = collect_enterprise_source_files(root).expect("collect source snapshot");
 
@@ -862,7 +882,7 @@ mod tests {
         assert!(!files.contains_key("README.md"));
         assert!(!files.contains_key("target/debug/generated.rs"));
         assert!(!files.contains_key(".git/config"));
-        assert!(!files.contains_key("queries.bin"));
+        assert!(!files.contains_key("queries.json"));
     }
 
     #[test]
