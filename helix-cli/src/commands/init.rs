@@ -351,12 +351,8 @@ target/
         .append(true)
         .open(&gitignore_path)?;
     for line in gitignore.lines() {
-    for line in gitignore.lines() {
         let trimmed = line.trim();
         if !existing.lines().any(|l| l.trim() == trimmed) {
-            writeln!(file, "{}", line)?;
-        }
-    }
             writeln!(file, "{}", line)?;
         }
     }
