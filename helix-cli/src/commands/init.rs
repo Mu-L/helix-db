@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::io::Write;
 
 pub async fn run(
     path: Option<String>,
@@ -338,13 +339,23 @@ fn create_project_structure(
     fs::write(&queries_path_file, default_queries)?;
     cleanup_tracker.track_file(queries_path_file);
 
-    // Create .gitignore
+    // add this to .gitignore
     let gitignore = r#".helix/
 target/
 *.log
 "#;
     let gitignore_path = project_dir.join(".gitignore");
-    fs::write(&gitignore_path, gitignore)?;
+    let existing = fs::read_to_string(&gitignore_path).unwrap_or_default();
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&gitignore_path)?;
+    for line in gitignore.lines() {
+        let trimmed = line.trim();
+        if !existing.lines().any(|l| l.trim() == trimmed) {
+            writeln!(file, "{}", line)?;
+        }
+    }
     cleanup_tracker.track_file(gitignore_path);
 
     Ok(())
