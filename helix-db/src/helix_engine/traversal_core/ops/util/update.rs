@@ -3,6 +3,7 @@ use itertools::Itertools;
 
 use crate::{
     helix_engine::{
+        bm25::bm25::{BM25, build_bm25_payload},
         traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
     },
@@ -174,6 +175,16 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 );
 
                                 node.properties = Some(new_map);
+                            }
+                        }
+
+                        if let Some(bm25) = &self.storage.bm25
+                            && let Some(properties) = node.properties.as_ref()
+                        {
+                            let data = build_bm25_payload(properties, node.label);
+                            if let Err(e) = bm25.update_doc(self.txn, node.id, &data) {
+                                results.push(Err(e));
+                                continue;
                             }
                         }
 

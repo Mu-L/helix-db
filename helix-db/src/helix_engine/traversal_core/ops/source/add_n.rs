@@ -1,6 +1,6 @@
 use crate::{
     helix_engine::{
-        bm25::bm25::{BM25, BM25Flatten},
+        bm25::bm25::{BM25, build_bm25_payload},
         storage_core::HelixGraphStorage,
         traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
@@ -141,8 +141,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
         if let Some(bm25) = &self.storage.bm25
             && let Some(props) = node.properties.as_ref()
         {
-            let mut data = props.flatten_bm25();
-            data.push_str(node.label);
+            let data = build_bm25_payload(props, node.label);
             if let Err(e) = bm25.insert_doc(self.txn, node.id, &data) {
                 result = Err(e);
             }

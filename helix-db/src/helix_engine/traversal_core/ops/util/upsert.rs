@@ -3,7 +3,7 @@ use itertools::Itertools;
 
 use crate::{
     helix_engine::{
-        bm25::bm25::{BM25, BM25Flatten},
+        bm25::bm25::{BM25, build_bm25_payload},
         storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
         traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
@@ -18,11 +18,41 @@ use crate::{
     },
 };
 
+fn merge_create_props(
+    props: &[(&'static str, Value)],
+    create_defaults: &[(&'static str, Value)],
+) -> Vec<(&'static str, Value)> {
+    let mut merged = props
+        .iter()
+        .map(|(key, value)| (*key, value.clone()))
+        .collect::<Vec<_>>();
+
+    for (key, value) in create_defaults {
+        if !merged.iter().any(|(existing_key, _)| existing_key == key) {
+            merged.push((*key, value.clone()));
+        }
+    }
+
+    merged
+}
+
 pub trait UpsertAdapter<'db, 'arena, 'txn>: Iterator {
     fn upsert_n(
         self,
         label: &'static str,
         props: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
+
+    fn upsert_n_with_defaults(
+        self,
+        label: &'static str,
+        props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -43,11 +73,38 @@ pub trait UpsertAdapter<'db, 'arena, 'txn>: Iterator {
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     >;
 
+    fn upsert_e_with_defaults(
+        self,
+        label: &'arena str,
+        from_node: u128,
+        to_node: u128,
+        props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
+
     fn upsert_v(
         self,
         query: &'arena [f64],
         label: &'arena str,
         props: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
+
+    fn upsert_v_with_defaults(
+        self,
+        query: &'arena [f64],
+        label: &'arena str,
+        props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -60,9 +117,23 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
     UpsertAdapter<'db, 'arena, 'txn> for RwTraversalIterator<'db, 'arena, 'txn, I>
 {
     fn upsert_n(
+        self,
+        label: &'static str,
+        props: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
+        self.upsert_n_with_defaults(label, props, &[])
+    }
+
+    fn upsert_n_with_defaults(
         mut self,
         label: &'static str,
         props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -210,8 +281,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     if let Some(bm25) = &self.storage.bm25
                         && let Some(props) = node.properties.as_ref()
                     {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(node.label);
+                        let data = build_bm25_payload(props, node.label);
                         bm25.update_doc(self.txn, node.id, &data)?;
                     }
 
@@ -222,13 +292,15 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     Ok(TraversalValue::Node(node))
                 }
                 None => {
+                    let create_props = merge_create_props(props, create_defaults);
+
                     let properties = {
-                        if props.is_empty() {
+                        if create_props.is_empty() {
                             None
                         } else {
                             Some(ImmutablePropertiesMap::new(
-                                props.len(),
-                                props.iter().map(|(k, v)| (*k, v.clone())),
+                                create_props.len(),
+                                create_props.iter().map(|(k, v)| (*k, v.clone())),
                                 self.arena,
                             ))
                         }
@@ -249,7 +321,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         &bytes,
                     )?;
 
-                    for (k, v) in props.iter() {
+                    for (k, v) in create_props.iter() {
                         let Some((db, secondary_index)) = self.storage.secondary_indices.get(*k)
                         else {
                             continue;
@@ -279,8 +351,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     if let Some(bm25) = &self.storage.bm25
                         && let Some(props) = node.properties.as_ref()
                     {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(node.label);
+                        let data = build_bm25_payload(props, node.label);
                         bm25.insert_doc(self.txn, node.id, &data)?;
                     }
 
@@ -311,6 +382,22 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
         'txn,
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     > {
+        self.upsert_e_with_defaults(label, from_node, to_node, props, &[])
+    }
+
+    fn upsert_e_with_defaults(
+        self,
+        label: &'arena str,
+        from_node: u128,
+        to_node: u128,
+        props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
         let label_hash = hash_label(label, None);
         let out_key = HelixGraphStorage::out_edge_key(&from_node, &label_hash);
         let existing_edge: Result<Option<Edge>, GraphError> = (|| {
@@ -324,7 +411,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
             };
             for item in iter {
                 let (_, data) = item?;
-                let data = data.decode().map_err(|e| GraphError::DecodeError(e.to_string()))?;
+                let data = data
+                    .decode()
+                    .map_err(|e| GraphError::DecodeError(e.to_string()))?;
                 let (edge_id, node_id) = HelixGraphStorage::unpack_adj_edge_data(data)?;
                 if node_id == to_node {
                     return Ok(Some(self.storage.get_edge(self.txn, &edge_id, self.arena)?));
@@ -387,12 +476,13 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                 Ok(None) => {
                     // Create new edge
                     let version = self.storage.version_info.get_latest(label);
-                    let properties = if props.is_empty() {
+                    let create_props = merge_create_props(props, create_defaults);
+                    let properties = if create_props.is_empty() {
                         None
                     } else {
                         Some(ImmutablePropertiesMap::new(
-                            props.len(),
-                            props.iter().map(|(k, v)| (*k, v.clone())),
+                            create_props.len(),
+                            create_props.iter().map(|(k, v)| (*k, v.clone())),
                             self.arena,
                         ))
                     };
@@ -440,10 +530,25 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
     }
 
     fn upsert_v(
+        self,
+        query: &'arena [f64],
+        label: &'arena str,
+        props: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
+        self.upsert_v_with_defaults(query, label, props, &[])
+    }
+
+    fn upsert_v_with_defaults(
         mut self,
         query: &'arena [f64],
         label: &'arena str,
         props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -587,26 +692,19 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         }
                     }
 
-                    // Update BM25 index for existing vector
-                    if let Some(bm25) = &self.storage.bm25
-                        && let Some(props) = vector.properties.as_ref()
-                    {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(vector.label);
-                        bm25.update_doc(self.txn, vector.id, &data)?;
-                    }
-
                     self.storage.vectors.put_vector(self.txn, &vector)?;
                     Ok(TraversalValue::Vector(vector))
                 }
                 None => {
+                    let create_props = merge_create_props(props, create_defaults);
+
                     let properties = {
-                        if props.is_empty() {
+                        if create_props.is_empty() {
                             None
                         } else {
                             Some(ImmutablePropertiesMap::new(
-                                props.len(),
-                                props.iter().map(|(k, v)| (*k, v.clone())),
+                                create_props.len(),
+                                create_props.iter().map(|(k, v)| (*k, v.clone())),
                                 self.arena,
                             ))
                         }
@@ -619,7 +717,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                             self.txn, label, query, properties, self.arena,
                         )?;
 
-                    for (k, v) in props.iter() {
+                    for (k, v) in create_props.iter() {
                         let Some((db, secondary_index)) = self.storage.secondary_indices.get(*k)
                         else {
                             continue;
@@ -644,14 +742,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 )?,
                             crate::helix_engine::types::SecondaryIndex::None => unreachable!(),
                         }
-                    }
-
-                    if let Some(bm25) = &self.storage.bm25
-                        && let Some(props) = vector.properties.as_ref()
-                    {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(vector.label);
-                        bm25.insert_doc(self.txn, vector.id, &data)?;
                     }
 
                     Ok(TraversalValue::Vector(vector))
@@ -795,15 +885,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
 
                             vector.properties = Some(new_map);
                         }
-                    }
-
-                    // Update BM25 index for existing vector
-                    if let Some(bm25) = &self.storage.bm25
-                        && let Some(props) = vector.properties.as_ref()
-                    {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(vector.label);
-                        bm25.update_doc(self.txn, vector.id, &data)?;
                     }
 
                     self.storage.vectors.put_vector(self.txn, &vector)?;
