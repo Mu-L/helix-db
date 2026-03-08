@@ -86,7 +86,7 @@ impl<'a> HelixManager<'a> {
         let cluster_id = "YOUR_CLUSTER_ID".to_string();
 
         // Use provided region or default to us-east-1
-        let region = region.or_else(|| Some("us-east-1".to_string()));
+        let region = region.or(Some("us-east-1".to_string()));
 
         Ok(CloudInstanceConfig {
             cluster_id,
@@ -168,7 +168,7 @@ impl<'a> HelixManager<'a> {
         build_mode_override: Option<BuildMode>,
     ) -> Result<()> {
         let credentials = require_auth().await?;
-        let path = match get_path_or_cwd(path.as_ref()) {
+        let path = match get_path_or_cwd(path.as_deref()) {
             Ok(path) => path,
             Err(e) => {
                 return Err(eyre!("Error: failed to get path: {e}"));
@@ -553,7 +553,7 @@ impl<'a> HelixManager<'a> {
         config: &crate::config::EnterpriseInstanceConfig,
     ) -> Result<()> {
         let credentials = require_auth().await?;
-        let path = match get_path_or_cwd(path.as_ref()) {
+        let path = match get_path_or_cwd(path.as_deref()) {
             Ok(path) => path,
             Err(e) => {
                 return Err(eyre!("Error: failed to get path: {e}"));
@@ -568,8 +568,7 @@ impl<'a> HelixManager<'a> {
             for entry in std::fs::read_dir(&queries_dir)? {
                 let entry = entry?;
                 let file_path = entry.path();
-                if file_path.is_file() && file_path.extension().map(|e| e == "rs").unwrap_or(false)
-                {
+                if file_path.is_file() && file_path.extension().is_some_and(|e| e == "rs") {
                     let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
                     let content = std::fs::read_to_string(&file_path)
                         .map_err(|e| eyre!("Failed to read {}: {}", filename, e))?;
@@ -710,7 +709,7 @@ impl<'a> HelixManager<'a> {
 }
 
 /// Returns the path or the current working directory if no path is provided
-pub fn get_path_or_cwd(path: Option<&String>) -> Result<PathBuf> {
+pub fn get_path_or_cwd(path: Option<&str>) -> Result<PathBuf> {
     match path {
         Some(p) => Ok(PathBuf::from(p)),
         None => Ok(env::current_dir()?),

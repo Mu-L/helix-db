@@ -286,6 +286,7 @@ impl CloudInstanceConfig {
 }
 
 impl EnterpriseInstanceConfig {
+    #[allow(dead_code)]
     pub fn runtime_config(&self) -> RuntimeConfig {
         self.db_config.to_runtime_config()
     }

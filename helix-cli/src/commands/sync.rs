@@ -220,7 +220,7 @@ fn collect_local_hx_manifest(queries_dir: &Path) -> Result<HashMap<String, Manif
                 continue;
             }
 
-            let is_hx = path.extension().map(|ext| ext == "hx").unwrap_or(false);
+            let is_hx = path.extension().is_some_and(|ext| ext == "hx");
             if !is_hx {
                 continue;
             }
@@ -704,6 +704,17 @@ fn pull_remote_snapshot_into_local(
 
     let target_manifest = collect_local_hx_manifest(target_queries_dir)?;
 
+    fs::create_dir_all(target_queries_dir)?;
+
+    for (relative_path, remote_entry) in remote_manifest {
+        let destination = safe_join_relative(target_queries_dir, relative_path)?;
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&destination, &remote_entry.content)
+            .map_err(|e| eyre!("Failed to write {}: {}", relative_path, e))?;
+    }
+
     for relative_path in local_manifest.keys() {
         let local_path = safe_join_relative(current_queries_dir, relative_path)?;
         if local_path.exists() {
@@ -723,17 +734,6 @@ fn pull_remote_snapshot_into_local(
                 .map_err(|e| eyre!("Failed to remove local file {}: {}", relative_path, e))?;
             Step::verbose_substep(&format!("  Removed {}", relative_path));
         }
-    }
-
-    fs::create_dir_all(target_queries_dir)?;
-
-    for (relative_path, remote_entry) in remote_manifest {
-        let destination = safe_join_relative(target_queries_dir, relative_path)?;
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&destination, &remote_entry.content)
-            .map_err(|e| eyre!("Failed to write {}: {}", relative_path, e))?;
     }
 
     Ok(())
@@ -1745,17 +1745,14 @@ async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Re
             assume_yes,
         )
         .await?;
-        if let SyncReconciliationOutcome::Pulled = sync_outcome {
-            if project.config.project.queries != selected_queries_relative {
-                update_project_queries_path_in_helix_toml(
-                    &project.root,
-                    &selected_queries_relative,
-                )?;
-                Step::verbose_substep(&format!(
-                    "  Updated project queries path to {}",
-                    selected_queries_relative.display()
-                ));
-            }
+        if let SyncReconciliationOutcome::Pulled = sync_outcome
+            && project.config.project.queries != selected_queries_relative
+        {
+            update_project_queries_path_in_helix_toml(&project.root, &selected_queries_relative)?;
+            Step::verbose_substep(&format!(
+                "  Updated project queries path to {}",
+                selected_queries_relative.display()
+            ));
         }
     }
 
@@ -2176,17 +2173,17 @@ async fn pull_from_cloud_instance(
             )
             .await?;
 
-            if let SyncReconciliationOutcome::Pulled = sync_outcome {
-                if project.config.project.queries != selected_queries_relative {
-                    update_project_queries_path_in_helix_toml(
-                        &project.root,
-                        &selected_queries_relative,
-                    )?;
-                    Step::verbose_substep(&format!(
-                        "  Updated project queries path to {}",
-                        selected_queries_relative.display()
-                    ));
-                }
+            if let SyncReconciliationOutcome::Pulled = sync_outcome
+                && project.config.project.queries != selected_queries_relative
+            {
+                update_project_queries_path_in_helix_toml(
+                    &project.root,
+                    &selected_queries_relative,
+                )?;
+                Step::verbose_substep(&format!(
+                    "  Updated project queries path to {}",
+                    selected_queries_relative.display()
+                ));
             }
 
             reconcile_project_config_from_cloud(
