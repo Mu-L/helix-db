@@ -3,7 +3,7 @@ use itertools::Itertools;
 
 use crate::{
     helix_engine::{
-        bm25::bm25::{BM25, BM25Flatten},
+        bm25::bm25::{BM25, build_bm25_payload},
         storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
         traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
@@ -281,8 +281,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     if let Some(bm25) = &self.storage.bm25
                         && let Some(props) = node.properties.as_ref()
                     {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(node.label);
+                        let data = build_bm25_payload(props, node.label);
                         bm25.update_doc(self.txn, node.id, &data)?;
                     }
 
@@ -352,8 +351,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     if let Some(bm25) = &self.storage.bm25
                         && let Some(props) = node.properties.as_ref()
                     {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(node.label);
+                        let data = build_bm25_payload(props, node.label);
                         bm25.insert_doc(self.txn, node.id, &data)?;
                     }
 
@@ -694,15 +692,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         }
                     }
 
-                    // Update BM25 index for existing vector
-                    if let Some(bm25) = &self.storage.bm25
-                        && let Some(props) = vector.properties.as_ref()
-                    {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(vector.label);
-                        bm25.update_doc(self.txn, vector.id, &data)?;
-                    }
-
                     self.storage.vectors.put_vector(self.txn, &vector)?;
                     Ok(TraversalValue::Vector(vector))
                 }
@@ -753,14 +742,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 )?,
                             crate::helix_engine::types::SecondaryIndex::None => unreachable!(),
                         }
-                    }
-
-                    if let Some(bm25) = &self.storage.bm25
-                        && let Some(props) = vector.properties.as_ref()
-                    {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(vector.label);
-                        bm25.insert_doc(self.txn, vector.id, &data)?;
                     }
 
                     Ok(TraversalValue::Vector(vector))
@@ -904,15 +885,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
 
                             vector.properties = Some(new_map);
                         }
-                    }
-
-                    // Update BM25 index for existing vector
-                    if let Some(bm25) = &self.storage.bm25
-                        && let Some(props) = vector.properties.as_ref()
-                    {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(vector.label);
-                        bm25.update_doc(self.txn, vector.id, &data)?;
                     }
 
                     self.storage.vectors.put_vector(self.txn, &vector)?;
