@@ -42,6 +42,34 @@ pub struct HelixManager<'a> {
     project: &'a ProjectContext,
 }
 
+fn build_standard_deploy_payload(
+    schema_content: String,
+    queries_map: HashMap<String, String>,
+    cluster_name: &str,
+    cluster_info: &CloudInstanceConfig,
+    helix_toml_content: Option<String>,
+    build_mode_override: Option<String>,
+) -> Result<serde_json::Value> {
+    let build_mode = match cluster_info.build_mode {
+        BuildMode::Dev => "dev",
+        BuildMode::Release => "release",
+        BuildMode::Debug => {
+            return Err(eyre!("debug build mode is not supported for cloud deploys"));
+        }
+    };
+
+    Ok(json!({
+        "schema": schema_content,
+        "queries": queries_map,
+        "env_vars": cluster_info.env_vars.clone(),
+        "runtime_config": cluster_info.runtime_config(),
+        "build_mode": build_mode,
+        "instance_name": cluster_name,
+        "helix_toml": helix_toml_content,
+        "build_mode_override": build_mode_override,
+    }))
+}
+
 impl<'a> HelixManager<'a> {
     pub fn new(project: &'a ProjectContext) -> Self {
         Self { project }
@@ -241,22 +269,22 @@ impl<'a> HelixManager<'a> {
         // Prepare deployment payload
         let build_mode_override = build_mode_override
             .map(|mode| match mode {
-                BuildMode::Dev => Ok("dev"),
-                BuildMode::Release => Ok("release"),
+                BuildMode::Dev => Ok("dev".to_string()),
+                BuildMode::Release => Ok("release".to_string()),
                 BuildMode::Debug => {
                     Err(eyre!("debug build mode is not supported for cloud deploys"))
                 }
             })
             .transpose()?;
 
-        let payload = json!({
-            "schema": schema_content,
-            "queries": queries_map,
-            "env_vars": cluster_info.env_vars,
-            "instance_name": cluster_name,
-            "helix_toml": helix_toml_content,
-            "build_mode_override": build_mode_override
-        });
+        let payload = build_standard_deploy_payload(
+            schema_content,
+            queries_map,
+            &cluster_name,
+            cluster_info,
+            helix_toml_content,
+            build_mode_override,
+        )?;
 
         // Initiate deployment with SSE streaming
         let client = reqwest::Client::new();
@@ -686,5 +714,50 @@ pub fn get_path_or_cwd(path: Option<&String>) -> Result<PathBuf> {
     match path {
         Some(p) => Ok(PathBuf::from(p)),
         None => Ok(env::current_dir()?),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_standard_deploy_payload_includes_runtime_config_and_build_mode() {
+        let mut queries = HashMap::new();
+        queries.insert("search.hx".to_string(), "GetUsers {}".to_string());
+
+        let mut env_vars = HashMap::new();
+        env_vars.insert("OPENAI_API_KEY".to_string(), "key".to_string());
+
+        let config = CloudInstanceConfig {
+            cluster_id: "cluster-123".to_string(),
+            region: Some("us-east-1".to_string()),
+            build_mode: BuildMode::Release,
+            env_vars,
+            db_config: DbConfig {
+                vector_config: crate::config::VectorConfig {
+                    db_max_size_gb: 42,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        };
+
+        let payload = build_standard_deploy_payload(
+            "schema.hx".to_string(),
+            queries,
+            "prod",
+            &config,
+            Some("[project]\nname = \"demo\"\n".to_string()),
+            Some("dev".to_string()),
+        )
+        .expect("payload should serialize");
+
+        assert_eq!(payload["build_mode"], "release");
+        assert_eq!(payload["build_mode_override"], "dev");
+        assert_eq!(payload["instance_name"], "prod");
+        assert_eq!(payload["env_vars"]["OPENAI_API_KEY"], "key");
+        assert_eq!(payload["runtime_config"]["db_max_size_gb"], 42);
+        assert!(payload["helix_toml"].is_string());
     }
 }

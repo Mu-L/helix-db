@@ -1,4 +1,11 @@
 use crate::errors::ConfigError;
+use helix_db::helix_engine::{
+    traversal_core::config::{
+        Config as RuntimeConfig, GraphConfig as EngineGraphConfig,
+        VectorConfig as EngineVectorConfig,
+    },
+    types::SecondaryIndex,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -239,6 +246,51 @@ impl CloudConfig {
         }
     }
 }
+
+impl DbConfig {
+    pub fn to_runtime_config(&self) -> RuntimeConfig {
+        let secondary_indices = if self.graph_config.secondary_indices.is_empty() {
+            None
+        } else {
+            Some(
+                self.graph_config
+                    .secondary_indices
+                    .iter()
+                    .cloned()
+                    .map(SecondaryIndex::Index)
+                    .collect(),
+            )
+        };
+
+        RuntimeConfig {
+            vector_config: Some(EngineVectorConfig {
+                m: Some(self.vector_config.m as usize),
+                ef_construction: Some(self.vector_config.ef_construction as usize),
+                ef_search: Some(self.vector_config.ef_search as usize),
+            }),
+            graph_config: Some(EngineGraphConfig { secondary_indices }),
+            db_max_size_gb: Some(self.vector_config.db_max_size_gb as usize),
+            mcp: Some(self.mcp),
+            bm25: Some(self.bm25),
+            schema: self.schema.clone(),
+            embedding_model: self.embedding_model.clone(),
+            graphvis_node_label: self.graphvis_node_label.clone(),
+        }
+    }
+}
+
+impl CloudInstanceConfig {
+    pub fn runtime_config(&self) -> RuntimeConfig {
+        self.db_config.to_runtime_config()
+    }
+}
+
+impl EnterpriseInstanceConfig {
+    pub fn runtime_config(&self) -> RuntimeConfig {
+        self.db_config.to_runtime_config()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AvailabilityMode {

@@ -439,22 +439,6 @@ fn parse_and_sanitize_remote_config(
     Some(remote_config)
 }
 
-fn serialize_remote_config(
-    remote_config: &crate::config::HelixConfig,
-    source: &str,
-) -> Option<String> {
-    match toml::to_string_pretty(remote_config) {
-        Ok(serialized) => Some(serialized),
-        Err(e) => {
-            print_warning(&format!(
-                "Failed to serialize sanitized remote helix.toml from {}: {}",
-                source, e
-            ));
-            None
-        }
-    }
-}
-
 fn resolve_remote_queries_dir(
     base_dir: &Path,
     remote_config: Option<&crate::config::HelixConfig>,
@@ -515,6 +499,55 @@ async fn fetch_sync_response_with_remote_empty_fallback(
         status => {
             let error_text = response.text().await.unwrap_or_default();
             Err(eyre!("Sync failed ({}): {}", status, error_text))
+        }
+    }
+}
+
+async fn fetch_enterprise_sync_response_with_remote_empty_fallback(
+    client: &reqwest::Client,
+    api_key: &str,
+    cluster_id: &str,
+) -> Result<EnterpriseSyncResponse> {
+    let sync_url = format!(
+        "{}/api/cli/enterprise-clusters/{}/sync",
+        cloud_base_url(),
+        cluster_id
+    );
+    let response = client
+        .get(&sync_url)
+        .header("x-api-key", api_key)
+        .send()
+        .await
+        .map_err(|e| eyre!("Failed to connect to Helix Cloud: {}", e))?;
+
+    match response.status() {
+        reqwest::StatusCode::OK => {
+            let parsed: EnterpriseSyncResponse = response
+                .json()
+                .await
+                .map_err(|e| eyre!("Failed to parse enterprise sync response: {}", e))?;
+            Ok(parsed)
+        }
+        reqwest::StatusCode::NOT_FOUND => {
+            print_warning(&format!(
+                "No remote source files found for enterprise cluster '{}'. Treating cloud changes as empty.",
+                cluster_id
+            ));
+            Ok(EnterpriseSyncResponse {
+                rs_files: HashMap::new(),
+                helix_toml: None,
+            })
+        }
+        reqwest::StatusCode::UNAUTHORIZED => Err(eyre!(
+            "Authentication failed. Run 'helix auth login' to re-authenticate."
+        )),
+        reqwest::StatusCode::FORBIDDEN => Err(eyre!(
+            "Access denied to enterprise cluster '{}'. Make sure you have permission to access this cluster.",
+            cluster_id
+        )),
+        status => {
+            let error_text = response.text().await.unwrap_or_default();
+            Err(eyre!("Enterprise sync failed ({}): {}", status, error_text))
         }
     }
 }
@@ -637,32 +670,70 @@ fn print_plan_for_direction(diff: &ManifestDiff, direction: SyncDirection) {
 }
 
 fn pull_remote_snapshot_into_local(
-    project: &ProjectContext,
+    current_queries_dir: &Path,
+    target_queries_dir: &Path,
     local_manifest: &HashMap<String, ManifestEntry>,
     remote_manifest: &HashMap<String, ManifestEntry>,
 ) -> Result<()> {
-    let queries_dir = project.root.join(&project.config.project.queries);
-    fs::create_dir_all(&queries_dir)?;
+    if current_queries_dir == target_queries_dir {
+        fs::create_dir_all(target_queries_dir)?;
+
+        for (relative_path, remote_entry) in remote_manifest {
+            let destination = safe_join_relative(target_queries_dir, relative_path)?;
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&destination, &remote_entry.content)
+                .map_err(|e| eyre!("Failed to write {}: {}", relative_path, e))?;
+        }
+
+        for local_only_path in local_manifest
+            .keys()
+            .filter(|path| !remote_manifest.contains_key(*path))
+        {
+            let local_path = safe_join_relative(current_queries_dir, local_only_path)?;
+            if local_path.exists() {
+                fs::remove_file(&local_path)
+                    .map_err(|e| eyre!("Failed to remove local file {}: {}", local_only_path, e))?;
+                Step::verbose_substep(&format!("  Removed {}", local_only_path));
+            }
+        }
+
+        return Ok(());
+    }
+
+    let target_manifest = collect_local_hx_manifest(target_queries_dir)?;
+
+    for relative_path in local_manifest.keys() {
+        let local_path = safe_join_relative(current_queries_dir, relative_path)?;
+        if local_path.exists() {
+            fs::remove_file(&local_path)
+                .map_err(|e| eyre!("Failed to remove local file {}: {}", relative_path, e))?;
+            Step::verbose_substep(&format!("  Removed {}", relative_path));
+        }
+    }
+
+    for relative_path in target_manifest
+        .keys()
+        .filter(|path| !remote_manifest.contains_key(*path))
+    {
+        let local_path = safe_join_relative(target_queries_dir, relative_path)?;
+        if local_path.exists() {
+            fs::remove_file(&local_path)
+                .map_err(|e| eyre!("Failed to remove local file {}: {}", relative_path, e))?;
+            Step::verbose_substep(&format!("  Removed {}", relative_path));
+        }
+    }
+
+    fs::create_dir_all(target_queries_dir)?;
 
     for (relative_path, remote_entry) in remote_manifest {
-        let destination = safe_join_relative(&queries_dir, relative_path)?;
+        let destination = safe_join_relative(target_queries_dir, relative_path)?;
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::write(&destination, &remote_entry.content)
             .map_err(|e| eyre!("Failed to write {}: {}", relative_path, e))?;
-    }
-
-    for local_only_path in local_manifest
-        .keys()
-        .filter(|path| !remote_manifest.contains_key(*path))
-    {
-        let local_path = safe_join_relative(&queries_dir, local_only_path)?;
-        if local_path.exists() {
-            fs::remove_file(&local_path)
-                .map_err(|e| eyre!("Failed to remove local file {}: {}", local_only_path, e))?;
-            Step::verbose_substep(&format!("  Removed {}", local_only_path));
-        }
     }
 
     Ok(())
@@ -687,6 +758,13 @@ enum TieResolutionAction {
     NoOp,
     Pull,
     Push,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SyncReconciliationOutcome {
+    Unchanged,
+    Pulled,
+    Pushed,
 }
 
 fn resolve_tie_action(assume_yes: bool, allow_push: bool) -> Result<TieResolutionAction> {
@@ -721,8 +799,9 @@ async fn reconcile_standard_cluster_snapshot(
     api_key: &str,
     cluster_id: &str,
     cluster_name: &str,
+    target_queries_relative: &Path,
     assume_yes: bool,
-) -> Result<()> {
+) -> Result<SyncReconciliationOutcome> {
     let op = Operation::new("Syncing", cluster_name);
     let client = reqwest::Client::new();
 
@@ -740,12 +819,13 @@ async fn reconcile_standard_cluster_snapshot(
             }
         };
 
-    let queries_dir = project.root.join(&project.config.project.queries);
-    let local_manifest = collect_local_hx_manifest(&queries_dir)?;
+    let current_queries_dir = project.root.join(&project.config.project.queries);
+    let target_queries_dir = project.root.join(target_queries_relative);
+    let local_manifest = collect_local_hx_manifest(&current_queries_dir)?;
     let remote_manifest = build_remote_hx_manifest(&sync_response);
     let comparison = compare_manifests(&local_manifest, &remote_manifest);
 
-    let mut changed = false;
+    let mut outcome = SyncReconciliationOutcome::Unchanged;
 
     match comparison {
         SnapshotComparison::BothEmpty | SnapshotComparison::InSync => {
@@ -767,7 +847,7 @@ async fn reconcile_standard_cluster_snapshot(
                 let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
                 print_plan_for_direction(&diff, SyncDirection::Push);
                 push_local_snapshot_to_cluster(project, cluster_id, cluster_name).await?;
-                changed = true;
+                outcome = SyncReconciliationOutcome::Pushed;
             } else {
                 crate::output::info("Left local and cloud changes unchanged.");
             }
@@ -779,8 +859,13 @@ async fn reconcile_standard_cluster_snapshot(
             )? {
                 let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
                 print_plan_for_direction(&diff, SyncDirection::Pull);
-                pull_remote_snapshot_into_local(project, &local_manifest, &remote_manifest)?;
-                changed = true;
+                pull_remote_snapshot_into_local(
+                    &current_queries_dir,
+                    &target_queries_dir,
+                    &local_manifest,
+                    &remote_manifest,
+                )?;
+                outcome = SyncReconciliationOutcome::Pulled;
             } else {
                 crate::output::info("Left local and cloud changes unchanged.");
             }
@@ -805,18 +890,19 @@ async fn reconcile_standard_cluster_snapshot(
                     )? {
                         print_plan_for_direction(&diff, SyncDirection::Push);
                         push_local_snapshot_to_cluster(project, cluster_id, cluster_name).await?;
-                        changed = true;
+                        outcome = SyncReconciliationOutcome::Pushed;
                     } else if confirm_sync_action(
                         false,
                         "Overwrite local files with cloud changes instead?",
                     )? {
                         print_plan_for_direction(&diff, SyncDirection::Pull);
                         pull_remote_snapshot_into_local(
-                            project,
+                            &current_queries_dir,
+                            &target_queries_dir,
                             &local_manifest,
                             &remote_manifest,
                         )?;
-                        changed = true;
+                        outcome = SyncReconciliationOutcome::Pulled;
                     } else {
                         crate::output::info("Left local and cloud changes unchanged.");
                     }
@@ -830,8 +916,13 @@ async fn reconcile_standard_cluster_snapshot(
                     "Overwrite local files with cloud changes instead?",
                 )? {
                     print_plan_for_direction(&diff, SyncDirection::Pull);
-                    pull_remote_snapshot_into_local(project, &local_manifest, &remote_manifest)?;
-                    changed = true;
+                    pull_remote_snapshot_into_local(
+                        &current_queries_dir,
+                        &target_queries_dir,
+                        &local_manifest,
+                        &remote_manifest,
+                    )?;
+                    outcome = SyncReconciliationOutcome::Pulled;
                 } else {
                     crate::output::info("Left local and cloud changes unchanged.");
                 }
@@ -842,8 +933,13 @@ async fn reconcile_standard_cluster_snapshot(
                     "Cloud changes are newer. Pull cloud files to local?",
                 )? {
                     print_plan_for_direction(&diff, SyncDirection::Pull);
-                    pull_remote_snapshot_into_local(project, &local_manifest, &remote_manifest)?;
-                    changed = true;
+                    pull_remote_snapshot_into_local(
+                        &current_queries_dir,
+                        &target_queries_dir,
+                        &local_manifest,
+                        &remote_manifest,
+                    )?;
+                    outcome = SyncReconciliationOutcome::Pulled;
                 } else {
                     crate::output::info("Left local and cloud changes unchanged.");
                 }
@@ -867,28 +963,29 @@ async fn reconcile_standard_cluster_snapshot(
                     TieResolutionAction::Pull => {
                         print_plan_for_direction(&diff, SyncDirection::Pull);
                         pull_remote_snapshot_into_local(
-                            project,
+                            &current_queries_dir,
+                            &target_queries_dir,
                             &local_manifest,
                             &remote_manifest,
                         )?;
-                        changed = true;
+                        outcome = SyncReconciliationOutcome::Pulled;
                     }
                     TieResolutionAction::Push => {
                         print_plan_for_direction(&diff, SyncDirection::Push);
                         push_local_snapshot_to_cluster(project, cluster_id, cluster_name).await?;
-                        changed = true;
+                        outcome = SyncReconciliationOutcome::Pushed;
                     }
                 }
             }
         },
     }
 
-    if changed {
+    if outcome != SyncReconciliationOutcome::Unchanged {
         crate::output::success("Sync reconciliation applied.");
     }
 
     op.success();
-    Ok(())
+    Ok(outcome)
 }
 
 async fn fetch_workspaces(
@@ -941,28 +1038,6 @@ async fn resolve_workspace_id(
     workspace_config.workspace_id = Some(selected.clone());
     workspace_config.save()?;
     Ok(selected)
-}
-
-fn update_project_identity_in_helix_toml(
-    project_root: &Path,
-    new_project_name: &str,
-    project_id: &str,
-) -> Result<()> {
-    let helix_toml_path = project_root.join("helix.toml");
-    let mut config = HelixConfig::from_file(&helix_toml_path).map_err(|e| {
-        eyre!(
-            "Failed to load helix.toml for project identity update: {}",
-            e
-        )
-    })?;
-
-    config.project.name = new_project_name.to_string();
-    config.project.id = Some(project_id.to_string());
-    config
-        .save_to_file(&helix_toml_path)
-        .map_err(|e| eyre!("Failed to update project identity in helix.toml: {}", e))?;
-
-    Ok(())
 }
 
 async fn resolve_or_create_project_for_sync(
@@ -1110,6 +1185,51 @@ async fn fetch_cluster_project(
     Ok(cluster_project)
 }
 
+async fn fetch_enterprise_cluster_project(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    cluster_id: &str,
+) -> Result<CliClusterProject> {
+    let cluster_project: CliClusterProject = client
+        .get(format!(
+            "{}/api/cli/enterprise-clusters/{}/project",
+            base_url, cluster_id
+        ))
+        .header("x-api-key", api_key)
+        .send()
+        .await
+        .map_err(|e| eyre!("Failed to fetch enterprise cluster project: {}", e))?
+        .error_for_status()
+        .map_err(|e| eyre!("Failed to fetch enterprise cluster project: {}", e))?
+        .json()
+        .await
+        .map_err(|e| eyre!("Failed to parse enterprise cluster project response: {}", e))?;
+
+    Ok(cluster_project)
+}
+
+async fn fetch_project_clusters_for_standard_cluster(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    cluster_id: &str,
+) -> Result<CliProjectClusters> {
+    let cluster_project = fetch_cluster_project(client, base_url, api_key, cluster_id).await?;
+    fetch_project_clusters(client, base_url, api_key, &cluster_project.project_id).await
+}
+
+async fn fetch_project_clusters_for_enterprise_cluster(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    cluster_id: &str,
+) -> Result<CliProjectClusters> {
+    let cluster_project =
+        fetch_enterprise_cluster_project(client, base_url, api_key, cluster_id).await?;
+    fetch_project_clusters(client, base_url, api_key, &cluster_project.project_id).await
+}
+
 fn build_mode_from_cloud(value: &str) -> BuildMode {
     match value {
         "dev" => BuildMode::Dev,
@@ -1130,13 +1250,15 @@ fn insert_unique_cloud_instance_name(
     preferred_name: &str,
     cluster_id: &str,
     config: CloudConfig,
-) {
+) -> String {
     let mut name = preferred_name.to_string();
     if cloud.contains_key(&name) {
         let suffix = cluster_id.chars().take(8).collect::<String>();
         name = format!("{}-{}", preferred_name, suffix);
     }
-    cloud.insert(name, config);
+    let inserted_name = name.clone();
+    cloud.insert(inserted_name.clone(), config);
+    inserted_name
 }
 
 fn insert_unique_enterprise_instance_name(
@@ -1144,22 +1266,270 @@ fn insert_unique_enterprise_instance_name(
     preferred_name: &str,
     cluster_id: &str,
     config: EnterpriseInstanceConfig,
-) {
+) -> String {
     let mut name = preferred_name.to_string();
     if enterprise.contains_key(&name) {
         let suffix = cluster_id.chars().take(8).collect::<String>();
         name = format!("{}-{}", preferred_name, suffix);
     }
-    enterprise.insert(name, config);
+    let inserted_name = name.clone();
+    enterprise.insert(inserted_name.clone(), config);
+    inserted_name
 }
 
-fn reconcile_project_config_from_cloud(
-    project: &ProjectContext,
-    project_clusters: &CliProjectClusters,
+fn extract_standard_snapshot_config(
+    remote_config: &HelixConfig,
+    cluster_id: &str,
+) -> Option<CloudInstanceConfig> {
+    if let Some(config) = remote_config.cloud.values().find_map(|entry| match entry {
+        CloudConfig::Helix(config) if config.cluster_id == cluster_id => Some(config.clone()),
+        _ => None,
+    }) {
+        return Some(config);
+    }
+
+    let mut helix_configs = remote_config
+        .cloud
+        .values()
+        .filter_map(|entry| match entry {
+            CloudConfig::Helix(config) => Some(config.clone()),
+            _ => None,
+        });
+
+    let first = helix_configs.next()?;
+    if helix_configs.next().is_none() {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+fn extract_enterprise_snapshot_config(
+    remote_config: &HelixConfig,
+    cluster_id: &str,
+) -> Option<EnterpriseInstanceConfig> {
+    if let Some(config) = remote_config
+        .enterprise
+        .values()
+        .find(|config| config.cluster_id == cluster_id)
+    {
+        return Some(config.clone());
+    }
+
+    let mut enterprise_configs = remote_config.enterprise.values().cloned();
+    let first = enterprise_configs.next()?;
+    if enterprise_configs.next().is_none() {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+fn snapshot_config_from_remote_toml(
+    remote_toml: Option<&str>,
+    source: &str,
+) -> Option<HelixConfig> {
+    remote_toml.and_then(|remote_toml| parse_and_sanitize_remote_config(remote_toml, source))
+}
+
+async fn fetch_standard_cluster_snapshot_config(
+    client: &reqwest::Client,
+    api_key: &str,
+    cluster_id: &str,
+    source: &str,
+) -> Result<Option<HelixConfig>> {
+    let sync_response =
+        fetch_sync_response_with_remote_empty_fallback(client, api_key, cluster_id).await?;
+    Ok(snapshot_config_from_remote_toml(
+        sync_response.helix_toml.as_deref(),
+        source,
+    ))
+}
+
+async fn fetch_enterprise_cluster_snapshot_config(
+    client: &reqwest::Client,
+    api_key: &str,
+    cluster_id: &str,
+    source: &str,
+) -> Result<Option<HelixConfig>> {
+    let sync_response =
+        fetch_enterprise_sync_response_with_remote_empty_fallback(client, api_key, cluster_id)
+            .await?;
+    Ok(snapshot_config_from_remote_toml(
+        sync_response.helix_toml.as_deref(),
+        source,
+    ))
+}
+
+async fn fetch_standard_cluster_snapshot_configs(
+    client: &reqwest::Client,
+    api_key: &str,
+    clusters: &[CliProjectStandardCluster],
+) -> Result<HashMap<String, HelixConfig>> {
+    let mut snapshots = HashMap::new();
+
+    for cluster in clusters {
+        if let Some(remote_config) = fetch_standard_cluster_snapshot_config(
+            client,
+            api_key,
+            &cluster.cluster_id,
+            &format!("cluster '{}' snapshot", cluster.cluster_id),
+        )
+        .await?
+        {
+            snapshots.insert(cluster.cluster_id.clone(), remote_config);
+        }
+    }
+
+    Ok(snapshots)
+}
+
+async fn fetch_enterprise_cluster_snapshot_configs(
+    client: &reqwest::Client,
+    api_key: &str,
+    clusters: &[CliProjectEnterpriseCluster],
+) -> Result<HashMap<String, HelixConfig>> {
+    let mut snapshots = HashMap::new();
+
+    for cluster in clusters {
+        if let Some(remote_config) = fetch_enterprise_cluster_snapshot_config(
+            client,
+            api_key,
+            &cluster.cluster_id,
+            &format!("enterprise cluster '{}' snapshot", cluster.cluster_id),
+        )
+        .await?
+        {
+            snapshots.insert(cluster.cluster_id.clone(), remote_config);
+        }
+    }
+
+    Ok(snapshots)
+}
+
+fn merged_standard_cluster_config(
+    cluster: &CliProjectStandardCluster,
+    existing_config: Option<&CloudInstanceConfig>,
+    snapshot_config: Option<&HelixConfig>,
+) -> CloudInstanceConfig {
+    if let Some(mut snapshot_config) = snapshot_config
+        .and_then(|snapshot| extract_standard_snapshot_config(snapshot, &cluster.cluster_id))
+    {
+        snapshot_config.cluster_id = cluster.cluster_id.clone();
+        snapshot_config.build_mode = build_mode_from_cloud(&cluster.build_mode);
+        return snapshot_config;
+    }
+
+    if let Some(existing_config) = existing_config {
+        let mut preserved = existing_config.clone();
+        preserved.cluster_id = cluster.cluster_id.clone();
+        preserved.build_mode = build_mode_from_cloud(&cluster.build_mode);
+        return preserved;
+    }
+
+    CloudInstanceConfig {
+        cluster_id: cluster.cluster_id.clone(),
+        region: None,
+        build_mode: build_mode_from_cloud(&cluster.build_mode),
+        env_vars: HashMap::new(),
+        db_config: DbConfig::default(),
+    }
+}
+
+fn selected_project_queries_path(selected_snapshot: Option<&HelixConfig>) -> Option<PathBuf> {
+    selected_snapshot.map(|snapshot| snapshot.project.queries.clone())
+}
+
+fn resolve_selected_project_queries_path(selected_snapshot: Option<&HelixConfig>) -> PathBuf {
+    selected_project_queries_path(selected_snapshot)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_QUERIES_DIR))
+}
+
+fn update_project_queries_path_in_helix_toml(
+    project_root: &Path,
+    queries_path: &Path,
 ) -> Result<()> {
-    let helix_toml_path = project.root.join("helix.toml");
+    let helix_toml_path = project_root.join("helix.toml");
     let mut config = HelixConfig::from_file(&helix_toml_path)
-        .map_err(|e| eyre!("Failed to load helix.toml: {}", e))?;
+        .map_err(|e| eyre!("Failed to load helix.toml for queries path update: {}", e))?;
+
+    config.project.queries = sanitize_relative_path(queries_path)?;
+    config
+        .save_to_file(&helix_toml_path)
+        .map_err(|e| eyre!("Failed to update queries path in helix.toml: {}", e))?;
+
+    Ok(())
+}
+
+fn merged_enterprise_cluster_config(
+    cluster: &CliProjectEnterpriseCluster,
+    existing_config: Option<&EnterpriseInstanceConfig>,
+    snapshot_config: Option<&HelixConfig>,
+) -> EnterpriseInstanceConfig {
+    let db_config = snapshot_config
+        .and_then(|snapshot| extract_enterprise_snapshot_config(snapshot, &cluster.cluster_id))
+        .map(|snapshot| snapshot.db_config)
+        .or_else(|| existing_config.map(|existing| existing.db_config.clone()))
+        .unwrap_or_default();
+
+    EnterpriseInstanceConfig {
+        cluster_id: cluster.cluster_id.clone(),
+        availability_mode: availability_mode_from_cloud(&cluster.availability_mode),
+        gateway_node_type: cluster.gateway_node_type.clone(),
+        db_node_type: cluster.db_node_type.clone(),
+        min_instances: cluster.min_instances,
+        max_instances: cluster.max_instances,
+        db_config,
+    }
+}
+
+async fn reconcile_project_config_from_cloud(
+    project_root: &Path,
+    client: &reqwest::Client,
+    api_key: &str,
+    project_clusters: &CliProjectClusters,
+    initial_queries_path: Option<&Path>,
+) -> Result<()> {
+    let helix_toml_path = project_root.join("helix.toml");
+    let mut config = if helix_toml_path.exists() {
+        HelixConfig::from_file(&helix_toml_path)
+            .map_err(|e| eyre!("Failed to load helix.toml: {}", e))?
+    } else {
+        HelixConfig {
+            project: crate::config::ProjectConfig {
+                id: None,
+                name: project_clusters.project_name.clone(),
+                queries: initial_queries_path
+                    .map(sanitize_relative_path)
+                    .transpose()?
+                    .unwrap_or_else(|| PathBuf::from(DEFAULT_QUERIES_DIR)),
+                container_runtime: crate::config::ContainerRuntime::Docker,
+            },
+            local: HashMap::new(),
+            cloud: HashMap::new(),
+            enterprise: HashMap::new(),
+        }
+    };
+
+    let existing_standard_configs: HashMap<String, CloudInstanceConfig> = config
+        .cloud
+        .values()
+        .filter_map(|entry| match entry {
+            CloudConfig::Helix(instance) => Some((instance.cluster_id.clone(), instance.clone())),
+            _ => None,
+        })
+        .collect();
+    let existing_enterprise_configs: HashMap<String, EnterpriseInstanceConfig> = config
+        .enterprise
+        .values()
+        .map(|instance| (instance.cluster_id.clone(), instance.clone()))
+        .collect();
+    let standard_snapshots =
+        fetch_standard_cluster_snapshot_configs(client, api_key, &project_clusters.standard)
+            .await?;
+    let enterprise_snapshots =
+        fetch_enterprise_cluster_snapshot_configs(client, api_key, &project_clusters.enterprise)
+            .await?;
 
     config.project.name = project_clusters.project_name.clone();
     config.project.id = Some(project_clusters.project_id.clone());
@@ -1170,39 +1540,47 @@ fn reconcile_project_config_from_cloud(
     config.enterprise.clear();
 
     for cluster in &project_clusters.standard {
-        let instance_config = CloudInstanceConfig {
-            cluster_id: cluster.cluster_id.clone(),
-            region: Some("us-east-1".to_string()),
-            build_mode: build_mode_from_cloud(&cluster.build_mode),
-            env_vars: HashMap::new(),
-            db_config: DbConfig::default(),
-        };
+        let instance_config = merged_standard_cluster_config(
+            cluster,
+            existing_standard_configs.get(&cluster.cluster_id),
+            standard_snapshots.get(&cluster.cluster_id),
+        );
 
-        insert_unique_cloud_instance_name(
+        let inserted_name = insert_unique_cloud_instance_name(
             &mut config.cloud,
             &cluster.cluster_name,
             &cluster.cluster_id,
             CloudConfig::Helix(instance_config),
         );
+
+        if inserted_name != cluster.cluster_name {
+            print_warning(&format!(
+                "Remote cluster '{}' conflicted with an existing instance name; saved as '{}'.",
+                cluster.cluster_name, inserted_name
+            ));
+        }
     }
 
     for cluster in &project_clusters.enterprise {
-        let instance_config = EnterpriseInstanceConfig {
-            cluster_id: cluster.cluster_id.clone(),
-            availability_mode: availability_mode_from_cloud(&cluster.availability_mode),
-            gateway_node_type: cluster.gateway_node_type.clone(),
-            db_node_type: cluster.db_node_type.clone(),
-            min_instances: cluster.min_instances,
-            max_instances: cluster.max_instances,
-            db_config: DbConfig::default(),
-        };
+        let instance_config = merged_enterprise_cluster_config(
+            cluster,
+            existing_enterprise_configs.get(&cluster.cluster_id),
+            enterprise_snapshots.get(&cluster.cluster_id),
+        );
 
-        insert_unique_enterprise_instance_name(
+        let inserted_name = insert_unique_enterprise_instance_name(
             &mut config.enterprise,
             &cluster.cluster_name,
             &cluster.cluster_id,
             instance_config,
         );
+
+        if inserted_name != cluster.cluster_name {
+            print_warning(&format!(
+                "Remote enterprise cluster '{}' conflicted with an existing instance name; saved as '{}'.",
+                cluster.cluster_name, inserted_name
+            ));
+        }
     }
 
     config
@@ -1217,10 +1595,18 @@ async fn sync_cluster_into_project(
     cluster_id: &str,
     cluster_name: &str,
     project: &ProjectContext,
+    target_queries_relative: &Path,
     assume_yes: bool,
-) -> Result<()> {
-    reconcile_standard_cluster_snapshot(project, api_key, cluster_id, cluster_name, assume_yes)
-        .await
+) -> Result<SyncReconciliationOutcome> {
+    reconcile_standard_cluster_snapshot(
+        project,
+        api_key,
+        cluster_id,
+        cluster_name,
+        target_queries_relative,
+        assume_yes,
+    )
+    .await
 }
 
 async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Result<()> {
@@ -1255,20 +1641,6 @@ async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Re
     )
     .await?;
 
-    if project.config.project.name != resolved_project.name
-        || project.config.project.id.as_deref() != Some(resolved_project.id.as_str())
-    {
-        update_project_identity_in_helix_toml(
-            &project.root,
-            &resolved_project.name,
-            &resolved_project.id,
-        )?;
-        crate::output::info(&format!(
-            "Updated helix.toml project identity to '{}' ({})",
-            resolved_project.name, resolved_project.id
-        ));
-    }
-
     let project_clusters = fetch_project_clusters(
         &client,
         &base_url,
@@ -1283,11 +1655,6 @@ async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Re
             resolved_project.name
         ));
     }
-
-    reconcile_project_config_from_cloud(project, &project_clusters)?;
-    crate::output::info(
-        "Updated helix.toml with canonical project and cluster metadata from Helix Cloud.",
-    );
 
     let standard_items: Vec<(String, String, String)> = project_clusters
         .standard
@@ -1316,8 +1683,51 @@ async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Re
     let (cluster_id, is_enterprise) =
         prompts::select_cluster_from_workspace(&standard_items, &enterprise_items)?;
 
+    let selected_snapshot = if is_enterprise {
+        fetch_enterprise_cluster_snapshot_config(
+            &client,
+            &credentials.helix_admin_key,
+            &cluster_id,
+            &format!("selected enterprise cluster '{}' snapshot", cluster_id),
+        )
+        .await?
+    } else {
+        fetch_standard_cluster_snapshot_config(
+            &client,
+            &credentials.helix_admin_key,
+            &cluster_id,
+            &format!("selected cluster '{}' snapshot", cluster_id),
+        )
+        .await?
+    };
+
+    let selected_queries_relative =
+        resolve_selected_project_queries_path(selected_snapshot.as_ref());
+
     if is_enterprise {
-        sync_enterprise_from_cluster_id(&credentials.helix_admin_key, &cluster_id).await?;
+        let cluster_name = project_clusters
+            .enterprise
+            .iter()
+            .find(|cluster| cluster.cluster_id == cluster_id)
+            .map(|cluster| cluster.cluster_name.as_str())
+            .unwrap_or(cluster_id.as_str());
+
+        sync_enterprise_cluster_into_project(
+            project,
+            &credentials.helix_admin_key,
+            &cluster_id,
+            cluster_name,
+            &selected_queries_relative,
+        )
+        .await?;
+
+        if project.config.project.queries != selected_queries_relative {
+            update_project_queries_path_in_helix_toml(&project.root, &selected_queries_relative)?;
+            Step::verbose_substep(&format!(
+                "  Updated project queries path to {}",
+                selected_queries_relative.display()
+            ));
+        }
     } else {
         let cluster_name = project_clusters
             .standard
@@ -1326,15 +1736,40 @@ async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Re
             .map(|cluster| cluster.cluster_name.as_str())
             .unwrap_or(cluster_id.as_str());
 
-        sync_cluster_into_project(
+        let sync_outcome = sync_cluster_into_project(
             &credentials.helix_admin_key,
             &cluster_id,
             cluster_name,
             project,
+            &selected_queries_relative,
             assume_yes,
         )
         .await?;
+        if let SyncReconciliationOutcome::Pulled = sync_outcome {
+            if project.config.project.queries != selected_queries_relative {
+                update_project_queries_path_in_helix_toml(
+                    &project.root,
+                    &selected_queries_relative,
+                )?;
+                Step::verbose_substep(&format!(
+                    "  Updated project queries path to {}",
+                    selected_queries_relative.display()
+                ));
+            }
+        }
     }
+
+    reconcile_project_config_from_cloud(
+        &project.root,
+        &client,
+        &credentials.helix_admin_key,
+        &project_clusters,
+        None,
+    )
+    .await?;
+    crate::output::info(
+        "Updated helix.toml with canonical project and cluster metadata from Helix Cloud.",
+    );
 
     Ok(())
 }
@@ -1455,6 +1890,7 @@ async fn sync_from_cluster_id(api_key: &str, cluster_id: &str) -> Result<()> {
     let op = Operation::new("Syncing", cluster_id);
 
     let client = reqwest::Client::new();
+    let base_url = cloud_base_url();
 
     let mut sync_step = Step::with_messages("Fetching source files", "Source files fetched");
     sync_step.start();
@@ -1477,6 +1913,10 @@ async fn sync_from_cluster_id(api_key: &str, cluster_id: &str) -> Result<()> {
         .helix_toml
         .as_deref()
         .and_then(|remote_toml| parse_and_sanitize_remote_config(remote_toml, "cluster sync"));
+    let project_clusters =
+        fetch_project_clusters_for_standard_cluster(&client, &base_url, api_key, cluster_id)
+            .await?;
+    let remote_queries_relative = resolve_selected_project_queries_path(remote_config.as_ref());
     let queries_dir = resolve_remote_queries_dir(&cwd, remote_config.as_ref());
 
     if !queries_dir.exists() {
@@ -1500,15 +1940,16 @@ async fn sync_from_cluster_id(api_key: &str, cluster_id: &str) -> Result<()> {
         Step::verbose_substep(&format!("  Wrote {}", filename));
     }
 
-    if let Some(remote_config) = remote_config.as_ref()
-        && let Some(remote_toml) = serialize_remote_config(remote_config, "cluster sync")
-    {
-        let helix_toml_path = cwd.join("helix.toml");
-        std::fs::write(&helix_toml_path, remote_toml)
-            .map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
-        files_written += 1;
-        Step::verbose_substep("  Wrote helix.toml");
-    }
+    reconcile_project_config_from_cloud(
+        &cwd,
+        &client,
+        api_key,
+        &project_clusters,
+        Some(remote_queries_relative.as_path()),
+    )
+    .await?;
+    files_written += 1;
+    Step::verbose_substep("  Wrote helix.toml (canonical cloud metadata)");
 
     write_step.done_with_info(&format!("{} files", files_written));
     op.success();
@@ -1528,45 +1969,21 @@ async fn sync_enterprise_from_cluster_id(api_key: &str, cluster_id: &str) -> Res
     let op = Operation::new("Syncing", cluster_id);
 
     let client = reqwest::Client::new();
-    let sync_url = format!(
-        "{}/api/cli/enterprise-clusters/{}/sync",
-        cloud_base_url(),
-        cluster_id
-    );
+    let base_url = cloud_base_url();
 
     let mut sync_step = Step::with_messages("Fetching .rs files", ".rs files fetched");
     sync_step.start();
 
-    let response = match client
-        .get(&sync_url)
-        .header("x-api-key", api_key)
-        .send()
-        .await
+    let sync_response = match fetch_enterprise_sync_response_with_remote_empty_fallback(
+        &client, api_key, cluster_id,
+    )
+    .await
     {
-        Ok(resp) => resp,
+        Ok(response) => response,
         Err(e) => {
             sync_step.fail();
             op.failure();
-            return Err(eyre!("Failed to connect to Helix Cloud: {}", e));
-        }
-    };
-
-    match response.status() {
-        reqwest::StatusCode::OK => {}
-        status => {
-            let error_text = response.text().await.unwrap_or_default();
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Enterprise sync failed ({}): {}", status, error_text));
-        }
-    }
-
-    let sync_response: EnterpriseSyncResponse = match response.json().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Failed to parse sync response: {}", e));
+            return Err(e);
         }
     };
 
@@ -1576,6 +1993,10 @@ async fn sync_enterprise_from_cluster_id(api_key: &str, cluster_id: &str) -> Res
     let remote_config = sync_response.helix_toml.as_deref().and_then(|remote_toml| {
         parse_and_sanitize_remote_config(remote_toml, "enterprise cluster sync")
     });
+    let project_clusters =
+        fetch_project_clusters_for_enterprise_cluster(&client, &base_url, api_key, cluster_id)
+            .await?;
+    let remote_queries_relative = resolve_selected_project_queries_path(remote_config.as_ref());
     let queries_dir = resolve_remote_queries_dir(&cwd, remote_config.as_ref());
 
     if !queries_dir.exists() {
@@ -1599,15 +2020,16 @@ async fn sync_enterprise_from_cluster_id(api_key: &str, cluster_id: &str) -> Res
         Step::verbose_substep(&format!("  Wrote {}", filename));
     }
 
-    if let Some(remote_config) = remote_config.as_ref()
-        && let Some(remote_toml) = serialize_remote_config(remote_config, "enterprise cluster sync")
-    {
-        let helix_toml_path = cwd.join("helix.toml");
-        std::fs::write(&helix_toml_path, remote_toml)
-            .map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
-        files_written += 1;
-        Step::verbose_substep("  Wrote helix.toml");
-    }
+    reconcile_project_config_from_cloud(
+        &cwd,
+        &client,
+        api_key,
+        &project_clusters,
+        Some(remote_queries_relative.as_path()),
+    )
+    .await?;
+    files_written += 1;
+    Step::verbose_substep("  Wrote helix.toml (canonical cloud metadata)");
 
     write_step.done_with_info(&format!("{} files", files_written));
     op.success();
@@ -1653,130 +2075,177 @@ async fn pull_from_cloud_instance(
     instance_config: InstanceInfo<'_>,
     assume_yes: bool,
 ) -> Result<()> {
-    // Handle enterprise instances separately
-    if let InstanceInfo::Enterprise(config) = &instance_config {
-        return pull_from_enterprise_instance(project, instance_name, config, assume_yes).await;
-    }
-
-    // Verify this is a Helix Cloud instance
-    let cluster_id = match &instance_config {
-        InstanceInfo::Helix(config) => &config.cluster_id,
-        InstanceInfo::FlyIo(_) => {
-            return Err(eyre!(
-                "Sync is only supported for Helix Cloud instances, not Fly.io deployments"
-            ));
-        }
-        InstanceInfo::Ecr(_) => {
-            return Err(eyre!(
-                "Sync is only supported for Helix Cloud instances, not ECR deployments"
-            ));
-        }
-        InstanceInfo::Local(_) | InstanceInfo::Enterprise(_) => {
-            return Err(eyre!("Sync is only supported for cloud instances"));
-        }
-    };
-
-    // Check auth
     let credentials = require_auth().await?;
-
-    Step::verbose_substep(&format!("Reconciling against cluster: {cluster_id}"));
-
-    reconcile_standard_cluster_snapshot(
-        project,
-        &credentials.helix_admin_key,
-        cluster_id,
-        instance_name,
-        assume_yes,
-    )
-    .await?;
-
     let client = reqwest::Client::new();
+    let base_url = cloud_base_url();
 
-    let cluster_project = fetch_cluster_project(
-        &client,
-        &cloud_base_url(),
-        &credentials.helix_admin_key,
-        cluster_id,
-    )
-    .await?;
-    let project_clusters = fetch_project_clusters(
-        &client,
-        &cloud_base_url(),
-        &credentials.helix_admin_key,
-        &cluster_project.project_id,
-    )
-    .await?;
+    match instance_config {
+        InstanceInfo::Enterprise(config) => {
+            let selected_snapshot = fetch_enterprise_cluster_snapshot_config(
+                &client,
+                &credentials.helix_admin_key,
+                &config.cluster_id,
+                &format!("enterprise instance '{}' snapshot", config.cluster_id),
+            )
+            .await?;
+            let selected_queries_relative =
+                resolve_selected_project_queries_path(selected_snapshot.as_ref());
+            let project_clusters = fetch_project_clusters_for_enterprise_cluster(
+                &client,
+                &base_url,
+                &credentials.helix_admin_key,
+                &config.cluster_id,
+            )
+            .await?;
 
-    reconcile_project_config_from_cloud(project, &project_clusters)?;
-    Step::verbose_substep("  Wrote helix.toml (canonical cloud metadata)");
+            let cluster_name = project_clusters
+                .enterprise
+                .iter()
+                .find(|cluster| cluster.cluster_id == config.cluster_id)
+                .map(|cluster| cluster.cluster_name.as_str())
+                .unwrap_or(instance_name);
 
-    Ok(())
+            sync_enterprise_cluster_into_project(
+                project,
+                &credentials.helix_admin_key,
+                &config.cluster_id,
+                cluster_name,
+                &selected_queries_relative,
+            )
+            .await?;
+
+            if project.config.project.queries != selected_queries_relative {
+                update_project_queries_path_in_helix_toml(
+                    &project.root,
+                    &selected_queries_relative,
+                )?;
+                Step::verbose_substep(&format!(
+                    "  Updated project queries path to {}",
+                    selected_queries_relative.display()
+                ));
+            }
+
+            reconcile_project_config_from_cloud(
+                &project.root,
+                &client,
+                &credentials.helix_admin_key,
+                &project_clusters,
+                None,
+            )
+            .await?;
+            Step::verbose_substep("  Wrote helix.toml (canonical cloud metadata)");
+
+            Ok(())
+        }
+        InstanceInfo::Helix(config) => {
+            Step::verbose_substep(&format!(
+                "Reconciling against cluster: {}",
+                config.cluster_id
+            ));
+
+            let selected_snapshot = fetch_standard_cluster_snapshot_config(
+                &client,
+                &credentials.helix_admin_key,
+                &config.cluster_id,
+                &format!("cluster '{}' snapshot", config.cluster_id),
+            )
+            .await?;
+            let selected_queries_relative =
+                resolve_selected_project_queries_path(selected_snapshot.as_ref());
+            let project_clusters = fetch_project_clusters_for_standard_cluster(
+                &client,
+                &base_url,
+                &credentials.helix_admin_key,
+                &config.cluster_id,
+            )
+            .await?;
+            let cluster_name = project_clusters
+                .standard
+                .iter()
+                .find(|cluster| cluster.cluster_id == config.cluster_id)
+                .map(|cluster| cluster.cluster_name.as_str())
+                .unwrap_or(instance_name);
+
+            let sync_outcome = sync_cluster_into_project(
+                &credentials.helix_admin_key,
+                &config.cluster_id,
+                cluster_name,
+                project,
+                &selected_queries_relative,
+                assume_yes,
+            )
+            .await?;
+
+            if let SyncReconciliationOutcome::Pulled = sync_outcome {
+                if project.config.project.queries != selected_queries_relative {
+                    update_project_queries_path_in_helix_toml(
+                        &project.root,
+                        &selected_queries_relative,
+                    )?;
+                    Step::verbose_substep(&format!(
+                        "  Updated project queries path to {}",
+                        selected_queries_relative.display()
+                    ));
+                }
+            }
+
+            reconcile_project_config_from_cloud(
+                &project.root,
+                &client,
+                &credentials.helix_admin_key,
+                &project_clusters,
+                None,
+            )
+            .await?;
+            Step::verbose_substep("  Wrote helix.toml (canonical cloud metadata)");
+
+            Ok(())
+        }
+        InstanceInfo::FlyIo(_) => Err(eyre!(
+            "Sync is only supported for Helix Cloud instances, not Fly.io deployments"
+        )),
+        InstanceInfo::Ecr(_) => Err(eyre!(
+            "Sync is only supported for Helix Cloud instances, not ECR deployments"
+        )),
+        InstanceInfo::Local(_) => Err(eyre!("Sync is only supported for cloud instances")),
+    }
 }
 
-async fn pull_from_enterprise_instance(
+async fn sync_enterprise_cluster_into_project(
     project: &ProjectContext,
-    instance_name: &str,
-    config: &crate::config::EnterpriseInstanceConfig,
-    _assume_yes: bool,
+    api_key: &str,
+    cluster_id: &str,
+    cluster_name: &str,
+    target_queries_relative: &Path,
 ) -> Result<()> {
-    let op = Operation::new("Syncing", instance_name);
-    let credentials = require_auth().await?;
+    let op = Operation::new("Syncing", cluster_name);
 
     Step::verbose_substep(&format!(
         "Downloading .rs files from enterprise cluster: {}",
-        config.cluster_id
+        cluster_id
     ));
 
     let client = reqwest::Client::new();
-    let sync_url = format!(
-        "{}/api/cli/enterprise-clusters/{}/sync",
-        cloud_base_url(),
-        config.cluster_id
-    );
 
     let mut sync_step = Step::with_messages("Fetching source files", "Source files fetched");
     sync_step.start();
 
-    let response = match client
-        .get(&sync_url)
-        .header("x-api-key", &credentials.helix_admin_key)
-        .send()
-        .await
+    let sync_response = match fetch_enterprise_sync_response_with_remote_empty_fallback(
+        &client, api_key, cluster_id,
+    )
+    .await
     {
-        Ok(resp) => resp,
+        Ok(response) => response,
         Err(e) => {
             sync_step.fail();
             op.failure();
-            return Err(eyre!("Failed to connect to Helix Cloud: {}", e));
-        }
-    };
-
-    match response.status() {
-        reqwest::StatusCode::OK => {}
-        status => {
-            let error_text = response.text().await.unwrap_or_default();
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Enterprise sync failed ({}): {}", status, error_text));
-        }
-    }
-
-    let sync_response: EnterpriseSyncResponse = match response.json().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            sync_step.fail();
-            op.failure();
-            return Err(eyre!("Failed to parse sync response: {}", e));
+            return Err(e);
         }
     };
 
     sync_step.done();
 
-    let remote_config = sync_response.helix_toml.as_deref().and_then(|remote_toml| {
-        parse_and_sanitize_remote_config(remote_toml, "enterprise instance sync")
-    });
-
-    let queries_dir = project.root.join(&project.config.project.queries);
+    let queries_dir = project.root.join(target_queries_relative);
     if !queries_dir.exists() {
         std::fs::create_dir_all(&queries_dir)?;
     }
@@ -1798,23 +2267,12 @@ async fn pull_from_enterprise_instance(
         Step::verbose_substep(&format!("  Wrote {}", filename));
     }
 
-    if let Some(remote_config) = remote_config.as_ref()
-        && let Some(remote_toml) =
-            serialize_remote_config(remote_config, "enterprise instance sync")
-    {
-        let helix_toml_path = project.root.join("helix.toml");
-        std::fs::write(&helix_toml_path, remote_toml)
-            .map_err(|e| eyre!("Failed to write helix.toml: {}", e))?;
-        files_written += 1;
-        Step::verbose_substep("  Wrote helix.toml");
-    }
-
     write_step.done_with_info(&format!("{} files", files_written));
     op.success();
 
     crate::output::info(&format!(
         "Synced {} .rs files from enterprise cluster '{}'",
-        files_written, config.cluster_id
+        files_written, cluster_id
     ));
 
     Ok(())
@@ -1823,6 +2281,7 @@ async fn pull_from_enterprise_instance(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     fn manifest_entry(hash: &str, last_modified_ms: Option<i64>) -> ManifestEntry {
         ManifestEntry {
@@ -1830,6 +2289,175 @@ mod tests {
             last_modified_ms,
             content: String::new(),
         }
+    }
+
+    fn cloud_db_config(db_max_size_gb: u32, env_key: &str) -> CloudInstanceConfig {
+        let mut env_vars = HashMap::new();
+        env_vars.insert(env_key.to_string(), "value".to_string());
+
+        CloudInstanceConfig {
+            cluster_id: "cluster-123".to_string(),
+            region: Some("eu-west-1".to_string()),
+            build_mode: BuildMode::Dev,
+            env_vars,
+            db_config: DbConfig {
+                vector_config: crate::config::VectorConfig {
+                    db_max_size_gb,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        }
+    }
+
+    fn sample_snapshot(instance_name: &str, config: CloudInstanceConfig) -> HelixConfig {
+        let mut cloud = HashMap::new();
+        cloud.insert(instance_name.to_string(), CloudConfig::Helix(config));
+        HelixConfig {
+            project: crate::config::ProjectConfig {
+                id: Some("project-123".to_string()),
+                name: "demo".to_string(),
+                queries: PathBuf::from("./db"),
+                container_runtime: crate::config::ContainerRuntime::Docker,
+            },
+            local: HashMap::new(),
+            cloud,
+            enterprise: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn merged_standard_cluster_config_uses_snapshot_payload_but_keeps_cloud_build_mode() {
+        let cluster = CliProjectStandardCluster {
+            cluster_id: "cluster-123".to_string(),
+            cluster_name: "remote-prod".to_string(),
+            build_mode: "release".to_string(),
+            max_memory_gb: 1,
+            max_vcpus: 1.0,
+        };
+        let existing = cloud_db_config(10, "LOCAL_FLAG");
+        let snapshot = sample_snapshot("snapshot-name", cloud_db_config(64, "REMOTE_FLAG"));
+
+        let merged = merged_standard_cluster_config(&cluster, Some(&existing), Some(&snapshot));
+
+        assert_eq!(merged.build_mode, BuildMode::Release);
+        assert_eq!(merged.region.as_deref(), Some("eu-west-1"));
+        assert_eq!(merged.db_config.vector_config.db_max_size_gb, 64);
+        assert!(merged.env_vars.contains_key("REMOTE_FLAG"));
+        assert!(!merged.env_vars.contains_key("LOCAL_FLAG"));
+    }
+
+    #[test]
+    fn selected_project_queries_path_uses_selected_snapshot() {
+        let mut snapshot = sample_snapshot("snapshot-name", cloud_db_config(64, "REMOTE_FLAG"));
+        snapshot.project.queries = PathBuf::from("./remote-queries");
+
+        let selected = selected_project_queries_path(Some(&snapshot));
+
+        assert_eq!(selected, Some(PathBuf::from("./remote-queries")));
+    }
+
+    #[test]
+    fn resolve_selected_project_queries_path_defaults_to_db() {
+        assert_eq!(
+            resolve_selected_project_queries_path(None),
+            PathBuf::from(DEFAULT_QUERIES_DIR)
+        );
+    }
+
+    #[test]
+    fn merged_standard_cluster_config_preserves_existing_payload_without_snapshot() {
+        let cluster = CliProjectStandardCluster {
+            cluster_id: "cluster-123".to_string(),
+            cluster_name: "renamed-remote".to_string(),
+            build_mode: "release".to_string(),
+            max_memory_gb: 1,
+            max_vcpus: 1.0,
+        };
+        let existing = cloud_db_config(32, "LOCAL_FLAG");
+
+        let merged = merged_standard_cluster_config(&cluster, Some(&existing), None);
+
+        assert_eq!(merged.cluster_id, "cluster-123");
+        assert_eq!(merged.build_mode, BuildMode::Release);
+        assert_eq!(merged.region.as_deref(), Some("eu-west-1"));
+        assert_eq!(merged.db_config.vector_config.db_max_size_gb, 32);
+        assert!(merged.env_vars.contains_key("LOCAL_FLAG"));
+    }
+
+    #[test]
+    fn merged_standard_cluster_config_defaults_new_remote_cluster_without_snapshot() {
+        let cluster = CliProjectStandardCluster {
+            cluster_id: "cluster-999".to_string(),
+            cluster_name: "brand-new".to_string(),
+            build_mode: "dev".to_string(),
+            max_memory_gb: 1,
+            max_vcpus: 1.0,
+        };
+
+        let merged = merged_standard_cluster_config(&cluster, None, None);
+
+        assert_eq!(merged.cluster_id, "cluster-999");
+        assert_eq!(merged.region, None);
+        assert_eq!(merged.build_mode, BuildMode::Dev);
+        assert!(merged.env_vars.is_empty());
+    }
+
+    #[test]
+    fn merged_enterprise_cluster_config_preserves_db_config_but_uses_remote_metadata() {
+        let cluster = CliProjectEnterpriseCluster {
+            cluster_id: "enterprise-123".to_string(),
+            cluster_name: "remote-enterprise".to_string(),
+            availability_mode: "ha".to_string(),
+            gateway_node_type: "c7g.large".to_string(),
+            db_node_type: "r7g.large".to_string(),
+            min_instances: 2,
+            max_instances: 4,
+        };
+        let existing = EnterpriseInstanceConfig {
+            cluster_id: "enterprise-123".to_string(),
+            availability_mode: AvailabilityMode::Dev,
+            gateway_node_type: "old-gateway".to_string(),
+            db_node_type: "old-db".to_string(),
+            min_instances: 1,
+            max_instances: 1,
+            db_config: DbConfig {
+                vector_config: crate::config::VectorConfig {
+                    db_max_size_gb: 88,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        };
+
+        let merged = merged_enterprise_cluster_config(&cluster, Some(&existing), None);
+
+        assert_eq!(merged.availability_mode, AvailabilityMode::Ha);
+        assert_eq!(merged.gateway_node_type, "c7g.large");
+        assert_eq!(merged.db_node_type, "r7g.large");
+        assert_eq!(merged.min_instances, 2);
+        assert_eq!(merged.max_instances, 4);
+        assert_eq!(merged.db_config.vector_config.db_max_size_gb, 88);
+    }
+
+    #[test]
+    fn insert_unique_cloud_instance_name_adds_suffix_on_collision() {
+        let mut cloud = HashMap::new();
+        cloud.insert(
+            "prod".to_string(),
+            CloudConfig::Helix(cloud_db_config(20, "FIRST")),
+        );
+
+        let inserted_name = insert_unique_cloud_instance_name(
+            &mut cloud,
+            "prod",
+            "cluster-abc12345",
+            CloudConfig::Helix(cloud_db_config(30, "SECOND")),
+        );
+
+        assert_eq!(inserted_name, "prod-cluster-");
+        assert!(cloud.contains_key("prod"));
+        assert!(cloud.contains_key("prod-cluster-"));
     }
 
     #[test]
@@ -1980,5 +2608,61 @@ mod tests {
         assert_eq!(plan.to_create, vec!["local-only.hx".to_string()]);
         assert_eq!(plan.to_change, vec!["changed.hx".to_string()]);
         assert_eq!(plan.to_delete, vec!["remote-only.hx".to_string()]);
+    }
+
+    #[test]
+    fn pull_remote_snapshot_into_local_moves_files_to_new_queries_dir() {
+        let root = tempdir().expect("tempdir");
+        let current_queries_dir = root.path().join("db");
+        let target_queries_dir = root.path().join("remote-db");
+
+        fs::create_dir_all(&current_queries_dir).expect("create current queries dir");
+        fs::create_dir_all(&target_queries_dir).expect("create target queries dir");
+
+        fs::write(current_queries_dir.join("schema.hx"), "local schema")
+            .expect("write local schema");
+        fs::write(current_queries_dir.join("legacy.hx"), "legacy").expect("write legacy file");
+        fs::write(target_queries_dir.join("stale.hx"), "stale").expect("write stale file");
+
+        let local_manifest =
+            collect_local_hx_manifest(&current_queries_dir).expect("local manifest");
+        let remote_manifest = HashMap::from([
+            (
+                "schema.hx".to_string(),
+                ManifestEntry {
+                    sha256: compute_sha256("remote schema"),
+                    last_modified_ms: Some(2),
+                    content: "remote schema".to_string(),
+                },
+            ),
+            (
+                "queries.hx".to_string(),
+                ManifestEntry {
+                    sha256: compute_sha256("remote query"),
+                    last_modified_ms: Some(2),
+                    content: "remote query".to_string(),
+                },
+            ),
+        ]);
+
+        pull_remote_snapshot_into_local(
+            &current_queries_dir,
+            &target_queries_dir,
+            &local_manifest,
+            &remote_manifest,
+        )
+        .expect("pull remote snapshot");
+
+        assert!(!current_queries_dir.join("schema.hx").exists());
+        assert!(!current_queries_dir.join("legacy.hx").exists());
+        assert!(!target_queries_dir.join("stale.hx").exists());
+        assert_eq!(
+            fs::read_to_string(target_queries_dir.join("schema.hx")).expect("read target schema"),
+            "remote schema"
+        );
+        assert_eq!(
+            fs::read_to_string(target_queries_dir.join("queries.hx")).expect("read target queries"),
+            "remote query"
+        );
     }
 }
