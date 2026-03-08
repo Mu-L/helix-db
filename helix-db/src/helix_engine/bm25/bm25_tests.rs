@@ -3,7 +3,8 @@ mod tests {
     use crate::{
         helix_engine::{
             bm25::bm25::{
-                BM25, BM25Flatten, BM25Metadata, HBM25Config, HybridSearch, METADATA_KEY,
+                BM25, BM25_SCHEMA_VERSION, BM25_SCHEMA_VERSION_KEY, BM25Flatten, BM25Metadata,
+                HBM25Config, HybridSearch, METADATA_KEY, PostingListEntry, ReversePostingEntry,
             },
             storage_core::{HelixGraphStorage, version_info::VersionInfo},
             traversal_core::config::Config,
@@ -48,6 +49,10 @@ mod tests {
         let config = Config::default();
         let storage = HelixGraphStorage::new(path, config, VersionInfo::default()).unwrap();
         (storage, temp_dir)
+    }
+
+    fn reverse_entries(bm25: &HBM25Config, txn: &RoTxn, doc_id: u128) -> Vec<ReversePostingEntry> {
+        bm25.reverse_entries(txn, doc_id).unwrap()
     }
 
     fn generate_random_vectors(n: usize, d: usize) -> Vec<Vec<f64>> {
@@ -132,6 +137,10 @@ mod tests {
         assert!(metadata.avgdl > 0.0);
 
         wtxn.commit().unwrap();
+
+        let rtxn = bm25.graph_env.read_txn().unwrap();
+        let reverse_entries = reverse_entries(&bm25, &rtxn, doc_id);
+        assert!(!reverse_entries.is_empty());
     }
 
     #[test]
@@ -1341,6 +1350,59 @@ mod tests {
         let results = bm25.search(&rtxn, "updated", 10, &arena).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, doc_id);
+
+        let stale_results = bm25.search(&rtxn, "original", 10, &arena).unwrap();
+        assert!(stale_results.is_empty());
+
+        let reverse_entries = reverse_entries(&bm25, &rtxn, doc_id);
+        assert!(reverse_entries.iter().any(|entry| entry.term == "updated"));
+        assert!(!reverse_entries.iter().any(|entry| entry.term == "original"));
+    }
+
+    #[test]
+    fn test_update_document_non_empty_to_empty() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        let doc_id = 1u128;
+        bm25.insert_doc(&mut wtxn, doc_id, "searchable content")
+            .unwrap();
+        bm25.update_doc(&mut wtxn, doc_id, "an to of").unwrap();
+
+        let doc_length = bm25.doc_lengths_db.get(&wtxn, &doc_id).unwrap().unwrap();
+        assert_eq!(doc_length, 0);
+        wtxn.commit().unwrap();
+
+        let rtxn = bm25.graph_env.read_txn().unwrap();
+        let arena = Bump::new();
+        assert!(
+            bm25.search(&rtxn, "searchable", 10, &arena)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(reverse_entries(&bm25, &rtxn, doc_id).is_empty());
+    }
+
+    #[test]
+    fn test_update_document_empty_to_non_empty() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        let doc_id = 1u128;
+        bm25.insert_doc(&mut wtxn, doc_id, "an to of").unwrap();
+        bm25.update_doc(&mut wtxn, doc_id, "fresh searchable content")
+            .unwrap();
+
+        let doc_length = bm25.doc_lengths_db.get(&wtxn, &doc_id).unwrap().unwrap();
+        assert!(doc_length > 0);
+        wtxn.commit().unwrap();
+
+        let rtxn = bm25.graph_env.read_txn().unwrap();
+        let arena = Bump::new();
+        let results = bm25.search(&rtxn, "fresh", 10, &arena).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, doc_id);
+        assert!(!reverse_entries(&bm25, &rtxn, doc_id).is_empty());
     }
 
     #[test]
@@ -1366,6 +1428,13 @@ mod tests {
         let doc_length = bm25.doc_lengths_db.get(&wtxn, &2u128).unwrap();
         assert!(doc_length.is_none());
 
+        assert!(
+            bm25.reverse_index_db
+                .get_duplicates(&wtxn, &2u128)
+                .unwrap()
+                .is_none()
+        );
+
         // check that metadata was updated
         let metadata_bytes = bm25.metadata_db.get(&wtxn, METADATA_KEY).unwrap().unwrap();
         let metadata: BM25Metadata = bincode::deserialize(metadata_bytes).unwrap();
@@ -1378,6 +1447,300 @@ mod tests {
         let arena = Bump::new();
         let results = bm25.search(&rtxn, "two", 10, &arena).unwrap();
         assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_delete_document_twice_is_noop() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        bm25.insert_doc(&mut wtxn, 1u128, "content to delete")
+            .unwrap();
+        bm25.delete_doc(&mut wtxn, 1u128).unwrap();
+        bm25.delete_doc(&mut wtxn, 1u128).unwrap();
+
+        let metadata: BM25Metadata =
+            bincode::deserialize(bm25.metadata_db.get(&wtxn, METADATA_KEY).unwrap().unwrap())
+                .unwrap();
+        assert_eq!(metadata.total_docs, 0);
+        wtxn.commit().unwrap();
+    }
+
+    #[test]
+    fn test_delete_document_errors_when_reverse_exists_without_doc_length() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        let reverse_entry = ReversePostingEntry {
+            term: "ghost".to_string(),
+            term_frequency: 1,
+        };
+        let reverse_bytes = bincode::serialize(&reverse_entry).unwrap();
+        bm25.reverse_index_db
+            .put(&mut wtxn, &1u128, &reverse_bytes)
+            .unwrap();
+
+        let err = bm25.delete_doc(&mut wtxn, 1u128).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("reverse index exists without doc length")
+        );
+    }
+
+    #[test]
+    fn test_update_document_errors_when_reverse_exists_without_doc_length() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        let reverse_entry = ReversePostingEntry {
+            term: "ghost".to_string(),
+            term_frequency: 1,
+        };
+        let reverse_bytes = bincode::serialize(&reverse_entry).unwrap();
+        bm25.reverse_index_db
+            .put(&mut wtxn, &1u128, &reverse_bytes)
+            .unwrap();
+
+        let err = bm25
+            .update_doc(&mut wtxn, 1u128, "new content")
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("reverse index exists without doc length")
+        );
+    }
+
+    #[test]
+    fn test_delete_document_errors_when_positive_doc_length_has_no_reverse_entries() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        let metadata = BM25Metadata {
+            total_docs: 1,
+            avgdl: 3.0,
+            k1: 1.2,
+            b: 0.75,
+        };
+        bm25.doc_lengths_db.put(&mut wtxn, &1u128, &3).unwrap();
+        bm25.metadata_db
+            .put(
+                &mut wtxn,
+                METADATA_KEY,
+                &bincode::serialize(&metadata).unwrap(),
+            )
+            .unwrap();
+
+        let err = bm25.delete_doc(&mut wtxn, 1u128).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("has doc length 3 but no reverse entries")
+        );
+    }
+
+    #[test]
+    fn test_update_document_errors_when_positive_doc_length_has_no_reverse_entries() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        let metadata = BM25Metadata {
+            total_docs: 1,
+            avgdl: 3.0,
+            k1: 1.2,
+            b: 0.75,
+        };
+        bm25.doc_lengths_db.put(&mut wtxn, &1u128, &3).unwrap();
+        bm25.metadata_db
+            .put(
+                &mut wtxn,
+                METADATA_KEY,
+                &bincode::serialize(&metadata).unwrap(),
+            )
+            .unwrap();
+
+        let err = bm25
+            .update_doc(&mut wtxn, 1u128, "new content")
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("has doc length 3 but no reverse entries")
+        );
+    }
+
+    #[test]
+    fn test_delete_document_errors_when_zero_length_doc_has_reverse_entries() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        let metadata = BM25Metadata {
+            total_docs: 1,
+            avgdl: 0.0,
+            k1: 1.2,
+            b: 0.75,
+        };
+        let reverse_entry = ReversePostingEntry {
+            term: "ghost".to_string(),
+            term_frequency: 1,
+        };
+
+        bm25.doc_lengths_db.put(&mut wtxn, &1u128, &0).unwrap();
+        bm25.reverse_index_db
+            .put(
+                &mut wtxn,
+                &1u128,
+                &bincode::serialize(&reverse_entry).unwrap(),
+            )
+            .unwrap();
+        bm25.metadata_db
+            .put(
+                &mut wtxn,
+                METADATA_KEY,
+                &bincode::serialize(&metadata).unwrap(),
+            )
+            .unwrap();
+
+        let err = bm25.delete_doc(&mut wtxn, 1u128).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("zero-length document 1 has reverse entries")
+        );
+    }
+
+    #[test]
+    fn test_search_errors_when_posting_doc_is_absent() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        let metadata = BM25Metadata {
+            total_docs: 1,
+            avgdl: 1.0,
+            k1: 1.2,
+            b: 0.75,
+        };
+        let posting = PostingListEntry {
+            doc_id: 1u128,
+            term_frequency: 1,
+        };
+
+        bm25.inverted_index_db
+            .put(&mut wtxn, b"ghost", &bincode::serialize(&posting).unwrap())
+            .unwrap();
+        bm25.term_frequencies_db
+            .put(&mut wtxn, b"ghost", &1)
+            .unwrap();
+        bm25.metadata_db
+            .put(
+                &mut wtxn,
+                METADATA_KEY,
+                &bincode::serialize(&metadata).unwrap(),
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let rtxn = bm25.graph_env.read_txn().unwrap();
+        let arena = Bump::new();
+        let err = bm25.search(&rtxn, "ghost", 10, &arena).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("posting exists for absent document 1")
+        );
+    }
+
+    #[test]
+    fn test_search_errors_when_zero_length_doc_has_reverse_entries() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        let metadata = BM25Metadata {
+            total_docs: 1,
+            avgdl: 1.0,
+            k1: 1.2,
+            b: 0.75,
+        };
+        let posting = PostingListEntry {
+            doc_id: 1u128,
+            term_frequency: 1,
+        };
+        let reverse_entry = ReversePostingEntry {
+            term: "ghost".to_string(),
+            term_frequency: 1,
+        };
+
+        bm25.inverted_index_db
+            .put(&mut wtxn, b"ghost", &bincode::serialize(&posting).unwrap())
+            .unwrap();
+        bm25.term_frequencies_db
+            .put(&mut wtxn, b"ghost", &1)
+            .unwrap();
+        bm25.doc_lengths_db.put(&mut wtxn, &1u128, &0).unwrap();
+        bm25.reverse_index_db
+            .put(
+                &mut wtxn,
+                &1u128,
+                &bincode::serialize(&reverse_entry).unwrap(),
+            )
+            .unwrap();
+        bm25.metadata_db
+            .put(
+                &mut wtxn,
+                METADATA_KEY,
+                &bincode::serialize(&metadata).unwrap(),
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let rtxn = bm25.graph_env.read_txn().unwrap();
+        let arena = Bump::new();
+        let err = bm25.search(&rtxn, "ghost", 10, &arena).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("zero-length document 1 has reverse entries")
+        );
+    }
+
+    #[test]
+    fn test_delete_document_errors_when_forward_posting_missing_and_df_stays_unchanged() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+
+        let metadata = BM25Metadata {
+            total_docs: 1,
+            avgdl: 1.0,
+            k1: 1.2,
+            b: 0.75,
+        };
+        let reverse_entry = ReversePostingEntry {
+            term: "ghost".to_string(),
+            term_frequency: 1,
+        };
+
+        bm25.doc_lengths_db.put(&mut wtxn, &1u128, &1).unwrap();
+        bm25.reverse_index_db
+            .put(
+                &mut wtxn,
+                &1u128,
+                &bincode::serialize(&reverse_entry).unwrap(),
+            )
+            .unwrap();
+        bm25.term_frequencies_db
+            .put(&mut wtxn, b"ghost", &1)
+            .unwrap();
+        bm25.metadata_db
+            .put(
+                &mut wtxn,
+                METADATA_KEY,
+                &bincode::serialize(&metadata).unwrap(),
+            )
+            .unwrap();
+
+        let err = bm25.delete_doc(&mut wtxn, 1u128).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("posting missing while deleting term 'ghost' for document 1")
+        );
+        assert_eq!(
+            bm25.term_frequencies_db.get(&wtxn, b"ghost").unwrap(),
+            Some(1)
+        );
     }
 
     #[test]
@@ -1850,6 +2213,31 @@ mod tests {
         let arena = Bump::new();
         let results = config.search(&rtxn, "test", 10, &arena).unwrap();
         assert_eq!(results.len(), 1);
+
+        let reverse_entries = reverse_entries(&config, &rtxn, 1u128);
+        assert_eq!(reverse_entries.len(), 2);
+    }
+
+    #[test]
+    fn test_schema_version_round_trip() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+        bm25.write_schema_version(&mut wtxn, BM25_SCHEMA_VERSION)
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let rtxn = bm25.graph_env.read_txn().unwrap();
+        assert_eq!(
+            bm25.schema_version(&rtxn).unwrap(),
+            Some(BM25_SCHEMA_VERSION)
+        );
+        assert_eq!(
+            bm25.metadata_db
+                .get(&rtxn, BM25_SCHEMA_VERSION_KEY)
+                .unwrap()
+                .unwrap(),
+            BM25_SCHEMA_VERSION.to_le_bytes().as_slice()
+        );
     }
 
     #[test]

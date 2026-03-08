@@ -7,9 +7,11 @@ use tempfile::TempDir;
 use super::test_utils::props_option;
 use crate::{
     helix_engine::{
+        bm25::bm25::BM25,
         storage_core::HelixGraphStorage,
         traversal_core::{
             ops::{
+                bm25::search_bm25::SearchBM25Adapter,
                 g::G,
                 in_::in_::InAdapter,
                 in_::in_e::InEdgesAdapter,
@@ -701,6 +703,37 @@ fn test_upsert_e_ignores_iterator_content() {
     txn.commit().unwrap();
 }
 
+#[test]
+fn test_upsert_n_existing_node_without_prior_bm25_doc_becomes_searchable() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    let existing = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", None, None)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()[0]
+        .clone();
+    let node_id = existing.id();
+
+    G::new_mut_from_iter(&storage, &mut txn, std::iter::once(existing), &arena)
+        .upsert_n("person", &[("name", Value::from("upsert_searchable"))])
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    txn.commit().unwrap();
+
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let results = G::new(&storage, &txn, &arena)
+        .search_bm25("person", "upsert_searchable", 10)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id(), node_id);
+}
+
 // ============================================================================
 // Vector Upsert Tests (upsert_v)
 // ============================================================================
@@ -1238,12 +1271,11 @@ fn test_upsert_e_preserves_edge_relationships() {
 }
 
 #[test]
-fn test_upsert_v_with_bm25_indexing() {
+fn test_upsert_v_does_not_index_bm25() {
     let (_temp_dir, storage) = setup_test_db();
     let arena = Bump::new();
     let mut txn = storage.graph_env.write_txn().unwrap();
 
-    // Test upsert vector with text content that should be indexed by BM25
     let result = G::new_mut_from_iter(
         &storage,
         &mut txn,
@@ -1271,6 +1303,19 @@ fn test_upsert_v_with_bm25_indexing() {
     }
 
     txn.commit().unwrap();
+
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let raw_results = storage
+        .bm25
+        .as_ref()
+        .unwrap()
+        .search(&txn, "machine learning", 10, &arena)
+        .unwrap();
+    assert!(
+        raw_results.is_empty(),
+        "vector upsert should not affect BM25"
+    );
 }
 
 #[test]

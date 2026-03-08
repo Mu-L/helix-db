@@ -9,6 +9,7 @@ use crate::{
         storage_core::HelixGraphStorage,
         traversal_core::{
             ops::{
+                bm25::search_bm25::SearchBM25Adapter,
                 g::G,
                 source::{add_n::AddNAdapter, n_from_id::NFromIdAdapter},
                 util::update::UpdateAdapter,
@@ -89,4 +90,44 @@ fn test_update_node() {
         }
         other => panic!("unexpected traversal value: {other:?}"),
     }
+}
+
+#[test]
+fn test_update_node_without_prior_bm25_doc_becomes_searchable() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    let node = G::new_mut(&storage, &arena, &mut txn)
+        .add_n("person", None, None)
+        .collect_to_obj()
+        .unwrap();
+    txn.commit().unwrap();
+
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let traversal = G::new(&storage, &txn, &arena)
+        .n_from_id(&node.id())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    drop(txn);
+
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+    G::new_mut_from_iter(&storage, &mut txn, traversal.into_iter(), &arena)
+        .update(&[("name", Value::from("bm25_searchable"))])
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    txn.commit().unwrap();
+
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let results = G::new(&storage, &txn, &arena)
+        .search_bm25("person", "bm25_searchable", 10)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id(), node.id());
 }
