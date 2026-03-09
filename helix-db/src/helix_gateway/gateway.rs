@@ -214,13 +214,13 @@ async fn post_handler(
             return e.into_response();
         }
     }
-    let body = req.body.to_vec();
+    let body = req.body.clone();
     let query_name = req.name.clone();
     let res = state.worker_pool.process(req).await;
 
     match res {
         Ok(r) => {
-            #[cfg(any(feature = "dev-instance", feature = "production"))]
+            // #[cfg(any(feature = "dev-instance", feature = "production"))]
             {
                 let resp_str = String::from_utf8_lossy(&r.body);
                 info!(query = %query_name, response = %resp_str, "Response");
@@ -248,7 +248,7 @@ async fn post_handler(
                 helix_metrics::events::QueryErrorEvent {
                     cluster_id: state.cluster_id.clone(),
                     query_name,
-                    input_json: sonic_rs::to_string(&body).ok(),
+                    input_json: sonic_rs::to_string(&body.to_vec()).ok(),
                     output_json: sonic_rs::to_string(&e).ok(),
                     time_taken_usec: start_time.elapsed().as_micros() as u32,
                 },
