@@ -228,7 +228,11 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                             &old_serialized,
                                             &node.id,
                                         )?;
-                                        update_secondary_index(index, self.txn, k, node.id, v)?;
+                                        if let Err(e) = update_secondary_index(index, self.txn, k, node.id, v) {
+                                            // Restore the old index entry since the new one failed
+                                            let _ = db.put(self.txn, &old_serialized, &node.id);
+                                            return Err(e);
+                                        }
                                     }
                                     None => {
                                         update_secondary_index(index, self.txn, k, node.id, v)?;
