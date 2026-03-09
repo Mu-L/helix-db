@@ -33,6 +33,16 @@ fn setup_indexed_db() -> (TempDir, Arc<HelixGraphStorage>) {
     (temp_dir, Arc::new(storage))
 }
 
+fn setup_unique_indexed_db() -> (TempDir, Arc<HelixGraphStorage>) {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().to_str().unwrap();
+    let mut config = crate::helix_engine::traversal_core::config::Config::default();
+    config.graph_config.as_mut().unwrap().secondary_indices =
+        Some(vec![SecondaryIndex::Unique("name".to_string())]);
+    let storage = HelixGraphStorage::new(db_path, config, Default::default()).unwrap();
+    (temp_dir, Arc::new(storage))
+}
+
 fn to_result_iter(
     values: Vec<TraversalValue>,
 ) -> impl Iterator<Item = Result<TraversalValue, GraphError>> {
@@ -143,4 +153,86 @@ fn test_update_of_secondary_indices() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     assert!(john_nodes.is_empty());
+}
+
+#[test]
+fn test_unique_index_rejects_duplicate() {
+    let (_temp_dir, storage) = setup_unique_indexed_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    // First insert should succeed
+    let node = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "person",
+            props_option(&arena, props! { "name" => "John" }),
+            Some(&["name"]),
+        )
+        .collect_to_obj()
+        .unwrap();
+    assert!(matches!(node, TraversalValue::Node(_)));
+
+    // Second insert with same value should fail with DuplicateKey
+    let result = G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "person",
+            props_option(&arena, props! { "name" => "John" }),
+            Some(&["name"]),
+        )
+        .collect_to_obj();
+    assert!(
+        matches!(result, Err(GraphError::DuplicateKey(_))),
+        "Expected DuplicateKey error, got: {result:?}"
+    );
+    txn.commit().unwrap();
+
+    // Verify only one node exists in the index
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let nodes = G::new(&storage, &txn, &arena)
+        .n_from_index("person", "name", &"John".to_string())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(nodes.len(), 1, "Expected exactly one node, but found {}", nodes.len());
+}
+
+#[test]
+fn test_unique_index_allows_different_values() {
+    let (_temp_dir, storage) = setup_unique_indexed_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "person",
+            props_option(&arena, props! { "name" => "John" }),
+            Some(&["name"]),
+        )
+        .collect_to_obj()
+        .unwrap();
+
+    // Different value should succeed
+    G::new_mut(&storage, &arena, &mut txn)
+        .add_n(
+            "person",
+            props_option(&arena, props! { "name" => "Jane" }),
+            Some(&["name"]),
+        )
+        .collect_to_obj()
+        .unwrap();
+    txn.commit().unwrap();
+
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    let john = G::new(&storage, &txn, &arena)
+        .n_from_index("person", "name", &"John".to_string())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(john.len(), 1);
+
+    let jane = G::new(&storage, &txn, &arena)
+        .n_from_index("person", "name", &"Jane".to_string())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(jane.len(), 1);
 }

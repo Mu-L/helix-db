@@ -5,6 +5,7 @@ mod tests {
             bm25::bm25::{
                 BM25, BM25_SCHEMA_VERSION, BM25_SCHEMA_VERSION_KEY, BM25Flatten, BM25Metadata,
                 HBM25Config, HybridSearch, METADATA_KEY, PostingListEntry, ReversePostingEntry,
+                build_bm25_payload,
             },
             storage_core::{HelixGraphStorage, version_info::VersionInfo},
             traversal_core::config::Config,
@@ -110,6 +111,46 @@ mod tests {
 
         let tokens = bm25.tokenize::<true>("!@#$%^&*()");
         assert_eq!(tokens.len(), 0);
+    }
+
+    #[test]
+    fn test_term_counts_for_node_match_payload_tokenization() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let arena = Bump::new();
+
+        let props = [
+            ("title", Value::from("Fast BM25 Upsert")),
+            (
+                "tags",
+                Value::Array(vec![
+                    Value::from("alpha"),
+                    Value::from("beta"),
+                    Value::from(42),
+                ]),
+            ),
+            (
+                "metadata",
+                Value::Object(HashMap::from([
+                    ("kind".to_string(), Value::from("Primary Topic")),
+                    ("priority".to_string(), Value::from(7)),
+                ])),
+            ),
+        ];
+
+        let props_map = ImmutablePropertiesMap::new(
+            props.len(),
+            props.iter().map(|(key, value)| (*key, value.clone())),
+            &arena,
+        );
+
+        let payload = build_bm25_payload(&props_map, "person");
+        let mut expected = HashMap::new();
+        for token in bm25.tokenize::<true>(&payload) {
+            *expected.entry(token).or_insert(0) += 1;
+        }
+
+        let actual = bm25.term_counts_for_node(&props_map, "person");
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -1357,6 +1398,49 @@ mod tests {
         let reverse_entries = reverse_entries(&bm25, &rtxn, doc_id);
         assert!(reverse_entries.iter().any(|entry| entry.term == "updated"));
         assert!(!reverse_entries.iter().any(|entry| entry.term == "original"));
+    }
+
+    #[test]
+    fn test_update_document_same_content_is_noop() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let doc_id = 1u128;
+
+        {
+            let mut wtxn = bm25.graph_env.write_txn().unwrap();
+            bm25.insert_doc(&mut wtxn, doc_id, "same searchable content")
+                .unwrap();
+            wtxn.commit().unwrap();
+        }
+
+        let rtxn = bm25.graph_env.read_txn().unwrap();
+        let before_entries = reverse_entries(&bm25, &rtxn, doc_id);
+        let before_doc_length = bm25.doc_lengths_db.get(&rtxn, &doc_id).unwrap().unwrap();
+        let before_metadata = bm25
+            .metadata_db
+            .get(&rtxn, METADATA_KEY)
+            .unwrap()
+            .unwrap()
+            .to_vec();
+        drop(rtxn);
+
+        let mut wtxn = bm25.graph_env.write_txn().unwrap();
+        bm25.update_doc(&mut wtxn, doc_id, "same searchable content")
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let rtxn = bm25.graph_env.read_txn().unwrap();
+        let after_entries = reverse_entries(&bm25, &rtxn, doc_id);
+        let after_doc_length = bm25.doc_lengths_db.get(&rtxn, &doc_id).unwrap().unwrap();
+        let after_metadata = bm25
+            .metadata_db
+            .get(&rtxn, METADATA_KEY)
+            .unwrap()
+            .unwrap()
+            .to_vec();
+
+        assert_eq!(after_entries, before_entries);
+        assert_eq!(after_doc_length, before_doc_length);
+        assert_eq!(after_metadata, before_metadata);
     }
 
     #[test]

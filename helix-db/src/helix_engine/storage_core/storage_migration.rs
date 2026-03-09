@@ -1,6 +1,6 @@
 use crate::{
     helix_engine::{
-        bm25::bm25::{BM25, BM25_SCHEMA_VERSION, build_bm25_payload},
+        bm25::bm25::{BM25_SCHEMA_VERSION, HBM25Config},
         storage_core::HelixGraphStorage,
         types::GraphError,
         vector_core::{vector::HVector, vector_core},
@@ -94,7 +94,7 @@ fn migrate_bm25(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
 
 fn rebuild_bm25_batch(
     storage: &HelixGraphStorage,
-    bm25: &crate::helix_engine::bm25::bm25::HBM25Config,
+    bm25: &HBM25Config,
     batch: &[(u128, Vec<u8>)],
 ) -> Result<(), GraphError> {
     let arena = bumpalo::Bump::new();
@@ -103,8 +103,7 @@ fn rebuild_bm25_batch(
     for (id, value) in batch {
         let node = Node::from_bincode_bytes(*id, value, &arena)?;
         if let Some(properties) = node.properties.as_ref() {
-            let data = build_bm25_payload(properties, node.label);
-            bm25.insert_doc(&mut txn, *id, &data)?;
+            bm25.insert_doc_for_node(&mut txn, *id, properties, node.label)?;
         }
     }
 
