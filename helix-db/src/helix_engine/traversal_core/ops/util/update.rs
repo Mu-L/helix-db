@@ -106,8 +106,9 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 node.properties = Some(map);
                             }
                             Some(old) => {
+                                let mut index_error = false;
                                 for (k, v) in props.iter() {
-                                    let Some((db, _)) = self.storage.secondary_indices.get(*k)
+                                    let Some((db, secondary_index)) = self.storage.secondary_indices.get(*k)
                                     else {
                                         continue;
                                     };
@@ -117,34 +118,67 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                         continue;
                                     };
 
-                                    match bincode::serialize(old_value) {
-                                        Ok(old_serialized) => {
-                                            if let Err(e) = db.delete_one_duplicate(
-                                                self.txn,
-                                                &old_serialized,
-                                                &node.id,
-                                            ) {
-                                                results.push(Err(GraphError::from(e)));
-                                                break;
-                                            }
-                                        }
+                                    // Skip if value unchanged
+                                    if old_value == v {
+                                        continue;
+                                    }
+
+                                    let old_serialized = match bincode::serialize(old_value) {
+                                        Ok(s) => s,
                                         Err(e) => {
                                             results.push(Err(GraphError::from(e)));
+                                            index_error = true;
                                             break;
                                         }
+                                    };
+
+                                    if let Err(e) = db.delete_one_duplicate(
+                                        self.txn,
+                                        &old_serialized,
+                                        &node.id,
+                                    ) {
+                                        results.push(Err(GraphError::from(e)));
+                                        index_error = true;
+                                        break;
                                     }
 
                                     // create new secondary indexes for the props changed
                                     match bincode::serialize(v) {
                                         Ok(v_serialized) => {
-                                            if let Err(e) =
-                                                db.put(self.txn, &v_serialized, &node.id)
-                                            {
-                                                results.push(Err(GraphError::from(e)));
+                                            let put_result = match secondary_index {
+                                                crate::helix_engine::types::SecondaryIndex::Unique(_) => {
+                                                    db.put_with_flags(
+                                                        self.txn,
+                                                        PutFlags::NO_OVERWRITE,
+                                                        &v_serialized,
+                                                        &node.id,
+                                                    )
+                                                }
+                                                crate::helix_engine::types::SecondaryIndex::Index(_) => {
+                                                    db.put(self.txn, &v_serialized, &node.id)
+                                                }
+                                                crate::helix_engine::types::SecondaryIndex::None => unreachable!(),
+                                            };
+                                            if let Err(_e) = put_result {
+                                                // Restore the old index entry since the new one failed
+                                                let _ = db.put(self.txn, &old_serialized, &node.id);
+                                                results.push(Err(GraphError::DuplicateKey(k.to_string())));
+                                                index_error = true;
+                                                break;
                                             }
                                         }
-                                        Err(e) => results.push(Err(GraphError::from(e))),
+                                        Err(e) => {
+                                            // Restore the old index entry
+                                            let _ = db.put(self.txn, &old_serialized, &node.id);
+                                            results.push(Err(GraphError::from(e)));
+                                            index_error = true;
+                                            break;
+                                        }
                                     }
+                                }
+
+                                if index_error {
+                                    continue;
                                 }
 
                                 let diff = props.iter().filter(|(k, _)| {
