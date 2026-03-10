@@ -38,7 +38,7 @@ pub async fn introspect_schema_handler(
     match state.schema_json.as_ref() {
         Some(data) => axum::response::Response::builder()
             .header("Content-Type", "application/json")
-            .body(Body::from(data.clone().into_bytes()))
+            .body(Body::from(data.clone()))
             .expect("should be able to make response from string"),
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "Could not find schema").into_response(),
     }

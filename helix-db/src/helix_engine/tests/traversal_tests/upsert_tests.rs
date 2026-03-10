@@ -1614,6 +1614,98 @@ fn test_upsert_n_sequential_property_updates() {
     txn.commit().unwrap();
 }
 
+#[test]
+fn test_upsert_n_updates_only_the_first_source_node() {
+    let (_temp_dir, storage) = setup_test_db();
+    let arena = Bump::new();
+    let mut txn = storage.graph_env.write_txn().unwrap();
+
+    let node1 = G::new_mut_from_iter(
+        &storage,
+        &mut txn,
+        std::iter::empty::<TraversalValue>(),
+        &arena,
+    )
+    .upsert_n(
+        "email",
+        &[
+            ("email_id", Value::from("email_001")),
+            ("status", Value::from("first_old")),
+        ],
+    )
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()[0]
+        .clone();
+
+    let node2 = G::new_mut_from_iter(
+        &storage,
+        &mut txn,
+        std::iter::empty::<TraversalValue>(),
+        &arena,
+    )
+    .upsert_n(
+        "email",
+        &[
+            ("email_id", Value::from("email_002")),
+            ("status", Value::from("second_old")),
+        ],
+    )
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()[0]
+        .clone();
+
+    let node1_id = node1.id();
+    let node2_id = node2.id();
+
+    let result = G::new_mut_from_iter(&storage, &mut txn, vec![node1, node2].into_iter(), &arena)
+        .upsert_n("email", &[("status", Value::from("updated"))])
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].id(), node1_id);
+    if let TraversalValue::Node(node) = &result[0] {
+        assert_eq!(
+            node.get_property("status").unwrap(),
+            &Value::from("updated")
+        );
+    } else {
+        panic!("Expected node");
+    }
+
+    txn.commit().unwrap();
+
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+
+    let first = G::new(&storage, &txn, &arena)
+        .n_from_id(&node1_id)
+        .collect_to_obj()
+        .unwrap();
+    let second = G::new(&storage, &txn, &arena)
+        .n_from_id(&node2_id)
+        .collect_to_obj()
+        .unwrap();
+
+    if let TraversalValue::Node(node) = &first {
+        assert_eq!(
+            node.get_property("status").unwrap(),
+            &Value::from("updated")
+        );
+    } else {
+        panic!("Expected node");
+    }
+
+    if let TraversalValue::Node(node) = &second {
+        assert_eq!(
+            node.get_property("status").unwrap(),
+            &Value::from("second_old")
+        );
+    } else {
+        panic!("Expected node");
+    }
+}
+
 // ============================================================================
 // Regression Tests - Issue #850
 // ============================================================================
