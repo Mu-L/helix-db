@@ -149,8 +149,28 @@ mod tests {
             *expected.entry(token).or_insert(0) += 1;
         }
 
-        let actual = bm25.term_counts_for_node(&props_map, "person");
+        let actual = bm25.term_counts_for_node(&props_map, "person").unwrap();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_term_counts_for_node_errors_on_empty_value() {
+        let (bm25, _temp_dir) = setup_bm25_config();
+        let arena = Bump::new();
+
+        let props = [("status", Value::Empty)];
+
+        let props_map = ImmutablePropertiesMap::new(
+            props.len(),
+            props.iter().map(|(key, value)| (*key, value.clone())),
+            &arena,
+        );
+
+        let err = bm25.term_counts_for_node(&props_map, "person").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("BM25: unexpected empty value in node properties")
+        );
     }
 
     #[test]

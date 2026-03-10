@@ -354,37 +354,88 @@ impl HBM25Config {
         Self::flush_token::<SHOULD_FILTER>(term_counts, &mut token);
     }
 
-    fn add_value_term_counts(&self, term_counts: &mut HashMap<String, u32>, value: &Value) {
+    fn add_value_term_counts(
+        &self,
+        term_counts: &mut HashMap<String, u32>,
+        value: &Value,
+    ) -> Result<(), GraphError> {
         match value {
-            Value::String(s) => self.add_text_term_counts::<true>(term_counts, s),
-            Value::F32(f) => self.add_text_term_counts::<true>(term_counts, &f.to_string()),
-            Value::F64(f) => self.add_text_term_counts::<true>(term_counts, &f.to_string()),
-            Value::I8(i) => self.add_text_term_counts::<true>(term_counts, &i.to_string()),
-            Value::I16(i) => self.add_text_term_counts::<true>(term_counts, &i.to_string()),
-            Value::I32(i) => self.add_text_term_counts::<true>(term_counts, &i.to_string()),
-            Value::I64(i) => self.add_text_term_counts::<true>(term_counts, &i.to_string()),
-            Value::U8(u) => self.add_text_term_counts::<true>(term_counts, &u.to_string()),
-            Value::U16(u) => self.add_text_term_counts::<true>(term_counts, &u.to_string()),
-            Value::U32(u) => self.add_text_term_counts::<true>(term_counts, &u.to_string()),
-            Value::U64(u) => self.add_text_term_counts::<true>(term_counts, &u.to_string()),
-            Value::U128(u) => self.add_text_term_counts::<true>(term_counts, &u.to_string()),
-            Value::Date(d) => self.add_text_term_counts::<true>(term_counts, &d.to_string()),
-            Value::Boolean(b) => {
-                self.add_text_term_counts::<true>(term_counts, if *b { "true" } else { "false" })
+            Value::String(s) => {
+                self.add_text_term_counts::<true>(term_counts, s);
+                Ok(())
             }
-            Value::Id(id) => self.add_text_term_counts::<true>(term_counts, &id.stringify()),
+            Value::F32(f) => {
+                self.add_text_term_counts::<true>(term_counts, &f.to_string());
+                Ok(())
+            }
+            Value::F64(f) => {
+                self.add_text_term_counts::<true>(term_counts, &f.to_string());
+                Ok(())
+            }
+            Value::I8(i) => {
+                self.add_text_term_counts::<true>(term_counts, &i.to_string());
+                Ok(())
+            }
+            Value::I16(i) => {
+                self.add_text_term_counts::<true>(term_counts, &i.to_string());
+                Ok(())
+            }
+            Value::I32(i) => {
+                self.add_text_term_counts::<true>(term_counts, &i.to_string());
+                Ok(())
+            }
+            Value::I64(i) => {
+                self.add_text_term_counts::<true>(term_counts, &i.to_string());
+                Ok(())
+            }
+            Value::U8(u) => {
+                self.add_text_term_counts::<true>(term_counts, &u.to_string());
+                Ok(())
+            }
+            Value::U16(u) => {
+                self.add_text_term_counts::<true>(term_counts, &u.to_string());
+                Ok(())
+            }
+            Value::U32(u) => {
+                self.add_text_term_counts::<true>(term_counts, &u.to_string());
+                Ok(())
+            }
+            Value::U64(u) => {
+                self.add_text_term_counts::<true>(term_counts, &u.to_string());
+                Ok(())
+            }
+            Value::U128(u) => {
+                self.add_text_term_counts::<true>(term_counts, &u.to_string());
+                Ok(())
+            }
+            Value::Date(d) => {
+                self.add_text_term_counts::<true>(term_counts, &d.to_string());
+                Ok(())
+            }
+            Value::Boolean(b) => {
+                self.add_text_term_counts::<true>(term_counts, if *b { "true" } else { "false" });
+                Ok(())
+            }
+            Value::Id(id) => {
+                self.add_text_term_counts::<true>(term_counts, &id.stringify());
+                Ok(())
+            }
             Value::Array(values) => {
                 for value in values {
-                    self.add_value_term_counts(term_counts, value);
+                    self.add_value_term_counts(term_counts, value)?;
                 }
+                Ok(())
             }
             Value::Object(entries) => {
                 for (key, value) in entries {
                     self.add_text_term_counts::<true>(term_counts, key);
-                    self.add_value_term_counts(term_counts, value);
+                    self.add_value_term_counts(term_counts, value)?;
                 }
+                Ok(())
             }
-            Value::Empty => panic!("Not primitive"),
+            Value::Empty => Err(GraphError::New(
+                "BM25: unexpected empty value in node properties".to_string(),
+            )),
         }
     }
 
@@ -392,16 +443,16 @@ impl HBM25Config {
         &self,
         properties: &ImmutablePropertiesMap<'_>,
         label: &str,
-    ) -> HashMap<String, u32> {
+    ) -> Result<HashMap<String, u32>, GraphError> {
         let mut term_counts = HashMap::new();
 
         for (key, value) in properties.iter() {
             self.add_text_term_counts::<true>(&mut term_counts, key);
-            self.add_value_term_counts(&mut term_counts, value);
+            self.add_value_term_counts(&mut term_counts, value)?;
         }
 
         self.add_text_term_counts::<true>(&mut term_counts, label);
-        term_counts
+        Ok(term_counts)
     }
 
     fn term_counts(&self, doc: &str) -> HashMap<String, u32> {
@@ -614,11 +665,12 @@ impl HBM25Config {
         &self,
         txn: &mut RwTxn,
         doc_id: u128,
-        new_reverse_entries: Vec<ReversePostingEntry>,
+        mut new_reverse_entries: Vec<ReversePostingEntry>,
     ) -> Result<(), GraphError> {
+        new_reverse_entries.sort_by(|a, b| a.term.cmp(&b.term));
         let new_doc_length = Self::doc_length_from_reverse_entries(&new_reverse_entries);
 
-        let (old_doc_length, old_reverse_entries) = match self.doc_state(txn, doc_id)? {
+        let (old_doc_length, mut old_reverse_entries) = match self.doc_state(txn, doc_id)? {
             DocState::Absent => {
                 return self.insert_new_document_from_reverse_entries(
                     txn,
@@ -633,6 +685,8 @@ impl HBM25Config {
                 reverse_entries,
             } => (doc_length, reverse_entries),
         };
+
+        old_reverse_entries.sort_by(|a, b| a.term.cmp(&b.term));
 
         if old_reverse_entries == new_reverse_entries {
             return Ok(());
@@ -706,7 +760,7 @@ impl HBM25Config {
             )));
         }
 
-        let term_counts = self.term_counts_for_node(properties, label);
+        let term_counts = self.term_counts_for_node(properties, label)?;
         let reverse_entries = Self::reverse_entries_from_term_counts(&term_counts);
         let doc_length = Self::doc_length_from_reverse_entries(&reverse_entries);
 
@@ -720,7 +774,7 @@ impl HBM25Config {
         properties: &ImmutablePropertiesMap<'_>,
         label: &str,
     ) -> Result<(), GraphError> {
-        let term_counts = self.term_counts_for_node(properties, label);
+        let term_counts = self.term_counts_for_node(properties, label)?;
         let reverse_entries = Self::reverse_entries_from_term_counts(&term_counts);
         self.update_doc_with_reverse_entries(txn, doc_id, reverse_entries)
     }
