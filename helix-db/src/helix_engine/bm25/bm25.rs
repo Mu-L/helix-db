@@ -5,6 +5,7 @@ use crate::{
         types::GraphError,
         vector_core::{hnsw::HNSW, vector::HVector},
     },
+    protocol::value::Value,
     utils::properties::ImmutablePropertiesMap,
 };
 
@@ -312,11 +313,151 @@ impl HBM25Config {
         })
     }
 
+    fn flush_token<const SHOULD_FILTER: bool>(
+        term_counts: &mut HashMap<String, u32>,
+        token: &mut String,
+    ) {
+        if token.is_empty() {
+            return;
+        }
+
+        if SHOULD_FILTER && token.len() <= 2 {
+            token.clear();
+            return;
+        }
+
+        if let Some(count) = term_counts.get_mut(token.as_str()) {
+            *count += 1;
+            token.clear();
+        } else {
+            term_counts.insert(std::mem::take(token), 1);
+        }
+    }
+
+    fn add_text_term_counts<const SHOULD_FILTER: bool>(
+        &self,
+        term_counts: &mut HashMap<String, u32>,
+        text: &str,
+    ) {
+        let mut token = String::new();
+
+        for ch in text.chars() {
+            for lower in ch.to_lowercase() {
+                if lower.is_alphanumeric() {
+                    token.push(lower);
+                } else {
+                    Self::flush_token::<SHOULD_FILTER>(term_counts, &mut token);
+                }
+            }
+        }
+
+        Self::flush_token::<SHOULD_FILTER>(term_counts, &mut token);
+    }
+
+    fn add_value_term_counts(
+        &self,
+        term_counts: &mut HashMap<String, u32>,
+        value: &Value,
+    ) -> Result<(), GraphError> {
+        match value {
+            Value::String(s) => {
+                self.add_text_term_counts::<true>(term_counts, s);
+                Ok(())
+            }
+            Value::F32(f) => {
+                self.add_text_term_counts::<true>(term_counts, &f.to_string());
+                Ok(())
+            }
+            Value::F64(f) => {
+                self.add_text_term_counts::<true>(term_counts, &f.to_string());
+                Ok(())
+            }
+            Value::I8(i) => {
+                self.add_text_term_counts::<true>(term_counts, &i.to_string());
+                Ok(())
+            }
+            Value::I16(i) => {
+                self.add_text_term_counts::<true>(term_counts, &i.to_string());
+                Ok(())
+            }
+            Value::I32(i) => {
+                self.add_text_term_counts::<true>(term_counts, &i.to_string());
+                Ok(())
+            }
+            Value::I64(i) => {
+                self.add_text_term_counts::<true>(term_counts, &i.to_string());
+                Ok(())
+            }
+            Value::U8(u) => {
+                self.add_text_term_counts::<true>(term_counts, &u.to_string());
+                Ok(())
+            }
+            Value::U16(u) => {
+                self.add_text_term_counts::<true>(term_counts, &u.to_string());
+                Ok(())
+            }
+            Value::U32(u) => {
+                self.add_text_term_counts::<true>(term_counts, &u.to_string());
+                Ok(())
+            }
+            Value::U64(u) => {
+                self.add_text_term_counts::<true>(term_counts, &u.to_string());
+                Ok(())
+            }
+            Value::U128(u) => {
+                self.add_text_term_counts::<true>(term_counts, &u.to_string());
+                Ok(())
+            }
+            Value::Date(d) => {
+                self.add_text_term_counts::<true>(term_counts, &d.to_string());
+                Ok(())
+            }
+            Value::Boolean(b) => {
+                self.add_text_term_counts::<true>(term_counts, if *b { "true" } else { "false" });
+                Ok(())
+            }
+            Value::Id(id) => {
+                self.add_text_term_counts::<true>(term_counts, &id.stringify());
+                Ok(())
+            }
+            Value::Array(values) => {
+                for value in values {
+                    self.add_value_term_counts(term_counts, value)?;
+                }
+                Ok(())
+            }
+            Value::Object(entries) => {
+                for (key, value) in entries {
+                    self.add_text_term_counts::<true>(term_counts, key);
+                    self.add_value_term_counts(term_counts, value)?;
+                }
+                Ok(())
+            }
+            Value::Empty => Err(GraphError::New(
+                "BM25: unexpected empty value in node properties".to_string(),
+            )),
+        }
+    }
+
+    pub(crate) fn term_counts_for_node(
+        &self,
+        properties: &ImmutablePropertiesMap<'_>,
+        label: &str,
+    ) -> Result<HashMap<String, u32>, GraphError> {
+        let mut term_counts = HashMap::new();
+
+        for (key, value) in properties.iter() {
+            self.add_text_term_counts::<true>(&mut term_counts, key);
+            self.add_value_term_counts(&mut term_counts, value)?;
+        }
+
+        self.add_text_term_counts::<true>(&mut term_counts, label);
+        Ok(term_counts)
+    }
+
     fn term_counts(&self, doc: &str) -> HashMap<String, u32> {
         let mut term_counts = HashMap::new();
-        for token in self.tokenize::<true>(doc) {
-            *term_counts.entry(token).or_insert(0) += 1;
-        }
+        self.add_text_term_counts::<true>(&mut term_counts, doc);
         term_counts
     }
 
@@ -498,21 +639,144 @@ impl HBM25Config {
         self.write_metadata(txn, &metadata)
     }
 
-    fn insert_new_document(
+    fn doc_length_from_reverse_entries(reverse_entries: &[ReversePostingEntry]) -> u32 {
+        reverse_entries
+            .iter()
+            .map(|entry| entry.term_frequency)
+            .sum()
+    }
+
+    fn insert_new_document_from_reverse_entries(
         &self,
         txn: &mut RwTxn,
         doc_id: u128,
-        term_counts: &HashMap<String, u32>,
+        reverse_entries: &[ReversePostingEntry],
         doc_length: u32,
     ) -> Result<(), GraphError> {
-        let reverse_entries = Self::reverse_entries_from_term_counts(term_counts);
-
         self.doc_lengths_db.put(txn, &doc_id, &doc_length)?;
-        for entry in &reverse_entries {
+        for entry in reverse_entries {
             self.insert_posting(txn, doc_id, &entry.term, entry.term_frequency)?;
         }
-        self.replace_reverse_entries(txn, doc_id, &reverse_entries)?;
+        self.replace_reverse_entries(txn, doc_id, reverse_entries)?;
         self.record_insert(txn, doc_length)
+    }
+
+    fn update_doc_with_reverse_entries(
+        &self,
+        txn: &mut RwTxn,
+        doc_id: u128,
+        mut new_reverse_entries: Vec<ReversePostingEntry>,
+    ) -> Result<(), GraphError> {
+        new_reverse_entries.sort_by(|a, b| a.term.cmp(&b.term));
+        let new_doc_length = Self::doc_length_from_reverse_entries(&new_reverse_entries);
+
+        let (old_doc_length, mut old_reverse_entries) = match self.doc_state(txn, doc_id)? {
+            DocState::Absent => {
+                return self.insert_new_document_from_reverse_entries(
+                    txn,
+                    doc_id,
+                    &new_reverse_entries,
+                    new_doc_length,
+                );
+            }
+            DocState::Empty => (0, Vec::new()),
+            DocState::Indexed {
+                doc_length,
+                reverse_entries,
+            } => (doc_length, reverse_entries),
+        };
+
+        old_reverse_entries.sort_by(|a, b| a.term.cmp(&b.term));
+
+        if old_reverse_entries == new_reverse_entries {
+            return Ok(());
+        }
+
+        let mut old_index = 0;
+        let mut new_index = 0;
+
+        while old_index < old_reverse_entries.len() && new_index < new_reverse_entries.len() {
+            let old_entry = &old_reverse_entries[old_index];
+            let new_entry = &new_reverse_entries[new_index];
+
+            match old_entry.term.cmp(&new_entry.term) {
+                std::cmp::Ordering::Less => {
+                    self.delete_posting(txn, doc_id, &old_entry.term, old_entry.term_frequency)?;
+                    old_index += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    self.insert_posting(txn, doc_id, &new_entry.term, new_entry.term_frequency)?;
+                    new_index += 1;
+                }
+                std::cmp::Ordering::Equal => {
+                    if old_entry.term_frequency != new_entry.term_frequency {
+                        self.delete_posting(
+                            txn,
+                            doc_id,
+                            &old_entry.term,
+                            old_entry.term_frequency,
+                        )?;
+                        self.insert_posting(
+                            txn,
+                            doc_id,
+                            &new_entry.term,
+                            new_entry.term_frequency,
+                        )?;
+                    }
+                    old_index += 1;
+                    new_index += 1;
+                }
+            }
+        }
+
+        for old_entry in &old_reverse_entries[old_index..] {
+            self.delete_posting(txn, doc_id, &old_entry.term, old_entry.term_frequency)?;
+        }
+
+        for new_entry in &new_reverse_entries[new_index..] {
+            self.insert_posting(txn, doc_id, &new_entry.term, new_entry.term_frequency)?;
+        }
+
+        self.replace_reverse_entries(txn, doc_id, &new_reverse_entries)?;
+
+        if old_doc_length != new_doc_length {
+            self.doc_lengths_db.put(txn, &doc_id, &new_doc_length)?;
+            self.record_update(txn, doc_id, old_doc_length, new_doc_length)?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn insert_doc_for_node(
+        &self,
+        txn: &mut RwTxn,
+        doc_id: u128,
+        properties: &ImmutablePropertiesMap<'_>,
+        label: &str,
+    ) -> Result<(), GraphError> {
+        if !matches!(self.doc_state(txn, doc_id)?, DocState::Absent) {
+            return Err(GraphError::New(format!(
+                "BM25 document {doc_id} already exists"
+            )));
+        }
+
+        let term_counts = self.term_counts_for_node(properties, label)?;
+        let reverse_entries = Self::reverse_entries_from_term_counts(&term_counts);
+        let doc_length = Self::doc_length_from_reverse_entries(&reverse_entries);
+
+        self.insert_new_document_from_reverse_entries(txn, doc_id, &reverse_entries, doc_length)
+    }
+
+    pub(crate) fn update_doc_for_node(
+        &self,
+        txn: &mut RwTxn,
+        doc_id: u128,
+        properties: &ImmutablePropertiesMap<'_>,
+        label: &str,
+    ) -> Result<(), GraphError> {
+        let term_counts = self.term_counts_for_node(properties, label)?;
+        let reverse_entries = Self::reverse_entries_from_term_counts(&term_counts);
+        self.update_doc_with_reverse_entries(txn, doc_id, reverse_entries)
     }
 }
 
@@ -534,8 +798,9 @@ impl BM25 for HBM25Config {
         }
 
         let term_counts = self.term_counts(doc);
-        let doc_length = term_counts.values().copied().sum();
-        self.insert_new_document(txn, doc_id, &term_counts, doc_length)
+        let reverse_entries = Self::reverse_entries_from_term_counts(&term_counts);
+        let doc_length = Self::doc_length_from_reverse_entries(&reverse_entries);
+        self.insert_new_document_from_reverse_entries(txn, doc_id, &reverse_entries, doc_length)
     }
 
     fn delete_doc(&self, txn: &mut RwTxn, doc_id: u128) -> Result<(), GraphError> {
@@ -558,46 +823,9 @@ impl BM25 for HBM25Config {
     }
 
     fn update_doc(&self, txn: &mut RwTxn, doc_id: u128, doc: &str) -> Result<(), GraphError> {
-        let new_term_counts = self.term_counts(doc);
-        let new_doc_length = new_term_counts.values().copied().sum();
-
-        let (old_doc_length, old_reverse_entries) = match self.doc_state(txn, doc_id)? {
-            DocState::Absent => {
-                return self.insert_new_document(txn, doc_id, &new_term_counts, new_doc_length);
-            }
-            DocState::Empty => (0, Vec::new()),
-            DocState::Indexed {
-                doc_length,
-                reverse_entries,
-            } => (doc_length, reverse_entries),
-        };
-
-        let mut old_term_counts = HashMap::new();
-        for entry in &old_reverse_entries {
-            old_term_counts.insert(entry.term.clone(), entry.term_frequency);
-        }
-
-        for (term, old_term_frequency) in &old_term_counts {
-            match new_term_counts.get(term) {
-                Some(new_term_frequency) if *new_term_frequency == *old_term_frequency => {}
-                Some(new_term_frequency) => {
-                    self.delete_posting(txn, doc_id, term, *old_term_frequency)?;
-                    self.insert_posting(txn, doc_id, term, *new_term_frequency)?;
-                }
-                None => self.delete_posting(txn, doc_id, term, *old_term_frequency)?,
-            }
-        }
-
-        for (term, new_term_frequency) in &new_term_counts {
-            if !old_term_counts.contains_key(term) {
-                self.insert_posting(txn, doc_id, term, *new_term_frequency)?;
-            }
-        }
-
-        let new_reverse_entries = Self::reverse_entries_from_term_counts(&new_term_counts);
-        self.replace_reverse_entries(txn, doc_id, &new_reverse_entries)?;
-        self.doc_lengths_db.put(txn, &doc_id, &new_doc_length)?;
-        self.record_update(txn, doc_id, old_doc_length, new_doc_length)
+        let term_counts = self.term_counts(doc);
+        let reverse_entries = Self::reverse_entries_from_term_counts(&term_counts);
+        self.update_doc_with_reverse_entries(txn, doc_id, reverse_entries)
     }
 
     fn calculate_bm25_score(
