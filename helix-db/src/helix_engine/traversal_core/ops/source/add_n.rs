@@ -146,10 +146,9 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
 
             if let Some(bm25) = &self.storage.bm25
                 && let Some(props) = node.properties.as_ref()
+                && let Err(e) = insert_bm25_node_doc(bm25, self.txn, node.id, props, node.label)
             {
-                if let Err(e) = insert_bm25_node_doc(bm25, self.txn, node.id, props, node.label) {
-                    result = Err(e);
-                }
+                result = Err(e);
             }
         }
 
