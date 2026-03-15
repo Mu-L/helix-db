@@ -453,11 +453,10 @@ async fn create_enterprise_cluster_flow(
         "prod".to_string()
     };
 
-    let availability_mode = if prompts::is_interactive() {
-        prompts::select_availability_mode()?
-    } else {
-        AvailabilityMode::Dev
-    };
+    let availability_mode = AvailabilityMode::Ha;
+    if prompts::is_interactive() {
+        crate::output::info("Enterprise dev mode has been removed; creating an HA cluster.");
+    }
     let is_ha = availability_mode == AvailabilityMode::Ha;
 
     let gateway_node_type = if prompts::is_interactive() {
@@ -518,6 +517,8 @@ async fn create_enterprise_cluster_flow(
             "availability_mode": availability_mode_str,
             "gateway_node_type": gateway_node_type,
             "db_node_type": db_node_type,
+            "gateway_count": min_instances,
+            "hyperscale_count": max_instances,
             "min_instances": min_instances,
             "max_instances": max_instances,
         }))

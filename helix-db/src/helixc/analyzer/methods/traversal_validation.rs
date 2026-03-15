@@ -549,7 +549,13 @@ pub(crate) fn validate_traversal<'a>(
                     let embed_data = match &e.value {
                         EvaluatesToString::Identifier(i) => {
                             type_in_scope(ctx, original_query, sv.loc.clone(), scope, i.as_str());
-                            validate_embed_string_type(ctx, original_query, sv.loc.clone(), scope, i.as_str());
+                            validate_embed_string_type(
+                                ctx,
+                                original_query,
+                                sv.loc.clone(),
+                                scope,
+                                i.as_str(),
+                            );
                             EmbedData {
                                 data: gen_identifier_or_param(
                                     original_query,
@@ -816,7 +822,9 @@ pub(crate) fn validate_traversal<'a>(
                         // Check that the traversal ends with a boolean operation.
                         // If it doesn't (e.g., ends with Out, In, Where, etc.), it returns
                         // nodes/edges rather than a boolean — user likely needs EXISTS(...).
-                        let last_is_bool_op = tr.steps.last()
+                        let last_is_bool_op = tr
+                            .steps
+                            .last()
                             .is_some_and(|s| matches!(s.inner(), GeneratedStep::BoolOp(_)));
                         if !last_is_bool_op {
                             generate_error!(
@@ -2478,7 +2486,13 @@ pub(crate) fn validate_traversal<'a>(
                                     scope,
                                     id.as_str(),
                                 );
-                                validate_embed_string_type(ctx, original_query, embed.loc.clone(), scope, id.as_str());
+                                validate_embed_string_type(
+                                    ctx,
+                                    original_query,
+                                    embed.loc.clone(),
+                                    scope,
+                                    id.as_str(),
+                                );
                                 EmbedData {
                                     data: gen_identifier_or_param(
                                         original_query,

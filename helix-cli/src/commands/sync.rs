@@ -121,8 +121,38 @@ struct CliProjectEnterpriseCluster {
     availability_mode: String,
     gateway_node_type: String,
     db_node_type: String,
-    min_instances: u64,
-    max_instances: u64,
+    #[serde(default)]
+    gateway_count: Option<u64>,
+    #[serde(default)]
+    hyperscale_count: Option<u64>,
+    #[serde(default)]
+    min_instances: Option<u64>,
+    #[serde(default)]
+    max_instances: Option<u64>,
+}
+
+impl CliProjectEnterpriseCluster {
+    fn resolved_gateway_count(&self) -> Option<u64> {
+        self.gateway_count.or(self.min_instances)
+    }
+
+    fn resolved_hyperscale_count(&self) -> Option<u64> {
+        self.hyperscale_count.or(self.max_instances)
+    }
+
+    fn compatibility_min_instances(&self) -> Option<u64> {
+        Some(
+            self.resolved_gateway_count()?
+                .min(self.resolved_hyperscale_count()?),
+        )
+    }
+
+    fn compatibility_max_instances(&self) -> Option<u64> {
+        Some(
+            self.resolved_gateway_count()?
+                .max(self.resolved_hyperscale_count()?),
+        )
+    }
 }
 
 #[derive(Deserialize)]
@@ -1701,13 +1731,37 @@ fn reconcile_project_config_from_cloud(
     }
 
     for cluster in &project_clusters.enterprise {
+        let gateway_count = cluster.resolved_gateway_count().ok_or_else(|| {
+            eyre!(
+                "Enterprise cluster '{}' is missing gateway_count/min_instances in the project clusters response",
+                cluster.cluster_id
+            )
+        })?;
+        let hyperscale_count = cluster.resolved_hyperscale_count().ok_or_else(|| {
+            eyre!(
+                "Enterprise cluster '{}' is missing hyperscale_count/max_instances in the project clusters response",
+                cluster.cluster_id
+            )
+        })?;
+
+        if gateway_count != hyperscale_count {
+            print_warning(&format!(
+                "Enterprise cluster '{}' uses different gateway ({}) and DB ({}) counts; helix.toml stores these as min_instances/max_instances for compatibility.",
+                cluster.cluster_name, gateway_count, hyperscale_count
+            ));
+        }
+
         let instance_config = EnterpriseInstanceConfig {
             cluster_id: cluster.cluster_id.clone(),
             availability_mode: availability_mode_from_cloud(&cluster.availability_mode),
             gateway_node_type: cluster.gateway_node_type.clone(),
             db_node_type: cluster.db_node_type.clone(),
-            min_instances: cluster.min_instances,
-            max_instances: cluster.max_instances,
+            min_instances: cluster
+                .compatibility_min_instances()
+                .unwrap_or(gateway_count),
+            max_instances: cluster
+                .compatibility_max_instances()
+                .unwrap_or(hyperscale_count),
             db_config: DbConfig::default(),
         };
 
@@ -2524,5 +2578,57 @@ mod tests {
             manifest["Cargo.toml"].sha256,
             compute_sha256("[package]\nname = \"queries\"\n")
         );
+    }
+
+    #[test]
+    fn project_clusters_accept_legacy_enterprise_counts() {
+        let response: CliProjectClusters = serde_json::from_value(serde_json::json!({
+            "project_id": "project-1",
+            "project_name": "demo",
+            "standard": [],
+            "enterprise": [{
+                "cluster_id": "cluster-1",
+                "cluster_name": "enterprise-a",
+                "availability_mode": "ha",
+                "gateway_node_type": "GW-40",
+                "db_node_type": "HLX-160",
+                "min_instances": 3,
+                "max_instances": 5
+            }]
+        }))
+        .unwrap();
+
+        let cluster = &response.enterprise[0];
+        assert_eq!(cluster.resolved_gateway_count(), Some(3));
+        assert_eq!(cluster.resolved_hyperscale_count(), Some(5));
+        assert_eq!(cluster.compatibility_min_instances(), Some(3));
+        assert_eq!(cluster.compatibility_max_instances(), Some(5));
+    }
+
+    #[test]
+    fn project_clusters_accept_canonical_and_legacy_enterprise_counts() {
+        let response: CliProjectClusters = serde_json::from_value(serde_json::json!({
+            "project_id": "project-1",
+            "project_name": "demo",
+            "standard": [],
+            "enterprise": [{
+                "cluster_id": "cluster-1",
+                "cluster_name": "enterprise-a",
+                "availability_mode": "ha",
+                "gateway_node_type": "GW-40",
+                "db_node_type": "HLX-160",
+                "gateway_count": 6,
+                "hyperscale_count": 3,
+                "min_instances": 3,
+                "max_instances": 6
+            }]
+        }))
+        .unwrap();
+
+        let cluster = &response.enterprise[0];
+        assert_eq!(cluster.resolved_gateway_count(), Some(6));
+        assert_eq!(cluster.resolved_hyperscale_count(), Some(3));
+        assert_eq!(cluster.compatibility_min_instances(), Some(3));
+        assert_eq!(cluster.compatibility_max_instances(), Some(6));
     }
 }
