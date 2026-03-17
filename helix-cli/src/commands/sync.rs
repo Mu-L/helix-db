@@ -122,6 +122,14 @@ struct CliProjectEnterpriseCluster {
     gateway_node_type: String,
     db_node_type: String,
     #[serde(default)]
+    min_gateway_count: Option<u64>,
+    #[serde(default)]
+    max_gateway_count: Option<u64>,
+    #[serde(default)]
+    min_hyperscale_count: Option<u64>,
+    #[serde(default)]
+    max_hyperscale_count: Option<u64>,
+    #[serde(default)]
     gateway_count: Option<u64>,
     #[serde(default)]
     hyperscale_count: Option<u64>,
@@ -132,26 +140,62 @@ struct CliProjectEnterpriseCluster {
 }
 
 impl CliProjectEnterpriseCluster {
+    fn resolved_gateway_min_count(&self) -> Option<u64> {
+        self.min_gateway_count
+            .or(self.gateway_count)
+            .or(self.max_gateway_count)
+            .or(self.min_instances)
+    }
+
+    fn resolved_gateway_max_count(&self) -> Option<u64> {
+        self.max_gateway_count
+            .or(self.gateway_count)
+            .or(self.min_gateway_count)
+            .or(self.min_instances)
+    }
+
+    fn resolved_hyperscale_min_count(&self) -> Option<u64> {
+        self.min_hyperscale_count
+            .or(self.hyperscale_count)
+            .or(self.max_hyperscale_count)
+            .or(self.max_instances)
+    }
+
+    fn resolved_hyperscale_max_count(&self) -> Option<u64> {
+        self.max_hyperscale_count
+            .or(self.hyperscale_count)
+            .or(self.min_hyperscale_count)
+            .or(self.max_instances)
+    }
+
     fn resolved_gateway_count(&self) -> Option<u64> {
-        self.gateway_count.or(self.min_instances)
+        self.resolved_gateway_min_count()
     }
 
     fn resolved_hyperscale_count(&self) -> Option<u64> {
-        self.hyperscale_count.or(self.max_instances)
+        self.resolved_hyperscale_min_count()
     }
 
     fn compatibility_min_instances(&self) -> Option<u64> {
-        Some(
-            self.resolved_gateway_count()?
-                .min(self.resolved_hyperscale_count()?),
-        )
+        if let (Some(gateway_count), Some(hyperscale_count)) = (
+            self.resolved_gateway_min_count(),
+            self.resolved_hyperscale_min_count(),
+        ) {
+            Some(gateway_count.min(hyperscale_count))
+        } else {
+            self.min_instances
+        }
     }
 
     fn compatibility_max_instances(&self) -> Option<u64> {
-        Some(
-            self.resolved_gateway_count()?
-                .max(self.resolved_hyperscale_count()?),
-        )
+        if let (Some(gateway_count), Some(hyperscale_count)) = (
+            self.resolved_gateway_max_count(),
+            self.resolved_hyperscale_max_count(),
+        ) {
+            Some(gateway_count.max(hyperscale_count))
+        } else {
+            self.max_instances
+        }
     }
 }
 
@@ -1733,13 +1777,13 @@ fn reconcile_project_config_from_cloud(
     for cluster in &project_clusters.enterprise {
         let gateway_count = cluster.resolved_gateway_count().ok_or_else(|| {
             eyre!(
-                "Enterprise cluster '{}' is missing gateway_count/min_instances in the project clusters response",
+                "Enterprise cluster '{}' is missing gateway count fields (expected min_gateway_count/max_gateway_count, gateway_count, or min_instances) in the project clusters response",
                 cluster.cluster_id
             )
         })?;
         let hyperscale_count = cluster.resolved_hyperscale_count().ok_or_else(|| {
             eyre!(
-                "Enterprise cluster '{}' is missing hyperscale_count/max_instances in the project clusters response",
+                "Enterprise cluster '{}' is missing hyperscale count fields (expected min_hyperscale_count/max_hyperscale_count, hyperscale_count, or max_instances) in the project clusters response",
                 cluster.cluster_id
             )
         })?;
@@ -2606,7 +2650,7 @@ mod tests {
     }
 
     #[test]
-    fn project_clusters_accept_canonical_and_legacy_enterprise_counts() {
+    fn project_clusters_accept_role_based_enterprise_counts() {
         let response: CliProjectClusters = serde_json::from_value(serde_json::json!({
             "project_id": "project-1",
             "project_name": "demo",
@@ -2617,10 +2661,10 @@ mod tests {
                 "availability_mode": "ha",
                 "gateway_node_type": "GW-40",
                 "db_node_type": "HLX-160",
-                "gateway_count": 6,
-                "hyperscale_count": 3,
-                "min_instances": 3,
-                "max_instances": 6
+                "min_gateway_count": 6,
+                "max_gateway_count": 6,
+                "min_hyperscale_count": 3,
+                "max_hyperscale_count": 3
             }]
         }))
         .unwrap();
@@ -2630,5 +2674,34 @@ mod tests {
         assert_eq!(cluster.resolved_hyperscale_count(), Some(3));
         assert_eq!(cluster.compatibility_min_instances(), Some(3));
         assert_eq!(cluster.compatibility_max_instances(), Some(6));
+    }
+
+    #[test]
+    fn project_clusters_prefer_role_based_counts_over_legacy_compatibility_fields() {
+        let response: CliProjectClusters = serde_json::from_value(serde_json::json!({
+            "project_id": "project-1",
+            "project_name": "demo",
+            "standard": [],
+            "enterprise": [{
+                "cluster_id": "cluster-1",
+                "cluster_name": "enterprise-a",
+                "availability_mode": "ha",
+                "gateway_node_type": "GW-40",
+                "db_node_type": "HLX-160",
+                "min_gateway_count": 4,
+                "max_gateway_count": 4,
+                "min_hyperscale_count": 7,
+                "max_hyperscale_count": 7,
+                "min_instances": 3,
+                "max_instances": 5
+            }]
+        }))
+        .unwrap();
+
+        let cluster = &response.enterprise[0];
+        assert_eq!(cluster.resolved_gateway_count(), Some(4));
+        assert_eq!(cluster.resolved_hyperscale_count(), Some(7));
+        assert_eq!(cluster.compatibility_min_instances(), Some(4));
+        assert_eq!(cluster.compatibility_max_instances(), Some(7));
     }
 }

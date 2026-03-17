@@ -20,7 +20,8 @@ const DEFAULT_CLOUD_AUTHORITY: &str = "cloud.helix-db.com";
 pub static CLOUD_AUTHORITY: LazyLock<String> = LazyLock::new(|| {
     std::env::var("CLOUD_AUTHORITY").unwrap_or_else(|_| {
         if cfg!(debug_assertions) {
-            "http://helix-cloud-build-staging-gw-alb-72217854.us-east-1.elb.amazonaws.com".to_string()
+            "http://helix-cloud-build-staging-gw-alb-72217854.us-east-1.elb.amazonaws.com"
+                .to_string()
         } else {
             DEFAULT_CLOUD_AUTHORITY.to_string()
         }
@@ -44,7 +45,8 @@ pub struct HelixManager<'a> {
 }
 
 const ENTERPRISE_SOURCE_MAX_FILES: usize = 2_000;
-const ENTERPRISE_SOURCE_MAX_BYTES: usize = 10 * 1024 * 1024;
+const ENTERPRISE_SOURCE_MAX_BYTES: usize = 20 * 1024 * 1024;
+const ENTERPRISE_DEPLOY_REQUEST_MAX_BYTES: usize = 20 * 1024 * 1024;
 
 impl<'a> HelixManager<'a> {
     pub fn new(project: &'a ProjectContext) -> Self {
@@ -641,6 +643,16 @@ impl<'a> HelixManager<'a> {
             "instance_name": cluster_name,
             "helix_toml": helix_toml_content,
         });
+        let payload_bytes = serde_json::to_vec(&payload)
+            .map_err(|e| eyre!("Failed to serialize enterprise deploy payload: {e}"))?;
+
+        if payload_bytes.len() > ENTERPRISE_DEPLOY_REQUEST_MAX_BYTES {
+            return Err(eyre!(
+                "Enterprise deploy payload exceeds size limit ({} bytes > {} bytes). Trim your queries.json or source snapshot before deploy.",
+                payload_bytes.len(),
+                ENTERPRISE_DEPLOY_REQUEST_MAX_BYTES
+            ));
+        }
 
         // Send to enterprise deploy endpoint
         let client = reqwest::Client::new();
@@ -654,7 +666,7 @@ impl<'a> HelixManager<'a> {
             .post(&deploy_url)
             .header("x-api-key", &credentials.helix_admin_key)
             .header("Content-Type", "application/json")
-            .json(&payload)
+            .body(payload_bytes)
             .send()
             .await
             .map_err(|e| eyre!("Enterprise deployment request failed: {e}"))?;
