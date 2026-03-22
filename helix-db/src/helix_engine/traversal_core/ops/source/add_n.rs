@@ -1,6 +1,6 @@
 use crate::{
     helix_engine::{
-        bm25::bm25::{BM25, BM25Flatten},
+        bm25::bm25::HBM25Config,
         storage_core::HelixGraphStorage,
         traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
@@ -8,6 +8,16 @@ use crate::{
     utils::{id::v6_uuid, items::Node, properties::ImmutablePropertiesMap},
 };
 use heed3::{PutFlags, RwTxn};
+
+fn insert_bm25_node_doc(
+    bm25: &HBM25Config,
+    txn: &mut heed3::RwTxn<'_>,
+    node_id: u128,
+    properties: &ImmutablePropertiesMap<'_>,
+    label: &str,
+) -> Result<(), GraphError> {
+    bm25.insert_doc_for_node(txn, node_id, properties, label)
+}
 
 pub struct AddNIterator<'db, 'arena, 'txn>
 where
@@ -79,7 +89,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                         Ok(serialized) => {
                             // possibly append dup
 
-                            if let Err(e) = {
+                            if let Err(_e) = {
                                 match secondary_index {
                                     crate::helix_engine::types::SecondaryIndex::Unique(_) => db
                                         .put_with_flags(
@@ -100,12 +110,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                                     }
                                 }
                             } {
-                                println!(
-                                    "{} Error adding node to secondary index: {:?}",
-                                    line!(),
-                                    e
-                                );
-                                result = Err(GraphError::from(e));
+                                result = Err(GraphError::DuplicateKey(index.to_string()));
                                 break;
                             }
                         }
@@ -124,26 +129,25 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
             }
         }
 
-        match bincode::serialize(&node) {
-            Ok(bytes) => {
-                if let Err(e) = self.storage.nodes_db.put_with_flags(
-                    self.txn,
-                    PutFlags::APPEND,
-                    &node.id,
-                    &bytes,
-                ) {
-                    result = Err(GraphError::from(e));
+        if result.is_ok() {
+            match bincode::serialize(&node) {
+                Ok(bytes) => {
+                    if let Err(e) = self.storage.nodes_db.put_with_flags(
+                        self.txn,
+                        PutFlags::APPEND,
+                        &node.id,
+                        &bytes,
+                    ) {
+                        result = Err(GraphError::from(e));
+                    }
                 }
+                Err(e) => result = Err(GraphError::from(e)),
             }
-            Err(e) => result = Err(GraphError::from(e)),
-        }
 
-        if let Some(bm25) = &self.storage.bm25
-            && let Some(props) = node.properties.as_ref()
-        {
-            let mut data = props.flatten_bm25();
-            data.push_str(node.label);
-            if let Err(e) = bm25.insert_doc(self.txn, node.id, &data) {
+            if let Some(bm25) = &self.storage.bm25
+                && let Some(props) = node.properties.as_ref()
+                && let Err(e) = insert_bm25_node_doc(bm25, self.txn, node.id, props, node.label)
+            {
                 result = Err(e);
             }
         }

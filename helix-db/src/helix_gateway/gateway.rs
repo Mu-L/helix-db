@@ -3,7 +3,7 @@ use std::sync::atomic::{self, AtomicUsize};
 use std::time::Instant;
 use std::{collections::HashMap, sync::Arc};
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -132,7 +132,9 @@ impl HelixGateway {
 
         let axum_app = axum_app.with_state(Arc::new(AppState {
             worker_pool,
-            schema_json: self.opts.and_then(|o| o.config.schema),
+            schema_json: self
+                .opts
+                .and_then(|o| o.config.schema.map(Bytes::from)),
             cluster_id: self.cluster_id,
         }));
 
@@ -214,7 +216,11 @@ async fn post_handler(
             return e.into_response();
         }
     }
-    let body = req.body.to_vec();
+    let input_body = if *helix_metrics::METRICS_ENABLED {
+        Some(req.body.clone())
+    } else {
+        None
+    };
     let query_name = req.name.clone();
     let res = state.worker_pool.process(req).await;
 
@@ -248,7 +254,10 @@ async fn post_handler(
                 helix_metrics::events::QueryErrorEvent {
                     cluster_id: state.cluster_id.clone(),
                     query_name,
-                    input_json: sonic_rs::to_string(&body).ok(),
+                    input_json: input_body
+                        .as_ref()
+                        .and_then(|body| std::str::from_utf8(body.as_ref()).ok())
+                        .map(str::to_owned),
                     output_json: sonic_rs::to_string(&e).ok(),
                     time_taken_usec: start_time.elapsed().as_micros() as u32,
                 },
@@ -260,7 +269,7 @@ async fn post_handler(
 
 pub struct AppState {
     pub worker_pool: WorkerPool,
-    pub schema_json: Option<String>,
+    pub schema_json: Option<Bytes>,
     pub cluster_id: Option<String>,
 }
 

@@ -3,7 +3,7 @@ use itertools::Itertools;
 
 use crate::{
     helix_engine::{
-        bm25::bm25::{BM25, BM25Flatten},
+        bm25::bm25::HBM25Config,
         storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
         traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
@@ -18,11 +18,83 @@ use crate::{
     },
 };
 
+fn merge_create_props(
+    props: &[(&'static str, Value)],
+    create_defaults: &[(&'static str, Value)],
+) -> Vec<(&'static str, Value)> {
+    let mut merged = props
+        .iter()
+        .map(|(key, value)| (*key, value.clone()))
+        .collect::<Vec<_>>();
+
+    for (key, value) in create_defaults {
+        if !merged.iter().any(|(existing_key, _)| existing_key == key) {
+            merged.push((*key, value.clone()));
+        }
+    }
+
+    merged
+}
+
+fn update_secondary_index(
+    bm25: &(
+        heed3::Database<heed3::types::Bytes, heed3::types::U128<heed3::byteorder::BE>>,
+        crate::helix_engine::types::SecondaryIndex,
+    ),
+    txn: &mut heed3::RwTxn<'_>,
+    key: &'static str,
+    id: u128,
+    value: &Value,
+) -> Result<(), GraphError> {
+    let (db, secondary_index) = bm25;
+    let serialized = bincode::serialize(value)?;
+    match secondary_index {
+        crate::helix_engine::types::SecondaryIndex::Unique(_) => db
+            .put_with_flags(txn, PutFlags::NO_OVERWRITE, &serialized, &id)
+            .map_err(|_| GraphError::DuplicateKey(key.to_string()))?,
+        crate::helix_engine::types::SecondaryIndex::Index(_) => db.put(txn, &serialized, &id)?,
+        crate::helix_engine::types::SecondaryIndex::None => unreachable!(),
+    }
+    Ok(())
+}
+
+fn update_bm25_node_doc(
+    bm25: &HBM25Config,
+    txn: &mut heed3::RwTxn<'_>,
+    node_id: u128,
+    properties: &ImmutablePropertiesMap<'_>,
+    label: &str,
+) -> Result<(), GraphError> {
+    bm25.update_doc_for_node(txn, node_id, properties, label)
+}
+
+fn insert_bm25_node_doc(
+    bm25: &HBM25Config,
+    txn: &mut heed3::RwTxn<'_>,
+    node_id: u128,
+    properties: &ImmutablePropertiesMap<'_>,
+    label: &str,
+) -> Result<(), GraphError> {
+    bm25.insert_doc_for_node(txn, node_id, properties, label)
+}
+
 pub trait UpsertAdapter<'db, 'arena, 'txn>: Iterator {
     fn upsert_n(
         self,
         label: &'static str,
         props: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
+
+    fn upsert_n_with_defaults(
+        self,
+        label: &'static str,
+        props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -43,11 +115,38 @@ pub trait UpsertAdapter<'db, 'arena, 'txn>: Iterator {
         impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
     >;
 
+    fn upsert_e_with_defaults(
+        self,
+        label: &'arena str,
+        from_node: u128,
+        to_node: u128,
+        props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
+
     fn upsert_v(
         self,
         query: &'arena [f64],
         label: &'arena str,
         props: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >;
+
+    fn upsert_v_with_defaults(
+        self,
+        query: &'arena [f64],
+        label: &'arena str,
+        props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -60,9 +159,23 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
     UpsertAdapter<'db, 'arena, 'txn> for RwTraversalIterator<'db, 'arena, 'txn, I>
 {
     fn upsert_n(
+        self,
+        label: &'static str,
+        props: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
+        self.upsert_n_with_defaults(label, props, &[])
+    }
+
+    fn upsert_n_with_defaults(
         mut self,
         label: &'static str,
         props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -74,31 +187,16 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                 Some(Ok(TraversalValue::Node(mut node))) => {
                     match node.properties {
                         None => {
+                            if props.is_empty() {
+                                return Ok(TraversalValue::Node(node));
+                            }
+
                             // Insert secondary indices
                             for (k, v) in props.iter() {
-                                let Some((db, secondary_index)) =
-                                    self.storage.secondary_indices.get(*k)
-                                else {
+                                let Some(index) = self.storage.secondary_indices.get(*k) else {
                                     continue;
                                 };
-
-                                let v_serialized = bincode::serialize(v)?;
-                                match secondary_index {
-                                    crate::helix_engine::types::SecondaryIndex::Unique(_) => db
-                                        .put_with_flags(
-                                            self.txn,
-                                            PutFlags::NO_OVERWRITE,
-                                            &v_serialized,
-                                            &node.id,
-                                        )
-                                        .map_err(|_| GraphError::DuplicateKey(k.to_string()))?,
-                                    crate::helix_engine::types::SecondaryIndex::Index(_) => {
-                                        db.put(self.txn, &v_serialized, &node.id)?
-                                    }
-                                    crate::helix_engine::types::SecondaryIndex::None => {
-                                        unreachable!()
-                                    }
-                                }
+                                update_secondary_index(index, self.txn, k, node.id, v)?;
                             }
 
                             // Create properties map and insert node
@@ -111,76 +209,39 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                             node.properties = Some(map);
                         }
                         Some(old) => {
+                            if props.iter().all(|(k, v)| old.get(k) == Some(v)) {
+                                return Ok(TraversalValue::Node(node));
+                            }
+
                             for (k, v) in props.iter() {
-                                let Some((db, secondary_index)) =
-                                    self.storage.secondary_indices.get(*k)
-                                else {
+                                let Some(index) = self.storage.secondary_indices.get(*k) else {
                                     continue;
                                 };
 
-                                // delete secondary indexes for the props changed
-                                let Some(old_value) = old.get(k) else {
-                                    continue;
-                                };
-
-                                let old_serialized = bincode::serialize(old_value)?;
-                                db.delete_one_duplicate(self.txn, &old_serialized, &node.id)?;
-
-                                // create new secondary indexes for the props changed
-                                let v_serialized = bincode::serialize(v)?;
-                                match secondary_index {
-                                    crate::helix_engine::types::SecondaryIndex::Unique(_) => db
-                                        .put_with_flags(
+                                match old.get(k) {
+                                    Some(old_value) if old_value == v => continue,
+                                    Some(old_value) => {
+                                        let (db, _) = index;
+                                        let old_serialized = bincode::serialize(old_value)?;
+                                        db.delete_one_duplicate(
                                             self.txn,
-                                            PutFlags::NO_OVERWRITE,
-                                            &v_serialized,
+                                            &old_serialized,
                                             &node.id,
-                                        )
-                                        .map_err(|_| GraphError::DuplicateKey(k.to_string()))?,
-                                    crate::helix_engine::types::SecondaryIndex::Index(_) => {
-                                        db.put(self.txn, &v_serialized, &node.id)?
+                                        )?;
+                                        if let Err(e) = update_secondary_index(index, self.txn, k, node.id, v) {
+                                            // Restore the old index entry since the new one failed
+                                            let _ = db.put(self.txn, &old_serialized, &node.id);
+                                            return Err(e);
+                                        }
                                     }
-                                    crate::helix_engine::types::SecondaryIndex::None => {
-                                        unreachable!()
+                                    None => {
+                                        update_secondary_index(index, self.txn, k, node.id, v)?;
                                     }
                                 }
                             }
 
-                            let diff: Vec<_> = props
-                                .iter()
-                                .filter(|(k, _)| !old.iter().map(|(old_k, _)| old_k).contains(k))
-                                .cloned()
-                                .collect();
-
-                            // Add secondary indices for NEW properties (not in old)
-                            for (k, v) in &diff {
-                                let Some((db, secondary_index)) =
-                                    self.storage.secondary_indices.get(*k)
-                                else {
-                                    continue;
-                                };
-
-                                let v_serialized = bincode::serialize(v)?;
-                                match secondary_index {
-                                    crate::helix_engine::types::SecondaryIndex::Unique(_) => db
-                                        .put_with_flags(
-                                            self.txn,
-                                            PutFlags::NO_OVERWRITE,
-                                            &v_serialized,
-                                            &node.id,
-                                        )
-                                        .map_err(|_| GraphError::DuplicateKey(k.to_string()))?,
-                                    crate::helix_engine::types::SecondaryIndex::Index(_) => {
-                                        db.put(self.txn, &v_serialized, &node.id)?
-                                    }
-                                    crate::helix_engine::types::SecondaryIndex::None => {
-                                        unreachable!()
-                                    }
-                                }
-                            }
-
-                            // find out how many new properties we'll need space for
-                            let len_diff = diff.len();
+                            let new_prop_count =
+                                props.iter().filter(|(k, _)| old.get(k).is_none()).count();
 
                             let merged = old
                                 .iter()
@@ -193,11 +254,16 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                             |v| (old_k, v.clone()),
                                         )
                                 })
-                                .chain(diff);
+                                .chain(
+                                    props
+                                        .iter()
+                                        .filter(|(k, _)| old.get(k).is_none())
+                                        .map(|(k, v)| (*k, v.clone())),
+                                );
 
                             // make new props, updated by current props
                             let new_map = ImmutablePropertiesMap::new(
-                                old.len() + len_diff,
+                                old.len() + new_prop_count,
                                 merged,
                                 self.arena,
                             );
@@ -210,9 +276,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     if let Some(bm25) = &self.storage.bm25
                         && let Some(props) = node.properties.as_ref()
                     {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(node.label);
-                        bm25.update_doc(self.txn, node.id, &data)?;
+                        update_bm25_node_doc(bm25, self.txn, node.id, props, node.label)?;
                     }
 
                     let serialized_node = bincode::serialize(&node)?;
@@ -222,13 +286,15 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     Ok(TraversalValue::Node(node))
                 }
                 None => {
+                    let create_props = merge_create_props(props, create_defaults);
+
                     let properties = {
-                        if props.is_empty() {
+                        if create_props.is_empty() {
                             None
                         } else {
                             Some(ImmutablePropertiesMap::new(
-                                props.len(),
-                                props.iter().map(|(k, v)| (*k, v.clone())),
+                                create_props.len(),
+                                create_props.iter().map(|(k, v)| (*k, v.clone())),
                                 self.arena,
                             ))
                         }
@@ -249,7 +315,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         &bytes,
                     )?;
 
-                    for (k, v) in props.iter() {
+                    for (k, v) in create_props.iter() {
                         let Some((db, secondary_index)) = self.storage.secondary_indices.get(*k)
                         else {
                             continue;
@@ -279,9 +345,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     if let Some(bm25) = &self.storage.bm25
                         && let Some(props) = node.properties.as_ref()
                     {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(node.label);
-                        bm25.insert_doc(self.txn, node.id, &data)?;
+                        insert_bm25_node_doc(bm25, self.txn, node.id, props, node.label)?;
                     }
 
                     Ok(TraversalValue::Node(node))
@@ -305,6 +369,22 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
         from_node: u128,
         to_node: u128,
         props: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
+        self.upsert_e_with_defaults(label, from_node, to_node, props, &[])
+    }
+
+    fn upsert_e_with_defaults(
+        self,
+        label: &'arena str,
+        from_node: u128,
+        to_node: u128,
+        props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -389,12 +469,13 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                 Ok(None) => {
                     // Create new edge
                     let version = self.storage.version_info.get_latest(label);
-                    let properties = if props.is_empty() {
+                    let create_props = merge_create_props(props, create_defaults);
+                    let properties = if create_props.is_empty() {
                         None
                     } else {
                         Some(ImmutablePropertiesMap::new(
-                            props.len(),
-                            props.iter().map(|(k, v)| (*k, v.clone())),
+                            create_props.len(),
+                            create_props.iter().map(|(k, v)| (*k, v.clone())),
                             self.arena,
                         ))
                     };
@@ -442,10 +523,25 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
     }
 
     fn upsert_v(
+        self,
+        query: &'arena [f64],
+        label: &'arena str,
+        props: &[(&'static str, Value)],
+    ) -> RwTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    > {
+        self.upsert_v_with_defaults(query, label, props, &[])
+    }
+
+    fn upsert_v_with_defaults(
         mut self,
         query: &'arena [f64],
         label: &'arena str,
         props: &[(&'static str, Value)],
+        create_defaults: &[(&'static str, Value)],
     ) -> RwTraversalIterator<
         'db,
         'arena,
@@ -589,26 +685,19 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                         }
                     }
 
-                    // Update BM25 index for existing vector
-                    if let Some(bm25) = &self.storage.bm25
-                        && let Some(props) = vector.properties.as_ref()
-                    {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(vector.label);
-                        bm25.update_doc(self.txn, vector.id, &data)?;
-                    }
-
                     self.storage.vectors.put_vector(self.txn, &vector)?;
                     Ok(TraversalValue::Vector(vector))
                 }
                 None => {
+                    let create_props = merge_create_props(props, create_defaults);
+
                     let properties = {
-                        if props.is_empty() {
+                        if create_props.is_empty() {
                             None
                         } else {
                             Some(ImmutablePropertiesMap::new(
-                                props.len(),
-                                props.iter().map(|(k, v)| (*k, v.clone())),
+                                create_props.len(),
+                                create_props.iter().map(|(k, v)| (*k, v.clone())),
                                 self.arena,
                             ))
                         }
@@ -621,7 +710,7 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                             self.txn, label, query, properties, self.arena,
                         )?;
 
-                    for (k, v) in props.iter() {
+                    for (k, v) in create_props.iter() {
                         let Some((db, secondary_index)) = self.storage.secondary_indices.get(*k)
                         else {
                             continue;
@@ -646,14 +735,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 )?,
                             crate::helix_engine::types::SecondaryIndex::None => unreachable!(),
                         }
-                    }
-
-                    if let Some(bm25) = &self.storage.bm25
-                        && let Some(props) = vector.properties.as_ref()
-                    {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(vector.label);
-                        bm25.insert_doc(self.txn, vector.id, &data)?;
                     }
 
                     Ok(TraversalValue::Vector(vector))
@@ -797,15 +878,6 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
 
                             vector.properties = Some(new_map);
                         }
-                    }
-
-                    // Update BM25 index for existing vector
-                    if let Some(bm25) = &self.storage.bm25
-                        && let Some(props) = vector.properties.as_ref()
-                    {
-                        let mut data = props.flatten_bm25();
-                        data.push_str(vector.label);
-                        bm25.update_doc(self.txn, vector.id, &data)?;
                     }
 
                     self.storage.vectors.put_vector(self.txn, &vector)?;

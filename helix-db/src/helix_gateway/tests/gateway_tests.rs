@@ -2,6 +2,7 @@ use crate::helix_engine::traversal_core::{HelixGraphEngine, HelixGraphEngineOpts
 use crate::helix_gateway::gateway::{AppState, CoreSetter, GatewayOpts, HelixGateway};
 use crate::helix_gateway::router::router::HelixRouter;
 use crate::helix_gateway::worker_pool::WorkerPool;
+use axum::body::Bytes;
 use core_affinity::CoreId;
 use std::sync::atomic;
 use std::{collections::HashMap, sync::Arc};
@@ -179,12 +180,15 @@ fn test_app_state_with_schema() {
 
     let state = AppState {
         worker_pool,
-        schema_json: Some("{\"schema\": \"test\"}".to_string()),
+        schema_json: Some(Bytes::from_static(br#"{"schema": "test"}"#)),
         cluster_id: None,
     };
 
     assert!(state.schema_json.is_some());
-    assert_eq!(state.schema_json.unwrap(), "{\"schema\": \"test\"}");
+    assert_eq!(
+        state.schema_json.unwrap(),
+        Bytes::from_static(br#"{"schema": "test"}"#)
+    );
 }
 
 #[test]

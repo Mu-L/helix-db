@@ -17,6 +17,7 @@ use eyre::Result;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 pub async fn run(
@@ -397,13 +398,36 @@ fn create_project_structure(
         cleanup_tracker,
     )?;
 
-    // Create .gitignore
-    let gitignore = r#".helix/
-target/
-*.log
-"#;
+    // add this to .gitignore
+    let gitignore = [".helix/", "target/", "*.log"];
     let gitignore_path = project_dir.join(".gitignore");
-    write_starter_file(&gitignore_path, gitignore, interactive, cleanup_tracker)?;
+    let file_existed = gitignore_path.exists();
+    let existing = fs::read_to_string(&gitignore_path).unwrap_or_default();
+
+    let missing_entries: Vec<&str> = gitignore
+        .iter()
+        .copied()
+        .filter(|entry| !existing.lines().any(|line| line.trim() == *entry))
+        .collect();
+
+    if !missing_entries.is_empty() {
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&gitignore_path)?;
+
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            writeln!(file)?;
+        }
+
+        for entry in missing_entries {
+            writeln!(file, "{entry}")?;
+        }
+    }
+
+    if !file_existed {
+        cleanup_tracker.track_file(gitignore_path);
+    }
 
     Ok(())
 }

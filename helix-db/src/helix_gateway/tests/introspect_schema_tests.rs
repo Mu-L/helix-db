@@ -10,6 +10,7 @@ use crate::{
     },
     helix_gateway::{gateway::AppState, introspect_schema::introspect_schema_handler},
 };
+use axum::body::Bytes;
 use axum::extract::State;
 #[cfg(feature = "api-key")]
 use axum::http::HeaderMap;
@@ -40,7 +41,7 @@ fn create_test_app_state(schema_json: Option<String>) -> Arc<AppState> {
 
     Arc::new(AppState {
         worker_pool,
-        schema_json,
+        schema_json: schema_json.map(Bytes::from),
         cluster_id: None,
     })
 }

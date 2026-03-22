@@ -1,11 +1,12 @@
 use crate::{
     helix_engine::{
+        bm25::bm25::{BM25_SCHEMA_VERSION, HBM25Config},
         storage_core::HelixGraphStorage,
         types::GraphError,
         vector_core::{vector::HVector, vector_core},
     },
     protocol::value::Value,
-    utils::properties::ImmutablePropertiesMap,
+    utils::{items::Node, properties::ImmutablePropertiesMap},
 };
 use bincode::Options;
 use itertools::Itertools;
@@ -38,7 +39,75 @@ pub fn migrate(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
 
     verify_vectors_and_repair(storage)?;
     remove_orphaned_vector_edges(storage)?;
+    migrate_bm25(storage)?;
 
+    Ok(())
+}
+
+fn migrate_bm25(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
+    const BATCH_SIZE: usize = 1024;
+
+    let Some(bm25) = storage.bm25.as_ref() else {
+        return Ok(());
+    };
+
+    let current_schema_version = {
+        let txn = storage.graph_env.read_txn()?;
+        bm25.schema_version(&txn)?
+    };
+
+    if current_schema_version == Some(BM25_SCHEMA_VERSION) {
+        return Ok(());
+    }
+
+    {
+        let mut txn = storage.graph_env.write_txn()?;
+        bm25.clear_all(&mut txn)?;
+        txn.commit()?;
+    }
+
+    let read_txn = storage.graph_env.read_txn()?;
+    let mut batch = Vec::with_capacity(BATCH_SIZE);
+
+    for kv in storage.nodes_db.iter(&read_txn)? {
+        let (id, value) = kv?;
+        batch.push((id, value.to_vec()));
+
+        if batch.len() == BATCH_SIZE {
+            rebuild_bm25_batch(storage, bm25, &batch)?;
+            batch.clear();
+        }
+    }
+
+    drop(read_txn);
+
+    if !batch.is_empty() {
+        rebuild_bm25_batch(storage, bm25, &batch)?;
+    }
+
+    let mut txn = storage.graph_env.write_txn()?;
+    bm25.write_schema_version(&mut txn, BM25_SCHEMA_VERSION)?;
+    txn.commit()?;
+
+    Ok(())
+}
+
+fn rebuild_bm25_batch(
+    storage: &HelixGraphStorage,
+    bm25: &HBM25Config,
+    batch: &[(u128, Vec<u8>)],
+) -> Result<(), GraphError> {
+    let arena = bumpalo::Bump::new();
+    let mut txn = storage.graph_env.write_txn()?;
+
+    for (id, value) in batch {
+        let node = Node::from_bincode_bytes(*id, value, &arena)?;
+        if let Some(properties) = node.properties.as_ref() {
+            bm25.insert_doc_for_node(&mut txn, *id, properties, node.label)?;
+        }
+    }
+
+    txn.commit()?;
     Ok(())
 }
 

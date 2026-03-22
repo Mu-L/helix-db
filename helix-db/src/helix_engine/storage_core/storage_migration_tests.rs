@@ -18,10 +18,20 @@ use super::{
 };
 use crate::{
     helix_engine::{
-        storage_core::version_info::VersionInfo, traversal_core::config::Config, types::GraphError,
+        bm25::bm25::{
+            BM25, BM25_SCHEMA_VERSION, BM25_SCHEMA_VERSION_KEY, BM25Metadata, METADATA_KEY,
+        },
+        storage_core::version_info::VersionInfo,
+        traversal_core::{
+            config::Config,
+            ops::{g::G, source::add_n::AddNAdapter},
+        },
+        types::GraphError,
     },
     protocol::value::Value,
+    utils::{items::Node, properties::ImmutablePropertiesMap},
 };
+use bumpalo::Bump;
 use std::collections::HashMap;
 use tempfile::TempDir;
 
@@ -167,6 +177,45 @@ fn clear_metadata(storage: &mut HelixGraphStorage) -> Result<(), GraphError> {
     storage.metadata_db.clear(&mut txn)?;
     txn.commit()?;
     Ok(())
+}
+
+fn add_test_node(
+    storage: &HelixGraphStorage,
+    label: &'static str,
+    properties: &[(&'static str, Value)],
+) -> u128 {
+    let arena = Bump::new();
+    let properties = if properties.is_empty() {
+        None
+    } else {
+        Some(ImmutablePropertiesMap::new(
+            properties.len(),
+            properties.iter().map(|(key, value)| (*key, value.clone())),
+            &arena,
+        ))
+    };
+    let mut txn = storage.graph_env.write_txn().unwrap();
+    let node = G::new_mut(storage, &arena, &mut txn)
+        .add_n(label, properties, None)
+        .collect_to_obj()
+        .unwrap();
+    let node_id = node.id();
+    txn.commit().unwrap();
+    node_id
+}
+
+fn bm25_search_ids(storage: &HelixGraphStorage, query: &str) -> Vec<u128> {
+    let arena = Bump::new();
+    let txn = storage.graph_env.read_txn().unwrap();
+    storage
+        .bm25
+        .as_ref()
+        .unwrap()
+        .search(&txn, query, 10, &arena)
+        .unwrap()
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
 }
 
 // ============================================================================
@@ -889,7 +938,6 @@ fn test_error_corrupted_property_data() {
 }
 
 #[test]
-#[ignore]
 fn test_date_bincode_serialization() {
     // Test that Date values serialize/deserialize correctly with bincode
     use crate::protocol::date::Date;
@@ -901,7 +949,7 @@ fn test_date_bincode_serialization() {
     // Serialize with bincode
     let serialized = bincode::serialize(&value).unwrap();
     println!("\nValue::Date serialized to {} bytes", serialized.len());
-    println!("Format: [variant=12] [i64 timestamp]");
+    println!("Format: [variant=12] [RFC3339 string]");
     println!("Bytes: {:?}", serialized);
 
     // Deserialize
@@ -959,6 +1007,140 @@ fn test_error_handling_graceful_failure() {
     let txn = storage.graph_env.read_txn().unwrap();
     let count = storage.vectors.vectors_db.len(&txn).unwrap();
     assert_eq!(count, 11); // 10 valid + 1 invalid
+}
+
+#[test]
+fn test_bm25_migration_rerun_is_noop_once_schema_written() {
+    let (mut storage, _temp_dir) = setup_test_storage();
+    let node_id = add_test_node(&storage, "person", &[("name", Value::from("stable_term"))]);
+
+    let before_metadata = {
+        let txn = storage.graph_env.read_txn().unwrap();
+        let bm25 = storage.bm25.as_ref().unwrap();
+        assert_eq!(
+            bm25.schema_version(&txn).unwrap(),
+            Some(BM25_SCHEMA_VERSION)
+        );
+        bm25.metadata_db
+            .get(&txn, METADATA_KEY)
+            .unwrap()
+            .map(|bytes| bytes.to_vec())
+    };
+    let before_results = bm25_search_ids(&storage, "stable_term");
+    assert_eq!(before_results, vec![node_id]);
+
+    migrate(&mut storage).unwrap();
+
+    let after_metadata = {
+        let txn = storage.graph_env.read_txn().unwrap();
+        let bm25 = storage.bm25.as_ref().unwrap();
+        assert_eq!(
+            bm25.schema_version(&txn).unwrap(),
+            Some(BM25_SCHEMA_VERSION)
+        );
+        bm25.metadata_db
+            .get(&txn, METADATA_KEY)
+            .unwrap()
+            .map(|bytes| bytes.to_vec())
+    };
+    let after_results = bm25_search_ids(&storage, "stable_term");
+
+    assert_eq!(after_results, vec![node_id]);
+    assert_eq!(before_results, after_results);
+    assert_eq!(before_metadata, after_metadata);
+}
+
+#[test]
+fn test_bm25_migration_repairs_stale_node_index() {
+    let (mut storage, _temp_dir) = setup_test_storage();
+    let node_id = add_test_node(&storage, "person", &[("name", Value::from("legacyalpha"))]);
+
+    assert_eq!(bm25_search_ids(&storage, "legacyalpha"), vec![node_id]);
+    assert!(bm25_search_ids(&storage, "freshomega").is_empty());
+
+    {
+        let arena = Bump::new();
+        let mut txn = storage.graph_env.write_txn().unwrap();
+        let node_bytes = storage
+            .nodes_db
+            .get(&txn, &node_id)
+            .unwrap()
+            .unwrap()
+            .to_vec();
+        let mut node = Node::from_bincode_bytes(node_id, &node_bytes, &arena).unwrap();
+        node.properties = Some(ImmutablePropertiesMap::new(
+            1,
+            std::iter::once(("name", Value::from("freshomega"))),
+            &arena,
+        ));
+
+        let updated_bytes = node.to_bincode_bytes().unwrap();
+        storage
+            .nodes_db
+            .put(&mut txn, &node_id, &updated_bytes)
+            .unwrap();
+        storage
+            .bm25
+            .as_ref()
+            .unwrap()
+            .metadata_db
+            .put(&mut txn, BM25_SCHEMA_VERSION_KEY, &0u64.to_le_bytes())
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    assert_eq!(bm25_search_ids(&storage, "legacyalpha"), vec![node_id]);
+    assert!(bm25_search_ids(&storage, "freshomega").is_empty());
+
+    migrate(&mut storage).unwrap();
+
+    assert!(bm25_search_ids(&storage, "legacyalpha").is_empty());
+    assert_eq!(bm25_search_ids(&storage, "freshomega"), vec![node_id]);
+
+    let txn = storage.graph_env.read_txn().unwrap();
+    assert_eq!(
+        storage.bm25.as_ref().unwrap().schema_version(&txn).unwrap(),
+        Some(BM25_SCHEMA_VERSION)
+    );
+}
+
+#[test]
+fn test_bm25_migration_drops_legacy_direct_docs() {
+    let (mut storage, _temp_dir) = setup_test_storage();
+    let node_id = add_test_node(&storage, "person", &[("name", Value::from("nodeonlyterm"))]);
+
+    {
+        let mut txn = storage.graph_env.write_txn().unwrap();
+        let bm25 = storage.bm25.as_ref().unwrap();
+        bm25.insert_doc(&mut txn, 999u128, "legacyvectorterm")
+            .unwrap();
+        bm25.metadata_db
+            .put(&mut txn, BM25_SCHEMA_VERSION_KEY, &0u64.to_le_bytes())
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    assert_eq!(bm25_search_ids(&storage, "legacyvectorterm"), vec![999u128]);
+    assert_eq!(bm25_search_ids(&storage, "nodeonlyterm"), vec![node_id]);
+
+    migrate(&mut storage).unwrap();
+
+    assert!(bm25_search_ids(&storage, "legacyvectorterm").is_empty());
+    assert_eq!(bm25_search_ids(&storage, "nodeonlyterm"), vec![node_id]);
+
+    let txn = storage.graph_env.read_txn().unwrap();
+    let metadata: BM25Metadata = bincode::deserialize(
+        storage
+            .bm25
+            .as_ref()
+            .unwrap()
+            .metadata_db
+            .get(&txn, METADATA_KEY)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(metadata.total_docs, 1);
 }
 
 // ============================================================================
