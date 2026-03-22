@@ -744,10 +744,10 @@ impl<'a> HelixManager<'a> {
 
 fn should_descend_enterprise_source_dir(relative_path: &Path) -> bool {
     for component in relative_path.components() {
-        if let Component::Normal(part) = component {
-            if part == "target" || part == ".git" {
-                return false;
-            }
+        if let Component::Normal(part) = component
+            && (part == "target" || part == ".git")
+        {
+            return false;
         }
     }
 

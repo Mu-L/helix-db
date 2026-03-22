@@ -485,6 +485,7 @@ pub fn select_build_mode() -> Result<crate::config::BuildMode> {
 }
 
 /// Prompt user to select availability mode for enterprise clusters
+#[allow(dead_code)]
 pub fn select_availability_mode() -> Result<crate::config::AvailabilityMode> {
     let selected: crate::config::AvailabilityMode = cliclack::select("Select availability mode")
         .item(

@@ -381,10 +381,10 @@ fn should_descend_enterprise_source_dir(relative_path: &Path) -> bool {
     }
 
     for component in relative_path.components() {
-        if let Component::Normal(part) = component {
-            if part == "target" || part == ".git" {
-                return false;
-            }
+        if let Component::Normal(part) = component
+            && (part == "target" || part == ".git")
+        {
+            return false;
         }
     }
 
@@ -2143,8 +2143,7 @@ async fn reconcile_project_config_from_cloud(
         if let (Some(gateway_count), Some(hyperscale_count)) = (
             cluster.resolved_gateway_count(),
             cluster.resolved_hyperscale_count(),
-        )
-            && gateway_count != hyperscale_count
+        ) && gateway_count != hyperscale_count
         {
             print_warning(&format!(
                 "Enterprise cluster '{}' uses different gateway ({}) and DB ({}) counts; helix.toml stores these as min_instances/max_instances for compatibility.",
