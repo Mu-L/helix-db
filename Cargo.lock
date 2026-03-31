@@ -1540,7 +1540,8 @@ dependencies = [
 [[package]]
 name = "helix-dsl-macros"
 version = "0.1.0"
-source = "git+https://github.com/HelixDB/helix-enterprise-ql.git#df97dd9788335e59d15b593881a899063723def6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8ce6987f5eae966b7956d4b9f0cd4ddb01fcbbbfb709b45b20ab5054fa24d7b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1549,8 +1550,9 @@ dependencies = [
 
 [[package]]
 name = "helix-enterprise-ql"
-version = "0.1.0"
-source = "git+https://github.com/HelixDB/helix-enterprise-ql.git#df97dd9788335e59d15b593881a899063723def6"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d8222d99d65571532eab4ec16af81c9aff450cb1c6316c83c010b210fa7e7f5"
 dependencies = [
  "helix-dsl-macros",
  "inventory",
@@ -4459,9 +4461,9 @@ dependencies = [
 
 [[package]]
 name = "sonic-rs"
-version = "0.5.7"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e16b39f36452a4fa6f14a481b02e9ba5c6842c6a44d0545da967eca122f2eed9"
+checksum = "d971cc77a245ccf1756dbd1a87c3e7f709c0191464096510d43eec056d0f2c4f"
 dependencies = [
  "ahash",
  "bumpalo",
