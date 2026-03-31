@@ -42,7 +42,7 @@ async fn login() -> Result<()> {
         );
     }
 
-    let (key, user_id) = github_login().await.unwrap();
+    let (key, user_id) = github_login().await?;
 
     // write credentials
     let credentials = Credentials {

@@ -3,7 +3,7 @@ use crate::commands::integrations::helix::cloud_base_url;
 use crate::config::{AvailabilityMode, BuildMode, WorkspaceConfig};
 use crate::prompts;
 use eyre::{Result, eyre};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // ============================================================================
 // Result types
@@ -91,6 +91,38 @@ struct CreateClusterResponse {
     cluster_id: String,
 }
 
+#[derive(Serialize)]
+struct CreateEnterpriseClusterRequest<'a> {
+    cluster_name: &'a str,
+    availability_mode: &'a str,
+    gateway_node_type: &'a str,
+    db_node_type: &'a str,
+    min_gateway_count: u64,
+    max_gateway_count: u64,
+    min_hyperscale_count: u64,
+    max_hyperscale_count: u64,
+}
+
+fn build_enterprise_cluster_request<'a>(
+    cluster_name: &'a str,
+    availability_mode: &'a str,
+    gateway_node_type: &'a str,
+    db_node_type: &'a str,
+    min_instances: u64,
+    max_instances: u64,
+) -> CreateEnterpriseClusterRequest<'a> {
+    CreateEnterpriseClusterRequest {
+        cluster_name,
+        availability_mode,
+        gateway_node_type,
+        db_node_type,
+        min_gateway_count: min_instances,
+        max_gateway_count: min_instances,
+        min_hyperscale_count: max_instances,
+        max_hyperscale_count: max_instances,
+    }
+}
+
 // ============================================================================
 // Main flow
 // ============================================================================
@@ -101,6 +133,7 @@ pub async fn run_workspace_project_cluster_flow(
     project_name: &str,
     project_id_hint: Option<&str>,
     credentials: &Credentials,
+    preferred_cluster_name: Option<&str>,
 ) -> Result<WorkspaceProjectClusterFlowResult> {
     let client = reqwest::Client::new();
     let base_url = cloud_base_url();
@@ -138,6 +171,7 @@ pub async fn run_workspace_project_cluster_flow(
                 &base_url,
                 credentials,
                 &resolved_project.id,
+                preferred_cluster_name,
             )
             .await?,
             resolved_project_name: resolved_project.name,
@@ -149,6 +183,7 @@ pub async fn run_workspace_project_cluster_flow(
                 &base_url,
                 credentials,
                 &resolved_project.id,
+                preferred_cluster_name,
             )
             .await?,
             resolved_project_name: resolved_project.name,
@@ -381,9 +416,21 @@ async fn create_standard_cluster_flow(
     base_url: &str,
     credentials: &Credentials,
     project_id: &str,
+    preferred_cluster_name: Option<&str>,
 ) -> Result<ClusterResult> {
-    let cluster_name = prompts::input_cluster_name("prod")?;
-    let build_mode = prompts::select_build_mode()?;
+    let cluster_name = if let Some(name) = preferred_cluster_name {
+        name.to_string()
+    } else if prompts::is_interactive() {
+        prompts::input_cluster_name("prod")?
+    } else {
+        "prod".to_string()
+    };
+
+    let build_mode = if prompts::is_interactive() {
+        prompts::select_build_mode()?
+    } else {
+        BuildMode::Release
+    };
 
     let build_mode_str = match build_mode {
         BuildMode::Dev => "dev",
@@ -428,18 +475,44 @@ async fn create_enterprise_cluster_flow(
     base_url: &str,
     credentials: &Credentials,
     project_id: &str,
+    preferred_cluster_name: Option<&str>,
 ) -> Result<ClusterResult> {
-    let cluster_name = prompts::input_cluster_name("prod")?;
-    let availability_mode = prompts::select_availability_mode()?;
+    let cluster_name = if let Some(name) = preferred_cluster_name {
+        name.to_string()
+    } else if prompts::is_interactive() {
+        prompts::input_cluster_name("prod")?
+    } else {
+        "prod".to_string()
+    };
+
+    let availability_mode = AvailabilityMode::Ha;
+    if prompts::is_interactive() {
+        crate::output::info("Enterprise dev mode has been removed; creating an HA cluster.");
+    }
     let is_ha = availability_mode == AvailabilityMode::Ha;
 
-    let gateway_node_type = prompts::select_gateway_node_type(is_ha)?;
-    let db_node_type = prompts::select_db_node_type(is_ha)?;
+    let gateway_node_type = if prompts::is_interactive() {
+        prompts::select_gateway_node_type(is_ha)?
+    } else if is_ha {
+        "GW-40".to_string()
+    } else {
+        "GW-20".to_string()
+    };
 
-    let (min_instances, max_instances) = if is_ha {
+    let db_node_type = if prompts::is_interactive() {
+        prompts::select_db_node_type(is_ha)?
+    } else if is_ha {
+        "HLX-160".to_string()
+    } else {
+        "HLX-40".to_string()
+    };
+
+    let (min_instances, max_instances) = if is_ha && prompts::is_interactive() {
         let min = prompts::input_min_instances()?;
         let max = prompts::input_max_instances(min)?;
         (min, max)
+    } else if is_ha {
+        (3, 3)
     } else {
         (1, 1)
     };
@@ -455,7 +528,7 @@ async fn create_enterprise_cluster_flow(
     }
     println!();
 
-    if !prompts::confirm("Create this enterprise cluster?")? {
+    if prompts::is_interactive() && !prompts::confirm("Create this enterprise cluster?")? {
         return Err(eyre!("Cluster creation cancelled"));
     }
 
@@ -463,6 +536,14 @@ async fn create_enterprise_cluster_flow(
         AvailabilityMode::Dev => "dev",
         AvailabilityMode::Ha => "ha",
     };
+    let request_body = build_enterprise_cluster_request(
+        &cluster_name,
+        availability_mode_str,
+        &gateway_node_type,
+        &db_node_type,
+        min_instances,
+        max_instances,
+    );
 
     let resp: CreateClusterResponse = client
         .post(format!(
@@ -471,14 +552,7 @@ async fn create_enterprise_cluster_flow(
         ))
         .header("x-api-key", &credentials.helix_admin_key)
         .header("Content-Type", "application/json")
-        .json(&serde_json::json!({
-            "cluster_name": cluster_name,
-            "availability_mode": availability_mode_str,
-            "gateway_node_type": gateway_node_type,
-            "db_node_type": db_node_type,
-            "min_instances": min_instances,
-            "max_instances": max_instances,
-        }))
+        .json(&request_body)
         .send()
         .await
         .map_err(|e| eyre!("Failed to create enterprise cluster: {}", e))?
@@ -502,4 +576,30 @@ async fn create_enterprise_cluster_flow(
         min_instances,
         max_instances,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn enterprise_cluster_create_request_uses_role_based_count_fields() {
+        let request = build_enterprise_cluster_request("prod", "ha", "GW-40", "HLX-160", 3, 5);
+        let request_json = serde_json::to_value(&request).unwrap();
+
+        assert_eq!(
+            request_json,
+            json!({
+                "cluster_name": "prod",
+                "availability_mode": "ha",
+                "gateway_node_type": "GW-40",
+                "db_node_type": "HLX-160",
+                "min_gateway_count": 3,
+                "max_gateway_count": 3,
+                "min_hyperscale_count": 5,
+                "max_hyperscale_count": 5
+            })
+        );
+    }
 }

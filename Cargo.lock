@@ -1426,9 +1426,10 @@ dependencies = [
 
 [[package]]
 name = "helix-cli"
-version = "2.3.3"
+version = "2.3.4"
 dependencies = [
  "async-trait",
+ "base64",
  "chrono",
  "clap",
  "cliclack",
@@ -1441,6 +1442,7 @@ dependencies = [
  "futures-util",
  "heed3",
  "helix-db",
+ "helix-enterprise-ql",
  "helix-metrics",
  "indicatif 0.18.3",
  "iota",
@@ -1533,6 +1535,29 @@ dependencies = [
  "twox-hash",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "helix-dsl-macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8ce6987f5eae966b7956d4b9f0cd4ddb01fcbbbfb709b45b20ab5054fa24d7b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "helix-enterprise-ql"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d8222d99d65571532eab4ec16af81c9aff450cb1c6316c83c010b210fa7e7f5"
+dependencies = [
+ "helix-dsl-macros",
+ "inventory",
+ "serde",
+ "sonic-rs",
 ]
 
 [[package]]
@@ -4436,9 +4461,9 @@ dependencies = [
 
 [[package]]
 name = "sonic-rs"
-version = "0.5.3"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd1adc42def3cb101f3ebef3cd2d642f9a21072bbcd4ec9423343ccaa6afa596"
+checksum = "d971cc77a245ccf1756dbd1a87c3e7f709c0191464096510d43eec056d0f2c4f"
 dependencies = [
  "ahash",
  "bumpalo",
@@ -4447,12 +4472,12 @@ dependencies = [
  "faststr",
  "itoa",
  "ref-cast",
- "ryu",
  "serde",
  "simdutf8",
  "sonic-number",
  "sonic-simd",
  "thiserror 2.0.12",
+ "zmij",
 ]
 
 [[package]]
@@ -6076,6 +6101,12 @@ name = "zlib-rs"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "626bd9fa9734751fc50d6060752170984d7053f5a39061f524cda68023d4db8a"
+
+[[package]]
+name = "zmij"
+version = "1.0.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zstd"
