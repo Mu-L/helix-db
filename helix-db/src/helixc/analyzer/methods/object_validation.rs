@@ -405,7 +405,9 @@ fn validate_property_access<'a>(
                         FieldValueType::Expression(expr) => {
                             // Check if this expression contains a traversal
                             use crate::helixc::analyzer::methods::traversal_validation::validate_traversal;
-                            use crate::helixc::generator::traversal_steps::{ComputedExpressionInfo, NestedTraversalInfo};
+                            use crate::helixc::generator::traversal_steps::{
+                                ComputedExpressionInfo, NestedTraversalInfo,
+                            };
                             use crate::helixc::parser::types::ExpressionType;
 
                             if let ExpressionType::MathFunctionCall(_) = &expr.expr {

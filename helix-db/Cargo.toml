@@ -16,7 +16,7 @@ helix-metrics = { path = "../metrics" }
 tokio = { version = "1.44.2", features = ["full"] }
 serde = { version = "1.0.217", features = ["derive"] }
 bincode = "1.3.3" # TODO: Figure out bincode 2 impl with current serde impl
-sonic-rs = "0.5.0"
+sonic-rs = "0.5.7"
 inventory = "0.3.16"
 twox-hash = "2.1.0"
 heed3 = "0.22.0"
