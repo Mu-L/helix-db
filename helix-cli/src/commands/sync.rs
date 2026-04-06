@@ -1,4 +1,10 @@
 use crate::commands::auth::require_auth;
+use crate::commands::cloud_api::{
+    CliProjectClusters, CliProjectEnterpriseCluster, CliProjectStandardCluster, CliWorkspace,
+    fetch_cluster_project, fetch_enterprise_cluster_project, fetch_project_clusters,
+    fetch_project_details, fetch_workspace_clusters, resolve_current_workspace,
+    resolve_or_create_project,
+};
 use crate::commands::integrations::helix::HelixManager;
 use crate::commands::integrations::helix::cloud_base_url;
 use crate::config::{
@@ -48,166 +54,6 @@ struct EnterpriseSyncResponse {
     file_metadata: HashMap<String, SyncFileMetadata>,
     #[serde(default)]
     helix_toml: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct CliEnterpriseCluster {
-    pub cluster_id: String,
-    pub cluster_name: String,
-    #[allow(dead_code)]
-    pub project_id: String,
-    pub project_name: String,
-    #[allow(dead_code)]
-    pub availability_mode: String,
-}
-
-#[derive(Deserialize)]
-struct CliWorkspaceClusters {
-    standard: Vec<CliCluster>,
-    enterprise: Vec<CliEnterpriseCluster>,
-}
-
-#[derive(Deserialize)]
-pub struct CliWorkspace {
-    pub id: String,
-    pub name: String,
-    #[allow(dead_code)]
-    pub url_slug: String,
-}
-
-#[derive(Deserialize)]
-pub struct CliCluster {
-    pub cluster_id: String,
-    pub cluster_name: String,
-    #[allow(dead_code)]
-    pub project_id: String,
-    pub project_name: String,
-}
-
-#[derive(Clone, Deserialize)]
-struct CliProject {
-    id: String,
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct CreateProjectResponse {
-    id: String,
-}
-
-#[derive(Deserialize)]
-struct CliProjectClusters {
-    project_id: String,
-    project_name: String,
-    standard: Vec<CliProjectStandardCluster>,
-    enterprise: Vec<CliProjectEnterpriseCluster>,
-}
-
-#[derive(Deserialize)]
-struct CliProjectStandardCluster {
-    cluster_id: String,
-    cluster_name: String,
-    build_mode: String,
-    #[allow(dead_code)]
-    max_memory_gb: u32,
-    #[allow(dead_code)]
-    max_vcpus: f32,
-}
-
-#[derive(Deserialize)]
-struct CliProjectEnterpriseCluster {
-    cluster_id: String,
-    cluster_name: String,
-    availability_mode: String,
-    gateway_node_type: String,
-    db_node_type: String,
-    #[serde(default)]
-    min_gateway_count: Option<u64>,
-    #[serde(default)]
-    max_gateway_count: Option<u64>,
-    #[serde(default)]
-    min_hyperscale_count: Option<u64>,
-    #[serde(default)]
-    max_hyperscale_count: Option<u64>,
-    #[serde(default)]
-    gateway_count: Option<u64>,
-    #[serde(default)]
-    hyperscale_count: Option<u64>,
-    #[serde(default)]
-    min_instances: Option<u64>,
-    #[serde(default)]
-    max_instances: Option<u64>,
-}
-
-impl CliProjectEnterpriseCluster {
-    fn resolved_gateway_min_count(&self) -> Option<u64> {
-        self.min_gateway_count
-            .or(self.gateway_count)
-            .or(self.max_gateway_count)
-            .or(self.min_instances)
-    }
-
-    fn resolved_gateway_max_count(&self) -> Option<u64> {
-        self.max_gateway_count
-            .or(self.gateway_count)
-            .or(self.min_gateway_count)
-            .or(self.min_instances)
-    }
-
-    fn resolved_hyperscale_min_count(&self) -> Option<u64> {
-        self.min_hyperscale_count
-            .or(self.hyperscale_count)
-            .or(self.max_hyperscale_count)
-            .or(self.max_instances)
-    }
-
-    fn resolved_hyperscale_max_count(&self) -> Option<u64> {
-        self.max_hyperscale_count
-            .or(self.hyperscale_count)
-            .or(self.min_hyperscale_count)
-            .or(self.max_instances)
-    }
-
-    fn resolved_gateway_count(&self) -> Option<u64> {
-        self.resolved_gateway_min_count()
-    }
-
-    fn resolved_hyperscale_count(&self) -> Option<u64> {
-        self.resolved_hyperscale_min_count()
-    }
-
-    fn compatibility_min_instances(&self) -> Option<u64> {
-        if let (Some(gateway_count), Some(hyperscale_count)) = (
-            self.resolved_gateway_min_count(),
-            self.resolved_hyperscale_min_count(),
-        ) {
-            Some(gateway_count.min(hyperscale_count))
-        } else {
-            self.min_instances
-        }
-    }
-
-    fn compatibility_max_instances(&self) -> Option<u64> {
-        if let (Some(gateway_count), Some(hyperscale_count)) = (
-            self.resolved_gateway_max_count(),
-            self.resolved_hyperscale_max_count(),
-        ) {
-            Some(gateway_count.max(hyperscale_count))
-        } else {
-            self.max_instances
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct CliClusterProject {
-    #[allow(dead_code)]
-    cluster_id: String,
-    project_id: String,
-    #[allow(dead_code)]
-    project_name: String,
-    #[allow(dead_code)]
-    workspace_id: String,
 }
 
 const DEFAULT_QUERIES_DIR: &str = "db";
@@ -1558,227 +1404,6 @@ async fn reconcile_enterprise_cluster_snapshot(
     Ok(outcome)
 }
 
-async fn fetch_workspaces(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-) -> Result<Vec<CliWorkspace>> {
-    let workspaces: Vec<CliWorkspace> = client
-        .get(format!("{}/api/cli/workspaces", base_url))
-        .header("x-api-key", api_key)
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to fetch workspaces: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to fetch workspaces: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse workspaces response: {}", e))?;
-
-    Ok(workspaces)
-}
-
-async fn resolve_workspace_id(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    workspace_config: &mut WorkspaceConfig,
-) -> Result<String> {
-    let workspaces = fetch_workspaces(client, base_url, api_key).await?;
-
-    if workspaces.is_empty() {
-        return Err(eyre!(
-            "No workspaces found. Create a workspace in the dashboard first."
-        ));
-    }
-
-    if let Some(cached_workspace_id) = workspace_config.workspace_id.clone() {
-        if workspaces.iter().any(|w| w.id == cached_workspace_id) {
-            return Ok(cached_workspace_id);
-        }
-
-        print_warning(
-            "Saved workspace selection is no longer available. Please select a workspace again.",
-        );
-        workspace_config.workspace_id = None;
-        workspace_config.save()?;
-    }
-
-    let selected = prompts::select_workspace(&workspaces)?;
-    workspace_config.workspace_id = Some(selected.clone());
-    workspace_config.save()?;
-    Ok(selected)
-}
-
-async fn resolve_or_create_project_for_sync(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    workspace_id: &str,
-    project_name_from_toml: &str,
-    project_id_from_toml: Option<&str>,
-) -> Result<CliProject> {
-    let projects: Vec<CliProject> = client
-        .get(format!(
-            "{}/api/cli/workspaces/{}/projects",
-            base_url, workspace_id
-        ))
-        .header("x-api-key", api_key)
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to fetch projects: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to fetch projects: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse projects response: {}", e))?;
-
-    if let Some(project_id_hint) = project_id_from_toml
-        && let Some(existing) = projects.iter().find(|p| p.id == project_id_hint).cloned()
-    {
-        crate::output::info(&format!(
-            "Using project '{}' from your selected workspace.",
-            existing.name
-        ));
-        return Ok(existing);
-    }
-
-    if let Some(existing) = projects
-        .iter()
-        .find(|p| p.name == project_name_from_toml)
-        .cloned()
-    {
-        crate::output::info(&format!(
-            "Using project '{}' from your selected workspace.",
-            existing.name
-        ));
-        return Ok(existing);
-    }
-
-    match prompts::select_missing_project_choice(project_name_from_toml)? {
-        prompts::MissingProjectChoice::ChooseExisting => {
-            if projects.is_empty() {
-                return Err(eyre!(
-                    "No projects exist in this workspace yet. Create one to continue."
-                ));
-            }
-
-            let project_choices: Vec<(String, String)> = projects
-                .iter()
-                .map(|p| (p.id.clone(), p.name.clone()))
-                .collect();
-            let selected_project_id = prompts::select_project(&project_choices)?;
-            let selected_project = projects
-                .into_iter()
-                .find(|p| p.id == selected_project_id)
-                .ok_or_else(|| eyre!("Selected project was not found in response"))?;
-
-            crate::output::info(&format!(
-                "Using existing project '{}' from your selected workspace.",
-                selected_project.name
-            ));
-
-            Ok(selected_project)
-        }
-        prompts::MissingProjectChoice::Create => {
-            let chosen_name = prompts::input_project_name(project_name_from_toml)?;
-            let created: CreateProjectResponse = client
-                .post(format!(
-                    "{}/api/cli/workspaces/{}/projects",
-                    base_url, workspace_id
-                ))
-                .header("x-api-key", api_key)
-                .header("Content-Type", "application/json")
-                .json(&serde_json::json!({ "name": chosen_name }))
-                .send()
-                .await
-                .map_err(|e| eyre!("Failed to create project: {}", e))?
-                .error_for_status()
-                .map_err(|e| eyre!("Failed to create project: {}", e))?
-                .json()
-                .await
-                .map_err(|e| eyre!("Failed to parse create project response: {}", e))?;
-
-            Ok(CliProject {
-                id: created.id,
-                name: chosen_name,
-            })
-        }
-    }
-}
-
-async fn fetch_project_clusters(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    project_id: &str,
-) -> Result<CliProjectClusters> {
-    let project_clusters: CliProjectClusters = client
-        .get(format!(
-            "{}/api/cli/projects/{}/clusters",
-            base_url, project_id
-        ))
-        .header("x-api-key", api_key)
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to fetch project clusters: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to fetch project clusters: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse project clusters response: {}", e))?;
-
-    Ok(project_clusters)
-}
-
-async fn fetch_cluster_project(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    cluster_id: &str,
-) -> Result<CliClusterProject> {
-    let cluster_project: CliClusterProject = client
-        .get(format!(
-            "{}/api/cli/clusters/{}/project",
-            base_url, cluster_id
-        ))
-        .header("x-api-key", api_key)
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to fetch cluster project: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to fetch cluster project: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse cluster project response: {}", e))?;
-
-    Ok(cluster_project)
-}
-
-async fn fetch_enterprise_cluster_project(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    cluster_id: &str,
-) -> Result<CliClusterProject> {
-    let cluster_project: CliClusterProject = client
-        .get(format!(
-            "{}/api/cli/enterprise-clusters/{}/project",
-            base_url, cluster_id
-        ))
-        .header("x-api-key", api_key)
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to fetch enterprise cluster project: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to fetch enterprise cluster project: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse enterprise cluster project response: {}", e))?;
-
-    Ok(cluster_project)
-}
-
 async fn fetch_project_clusters_for_standard_cluster(
     client: &reqwest::Client,
     base_url: &str,
@@ -2198,6 +1823,35 @@ async fn sync_cluster_into_project(
     .await
 }
 
+async fn resolve_workspace_for_project_sync(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    workspace_config: &mut WorkspaceConfig,
+    project_id: Option<&str>,
+) -> Result<CliWorkspace> {
+    if let Some(project_id) = project_id {
+        match fetch_project_details(client, base_url, api_key, project_id).await {
+            Ok(project) => {
+                return Ok(CliWorkspace {
+                    id: project.workspace_id,
+                    name: project.workspace_name,
+                    url_slug: project.workspace_slug,
+                    workspace_type: "organization".to_string(),
+                });
+            }
+            Err(error) => {
+                print_warning(&format!(
+                    "Could not resolve workspace from project.id '{}': {}. Falling back to the selected workspace.",
+                    project_id, error
+                ));
+            }
+        }
+    }
+
+    resolve_current_workspace(client, base_url, api_key, workspace_config).await
+}
+
 async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Result<()> {
     prompts::intro(
         "helix sync",
@@ -2212,19 +1866,20 @@ async fn run_project_sync_flow(project: &ProjectContext, assume_yes: bool) -> Re
     let base_url = cloud_base_url();
 
     let mut workspace_config = WorkspaceConfig::load()?;
-    let workspace_id = resolve_workspace_id(
+    let workspace = resolve_workspace_for_project_sync(
         &client,
         &base_url,
         &credentials.helix_admin_key,
         &mut workspace_config,
+        project.config.project.id.as_deref(),
     )
     .await?;
 
-    let resolved_project = resolve_or_create_project_for_sync(
+    let resolved_project = resolve_or_create_project(
         &client,
         &base_url,
         &credentials.helix_admin_key,
-        &workspace_id,
+        &workspace.id,
         &project.config.project.name,
         project.config.project.id.as_deref(),
     )
@@ -2408,7 +2063,7 @@ async fn run_workspace_sync_flow() -> Result<()> {
     // Load or prompt for workspace
     let mut workspace_config = WorkspaceConfig::load()?;
 
-    let workspace_id = resolve_workspace_id(
+    let workspace = resolve_current_workspace(
         &client,
         &base_url,
         &credentials.helix_admin_key,
@@ -2417,20 +2072,13 @@ async fn run_workspace_sync_flow() -> Result<()> {
     .await?;
 
     // Fetch clusters for workspace (both standard and enterprise)
-    let workspace_clusters: CliWorkspaceClusters = client
-        .get(format!(
-            "{}/api/cli/workspaces/{}/clusters",
-            base_url, workspace_id
-        ))
-        .header("x-api-key", &credentials.helix_admin_key)
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to fetch clusters: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to fetch clusters: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse clusters response: {}", e))?;
+    let workspace_clusters = fetch_workspace_clusters(
+        &client,
+        &base_url,
+        &credentials.helix_admin_key,
+        &workspace.id,
+    )
+    .await?;
 
     if workspace_clusters.standard.is_empty() && workspace_clusters.enterprise.is_empty() {
         return Err(eyre!(

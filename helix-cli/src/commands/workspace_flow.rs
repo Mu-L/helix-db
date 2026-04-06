@@ -1,4 +1,8 @@
 use crate::commands::auth::Credentials;
+use crate::commands::cloud_api::{
+    CliBillingResponse, CliProject, fetch_project_details, fetch_workspace_billing,
+    fetch_workspaces, find_workspace_by_id, resolve_current_workspace, resolve_or_create_project,
+};
 use crate::commands::integrations::helix::cloud_base_url;
 use crate::config::{AvailabilityMode, BuildMode, WorkspaceConfig};
 use crate::prompts;
@@ -36,54 +40,13 @@ pub struct WorkspaceProjectClusterFlowResult {
     pub resolved_project_id: String,
 }
 
-struct ResolvedProject {
-    id: String,
-    name: String,
-}
-
 // ============================================================================
 // API response types
 // ============================================================================
 
-#[derive(Deserialize)]
-struct CliWorkspace {
-    id: String,
-    name: String,
-    #[allow(dead_code)]
-    url_slug: String,
-    #[serde(default = "default_workspace_type")]
-    workspace_type: String,
-}
-
-fn default_workspace_type() -> String {
-    "organization".to_string()
-}
-
 struct SelectedWorkspace {
     id: String,
     workspace_type: String,
-}
-
-#[derive(Deserialize)]
-struct CliBillingResponse {
-    has_billing: bool,
-    #[allow(dead_code)]
-    workspace_type: String,
-    #[allow(dead_code)]
-    plan: String,
-}
-
-#[derive(Deserialize)]
-struct CliProject {
-    id: String,
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct CreateProjectResponse {
-    id: String,
-    #[allow(dead_code)]
-    name: String,
 }
 
 #[derive(Deserialize)]
@@ -139,7 +102,8 @@ pub async fn run_workspace_project_cluster_flow(
     let base_url = cloud_base_url();
 
     // Step 1: Workspace selection
-    let workspace = select_or_load_workspace(&client, &base_url, credentials).await?;
+    let workspace =
+        select_or_load_workspace(&client, &base_url, credentials, project_id_hint).await?;
 
     // Step 2: Billing check
     check_billing(&client, &base_url, credentials, &workspace.id).await?;
@@ -196,21 +160,10 @@ async fn select_or_load_workspace(
     client: &reqwest::Client,
     base_url: &str,
     credentials: &Credentials,
+    project_id_hint: Option<&str>,
 ) -> Result<SelectedWorkspace> {
     let mut workspace_config = WorkspaceConfig::load()?;
-
-    // Fetch workspaces
-    let workspaces: Vec<CliWorkspace> = client
-        .get(format!("{}/api/cli/workspaces", base_url))
-        .header("x-api-key", &credentials.helix_admin_key)
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to fetch workspaces: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to fetch workspaces: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse workspaces: {}", e))?;
+    let workspaces = fetch_workspaces(client, base_url, &credentials.helix_admin_key).await?;
 
     if workspaces.is_empty() {
         return Err(eyre!(
@@ -218,45 +171,38 @@ async fn select_or_load_workspace(
         ));
     }
 
-    if let Some(cached_workspace_id) = workspace_config.workspace_id.clone() {
-        if let Some(workspace) = workspaces.iter().find(|w| w.id == cached_workspace_id) {
-            return Ok(SelectedWorkspace {
-                id: workspace.id.clone(),
-                workspace_type: workspace.workspace_type.clone(),
-            });
+    if let Some(project_id) = project_id_hint {
+        match fetch_project_details(client, base_url, &credentials.helix_admin_key, project_id)
+            .await
+        {
+            Ok(project) => {
+                if let Some(workspace) = find_workspace_by_id(&workspaces, &project.workspace_id) {
+                    return Ok(SelectedWorkspace {
+                        id: workspace.id.clone(),
+                        workspace_type: workspace.workspace_type.clone(),
+                    });
+                }
+            }
+            Err(error) => {
+                crate::output::warning(&format!(
+                    "Could not resolve workspace from project.id '{}': {}. Falling back to the selected workspace.",
+                    project_id, error
+                ));
+            }
         }
-
-        crate::output::warning(
-            "Saved workspace selection is no longer available. Please select a workspace again.",
-        );
-        workspace_config.workspace_id = None;
-        workspace_config.save()?;
     }
 
-    // Convert for prompt
-    let ws_for_prompt: Vec<crate::commands::sync::CliWorkspace> = workspaces
-        .iter()
-        .map(|w| crate::commands::sync::CliWorkspace {
-            id: w.id.clone(),
-            name: w.name.clone(),
-            url_slug: w.url_slug.clone(),
-        })
-        .collect();
-
-    let selected = prompts::select_workspace(&ws_for_prompt)?;
-
-    // Save selection
-    workspace_config.workspace_id = Some(selected.clone());
-    workspace_config.save()?;
-
-    let selected_workspace = workspaces
-        .iter()
-        .find(|w| w.id == selected)
-        .ok_or_else(|| eyre!("Selected workspace was not found in response"))?;
+    let workspace = resolve_current_workspace(
+        client,
+        base_url,
+        &credentials.helix_admin_key,
+        &mut workspace_config,
+    )
+    .await?;
 
     Ok(SelectedWorkspace {
-        id: selected_workspace.id.clone(),
-        workspace_type: selected_workspace.workspace_type.clone(),
+        id: workspace.id,
+        workspace_type: workspace.workspace_type,
     })
 }
 
@@ -266,20 +212,9 @@ async fn check_billing(
     credentials: &Credentials,
     workspace_id: &str,
 ) -> Result<CliBillingResponse> {
-    let billing: CliBillingResponse = client
-        .get(format!(
-            "{}/api/cli/workspaces/{}/billing",
-            base_url, workspace_id
-        ))
-        .header("x-api-key", &credentials.helix_admin_key)
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to check billing: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to check billing: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse billing response: {}", e))?;
+    let billing =
+        fetch_workspace_billing(client, base_url, &credentials.helix_admin_key, workspace_id)
+            .await?;
 
     if !billing.has_billing {
         return Err(eyre!(
@@ -297,118 +232,18 @@ async fn match_or_create_project(
     workspace_id: &str,
     project_name: &str,
     project_id_hint: Option<&str>,
-) -> Result<ResolvedProject> {
-    // Fetch projects
-    let projects: Vec<CliProject> = client
-        .get(format!(
-            "{}/api/cli/workspaces/{}/projects",
-            base_url, workspace_id
-        ))
-        .header("x-api-key", &credentials.helix_admin_key)
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to fetch projects: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to fetch projects: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse projects: {}", e))?;
+) -> Result<CliProject> {
+    let project = resolve_or_create_project(
+        client,
+        base_url,
+        &credentials.helix_admin_key,
+        workspace_id,
+        project_name,
+        project_id_hint,
+    )
+    .await?;
 
-    // Try to find matching project by ID first (canonical identity)
-    if let Some(expected_project_id) = project_id_hint
-        && let Some(existing) = projects.iter().find(|p| p.id == expected_project_id)
-    {
-        crate::output::info(&format!(
-            "Using project '{}' from your selected workspace.",
-            existing.name
-        ));
-
-        return Ok(ResolvedProject {
-            id: existing.id.clone(),
-            name: existing.name.clone(),
-        });
-    }
-
-    // Fallback to matching by display name
-    if let Some(existing) = projects.iter().find(|p| p.name == project_name) {
-        crate::output::info(&format!(
-            "Using existing project '{}' from your selected workspace.",
-            existing.name
-        ));
-
-        return Ok(ResolvedProject {
-            id: existing.id.clone(),
-            name: existing.name.clone(),
-        });
-    }
-
-    match prompts::select_missing_project_choice(project_name)? {
-        prompts::MissingProjectChoice::ChooseExisting => {
-            if projects.is_empty() {
-                return Err(eyre!(
-                    "No projects exist in this workspace yet. Create one to continue."
-                ));
-            }
-
-            let project_choices: Vec<(String, String)> = projects
-                .iter()
-                .map(|p| (p.id.clone(), p.name.clone()))
-                .collect();
-            let selected_project_id = prompts::select_project(&project_choices)?;
-            let selected_project = projects
-                .iter()
-                .find(|p| p.id == selected_project_id)
-                .ok_or_else(|| eyre!("Selected project was not found in response"))?;
-
-            crate::output::info(&format!(
-                "Using existing project '{}' from your selected workspace.",
-                selected_project.name
-            ));
-
-            Ok(ResolvedProject {
-                id: selected_project.id.clone(),
-                name: selected_project.name.clone(),
-            })
-        }
-        prompts::MissingProjectChoice::Create => {
-            let chosen_name = prompts::input_project_name(project_name)?;
-            let project_id =
-                create_project(client, base_url, credentials, workspace_id, &chosen_name).await?;
-
-            Ok(ResolvedProject {
-                id: project_id,
-                name: chosen_name,
-            })
-        }
-    }
-}
-
-async fn create_project(
-    client: &reqwest::Client,
-    base_url: &str,
-    credentials: &Credentials,
-    workspace_id: &str,
-    name: &str,
-) -> Result<String> {
-    let resp: CreateProjectResponse = client
-        .post(format!(
-            "{}/api/cli/workspaces/{}/projects",
-            base_url, workspace_id
-        ))
-        .header("x-api-key", &credentials.helix_admin_key)
-        .header("Content-Type", "application/json")
-        .json(&serde_json::json!({ "name": name }))
-        .send()
-        .await
-        .map_err(|e| eyre!("Failed to create project: {}", e))?
-        .error_for_status()
-        .map_err(|e| eyre!("Failed to create project: {}", e))?
-        .json()
-        .await
-        .map_err(|e| eyre!("Failed to parse create project response: {}", e))?;
-
-    crate::output::success(&format!("Project '{}' created", name));
-    Ok(resp.id)
+    Ok(project)
 }
 
 async fn create_standard_cluster_flow(

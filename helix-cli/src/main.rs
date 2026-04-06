@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
-use helix_cli::{AuthAction, CloudDeploymentTypeCommand, DashboardAction, MetricsAction};
+pub use helix_cli::{
+    AuthAction, CloudDeploymentTypeCommand, ClusterConfigAction, ConfigAction, ConfigOutputFormat,
+    DashboardAction, MetricsAction, ProjectConfigAction, WorkspaceConfigAction,
+};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use tui_banner::{Align, Banner, ColorMode, Fill, Gradient, Palette};
@@ -155,6 +158,12 @@ enum Commands {
     Auth {
         #[command(subcommand)]
         action: AuthAction,
+    },
+
+    /// Configure workspace, project, and cluster defaults
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
     },
 
     /// Prune containers, images and workspace (preserves volumes)
@@ -428,6 +437,7 @@ async fn main() -> Result<()> {
                 end,
             } => commands::logs::run(instance, live, range, start, end).await,
             Commands::Auth { action } => commands::auth::run(action).await,
+            Commands::Config { action } => commands::config::run(action).await,
             Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
             Commands::Delete { instance } => commands::delete::run(instance).await,
             Commands::Metrics { action } => commands::metrics::run(action).await,
