@@ -50,14 +50,13 @@ pub async fn run(
     // Get instance config
     let instance_config = project.config.get_instance(&instance_name)?;
 
-    if let InstanceInfo::Enterprise(_) = &instance_config {
-        return Err(eyre!(
-            "Logs are not yet supported for enterprise instances. Use your infrastructure logs for now."
-        ));
-    }
+    let is_enterprise = matches!(&instance_config, InstanceInfo::Enterprise(_));
 
-    // Check auth early for Helix Cloud instances
-    let credentials = if let InstanceInfo::Helix(_) = &instance_config {
+    // Check auth early for Helix Cloud and enterprise instances
+    let credentials = if matches!(
+        &instance_config,
+        InstanceInfo::Helix(_) | InstanceInfo::Enterprise(_)
+    ) {
         Some(require_auth().await?)
     } else {
         None
@@ -68,8 +67,13 @@ pub async fn run(
 
     // Route to appropriate mode
     if live {
+        if is_enterprise {
+            return Err(eyre!(
+                "Live log streaming is not supported for enterprise instances. Use range output instead."
+            ));
+        }
         cli::stream_live(&log_source).await
-    } else if range {
+    } else if range || is_enterprise {
         cli::query_range(&log_source, start, end).await
     } else {
         // TUI mode (default when no flags)
