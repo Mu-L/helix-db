@@ -14,9 +14,13 @@ use crate::{
     ClusterConfigAction, ConfigAction, ConfigOutputFormat, ProjectConfigAction,
     WorkspaceConfigAction,
 };
+use color_eyre::owo_colors::OwoColorize;
 use eyre::{Result, eyre};
 use serde::Serialize;
 use std::path::Path;
+
+const SECTION_RULE: &str = "----------------------------------------";
+const CONTEXT_LABEL_WIDTH: usize = 11;
 
 #[derive(Debug, Serialize)]
 struct WorkspaceListItem {
@@ -351,87 +355,223 @@ fn project_enterprise_summaries(clusters: &CliProjectClusters) -> Vec<Enterprise
     items
 }
 
-fn print_workspace_item(item: &WorkspaceListItem) {
-    let marker = if item.current { "*" } else { " " };
+fn build_mode_label(build_mode: BuildMode) -> &'static str {
+    match build_mode {
+        BuildMode::Dev => "dev",
+        BuildMode::Release => "release",
+        BuildMode::Debug => "debug",
+    }
+}
+
+fn trim_trailing_zeroes(value: f32) -> String {
+    let formatted = format!("{value:.2}");
+    formatted
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
+}
+
+fn print_context_block(title: &str, fields: &[(&str, String)]) {
+    println!("{}", title.bold());
+    println!("{}", SECTION_RULE.dimmed());
+    for (label, value) in fields {
+        let label = format!("{label}:");
+        println!(
+            "  {:<width$} {}",
+            label.dimmed(),
+            value,
+            width = CONTEXT_LABEL_WIDTH
+        );
+    }
+    println!();
+}
+
+fn print_section(title: &str, count: usize) {
+    println!("{}", format!("{title} ({count})").bold());
+    println!("{}", SECTION_RULE.dimmed());
+}
+
+fn print_empty_section(title: &str) {
+    print_section(title, 0);
+    println!("  {}", "None".dimmed());
+    println!();
+}
+
+fn print_metadata_line(indent: usize, fields: &[String]) {
+    if fields.is_empty() {
+        return;
+    }
+
     println!(
-        "{marker} {} (slug: {}, id: {}, type: {})",
-        item.name, item.url_slug, item.id, item.workspace_type
+        "{:indent$}{}",
+        "",
+        fields.join("  ").dimmed(),
+        indent = indent
     );
+}
+
+fn print_list_item(name: &str, current: bool, indent: usize, metadata: &[String]) {
+    let prefix = if current {
+        format!("{}", "*".green().bold())
+    } else {
+        format!("{}", "-".dimmed())
+    };
+    println!("{:indent$}{} {}", "", prefix, name.bold(), indent = indent);
+    print_metadata_line(indent + 4, metadata);
+}
+
+fn print_workspace_item(item: &WorkspaceListItem) {
+    let mut metadata = vec![
+        format!("slug={}", item.url_slug),
+        format!("type={}", item.workspace_type),
+        format!("id={}", item.id),
+    ];
+    if let Some(members) = &item.members {
+        metadata.push(format!("members={}", members.len()));
+    }
+
+    print_list_item(&item.name, item.current, 0, &metadata);
 
     if let Some(members) = &item.members {
         for member in members {
-            println!(
-                "    {} ({}) <{}>",
-                member.user.github_login, member.role, member.user.github_email
-            );
+            let display_name = if member.user.github_name.is_empty()
+                || member.user.github_name == member.user.github_login
+            {
+                member.user.github_login.clone()
+            } else {
+                format!("{} ({})", member.user.github_login, member.user.github_name)
+            };
+
+            let metadata = vec![
+                format!("role={}", member.role),
+                format!("email={}", member.user.github_email),
+            ];
+            print_list_item(&display_name, false, 4, &metadata);
         }
     }
 }
 
 fn print_local_instances(local_instances: &[LocalInstanceSummary]) {
-    println!("Local Instances");
     if local_instances.is_empty() {
-        println!("  None");
-        println!();
+        print_empty_section("Local Instances");
         return;
     }
 
+    print_section("Local Instances", local_instances.len());
     for instance in local_instances {
-        let port = instance
-            .port
-            .map(|port| format!(", port {port}"))
-            .unwrap_or_default();
-        println!(
-            "  {} (build {}{})",
-            instance.name,
-            match instance.build_mode {
-                BuildMode::Dev => "dev",
-                BuildMode::Release => "release",
-                BuildMode::Debug => "debug",
-            },
-            port
-        );
+        let mut metadata = vec![format!("build={}", build_mode_label(instance.build_mode))];
+        if let Some(port) = instance.port {
+            metadata.push(format!("port={port}"));
+        }
+        print_list_item(&instance.name, false, 0, &metadata);
     }
     println!();
 }
 
+fn print_project_heading(project_name: &str) {
+    println!("{}", project_name.blue().bold());
+}
+
 fn print_standard_clusters(clusters: &[StandardClusterSummary]) {
-    println!("Helix Cloud Clusters");
     if clusters.is_empty() {
-        println!("  None");
-        println!();
+        print_empty_section("Helix Cloud Clusters");
         return;
     }
 
-    for cluster in clusters {
-        let mut details = format!(
-            "project {}, id {}",
-            cluster.project_name, cluster.cluster_id
-        );
-        if let Some(build_mode) = &cluster.build_mode {
-            details.push_str(&format!(", build {build_mode}"));
+    print_section("Helix Cloud Clusters", clusters.len());
+    let mut items: Vec<&StandardClusterSummary> = clusters.iter().collect();
+    items.sort_by(|a, b| {
+        (&a.project_name, &a.cluster_name, &a.cluster_id).cmp(&(
+            &b.project_name,
+            &b.cluster_name,
+            &b.cluster_id,
+        ))
+    });
+
+    let mut current_project: Option<&str> = None;
+    for cluster in items {
+        if current_project != Some(cluster.project_name.as_str()) {
+            if current_project.is_some() {
+                println!();
+            }
+            print_project_heading(&cluster.project_name);
+            current_project = Some(cluster.project_name.as_str());
         }
-        println!("  {} ({details})", cluster.cluster_name);
+
+        let mut metadata = vec![format!("id={}", cluster.cluster_id)];
+        if let Some(build_mode) = &cluster.build_mode {
+            metadata.push(format!("build={build_mode}"));
+        }
+        if let Some(max_memory_gb) = cluster.max_memory_gb {
+            metadata.push(format!("memory={}GB", max_memory_gb));
+        }
+        if let Some(max_vcpus) = cluster.max_vcpus {
+            metadata.push(format!("vcpus={}", trim_trailing_zeroes(max_vcpus)));
+        }
+        print_list_item(&cluster.cluster_name, false, 2, &metadata);
     }
     println!();
 }
 
 fn print_enterprise_clusters(clusters: &[EnterpriseClusterSummary]) {
-    println!("Enterprise Clusters");
     if clusters.is_empty() {
-        println!("  None");
-        println!();
+        print_empty_section("Enterprise Clusters");
         return;
     }
 
-    for cluster in clusters {
-        println!(
-            "  {} (project {}, id {}, mode {})",
-            cluster.cluster_name,
-            cluster.project_name,
-            cluster.cluster_id,
-            cluster.availability_mode
-        );
+    print_section("Enterprise Clusters", clusters.len());
+    let mut items: Vec<&EnterpriseClusterSummary> = clusters.iter().collect();
+    items.sort_by(|a, b| {
+        (&a.project_name, &a.cluster_name, &a.cluster_id).cmp(&(
+            &b.project_name,
+            &b.cluster_name,
+            &b.cluster_id,
+        ))
+    });
+
+    let mut current_project: Option<&str> = None;
+    for cluster in items {
+        if current_project != Some(cluster.project_name.as_str()) {
+            if current_project.is_some() {
+                println!();
+            }
+            print_project_heading(&cluster.project_name);
+            current_project = Some(cluster.project_name.as_str());
+        }
+
+        let mut metadata = vec![
+            format!("id={}", cluster.cluster_id),
+            format!("mode={}", cluster.availability_mode),
+        ];
+        if let Some(gateway_node_type) = &cluster.gateway_node_type {
+            metadata.push(format!("gateway={gateway_node_type}"));
+        }
+        if let Some(db_node_type) = &cluster.db_node_type {
+            metadata.push(format!("db={db_node_type}"));
+        }
+        if let (Some(min_gateway_count), Some(max_gateway_count)) =
+            (cluster.min_gateway_count, cluster.max_gateway_count)
+        {
+            if min_gateway_count == max_gateway_count {
+                metadata.push(format!("gateway_nodes={min_gateway_count}"));
+            } else {
+                metadata.push(format!(
+                    "gateway_nodes={min_gateway_count}-{max_gateway_count}"
+                ));
+            }
+        }
+        if let (Some(min_hyperscale_count), Some(max_hyperscale_count)) =
+            (cluster.min_hyperscale_count, cluster.max_hyperscale_count)
+        {
+            if min_hyperscale_count == max_hyperscale_count {
+                metadata.push(format!("db_nodes={min_hyperscale_count}"));
+            } else {
+                metadata.push(format!(
+                    "db_nodes={min_hyperscale_count}-{max_hyperscale_count}"
+                ));
+            }
+        }
+        print_list_item(&cluster.cluster_name, false, 2, &metadata);
     }
     println!();
 }
@@ -484,9 +624,11 @@ async fn workspace_list(include_members: bool, format: ConfigOutputFormat) -> Re
                 return Ok(());
             }
 
+            print_section("Workspaces", items.len());
             for item in &items {
                 print_workspace_item(item);
             }
+            println!();
             Ok(())
         }
     }
@@ -520,7 +662,15 @@ async fn workspace_show(format: ConfigOutputFormat) -> Result<()> {
         ConfigOutputFormat::Json => print_json(&output),
         ConfigOutputFormat::Human => {
             if let Some(workspace) = &output.workspace {
-                print_workspace_item(workspace);
+                print_context_block(
+                    "Current Workspace",
+                    &[
+                        ("Name", workspace.name.clone()),
+                        ("Slug", workspace.url_slug.clone()),
+                        ("Type", workspace.workspace_type.clone()),
+                        ("ID", workspace.id.clone()),
+                    ],
+                );
             } else {
                 println!("No workspace selected.");
             }
@@ -567,9 +717,15 @@ async fn workspace_switch(workspace: Option<String>, use_id: bool) -> Result<()>
     let mut workspace_config = WorkspaceConfig::load()?;
     workspace_config.workspace_id = Some(selected.id.clone());
     workspace_config.save()?;
-    println!(
-        "Selected workspace '{}' (slug: {}, id: {}).",
-        selected.name, selected.url_slug, selected.id
+    crate::output::success("Updated workspace selection");
+    print_context_block(
+        "Current Workspace",
+        &[
+            ("Name", selected.name.clone()),
+            ("Slug", selected.url_slug.clone()),
+            ("Type", selected.workspace_type.clone()),
+            ("ID", selected.id.clone()),
+        ],
     );
     Ok(())
 }
@@ -627,16 +783,25 @@ async fn project_list(
             projects: items,
         }),
         ConfigOutputFormat::Human => {
-            println!("Projects in workspace '{}'", workspace.url_slug);
+            print_context_block(
+                "Workspace",
+                &[
+                    ("Name", workspace.name.clone()),
+                    ("Slug", workspace.url_slug.clone()),
+                    ("ID", workspace.id.clone()),
+                ],
+            );
             if items.is_empty() {
-                println!("  None");
+                print_empty_section("Projects");
                 return Ok(());
             }
 
+            print_section("Projects", items.len());
             for item in &items {
-                let marker = if item.current { "*" } else { " " };
-                println!("{marker} {} (id: {})", item.name, item.id);
+                let metadata = [format!("id={}", item.id)];
+                print_list_item(&item.name, item.current, 0, &metadata);
             }
+            println!();
             Ok(())
         }
     }
@@ -669,11 +834,20 @@ async fn project_show(format: ConfigOutputFormat) -> Result<()> {
             message: None,
         }),
         ConfigOutputFormat::Human => {
-            println!("Project: {}", project_details.name);
-            println!("ID: {}", project_details.id);
-            println!(
-                "Workspace: {} ({})",
-                project_details.workspace_name, project_details.workspace_slug
+            print_context_block(
+                "Current Project",
+                &[
+                    ("Name", project_details.name.clone()),
+                    ("ID", project_details.id.clone()),
+                    (
+                        "Workspace",
+                        format!(
+                            "{} ({})",
+                            project_details.workspace_name, project_details.workspace_slug
+                        ),
+                    ),
+                    ("Workspace ID", project_details.workspace_id.clone()),
+                ],
             );
             Ok(())
         }
@@ -780,9 +954,21 @@ async fn project_switch(project: Option<String>, use_id: bool) -> Result<()> {
     config.project.name = selected_project.name.clone();
     save_project_selection(&project_context.root, &config)?;
 
-    println!(
-        "Linked project '{}' (id: {}) in helix.toml.",
-        selected_project.name, selected_project.id
+    crate::output::success("Updated project selection");
+    print_context_block(
+        "Current Project",
+        &[
+            ("Name", selected_project.name.clone()),
+            ("ID", selected_project.id.clone()),
+            (
+                "Config",
+                project_context
+                    .root
+                    .join("helix.toml")
+                    .display()
+                    .to_string(),
+            ),
+        ],
     );
     Ok(())
 }
@@ -921,11 +1107,15 @@ async fn cluster_list(
     match format {
         ConfigOutputFormat::Json => print_json(&output),
         ConfigOutputFormat::Human => {
-            println!("Workspace: {} ({})", workspace.name, workspace.url_slug);
+            let mut fields = vec![
+                ("Name", workspace.name.clone()),
+                ("Slug", workspace.url_slug.clone()),
+                ("ID", workspace.id.clone()),
+            ];
             if let Some(project) = &output.project {
-                println!("Project: {} ({})", project.name, project.id);
+                fields.push(("Project", format!("{} ({})", project.name, project.id)));
             }
-            println!();
+            print_context_block("Selection", &fields);
             print_local_instances(&output.local_instances);
             print_standard_clusters(&output.standard_clusters);
             print_enterprise_clusters(&output.enterprise_clusters);
