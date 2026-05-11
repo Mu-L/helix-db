@@ -1,82 +1,93 @@
-//! `helix logs` command for viewing instance logs.
-//!
-//! Supports two modes:
-//! - CLI mode (with flags): Non-interactive log streaming/querying
-//! - TUI mode (no flags): Interactive terminal UI with tabs and hotkeys
-
-mod cli;
-mod log_source;
-mod tui;
-
 use crate::commands::auth::require_auth;
 use crate::config::InstanceInfo;
+use crate::enterprise_cloud::cloud_base_url;
+use crate::local_runtime::LocalRuntime;
 use crate::project::ProjectContext;
-use crate::prompts;
+use chrono::{DateTime, Duration, Utc};
 use eyre::{Result, eyre};
-use log_source::LogSource;
+use serde::Deserialize;
 
-/// Run the logs command.
+#[derive(Debug, Deserialize)]
+struct LogsRangeResponse {
+    logs: Vec<LogEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LogEntry {
+    message: String,
+}
+
 pub async fn run(
     instance: Option<String>,
-    live: bool,
+    follow: bool,
     range: bool,
     start: Option<String>,
     end: Option<String>,
 ) -> Result<()> {
-    // Load project context
     let project = ProjectContext::find_and_load(None)?;
-
-    // Get instance name - prompt if not provided
-    let instance_name = match instance {
-        Some(name) => name,
-        None if prompts::is_interactive() => {
-            let instances = project.config.list_instances_with_types();
-            prompts::intro("helix logs", Some("View logs for your instance\n"))?;
-            prompts::select_instance(&instances)?
+    let instance = instance.unwrap_or_else(|| "dev".to_string());
+    match project.config.get_instance(&instance)? {
+        InstanceInfo::Local(_) => {
+            LocalRuntime::new(&project).logs(&instance, follow)?;
         }
-        None => {
-            let instances = project.config.list_instances();
-            return Err(eyre!(
-                "No instance specified. Available instances: {}",
-                instances
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+        InstanceInfo::Enterprise(config) => {
+            if follow {
+                return Err(eyre!(
+                    "live Enterprise logs are not supported yet; use --range instead"
+                ));
+            }
+            let credentials = require_auth().await?;
+            let (start, end) = parse_range(range, start, end)?;
+            let logs =
+                query_enterprise_logs(&config.cluster_id, &credentials.helix_admin_key, start, end)
+                    .await?;
+            for line in logs {
+                println!("{line}");
+            }
         }
-    };
-
-    // Get instance config
-    let instance_config = project.config.get_instance(&instance_name)?;
-
-    let is_enterprise = matches!(&instance_config, InstanceInfo::Enterprise(_));
-
-    // Check auth early for Helix Cloud and enterprise instances
-    let credentials = if matches!(
-        &instance_config,
-        InstanceInfo::Helix(_) | InstanceInfo::Enterprise(_)
-    ) {
-        Some(require_auth().await?)
-    } else {
-        None
-    };
-
-    // Create log source
-    let log_source = LogSource::from_instance(&project, &instance_name, credentials.as_ref())?;
-
-    // Route to appropriate mode
-    if live {
-        if is_enterprise {
-            return Err(eyre!(
-                "Live log streaming is not supported for enterprise instances. Use range output instead."
-            ));
-        }
-        cli::stream_live(&log_source).await
-    } else if range || is_enterprise {
-        cli::query_range(&log_source, start, end).await
-    } else {
-        // TUI mode (default when no flags)
-        tui::run(log_source, instance_name).await
     }
+    Ok(())
+}
+
+fn parse_range(
+    range: bool,
+    start: Option<String>,
+    end: Option<String>,
+) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+    let end = match end {
+        Some(end) => DateTime::parse_from_rfc3339(&end)?.with_timezone(&Utc),
+        None => Utc::now(),
+    };
+    let start = match start {
+        Some(start) => DateTime::parse_from_rfc3339(&start)?.with_timezone(&Utc),
+        None if range => end - Duration::hours(1),
+        None => end - Duration::hours(1),
+    };
+    Ok((start, end))
+}
+
+async fn query_enterprise_logs(
+    cluster_id: &str,
+    api_key: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Vec<String>> {
+    let url = format!(
+        "{}/api/cli/enterprise-clusters/{}/logs/range?start_time={}&end_time={}",
+        cloud_base_url(),
+        cluster_id,
+        start.timestamp(),
+        end.timestamp()
+    );
+    let response = reqwest::Client::new()
+        .get(url)
+        .header("x-api-key", api_key)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(eyre!("Failed to fetch Enterprise logs: {body}"));
+    }
+    let payload: LogsRangeResponse = response.json().await?;
+    Ok(payload.logs.into_iter().map(|log| log.message).collect())
 }

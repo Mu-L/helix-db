@@ -75,7 +75,7 @@ pub struct MetricsSender {
 
 #[derive(Debug)]
 enum MetricsMessage {
-    Event(RawEvent<EventData>),
+    Event(Box<RawEvent<EventData>>),
     Shutdown,
 }
 
@@ -92,7 +92,7 @@ impl MetricsSender {
     }
 
     pub fn send_event(&self, event: RawEvent<EventData>) {
-        let _ = self.tx.send(MetricsMessage::Event(event));
+        let _ = self.tx.send(MetricsMessage::Event(Box::new(event)));
     }
 
     pub async fn shutdown(self) -> Result<()> {
@@ -123,7 +123,7 @@ async fn metrics_task(rx: Receiver<MetricsMessage>) -> Result<()> {
         match message {
             MetricsMessage::Event(event) => {
                 if let Some(ref mut writer) = log_writer
-                    && let Err(e) = write_event_to_log(writer, &event)
+                    && let Err(e) = write_event_to_log(writer, event.as_ref())
                 {
                     eprintln!("Failed to write metrics event: {e}");
                 }

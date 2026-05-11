@@ -1,6 +1,6 @@
 use crate::{
     AuthAction,
-    commands::integrations::helix::cloud_base_url,
+    enterprise_cloud::cloud_base_url,
     metrics_sender::{load_metrics_config, save_metrics_config},
     output,
     sse_client::{SseClient, SseEvent},
@@ -94,7 +94,10 @@ async fn create_key(cluster: &str) -> Result<()> {
     output::info(&format!("Rotating API key for cluster: {cluster}"));
 
     let credentials = require_auth().await?;
-    let url = format!("{}/api/cli/clusters/{cluster}/key", cloud_base_url());
+    let url = format!(
+        "{}/api/cli/enterprise-clusters/{cluster}/key",
+        cloud_base_url()
+    );
 
     let response = reqwest::Client::new()
         .post(&url)
@@ -225,27 +228,10 @@ pub async fn require_auth() -> Result<Credentials> {
         return Ok(credentials);
     }
 
-    // Not authenticated - prompt user to login
     output::warning("Not authenticated with Helix Cloud");
-
-    if !crate::prompts::is_interactive() {
-        return Err(eyre!("Run 'helix auth login' first."));
-    }
-
-    let should_login = crate::prompts::confirm("Would you like to login now?")?;
-
-    if !should_login {
-        return Err(eyre!(
-            "Authentication required. Run 'helix auth login' to authenticate."
-        ));
-    }
-
-    // Run login flow
-    login().await?;
-
-    // Read the newly saved credentials
-    Credentials::try_read_from_file(&credentials_path)
-        .ok_or_else(|| eyre!("Login succeeded but failed to read credentials. Please try again."))
+    Err(eyre!(
+        "Authentication required. Run 'helix auth login' first."
+    ))
 }
 
 pub async fn github_login() -> Result<(String, String)> {

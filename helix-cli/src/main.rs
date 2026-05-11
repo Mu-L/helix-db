@@ -1,28 +1,12 @@
 use clap::{Parser, Subcommand};
 use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
-pub use helix_cli::{
-    AuthAction, CloudDeploymentTypeCommand, ClusterConfigAction, ConfigAction, ConfigOutputFormat,
-    DashboardAction, MetricsAction, ProjectConfigAction, WorkspaceConfigAction,
+use helix_cli::{
+    AddTarget, AuthAction, ConfigAction, DashboardAction, InitTarget, MetricsAction, commands,
+    errors, metrics_sender, output, update,
 };
 use std::io::IsTerminal;
-use std::path::PathBuf;
 use tui_banner::{Align, Banner, ColorMode, Fill, Gradient, Palette};
-
-mod cleanup;
-mod commands;
-mod config;
-mod docker;
-mod errors;
-mod github_issue;
-mod metrics_sender;
-mod output;
-mod port;
-mod project;
-mod prompts;
-mod sse_client;
-mod update;
-mod utils;
 
 #[derive(Parser)]
 #[command(name = "Helix CLI")]
@@ -42,141 +26,115 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a new Helix project with helix.toml
+    /// Initialize a v2 Helix project
     Init {
         /// Project directory (defaults to current directory)
         #[arg(short, long)]
         path: Option<String>,
-
-        #[arg(short, long, default_value = "empty")]
-        template: String,
-
-        /// Queries directory path (defaults to ./db/)
-        #[arg(short, long = "queries-path", default_value = "./db/")]
-        queries_path: String,
-
         #[command(subcommand)]
-        cloud: Option<CloudDeploymentTypeCommand>,
+        target: Option<InitTarget>,
     },
 
-    /// Add a new instance to an existing Helix project
+    /// Add a local v2 or Enterprise Cloud instance
     Add {
         #[command(subcommand)]
-        cloud: Option<CloudDeploymentTypeCommand>,
+        target: AddTarget,
     },
 
-    /// Validate project configuration and queries
-    Check {
-        /// Instance to check (defaults to all instances)
+    /// Run a local v2 instance
+    Run {
+        /// Instance name to run
         instance: Option<String>,
-    },
-
-    /// Compile project queries into the workspace
-    Compile {
-        /// Directory containing helix.toml (defaults to current directory or project root)
-        #[arg(short, long)]
-        path: Option<String>,
-
-        /// Path to output compiled queries
-        #[arg(short, long)]
-        output: Option<String>,
-    },
-
-    /// Build and compile project for an instance
-    Build {
-        /// Instance name to build (interactive selection if not provided)
-        #[arg(short, long)]
-        instance: Option<String>,
-        /// Should build HelixDB into a binary at the specified directory location
+        /// Run in the background
         #[arg(long)]
-        bin: Option<String>,
-    },
-
-    /// Deploy/start an instance
-    Push {
-        /// Instance name to push (interactive selection if not provided)
-        instance: Option<String>,
-        /// Use development profile for faster builds (Helix Cloud only)
+        detach: bool,
+        /// Override local port for this run
         #[arg(long)]
-        dev: bool,
+        port: Option<u16>,
     },
 
-    /// Sync .hx source files and config from a deployed Helix Cloud instance
-    Sync {
-        /// Instance name to sync from (interactive selection if not provided)
-        instance: Option<String>,
-
-        /// Overwrite local files without confirmation prompts
-        #[arg(short = 'y', long)]
-        yes: bool,
-    },
-
-    /// Start an instance (doesn't rebuild)
-    Start {
-        /// Instance name to start (interactive selection if not provided)
-        instance: Option<String>,
-    },
-
-    /// Stop an instance
+    /// Stop a detached local v2 instance
     Stop {
-        /// Instance name to stop (interactive selection if not provided)
+        /// Instance name to stop
         instance: Option<String>,
     },
 
-    /// Restart an instance (stop then start)
+    /// Restart a detached local v2 instance
     Restart {
-        /// Instance name to restart (interactive selection if not provided)
+        /// Instance name to restart
         instance: Option<String>,
     },
 
-    /// Show status of all instances
+    /// Show local and Enterprise Cloud instance status
     Status,
 
-    /// View logs for an instance
+    /// View logs for a local or Enterprise Cloud instance
     Logs {
-        /// Instance name (interactive selection if not provided)
+        /// Instance name
         instance: Option<String>,
-
-        /// Stream live logs (non-interactive)
-        #[arg(long, short = 'l')]
-        live: bool,
-
-        /// Query historical logs with time range
+        /// Follow logs
+        #[arg(long, short = 'f')]
+        follow: bool,
+        /// Query historical logs with time range for Enterprise Cloud
         #[arg(long, short = 'r')]
         range: bool,
-
-        /// Start time (ISO 8601: 2024-01-15T10:00:00Z)
+        /// Start time (ISO 8601)
         #[arg(long, requires = "range")]
         start: Option<String>,
-
-        /// End time (ISO 8601: 2024-01-15T11:00:00Z)
+        /// End time (ISO 8601)
         #[arg(long, requires = "range")]
         end: Option<String>,
     },
 
-    /// Cloud operations (login, keys, etc.)
+    /// Send a dynamic query to POST /v1/query
+    Query {
+        /// Instance name
+        instance: Option<String>,
+        /// JSON request file
+        #[arg(short, long)]
+        file: String,
+        /// Add X-Helix-Warm header. Only valid for read requests.
+        #[arg(long)]
+        warm: bool,
+        /// Override host for local query execution
+        #[arg(long)]
+        host: Option<String>,
+        /// Override port for local query execution
+        #[arg(long)]
+        port: Option<u16>,
+        /// Print compact JSON instead of pretty JSON
+        #[arg(long)]
+        compact: bool,
+    },
+
+    /// Enterprise Cloud auth operations
     Auth {
         #[command(subcommand)]
         action: AuthAction,
     },
 
-    /// Configure workspace, project, and cluster defaults
+    /// Configure workspace, project, and Enterprise cluster defaults
     Config {
         #[command(subcommand)]
         action: ConfigAction,
     },
 
-    /// Prune containers, images and workspace (preserves volumes)
-    Prune {
-        /// Instance to prune (if not specified, prunes unused resources)
+    /// Sync Enterprise Cloud metadata into helix.toml
+    Sync {
+        /// Enterprise instance name
         instance: Option<String>,
+    },
 
-        /// Prune all instances in project
+    /// Prune local v2 containers/workspaces
+    Prune {
+        /// Instance to prune
+        instance: Option<String>,
+        /// Prune all local instances
         #[arg(short, long)]
         all: bool,
     },
 
-    /// Delete an instance completely
+    /// Delete an instance from helix.toml and local runtime state
     Delete {
         /// Instance name to delete
         instance: String,
@@ -194,70 +152,28 @@ enum Commands {
         action: DashboardAction,
     },
 
-    /// Update to the latest version
+    /// Update to the latest CLI version
     Update {
         /// Force update even if already on latest version
         #[arg(long)]
         force: bool,
     },
 
-    /// Migrate v1 project to v2 format
-    Migrate {
-        /// Project directory to migrate (defaults to current directory)
-        #[arg(short, long)]
-        path: Option<String>,
-
-        /// Directory to move .hx files to (defaults to ./db/)
-        #[arg(short, long = "queries-dir", default_value = "./db/")]
-        queries_dir: String,
-
-        /// Name for the default local instance (defaults to "dev")
-        #[arg(short, long, default_value = "dev")]
-        instance_name: String,
-
-        /// Port for local instance (defaults to 6969)
-        #[arg(long, default_value = "6969")]
-        port: u16,
-
-        /// Show what would be migrated without making changes
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Skip creating backup of v1 files
-        #[arg(long)]
-        no_backup: bool,
-    },
-
-    /// Backup instance at the given path
-    Backup {
-        /// Instance name to backup
-        instance: String,
-
-        /// Output directory for the backup. If omitted, ./backups/backup-<ts>/ will be used
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
-
     /// Send feedback to the Helix team
     Feedback {
-        /// Feedback message (opens interactive prompt if not provided)
+        /// Feedback message
         message: Option<String>,
     },
 }
 
-/// Display the welcome banner and getting started guide
 fn display_welcome(update_available: Option<String>) {
     let use_color = std::io::stdout().is_terminal();
-
-    // Generate ASCII art banner using tui-banner
 
     if let Ok(banner) = Banner::new("> HELIX DB") {
         let banner = banner
             .color_mode(ColorMode::TrueColor)
             .gradient(Gradient::vertical(Palette::from_hex(&[
-                "#ff7f17", // light orange
-                "#e36600", // orange
-                "#8f4000", // dark orange
+                "#ff7f17", "#e36600", "#8f4000",
             ])))
             .fill(Fill::Keep)
             .dither()
@@ -266,11 +182,9 @@ fn display_welcome(update_available: Option<String>) {
             .align(Align::Center)
             .padding(3)
             .render();
-
         println!("{banner}");
     }
 
-    // Version info
     let version = update::current_version();
     if use_color {
         println!(
@@ -282,25 +196,11 @@ fn display_welcome(update_available: Option<String>) {
         println!("  Helix DB CLI v{}\n", version);
     }
 
-    // Update notification (after banner and version)
     if let Some(latest_version) = update_available {
-        if use_color {
-            println!(
-                "  │ Update available: v{} ➜ {}",
-                version,
-                format!("v{}", latest_version).green().bold()
-            );
-            println!(
-                "  │ Run '{}' to upgrade\n",
-                "helix update".truecolor(255, 165, 54).bold()
-            );
-        } else {
-            println!("  | Update available: v{} ➜ v{}", version, latest_version);
-            println!("  | Run 'helix update' to upgrade\n");
-        }
+        println!("  Update available: v{} -> v{}", version, latest_version);
+        println!("  Run 'helix update' to upgrade\n");
     }
 
-    // Getting Started section
     println!(
         "{}",
         if use_color {
@@ -310,64 +210,16 @@ fn display_welcome(update_available: Option<String>) {
         }
     );
     println!();
-    print_command("helix init", "Create a new Helix project", use_color);
+    print_command("helix init", "Create a v2 project", use_color);
+    print_command("helix run dev", "Run local Enterprise dev", use_color);
     print_command(
-        "helix init cloud",
-        "Create a cloud-deployed project",
+        "helix query dev --file request.json",
+        "Send a dynamic query",
         use_color,
     );
-    print_command("helix build", "Build your project", use_color);
-    print_command("helix push", "Deploy/start an instance", use_color);
-
+    print_command("helix auth login", "Login to Enterprise Cloud", use_color);
     println!();
-    println!(
-        "{}",
-        if use_color {
-            "Common Commands".bold().to_string()
-        } else {
-            "Common Commands".to_string()
-        }
-    );
-    println!();
-    print_command("helix status", "Show status of all instances", use_color);
-    print_command("helix logs", "View logs for an instance", use_color);
-    print_command(
-        "helix dashboard start",
-        "Launch the Helix Dashboard",
-        use_color,
-    );
-    print_command("helix auth login", "Login to Helix Cloud", use_color);
-
-    println!();
-    println!(
-        "{}",
-        if use_color {
-            "Help & Info".bold().to_string()
-        } else {
-            "Help & Info".to_string()
-        }
-    );
-    println!();
-    print_command("helix --help", "Show all available commands", use_color);
-    print_command(
-        "helix <command> --help",
-        "Show help for a specific command",
-        use_color,
-    );
-
-    println!();
-    if use_color {
-        println!(
-            "  {} {}",
-            "Docs:".dimmed(),
-            "https://docs.helix-db.com"
-                .truecolor(253, 169, 66)
-                .underline()
-        );
-    } else {
-        println!("  Docs: https://docs.helix-db.com");
-    }
-    println!();
+    println!("Docs: https://docs.helix-db.com");
 }
 
 fn print_command(cmd: &str, desc: &str, use_color: bool) {
@@ -378,27 +230,18 @@ fn print_command(cmd: &str, desc: &str, use_color: bool) {
             desc.dimmed()
         );
     } else {
-        println!("  {:30} {}", cmd, desc);
+        println!("  {:34} {}", cmd, desc);
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize error reporting
     color_eyre::install()?;
-
-    // Initialize metrics sender
     let metrics_sender = metrics_sender::MetricsSender::new()?;
-
-    // Send CLI install event (only first time)
     metrics_sender.send_cli_install_event_if_first_time();
-
-    // Check for updates before processing commands
     let update_available = update::check_for_updates().await?;
 
     let cli = Cli::parse();
-
-    // Set verbosity level from flags
     output::Verbosity::set(output::Verbosity::from_flags(cli.quiet, cli.verbose));
 
     let result = match cli.command {
@@ -406,71 +249,52 @@ async fn main() -> Result<()> {
             display_welcome(update_available);
             Ok(())
         }
-        Some(cmd) => match cmd {
-            Commands::Init {
-                path,
-                template,
-                queries_path,
-                cloud,
-            } => commands::init::run(path, template, queries_path, cloud).await,
-            Commands::Add { cloud } => commands::add::run(cloud).await,
-            Commands::Check { instance } => commands::check::run(instance, &metrics_sender).await,
-            Commands::Compile { output, path } => commands::compile::run(output, path).await,
-            Commands::Build { instance, bin } => {
-                commands::build::run(instance, bin, &metrics_sender)
-                    .await
-                    .map(|_| ())
-            }
-            Commands::Push { instance, dev } => {
-                commands::push::run(instance, dev, &metrics_sender).await
-            }
-            Commands::Sync { instance, yes } => commands::sync::run(instance, yes).await,
-            Commands::Start { instance } => commands::start::run(instance).await,
-            Commands::Stop { instance } => commands::stop::run(instance).await,
-            Commands::Restart { instance } => commands::restart::run(instance).await,
-            Commands::Status => commands::status::run().await,
-            Commands::Logs {
-                instance,
-                live,
-                range,
-                start,
-                end,
-            } => commands::logs::run(instance, live, range, start, end).await,
-            Commands::Auth { action } => commands::auth::run(action).await,
-            Commands::Config { action } => commands::config::run(action).await,
-            Commands::Prune { instance, all } => commands::prune::run(instance, all).await,
-            Commands::Delete { instance } => commands::delete::run(instance).await,
-            Commands::Metrics { action } => commands::metrics::run(action).await,
-            Commands::Dashboard { action } => commands::dashboard::run(action).await,
-            Commands::Update { force } => commands::update::run(force).await,
-            Commands::Migrate {
-                path,
-                queries_dir,
-                instance_name,
-                port,
-                dry_run,
-                no_backup,
-            } => {
-                commands::migrate::run(path, queries_dir, instance_name, port, dry_run, no_backup)
-                    .await
-            }
-            Commands::Backup { instance, output } => commands::backup::run(output, instance).await,
-            Commands::Feedback { message } => commands::feedback::run(message).await,
-        },
+        Some(Commands::Init { path, target }) => commands::init::run(path, target).await,
+        Some(Commands::Add { target }) => commands::add::run(target).await,
+        Some(Commands::Run {
+            instance,
+            detach,
+            port,
+        }) => commands::run::run(instance, detach, port).await,
+        Some(Commands::Stop { instance }) => commands::stop::run(instance).await,
+        Some(Commands::Restart { instance }) => commands::restart::run(instance).await,
+        Some(Commands::Status) => commands::status::run().await,
+        Some(Commands::Logs {
+            instance,
+            follow,
+            range,
+            start,
+            end,
+        }) => commands::logs::run(instance, follow, range, start, end).await,
+        Some(Commands::Query {
+            instance,
+            file,
+            warm,
+            host,
+            port,
+            compact,
+        }) => commands::query::run(instance, file, warm, host, port, compact).await,
+        Some(Commands::Auth { action }) => commands::auth::run(action).await,
+        Some(Commands::Config { action }) => commands::config::run(action).await,
+        Some(Commands::Sync { instance }) => commands::sync::run(instance).await,
+        Some(Commands::Prune { instance, all }) => commands::prune::run(instance, all).await,
+        Some(Commands::Delete { instance }) => commands::delete::run(instance).await,
+        Some(Commands::Metrics { action }) => commands::metrics::run(action).await,
+        Some(Commands::Dashboard { action }) => commands::dashboard::run(action).await,
+        Some(Commands::Update { force }) => commands::update::run(force).await,
+        Some(Commands::Feedback { message }) => commands::feedback::run(message).await,
     };
 
-    // Shutdown metrics sender
     metrics_sender.shutdown().await?;
 
-    // Handle result with proper error formatting
     if let Err(e) = result {
-        if let Some(cli_error) = e.downcast_ref::<crate::errors::CliError>() {
+        if let Some(cli_error) = e.downcast_ref::<errors::CliError>() {
             eprint!("{}", cli_error.render());
-        } else if let Some(config_error) = e.downcast_ref::<crate::errors::ConfigError>() {
+        } else if let Some(config_error) = e.downcast_ref::<errors::ConfigError>() {
             eprint!("{}", config_error.to_cli_error().render());
-        } else if let Some(project_error) = e.downcast_ref::<crate::errors::ProjectError>() {
+        } else if let Some(project_error) = e.downcast_ref::<errors::ProjectError>() {
             eprint!("{}", project_error.to_cli_error().render());
-        } else if let Some(port_error) = e.downcast_ref::<crate::errors::PortError>() {
+        } else if let Some(port_error) = e.downcast_ref::<errors::PortError>() {
             eprint!("{}", port_error.to_cli_error().render());
         } else {
             eprintln!("{e}");
