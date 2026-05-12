@@ -9,6 +9,7 @@ pub mod metrics_sender;
 pub mod output;
 pub mod port;
 pub mod project;
+pub mod prompts;
 pub mod sse_client;
 pub mod update;
 pub mod utils;

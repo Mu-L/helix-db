@@ -3,6 +3,7 @@ use crate::config::InstanceInfo;
 use crate::enterprise_cloud::cloud_base_url;
 use crate::local_runtime::LocalRuntime;
 use crate::project::ProjectContext;
+use crate::prompts;
 use chrono::{DateTime, Duration, Utc};
 use eyre::{Result, eyre};
 use serde::Deserialize;
@@ -25,9 +26,14 @@ pub async fn run(
     end: Option<String>,
 ) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
-    let instance = instance.unwrap_or_else(|| "dev".to_string());
+    let instance = resolve_instance(&project, instance)?;
     match project.config.get_instance(&instance)? {
         InstanceInfo::Local(_) => {
+            if range || start.is_some() || end.is_some() {
+                return Err(eyre!(
+                    "--range, --start, and --end are only supported for Enterprise logs; local logs use docker/podman logs"
+                ));
+            }
             LocalRuntime::new(&project).logs(&instance, follow)?;
         }
         InstanceInfo::Enterprise(config) => {
@@ -47,6 +53,32 @@ pub async fn run(
         }
     }
     Ok(())
+}
+
+fn resolve_instance(project: &ProjectContext, instance: Option<String>) -> Result<String> {
+    if let Some(instance) = instance {
+        return Ok(instance);
+    }
+    let instances = all_instances(project);
+    if prompts::is_interactive() && instances.len() > 1 {
+        return prompts::select_instance(&instances, "Show logs for which instance?");
+    }
+    if project.config.local.contains_key("dev") || project.config.enterprise.contains_key("dev") {
+        return Ok("dev".to_string());
+    }
+    if instances.len() == 1 {
+        return Ok(instances[0].0.clone());
+    }
+    Err(eyre!("No instance specified"))
+}
+
+fn all_instances(project: &ProjectContext) -> Vec<(String, String)> {
+    project
+        .config
+        .list_instances_with_types()
+        .into_iter()
+        .map(|(name, kind)| (name.clone(), kind.to_string()))
+        .collect()
 }
 
 fn parse_range(

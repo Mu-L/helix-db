@@ -1,6 +1,7 @@
 use crate::DashboardAction;
 use crate::config::{ContainerRuntime, InstanceInfo};
 use crate::local_runtime::LocalRuntime;
+use crate::output::Verbosity;
 use crate::project::ProjectContext;
 use crate::utils::command_exists;
 use eyre::{Result, eyre};
@@ -47,15 +48,8 @@ async fn start(
         host
     };
 
-    let _ = Command::new(runtime.binary())
-        .args(["rm", "-f", DASHBOARD_CONTAINER_NAME])
-        .output();
-    let status = Command::new(runtime.binary())
-        .args(["pull", DASHBOARD_IMAGE])
-        .status()?;
-    if !status.success() {
-        return Err(eyre!("Failed to pull dashboard image"));
-    }
+    let _ = remove_dashboard(runtime)?;
+    pull_dashboard_image(runtime)?;
 
     let mut command = Command::new(runtime.binary());
     command.args([
@@ -116,16 +110,46 @@ fn resolve_helix_target(
 
 fn stop() -> Result<()> {
     let runtime = detect_runtime()?;
+    if remove_dashboard(runtime)? {
+        crate::output::success("Dashboard stopped");
+    } else {
+        crate::output::info("Dashboard was not running");
+    }
+    Ok(())
+}
+
+fn remove_dashboard(runtime: ContainerRuntime) -> Result<bool> {
     let output = Command::new(runtime.binary())
         .args(["rm", "-f", DASHBOARD_CONTAINER_NAME])
         .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("No such container") {
+        return Ok(false);
+    }
+    if !output.status.success() {
+        return Err(eyre!("Failed to stop dashboard:\n{stderr}"));
+    }
+    Ok(true)
+}
+
+fn pull_dashboard_image(runtime: ContainerRuntime) -> Result<()> {
+    if Verbosity::current().show_verbose() {
+        let status = Command::new(runtime.binary())
+            .args(["pull", DASHBOARD_IMAGE])
+            .status()?;
+        if !status.success() {
+            return Err(eyre!("Failed to pull dashboard image"));
+        }
+        return Ok(());
+    }
+
+    let output = Command::new(runtime.binary())
+        .args(["pull", DASHBOARD_IMAGE])
+        .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stderr.contains("No such container") {
-            return Err(eyre!("Failed to stop dashboard:\n{stderr}"));
-        }
+        return Err(eyre!("Failed to pull dashboard image:\n{stderr}"));
     }
-    crate::output::success("Dashboard stopped");
     Ok(())
 }
 
@@ -141,7 +165,12 @@ fn status() -> Result<()> {
             "{{.Names}}\t{{.Status}}\t{{.Ports}}",
         ])
         .output()?;
-    print!("{}", String::from_utf8_lossy(&output.stdout));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.trim().is_empty() {
+        crate::output::info("Dashboard not running");
+    } else {
+        print!("{stdout}");
+    }
     Ok(())
 }
 

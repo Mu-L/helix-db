@@ -6,11 +6,21 @@ use crate::config::{
 };
 use crate::output::Operation;
 use crate::project::ProjectContext;
-use eyre::Result;
+use crate::prompts;
+use eyre::{Result, eyre};
 
-pub async fn run(target: AddTarget) -> Result<()> {
+pub async fn run(target: Option<AddTarget>) -> Result<()> {
     let mut project = ProjectContext::find_and_load(None)?;
     let config_path = project.root.join("helix.toml");
+    let target = match target {
+        Some(target) => target,
+        None if prompts::is_interactive() => prompts::select_add_target()?,
+        None => {
+            return Err(eyre!(
+                "Specify an instance type: 'helix add local' or 'helix add enterprise'"
+            ));
+        }
+    };
 
     match target {
         AddTarget::Local { name, port } => {
@@ -46,6 +56,9 @@ pub async fn run(target: AddTarget) -> Result<()> {
                     availability_mode: None,
                     gateway_node_type: None,
                     db_node_type: None,
+                    min_instances: 1,
+                    max_instances: 1,
+                    db_config: Default::default(),
                 },
             );
             project.config.save_to_file(&config_path)?;

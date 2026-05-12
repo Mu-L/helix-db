@@ -5,6 +5,7 @@ use crate::config::{
     LocalInstanceConfig,
 };
 use crate::output::Operation;
+use crate::prompts;
 use crate::utils::print_instructions;
 use eyre::Result;
 use std::env;
@@ -37,11 +38,18 @@ pub async fn run(path: Option<String>, target: Option<InitTarget>) -> Result<()>
     let op = Operation::new("Initializing", &project_name);
     let mut config = HelixConfig::default_config(&project_name);
 
-    match target.unwrap_or(InitTarget::Local {
-        name: "dev".to_string(),
-        port: crate::config::DEFAULT_LOCAL_PORT,
-    }) {
+    let target = match target {
+        Some(target) => target,
+        None if prompts::is_interactive() => prompts::select_init_target()?,
+        None => InitTarget::Local {
+            name: "dev".to_string(),
+            port: crate::config::DEFAULT_LOCAL_PORT,
+        },
+    };
+
+    let next_steps = match target {
         InitTarget::Local { name, port } => {
+            let instance_name = name.clone();
             config.local.clear();
             config.local.insert(
                 name,
@@ -51,12 +59,14 @@ pub async fn run(path: Option<String>, target: Option<InitTarget>) -> Result<()>
                 },
             );
             write_example_request(&project_dir)?;
+            local_next_steps(&instance_name)
         }
         InitTarget::Enterprise {
             name,
             cluster_id,
             gateway_url,
         } => {
+            let instance_name = name.clone();
             require_auth().await?;
             config.local.clear();
             config.enterprise.insert(
@@ -71,25 +81,41 @@ pub async fn run(path: Option<String>, target: Option<InitTarget>) -> Result<()>
                     availability_mode: None,
                     gateway_node_type: None,
                     db_node_type: None,
+                    min_instances: 1,
+                    max_instances: 1,
+                    db_config: Default::default(),
                 },
             );
+            enterprise_next_steps(&instance_name)
         }
-    }
+    };
 
     config.save_to_file(&config_path)?;
     append_gitignore(&project_dir)?;
     op.success();
 
-    print_instructions(
-        "Next steps:",
-        &[
-            "Run 'helix run dev' to start local Helix Enterprise dev",
-            "Create or edit a dynamic query JSON request",
-            "Run 'helix query dev --file examples/request.json'",
-        ],
-    );
+    let next_step_refs: Vec<&str> = next_steps.iter().map(String::as_str).collect();
+    print_instructions("Next steps:", &next_step_refs);
 
     Ok(())
+}
+
+fn local_next_steps(instance_name: &str) -> Vec<String> {
+    vec![
+        format!(
+            "Run 'helix run {instance_name}' to start local Helix Enterprise dev in the background"
+        ),
+        "Create or edit a dynamic query JSON request".to_string(),
+        format!("Run 'helix query {instance_name} --file examples/request.json'"),
+    ]
+}
+
+fn enterprise_next_steps(instance_name: &str) -> Vec<String> {
+    vec![
+        format!("Run 'helix sync {instance_name}' to refresh Enterprise Cloud metadata"),
+        "Ensure gateway_url and query auth settings are configured".to_string(),
+        format!("Run 'helix query {instance_name} --file <request.json>'"),
+    ]
 }
 
 fn write_example_request(project_dir: &Path) -> Result<()> {
@@ -106,7 +132,10 @@ fn write_example_request(project_dir: &Path) -> Result<()> {
             "queries": [{
                 "Query": {
                     "name": "node_count",
-                    "steps": ["Count"],
+                    "steps": [
+                        {"NWhere": {"Eq": ["$label", {"String": "User"}]}},
+                        "Count"
+                    ],
                     "condition": null
                 }
             }],
@@ -117,6 +146,48 @@ fn write_example_request(project_dir: &Path) -> Result<()> {
 
     fs::write(&request_path, serde_json::to_string_pretty(&request)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn example_request_starts_with_source_step() {
+        let dir = std::env::temp_dir().join(format!(
+            "helix-init-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        write_example_request(&dir).unwrap();
+        let request: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("examples/request.json")).unwrap(),
+        )
+        .unwrap();
+        let steps = &request["query"]["queries"][0]["Query"]["steps"];
+
+        assert!(steps[0].get("NWhere").is_some());
+        assert_eq!(steps[1], "Count");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn local_next_steps_use_instance_name() {
+        let steps = local_next_steps("qa");
+
+        assert!(steps[0].contains("helix run qa"));
+        assert!(steps[2].contains("helix query qa"));
+    }
+
+    #[test]
+    fn enterprise_next_steps_use_instance_name() {
+        let steps = enterprise_next_steps("production");
+
+        assert!(steps[0].contains("helix sync production"));
+        assert!(steps[2].contains("helix query production"));
+    }
 }
 
 fn append_gitignore(project_dir: &Path) -> Result<()> {

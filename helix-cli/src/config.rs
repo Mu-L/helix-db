@@ -70,8 +70,14 @@ pub struct ProjectConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
     pub name: String,
+    #[serde(default = "default_queries_path")]
+    pub queries: PathBuf,
     #[serde(default = "default_container_runtime")]
     pub container_runtime: ContainerRuntime,
+}
+
+fn default_queries_path() -> PathBuf {
+    PathBuf::from("db")
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -110,6 +116,110 @@ pub struct LocalInstanceConfig {
     pub image: String,
     #[serde(default = "default_enterprise_dev_tag")]
     pub tag: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VectorConfig {
+    #[serde(default = "default_m")]
+    pub m: u32,
+    #[serde(default = "default_ef_construction")]
+    pub ef_construction: u32,
+    #[serde(default = "default_ef_search")]
+    pub ef_search: u32,
+    #[serde(default = "default_db_max_size_gb")]
+    pub db_max_size_gb: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct GraphConfig {
+    #[serde(default)]
+    pub secondary_indices: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DbConfig {
+    #[serde(default, skip_serializing_if = "is_default_vector_config")]
+    pub vector_config: VectorConfig,
+    #[serde(default, skip_serializing_if = "is_default_graph_config")]
+    pub graph_config: GraphConfig,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub mcp: bool,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub bm25: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(
+        default = "default_embedding_model",
+        skip_serializing_if = "is_default_embedding_model"
+    )]
+    pub embedding_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphvis_node_label: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_m() -> u32 {
+    16
+}
+
+fn default_ef_construction() -> u32 {
+    128
+}
+
+fn default_ef_search() -> u32 {
+    768
+}
+
+fn default_db_max_size_gb() -> u32 {
+    20
+}
+
+fn default_embedding_model() -> Option<String> {
+    Some("text-embedding-ada-002".to_string())
+}
+
+fn is_default_embedding_model(value: &Option<String>) -> bool {
+    *value == default_embedding_model()
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+fn is_default_vector_config(value: &VectorConfig) -> bool {
+    *value == VectorConfig::default()
+}
+
+fn is_default_graph_config(value: &GraphConfig) -> bool {
+    *value == GraphConfig::default()
+}
+
+impl Default for VectorConfig {
+    fn default() -> Self {
+        Self {
+            m: default_m(),
+            ef_construction: default_ef_construction(),
+            ef_search: default_ef_search(),
+            db_max_size_gb: default_db_max_size_gb(),
+        }
+    }
+}
+
+impl Default for DbConfig {
+    fn default() -> Self {
+        Self {
+            vector_config: VectorConfig::default(),
+            graph_config: GraphConfig::default(),
+            mcp: true,
+            bm25: true,
+            schema: None,
+            embedding_model: default_embedding_model(),
+            graphvis_node_label: None,
+        }
+    }
 }
 
 fn default_local_port() -> u16 {
@@ -159,6 +269,16 @@ pub struct EnterpriseInstanceConfig {
     pub gateway_node_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub db_node_type: Option<String>,
+    #[serde(default = "default_min_instances")]
+    pub min_instances: u64,
+    #[serde(default = "default_min_instances")]
+    pub max_instances: u64,
+    #[serde(flatten)]
+    pub db_config: DbConfig,
+}
+
+fn default_min_instances() -> u64 {
+    1
 }
 
 fn default_query_auth_header() -> String {
@@ -297,10 +417,44 @@ impl HelixConfig {
                 id: None,
                 workspace_id: None,
                 name: project_name.to_string(),
+                queries: default_queries_path(),
                 container_runtime: ContainerRuntime::Docker,
             },
             local,
             enterprise: HashMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_enterprise_config_defaults_queries_and_runtime_fields() {
+        let config: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "demo"
+
+[enterprise.production]
+cluster_id = "cluster-123"
+availability_mode = "ha"
+gateway_node_type = "GW-40"
+db_node_type = "HLX-160"
+min_instances = 2
+max_instances = 4
+"#,
+        )
+        .expect("old enterprise config should deserialize");
+
+        assert_eq!(config.project.queries, PathBuf::from("db"));
+        let enterprise = config.enterprise.get("production").unwrap();
+        assert_eq!(enterprise.availability_mode.as_deref(), Some("ha"));
+        assert_eq!(enterprise.gateway_node_type.as_deref(), Some("GW-40"));
+        assert_eq!(enterprise.db_node_type.as_deref(), Some("HLX-160"));
+        assert_eq!(enterprise.min_instances, 2);
+        assert_eq!(enterprise.max_instances, 4);
+        assert_eq!(enterprise.db_config.vector_config.db_max_size_gb, 20);
     }
 }

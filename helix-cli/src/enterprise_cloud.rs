@@ -83,6 +83,90 @@ pub struct CliEnterpriseCluster {
     pub query_auth_header: Option<String>,
     #[serde(default)]
     pub query_auth_env: Option<String>,
+    #[serde(default)]
+    pub min_gateway_count: Option<u64>,
+    #[serde(default)]
+    pub max_gateway_count: Option<u64>,
+    #[serde(default)]
+    pub min_hyperscale_count: Option<u64>,
+    #[serde(default)]
+    pub max_hyperscale_count: Option<u64>,
+    #[serde(default)]
+    pub gateway_count: Option<u64>,
+    #[serde(default)]
+    pub hyperscale_count: Option<u64>,
+    #[serde(default)]
+    pub min_instances: Option<u64>,
+    #[serde(default)]
+    pub max_instances: Option<u64>,
+}
+
+impl CliEnterpriseCluster {
+    pub fn resolved_gateway_min_count(&self) -> Option<u64> {
+        self.min_gateway_count
+            .or(self.gateway_count)
+            .or(self.max_gateway_count)
+            .or(self.min_instances)
+    }
+
+    pub fn resolved_gateway_max_count(&self) -> Option<u64> {
+        self.max_gateway_count
+            .or(self.gateway_count)
+            .or(self.min_gateway_count)
+            .or(self.min_instances)
+    }
+
+    pub fn resolved_hyperscale_min_count(&self) -> Option<u64> {
+        self.min_hyperscale_count
+            .or(self.hyperscale_count)
+            .or(self.max_hyperscale_count)
+            .or(self.max_instances)
+    }
+
+    pub fn resolved_hyperscale_max_count(&self) -> Option<u64> {
+        self.max_hyperscale_count
+            .or(self.hyperscale_count)
+            .or(self.min_hyperscale_count)
+            .or(self.max_instances)
+    }
+
+    pub fn resolved_gateway_count(&self) -> Option<u64> {
+        self.resolved_gateway_min_count()
+    }
+
+    pub fn resolved_hyperscale_count(&self) -> Option<u64> {
+        self.resolved_hyperscale_min_count()
+    }
+
+    pub fn compatibility_min_instances(&self) -> Option<u64> {
+        if let (Some(gateway_count), Some(hyperscale_count)) = (
+            self.resolved_gateway_min_count(),
+            self.resolved_hyperscale_min_count(),
+        ) {
+            Some(gateway_count.min(hyperscale_count))
+        } else {
+            self.min_instances
+        }
+    }
+
+    pub fn compatibility_max_instances(&self) -> Option<u64> {
+        if let (Some(gateway_count), Some(hyperscale_count)) = (
+            self.resolved_gateway_max_count(),
+            self.resolved_hyperscale_max_count(),
+        ) {
+            Some(gateway_count.max(hyperscale_count))
+        } else {
+            self.max_instances
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CliClusterProject {
+    pub cluster_id: String,
+    pub project_id: String,
+    pub project_name: String,
+    pub workspace_id: String,
 }
 
 async fn get_json<T: DeserializeOwned>(
@@ -170,6 +254,21 @@ pub async fn fetch_workspace_clusters(
         format!("{base_url}/api/cli/workspaces/{workspace_id}/clusters"),
         api_key,
         "fetch workspace clusters",
+    )
+    .await
+}
+
+pub async fn fetch_enterprise_cluster_project(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    cluster_id: &str,
+) -> Result<CliClusterProject> {
+    get_json(
+        client,
+        format!("{base_url}/api/cli/enterprise-clusters/{cluster_id}/project"),
+        api_key,
+        "fetch enterprise cluster project",
     )
     .await
 }

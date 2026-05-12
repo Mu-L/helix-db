@@ -2,9 +2,10 @@ use crate::config::InstanceInfo;
 use crate::local_runtime::LocalRuntime;
 use crate::output::{Operation, Verbosity};
 use crate::project::ProjectContext;
+use crate::prompts;
 use eyre::{Result, eyre};
 
-pub async fn run(instance: Option<String>, detach: bool, port: Option<u16>) -> Result<()> {
+pub async fn run(instance: Option<String>, foreground: bool, port: Option<u16>) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
     let instance = resolve_local_instance(&project, instance)?;
     let InstanceInfo::Local(config) = project.config.get_instance(&instance)? else {
@@ -15,14 +16,18 @@ pub async fn run(instance: Option<String>, detach: bool, port: Option<u16>) -> R
         config.port = port;
     }
 
-    let op = Operation::new("Running", &instance);
+    let op = Operation::new(if foreground { "Running" } else { "Starting" }, &instance);
     crate::output::warning(
         "Local enterprise-dev uses in-memory storage. Stopping or restarting wipes local data.",
     );
 
     project.ensure_instance_dir(&instance)?;
     let runtime = LocalRuntime::new(&project);
-    if detach {
+    if foreground {
+        crate::output::info("Running in foreground. Press Ctrl-C to stop.");
+        runtime.run_foreground(&instance, &config).await?;
+        op.success();
+    } else {
         runtime.run_detached(&instance, &config)?;
         op.success();
         if Verbosity::current().show_normal() {
@@ -31,10 +36,6 @@ pub async fn run(instance: Option<String>, detach: bool, port: Option<u16>) -> R
                 ("Container", &runtime.container_name(&instance)),
             ]);
         }
-    } else {
-        crate::output::info("Running in foreground. Press Ctrl-C to stop.");
-        runtime.run_foreground(&instance, &config)?;
-        op.success();
     }
 
     Ok(())
@@ -44,6 +45,9 @@ fn resolve_local_instance(project: &ProjectContext, instance: Option<String>) ->
     if let Some(instance) = instance {
         return Ok(instance);
     }
+    if prompts::is_interactive() && project.config.local.len() > 1 {
+        return prompts::select_instance(&local_instances(project), "Run which local instance?");
+    }
     if project.config.local.contains_key("dev") {
         return Ok("dev".to_string());
     }
@@ -51,4 +55,15 @@ fn resolve_local_instance(project: &ProjectContext, instance: Option<String>) ->
         return Ok(project.config.local.keys().next().unwrap().clone());
     }
     Err(eyre!("No local instance specified"))
+}
+
+fn local_instances(project: &ProjectContext) -> Vec<(String, String)> {
+    let mut instances: Vec<(String, String)> = project
+        .config
+        .local
+        .iter()
+        .map(|(name, config)| (name.clone(), format!("http://localhost:{}", config.port)))
+        .collect();
+    instances.sort_by(|a, b| a.0.cmp(&b.0));
+    instances
 }

@@ -2,8 +2,9 @@ use clap::{Parser, Subcommand};
 use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
 use helix_cli::{
-    AddTarget, AuthAction, ConfigAction, DashboardAction, InitTarget, MetricsAction, commands,
-    errors, metrics_sender, output, update,
+    AddTarget, AuthAction, ClusterConfigAction, ConfigAction, DashboardAction, InitTarget,
+    MetricsAction, ProjectConfigAction, WorkspaceConfigAction, commands, errors, metrics_sender,
+    output, update,
 };
 use std::io::IsTerminal;
 use tui_banner::{Align, Banner, ColorMode, Fill, Gradient, Palette};
@@ -38,35 +39,41 @@ enum Commands {
     /// Add a local v2 or Enterprise Cloud instance
     Add {
         #[command(subcommand)]
-        target: AddTarget,
+        target: Option<AddTarget>,
     },
 
-    /// Run a local v2 instance
+    /// Run a local v2 instance in the background
     Run {
         /// Instance name to run
         instance: Option<String>,
-        /// Run in the background
-        #[arg(long)]
+        /// Run in the foreground and stop on Ctrl-C
+        #[arg(long, conflicts_with = "detach")]
+        foreground: bool,
+        /// Run in the background (default)
+        #[arg(long, hide = true)]
         detach: bool,
         /// Override local port for this run
         #[arg(long)]
         port: Option<u16>,
     },
 
-    /// Stop a detached local v2 instance
+    /// Stop a background local v2 instance
     Stop {
         /// Instance name to stop
         instance: Option<String>,
     },
 
-    /// Restart a detached local v2 instance
+    /// Restart a background local v2 instance
     Restart {
         /// Instance name to restart
         instance: Option<String>,
     },
 
     /// Show local and Enterprise Cloud instance status
-    Status,
+    Status {
+        /// Instance name to show, defaults to all instances
+        instance: Option<String>,
+    },
 
     /// View logs for a local or Enterprise Cloud instance
     Logs {
@@ -107,6 +114,15 @@ enum Commands {
         compact: bool,
     },
 
+    /// Deploy an Enterprise Cloud instance
+    Push {
+        /// Enterprise instance name to deploy
+        instance: Option<String>,
+        /// Deprecated Helix Cloud dev deploy override; ignored for Enterprise deploys
+        #[arg(long, hide = true)]
+        dev: bool,
+    },
+
     /// Enterprise Cloud auth operations
     Auth {
         #[command(subcommand)]
@@ -114,15 +130,37 @@ enum Commands {
     },
 
     /// Configure workspace, project, and Enterprise cluster defaults
+    #[command(hide = true)]
     Config {
         #[command(subcommand)]
-        action: ConfigAction,
+        action: Option<ConfigAction>,
+    },
+
+    /// Manage active Enterprise Cloud workspace selection
+    Workspace {
+        #[command(subcommand)]
+        action: Option<WorkspaceConfigAction>,
+    },
+
+    /// Manage linked Enterprise Cloud project selection
+    Project {
+        #[command(subcommand)]
+        action: Option<ProjectConfigAction>,
+    },
+
+    /// List and inspect Enterprise Cloud clusters
+    Cluster {
+        #[command(subcommand)]
+        action: Option<ClusterConfigAction>,
     },
 
     /// Sync Enterprise Cloud metadata into helix.toml
     Sync {
         /// Enterprise instance name
         instance: Option<String>,
+        /// Overwrite local/remote source during reconciliation without confirmation prompts
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Prune local v2 containers/workspaces
@@ -132,12 +170,18 @@ enum Commands {
         /// Prune all local instances
         #[arg(short, long)]
         all: bool,
+        /// Skip confirmation prompts
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Delete an instance from helix.toml and local runtime state
     Delete {
         /// Instance name to delete
         instance: String,
+        /// Skip confirmation prompts
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Manage metrics collection
@@ -223,14 +267,15 @@ fn display_welcome(update_available: Option<String>) {
 }
 
 fn print_command(cmd: &str, desc: &str, use_color: bool) {
+    let padded = format!("{cmd:<38}");
     if use_color {
         println!(
-            "  {}  {}",
-            cmd.truecolor(255, 165, 54).bold(),
+            "  {} {}",
+            padded.truecolor(255, 165, 54).bold(),
             desc.dimmed()
         );
     } else {
-        println!("  {:34} {}", cmd, desc);
+        println!("  {padded} {desc}");
     }
 }
 
@@ -253,12 +298,13 @@ async fn main() -> Result<()> {
         Some(Commands::Add { target }) => commands::add::run(target).await,
         Some(Commands::Run {
             instance,
-            detach,
+            foreground,
+            detach: _,
             port,
-        }) => commands::run::run(instance, detach, port).await,
+        }) => commands::run::run(instance, foreground, port).await,
         Some(Commands::Stop { instance }) => commands::stop::run(instance).await,
         Some(Commands::Restart { instance }) => commands::restart::run(instance).await,
-        Some(Commands::Status) => commands::status::run().await,
+        Some(Commands::Status { instance }) => commands::status::run(instance).await,
         Some(Commands::Logs {
             instance,
             follow,
@@ -274,11 +320,19 @@ async fn main() -> Result<()> {
             port,
             compact,
         }) => commands::query::run(instance, file, warm, host, port, compact).await,
+        Some(Commands::Push { instance, dev }) => {
+            commands::push::run(instance, dev, &metrics_sender).await
+        }
         Some(Commands::Auth { action }) => commands::auth::run(action).await,
         Some(Commands::Config { action }) => commands::config::run(action).await,
-        Some(Commands::Sync { instance }) => commands::sync::run(instance).await,
-        Some(Commands::Prune { instance, all }) => commands::prune::run(instance, all).await,
-        Some(Commands::Delete { instance }) => commands::delete::run(instance).await,
+        Some(Commands::Workspace { action }) => commands::config::run_workspace(action).await,
+        Some(Commands::Project { action }) => commands::config::run_project(action).await,
+        Some(Commands::Cluster { action }) => commands::config::run_cluster(action).await,
+        Some(Commands::Sync { instance, yes }) => commands::sync::run(instance, yes).await,
+        Some(Commands::Prune { instance, all, yes }) => {
+            commands::prune::run(instance, all, yes).await
+        }
+        Some(Commands::Delete { instance, yes }) => commands::delete::run(instance, yes).await,
         Some(Commands::Metrics { action }) => commands::metrics::run(action).await,
         Some(Commands::Dashboard { action }) => commands::dashboard::run(action).await,
         Some(Commands::Update { force }) => commands::update::run(force).await,
@@ -303,4 +357,141 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_defaults_to_background() {
+        let cli = Cli::parse_from(["helix", "run", "qa"]);
+
+        match cli.command {
+            Some(Commands::Run {
+                instance,
+                foreground,
+                detach,
+                port,
+            }) => {
+                assert_eq!(instance.as_deref(), Some("qa"));
+                assert!(!foreground);
+                assert!(!detach);
+                assert_eq!(port, None);
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn run_foreground_flag_enables_attached_mode() {
+        let cli = Cli::parse_from(["helix", "run", "qa", "--foreground"]);
+
+        match cli.command {
+            Some(Commands::Run { foreground, .. }) => assert!(foreground),
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn run_detach_flag_remains_background_alias() {
+        let cli = Cli::parse_from(["helix", "run", "qa", "--detach"]);
+
+        match cli.command {
+            Some(Commands::Run {
+                foreground, detach, ..
+            }) => {
+                assert!(!foreground);
+                assert!(detach);
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn run_foreground_conflicts_with_detach_alias() {
+        assert!(Cli::try_parse_from(["helix", "run", "qa", "--foreground", "--detach"]).is_err());
+    }
+
+    #[test]
+    fn add_allows_interactive_entrypoint() {
+        let cli = Cli::parse_from(["helix", "add"]);
+
+        match cli.command {
+            Some(Commands::Add { target }) => assert!(target.is_none()),
+            _ => panic!("expected add command"),
+        }
+    }
+
+    #[test]
+    fn root_workspace_command_parses() {
+        let cli = Cli::parse_from(["helix", "workspace", "list"]);
+
+        match cli.command {
+            Some(Commands::Workspace {
+                action: Some(WorkspaceConfigAction::List { .. }),
+            }) => {}
+            _ => panic!("expected workspace list command"),
+        }
+    }
+
+    #[test]
+    fn root_project_command_parses() {
+        let cli = Cli::parse_from(["helix", "project", "show"]);
+
+        match cli.command {
+            Some(Commands::Project {
+                action: Some(ProjectConfigAction::Show { .. }),
+            }) => {}
+            _ => panic!("expected project show command"),
+        }
+    }
+
+    #[test]
+    fn root_cluster_command_parses() {
+        let cli = Cli::parse_from(["helix", "cluster", "list"]);
+
+        match cli.command {
+            Some(Commands::Cluster {
+                action: Some(ClusterConfigAction::List { .. }),
+            }) => {}
+            _ => panic!("expected cluster list command"),
+        }
+    }
+
+    #[test]
+    fn status_accepts_optional_instance() {
+        let cli = Cli::parse_from(["helix", "status", "qa"]);
+
+        match cli.command {
+            Some(Commands::Status { instance }) => assert_eq!(instance.as_deref(), Some("qa")),
+            _ => panic!("expected status command"),
+        }
+    }
+
+    #[test]
+    fn push_accepts_optional_enterprise_instance() {
+        let cli = Cli::parse_from(["helix", "push", "production"]);
+
+        match cli.command {
+            Some(Commands::Push { instance, dev }) => {
+                assert_eq!(instance.as_deref(), Some("production"));
+                assert!(!dev);
+            }
+            _ => panic!("expected push command"),
+        }
+    }
+
+    #[test]
+    fn sync_accepts_yes_for_noninteractive_reconciliation() {
+        let cli = Cli::parse_from(["helix", "sync", "production", "--yes"]);
+
+        match cli.command {
+            Some(Commands::Sync { instance, yes }) => {
+                assert_eq!(instance.as_deref(), Some("production"));
+                assert!(yes);
+            }
+            _ => panic!("expected sync command"),
+        }
+    }
 }

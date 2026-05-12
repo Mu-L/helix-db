@@ -3,9 +3,12 @@ use crate::errors::CliError;
 use crate::output::Step;
 use crate::project::ProjectContext;
 use eyre::{Result, eyre};
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+use tokio::process::Command as TokioCommand;
 
 pub const CONTAINER_PORT: u16 = 8080;
 
@@ -107,7 +110,11 @@ impl LocalRuntime {
         Ok(())
     }
 
-    pub fn run_foreground(&self, instance_name: &str, config: &LocalInstanceConfig) -> Result<()> {
+    pub async fn run_foreground(
+        &self,
+        instance_name: &str,
+        config: &LocalInstanceConfig,
+    ) -> Result<()> {
         Self::check_available(self.runtime)?;
         self.pull_image(config)?;
 
@@ -115,7 +122,7 @@ impl LocalRuntime {
         let image = config.image_ref();
         let _ = self.remove_container(&name);
 
-        let status = Command::new(self.runtime.binary())
+        let mut child = TokioCommand::new(self.runtime.binary())
             .args([
                 "run",
                 "--rm",
@@ -128,31 +135,54 @@ impl LocalRuntime {
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
-            .status()
+            .spawn()
             .map_err(|e| eyre!("Failed to run {name}: {e}"))?;
 
-        if !status.success() {
-            return Err(eyre!("{name} exited with status {status}"));
+        let mut wait = Box::pin(child.wait());
+        tokio::select! {
+            status = &mut wait => {
+                let status = status?;
+                if !status.success() {
+                    return Err(eyre!("{name} exited with status {status}"));
+                }
+            }
+            signal = tokio::signal::ctrl_c() => {
+                signal?;
+                crate::output::info("Stopping foreground local Helix instance");
+                let _ = self.remove_container(&name);
+                match tokio::time::timeout(Duration::from_secs(10), &mut wait).await {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(e)) => return Err(eyre!("Failed to wait for {name} to stop: {e}")),
+                    Err(_) => return Err(eyre!("Timed out waiting for {name} to stop")),
+                }
+            }
         }
 
         Ok(())
     }
 
-    pub fn stop(&self, instance_name: &str) -> Result<()> {
+    pub fn stop(&self, instance_name: &str) -> Result<bool> {
         let name = self.container_name(instance_name);
         let stop = Command::new(self.runtime.binary())
             .args(["stop", &name])
             .output()
             .map_err(|e| eyre!("Failed to stop {name}: {e}"))?;
 
-        if !stop.status.success() {
+        let existed = if stop.status.success() {
+            true
+        } else {
             let stderr = String::from_utf8_lossy(&stop.stderr);
-            if !stderr.contains("No such container") {
+            if stderr.contains("No such container") {
+                false
+            } else if stderr.contains("is not running") {
+                true
+            } else {
                 return Err(eyre!("Failed to stop {name}:\n{stderr}"));
             }
-        }
+        };
 
-        self.remove_container(&name)
+        let removed = self.remove_container(&name)?;
+        Ok(existed || removed)
     }
 
     pub fn restart(&self, instance_name: &str, config: &LocalInstanceConfig) -> Result<()> {
@@ -230,7 +260,7 @@ impl LocalRuntime {
         }))
     }
 
-    pub fn prune_instance(&self, instance_name: &str) -> Result<()> {
+    pub fn prune_instance(&self, instance_name: &str) -> Result<bool> {
         let name = self.container_name(instance_name);
         self.remove_container(&name)
     }
@@ -248,25 +278,27 @@ impl LocalRuntime {
             })
     }
 
-    fn remove_container(&self, name: &str) -> Result<()> {
+    fn remove_container(&self, name: &str) -> Result<bool> {
         let output = Command::new(self.runtime.binary())
             .args(["rm", "-f", name])
             .output()
             .map_err(|e| eyre!("Failed to remove {name}: {e}"))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.contains("No such container") {
-                return Err(eyre!("Failed to remove {name}:\n{stderr}"));
-            }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("No such container") {
+            return Ok(false);
         }
-        Ok(())
+
+        if !output.status.success() {
+            return Err(eyre!("Failed to remove {name}:\n{stderr}"));
+        }
+        Ok(true)
     }
 
     fn wait_ready(&self, port: u16) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            if self.query_endpoint_ready(port) {
                 return Ok(());
             }
             thread::sleep(Duration::from_millis(250));
@@ -277,5 +309,33 @@ impl LocalRuntime {
                 "check logs with 'helix logs' or verify port {port} is reachable"
             ))
             .into())
+    }
+
+    fn query_endpoint_ready(&self, port: u16) -> bool {
+        let Ok(mut stream) = TcpStream::connect_timeout(
+            &(std::net::Ipv4Addr::LOCALHOST, port).into(),
+            Duration::from_millis(500),
+        ) else {
+            return false;
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(750)));
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(750)));
+
+        let body = r#"{"request_type":"read","query":{"queries":[{"Query":{"name":"readiness","steps":[{"NWhere":{"Eq":["$label",{"String":"__HelixReadiness__"}]}},"Count"],"condition":null}}],"returns":["readiness"]},"parameters":{}}"#;
+        let request = format!(
+            "POST /v1/query HTTP/1.1\r\nHost: localhost:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+
+        if stream.write_all(request.as_bytes()).is_err() {
+            return false;
+        }
+
+        let mut response = String::new();
+        if stream.read_to_string(&mut response).is_err() {
+            return false;
+        }
+
+        response.starts_with("HTTP/1.1 2") || response.starts_with("HTTP/1.0 2")
     }
 }

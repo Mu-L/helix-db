@@ -57,8 +57,7 @@ pub fn print_confirm(message: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    let input = print_prompt(&format!("{message} [y/N]"))?;
-    Ok(matches!(input.trim().to_lowercase().as_str(), "y" | "yes"))
+    crate::prompts::confirm(message)
 }
 
 pub fn print_prompt(message: &str) -> std::io::Result<String> {
