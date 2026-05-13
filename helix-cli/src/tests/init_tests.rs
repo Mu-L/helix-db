@@ -1,5 +1,5 @@
-use crate::commands::init::run;
 use crate::CloudDeploymentTypeCommand;
+use crate::commands::init::run;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;

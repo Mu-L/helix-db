@@ -2,7 +2,7 @@
 
 use crate::commands::auth::Credentials;
 use crate::commands::integrations::helix::cloud_base_url;
-use crate::config::ContainerRuntime;
+use crate::config::{ContainerRuntime, InstanceInfo};
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
 use crate::sse_client::{SseClient, SseEvent};
@@ -42,6 +42,8 @@ pub enum LogSource {
         user_id: String,
         api_key: String,
     },
+    /// Enterprise cluster error logs via Helix Cloud API
+    Enterprise { cluster_id: String, api_key: String },
 }
 
 impl LogSource {
@@ -63,7 +65,6 @@ impl LogSource {
                 runtime: docker.runtime,
             })
         } else {
-            // Cloud instance
             let credentials = credentials
                 .ok_or_else(|| eyre!("Authentication required for cloud instance logs"))?;
             let cluster_id = instance_config
@@ -71,11 +72,18 @@ impl LogSource {
                 .ok_or_else(|| eyre!("Cloud instance must have a cluster_id"))?
                 .to_string();
 
-            Ok(LogSource::Cloud {
-                cluster_id,
-                user_id: credentials.user_id.clone(),
-                api_key: credentials.helix_admin_key.clone(),
-            })
+            if matches!(&instance_config, InstanceInfo::Enterprise(_)) {
+                Ok(LogSource::Enterprise {
+                    cluster_id,
+                    api_key: credentials.helix_admin_key.clone(),
+                })
+            } else {
+                Ok(LogSource::Cloud {
+                    cluster_id,
+                    user_id: credentials.user_id.clone(),
+                    api_key: credentials.helix_admin_key.clone(),
+                })
+            }
         }
     }
 
@@ -95,6 +103,9 @@ impl LogSource {
                 user_id,
                 api_key,
             } => stream_cloud_logs(cluster_id, user_id, api_key, &mut on_line).await,
+            LogSource::Enterprise { .. } => Err(eyre!(
+                "Live log streaming is not supported for enterprise instances. Use range output instead."
+            )),
         }
     }
 
@@ -114,6 +125,10 @@ impl LogSource {
                 user_id,
                 api_key,
             } => query_cloud_logs(cluster_id, user_id, api_key, start, end).await,
+            LogSource::Enterprise {
+                cluster_id,
+                api_key,
+            } => query_enterprise_logs(cluster_id, api_key, start, end).await,
         }
     }
 }
@@ -265,6 +280,37 @@ async fn query_cloud_logs(
     if !response.status().is_success() {
         let error = response.text().await.unwrap_or_default();
         return Err(eyre!("Failed to fetch logs: {}", error));
+    }
+
+    let range_response: CloudLogsRangeResponse = response.json().await?;
+    let logs = range_response.logs.into_iter().map(|l| l.message).collect();
+    Ok(logs)
+}
+
+/// Query historical error logs for an enterprise cluster.
+async fn query_enterprise_logs(
+    cluster_id: &str,
+    api_key: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Vec<String>> {
+    let start_ts = start.timestamp();
+    let end_ts = end.timestamp();
+
+    let url = format!(
+        "{}/api/cli/enterprise-clusters/{}/logs/range?start_time={}&end_time={}",
+        cloud_base_url(),
+        cluster_id,
+        start_ts,
+        end_ts
+    );
+
+    let client = reqwest::Client::new();
+    let response = client.get(&url).header("x-api-key", api_key).send().await?;
+
+    if !response.status().is_success() {
+        let error = response.text().await.unwrap_or_default();
+        return Err(eyre!("Failed to fetch enterprise logs: {}", error));
     }
 
     let range_response: CloudLogsRangeResponse = response.json().await?;

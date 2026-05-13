@@ -347,15 +347,22 @@ pub fn input_feedback_message() -> Result<String> {
     Ok(message)
 }
 
-/// Prompt user to select a workspace from a list
-pub fn select_workspace(workspaces: &[crate::commands::sync::CliWorkspace]) -> Result<String> {
+/// Prompt user to select a workspace from a list.
+///
+/// Each item is `(id, display_name, slug)`.
+pub fn select_workspace(workspaces: &[(String, String, String)]) -> Result<String> {
+    if workspaces.is_empty() {
+        return Err(eyre::eyre!("No workspaces found"));
+    }
+
     if workspaces.len() == 1 {
-        return Ok(workspaces[0].id.clone());
+        return Ok(workspaces[0].0.clone());
     }
 
     let mut select = cliclack::select("Select a workspace");
-    for ws in workspaces {
-        select = select.item(ws.id.clone(), ws.name.as_str(), "");
+    for (id, name, slug) in workspaces {
+        let hint = format!("slug: {slug}");
+        select = select.item(id.clone(), name.as_str(), hint.as_str());
     }
     let selected = select.interact()?;
     Ok(selected)

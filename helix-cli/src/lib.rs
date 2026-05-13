@@ -1,5 +1,5 @@
 // Library interface for helix-cli to enable testing
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 
 pub mod cleanup;
 pub mod commands;
@@ -133,6 +133,119 @@ impl CloudDeploymentTypeCommand {
             CloudDeploymentTypeCommand::Local { name } => name.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum ConfigOutputFormat {
+    #[default]
+    Human,
+    Json,
+}
+
+#[derive(Subcommand)]
+pub enum ConfigAction {
+    /// Manage the active workspace selection
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceConfigAction,
+    },
+    /// Manage the project linked in helix.toml
+    Project {
+        #[command(subcommand)]
+        action: ProjectConfigAction,
+    },
+    /// List local and remote clusters for a workspace or project
+    Cluster {
+        #[command(subcommand)]
+        action: ClusterConfigAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WorkspaceConfigAction {
+    /// List accessible workspaces
+    List {
+        /// Include workspace members
+        #[arg(long)]
+        members: bool,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
+        format: ConfigOutputFormat,
+    },
+    /// Show the currently selected workspace
+    Show {
+        /// Output format
+        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
+        format: ConfigOutputFormat,
+    },
+    /// Switch the active workspace
+    Switch {
+        /// Workspace slug by default, or workspace ID with --id
+        workspace: Option<String>,
+
+        /// Treat the selector as a workspace ID instead of a slug
+        #[arg(long)]
+        id: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProjectConfigAction {
+    /// List projects in the selected workspace
+    List {
+        /// Workspace slug by default, or workspace ID with --id
+        workspace: Option<String>,
+
+        /// Treat the workspace selector as a workspace ID instead of a slug
+        #[arg(long)]
+        id: bool,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
+        format: ConfigOutputFormat,
+    },
+    /// Show the project linked in helix.toml
+    Show {
+        /// Output format
+        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
+        format: ConfigOutputFormat,
+    },
+    /// Switch the project linked in helix.toml
+    Switch {
+        /// Project name by default, or project ID with --id
+        project: Option<String>,
+
+        /// Treat the selector as a project ID instead of a project name
+        #[arg(long)]
+        id: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ClusterConfigAction {
+    /// List local instances plus live workspace/project clusters
+    List {
+        /// Workspace slug to inspect
+        #[arg(long, conflicts_with = "workspace_id")]
+        workspace: Option<String>,
+
+        /// Workspace ID to inspect
+        #[arg(long = "workspace-id", conflicts_with = "workspace")]
+        workspace_id: Option<String>,
+
+        /// Project name to narrow the remote results within the selected workspace
+        #[arg(long, conflicts_with = "project_id")]
+        project: Option<String>,
+
+        /// Project ID to narrow the remote results
+        #[arg(long = "project-id", conflicts_with = "project")]
+        project_id: Option<String>,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
+        format: ConfigOutputFormat,
+    },
 }
 
 #[cfg(test)]
