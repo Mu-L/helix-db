@@ -1,77 +1,63 @@
 # Helix CLI Testing Guide
 
-For each of these, make sure you're in the helix-cli directory.
-Then, create a directory called test-(some name).
-`cd` into that directory.
-Instead of the `helix` command in the commands below, use `cargo run -- <args passed to helix>`.
+Use an isolated temporary project and home directory when testing local runtime behavior. From the repository root, use `cargo run -p helix-cli -- <args>` or the built `target/debug/helix` binary.
 
-## Local Flows (Non-Cloud Testing)
+## Interactive Prompt Flows
 
-- `helix init` with default settings; check helix.toml created with empty template and ./db/ queries path
-- `helix init --path /custom/path` with custom directory; verify project created in specified location
-- `helix init --template custom_template` with custom template; confirm template applied correctly
-- `helix init --queries-path ./custom-queries/` with custom queries directory; validate queries path set correctly
-- `helix check` to validate all instances; verify all configurations and queries validated
-- `helix check my-instance` to validate specific instance; confirm only specified instance checked
-- `helix compile` to compile queries; verify queries compiled to default output
-- `helix compile --path ./custom-output --output my-instance` with custom settings; check compilation to specified path and instance
-- `helix build my-instance` to build local Docker instance; verify Dockerfile and docker-compose.yml generated; confirm Docker image built successfully
-- `helix push my-instance` to deploy local Docker instance; verify container starts and is accessible on configured port
-- `helix start my-instance` to start existing local Docker instance; verify container starts without rebuild
-- `helix stop my-instance` to stop running local Docker instance; confirm container stops cleanly
-- `helix status` to view all instances; confirm all instances listed with correct status and Docker container states
-- `helix prune` to clean unused resources; verify containers, images cleaned while preserving volumes
-- `helix prune my-instance` to clean specific instance resources; confirm only specified instance cleaned
-- `helix prune --all` to clean all instances; verify all project instances cleaned
-- `helix metrics full` to enable full metrics; verify metrics collection enabled
-- `helix metrics basic` to enable basic metrics; confirm reduced metrics collection
-- `helix metrics off` to disable metrics; verify metrics collection disabled
-- `helix metrics status` to check metrics state; confirm current metrics setting displayed
-- `helix update` to upgrade to latest version; verify CLI updated successfully
-- `helix update --force` to force update; confirm update proceeds even if already latest
-- `helix init` in directory with existing helix.toml; verify appropriate error message
-- `helix build non-existent-instance` with invalid instance; confirm error for missing instance
-- `helix start my-instance` without building first; verify error about missing docker-compose.yml
-- `helix build my-instance` without Docker installed/running; confirm Docker availability error
-- `helix push my-instance` without Docker daemon running; verify Docker daemon error
-- `helix add` with conflicting instance names; verify duplicate name error
+- In a real terminal, run `helix init`; verify it prompts for local vs Enterprise and still creates the selected project type.
+- In a project with multiple local instances, run `helix run`, `helix stop`, `helix restart`, and `helix logs`; verify each prompts for an instance.
+- In a project with multiple instances, run `helix status`; verify it prompts for all instances or a single instance.
+- Run `helix add`; verify it prompts for local vs Enterprise and required fields.
+- Run `helix prune`; verify it prompts for one local instance or all local instances.
+- Run `helix workspace`, `helix project`, and `helix cluster`; verify each prompts for the relevant Enterprise Cloud selection.
+- Repeat representative commands with explicit arguments in a non-TTY context; verify they do not prompt.
 
-## Cloud/Remote Flows
+## Local V2 Flows
 
-## Project Initialization
+- `helix init` with default settings; verify `helix.toml`, `.helix/`, `.gitignore`, and `examples/request.json` are created.
+- `helix init --path /custom/path local --name dev --port 18080`; verify the local instance is configured with the requested name and port.
+- `helix add local --name qa --port 18081`; verify the second local instance is added.
+- `helix add local --name qa --port 18081`; verify duplicate names fail clearly.
+- `helix run dev`; verify the local container starts in the background and becomes query-ready.
+- `helix query dev --file examples/request.json`; verify the scaffolded dynamic query succeeds.
+- `helix query dev --file examples/request.json --compact`; verify compact JSON output.
+- `helix logs dev`; verify local container logs are printed.
+- `helix logs dev --range`; verify local range filters are rejected with a clear Enterprise-only message.
+- `helix status`; verify local instances show their runtime state.
+- `helix restart dev`; verify the instance restarts and becomes query-ready again.
+- `helix stop dev`; verify the background local container is removed.
+- `helix stop dev`; verify repeated stop reports that the instance was not running.
+- `helix prune dev`; verify Helix-owned local runtime state for that instance is removed.
+- `helix prune --all --yes`; verify all local instance runtime state is removed.
+- `helix delete qa --yes`; verify the instance is removed from `helix.toml` and local runtime state is cleaned.
+- `helix dashboard status`; verify a not-running dashboard is reported clearly.
+- `helix dashboard start --host localhost --helix-port 18080 --port 13000`; verify the dashboard starts.
+- `helix dashboard stop`; verify the dashboard container is removed.
+- `helix metrics full`, `helix metrics basic`, `helix metrics off`, and `helix metrics status`; verify telemetry settings and status output.
 
-- `helix init --cloud` with cloud instance; verify cloud instance configured in helix.toml
-- `helix init --cloud --cloud-region eu-west-1` with custom region; check region set correctly
-- `helix init --ecr` with ECR instance; confirm ECR instance added to config
-- `helix init --fly` with Fly.io instance; verify Fly instance created with default settings
-- `helix init --fly --fly-auth token --fly-volume-size 50 --fly-vm-size performance-2x --fly-public false` with custom Fly settings; check all parameters applied
+## Enterprise Cloud Flows
 
-## Instance Management
-
-- `helix add my-instance --cloud` to add cloud instance; verify instance added to existing project
-- `helix add my-ecr --ecr` to add ECR instance; confirm ECR instance configured
-- `helix add my-fly --fly --fly-volume-size 30` to add Fly instance with custom volume; check instance created with correct volume size
-- `helix delete my-instance` to remove instance; verify instance completely removed from config and infrastructure
-
-## Build and Deployment
-
-- `helix build my-instance` to build instance; verify build process completes successfully
-- `helix push my-instance` to deploy instance; confirm instance deployed and running
-- `helix start my-instance` to start existing instance; verify instance starts without rebuild
-- `helix stop my-instance` to stop running instance; confirm instance stops cleanly
-
-## Data Operations
-
-- `helix sync my-instance` to sync source files from remote; verify local queries updated from instance
-- `helix sync` in a workspace without helix.toml; ensure standard and enterprise clusters are selectable
-
-## Authentication
-
-- `helix auth login` to authenticate with Helix cloud; verify login successful and credentials stored
-- `helix auth logout` to sign out; confirm credentials cleared
-- `helix auth create-key my-cluster` to generate API key; verify key created for specified cluster
+- `helix auth login`; verify credentials are stored.
+- `helix auth logout`; verify credentials are cleared.
+- `helix auth create-key <cluster-id>`; verify an API key is created for the requested cluster.
+- `helix init enterprise --name production --cluster-id <cluster-id> --gateway-url <url>`; verify Enterprise config is written.
+- `helix add enterprise --name staging --cluster-id <cluster-id> --gateway-url <url>`; verify Enterprise config is added.
+- `helix workspace list`; verify accessible workspaces render.
+- `helix project list`; verify projects render for the selected workspace.
+- `helix cluster list`; verify Enterprise clusters render.
+- `helix push production`; verify an Enterprise query Cargo project compiles, produces `queries.json`, and deploys to the configured cluster.
+- `helix push dev`; verify local v2 instances are rejected with a clear `helix run` suggestion.
+- `helix sync production`; verify Enterprise source snapshots are reconciled and metadata is synced into `helix.toml`.
+- `helix sync production --yes`; verify non-interactive reconciliation can proceed without prompts.
+- `helix logs production --range`; verify Enterprise historical logs are queried.
+- `helix query production --file examples/request.json`; verify the command fails clearly if `gateway_url` or query auth configuration is missing.
 
 ## Error Scenarios
 
-- `helix push` without building first; verify appropriate build dependency error
-- Commands requiring authentication without login; confirm proper authentication error messages
+- `helix status` outside a project; verify it exits nonzero with a project configuration error.
+- `helix init` in a directory with existing `helix.toml`; verify it fails clearly.
+- `helix query dev --file missing.json`; verify missing query files fail clearly.
+- `helix query dev --file invalid.json`; verify invalid JSON fails clearly.
+- `helix query dev --file write.json --warm`; verify `--warm` is rejected for write requests.
+- `helix run dev --foreground`; verify attached mode runs in the foreground and Ctrl-C stops the container.
+- `helix run dev` without Docker or Podman running; verify runtime availability errors are clear.

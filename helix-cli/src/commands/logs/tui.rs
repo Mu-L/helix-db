@@ -84,13 +84,7 @@ fn days_in_month(year: i32, month: u32) -> i32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
-        2 => {
-            if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) {
-                29
-            } else {
-                28
-            }
-        }
+        2 if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) => 29,
         _ => 28,
     }
 }
@@ -301,21 +295,19 @@ async fn run_app(
                                     KeyCode::Char('z') => {
                                         app.pending_z = true;
                                     }
-                                    KeyCode::Char('l') => {
-                                        if app.mode != LogMode::Live {
-                                            // Switch to live mode - restart streaming
-                                            stream_handle.abort();
-                                            app.mode = LogMode::Live;
-                                            app.logs.clear();
-                                            app.scroll_offset = 0;
-                                            app.status_message =
-                                                Some("Switching to live mode...".to_string());
-                                            fetch_initial_logs(app, size.height as usize).await?;
-                                            // Restart SSE stream
-                                            let (rx, handle) = spawn_live_stream(app.log_source.clone());
-                                            log_rx = rx;
-                                            stream_handle = handle;
-                                        }
+                                    KeyCode::Char('l') if app.mode != LogMode::Live => {
+                                        // Switch to live mode - restart streaming
+                                        stream_handle.abort();
+                                        app.mode = LogMode::Live;
+                                        app.logs.clear();
+                                        app.scroll_offset = 0;
+                                        app.status_message =
+                                            Some("Switching to live mode...".to_string());
+                                        fetch_initial_logs(app, size.height as usize).await?;
+                                        // Restart SSE stream
+                                        let (rx, handle) = spawn_live_stream(app.log_source.clone());
+                                        log_rx = rx;
+                                        stream_handle = handle;
                                     }
                                     KeyCode::Char('r') => {
                                         // Entering preset selection - stop streaming
@@ -359,37 +351,34 @@ async fn run_app(
                                     log_rx = rx;
                                     stream_handle = handle;
                                 }
-                                KeyCode::Up | KeyCode::Char('k') => {
-                                    if app.selected_preset > 0 {
-                                        app.selected_preset -= 1;
-                                    }
+                                KeyCode::Up | KeyCode::Char('k') if app.selected_preset > 0 => {
+                                    app.selected_preset -= 1;
                                 }
-                                KeyCode::Down | KeyCode::Char('j') => {
-                                    if app.selected_preset < PRESETS.len() - 1 {
-                                        app.selected_preset += 1;
-                                    }
+                                KeyCode::Down | KeyCode::Char('j')
+                                    if app.selected_preset < PRESETS.len() - 1 =>
+                                {
+                                    app.selected_preset += 1;
+                                }
+                                KeyCode::Enter if app.selected_preset == PRESETS.len() - 1 => {
+                                    // Custom range
+                                    app.mode = LogMode::CustomRangeInput;
+                                    app.picker_field = PickerField::Year;
+                                    app.picker_target = PickerTarget::Start;
+                                    let now = Utc::now();
+                                    app.picker_start = now - Duration::hours(1);
+                                    app.picker_end = now;
                                 }
                                 KeyCode::Enter => {
-                                    if app.selected_preset == PRESETS.len() - 1 {
-                                        // Custom range
-                                        app.mode = LogMode::CustomRangeInput;
-                                        app.picker_field = PickerField::Year;
-                                        app.picker_target = PickerTarget::Start;
-                                        let now = Utc::now();
-                                        app.picker_start = now - Duration::hours(1);
-                                        app.picker_end = now;
-                                    } else {
-                                        // Preset selected - stay in time range mode (no streaming)
-                                        let minutes = PRESETS[app.selected_preset].1;
-                                        let now = Utc::now();
-                                        app.range_start = Some(now - Duration::minutes(minutes));
-                                        app.range_end = Some(now);
-                                        app.mode = LogMode::TimeRange;
-                                        app.logs.clear();
-                                        app.scroll_offset = 0;
-                                        app.status_message = Some("Fetching logs...".to_string());
-                                        fetch_range_logs(app).await?;
-                                    }
+                                    // Preset selected - stay in time range mode (no streaming)
+                                    let minutes = PRESETS[app.selected_preset].1;
+                                    let now = Utc::now();
+                                    app.range_start = Some(now - Duration::minutes(minutes));
+                                    app.range_end = Some(now);
+                                    app.mode = LogMode::TimeRange;
+                                    app.logs.clear();
+                                    app.scroll_offset = 0;
+                                    app.status_message = Some("Fetching logs...".to_string());
+                                    fetch_range_logs(app).await?;
                                 }
                                 _ => {}
                             }
@@ -417,27 +406,25 @@ async fn run_app(
                                         PickerTarget::End => PickerTarget::Start,
                                     };
                                 }
+                                KeyCode::Enter if app.picker_start >= app.picker_end => {
+                                    app.status_message =
+                                        Some("Start time must be before end time".to_string());
+                                }
+                                KeyCode::Enter
+                                    if app.picker_end.signed_duration_since(app.picker_start)
+                                        > Duration::hours(1) =>
+                                {
+                                    app.status_message =
+                                        Some("Time range cannot exceed 1 hour".to_string());
+                                }
                                 KeyCode::Enter => {
-                                    // Validate and fetch
-                                    if app.picker_start >= app.picker_end {
-                                        app.status_message =
-                                            Some("Start time must be before end time".to_string());
-                                    } else {
-                                        let duration =
-                                            app.picker_end.signed_duration_since(app.picker_start);
-                                        if duration > Duration::hours(1) {
-                                            app.status_message =
-                                                Some("Time range cannot exceed 1 hour".to_string());
-                                        } else {
-                                            app.range_start = Some(app.picker_start);
-                                            app.range_end = Some(app.picker_end);
-                                            app.mode = LogMode::TimeRange;
-                                            app.logs.clear();
-                                            app.scroll_offset = 0;
-                                            app.status_message = Some("Fetching logs...".to_string());
-                                            fetch_range_logs(app).await?;
-                                        }
-                                    }
+                                    app.range_start = Some(app.picker_start);
+                                    app.range_end = Some(app.picker_end);
+                                    app.mode = LogMode::TimeRange;
+                                    app.logs.clear();
+                                    app.scroll_offset = 0;
+                                    app.status_message = Some("Fetching logs...".to_string());
+                                    fetch_range_logs(app).await?;
                                 }
                                 _ => {}
                             }
@@ -742,21 +729,13 @@ fn format_picker_line(
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     let content = match app.mode {
-        LogMode::Live | LogMode::TimeRange => {
-            if let Some(ref msg) = app.status_message {
-                msg.clone()
-            } else {
-                "j/k: page | zt: top | zb: bottom | l: live | r: time range | esc: exit".to_string()
-            }
-        }
+        LogMode::Live | LogMode::TimeRange => app.status_message.clone().unwrap_or_else(|| {
+            "j/k: page | zt: top | zb: bottom | l: live | r: time range | esc: exit".to_string()
+        }),
         LogMode::SelectingPreset => "up/down: select | enter: confirm | esc: back".to_string(),
-        LogMode::CustomRangeInput => {
-            if let Some(ref msg) = app.status_message {
-                msg.clone()
-            } else {
-                "arrows: adjust | tab: switch | enter: confirm | esc: back".to_string()
-            }
-        }
+        LogMode::CustomRangeInput => app.status_message.clone().unwrap_or_else(|| {
+            "arrows: adjust | tab: switch | enter: confirm | esc: back".to_string()
+        }),
     };
 
     let footer = Paragraph::new(content)

@@ -1,3 +1,4 @@
+use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
 use self_update::cargo_crate_version;
 
@@ -28,9 +29,9 @@ fn run_sync(force: bool) -> Result<()> {
         .build()?;
 
     let current_version = cargo_crate_version!();
+    let latest_release = status.get_latest_release()?;
 
     if !force {
-        let latest_release = status.get_latest_release()?;
         if latest_release.version == current_version {
             check_step.done_with_info("already up to date");
             op.success();
@@ -44,6 +45,10 @@ fn run_sync(force: bool) -> Result<()> {
         ));
     } else {
         check_step.done_with_info("force update");
+    }
+
+    if is_v3_update(current_version, &latest_release.version) {
+        print_v3_update_warning();
     }
 
     let mut install_step =
@@ -73,4 +78,37 @@ fn run_sync(force: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn is_v3_update(current_version: &str, latest_version: &str) -> bool {
+    let current_version = current_version.trim_start_matches('v');
+    let latest_version = latest_version.trim_start_matches('v');
+
+    !current_version.starts_with("3.") && latest_version.starts_with("3.")
+}
+
+fn print_v3_update_warning() {
+    if !Verbosity::current().show_normal() {
+        return;
+    }
+
+    println!();
+    println!(
+        "{}",
+        "WARNING: Updating from this version will update to v3, which is a breaking change."
+            .yellow()
+            .bold()
+    );
+    println!(
+        "{}",
+        "All existing databases will cease to work and only the Helix v2 DB will be available."
+            .yellow()
+            .bold()
+    );
+    println!(
+        "{}",
+        "For more information, see https://docs.helix-db.com"
+            .yellow()
+            .bold()
+    );
 }

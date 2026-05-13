@@ -172,23 +172,31 @@ async fn select_or_load_workspace(
     }
 
     if let Some(project_id) = project_id_hint {
-        match fetch_project_details(client, base_url, &credentials.helix_admin_key, project_id)
-            .await
+        let project = match fetch_project_details(
+            client,
+            base_url,
+            &credentials.helix_admin_key,
+            project_id,
+        )
+        .await
         {
-            Ok(project) => {
-                if let Some(workspace) = find_workspace_by_id(&workspaces, &project.workspace_id) {
-                    return Ok(SelectedWorkspace {
-                        id: workspace.id.clone(),
-                        workspace_type: workspace.workspace_type.clone(),
-                    });
-                }
-            }
+            Ok(project) => Some(project),
             Err(error) => {
                 crate::output::warning(&format!(
                     "Could not resolve workspace from project.id '{}': {}. Falling back to the selected workspace.",
                     project_id, error
                 ));
+                None
             }
+        };
+
+        if let Some(project) = project
+            && let Some(workspace) = find_workspace_by_id(&workspaces, &project.workspace_id)
+        {
+            return Ok(SelectedWorkspace {
+                id: workspace.id.clone(),
+                workspace_type: workspace.workspace_type.clone(),
+            });
         }
     }
 

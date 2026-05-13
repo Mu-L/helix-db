@@ -37,6 +37,7 @@ use std::{fmt::Write, fs};
 // Development flag - set to true when working on V2 locally
 const DEV_MODE: bool = cfg!(debug_assertions);
 const HELIX_REPO_URL: &str = "https://github.com/helixdb/helix-db.git";
+const HELIX_RELEASE_TAG: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
 // Get the cargo workspace root at compile time
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
@@ -281,15 +282,16 @@ fn create_dev_cache(repo_cache: &std::path::Path) -> Result<()> {
 }
 
 fn create_git_cache(repo_cache: &std::path::Path) -> Result<()> {
-    let output = std::process::Command::new("git")
-        .args(["clone", HELIX_REPO_URL, &repo_cache.to_string_lossy()])
-        .output()?;
+    let args = git_clone_args(repo_cache);
+    let output = std::process::Command::new("git").args(&args).output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let error = crate::errors::CliError::new("failed to clone Helix repository")
-            .with_context(stderr.to_string())
-            .with_hint("ensure git is installed and you have internet connectivity");
+        let error = crate::errors::CliError::new(format!(
+            "failed to clone Helix repository at {HELIX_RELEASE_TAG}"
+        ))
+        .with_context(stderr.to_string())
+        .with_hint("ensure git is installed and you have internet connectivity");
         return Err(eyre::eyre!("{}", error.render()));
     }
 
@@ -309,20 +311,68 @@ fn update_dev_cache(repo_cache: &std::path::Path) -> Result<()> {
 }
 
 fn update_git_cache(repo_cache: &std::path::Path) -> Result<()> {
+    let fetch_args = git_fetch_release_args();
     let output = std::process::Command::new("git")
-        .args(["pull"])
+        .args(&fetch_args)
         .current_dir(repo_cache)
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(eyre::eyre!(
-            "Failed to update Helix repository:\n{}",
+            "Failed to fetch Helix repository release {HELIX_RELEASE_TAG}:\n{}",
+            stderr
+        ));
+    }
+
+    let checkout_args = git_checkout_release_args();
+    let output = std::process::Command::new("git")
+        .args(&checkout_args)
+        .current_dir(repo_cache)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre::eyre!(
+            "Failed to checkout Helix repository release {HELIX_RELEASE_TAG}:\n{}",
             stderr
         ));
     }
 
     Ok(())
+}
+
+fn git_clone_args(repo_cache: &std::path::Path) -> Vec<String> {
+    vec![
+        "clone".to_string(),
+        "--branch".to_string(),
+        HELIX_RELEASE_TAG.to_string(),
+        "--depth".to_string(),
+        "1".to_string(),
+        "--single-branch".to_string(),
+        HELIX_REPO_URL.to_string(),
+        repo_cache.to_string_lossy().into_owned(),
+    ]
+}
+
+fn git_fetch_release_args() -> Vec<String> {
+    vec![
+        "fetch".to_string(),
+        "--force".to_string(),
+        "--depth".to_string(),
+        "1".to_string(),
+        "origin".to_string(),
+        format!("refs/tags/{HELIX_RELEASE_TAG}:refs/tags/{HELIX_RELEASE_TAG}"),
+    ]
+}
+
+fn git_checkout_release_args() -> Vec<String> {
+    vec![
+        "checkout".to_string(),
+        "--force".to_string(),
+        "--detach".to_string(),
+        format!("refs/tags/{HELIX_RELEASE_TAG}"),
+    ]
 }
 
 pub(crate) async fn prepare_instance_workspace(
@@ -597,4 +647,46 @@ fn build_binary_using_cargo(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn helix_release_tag_is_pinned_to_current_release() {
+        assert_eq!(HELIX_RELEASE_TAG, "v2.3.5");
+    }
+
+    #[test]
+    fn git_clone_args_checkout_release_tag() {
+        let args = git_clone_args(Path::new("/tmp/helix-repo"));
+
+        assert!(args.contains(&"--branch".to_string()));
+        assert!(args.contains(&HELIX_RELEASE_TAG.to_string()));
+        assert!(args.contains(&"--depth".to_string()));
+        assert!(args.contains(&"1".to_string()));
+        assert!(!args.contains(&"main".to_string()));
+    }
+
+    #[test]
+    fn git_update_args_fetch_and_checkout_release_tag() {
+        let fetch_args = git_fetch_release_args();
+        let checkout_args = git_checkout_release_args();
+
+        assert_eq!(fetch_args[0], "fetch");
+        assert!(fetch_args.contains(&"--force".to_string()));
+        assert!(fetch_args.contains(&"--depth".to_string()));
+        assert!(fetch_args.contains(&format!(
+            "refs/tags/{HELIX_RELEASE_TAG}:refs/tags/{HELIX_RELEASE_TAG}"
+        )));
+        assert!(!fetch_args.contains(&"pull".to_string()));
+        assert!(!fetch_args.contains(&"main".to_string()));
+
+        assert_eq!(checkout_args[0], "checkout");
+        assert!(checkout_args.contains(&"--detach".to_string()));
+        assert!(checkout_args.contains(&format!("refs/tags/{HELIX_RELEASE_TAG}")));
+        assert!(!checkout_args.contains(&"main".to_string()));
+    }
 }

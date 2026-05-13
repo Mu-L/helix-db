@@ -618,12 +618,11 @@ async fn workspace_list(include_members: bool, format: ConfigOutputFormat) -> Re
             current_workspace_id,
             workspaces: items,
         }),
+        ConfigOutputFormat::Human if items.is_empty() => {
+            println!("No workspaces found.");
+            Ok(())
+        }
         ConfigOutputFormat::Human => {
-            if items.is_empty() {
-                println!("No workspaces found.");
-                return Ok(());
-            }
-
             print_section("Workspaces", items.len());
             for item in &items {
                 print_workspace_item(item);
@@ -661,18 +660,19 @@ async fn workspace_show(format: ConfigOutputFormat) -> Result<()> {
     match format {
         ConfigOutputFormat::Json => print_json(&output),
         ConfigOutputFormat::Human => {
-            if let Some(workspace) = &output.workspace {
-                print_context_block(
-                    "Current Workspace",
-                    &[
-                        ("Name", workspace.name.clone()),
-                        ("Slug", workspace.url_slug.clone()),
-                        ("Type", workspace.workspace_type.clone()),
-                        ("ID", workspace.id.clone()),
-                    ],
-                );
-            } else {
-                println!("No workspace selected.");
+            match &output.workspace {
+                Some(workspace) => {
+                    print_context_block(
+                        "Current Workspace",
+                        &[
+                            ("Name", workspace.name.clone()),
+                            ("Slug", workspace.url_slug.clone()),
+                            ("Type", workspace.workspace_type.clone()),
+                            ("ID", workspace.id.clone()),
+                        ],
+                    );
+                }
+                None => println!("No workspace selected."),
             }
             Ok(())
         }
