@@ -68,27 +68,24 @@ impl HelixParser {
                         let mut schema_pairs = pair.into_inner();
 
                         let schema_version = match schema_pairs.peek() {
-                            Some(pair) => {
-                                if pair.as_rule() == Rule::schema_version {
-                                    let version_pair = schema_pairs.next().ok_or_else(|| {
-                                        ParserError::from("Expected schema version")
-                                    })?;
-                                    let version_str = version_pair
-                                        .into_inner()
-                                        .next()
-                                        .ok_or_else(|| {
-                                            ParserError::from("Schema version missing value")
-                                        })?
-                                        .as_str();
-                                    version_str.parse::<usize>().map_err(|e| {
-                                        ParserError::from(format!(
-                                            "Invalid schema version number '{version_str}': {e}"
-                                        ))
+                            Some(pair) if pair.as_rule() == Rule::schema_version => {
+                                let version_pair = schema_pairs
+                                    .next()
+                                    .ok_or_else(|| ParserError::from("Expected schema version"))?;
+                                let version_str = version_pair
+                                    .into_inner()
+                                    .next()
+                                    .ok_or_else(|| {
+                                        ParserError::from("Schema version missing value")
                                     })?
-                                } else {
-                                    1
-                                }
+                                    .as_str();
+                                version_str.parse::<usize>().map_err(|e| {
+                                    ParserError::from(format!(
+                                        "Invalid schema version number '{version_str}': {e}"
+                                    ))
+                                })?
                             }
+                            Some(_) => 1,
                             None => 1,
                         };
 
