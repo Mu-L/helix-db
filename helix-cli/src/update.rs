@@ -135,20 +135,21 @@ pub async fn check_for_updates() -> Result<Option<String>> {
     }
 
     // Perform actual update check
-    match fetch_latest_version().await {
-        Ok(latest_version) => {
-            if is_newer_version(CURRENT_VERSION, &latest_version) {
-                save_update_check(Some(latest_version.clone()))?;
-                return Ok(Some(latest_version));
-            } else {
-                save_update_check(Some(latest_version))?;
-            }
-        }
+    let latest_version = match fetch_latest_version().await {
+        Ok(latest_version) => latest_version,
         Err(_) => {
             // Silently fail - don't block CLI usage due to network issues
             save_update_check(None)?;
+            return Ok(None);
         }
+    };
+
+    if is_newer_version(CURRENT_VERSION, &latest_version) {
+        save_update_check(Some(latest_version.clone()))?;
+        return Ok(Some(latest_version));
     }
+
+    save_update_check(Some(latest_version))?;
 
     Ok(None)
 }

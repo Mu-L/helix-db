@@ -122,9 +122,11 @@ async fn metrics_task(rx: Receiver<MetricsMessage>) -> Result<()> {
     while let Ok(message) = rx.recv_async().await {
         match message {
             MetricsMessage::Event(event) => {
-                if let Some(ref mut writer) = log_writer
-                    && let Err(e) = write_event_to_log(writer, &event)
-                {
+                let Some(writer) = log_writer.as_mut() else {
+                    continue;
+                };
+
+                if let Err(e) = write_event_to_log(writer, &event) {
                     eprintln!("Failed to write metrics event: {e}");
                 }
             }

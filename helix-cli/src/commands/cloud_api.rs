@@ -516,13 +516,10 @@ pub async fn resolve_or_create_project(
     }
 
     match prompts::select_missing_project_choice(project_name)? {
+        prompts::MissingProjectChoice::ChooseExisting if projects.is_empty() => Err(eyre!(
+            "No projects exist in this workspace yet. Create one to continue."
+        )),
         prompts::MissingProjectChoice::ChooseExisting => {
-            if projects.is_empty() {
-                return Err(eyre!(
-                    "No projects exist in this workspace yet. Create one to continue."
-                ));
-            }
-
             let selected_project_id = prompts::select_project(&project_prompt_items(&projects))?;
             let selected_project = projects
                 .into_iter()

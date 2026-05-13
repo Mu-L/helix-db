@@ -477,11 +477,12 @@ fn compute_manifest_diff(
         match (local.get(&path), remote.get(&path)) {
             (Some(_), None) => diff.local_only.push(path),
             (None, Some(_)) => diff.remote_only.push(path),
-            (Some(local_entry), Some(remote_entry)) => {
-                if local_entry.sha256 != remote_entry.sha256 {
-                    diff.changed.push(path);
-                }
+            (Some(local_entry), Some(remote_entry))
+                if local_entry.sha256 != remote_entry.sha256 =>
+            {
+                diff.changed.push(path);
             }
+            (Some(_), Some(_)) => {}
             (None, None) => {}
         }
     }
@@ -1050,42 +1051,47 @@ async fn reconcile_standard_cluster_snapshot(
             crate::output::info("Local and cloud changes are already in sync.");
         }
         SnapshotComparison::LocalOnly => {
-            if let Err(error) = validate_local_hx_queries_for_push(project) {
-                op.failure();
-                return Err(eyre!(
-                    "your Cloud cluster has no queries, but local .hx queries failed validation. Fix errors before pushing to cloud.\n\n{}",
-                    error
-                ));
+            match validate_local_hx_queries_for_push(project) {
+                Ok(()) => {}
+                Err(error) => {
+                    op.failure();
+                    return Err(eyre!(
+                        "your Cloud cluster has no queries, but local .hx queries failed validation. Fix errors before pushing to cloud.\n\n{}",
+                        error
+                    ));
+                }
             }
 
-            if confirm_sync_action(
+            match confirm_sync_action(
                 assume_yes,
                 "your Cloud cluster has no queries! Push your local files to cloud now?",
             )? {
-                let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
-                print_plan_for_direction(&diff, SyncDirection::Push);
-                push_local_snapshot_to_cluster(project, cluster_id, cluster_name).await?;
-                outcome = SyncReconciliationOutcome::Pushed;
-            } else {
-                crate::output::info("Left local and cloud changes unchanged.");
+                true => {
+                    let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
+                    print_plan_for_direction(&diff, SyncDirection::Push);
+                    push_local_snapshot_to_cluster(project, cluster_id, cluster_name).await?;
+                    outcome = SyncReconciliationOutcome::Pushed;
+                }
+                false => crate::output::info("Left local and cloud changes unchanged."),
             }
         }
         SnapshotComparison::RemoteOnly => {
-            if confirm_sync_action(
+            match confirm_sync_action(
                 assume_yes,
                 "Local source is empty while cloud has files. Pull cloud files to local?",
             )? {
-                let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
-                print_plan_for_direction(&diff, SyncDirection::Pull);
-                pull_remote_snapshot_into_local(
-                    &current_queries_dir,
-                    &target_queries_dir,
-                    &local_manifest,
-                    &remote_manifest,
-                )?;
-                outcome = SyncReconciliationOutcome::Pulled;
-            } else {
-                crate::output::info("Left local and cloud changes unchanged.");
+                true => {
+                    let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
+                    print_plan_for_direction(&diff, SyncDirection::Pull);
+                    pull_remote_snapshot_into_local(
+                        &current_queries_dir,
+                        &target_queries_dir,
+                        &local_manifest,
+                        &remote_manifest,
+                    )?;
+                    outcome = SyncReconciliationOutcome::Pulled;
+                }
+                false => crate::output::info("Left local and cloud changes unchanged."),
             }
         }
         SnapshotComparison::Diverged { authority, diff } => match authority {
@@ -1146,20 +1152,21 @@ async fn reconcile_standard_cluster_snapshot(
                 }
             }
             DivergenceAuthority::RemoteNewer => {
-                if confirm_sync_action(
+                match confirm_sync_action(
                     assume_yes,
                     "Cloud changes are newer. Pull cloud files to local?",
                 )? {
-                    print_plan_for_direction(&diff, SyncDirection::Pull);
-                    pull_remote_snapshot_into_local(
-                        &current_queries_dir,
-                        &target_queries_dir,
-                        &local_manifest,
-                        &remote_manifest,
-                    )?;
-                    outcome = SyncReconciliationOutcome::Pulled;
-                } else {
-                    crate::output::info("Left local and cloud changes unchanged.");
+                    true => {
+                        print_plan_for_direction(&diff, SyncDirection::Pull);
+                        pull_remote_snapshot_into_local(
+                            &current_queries_dir,
+                            &target_queries_dir,
+                            &local_manifest,
+                            &remote_manifest,
+                        )?;
+                        outcome = SyncReconciliationOutcome::Pulled;
+                    }
+                    false => crate::output::info("Left local and cloud changes unchanged."),
                 }
             }
             DivergenceAuthority::TieOrUnknown => {
@@ -1262,38 +1269,43 @@ async fn reconcile_enterprise_cluster_snapshot(
             crate::output::info("Local and enterprise cloud changes are already in sync.");
         }
         SnapshotComparison::LocalOnly => {
-            if let Err(error) = validate_local_enterprise_queries_for_push(project) {
-                op.failure();
-                return Err(eyre!(
-                    "enterprise query project failed validation. Fix errors before pushing to cloud.\n\n{}",
-                    error
-                ));
+            match validate_local_enterprise_queries_for_push(project) {
+                Ok(()) => {}
+                Err(error) => {
+                    op.failure();
+                    return Err(eyre!(
+                        "enterprise query project failed validation. Fix errors before pushing to cloud.\n\n{}",
+                        error
+                    ));
+                }
             }
 
-            if confirm_sync_action(
+            match confirm_sync_action(
                 assume_yes,
                 "your enterprise cluster has no source snapshot. Push your local query project to cloud now?",
             )? {
-                let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
-                print_plan_for_direction(&diff, SyncDirection::Push);
-                push_local_enterprise_snapshot_to_cluster(project, cluster_id, cluster_name)
-                    .await?;
-                outcome = SyncReconciliationOutcome::Pushed;
-            } else {
-                crate::output::info("Left local and cloud changes unchanged.");
+                true => {
+                    let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
+                    print_plan_for_direction(&diff, SyncDirection::Push);
+                    push_local_enterprise_snapshot_to_cluster(project, cluster_id, cluster_name)
+                        .await?;
+                    outcome = SyncReconciliationOutcome::Pushed;
+                }
+                false => crate::output::info("Left local and cloud changes unchanged."),
             }
         }
         SnapshotComparison::RemoteOnly => {
-            if confirm_sync_action(
+            match confirm_sync_action(
                 assume_yes,
                 "Local enterprise source is empty while cloud has files. Pull cloud files to local?",
             )? {
-                let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
-                print_plan_for_direction(&diff, SyncDirection::Pull);
-                apply_pull()?;
-                outcome = SyncReconciliationOutcome::Pulled;
-            } else {
-                crate::output::info("Left local and cloud changes unchanged.");
+                true => {
+                    let diff = compute_manifest_diff(&local_manifest, &remote_manifest);
+                    print_plan_for_direction(&diff, SyncDirection::Pull);
+                    apply_pull()?;
+                    outcome = SyncReconciliationOutcome::Pulled;
+                }
+                false => crate::output::info("Left local and cloud changes unchanged."),
             }
         }
         SnapshotComparison::Diverged { authority, diff } => match authority {
@@ -1349,15 +1361,16 @@ async fn reconcile_enterprise_cluster_snapshot(
                 }
             }
             DivergenceAuthority::RemoteNewer => {
-                if confirm_sync_action(
+                match confirm_sync_action(
                     assume_yes,
                     "Enterprise cloud changes are newer. Pull cloud files to local?",
                 )? {
-                    print_plan_for_direction(&diff, SyncDirection::Pull);
-                    apply_pull()?;
-                    outcome = SyncReconciliationOutcome::Pulled;
-                } else {
-                    crate::output::info("Left local and cloud changes unchanged.");
+                    true => {
+                        print_plan_for_direction(&diff, SyncDirection::Pull);
+                        apply_pull()?;
+                        outcome = SyncReconciliationOutcome::Pulled;
+                    }
+                    false => crate::output::info("Left local and cloud changes unchanged."),
                 }
             }
             DivergenceAuthority::TieOrUnknown => {
