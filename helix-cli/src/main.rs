@@ -201,6 +201,9 @@ enum Commands {
         /// Force update even if already on latest version
         #[arg(long)]
         force: bool,
+        /// Update to the last v1-compatible CLI version
+        #[arg(long)]
+        v1: bool,
     },
 
     /// Send feedback to the Helix team
@@ -335,7 +338,7 @@ async fn main() -> Result<()> {
         Some(Commands::Delete { instance, yes }) => commands::delete::run(instance, yes).await,
         Some(Commands::Metrics { action }) => commands::metrics::run(action).await,
         Some(Commands::Dashboard { action }) => commands::dashboard::run(action).await,
-        Some(Commands::Update { force }) => commands::update::run(force).await,
+        Some(Commands::Update { force, v1 }) => commands::update::run(force, v1).await,
         Some(Commands::Feedback { message }) => commands::feedback::run(message).await,
     };
 
@@ -411,6 +414,19 @@ mod tests {
     #[test]
     fn run_foreground_conflicts_with_detach_alias() {
         assert!(Cli::try_parse_from(["helix", "run", "qa", "--foreground", "--detach"]).is_err());
+    }
+
+    #[test]
+    fn update_v1_flag_parses() {
+        let cli = Cli::parse_from(["helix", "update", "--v1"]);
+
+        match cli.command {
+            Some(Commands::Update { force, v1 }) => {
+                assert!(!force);
+                assert!(v1);
+            }
+            _ => panic!("expected update command"),
+        }
     }
 
     #[test]
