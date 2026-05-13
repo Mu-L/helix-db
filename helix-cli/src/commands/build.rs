@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn helix_release_tag_is_pinned_to_current_release() {
-        assert_eq!(HELIX_RELEASE_TAG, "v2.3.4");
+        assert_eq!(HELIX_RELEASE_TAG, "v2.3.5");
     }
 
     #[test]

@@ -13,18 +13,18 @@ Remove all v1 local, v1 cloud, HQL, generated Rust, and custom Docker image buil
 
 - Add `helix run` as the primary local v2 command.
 - Remove `helix start`; `run` replaces local start semantics.
-- Keep `helix stop`, because `helix run --detach` needs an explicit stop command.
-- Make `helix run` foreground by default and stop the local container on Ctrl-C.
-- Add `helix run --detach` for background local development.
+- Keep `helix stop`, because background `helix run` needs an explicit stop command.
+- Make `helix run` start in the background by default.
+- Add `helix run --foreground` for attached local development with Ctrl-C cleanup.
 - Keep dynamic queries only for the initial local v2 workflow.
 - Do not mount `queries.json` by default.
 - Do not support `.hx`, HQL, or generated Rust in the CLI.
-- Remove `helix push` entirely. Enterprise Cloud should not use push semantics for v2 dynamic-query usage.
-- Keep `auth`, `init`, `add`, `config`, `sync`, and `logs` for Enterprise Cloud.
+- Keep local v2 free of push/build semantics. Restore `helix push` only for Enterprise query project deployment to Enterprise Cloud clusters.
+- Keep `auth`, `init`, `add`, `workspace`, `project`, `cluster`, `sync`, and `logs` for Enterprise Cloud.
 - Remove v1 standard cloud flows, Fly.io flows, ECR flows, and Docker registry publishing.
 - Remove `helix backup`; it is LMDB/v1-specific and local v2 has no supported persistent backup flow.
 - Extract shared Enterprise Cloud control-plane helpers before deleting old integration modules.
-- Treat `helix sync` as Enterprise Cloud metadata/config sync only unless a concrete v2 artifact is defined.
+- Treat `helix sync` as Enterprise source snapshot reconciliation plus Enterprise Cloud metadata/config sync.
 - Enterprise Cloud dynamic query support requires a backend contract for gateway URL and runtime query auth.
 - Remodel telemetry from compile/deploy events into run/query/sync events if telemetry remains enabled.
 
@@ -60,8 +60,9 @@ Local v2 does not have a supported backup or persistent volume lifecycle in this
 helix auth login
 helix init enterprise
 helix add enterprise --name production
-helix config workspace ...
-helix config project ...
+helix workspace ...
+helix project ...
+helix push production
 helix sync production
 helix logs production
 ```
@@ -71,7 +72,8 @@ Enterprise Cloud support remains focused on:
 - Authentication.
 - Workspace/project/cluster selection.
 - Enterprise cluster configuration.
-- Syncing Enterprise Cloud metadata and local `helix.toml` config.
+- Enterprise query project deploys with `helix push`.
+- Source snapshot reconciliation and local `helix.toml` metadata sync with `helix sync`.
 - Enterprise Cloud logs.
 - Dynamic query execution once runtime gateway URL and auth details are known.
 
@@ -92,15 +94,16 @@ Before implementing Enterprise Cloud `helix query`, confirm the backend contract
 | --- | --- |
 | `helix init` | Create a v2 project. Supports local default and Enterprise Cloud setup. No HQL scaffold. |
 | `helix add` | Add a local v2 instance or Enterprise Cloud instance. |
-| `helix run` | Pull and run `ghcr.io/helixdb/enterprise-dev`. Foreground by default, `--detach` available. |
-| `helix stop` | Stop detached local v2 containers. |
-| `helix restart` | Restart detached local v2 containers. |
+| `helix run` | Pull and run `ghcr.io/helixdb/enterprise-dev`. Background by default, `--foreground` available. |
+| `helix stop` | Stop background local v2 containers. |
+| `helix restart` | Restart background local v2 containers. |
 | `helix status` | Show local v2 and Enterprise Cloud instance status. |
 | `helix logs` | Show local v2 container logs or Enterprise Cloud logs. |
 | `helix query` | Send dynamic query JSON to local or Enterprise Cloud `/v1/query`. |
 | `helix auth` | Keep for Enterprise Cloud. |
-| `helix config` | Keep for local config and Enterprise Cloud workspace/project/cluster selection. |
-| `helix sync` | Keep for Enterprise Cloud. Remove v1 source assumptions. |
+| `helix workspace` / `helix project` / `helix cluster` | Manage Enterprise Cloud workspace/project/cluster selection. |
+| `helix push` | Enterprise-only query project deployment. Local v2 instances must use `helix run`. |
+| `helix sync` | Reconcile Enterprise source snapshots and refresh Enterprise Cloud metadata. |
 | `helix dashboard` | Keep if compatible with v2 endpoints. Default local port becomes `8080`. |
 | `helix update` | Keep. |
 | `helix metrics` | Keep if telemetry remains desired. |
@@ -113,12 +116,11 @@ Before implementing Enterprise Cloud `helix query`, confirm the backend contract
 | `helix build` | Tied to v1 HQL compilation and Docker image builds. |
 | `helix compile` | Tied to HQL and stored-query generation. |
 | `helix check` | Tied to HQL parsing and generated Rust checks. |
-| `helix push` | Tied to v1 local/cloud deploy semantics and image publishing. |
 | `helix migrate` | v1 is no longer supported. |
 | `helix backup` | Tied to v1 LMDB files. Local v2 dev storage is in-memory. |
 | Fly/ECR commands | Out of scope for v2 local plus Enterprise Cloud. |
 
-If a future Enterprise Cloud deployment command is needed, add a new explicit command instead of reusing `push`, for example `helix enterprise deploy`. Do not bring back compile/build/push semantics.
+Do not bring back local compile/build/push semantics. `helix push` is reserved for Enterprise Cloud query project deployment only.
 
 ## Local Runtime Design
 
@@ -130,7 +132,7 @@ The new manager should support:
 - Pulling `ghcr.io/helixdb/enterprise-dev`.
 - Running a named local instance.
 - Foreground mode with log streaming and Ctrl-C shutdown.
-- Detached mode with `helix stop` and `helix restart` support.
+- Background mode with `helix stop` and `helix restart` support.
 - Status and log inspection.
 - Prune/delete of local container artifacts.
 - A readiness check after container start.
@@ -146,7 +148,7 @@ It should not support:
 
 Foreground mode should not use a restart policy. Prefer `docker run --rm` / `podman run --rm`, or an equivalent compose flow that guarantees Ctrl-C stops and removes the foreground container.
 
-Detached mode can use compose and a restart policy:
+Background mode can use compose and a restart policy:
 
 ```yaml
 services:
@@ -360,7 +362,7 @@ Remove from Enterprise Cloud paths:
 
 Enterprise Cloud query execution through CLI should use the same `helix query` dynamic request path, with auth headers resolved from the selected Enterprise instance.
 
-Before deleting `commands::integrations::helix`, move shared helpers such as cloud authority/base URL handling into `enterprise_cloud.rs`. `auth`, `config`, `sync`, `logs`, and `query` should depend on this neutral module, not on deleted deployment integrations.
+Before deleting `commands::integrations::helix`, move shared helpers such as cloud authority/base URL handling into `enterprise_cloud.rs`. `auth`, workspace/project/cluster selection, `sync`, `logs`, and `query` should depend on this neutral module, not on deleted deployment integrations.
 
 Enterprise config should distinguish:
 
@@ -429,7 +431,7 @@ Status:
 
 ## Sync
 
-Keep `helix sync` for Enterprise Cloud, but remodel it away from v1/HQL source files.
+Keep `helix sync` for Enterprise Cloud source snapshots and metadata. Local v2 remains dynamic-query only and does not use source manifests.
 
 The new sync should support:
 
@@ -437,14 +439,16 @@ The new sync should support:
 - Reconciling selected workspace/project/cluster config.
 - Resolving and saving Enterprise runtime `gateway_url`.
 - Resolving and saving runtime query auth metadata or the name of the environment variable that should supply it.
+- Reconciling Enterprise query project source snapshots.
+- Regenerating `queries.json` after pulling Enterprise query project source.
 
 The new sync should not support:
 
-- `.hx` files.
-- `queries.json` regeneration.
-- HQL project validation.
+- Local v2 `.hx` files.
+- Local v2 `queries.json` regeneration or mounts.
+- HQL project validation for local v2.
 - standard cloud/v1 clusters.
-- Local file manifest push/pull unless a concrete v2 artifact is defined later.
+- Local file manifest push/pull.
 
 If the cloud API cannot provide gateway/auth details yet, `sync` should still update available Enterprise cluster metadata and clearly report which runtime query fields are missing.
 
@@ -459,7 +463,7 @@ Remove tests for:
 - Generated `config.hx.json`.
 - Docker image builds.
 - `helix build`.
-- `helix push`.
+- local/v1 `helix push` behavior.
 - `helix backup`.
 - v1 migration.
 - Fly.io/ECR/v1 cloud.
@@ -470,10 +474,10 @@ Rewrite tests for:
 - No `.hx` scaffold from `helix init`.
 - Local image config uses `ghcr.io/helixdb/enterprise-dev`.
 - Default local port is `8080`.
-- `helix run` foreground and detached command construction.
+- `helix run` foreground and background command construction.
 - Foreground `helix run` does not use restart policy and cleans up on Ctrl-C.
-- Detached `helix run --detach` uses the configured restart policy.
-- `helix stop` detached container behavior.
+- Background `helix run` uses the configured restart policy.
+- `helix stop` background container behavior.
 - `helix query` request URL/body/header handling.
 - `helix query --warm` rejects write requests before sending.
 - Enterprise Cloud auth/config/sync/log command routing remains available.
@@ -571,10 +575,10 @@ curl -X POST http://localhost:8080/v1/query \
 ### Phase 2: Local V2 Runtime
 
 - Replace Docker build manager with prebuilt image manager.
-- Implement `helix run` foreground mode.
+- Implement background `helix run` mode.
+- Implement `helix run --foreground`.
 - Ensure foreground mode does not use restart policy and removes/stops the container on Ctrl-C.
-- Implement `helix run --detach`.
-- Use restart policy only for detached mode.
+- Use restart policy only for background mode.
 - Implement `helix stop`, `restart`, `status`, and local `logs` against the new container naming.
 - Add readiness checks.
 
@@ -589,8 +593,8 @@ curl -X POST http://localhost:8080/v1/query \
 
 - Keep and simplify `auth`.
 - Rewrite `init enterprise` and `add enterprise`.
-- Rewrite `config` around Enterprise Cloud only.
-- Rewrite `sync` around Enterprise Cloud metadata/config only.
+- Rewrite workspace/project/cluster commands around Enterprise Cloud only.
+- Restore Enterprise `push` and `sync` source snapshot behavior without local v1 build/deploy behavior.
 - Rewrite Enterprise Cloud `logs`.
 - Add gateway/auth resolution for Enterprise `helix query` when backend support exists.
 
@@ -626,7 +630,7 @@ Manual local smoke:
 
 ```bash
 helix init
-helix run dev --detach
+helix run dev
 helix status
 helix query dev --file request.json
 helix logs dev
@@ -636,7 +640,7 @@ helix stop dev
 Manual foreground smoke:
 
 ```bash
-helix run dev
+helix run dev --foreground
 ```
 
 Then confirm Ctrl-C stops the local container cleanly.
@@ -647,8 +651,8 @@ Manual Enterprise Cloud smoke:
 helix auth login
 helix init enterprise
 helix add enterprise --name production
-helix config workspace list
-helix config project show
+helix workspace list
+helix project show
 helix sync production
 helix logs production
 ```
