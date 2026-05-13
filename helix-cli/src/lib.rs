@@ -135,16 +135,11 @@ impl CloudDeploymentTypeCommand {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum ConfigOutputFormat {
+    #[default]
     Human,
     Json,
-}
-
-impl Default for ConfigOutputFormat {
-    fn default() -> Self {
-        Self::Human
-    }
 }
 
 #[derive(Subcommand)]
