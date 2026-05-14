@@ -5,34 +5,49 @@ use self_update::cargo_crate_version;
 use crate::output::{Operation, Step, Verbosity};
 use crate::utils::print_error_with_hint;
 
-pub async fn run(force: bool) -> Result<()> {
+const V1_TARGET_VERSION: &str = "2.3.5";
+const V1_TARGET_TAG: &str = "v2.3.5";
+
+pub async fn run(force: bool, v1: bool) -> Result<()> {
     // We're using the self_update crate which is very handy but doesn't support async.
     // Still, this is good enough, but because it panics in an async context we must
     // do a spawn_blocking
-    tokio::task::spawn_blocking(move || run_sync(force)).await?
+    tokio::task::spawn_blocking(move || run_sync(force, v1)).await?
 }
 
-fn run_sync(force: bool) -> Result<()> {
+fn run_sync(force: bool, v1: bool) -> Result<()> {
     let op = Operation::new("Updating", "CLI");
 
     let mut check_step = Step::with_messages("Checking for updates", "Checked for updates");
     check_step.start();
 
-    let status = self_update::backends::github::Update::configure()
+    let mut update_builder = self_update::backends::github::Update::configure();
+    update_builder
         .repo_owner("HelixDB")
         .repo_name("helix-db")
         .bin_name("helix")
         .show_download_progress(true)
         .show_output(false)
         .no_confirm(true)
-        .current_version(cargo_crate_version!())
-        .build()?;
+        .current_version(cargo_crate_version!());
+
+    if v1 {
+        update_builder.target_version_tag(V1_TARGET_TAG);
+    }
+
+    let status = update_builder.build()?;
 
     let current_version = cargo_crate_version!();
     let latest_release = status.get_latest_release()?;
 
     if !force {
-        if latest_release.version == current_version {
+        let target_release = if v1 {
+            status.get_release_version(V1_TARGET_TAG)?
+        } else {
+            status.get_latest_release()?
+        };
+
+        if target_release.version == current_version {
             check_step.done_with_info("already up to date");
             op.success();
             println!("  Use --force to reinstall");
@@ -41,8 +56,10 @@ fn run_sync(force: bool) -> Result<()> {
 
         check_step.done_with_info(&format!(
             "v{current_version} -> v{}",
-            latest_release.version
+            target_release.version
         ));
+    } else if v1 {
+        check_step.done_with_info(&format!("force update to v{V1_TARGET_VERSION}"));
     } else {
         check_step.done_with_info("force update");
     }

@@ -48,9 +48,9 @@ HelixDB primarily operates with a graph + vector data model, but it can also sup
 | **Built-in MCP tools**  | Helix has built-in MCP support to allow your agents to discover data and walk the graph rather than generating human readable queries. |
 | **Built-in Embeddings** | No need to embed your data before sending it to Helix, just use the `Embed` function to vectorize text.                                |
 | **Tooling for RAG**     | HelixDB has a built-in vector search, keyword search, and graph traversals that can be used to power any type of RAG applications.     |
-| **Secure by Default**   | HelixDB is private by default. You can only access your data through your compiled HelixQL queries.                                    |
+| **Secure by Default**   | HelixDB is private by default and can be run locally or through Enterprise Cloud.                                                     |
 | **Ultra-Low Latency**   | Helix is built in Rust and uses LMDB as its storage engine to provide extremely low latencies.                                         |
-| **Type-Safe Queries**   | HelixQL is 100% type-safe, which lets you develop and deploy with the confidence that your queries will execute in production          |
+| **Dynamic Queries**     | The v2 query API accepts JSON requests through `POST /v1/query`, so local development does not require a compile/deploy loop.          |
 
 ## Getting Started
 
@@ -71,56 +71,49 @@ Start by installing the Helix CLI tool to deploy Helix locally.
    helix init
    ```
 
-3. Write queries
+3. Start a local v2 development instance
 
-   Open your newly created `.hx` files and start writing your schema and queries.
-   Head over to [our docs](https://docs.helix-db.com/documentation/hql/hql) for more information about writing queries.
+   ```bash
+   helix run dev
+   ```
 
-   ```js
-   N::User {
-      INDEX name: String,
-      age: U32
+4. Send a dynamic query
+
+   `helix init` creates `examples/request.json`, which is a ready-to-run dynamic query request.
+
+   ```bash
+   helix query dev --file examples/request.json
+   ```
+
+   Dynamic query requests are JSON payloads sent to `POST /v1/query`:
+
+   ```json
+   {
+     "request_type": "read",
+     "query": {
+       "queries": [{
+         "Query": {
+           "name": "node_count",
+           "steps": [
+             {"NWhere": {"Eq": ["$label", {"String": "User"}]}},
+             "Count"
+           ],
+           "condition": null
+         }
+       }],
+       "returns": ["node_count"]
+     },
+     "parameters": {}
    }
-
-   QUERY getUser(user_name: String) =>
-      user <- N<User>({name: user_name})
-      RETURN user
    ```
 
-4. (Optional) Check your queries compile
+5. Stop the local instance when finished
 
    ```bash
-   helix check
-   ```
+    helix stop dev
+    ```
 
-5. Deploy your queries to their API endpoints
-
-   ```bash
-   helix push dev
-   ```
-
-6. Start calling them using our [TypeScript SDK](https://github.com/HelixDB/helix-ts) or [Python SDK](https://github.com/HelixDB/helix-py). For example:
-
-   ```typescript
-   import HelixDB from "helix-ts";
-
-   // Create a new HelixDB client
-   // The default port is 6969
-   const client = new HelixDB();
-
-   // Query the database
-   await client.query("addUser", {
-     name: "John",
-     age: 20,
-   });
-
-   // Get the created user
-   const user = await client.query("getUser", {
-     user_name: "John",
-   });
-
-   console.log(user);
-   ```
+Enterprise Cloud clusters use a separate deploy path. After linking an Enterprise instance with `helix init enterprise` or `helix add enterprise`, run `helix push <instance>` to compile and upload the Enterprise query project, and `helix sync <instance>` to reconcile source snapshots and refresh cloud metadata.
 
 ## License
 

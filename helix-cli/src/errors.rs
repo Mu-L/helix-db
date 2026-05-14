@@ -212,12 +212,8 @@ pub enum ConfigError {
     MissingInstances { path: PathBuf },
     #[error("instance name cannot be empty in {path}")]
     EmptyInstanceName { path: PathBuf },
-    #[error("cloud instance '{name}' must have a non-empty cluster_id in {path}")]
+    #[error("Enterprise instance '{name}' must have a non-empty cluster_id in {path}")]
     MissingClusterId { name: String, path: PathBuf },
-    #[error(
-        "`build_mode = \"debug\"` is removed in favour of dev mode. Please update to `build_mode = \"dev\"` in {path}"
-    )]
-    DeprecatedBuildMode { path: PathBuf },
     #[error("instance '{name}' not found in helix.toml")]
     InstanceNotFound { name: String },
 }
@@ -229,10 +225,6 @@ pub enum ProjectError {
         #[source]
         source: std::io::Error,
     },
-    #[error(
-        "found v1 project configuration at {path}; run 'helix migrate --path \"{root}\"' to migrate"
-    )]
-    LegacyConfig { path: PathBuf, root: PathBuf },
     #[error("project configuration not found (searched from {start} up to filesystem root)")]
     ConfigNotFound { start: PathBuf },
     #[error("failed to create directory at {path}: {source}")]
@@ -313,12 +305,8 @@ impl ConfigError {
                 path.display()
             )),
             ConfigError::MissingClusterId { name, path } => CliError::new(format!(
-                "cloud instance '{}' must have a non-empty cluster_id in {}",
+                "Enterprise instance '{}' must have a non-empty cluster_id in {}",
                 name,
-                path.display()
-            )),
-            ConfigError::DeprecatedBuildMode { path } => CliError::new(format!(
-                "`build_mode = \"debug\"` is removed in favour of dev mode. Please update to `build_mode = \"dev\"` in {}",
                 path.display()
             )),
             ConfigError::InstanceNotFound { name } => {
@@ -334,15 +322,6 @@ impl ProjectError {
             ProjectError::CurrentDir { source } => {
                 CliError::new("failed to determine current directory")
                     .with_caused_by(source.to_string())
-            }
-            ProjectError::LegacyConfig { path, root } => {
-                config_error("found v1 project configuration")
-                    .with_file_path(path.display().to_string())
-                    .with_context("This project uses the old v1 configuration format")
-                    .with_hint(format!(
-                        "Run 'helix migrate --path \"{}\"' to migrate this project to v2 format",
-                        root.display()
-                    ))
             }
             ProjectError::ConfigNotFound { start } => {
                 config_error("project configuration not found")

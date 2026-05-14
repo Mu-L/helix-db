@@ -1,29 +1,31 @@
 # Helix CLI
 
-Command-line interface for managing Helix projects and deployments.
+Command-line interface for managing v2 Helix projects, local development instances, and Enterprise Cloud deployments.
 
 ## Commands
 
-- `init`: initialize a new project with `helix.toml`.
-- `add`: add an instance to an existing project.
-- `check`: validate config and queries.
-- `compile`: compile queries into the workspace.
-- `build`: build an instance (local or remote prep).
-- `push`: deploy/start an instance.
-- `sync`: sync source/config from Helix Cloud (standard or enterprise).
-- `start` / `stop` / `status`: manage running instances.
-- `logs`: view or stream logs.
-- `auth`: login/logout/create-key.
-- `prune`: clean containers/images/workspaces.
-- `delete`: remove an instance.
+- `init`: initialize a v2 project with `helix.toml` and a dynamic query example.
+- `add`: add a local v2 or Enterprise Cloud instance to an existing project.
+- `run`: run a local v2 instance in the background by default, or attached with `--foreground`.
+- `stop` / `restart` / `status`: manage local v2 instances and inspect Enterprise Cloud config.
+- `logs`: view local container logs or query Enterprise Cloud historical logs.
+- `query`: send a dynamic query request JSON file to `POST /v1/query`.
+- `push`: compile and deploy an Enterprise query project to an Enterprise Cloud cluster.
+- `auth`: login, logout, or create an Enterprise Cloud API key.
+- `workspace`: manage active Enterprise Cloud workspace selection.
+- `project`: manage linked Enterprise Cloud project selection.
+- `cluster`: list and inspect Enterprise Cloud clusters.
+- `sync`: reconcile Enterprise query project source and sync Enterprise Cloud metadata into `helix.toml`.
+- `prune`: clean Helix-owned local containers and workspaces.
+- `delete`: remove an instance from `helix.toml` and clean local runtime state.
 - `metrics`: manage telemetry level.
 - `dashboard`: manage the Helix Dashboard.
 - `update`: update the CLI.
-- `migrate`: migrate v1 projects to v2.
-- `backup`: back up an instance.
 - `feedback`: send feedback to the Helix team.
 
 Run `helix <command> --help` for command-specific flags and options.
+
+When run in a terminal, commands with missing choices use interactive prompts powered by `cliclack`. When run in non-interactive contexts, commands do not prompt and require explicit arguments or flags.
 
 ## Error handling
 
