@@ -55,6 +55,9 @@ enum Commands {
         /// Override local port for this run
         #[arg(long)]
         port: Option<u16>,
+        /// Use on-disk storage backed by a local MinIO container for this run
+        #[arg(long)]
+        disk: bool,
     },
 
     /// Stop a background local v2 instance
@@ -304,7 +307,8 @@ async fn main() -> Result<()> {
             foreground,
             detach: _,
             port,
-        }) => commands::run::run(instance, foreground, port).await,
+            disk,
+        }) => commands::run::run(instance, foreground, port, disk).await,
         Some(Commands::Stop { instance }) => commands::stop::run(instance).await,
         Some(Commands::Restart { instance }) => commands::restart::run(instance).await,
         Some(Commands::Status { instance }) => commands::status::run(instance).await,
@@ -376,11 +380,13 @@ mod tests {
                 foreground,
                 detach,
                 port,
+                disk,
             }) => {
                 assert_eq!(instance.as_deref(), Some("qa"));
                 assert!(!foreground);
                 assert!(!detach);
                 assert_eq!(port, None);
+                assert!(!disk);
             }
             _ => panic!("expected run command"),
         }
@@ -392,6 +398,16 @@ mod tests {
 
         match cli.command {
             Some(Commands::Run { foreground, .. }) => assert!(foreground),
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn run_disk_flag_enables_on_disk_mode() {
+        let cli = Cli::parse_from(["helix", "run", "qa", "--disk"]);
+
+        match cli.command {
+            Some(Commands::Run { disk, .. }) => assert!(disk),
             _ => panic!("expected run command"),
         }
     }
@@ -414,6 +430,39 @@ mod tests {
     #[test]
     fn run_foreground_conflicts_with_detach_alias() {
         assert!(Cli::try_parse_from(["helix", "run", "qa", "--foreground", "--detach"]).is_err());
+    }
+
+    #[test]
+    fn init_local_disk_flag_parses() {
+        let cli = Cli::parse_from(["helix", "init", "local", "--disk"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                target: Some(InitTarget::Local { name, port, disk }),
+                ..
+            }) => {
+                assert_eq!(name, "dev");
+                assert_eq!(port, helix_cli::config::DEFAULT_LOCAL_PORT);
+                assert!(disk);
+            }
+            _ => panic!("expected init local command"),
+        }
+    }
+
+    #[test]
+    fn add_local_disk_flag_parses() {
+        let cli = Cli::parse_from(["helix", "add", "local", "--name", "qa", "--disk"]);
+
+        match cli.command {
+            Some(Commands::Add {
+                target: Some(AddTarget::Local { name, port, disk }),
+            }) => {
+                assert_eq!(name, "qa");
+                assert_eq!(port, helix_cli::config::DEFAULT_LOCAL_PORT);
+                assert!(disk);
+            }
+            _ => panic!("expected add local command"),
+        }
     }
 
     #[test]

@@ -72,6 +72,21 @@ pub fn input_port(default: u16) -> Result<u16> {
     Ok(port.parse().unwrap_or(DEFAULT_LOCAL_PORT))
 }
 
+pub fn select_local_disk_mode() -> Result<bool> {
+    Ok(cliclack::select("Local storage mode")
+        .item(
+            false,
+            "In-memory",
+            "Fast startup; data is wiped when the runtime stops or restarts",
+        )
+        .item(
+            true,
+            "On-disk",
+            "Persists local data with a MinIO-backed disk volume",
+        )
+        .interact()?)
+}
+
 pub fn input_required(label: &str) -> Result<String> {
     let value: String = cliclack::input(label)
         .validate(|input: &String| {
@@ -114,10 +129,12 @@ fn select_instance_kind(prompt: &str) -> Result<InstanceKind> {
 
 pub fn select_init_target() -> Result<InitTarget> {
     match select_instance_kind("What kind of Helix instance should this project use?")? {
-        InstanceKind::Local => Ok(InitTarget::Local {
-            name: input_project_instance_name("dev")?,
-            port: input_port(DEFAULT_LOCAL_PORT)?,
-        }),
+        InstanceKind::Local => {
+            let name = input_project_instance_name("dev")?;
+            let port = input_port(DEFAULT_LOCAL_PORT)?;
+            let disk = select_local_disk_mode()?;
+            Ok(InitTarget::Local { name, port, disk })
+        }
         InstanceKind::Enterprise => Ok(InitTarget::Enterprise {
             name: input_project_instance_name("production")?,
             cluster_id: input_required("Enterprise cluster ID")?,
@@ -128,10 +145,12 @@ pub fn select_init_target() -> Result<InitTarget> {
 
 pub fn select_add_target() -> Result<AddTarget> {
     match select_instance_kind("What kind of instance should be added?")? {
-        InstanceKind::Local => Ok(AddTarget::Local {
-            name: input_instance_name("dev")?,
-            port: input_port(DEFAULT_LOCAL_PORT)?,
-        }),
+        InstanceKind::Local => {
+            let name = input_instance_name("dev")?;
+            let port = input_port(DEFAULT_LOCAL_PORT)?;
+            let disk = select_local_disk_mode()?;
+            Ok(AddTarget::Local { name, port, disk })
+        }
         InstanceKind::Enterprise => Ok(AddTarget::Enterprise {
             name: input_instance_name("production")?,
             cluster_id: input_required("Enterprise cluster ID")?,

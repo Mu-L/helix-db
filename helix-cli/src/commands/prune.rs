@@ -54,7 +54,9 @@ fn local_instances(project: &ProjectContext) -> Vec<(String, String)> {
 }
 
 async fn prune_all(project: &ProjectContext, yes: bool) -> Result<()> {
-    print_warning("This will remove local v2 containers and workspaces for all local instances.");
+    print_warning(
+        "This will remove local v2 containers, workspaces, and on-disk storage volumes for all local instances.",
+    );
     if !yes && !std::io::stdin().is_terminal() {
         return Err(eyre!(
             "Refusing to prune all instances non-interactively. Re-run with --yes to confirm."

@@ -6,7 +6,7 @@ Command-line interface for managing v2 Helix projects, local development instanc
 
 - `init`: initialize a v2 project with `helix.toml` and a dynamic query example.
 - `add`: add a local v2 or Enterprise Cloud instance to an existing project.
-- `run`: run a local v2 instance in the background by default, or attached with `--foreground`.
+- `run`: run a local v2 instance in the background by default, attached with `--foreground`, or with persistent local storage using `--disk`.
 - `stop` / `restart` / `status`: manage local v2 instances and inspect Enterprise Cloud config.
 - `logs`: view local container logs or query Enterprise Cloud historical logs.
 - `query`: send a dynamic query request JSON file to `POST /v1/query`.
@@ -16,7 +16,7 @@ Command-line interface for managing v2 Helix projects, local development instanc
 - `project`: manage linked Enterprise Cloud project selection.
 - `cluster`: list and inspect Enterprise Cloud clusters.
 - `sync`: reconcile Enterprise query project source and sync Enterprise Cloud metadata into `helix.toml`.
-- `prune`: clean Helix-owned local containers and workspaces.
+- `prune`: clean Helix-owned local containers, disk-mode volumes, and workspaces.
 - `delete`: remove an instance from `helix.toml` and clean local runtime state.
 - `metrics`: manage telemetry level.
 - `dashboard`: manage the Helix Dashboard.

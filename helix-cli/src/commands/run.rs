@@ -1,11 +1,16 @@
-use crate::config::InstanceInfo;
+use crate::config::{InstanceInfo, LocalStorageMode};
 use crate::local_runtime::LocalRuntime;
 use crate::output::{Operation, Verbosity};
 use crate::project::ProjectContext;
 use crate::prompts;
 use eyre::{Result, eyre};
 
-pub async fn run(instance: Option<String>, foreground: bool, port: Option<u16>) -> Result<()> {
+pub async fn run(
+    instance: Option<String>,
+    foreground: bool,
+    port: Option<u16>,
+    disk: bool,
+) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
     let instance = resolve_local_instance(&project, instance)?;
     let InstanceInfo::Local(config) = project.config.get_instance(&instance)? else {
@@ -15,11 +20,20 @@ pub async fn run(instance: Option<String>, foreground: bool, port: Option<u16>) 
     if let Some(port) = port {
         config.port = port;
     }
+    if disk {
+        config.storage = LocalStorageMode::Disk;
+    }
 
     let op = Operation::new(if foreground { "Running" } else { "Starting" }, &instance);
-    crate::output::warning(
-        "Local enterprise-dev uses in-memory storage. Stopping or restarting wipes local data.",
-    );
+    if config.storage.is_disk() {
+        crate::output::info(
+            "Local enterprise-dev is using on-disk storage. 'helix stop' preserves data; 'helix prune' deletes it.",
+        );
+    } else {
+        crate::output::warning(
+            "Local enterprise-dev uses in-memory storage. Stopping or restarting wipes local data.",
+        );
+    }
 
     project.ensure_instance_dir(&instance)?;
     let runtime = LocalRuntime::new(&project);

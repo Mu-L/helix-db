@@ -37,6 +37,9 @@ pub enum InitTarget {
         /// Local gateway port
         #[arg(long, default_value_t = crate::config::DEFAULT_LOCAL_PORT)]
         port: u16,
+        /// Use on-disk storage backed by a local MinIO container
+        #[arg(long)]
+        disk: bool,
     },
     /// Initialize an Enterprise Cloud project
     Enterprise {
@@ -62,6 +65,9 @@ pub enum AddTarget {
         /// Local gateway port
         #[arg(long, default_value_t = crate::config::DEFAULT_LOCAL_PORT)]
         port: u16,
+        /// Use on-disk storage backed by a local MinIO container
+        #[arg(long)]
+        disk: bool,
     },
     /// Add an Enterprise Cloud instance
     Enterprise {

@@ -2,7 +2,7 @@ use crate::InitTarget;
 use crate::commands::auth::require_auth;
 use crate::config::{
     DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER, EnterpriseInstanceConfig, HelixConfig,
-    LocalInstanceConfig,
+    LocalInstanceConfig, LocalStorageMode,
 };
 use crate::output::Operation;
 use crate::prompts;
@@ -44,17 +44,19 @@ pub async fn run(path: Option<String>, target: Option<InitTarget>) -> Result<()>
         None => InitTarget::Local {
             name: "dev".to_string(),
             port: crate::config::DEFAULT_LOCAL_PORT,
+            disk: false,
         },
     };
 
     let next_steps = match target {
-        InitTarget::Local { name, port } => {
+        InitTarget::Local { name, port, disk } => {
             let instance_name = name.clone();
             config.local.clear();
             config.local.insert(
                 name,
                 LocalInstanceConfig {
                     port,
+                    storage: LocalStorageMode::from_disk_flag(disk),
                     ..LocalInstanceConfig::default()
                 },
             );

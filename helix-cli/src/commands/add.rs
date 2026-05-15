@@ -2,7 +2,7 @@ use crate::AddTarget;
 use crate::commands::auth::require_auth;
 use crate::config::{
     DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER, EnterpriseInstanceConfig,
-    LocalInstanceConfig,
+    LocalInstanceConfig, LocalStorageMode,
 };
 use crate::output::Operation;
 use crate::project::ProjectContext;
@@ -23,13 +23,14 @@ pub async fn run(target: Option<AddTarget>) -> Result<()> {
     };
 
     match target {
-        AddTarget::Local { name, port } => {
+        AddTarget::Local { name, port, disk } => {
             ensure_available(&project, &name)?;
             let op = Operation::new("Adding", &name);
             project.config.local.insert(
                 name.clone(),
                 LocalInstanceConfig {
                     port,
+                    storage: LocalStorageMode::from_disk_flag(disk),
                     ..LocalInstanceConfig::default()
                 },
             );

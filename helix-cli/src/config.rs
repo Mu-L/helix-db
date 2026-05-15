@@ -116,6 +116,33 @@ pub struct LocalInstanceConfig {
     pub image: String,
     #[serde(default = "default_enterprise_dev_tag")]
     pub tag: String,
+    #[serde(default, skip_serializing_if = "is_default_local_storage")]
+    pub storage: LocalStorageMode,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LocalStorageMode {
+    #[default]
+    Memory,
+    Disk,
+}
+
+impl LocalStorageMode {
+    pub const fn from_disk_flag(disk: bool) -> Self {
+        if disk { Self::Disk } else { Self::Memory }
+    }
+
+    pub const fn is_disk(&self) -> bool {
+        matches!(self, Self::Disk)
+    }
+
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Disk => "disk",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -234,12 +261,17 @@ fn default_enterprise_dev_tag() -> String {
     DEFAULT_ENTERPRISE_DEV_TAG.to_string()
 }
 
+fn is_default_local_storage(value: &LocalStorageMode) -> bool {
+    *value == LocalStorageMode::Memory
+}
+
 impl Default for LocalInstanceConfig {
     fn default() -> Self {
         Self {
             port: DEFAULT_LOCAL_PORT,
             image: DEFAULT_ENTERPRISE_DEV_IMAGE.to_string(),
             tag: DEFAULT_ENTERPRISE_DEV_TAG.to_string(),
+            storage: LocalStorageMode::Memory,
         }
     }
 }
@@ -456,5 +488,41 @@ max_instances = 4
         assert_eq!(enterprise.min_instances, 2);
         assert_eq!(enterprise.max_instances, 4);
         assert_eq!(enterprise.db_config.vector_config.db_max_size_gb, 20);
+    }
+
+    #[test]
+    fn old_local_config_defaults_to_memory_storage() {
+        let config: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "demo"
+
+[local.dev]
+port = 8080
+image = "ghcr.io/helixdb/enterprise-dev"
+tag = "latest"
+"#,
+        )
+        .expect("old local config should deserialize");
+
+        let local = config.local.get("dev").unwrap();
+        assert_eq!(local.storage, LocalStorageMode::Memory);
+    }
+
+    #[test]
+    fn local_config_can_use_disk_storage() {
+        let config: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "demo"
+
+[local.dev]
+storage = "disk"
+"#,
+        )
+        .expect("disk local config should deserialize");
+
+        let local = config.local.get("dev").unwrap();
+        assert_eq!(local.storage, LocalStorageMode::Disk);
     }
 }

@@ -51,7 +51,11 @@ fn print_instance(project: &ProjectContext, runtime: &LocalRuntime, name: &str) 
                 .unwrap_or("not created");
             print_field(
                 &format!("{name} (local)"),
-                &format!("http://localhost:{} - {state}", config.port),
+                &format!(
+                    "http://localhost:{} - {state} - storage: {}",
+                    config.port,
+                    config.storage.as_str()
+                ),
             );
         }
         InstanceInfo::Enterprise(config) => {

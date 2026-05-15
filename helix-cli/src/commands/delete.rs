@@ -10,7 +10,7 @@ pub async fn run(instance: String, yes: bool) -> Result<()> {
     let mut project = ProjectContext::find_and_load(None)?;
     let info = project.config.get_instance(&instance)?;
     print_warning(&format!(
-        "This will remove instance '{instance}' from helix.toml and clean local runtime state if present."
+        "This will remove instance '{instance}' from helix.toml and clean local runtime state, including on-disk storage volumes if present."
     ));
     if !yes && !std::io::stdin().is_terminal() {
         return Err(eyre!(
@@ -24,7 +24,7 @@ pub async fn run(instance: String, yes: bool) -> Result<()> {
 
     let op = Operation::new("Deleting", &instance);
     if matches!(info, InstanceInfo::Local(_)) {
-        let _ = LocalRuntime::new(&project).stop(&instance);
+        let _ = LocalRuntime::new(&project).prune_instance(&instance);
     }
 
     project.config.local.remove(&instance);
