@@ -84,16 +84,27 @@ async fn show_metrics_status() -> Result<()> {
         println!("  {}: {user_id}", "User ID".bright_white().bold());
     }
 
-    let last_updated = std::time::UNIX_EPOCH + std::time::Duration::from_secs(config.last_updated);
-    if let Ok(datetime) = last_updated.duration_since(std::time::UNIX_EPOCH) {
-        println!(
-            "  {}: {} seconds ago",
-            "Last updated".bright_white().bold(),
-            datetime.as_secs()
-        );
-    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let age = now.saturating_sub(config.last_updated);
+    println!(
+        "  {}: {}",
+        "Last updated".bright_white().bold(),
+        format_age(age)
+    );
 
     Ok(())
+}
+
+fn format_age(seconds: u64) -> String {
+    match seconds {
+        0..=4 => "just now".to_string(),
+        5..=59 => format!("{seconds}s ago"),
+        60..=3_599 => format!("{}m ago", seconds / 60),
+        3_600..=86_399 => format!("{}h ago", seconds / 3_600),
+        _ => format!("{}d ago", seconds / 86_400),
+    }
 }
 
 static EMAIL_REGEX: LazyLock<Regex> =
@@ -110,4 +121,18 @@ fn ask_for_email() -> String {
         return ask_for_email();
     }
     email
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_age;
+
+    #[test]
+    fn formats_age_for_status_output() {
+        assert_eq!(format_age(0), "just now");
+        assert_eq!(format_age(42), "42s ago");
+        assert_eq!(format_age(60), "1m ago");
+        assert_eq!(format_age(3_600), "1h ago");
+        assert_eq!(format_age(172_800), "2d ago");
+    }
 }

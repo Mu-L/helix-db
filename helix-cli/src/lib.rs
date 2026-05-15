@@ -1,12 +1,10 @@
-// Library interface for helix-cli to enable testing
 use clap::{Subcommand, ValueEnum};
 
-pub mod cleanup;
 pub mod commands;
 pub mod config;
-pub mod docker;
+pub mod enterprise_cloud;
 pub mod errors;
-pub mod github_issue;
+pub mod local_runtime;
 pub mod metrics_sender;
 pub mod output;
 pub mod port;
@@ -18,11 +16,11 @@ pub mod utils;
 
 #[derive(Subcommand)]
 pub enum AuthAction {
-    /// Login to Helix cloud
+    /// Login to Helix Cloud
     Login,
-    /// Logout from Helix cloud
+    /// Logout from Helix Cloud
     Logout,
-    /// Rotate a cluster API key
+    /// Rotate an Enterprise cluster API key
     CreateKey {
         /// Cluster ID
         cluster: String,
@@ -30,10 +28,66 @@ pub enum AuthAction {
 }
 
 #[derive(Subcommand)]
+pub enum InitTarget {
+    /// Initialize a local v2 development project
+    Local {
+        /// Local instance name
+        #[arg(short, long, default_value = "dev")]
+        name: String,
+        /// Local gateway port
+        #[arg(long, default_value_t = crate::config::DEFAULT_LOCAL_PORT)]
+        port: u16,
+        /// Use on-disk storage backed by a local MinIO container
+        #[arg(long)]
+        disk: bool,
+    },
+    /// Initialize an Enterprise Cloud project
+    Enterprise {
+        /// Enterprise instance name
+        #[arg(short, long, default_value = "production")]
+        name: String,
+        /// Enterprise cluster ID
+        #[arg(long)]
+        cluster_id: String,
+        /// Runtime gateway URL for dynamic queries
+        #[arg(long)]
+        gateway_url: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AddTarget {
+    /// Add a local v2 development instance
+    Local {
+        /// Local instance name
+        #[arg(short, long)]
+        name: String,
+        /// Local gateway port
+        #[arg(long, default_value_t = crate::config::DEFAULT_LOCAL_PORT)]
+        port: u16,
+        /// Use on-disk storage backed by a local MinIO container
+        #[arg(long)]
+        disk: bool,
+    },
+    /// Add an Enterprise Cloud instance
+    Enterprise {
+        /// Enterprise instance name
+        #[arg(short, long)]
+        name: String,
+        /// Enterprise cluster ID
+        #[arg(long)]
+        cluster_id: String,
+        /// Runtime gateway URL for dynamic queries
+        #[arg(long)]
+        gateway_url: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum MetricsAction {
-    /// Enable metrics collection
+    /// Enable full metrics collection
     Full,
-    /// Disable metrics collection
+    /// Enable basic metrics collection
     Basic,
     /// Disable metrics collection
     Off,
@@ -45,25 +99,20 @@ pub enum MetricsAction {
 pub enum DashboardAction {
     /// Start the dashboard
     Start {
-        /// Instance to connect to (from helix.toml)
+        /// Instance to connect to
         instance: Option<String>,
-
         /// Port to run dashboard on
         #[arg(short, long, default_value = "3000")]
         port: u16,
-
-        /// Helix host to connect to (e.g., localhost). Bypasses project config.
+        /// Helix host to connect to
         #[arg(long)]
         host: Option<String>,
-
-        /// Helix port to connect to. Used with --host.
-        #[arg(long, default_value = "6969")]
+        /// Helix port to connect to
+        #[arg(long, default_value_t = crate::config::DEFAULT_LOCAL_PORT)]
         helix_port: u16,
-
         /// Run dashboard in foreground with logs
         #[arg(long)]
         attach: bool,
-
         /// Restart if dashboard is already running
         #[arg(long)]
         restart: bool,
@@ -74,68 +123,7 @@ pub enum DashboardAction {
     Status,
 }
 
-#[derive(Subcommand, Clone)]
-pub enum CloudDeploymentTypeCommand {
-    /// Initialize Helix Cloud deployment
-    #[command(name = "cloud")]
-    Helix {
-        /// Region for Helix cloud instance (default: us-east-1)
-        #[arg(long, default_value = "us-east-1")]
-        region: Option<String>,
-
-        /// Instance name
-        #[arg(short, long)]
-        name: Option<String>,
-    },
-    /// Initialize ECR deployment
-    Ecr {
-        /// Instance name
-        #[arg(short, long)]
-        name: Option<String>,
-    },
-    /// Initialize Fly.io deployment
-    Fly {
-        /// Authentication type
-        #[arg(long, default_value = "cli")]
-        auth: String,
-
-        /// volume size
-        #[arg(long, default_value = "20")]
-        volume_size: u16,
-
-        /// vm size
-        #[arg(long, default_value = "shared-cpu-4x")]
-        vm_size: String,
-
-        /// privacy
-        #[arg(long, default_value = "false")]
-        private: bool,
-
-        /// Instance name
-        #[arg(short, long)]
-        name: Option<String>,
-    },
-
-    /// Initialize Local deployment
-    Local {
-        /// Instance name
-        #[arg(short, long)]
-        name: Option<String>,
-    },
-}
-
-impl CloudDeploymentTypeCommand {
-    pub fn name(&self) -> Option<String> {
-        match self {
-            CloudDeploymentTypeCommand::Helix { name, .. } => name.clone(),
-            CloudDeploymentTypeCommand::Ecr { name } => name.clone(),
-            CloudDeploymentTypeCommand::Fly { name, .. } => name.clone(),
-            CloudDeploymentTypeCommand::Local { name } => name.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
 pub enum ConfigOutputFormat {
     #[default]
     Human,
@@ -144,17 +132,17 @@ pub enum ConfigOutputFormat {
 
 #[derive(Subcommand)]
 pub enum ConfigAction {
-    /// Manage the active workspace selection
+    /// Manage active workspace selection
     Workspace {
         #[command(subcommand)]
         action: WorkspaceConfigAction,
     },
-    /// Manage the project linked in helix.toml
+    /// Manage linked project selection
     Project {
         #[command(subcommand)]
         action: ProjectConfigAction,
     },
-    /// List local and remote clusters for a workspace or project
+    /// List Enterprise clusters
     Cluster {
         #[command(subcommand)]
         action: ClusterConfigAction,
@@ -165,26 +153,17 @@ pub enum ConfigAction {
 pub enum WorkspaceConfigAction {
     /// List accessible workspaces
     List {
-        /// Include workspace members
-        #[arg(long)]
-        members: bool,
-
-        /// Output format
         #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
         format: ConfigOutputFormat,
     },
-    /// Show the currently selected workspace
+    /// Show selected workspace
     Show {
-        /// Output format
         #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
         format: ConfigOutputFormat,
     },
-    /// Switch the active workspace
+    /// Select workspace by slug or ID
     Switch {
-        /// Workspace slug by default, or workspace ID with --id
-        workspace: Option<String>,
-
-        /// Treat the selector as a workspace ID instead of a slug
+        workspace: String,
         #[arg(long)]
         id: bool,
     },
@@ -194,29 +173,19 @@ pub enum WorkspaceConfigAction {
 pub enum ProjectConfigAction {
     /// List projects in the selected workspace
     List {
-        /// Workspace slug by default, or workspace ID with --id
-        workspace: Option<String>,
-
-        /// Treat the workspace selector as a workspace ID instead of a slug
         #[arg(long)]
-        id: bool,
-
-        /// Output format
+        workspace_id: Option<String>,
         #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
         format: ConfigOutputFormat,
     },
-    /// Show the project linked in helix.toml
+    /// Show linked project
     Show {
-        /// Output format
         #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
         format: ConfigOutputFormat,
     },
-    /// Switch the project linked in helix.toml
+    /// Link this project to a cloud project by name or ID
     Switch {
-        /// Project name by default, or project ID with --id
-        project: Option<String>,
-
-        /// Treat the selector as a project ID instead of a project name
+        project: String,
         #[arg(long)]
         id: bool,
     },
@@ -224,29 +193,13 @@ pub enum ProjectConfigAction {
 
 #[derive(Subcommand)]
 pub enum ClusterConfigAction {
-    /// List local instances plus live workspace/project clusters
+    /// List Enterprise clusters
     List {
-        /// Workspace slug to inspect
-        #[arg(long, conflicts_with = "workspace_id")]
-        workspace: Option<String>,
-
-        /// Workspace ID to inspect
-        #[arg(long = "workspace-id", conflicts_with = "workspace")]
+        #[arg(long)]
         workspace_id: Option<String>,
-
-        /// Project name to narrow the remote results within the selected workspace
-        #[arg(long, conflicts_with = "project_id")]
-        project: Option<String>,
-
-        /// Project ID to narrow the remote results
-        #[arg(long = "project-id", conflicts_with = "project")]
+        #[arg(long)]
         project_id: Option<String>,
-
-        /// Output format
         #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
         format: ConfigOutputFormat,
     },
 }
-
-#[cfg(test)]
-mod tests;

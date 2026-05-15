@@ -459,9 +459,9 @@ main() {
     log_info ""
     log_info "Anonymous metrics are enabled by default."
     log_info "To help us improve Helix, please consider enabling full metrics."
-    log_info "Run: helix metrics --full"
+    log_info "Run: helix metrics full"
     log_info ""
-    log_info "To disable metrics, run: helix metrics --off"
+    log_info "To disable metrics, run: helix metrics off"
     log_info ""
     log_info "To show metrics status, run: helix metrics status"
 }

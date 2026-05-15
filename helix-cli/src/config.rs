@@ -1,33 +1,26 @@
 use crate::errors::ConfigError;
-use helix_db::helix_engine::{
-    traversal_core::config::{
-        Config as RuntimeConfig, GraphConfig as EngineGraphConfig,
-        VectorConfig as EngineVectorConfig,
-    },
-    types::SecondaryIndex,
-};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::commands::integrations::ecr::EcrConfig;
-use crate::commands::integrations::fly::FlyInstanceConfig;
+pub const DEFAULT_LOCAL_PORT: u16 = 8080;
+pub const DEFAULT_ENTERPRISE_DEV_IMAGE: &str = "ghcr.io/helixdb/enterprise-dev";
+pub const DEFAULT_ENTERPRISE_DEV_TAG: &str = "latest";
+pub const DEFAULT_QUERY_AUTH_HEADER: &str = "Authorization";
+pub const DEFAULT_QUERY_AUTH_ENV: &str = "HELIX_API_KEY";
 
-/// Global workspace configuration stored in ~/.helix/config
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkspaceConfig {
     pub workspace_id: Option<String>,
 }
 
 impl WorkspaceConfig {
-    /// Get the path to the global config file
     pub fn config_path() -> Result<PathBuf, ConfigError> {
         let home = dirs::home_dir().ok_or(ConfigError::HomeDirNotFound)?;
         Ok(home.join(".helix").join("config"))
     }
 
-    /// Load the workspace config from ~/.helix/config
     pub fn load() -> Result<Self, ConfigError> {
         let path = Self::config_path()?;
         if !path.exists() {
@@ -44,11 +37,8 @@ impl WorkspaceConfig {
             .map_err(|source| ConfigError::ParseWorkspaceConfig { path, source })
     }
 
-    /// Save the workspace config to ~/.helix/config
     pub fn save(&self) -> Result<(), ConfigError> {
         let path = Self::config_path()?;
-
-        // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| ConfigError::CreateWorkspaceDir {
                 path: parent.to_path_buf(),
@@ -58,10 +48,8 @@ impl WorkspaceConfig {
 
         let content = toml::to_string_pretty(self)
             .map_err(|source| ConfigError::SerializeWorkspaceConfig { source })?;
-
         fs::write(&path, content)
             .map_err(|source| ConfigError::WriteWorkspaceConfig { path, source })?;
-
         Ok(())
     }
 }
@@ -72,8 +60,6 @@ pub struct HelixConfig {
     #[serde(default)]
     pub local: HashMap<String, LocalInstanceConfig>,
     #[serde(default)]
-    pub cloud: HashMap<String, CloudConfig>,
-    #[serde(default)]
     pub enterprise: HashMap<String, EnterpriseInstanceConfig>,
 }
 
@@ -81,36 +67,19 @@ pub struct HelixConfig {
 pub struct ProjectConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     pub name: String,
-    #[serde(
-        default = "default_queries_path",
-        serialize_with = "serialize_path",
-        deserialize_with = "deserialize_path"
-    )]
+    #[serde(default = "default_queries_path")]
     pub queries: PathBuf,
     #[serde(default = "default_container_runtime")]
     pub container_runtime: ContainerRuntime,
 }
 
 fn default_queries_path() -> PathBuf {
-    PathBuf::from("./db/")
+    PathBuf::from("db")
 }
 
-fn serialize_path<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_str(&path.to_string_lossy())
-}
-
-fn deserialize_path<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    // Normalize path separators for cross-platform compatibility
-    Ok(PathBuf::from(s.replace('\\', "/")))
-}
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ContainerRuntime {
@@ -120,8 +89,7 @@ pub enum ContainerRuntime {
 }
 
 impl ContainerRuntime {
-    /// Get the CLI command name for this runtime
-    pub fn binary(&self) -> &'static str {
+    pub const fn binary(&self) -> &'static str {
         match self {
             Self::Docker => "docker",
             Self::Podman => "podman",
@@ -130,8 +98,8 @@ impl ContainerRuntime {
 
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::Docker => "DOCKER",
-            Self::Podman => "PODMAN",
+            Self::Docker => "Docker",
+            Self::Podman => "Podman",
         }
     }
 }
@@ -139,6 +107,44 @@ impl ContainerRuntime {
 fn default_container_runtime() -> ContainerRuntime {
     ContainerRuntime::Docker
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalInstanceConfig {
+    #[serde(default = "default_local_port")]
+    pub port: u16,
+    #[serde(default = "default_enterprise_dev_image")]
+    pub image: String,
+    #[serde(default = "default_enterprise_dev_tag")]
+    pub tag: String,
+    #[serde(default, skip_serializing_if = "is_default_local_storage")]
+    pub storage: LocalStorageMode,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LocalStorageMode {
+    #[default]
+    Memory,
+    Disk,
+}
+
+impl LocalStorageMode {
+    pub const fn from_disk_flag(disk: bool) -> Self {
+        if disk { Self::Disk } else { Self::Memory }
+    }
+
+    pub const fn is_disk(&self) -> bool {
+        matches!(self, Self::Disk)
+    }
+
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Disk => "disk",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VectorConfig {
     #[serde(default = "default_m")]
@@ -157,7 +163,7 @@ pub struct GraphConfig {
     pub secondary_indices: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DbConfig {
     #[serde(default, skip_serializing_if = "is_default_vector_config")]
     pub vector_config: VectorConfig,
@@ -176,156 +182,6 @@ pub struct DbConfig {
     pub embedding_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graphvis_node_label: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalInstanceConfig {
-    #[serde(default)]
-    pub port: Option<u16>,
-    #[serde(default = "default_dev_build_mode")]
-    pub build_mode: BuildMode,
-    #[serde(flatten)]
-    pub db_config: DbConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CloudInstanceConfig {
-    pub cluster_id: String,
-    #[serde(default)]
-    pub region: Option<String>,
-    #[serde(default = "default_dev_build_mode")]
-    pub build_mode: BuildMode,
-    #[serde(default)]
-    pub env_vars: HashMap<String, String>,
-    #[serde(flatten)]
-    pub db_config: DbConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-//lowercase all fields
-#[serde(rename_all = "lowercase")]
-pub enum CloudConfig {
-    Helix(CloudInstanceConfig),
-    #[serde(rename = "fly")]
-    FlyIo(FlyInstanceConfig),
-    Ecr(EcrConfig),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnterpriseInstanceConfig {
-    pub cluster_id: String,
-    pub availability_mode: AvailabilityMode,
-    pub gateway_node_type: String,
-    pub db_node_type: String,
-    #[serde(default = "default_min_instances")]
-    pub min_instances: u64,
-    #[serde(default = "default_min_instances")]
-    pub max_instances: u64,
-    #[serde(flatten)]
-    pub db_config: DbConfig,
-}
-
-fn default_min_instances() -> u64 {
-    1
-}
-
-impl CloudConfig {
-    pub fn get_cluster_id(&self) -> Option<&str> {
-        match self {
-            CloudConfig::Helix(config) => Some(&config.cluster_id),
-            CloudConfig::FlyIo(_) => Some("flyio"),
-            CloudConfig::Ecr(_) => Some("ecr"), // ECR doesn't use cluster_id
-        }
-    }
-
-    pub fn build_mode(&self) -> BuildMode {
-        match self {
-            Self::Helix(CloudInstanceConfig { build_mode, .. })
-            | Self::FlyIo(FlyInstanceConfig { build_mode, .. })
-            | Self::Ecr(EcrConfig { build_mode, .. }) => *build_mode,
-        }
-    }
-}
-
-impl DbConfig {
-    pub fn to_runtime_config(&self) -> RuntimeConfig {
-        let secondary_indices = if self.graph_config.secondary_indices.is_empty() {
-            None
-        } else {
-            Some(
-                self.graph_config
-                    .secondary_indices
-                    .iter()
-                    .cloned()
-                    .map(SecondaryIndex::Index)
-                    .collect(),
-            )
-        };
-
-        RuntimeConfig {
-            vector_config: Some(EngineVectorConfig {
-                m: Some(self.vector_config.m as usize),
-                ef_construction: Some(self.vector_config.ef_construction as usize),
-                ef_search: Some(self.vector_config.ef_search as usize),
-            }),
-            graph_config: Some(EngineGraphConfig { secondary_indices }),
-            db_max_size_gb: Some(self.vector_config.db_max_size_gb as usize),
-            mcp: Some(self.mcp),
-            bm25: Some(self.bm25),
-            schema: self.schema.clone(),
-            embedding_model: self.embedding_model.clone(),
-            graphvis_node_label: self.graphvis_node_label.clone(),
-        }
-    }
-}
-
-impl CloudInstanceConfig {
-    pub fn runtime_config(&self) -> RuntimeConfig {
-        self.db_config.to_runtime_config()
-    }
-}
-
-impl EnterpriseInstanceConfig {
-    #[allow(dead_code)]
-    pub fn runtime_config(&self) -> RuntimeConfig {
-        self.db_config.to_runtime_config()
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum AvailabilityMode {
-    Dev,
-    Ha,
-}
-
-impl std::fmt::Display for AvailabilityMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AvailabilityMode::Dev => write!(f, "dev"),
-            AvailabilityMode::Ha => write!(f, "ha"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum BuildMode {
-    #[default]
-    Dev,
-    Release,
-
-    // Validates that this is not used, and all previous code matching it now
-    // has an unreachable!("Please report as a bug. BuildMode::Debug should have been caught in validation.")
-    Debug,
-}
-
-pub fn default_dev_build_mode() -> BuildMode {
-    BuildMode::Dev
-}
-
-pub fn default_release_build_mode() -> BuildMode {
-    BuildMode::Release
 }
 
 fn default_true() -> bool {
@@ -370,7 +226,7 @@ fn is_default_graph_config(value: &GraphConfig) -> bool {
 
 impl Default for VectorConfig {
     fn default() -> Self {
-        VectorConfig {
+        Self {
             m: default_m(),
             ef_construction: default_ef_construction(),
             ef_search: default_ef_search(),
@@ -381,7 +237,7 @@ impl Default for VectorConfig {
 
 impl Default for DbConfig {
     fn default() -> Self {
-        DbConfig {
+        Self {
             vector_config: VectorConfig::default(),
             graph_config: GraphConfig::default(),
             mcp: true,
@@ -393,114 +249,93 @@ impl Default for DbConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+fn default_local_port() -> u16 {
+    DEFAULT_LOCAL_PORT
+}
+
+fn default_enterprise_dev_image() -> String {
+    DEFAULT_ENTERPRISE_DEV_IMAGE.to_string()
+}
+
+fn default_enterprise_dev_tag() -> String {
+    DEFAULT_ENTERPRISE_DEV_TAG.to_string()
+}
+
+fn is_default_local_storage(value: &LocalStorageMode) -> bool {
+    *value == LocalStorageMode::Memory
+}
+
+impl Default for LocalInstanceConfig {
+    fn default() -> Self {
+        Self {
+            port: DEFAULT_LOCAL_PORT,
+            image: DEFAULT_ENTERPRISE_DEV_IMAGE.to_string(),
+            tag: DEFAULT_ENTERPRISE_DEV_TAG.to_string(),
+            storage: LocalStorageMode::Memory,
+        }
+    }
+}
+
+impl LocalInstanceConfig {
+    pub fn image_ref(&self) -> String {
+        format!("{}:{}", self.image, self.tag)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnterpriseInstanceConfig {
+    pub cluster_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_url: Option<String>,
+    #[serde(default = "default_query_auth_header")]
+    pub query_auth_header: String,
+    #[serde(default = "default_query_auth_env")]
+    pub query_auth_env: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub availability_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_node_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_node_type: Option<String>,
+    #[serde(default = "default_min_instances")]
+    pub min_instances: u64,
+    #[serde(default = "default_min_instances")]
+    pub max_instances: u64,
+    #[serde(flatten)]
+    pub db_config: DbConfig,
+}
+
+fn default_min_instances() -> u64 {
+    1
+}
+
+fn default_query_auth_header() -> String {
+    DEFAULT_QUERY_AUTH_HEADER.to_string()
+}
+
+fn default_query_auth_env() -> String {
+    DEFAULT_QUERY_AUTH_ENV.to_string()
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum InstanceInfo<'a> {
     Local(&'a LocalInstanceConfig),
-    Helix(&'a CloudInstanceConfig),
-    FlyIo(&'a FlyInstanceConfig),
-    Ecr(&'a EcrConfig),
     Enterprise(&'a EnterpriseInstanceConfig),
 }
 
-impl<'a> InstanceInfo<'a> {
-    pub fn build_mode(&self) -> BuildMode {
-        match self {
-            InstanceInfo::Local(LocalInstanceConfig { build_mode, .. })
-            | InstanceInfo::Helix(CloudInstanceConfig { build_mode, .. })
-            | InstanceInfo::FlyIo(FlyInstanceConfig { build_mode, .. })
-            | InstanceInfo::Ecr(EcrConfig { build_mode, .. }) => *build_mode,
-            InstanceInfo::Enterprise(_) => BuildMode::Release,
-        }
-    }
-
-    pub fn port(&self) -> Option<u16> {
-        match self {
-            InstanceInfo::Local(config) => config.port,
-            InstanceInfo::Helix(_)
-            | InstanceInfo::FlyIo(_)
-            | InstanceInfo::Ecr(_)
-            | InstanceInfo::Enterprise(_) => None,
-        }
+impl InstanceInfo<'_> {
+    pub fn is_local(&self) -> bool {
+        matches!(self, Self::Local(_))
     }
 
     pub fn cluster_id(&self) -> Option<&str> {
         match self {
-            InstanceInfo::Local(_) => None,
-            InstanceInfo::Helix(config) => Some(&config.cluster_id),
-            InstanceInfo::FlyIo(_) => Some("flyio"),
-            InstanceInfo::Ecr(_) => Some("ecr"),
-            InstanceInfo::Enterprise(config) => Some(&config.cluster_id),
-        }
-    }
-
-    pub fn db_config(&self) -> &DbConfig {
-        match self {
-            InstanceInfo::Local(LocalInstanceConfig { db_config, .. })
-            | InstanceInfo::Helix(CloudInstanceConfig { db_config, .. })
-            | InstanceInfo::FlyIo(FlyInstanceConfig { db_config, .. })
-            | InstanceInfo::Ecr(EcrConfig { db_config, .. })
-            | InstanceInfo::Enterprise(EnterpriseInstanceConfig { db_config, .. }) => db_config,
-        }
-    }
-
-    pub fn is_local(&self) -> bool {
-        matches!(self, InstanceInfo::Local(_))
-    }
-
-    pub fn should_build_docker_image(&self) -> bool {
-        matches!(self, InstanceInfo::Local(_) | InstanceInfo::FlyIo(_))
-    }
-
-    pub fn docker_build_target(&self) -> Option<&str> {
-        match self {
-            InstanceInfo::Local(_) | InstanceInfo::Helix(_) | InstanceInfo::Enterprise(_) => None,
-            InstanceInfo::FlyIo(_) | InstanceInfo::Ecr(_) => Some("linux/amd64"),
-        }
-    }
-
-    /// Convert instance config to the legacy config.hx.json format
-    pub fn to_legacy_json(&self) -> serde_json::Value {
-        let db_config = self.db_config();
-
-        let mut json = serde_json::json!({
-            "vector_config": {
-                "m": db_config.vector_config.m,
-                "ef_construction": db_config.vector_config.ef_construction,
-                "ef_search": db_config.vector_config.ef_search,
-                "db_max_size": db_config.vector_config.db_max_size_gb
-            },
-            "graph_config": {
-                "secondary_indices": db_config.graph_config.secondary_indices
-            },
-            "db_max_size_gb": db_config.vector_config.db_max_size_gb,
-            "mcp": db_config.mcp,
-            "bm25": db_config.bm25
-        });
-
-        // Add optional fields if they exist
-        if let Some(schema) = &db_config.schema {
-            json["schema"] = serde_json::Value::String(schema.clone());
-        }
-
-        if let Some(embedding_model) = &db_config.embedding_model {
-            json["embedding_model"] = serde_json::Value::String(embedding_model.clone());
-        }
-
-        if let Some(graphvis_node_label) = &db_config.graphvis_node_label {
-            json["graphvis_node_label"] = serde_json::Value::String(graphvis_node_label.clone());
-        }
-
-        json
-    }
-}
-
-impl From<InstanceInfo<'_>> for CloudConfig {
-    fn from(instance_info: InstanceInfo<'_>) -> Self {
-        match instance_info {
-            InstanceInfo::Helix(config) => CloudConfig::Helix(config.clone()),
-            InstanceInfo::FlyIo(config) => CloudConfig::FlyIo(config.clone()),
-            InstanceInfo::Ecr(config) => CloudConfig::Ecr(config.clone()),
-            InstanceInfo::Local(_) | InstanceInfo::Enterprise(_) => unimplemented!(),
+            Self::Local(_) => None,
+            Self::Enterprise(config) => Some(&config.cluster_id),
         }
     }
 }
@@ -525,82 +360,42 @@ impl HelixConfig {
     pub fn save_to_file(&self, path: &Path) -> Result<(), ConfigError> {
         let content = toml::to_string_pretty(self)
             .map_err(|source| ConfigError::SerializeHelixConfig { source })?;
-
         fs::write(path, content).map_err(|source| ConfigError::WriteHelixConfig {
             path: path.to_path_buf(),
             source,
         })?;
-
         Ok(())
     }
 
     fn validate(&self, path: &Path) -> Result<(), ConfigError> {
-        // Compute relative path for error messages
         let relative_path = std::env::current_dir()
             .ok()
             .and_then(|cwd| path.strip_prefix(&cwd).ok())
-            .map(|p| p.to_path_buf())
+            .map(Path::to_path_buf)
             .unwrap_or_else(|| path.to_path_buf());
 
-        // Validate project config
-        if self.project.name.is_empty() {
+        if self.project.name.trim().is_empty() {
             return Err(ConfigError::EmptyProjectName {
-                path: relative_path.clone(),
+                path: relative_path,
             });
         }
 
-        // Validate instances
-        if self.local.is_empty() && self.cloud.is_empty() && self.enterprise.is_empty() {
+        if self.local.is_empty() && self.enterprise.is_empty() {
             return Err(ConfigError::MissingInstances {
-                path: relative_path.clone(),
+                path: relative_path,
             });
         }
 
-        // Validate local instances
-        for (name, config) in &self.local {
-            if name.is_empty() {
+        for name in self.local.keys().chain(self.enterprise.keys()) {
+            if name.trim().is_empty() {
                 return Err(ConfigError::EmptyInstanceName {
-                    path: relative_path.clone(),
-                });
-            }
-
-            if config.build_mode == BuildMode::Debug {
-                return Err(ConfigError::DeprecatedBuildMode {
-                    path: relative_path.clone(),
-                });
-            }
-        }
-
-        // Validate cloud instances
-        for (name, config) in &self.cloud {
-            if name.is_empty() {
-                return Err(ConfigError::EmptyInstanceName {
-                    path: relative_path.clone(),
-                });
-            }
-
-            if config.get_cluster_id().is_none() {
-                return Err(ConfigError::MissingClusterId {
-                    name: name.clone(),
-                    path: relative_path.clone(),
-                });
-            }
-
-            if config.build_mode() == BuildMode::Debug {
-                return Err(ConfigError::DeprecatedBuildMode {
                     path: relative_path.clone(),
                 });
             }
         }
 
         for (name, config) in &self.enterprise {
-            if name.is_empty() {
-                return Err(ConfigError::EmptyInstanceName {
-                    path: relative_path.clone(),
-                });
-            }
-
-            if config.cluster_id.is_empty() {
+            if config.cluster_id.trim().is_empty() {
                 return Err(ConfigError::MissingClusterId {
                     name: name.clone(),
                     path: relative_path.clone(),
@@ -612,26 +407,12 @@ impl HelixConfig {
     }
 
     pub fn get_instance(&self, name: &str) -> Result<InstanceInfo<'_>, ConfigError> {
-        if let Some(local_config) = self.local.get(name) {
-            return Ok(InstanceInfo::Local(local_config));
+        if let Some(config) = self.local.get(name) {
+            return Ok(InstanceInfo::Local(config));
         }
 
-        if let Some(cloud_config) = self.cloud.get(name) {
-            match cloud_config {
-                CloudConfig::Helix(config) => {
-                    return Ok(InstanceInfo::Helix(config));
-                }
-                CloudConfig::FlyIo(config) => {
-                    return Ok(InstanceInfo::FlyIo(config));
-                }
-                CloudConfig::Ecr(config) => {
-                    return Ok(InstanceInfo::Ecr(config));
-                }
-            }
-        }
-
-        if let Some(enterprise_config) = self.enterprise.get(name) {
-            return Ok(InstanceInfo::Enterprise(enterprise_config));
+        if let Some(config) = self.enterprise.get(name) {
+            return Ok(InstanceInfo::Enterprise(config));
         }
 
         Err(ConfigError::InstanceNotFound {
@@ -642,58 +423,106 @@ impl HelixConfig {
     pub fn list_instances(&self) -> Vec<&String> {
         let mut instances = Vec::new();
         instances.extend(self.local.keys());
-        instances.extend(self.cloud.keys());
         instances.extend(self.enterprise.keys());
+        instances.sort();
         instances
     }
 
-    /// List all instances with their type labels for display
-    /// Returns tuples of (name, type_hint) e.g. ("dev", "local"), ("prod", "Helix Cloud")
     pub fn list_instances_with_types(&self) -> Vec<(&String, &'static str)> {
         let mut instances = Vec::new();
-
         for name in self.local.keys() {
             instances.push((name, "local"));
         }
-
-        for (name, config) in &self.cloud {
-            let type_hint = match config {
-                CloudConfig::Helix(_) => "Helix Cloud",
-                CloudConfig::FlyIo(_) => "Fly.io",
-                CloudConfig::Ecr(_) => "AWS ECR",
-            };
-            instances.push((name, type_hint));
-        }
-
         for name in self.enterprise.keys() {
             instances.push((name, "Enterprise"));
         }
-
         instances.sort_by(|a, b| a.0.cmp(b.0));
         instances
     }
 
     pub fn default_config(project_name: &str) -> Self {
         let mut local = HashMap::new();
-        local.insert(
-            "dev".to_string(),
-            LocalInstanceConfig {
-                port: Some(6969),
-                build_mode: BuildMode::Dev,
-                db_config: DbConfig::default(),
-            },
-        );
+        local.insert("dev".to_string(), LocalInstanceConfig::default());
 
-        HelixConfig {
+        Self {
             project: ProjectConfig {
                 id: None,
+                workspace_id: None,
                 name: project_name.to_string(),
                 queries: default_queries_path(),
-                container_runtime: default_container_runtime(),
+                container_runtime: ContainerRuntime::Docker,
             },
             local,
-            cloud: HashMap::new(),
             enterprise: HashMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_enterprise_config_defaults_queries_and_runtime_fields() {
+        let config: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "demo"
+
+[enterprise.production]
+cluster_id = "cluster-123"
+availability_mode = "ha"
+gateway_node_type = "GW-40"
+db_node_type = "HLX-160"
+min_instances = 2
+max_instances = 4
+"#,
+        )
+        .expect("old enterprise config should deserialize");
+
+        assert_eq!(config.project.queries, PathBuf::from("db"));
+        let enterprise = config.enterprise.get("production").unwrap();
+        assert_eq!(enterprise.availability_mode.as_deref(), Some("ha"));
+        assert_eq!(enterprise.gateway_node_type.as_deref(), Some("GW-40"));
+        assert_eq!(enterprise.db_node_type.as_deref(), Some("HLX-160"));
+        assert_eq!(enterprise.min_instances, 2);
+        assert_eq!(enterprise.max_instances, 4);
+        assert_eq!(enterprise.db_config.vector_config.db_max_size_gb, 20);
+    }
+
+    #[test]
+    fn old_local_config_defaults_to_memory_storage() {
+        let config: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "demo"
+
+[local.dev]
+port = 8080
+image = "ghcr.io/helixdb/enterprise-dev"
+tag = "latest"
+"#,
+        )
+        .expect("old local config should deserialize");
+
+        let local = config.local.get("dev").unwrap();
+        assert_eq!(local.storage, LocalStorageMode::Memory);
+    }
+
+    #[test]
+    fn local_config_can_use_disk_storage() {
+        let config: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "demo"
+
+[local.dev]
+storage = "disk"
+"#,
+        )
+        .expect("disk local config should deserialize");
+
+        let local = config.local.get("dev").unwrap();
+        assert_eq!(local.storage, LocalStorageMode::Disk);
     }
 }

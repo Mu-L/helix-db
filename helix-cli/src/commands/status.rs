@@ -1,121 +1,82 @@
-use crate::docker::DockerManager;
+use crate::config::InstanceInfo;
+use crate::local_runtime::LocalRuntime;
 use crate::project::ProjectContext;
-use crate::utils::{print_error, print_field, print_header, print_newline};
+use crate::prompts::{self, StatusSelection};
+use crate::utils::{print_field, print_header, print_newline};
 use eyre::Result;
 
-pub async fn run() -> Result<()> {
-    // Load project context
-    let project = match ProjectContext::find_and_load(None) {
-        Ok(project) => project,
-        Err(_) => {
-            print_error("Not in a Helix project directory. Run 'helix init' to create one.");
-            return Ok(());
-        }
-    };
+pub async fn run(instance: Option<String>) -> Result<()> {
+    let project = ProjectContext::find_and_load(None)?;
 
     print_header("Helix Project Status");
     print_field("Project", &project.config.project.name);
     print_field("Root", &project.root.display().to_string());
     print_newline();
 
-    // Show configured instances
-    print_header("Configured Instances:");
-
-    // Show local instances
-    for (name, config) in &project.config.local {
-        let port = config.port.unwrap_or(6969);
-        print_field(&format!("{name} (Local)"), &format!("port {port}"));
-    }
-
-    // Show cloud instances
-    let mut helix_cloud_instances = Vec::new();
-    let mut flyio_instances = Vec::new();
-    let mut ecr_instances = Vec::new();
-
-    for (name, config) in &project.config.cloud {
-        match config {
-            crate::config::CloudConfig::Helix(helix_config) => {
-                helix_cloud_instances.push((name, &helix_config.cluster_id));
-            }
-            crate::config::CloudConfig::FlyIo(_) => {
-                flyio_instances.push((name, "flyio"));
-            }
-            crate::config::CloudConfig::Ecr(ecr_config) => {
-                ecr_instances.push((name, &ecr_config.repository_name, &ecr_config.region));
+    let runtime = LocalRuntime::new(&project);
+    print_header("Instances");
+    match resolve_status_selection(&project, instance)? {
+        StatusSelection::All => {
+            for name in project.config.list_instances() {
+                print_instance(&project, &runtime, name)?;
             }
         }
+        StatusSelection::Instance(instance) => print_instance(&project, &runtime, &instance)?,
     }
-
-    for (name, cluster_id) in helix_cloud_instances {
-        print_field(
-            &format!("{name} (Helix Cloud)"),
-            &format!("cluster {cluster_id}"),
-        );
-    }
-
-    for (name, cluster_id) in flyio_instances {
-        print_field(
-            &format!("{name} (Fly.io)"),
-            &format!("cluster {cluster_id}"),
-        );
-    }
-
-    for (name, repository_name, region) in ecr_instances {
-        print_field(
-            &format!("{name} (AWS ECR)"),
-            &format!("repository {repository_name} in {region}"),
-        );
-    }
-    print_newline();
-
-    // Show running containers (for local instances)
-    show_container_status(&project).await?;
 
     Ok(())
 }
 
-async fn show_container_status(project: &ProjectContext) -> Result<()> {
-    // Check if Docker is available
-    let runtime = project.config.project.container_runtime;
-    if DockerManager::check_runtime_available(runtime).is_err() {
-        print_field(&format!("{} Status", runtime.label()), "Not available");
-        return Ok(());
+fn resolve_status_selection(
+    project: &ProjectContext,
+    instance: Option<String>,
+) -> Result<StatusSelection> {
+    if let Some(instance) = instance {
+        return Ok(StatusSelection::Instance(instance));
     }
+    let instances = all_instances(project);
+    if prompts::is_interactive() && instances.len() > 1 {
+        return prompts::select_status(&instances);
+    }
+    Ok(StatusSelection::All)
+}
 
-    let docker = DockerManager::new(project);
-
-    let statuses = match docker.get_project_status() {
-        Ok(statuses) => statuses,
-        Err(e) => {
-            print_field("Container Status", &format!("Error getting status ({e})"));
-            return Ok(());
+fn print_instance(project: &ProjectContext, runtime: &LocalRuntime, name: &str) -> Result<()> {
+    match project.config.get_instance(name)? {
+        InstanceInfo::Local(config) => {
+            let status = runtime.status(name)?;
+            let state = status
+                .as_ref()
+                .map(|status| status.status.as_str())
+                .unwrap_or("not created");
+            print_field(
+                &format!("{name} (local)"),
+                &format!(
+                    "http://localhost:{} - {state} - storage: {}",
+                    config.port,
+                    config.storage.as_str()
+                ),
+            );
         }
-    };
-
-    if statuses.is_empty() {
-        print_field("Running Containers", "None");
-        return Ok(());
+        InstanceInfo::Enterprise(config) => {
+            let gateway = config
+                .gateway_url
+                .as_deref()
+                .unwrap_or("gateway not configured");
+            print_field(
+                &format!("{name} (Enterprise)"),
+                &format!("cluster {} - {gateway}", config.cluster_id),
+            );
+        }
     }
-
-    print_header("Running Containers:");
-    for status in statuses {
-        let status_icon = if status.status.contains("Up") {
-            "[UP]"
-        } else {
-            "[DOWN]"
-        };
-
-        let ports_info = if status.ports.is_empty() {
-            "no ports".to_string()
-        } else {
-            status.ports.clone()
-        };
-
-        print_field(
-            &format!("{status_icon} {}", status.instance_name),
-            &format!("{} ({ports_info})", status.status),
-        );
-    }
-
     Ok(())
+}
+
+fn all_instances(project: &ProjectContext) -> Vec<(String, String)> {
+    project
+        .config
+        .list_instances_with_types()
+        .into_iter()
+        .map(|(name, kind)| (name.clone(), kind.to_string()))
+        .collect()
 }

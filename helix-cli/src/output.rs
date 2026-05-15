@@ -442,6 +442,8 @@ fn past_tense(verb: &str) -> String {
         "initializing" => "Initialized",
         "pruning" => "Pruned",
         "pulling" => "Pulled",
+        "restarting" => "Restarted",
+        "running" => "Ran",
         "starting" => "Started",
         "stopping" => "Stopped",
         "updating" => "Updated",
@@ -458,6 +460,8 @@ mod tests {
     fn test_past_tense() {
         assert_eq!(past_tense("Building"), "Built");
         assert_eq!(past_tense("Deploying"), "Deployed");
+        assert_eq!(past_tense("Restarting"), "Restarted");
+        assert_eq!(past_tense("Running"), "Ran");
         assert_eq!(past_tense("Starting"), "Started");
         assert_eq!(past_tense("Backing up"), "Backed up");
     }
@@ -474,9 +478,9 @@ mod tests {
     fn test_verbosity_ordering() {
         assert!(Verbosity::Quiet < Verbosity::Normal);
         assert!(Verbosity::Normal < Verbosity::Verbose);
-        assert!(Verbosity::Quiet.show_normal() == false);
-        assert!(Verbosity::Normal.show_normal() == true);
-        assert!(Verbosity::Normal.show_verbose() == false);
-        assert!(Verbosity::Verbose.show_verbose() == true);
+        assert!(!Verbosity::Quiet.show_normal());
+        assert!(Verbosity::Normal.show_normal());
+        assert!(!Verbosity::Normal.show_verbose());
+        assert!(Verbosity::Verbose.show_verbose());
     }
 }
