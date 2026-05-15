@@ -101,8 +101,22 @@ enum Commands {
         /// Instance name
         instance: Option<String>,
         /// JSON request file
-        #[arg(short, long)]
-        file: String,
+        #[arg(
+            short,
+            long,
+            value_name = "REQUEST.json",
+            conflicts_with = "json",
+            required_unless_present = "json"
+        )]
+        file: Option<String>,
+        /// JSON request body
+        #[arg(
+            long,
+            value_name = "JSON",
+            conflicts_with = "file",
+            required_unless_present = "file"
+        )]
+        json: Option<String>,
         /// Add X-Helix-Warm header. Only valid for read requests.
         #[arg(long)]
         warm: bool,
@@ -322,11 +336,12 @@ async fn main() -> Result<()> {
         Some(Commands::Query {
             instance,
             file,
+            json,
             warm,
             host,
             port,
             compact,
-        }) => commands::query::run(instance, file, warm, host, port, compact).await,
+        }) => commands::query::run(instance, file, json, warm, host, port, compact).await,
         Some(Commands::Push { instance, dev }) => {
             commands::push::run(instance, dev, &metrics_sender).await
         }
@@ -532,6 +547,54 @@ mod tests {
             Some(Commands::Status { instance }) => assert_eq!(instance.as_deref(), Some("qa")),
             _ => panic!("expected status command"),
         }
+    }
+
+    #[test]
+    fn query_accepts_file_input() {
+        let cli = Cli::parse_from(["helix", "query", "dev", "--file", "request.json"]);
+
+        match cli.command {
+            Some(Commands::Query { file, json, .. }) => {
+                assert_eq!(file.as_deref(), Some("request.json"));
+                assert!(json.is_none());
+            }
+            _ => panic!("expected query command"),
+        }
+    }
+
+    #[test]
+    fn query_accepts_inline_json_input() {
+        let inline_json = r#"{"request_type":"read","query":{"queries":[]}}"#;
+        let cli = Cli::parse_from(["helix", "query", "dev", "--json", inline_json]);
+
+        match cli.command {
+            Some(Commands::Query { file, json, .. }) => {
+                assert!(file.is_none());
+                assert_eq!(json.as_deref(), Some(inline_json));
+            }
+            _ => panic!("expected query command"),
+        }
+    }
+
+    #[test]
+    fn query_rejects_missing_input() {
+        assert!(Cli::try_parse_from(["helix", "query", "dev"]).is_err());
+    }
+
+    #[test]
+    fn query_rejects_file_and_inline_json_together() {
+        assert!(
+            Cli::try_parse_from([
+                "helix",
+                "query",
+                "dev",
+                "--file",
+                "request.json",
+                "--json",
+                "{}",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
