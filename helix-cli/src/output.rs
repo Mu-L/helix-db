@@ -478,9 +478,9 @@ mod tests {
     fn test_verbosity_ordering() {
         assert!(Verbosity::Quiet < Verbosity::Normal);
         assert!(Verbosity::Normal < Verbosity::Verbose);
-        assert!(Verbosity::Quiet.show_normal() == false);
-        assert!(Verbosity::Normal.show_normal() == true);
-        assert!(Verbosity::Normal.show_verbose() == false);
-        assert!(Verbosity::Verbose.show_verbose() == true);
+        assert!(!Verbosity::Quiet.show_normal());
+        assert!(Verbosity::Normal.show_normal());
+        assert!(!Verbosity::Normal.show_verbose());
+        assert!(Verbosity::Verbose.show_verbose());
     }
 }

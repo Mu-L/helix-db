@@ -150,6 +150,32 @@ fn write_example_request(project_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn append_gitignore(project_dir: &Path) -> Result<()> {
+    let gitignore_path = project_dir.join(".gitignore");
+    let existing = fs::read_to_string(&gitignore_path).unwrap_or_default();
+    let entries = [".helix/", "target/", "*.log"];
+    let missing: Vec<&str> = entries
+        .into_iter()
+        .filter(|entry| !existing.lines().any(|line| line.trim() == *entry))
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&gitignore_path)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(file)?;
+    }
+    for entry in missing {
+        writeln!(file, "{entry}")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,30 +216,4 @@ mod tests {
         assert!(steps[0].contains("helix sync production"));
         assert!(steps[2].contains("helix query production"));
     }
-}
-
-fn append_gitignore(project_dir: &Path) -> Result<()> {
-    let gitignore_path = project_dir.join(".gitignore");
-    let existing = fs::read_to_string(&gitignore_path).unwrap_or_default();
-    let entries = [".helix/", "target/", "*.log"];
-    let missing: Vec<&str> = entries
-        .into_iter()
-        .filter(|entry| !existing.lines().any(|line| line.trim() == *entry))
-        .collect();
-
-    if missing.is_empty() {
-        return Ok(());
-    }
-
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&gitignore_path)?;
-    if !existing.is_empty() && !existing.ends_with('\n') {
-        writeln!(file)?;
-    }
-    for entry in missing {
-        writeln!(file, "{entry}")?;
-    }
-    Ok(())
 }
