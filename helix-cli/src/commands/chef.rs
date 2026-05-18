@@ -50,11 +50,14 @@ const DEFAULT_PROJECT_SPEC: &str = r#"You are building a **Personal CRM** as you
 6. `examples/interactions_for_contact.json` — read request, param `contactId` (I64). Returns the contact's interactions ordered by `loggedAt` desc, limited to 10.
 7. `examples/search_contacts.json` — read request, param `q` (String). Returns up to 25 contacts whose `name` starts with `q`. Use `NWhere` for the label, then `Where` with `StartsWith` for the prefix match.
 
-**Frontend (`web/index.html`):**
-- Top section: "Add contact" form (name, email, phone).
-- Middle section: contact list with a search box. The box calls `search_contacts.json` on input; "Refresh" calls `list_contacts.json`.
-- Each contact row has a "View" button that opens a detail panel showing the contact's Company (if any) and recent interactions, plus an "Add interaction" form (kind dropdown, note textarea).
-- Results rendered as `<pre>` blocks or simple cards. No framework, no build step.
+**Frontend (Next.js, App Router, Tailwind, all TypeScript) under `web/`:**
+- `web/src/app/page.tsx` (Server Component) — renders the contact list (server-fetches `/api/list_contacts`) and embeds `AddContactForm` and `ContactSearch`.
+- `web/src/app/_components/AddContactForm.tsx` (Client Component) — form (name, email, phone) → POST `/api/add_contact`.
+- `web/src/app/_components/ContactSearch.tsx` (Client Component) — debounced input → GET `/api/search_contacts?q=...`.
+- `web/src/app/contact/[id]/page.tsx` (Server Component) — detail view: contact + WORKS_AT company + LOGGED interactions. Embeds `AddInteractionForm`.
+- `web/src/app/_components/AddInteractionForm.tsx` (Client Component) — kind dropdown, note textarea → POST `/api/add_interaction`.
+- API routes (one per query under `examples/`): `web/src/app/api/{list_contacts,add_contact,contacts_at_company,interactions_for_contact,add_interaction,search_contacts}/route.ts`. Each reads its sibling JSON file from `examples/`, optionally merges request-body `parameters`, and POSTs to `http://localhost:8080/v1/query`.
+- Styling: Tailwind utility classes throughout. No global CSS beyond `globals.css` from the scaffold.
 
 **Demo flow the user should be able to click through end to end:**
 1. Add a Contact.
@@ -66,7 +69,7 @@ const DEFAULT_PROJECT_SPEC: &str = r#"You are building a **Personal CRM** as you
 const AGENT_PROMPT_TEMPLATE: &str = r#"# HelixDB MVP Builder
 
 <role>
-You are a HelixDB expert. The user just ran `helix chef` to bootstrap a new project. Your job: take the build intent below and ship a working MVP — a small set of dynamic JSON queries plus a tiny vanilla HTML/JS frontend that demonstrates them. Be persistent. Don't stop until every query you wrote returns valid JSON when run against the local DB and the demo flow works in a browser.
+You are a HelixDB expert. The user just ran `helix chef` to bootstrap a new project. Your job: take the build intent below and ship a working MVP — a small set of dynamic JSON queries plus a Next.js + React + Tailwind frontend (all TypeScript) that demonstrates them. Be persistent. Don't stop until every query you wrote returns valid JSON when run against the local DB and the demo flow works in a browser.
 </role>
 
 <environment>
@@ -75,16 +78,17 @@ You are a HelixDB expert. The user just ran `helix chef` to bootstrap a new proj
 - Created `helix.toml` with a local instance named `dev` on port `8080`.
 - Started the local DB (`helix run dev`). It is running in the background, in-memory.
 - Seeded 3 example `User` nodes via `examples/seed.json`.
-- Opened the dashboard at http://localhost:3000.
 - Installed the HelixDB skills (`helix-query-json-dynamic`, `helix-query-authoring`, `helix-query-optimize`, `helix-query-from-gremlin`, `helix-query-from-cypher`). Invoke them when authoring queries — they are authoritative.
 - Installed the Helix docs MCP (`helixdb-docs`). Query it when you need syntax details this prompt does not cover.
+
+Additional skills (Next.js, React, Tailwind, TypeScript) are NOT pre-installed. You install them yourself as part of the workflow — see `<install_more_skills>`.
 
 Existing files you must read before touching:
 - `helix.toml` — project config. Do not edit.
 - `examples/seed.json` — example write request that seeds Users via `ForEach` over `parameters.data`. Use it as the template for your own seed/write requests.
 - `examples/read_users.json` — example read request that lists Users. Use it as the template for your own read requests.
 
-This project uses **JSON dynamic queries only**. Never write Rust `.hx` files; there is no compile step. Every query is a JSON file under `examples/` that you send with `helix query dev --file examples/<name>.json`.
+This project uses **JSON dynamic queries only**. Never write Rust `.hx` files; there is no compile step. Every query is a JSON file under `examples/` that you send with `helix query dev --file examples/<name>.json`. The frontend that consumes these queries is a Next.js app under `web/` (App Router, TypeScript, Tailwind) — see `<frontend>`.
 </environment>
 
 <user_intent>
@@ -96,11 +100,59 @@ This project uses **JSON dynamic queries only**. Never write Rust `.hx` files; t
 2. **Write the seed query** at `examples/seed.json`, replacing the existing User seed. Use `ForEach` over `parameters.data` (`{"Array": "Object"}`) for bulk inserts. See `<patterns>` for the shape.
 3. **Run the seed:** `helix query dev --file examples/seed.json`. If it errors, read the error, fix the JSON, retry. Do not move on until it returns `{"created": [...]}` (or whatever you named the returned variable).
 4. **Write each read/write query** in its own file under `examples/`. Name them after what they do: `list_contacts.json`, `add_interaction.json`, etc. Test each one with `helix query dev --file examples/<name>.json` as you go.
-5. **Wire the queries into `web/index.html`:** vanilla HTML, one `<script>` block, no build step, no framework. One section per write query, one panel per read query. See `<frontend>`.
-6. **Open `web/index.html`** in a browser, click through every flow, confirm data appears. Loop on bugs.
+5. **Install the Next.js / React / Tailwind / TypeScript skills** before you start writing the frontend. See `<install_more_skills>`.
+6. **Scaffold the Next.js app** by running this exact command from the project root: `npx create-next-app@latest web --typescript --tailwind --app --eslint --src-dir --import-alias '@/*' --use-npm --yes`. If `web/` already exists from a previous run, delete it first. The scaffold creates `web/package.json`, `web/src/app/`, `web/tailwind.config.ts`, `web/tsconfig.json`, etc.
+7. **Add one Next.js API route per query** at `web/src/app/api/<query_name>/route.ts`. Each handler reads `examples/<query_name>.json` from disk at runtime (`fs.readFile`), merges any client-supplied parameters into the request's top-level `parameters` field, POSTs the result to `http://localhost:8080/v1/query`, and returns the response. **The browser must NEVER hit `:8080` directly.**
+8. **Build the UI** under `web/src/app/`. Server Components (the default — no `'use client'`) for read-only views; they `fetch('/api/<name>')` at render time. Client Components (`'use client'`) only for forms or anything that needs state / handlers. Style with Tailwind utility classes; do not add global CSS beyond what create-next-app generates. See `<frontend>` for concrete examples.
+9. **Start the Next.js dev server in the background.** The dev server is **frontend and backend in one process** — it serves React on `/` and the TypeScript API routes on `/api/*`. Detach it so it survives your bash invocation. Use the shell-portable pattern (works for every agent CLI):
+
+       cd web && nohup npm run dev > .next-dev.log 2>&1 & disown
+
+   If you're Claude Code, you can equivalently use the `Bash` tool's `run_in_background: true` flag.
+
+10. **Verify both layers are up before continuing.** Poll with a small retry loop (up to ~15 attempts, 1s sleeps; Next.js usually warms up in 3–5s):
+
+    - `curl -fsS http://localhost:3000` returns 200 (frontend).
+    - `curl -fsS http://localhost:3000/api/<one-of-your-routes>` returns valid JSON (backend).
+
+    If neither responds, read `web/.next-dev.log` for the error and fix it.
+
+11. **Curl every API route** under `web/src/app/api/` against the running server. Each must return the expected JSON shape. Then click through the demo flow in a browser via `http://localhost:3000`.
+
+12. **Open the frontend in the user's default browser.** Try whichever of these matches the platform:
+
+        open http://localhost:3000        # macOS
+        xdg-open http://localhost:3000    # Linux
+        start http://localhost:3000       # Windows
+
+    If none works (headless box, ssh session, missing utility), skip silently — `helix chef` retries the open after you exit as a safety net.
+
+13. **If you stood up any separate backend processes** (workers, queue consumers, additional Node services — uncommon, but if the MVP required it), background each one the same way: `nohup … > <name>.log 2>&1 & disown`. List every process you started in a `processes.md` file at the project root: name, start command, log path, stop command.
+
+14. **Do NOT stop anything you started.** Leave the Next.js dev server (and any extra backend services) running when you finish. The user opens `http://localhost:3000` immediately after `helix chef` exits — everything must be live.
 
 If `helix query dev` returns an error: tail logs with `helix logs dev --follow` in another shell, read the error, fix, retry. If state gets corrupted in-memory mode, `helix restart dev` wipes everything and you can re-seed.
 </workflow>
+
+<install_more_skills>
+The HelixDB skills (`helix-query-json-dynamic`, `helix-query-authoring`, etc.) are already installed by `helix chef`. You install everything else yourself as you go.
+
+**Install the Next.js / React / Tailwind / TypeScript skill pack first** (Vercel's curated set):
+
+    npx skills add vercel-labs/agent-skills -g -y --all
+
+`-g` puts them in `~/.claude/skills` so they're available across projects; `-y` skips prompts; `--all` installs every skill in the pack to every detected agent. After installing, the new skills become available the next time you invoke a skill — you may need to re-read the skill list to discover them.
+
+For any other tooling you decide is useful (e.g. shadcn, drizzle, prisma, react-hook-form), use the same pattern:
+
+    npx skills add <github-org/repo> -g -y
+
+Check what's already installed before adding more:
+
+    npx skills ls -g
+
+Don't kitchen-sink it. Install only what this project actually needs. One project, one Next.js skill pack — anything more requires a concrete reason.
+</install_more_skills>
 
 <json_dsl_quickref>
 Every request has this envelope:
@@ -377,112 +429,164 @@ Inside the `ForEach` body, each object's fields (`name`, `email`) are scoped as 
 </patterns>
 
 <frontend>
-Write a single `web/index.html`. Vanilla HTML, inline CSS, one `<script>` block, no build step, no framework. Open it directly with `file://` or any tiny static server.
+The frontend is a Next.js 15 app (App Router, TypeScript, Tailwind) under `web/`. Scaffolded by `npx create-next-app@latest web --typescript --tailwind --app --eslint --src-dir --import-alias '@/*' --use-npm --yes` (see step 6 of `<workflow>`).
 
-Pattern:
+Three concrete file shapes you write. **Every Helix call is server-side; the browser never talks to `:8080`.**
 
-```html
-<!doctype html>
-<html>
-<head><meta charset="utf-8"><title>My App</title>
-<style>
-  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
-  section { border: 1px solid #ddd; padding: 1rem; margin-bottom: 1rem; border-radius: 6px; }
-  input, button, select, textarea { font: inherit; padding: 0.4rem; margin: 0.2rem 0; }
-  pre { background: #f6f6f6; padding: 0.6rem; overflow-x: auto; }
-</style>
-</head>
-<body>
-<h1>My App</h1>
+**1. API route — `web/src/app/api/list_contacts/route.ts`** (one per query under `examples/`):
 
-<section>
-  <h2>Add contact</h2>
-  <input id="name"  placeholder="Name">
-  <input id="email" placeholder="Email">
-  <button onclick="addContact()">Add</button>
-  <pre id="addResult"></pre>
-</section>
+```typescript
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { NextRequest, NextResponse } from 'next/server';
 
-<section>
-  <h2>Contacts</h2>
-  <button onclick="listContacts()">Refresh</button>
-  <pre id="listResult"></pre>
-</section>
+const HELIX_URL = 'http://localhost:8080/v1/query';
+const QUERY_FILE = 'list_contacts.json';
 
-<script>
-const ENDPOINT = "http://localhost:8080/v1/query";
-
-async function helix(body) {
-  const r = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(body),
-  });
-  return r.json();
+async function loadQuery(overrides?: Record<string, unknown>) {
+  const raw = await fs.readFile(
+    path.join(process.cwd(), '..', 'examples', QUERY_FILE),
+    'utf-8',
+  );
+  const body = JSON.parse(raw);
+  if (overrides) body.parameters = { ...(body.parameters ?? {}), ...overrides };
+  return body;
 }
 
-async function addContact() {
-  const name  = document.getElementById("name").value;
-  const email = document.getElementById("email").value;
-  const result = await helix({
-    request_type: "write",
-    query: {
-      queries: [{Query: {
-        name: "created",
-        steps: [
-          {AddN: {label: "Contact", properties: [
-            ["name",      {Expr: {Param: "name"}}],
-            ["email",     {Expr: {Param: "email"}}],
-            ["createdAt", {Expr: "Timestamp"}],
-          ]}},
-          {ValueMap: ["$id", "name", "email"]},
-        ],
-        condition: null,
-      }}],
-      returns: ["created"],
-    },
-    parameters: {name, email},
-    parameter_types: {name: "String", email: "String"},
+export async function GET() {
+  const res = await fetch(HELIX_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(await loadQuery()),
   });
-  document.getElementById("addResult").textContent = JSON.stringify(result, null, 2);
+  return NextResponse.json(await res.json());
 }
 
-async function listContacts() {
-  const result = await helix({
-    request_type: "read",
-    query: {
-      queries: [{Query: {
-        name: "contacts",
-        steps: [
-          {NWhere: {Eq: ["$label", {String: "Contact"}]}},
-          {Limit: 50},
-          {ValueMap: ["$id", "name", "email", "createdAt"]},
-        ],
-        condition: null,
-      }}],
-      returns: ["contacts"],
-    },
-    parameters: {},
+export async function POST(req: NextRequest) {
+  const { parameters } = await req.json().catch(() => ({ parameters: {} }));
+  const res = await fetch(HELIX_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(await loadQuery(parameters)),
   });
-  document.getElementById("listResult").textContent = JSON.stringify(result, null, 2);
+  return NextResponse.json(await res.json());
 }
-</script>
-</body>
-</html>
 ```
 
-Generate one section per write query and one panel per read query. Render results into `<pre>` blocks during the MVP — fancier UI is scope creep. The Helix gateway sends CORS headers permissive enough for `file://` and `localhost` origins.
+**2. Server Component — `web/src/app/page.tsx`** (default; no `'use client'`):
+
+```typescript
+import AddContactForm from './_components/AddContactForm';
+
+async function getContacts() {
+  const res = await fetch('http://localhost:3000/api/list_contacts', { cache: 'no-store' });
+  return res.json();
+}
+
+export default async function Home() {
+  const data = await getContacts();
+  return (
+    <main className="mx-auto max-w-2xl space-y-6 p-6">
+      <h1 className="text-2xl font-semibold">Contacts</h1>
+      <AddContactForm />
+      <ul className="divide-y rounded-lg border bg-white">
+        {data.contacts.map((c: { $id: number; name: string; email: string }) => (
+          <li key={c.$id} className="p-3 hover:bg-slate-50">
+            <a href={`/contact/${c.$id}`} className="font-medium">{c.name}</a>
+            <span className="ml-2 text-sm text-slate-500">{c.email}</span>
+          </li>
+        ))}
+      </ul>
+    </main>
+  );
+}
+```
+
+**3. Client Component — `web/src/app/_components/AddContactForm.tsx`** (only because of state + handlers):
+
+```typescript
+'use client';
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+
+export default function AddContactForm() {
+  const router = useRouter();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [pending, start] = useTransition();
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    await fetch('/api/add_contact', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ parameters: { name, email } }),
+    });
+    setName(''); setEmail('');
+    start(() => router.refresh());
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-wrap gap-2">
+      <input
+        className="flex-1 rounded border px-2 py-1"
+        placeholder="Name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        required
+      />
+      <input
+        className="flex-1 rounded border px-2 py-1"
+        placeholder="Email"
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        required
+      />
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+      >
+        {pending ? 'Adding...' : 'Add'}
+      </button>
+    </form>
+  );
+}
+```
+
+**Rules of thumb:**
+
+- One API route per `examples/<name>.json`. The route reads the JSON from disk at runtime so query edits don't require redeploying.
+- Parameterized queries: the route merges request-body `parameters` into the on-disk query before forwarding.
+- Server Components (the default) for read-only views — they `fetch` from the API routes at render time. After mutations, call `router.refresh()` to re-run the server fetch.
+- Client Components (`'use client'` at the top of the file) only when you need `useState`, `onClick`, etc.
+- Place Client Components under `web/src/app/_components/`. The leading underscore opts the directory out of routing.
+- Tailwind utility classes only. No custom CSS files beyond `globals.css` from the scaffold.
+- App Router (`web/src/app/`) only. Do not create `web/src/pages/` — that's the legacy router.
 </frontend>
 
 <cli_commands>
 The commands you should run while building:
 
+**HelixDB:**
 - `helix query dev --file examples/<name>.json` — run a saved query.
 - `helix query dev --json '<inline json>'` — one-off without a file.
 - `helix query dev --file examples/<name>.json --compact | jq` — inspect response shape.
 - `helix logs dev --follow` — tail DB logs in another shell; ctrl-C when done.
 - `helix restart dev` — wipe in-memory state. Re-run your seed file afterwards.
 - `helix status dev` — sanity check that the DB is up.
+
+**Skills / scaffolding:**
+- `npx skills add vercel-labs/agent-skills -g -y --all` — install Next.js / React / Tailwind / TypeScript skills (run once per machine).
+- `npx skills ls -g` — list installed skills before deciding what else to add.
+- `npx create-next-app@latest web --typescript --tailwind --app --eslint --src-dir --import-alias '@/*' --use-npm --yes` — scaffold the frontend (run once per project).
+
+**Next.js:**
+- `cd web && nohup npm run dev > .next-dev.log 2>&1 & disown` — start the Next.js dev server in the background (port 3000). Survives your bash invocation; the user opens the URL after `helix chef` exits.
+- `tail -f web/.next-dev.log` — watch the dev server's output when debugging.
+- `pkill -f 'next dev'` — stop the dev server (the user runs this when they're done).
+- `cd web && npm run build && npm run start` — production-ish check; not required for the MVP.
 
 Do NOT run:
 - `helix init`, `helix chef`, `helix run dev`, `helix dashboard start` — already done. Re-running can fail or duplicate state.
@@ -504,7 +608,12 @@ When `helix query` fails, the response body (or stderr) contains the error. Comm
 - DO NOT write `.hx` files or invoke `helix compile` — this project uses dynamic JSON queries only.
 - DO NOT re-run `helix init` / `helix run dev` / `helix dashboard start` — already running.
 - DO NOT use plural label names (`Contacts`). Convention is singular (`Contact`). Edge labels are `SCREAMING_SNAKE` verbs (`WORKS_AT`).
-- DO NOT pull in React, Vue, Svelte, Tailwind, shadcn, or any npm dependency. One HTML file with inline CSS and a `<script>` block.
+- DO NOT write static `.html` files or hand-rolled CSS / JS for the frontend. The frontend is a Next.js app under `web/`; everything goes through the App Router and Tailwind.
+- DO NOT have the browser fetch `http://localhost:8080/v1/query`. Every Helix call goes through a Next.js API route handler in `web/src/app/api/<name>/route.ts`. Server-only.
+- DO NOT write any server / glue code in JavaScript or in any language other than TypeScript. Helix itself is the DB; everything you add is TypeScript.
+- DO NOT use the legacy `pages/` router. The scaffold uses the App Router (`web/src/app/`) — keep it.
+- DO NOT omit the `--src-dir` flag when running `create-next-app`. Routes, examples, and paths throughout this prompt all assume `web/src/app/...`.
+- DO NOT install random npm packages directly. Install skill packs first (`npx skills add ...`) and let the skill guide what gets added.
 - DO NOT add features the user did not ask for. Build the MVP, then stop.
 </antipatterns>
 
@@ -512,29 +621,38 @@ When `helix query` fails, the response body (or stderr) contains the error. Comm
 Before you end your turn, all three of these must be true:
 
 1. Every JSON file under `examples/` runs cleanly via `helix query dev --file examples/<name>.json` and returns a JSON body (not an error).
-2. `web/index.html` opens in a browser and every button you wired up works — adding data, listing it, traversing it.
+2. The Next.js dev server is running in the background on `http://localhost:3000` and is **still running when you finish.** Both the frontend (the App Router pages) and the backend (every API route under `web/src/app/api/`) are responsive — the API routes return valid JSON when called via `curl`, and every form / link in the UI works (adding data, listing it, navigating to detail views). Any additional backend processes you spun up are likewise still running and listed in `processes.md`.
 3. The user can click through the demo flow described in `<user_intent>` end to end.
 
-If any is not true: read the error, fix the query or the frontend, retry. Tail `helix logs dev --follow` if the error is opaque. Be persistent. Do not stop until the demo works.
+If any is not true: read the error, fix the query / route / component, retry. Tail `helix logs dev --follow` if the Helix-side error is opaque, or read the Next.js dev server output for SSR / route errors. Be persistent. Do not stop until the demo works.
 
-**Final summary — print this and then stop.** The user reads only this; make it scannable. Use exactly these sections, in this order:
+**Final summary — print this and then stop.** The user reads only this; make it scannable. Use exactly these seven sections, in this order:
 
 ### What you built
-One or two sentences naming the entities, edges, and what the frontend demonstrates. No marketing language.
+One or two sentences naming the entities, edges, and what the Next.js frontend demonstrates. No marketing language.
 
 ### Files created
-Bullet list of every new file (`examples/*.json`, `web/index.html`, `SCHEMA.md`, anything else). One line per file with a 3–8-word description of its purpose.
+Bullet list of every new file (`examples/*.json`, `SCHEMA.md`, `web/src/app/api/*/route.ts`, `web/src/app/page.tsx`, `web/src/app/_components/*.tsx`, `web/src/app/<route>/page.tsx`, anything else). One line per file with a 3–8-word description of its purpose. You can group the `web/` files generated by `create-next-app` under a single line like "web/ — Next.js scaffold (package.json, tsconfig.json, tailwind.config.ts, etc.)".
 
 ### Files modified
 Bullet list of files that already existed and were changed (typically `examples/seed.json`, possibly `examples/read_users.json`). One line per file describing what changed. Empty list if you didn't modify anything.
 
+### Services running
+Every long-lived process you left running, one bullet each, in the format `name · URL or PID · log file · stop command`. Example:
+- `Next.js dev server · http://localhost:3000 · web/.next-dev.log · pkill -f 'next dev'`
+- `(extra service, if any) · http://localhost:4000 · workers.log · pkill -f 'worker'`
+
+### Commands run
+Significant commands you executed during this run, in chronological order, one per line. Include skill installs, the `create-next-app` scaffold, the dev server start, every `helix query dev --file ...`, every `curl http://localhost:3000/api/...`, and the browser-open. Skip filler like `ls`, `cat`, `pwd`. The user must be able to replay any one of these by copy-paste.
+
 ### How to try it
-One `helix query dev --file examples/<name>.json` invocation per query file (every entry from "Files created" that's a JSON request). Then a single line pointing to `web/index.html` and how to open it.
+- The Next.js dev server is already running. The browser should be open at `http://localhost:3000` (chef will open it if you couldn't).
+- Brief click-through walkthrough of the demo flow (2–4 bullets covering the main UI actions).
 
 ### Known gaps
 Anything you couldn't finish or that's flaky. Empty list if everything works. Be honest — do not paper over broken behavior.
 
-Nothing else after these five sections. No closing pleasantries, no offer of next steps.
+Nothing else after these seven sections. No closing pleasantries, no offer of next steps.
 </deploy_imperative>
 "#;
 
@@ -1239,12 +1357,20 @@ enum ContentBlock {
 
 #[derive(Debug, serde::Deserialize)]
 struct ResultEvent {
+    /// Claude's self-reported success/failure for the run. We don't currently
+    /// act on it — the child's exit status is the source of truth — but it's
+    /// useful for debugging and may drive UX later.
+    #[allow(dead_code)]
     #[serde(default)]
     is_error: bool,
     #[serde(default)]
     duration_ms: Option<u64>,
     #[serde(default)]
     total_cost_usd: Option<f64>,
+    /// The final assistant text. With `-p` mode this is the structured summary
+    /// the prompt asks the agent to produce. We surface it after the run.
+    #[serde(default)]
+    result: Option<String>,
 }
 
 fn format_claude_event(event: &ClaudeEvent) -> Vec<String> {
@@ -1285,7 +1411,19 @@ fn format_tool_use(name: &str, input: &serde_json::Value) -> Option<String> {
         "Grep" => format!("🔍 Grep {}", s("pattern")?),
         "WebSearch" => format!("🌐 Searching: {}", s("query")?),
         "WebFetch" => format!("🌐 Fetch {}", s("url")?),
-        "TodoWrite" => return None,
+        "TodoWrite" => {
+            // Claude calls TodoWrite repeatedly during wrap-up. Render a generic
+            // status so the spinner doesn't appear frozen. Tag with todo count
+            // when available so consecutive updates look distinct.
+            match input
+                .get("todos")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+            {
+                Some(n) => format!("📋 Updating tasks ({n})"),
+                None => "📋 Updating tasks".to_string(),
+            }
+        }
         other if other.starts_with("mcp__") => format!("🔌 MCP: {other}"),
         other => format!("🔧 {other}"),
     })
@@ -1328,6 +1466,7 @@ async fn launch_agent(kind: AgentKind, mode: PermissionMode, project_dir: &Path)
     match status_result {
         Ok(status) if status.success() => {
             step.done();
+            try_open_frontend(project_dir);
         }
         Ok(_) => {
             step.fail();
@@ -1372,6 +1511,7 @@ async fn launch_claude_streaming(
 ) -> Result<std::process::ExitStatus> {
     use tokio::io::AsyncBufReadExt;
     use tokio::process::Command as TokioCommand;
+    use tokio::time::{Duration, timeout};
 
     let argv = build_agent_argv(AgentKind::ClaudeCode, mode, PROMPT_FILENAME, project_dir);
     let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -1379,7 +1519,9 @@ async fn launch_claude_streaming(
     let mut child = TokioCommand::new(AgentKind::ClaudeCode.binary())
         .args(&argv_refs)
         .current_dir(project_dir)
-        .stdin(Stdio::inherit())
+        // No stdin: Claude `-p` doesn't need it and an inherited stdin is a
+        // hang risk if the parent terminal is in an unusual state.
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()?;
@@ -1392,33 +1534,88 @@ async fn launch_claude_streaming(
 
     let dir_display = project_dir.display().to_string();
     let mut final_stats: Option<String> = None;
+    let mut final_text: Option<String> = None;
+    let mut aborted = false;
 
-    while let Some(line) = lines.next_line().await? {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(event) = serde_json::from_str::<ClaudeEvent>(trimmed) {
-            // Two-line spinner: the first line is the static "Cheffing in <dir>"
-            // header, the second line carries the latest action. Embedding `\n`
-            // in indicatif's message works because the template is `{spinner} {msg}`
-            // — the message body wraps onto a fresh line and gets rewritten in place
-            // on each update (line count is stable, so no visual artifacts).
-            // The 4-space indent on line 2 aligns under the spinner's message column.
-            if let Some(rendered) = format_claude_event(&event).into_iter().last() {
-                step.set_message(&format!("Cheffing in {dir_display}\n    {rendered}"));
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+
+    // Race the line stream against Ctrl-C. On signal, kill the child and bail
+    // — the rest of chef's flow handles the failure path the same way as a
+    // non-zero exit (paste-prompt hint).
+    loop {
+        tokio::select! {
+            line_result = lines.next_line() => {
+                match line_result? {
+                    None => break,
+                    Some(line) => {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if let Ok(event) = serde_json::from_str::<ClaudeEvent>(trimmed) {
+                            // Two-line spinner: the first line is the static "Cheffing in <dir>"
+                            // header, the second line carries the latest action. Embedding `\n`
+                            // in indicatif's message works because the template is `{spinner} {msg}`
+                            // — the message body wraps onto a fresh line and gets rewritten in place
+                            // on each update (line count is stable, so no visual artifacts).
+                            // The 4-space indent on line 2 aligns under the spinner's message column.
+                            if let Some(rendered) = format_claude_event(&event).into_iter().last() {
+                                step.set_message(&format!("Cheffing in {dir_display}\n    {rendered}"));
+                            }
+                            continue;
+                        }
+                        if let Ok(result) = serde_json::from_str::<ResultEvent>(trimmed) {
+                            final_stats = Some(format_result_stats(&result));
+                            if let Some(text) = result.result.as_ref().filter(|s| !s.trim().is_empty()) {
+                                final_text = Some(text.clone());
+                            }
+                        }
+                    }
+                }
             }
-            continue;
-        }
-        if let Ok(result) = serde_json::from_str::<ResultEvent>(trimmed) {
-            final_stats = Some(format_result_stats(&result));
+            _ = &mut ctrl_c => {
+                aborted = true;
+                step.println("Aborted by user.");
+                let _ = child.start_kill();
+                break;
+            }
         }
     }
 
-    let status = child.wait().await?;
+    // Time-bounded finalization. Normal exit lands in <100ms; if the child is
+    // wedged we force-kill after 5s so the chef CLI doesn't hang. On abort,
+    // the kill was already requested above — the wait collects the status.
+    let status = match timeout(Duration::from_secs(5), child.wait()).await {
+        Ok(res) => res?,
+        Err(_) => {
+            let _ = child.start_kill();
+            child.wait().await?
+        }
+    };
+
+    // On abort, status is non-success (killed), so launch_agent's Ok(_) branch
+    // runs the paste-prompt fallback automatically. No need to synthesize.
+    let _ = aborted;
+
     if let Some(stats) = final_stats.filter(|s| !s.is_empty()) {
         step.set_completion(&format!("Cheffed in {dir_display} {stats}"));
     }
+
+    // Surface the agent's structured summary (What you built / Files created / …)
+    // so the user actually sees it. Step::println goes above the spinner; we call
+    // it before .done() so the summary lands above the ✓ completion line.
+    if !aborted
+        && status.success()
+        && let Some(text) = final_text.as_deref().filter(|s| !s.is_empty())
+    {
+        step.println("");
+        for line in text.lines() {
+            step.println(line);
+        }
+        step.println("");
+    }
+
     Ok(status)
 }
 
@@ -1440,6 +1637,43 @@ fn print_paste_prompt_hint(project_dir: &Path, lead: &str) {
         "Paste the contents of {} into your agent of choice to get started.",
         project_dir.join(PROMPT_FILENAME).display(),
     ));
+}
+
+/// Safety-net: after the agent finishes successfully, try to open the Next.js
+/// dev server in the user's default browser. The agent SHOULD have done this
+/// itself (workflow step 12), but covering for the case where it didn't.
+///
+/// We only attempt if `web/package.json` exists (it's a Next.js project) AND
+/// `localhost:3000` actually responds (the dev server is up). Otherwise we
+/// either skip silently or print a fallback hint.
+fn try_open_frontend(project_dir: &Path) {
+    let url = "http://localhost:3000";
+
+    if !project_dir.join("web/package.json").exists() {
+        return; // not a Next.js project; agent built something else
+    }
+
+    // Reachability test — 1s ceiling so we don't slow chef's exit.
+    let reachable = Command::new("curl")
+        .args(["-fsSI", "-m", "1", url])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !reachable {
+        crate::output::info(&format!(
+            "The frontend should be at {url}, but it didn't respond. Check `web/.next-dev.log`."
+        ));
+        return;
+    }
+
+    match open::that(url) {
+        Ok(()) => crate::output::info(&format!("Opened {url} in your browser.")),
+        Err(_) => crate::output::info(&format!("Open {url} in your browser.")),
+    }
 }
 
 #[cfg(test)]
@@ -1488,6 +1722,76 @@ mod tests {
         let prompt = starter_prompt(Some("   "));
 
         assert!(prompt.contains("Personal CRM"));
+    }
+
+    #[test]
+    fn default_project_spec_uses_nextjs_stack() {
+        assert!(DEFAULT_PROJECT_SPEC.contains("Next.js"));
+        assert!(DEFAULT_PROJECT_SPEC.contains("Tailwind"));
+        assert!(DEFAULT_PROJECT_SPEC.contains("TypeScript"));
+        assert!(DEFAULT_PROJECT_SPEC.contains("App Router"));
+        assert!(!DEFAULT_PROJECT_SPEC.contains("web/index.html"));
+        assert!(!DEFAULT_PROJECT_SPEC.contains("vanilla HTML"));
+    }
+
+    #[test]
+    fn agent_prompt_template_uses_nextjs_stack() {
+        let prompt = starter_prompt(Some("Build a recipe library"));
+
+        assert!(prompt.contains("Build a recipe library"));
+        assert!(prompt.contains("Next.js"));
+        assert!(prompt.contains("Tailwind"));
+        assert!(prompt.contains("App Router"));
+        assert!(prompt.contains("create-next-app"));
+        assert!(prompt.contains("vercel-labs/agent-skills"));
+        assert!(prompt.contains("<install_more_skills>"));
+        assert!(prompt.contains("npm run dev"));
+        assert!(!prompt.contains("vanilla HTML"));
+        assert!(!prompt.contains("no framework"));
+    }
+
+    #[test]
+    fn agent_prompt_template_keeps_services_running() {
+        let prompt = starter_prompt(Some("X"));
+
+        // Background-detach pattern
+        assert!(prompt.contains("nohup"));
+        assert!(prompt.contains("& disown"));
+        // Persistence requirement
+        assert!(prompt.contains("still running"));
+        // Backend-is-included explainer
+        assert!(prompt.contains("frontend and backend in one process"));
+        // Stop command for the user
+        assert!(prompt.contains("pkill -f 'next dev'"));
+        // Old "user-must-start-server" wording is gone
+        assert!(!prompt.contains("must be running"));
+    }
+
+    #[test]
+    fn agent_prompt_template_summary_has_commands_and_services() {
+        let prompt = starter_prompt(Some("X"));
+
+        // Existing sections still present.
+        assert!(prompt.contains("### What you built"));
+        assert!(prompt.contains("### Files created"));
+        assert!(prompt.contains("### Files modified"));
+        assert!(prompt.contains("### How to try it"));
+        assert!(prompt.contains("### Known gaps"));
+        // New sections.
+        assert!(prompt.contains("### Services running"));
+        assert!(prompt.contains("### Commands run"));
+        // Old "use exactly these sections in this order: 5 sections" wording is updated.
+        assert!(prompt.contains("seven sections"));
+    }
+
+    #[test]
+    fn agent_prompt_template_workflow_includes_browser_open() {
+        let prompt = starter_prompt(Some("X"));
+
+        assert!(prompt.contains("Open the frontend in the user's default browser"));
+        assert!(prompt.contains("open http://localhost:3000"));
+        assert!(prompt.contains("xdg-open http://localhost:3000"));
+        assert!(prompt.contains("start http://localhost:3000"));
     }
 
     #[test]
@@ -1751,9 +2055,18 @@ mod tests {
     }
 
     #[test]
-    fn format_tool_use_todowrite_returns_none() {
-        let input = serde_json::json!({"todos": []});
-        assert!(format_tool_use("TodoWrite", &input).is_none());
+    fn format_tool_use_todowrite_renders_with_count() {
+        let input = serde_json::json!({"todos": [{"content": "a"}, {"content": "b"}]});
+        let rendered = format_tool_use("TodoWrite", &input).unwrap();
+        assert!(rendered.contains("Updating tasks"));
+        assert!(rendered.contains("(2)"));
+    }
+
+    #[test]
+    fn format_tool_use_todowrite_renders_without_count() {
+        let input = serde_json::json!({});
+        let rendered = format_tool_use("TodoWrite", &input).unwrap();
+        assert_eq!(rendered, "📋 Updating tasks");
     }
 
     #[test]
@@ -1845,7 +2158,25 @@ mod tests {
             is_error: false,
             duration_ms: Some(1500),
             total_cost_usd: None,
+            result: None,
         };
         assert_eq!(format_result_stats(&result), "(1.5s)");
+    }
+
+    #[test]
+    fn parse_result_event_captures_result_text() {
+        let line = r####"{"type": "result", "is_error": false, "duration_ms": 1000, "result": "### What you built\nA recipe library MVP."}"####;
+        let result: ResultEvent = serde_json::from_str(line).unwrap();
+        assert_eq!(
+            result.result.as_deref(),
+            Some("### What you built\nA recipe library MVP.")
+        );
+    }
+
+    #[test]
+    fn parse_result_event_missing_text_is_none() {
+        let line = r#"{"type": "result", "is_error": false}"#;
+        let result: ResultEvent = serde_json::from_str(line).unwrap();
+        assert!(result.result.is_none());
     }
 }
