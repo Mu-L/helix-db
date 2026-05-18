@@ -63,10 +63,12 @@ pub async fn run(
         return Ok(());
     }
     let value: Value = serde_json::from_str(&body).unwrap_or(Value::String(body));
-    if compact {
-        println!("{}", serde_json::to_string(&value)?);
-    } else {
-        println!("{}", serde_json::to_string_pretty(&value)?);
+    if crate::output::Verbosity::current().show_normal() {
+        if compact {
+            println!("{}", serde_json::to_string(&value)?);
+        } else {
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        }
     }
     Ok(())
 }

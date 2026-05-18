@@ -1,6 +1,8 @@
 //! Clean, modern CLI output system with verbosity control.
 //!
-//! Provides a structured approach to CLI output with three verbosity levels:
+//! Provides a structured approach to CLI output with four verbosity levels:
+//! - **Silent**: Nothing (internal: used when one command wraps another and
+//!   wants to suppress the inner command's own output)
 //! - **Quiet**: Only errors and final results
 //! - **Normal**: Key milestones with spinners for long operations
 //! - **Verbose**: All sub-steps with timing information
@@ -26,26 +28,31 @@ pub(crate) fn standard_spinner_style() -> ProgressStyle {
 // ============================================================================
 
 /// Global verbosity level (atomic for thread safety)
-static VERBOSITY: AtomicU8 = AtomicU8::new(1); // Default: Normal
+static VERBOSITY: AtomicU8 = AtomicU8::new(2); // Default: Normal
 
 /// Output verbosity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Verbosity {
+    /// Suppress everything, even the per-command final result line.
+    /// Set internally when one command wraps another (e.g. `helix chef` driving
+    /// `init::run` and `run::run` behind its own progress spinners).
+    Silent = 0,
     /// Only errors and final result
-    Quiet = 0,
+    Quiet = 1,
     /// Key milestones with spinners (default)
-    Normal = 1,
+    Normal = 2,
     /// All sub-steps with timing
-    Verbose = 2,
+    Verbose = 3,
 }
 
 impl Verbosity {
     /// Get the current global verbosity level
     pub fn current() -> Self {
         match VERBOSITY.load(Ordering::Relaxed) {
-            0 => Verbosity::Quiet,
-            2 => Verbosity::Verbose,
+            0 => Verbosity::Silent,
+            1 => Verbosity::Quiet,
+            3 => Verbosity::Verbose,
             _ => Verbosity::Normal,
         }
     }
@@ -64,6 +71,11 @@ impl Verbosity {
         } else {
             Verbosity::Normal
         }
+    }
+
+    /// Check if any output (even the Quiet final-result line) should print
+    pub fn show_quiet(&self) -> bool {
+        *self >= Verbosity::Quiet
     }
 
     /// Check if we should show normal output
@@ -166,6 +178,7 @@ impl Operation {
         let duration = self.start_time.elapsed();
 
         match Verbosity::current() {
+            Verbosity::Silent => {}
             Verbosity::Quiet => {
                 println!("{} '{}'", verb_past, self.target);
             }
@@ -200,6 +213,7 @@ impl Operation {
         let duration = self.start_time.elapsed();
 
         match Verbosity::current() {
+            Verbosity::Silent => {}
             Verbosity::Quiet => {
                 println!(
                     "{} {} '{}' failed",
@@ -272,7 +286,7 @@ impl Step {
         self.start_time = Some(Instant::now());
 
         match Verbosity::current() {
-            Verbosity::Quiet => {}
+            Verbosity::Silent | Verbosity::Quiet => {}
             Verbosity::Normal => {
                 self.spinner = Some(LiveSpinner::new(&self.progress_message));
             }
@@ -280,6 +294,30 @@ impl Step {
                 println!("  {} {}...", symbols::INFO.blue(), self.progress_message);
             }
         }
+    }
+
+    /// Print a line above the active spinner without breaking the animation.
+    /// Falls back to a plain println in verbose / quiet modes (no live spinner).
+    pub fn println(&self, message: &str) {
+        if let Some(spinner) = self.spinner.as_ref() {
+            spinner.println(message);
+        } else if Verbosity::current().show_normal() {
+            println!("{message}");
+        }
+    }
+
+    /// Replace the spinner's visible message in place (no new line).
+    /// No-op in verbose / quiet modes where there is no live spinner.
+    pub fn set_message(&self, message: &str) {
+        if let Some(spinner) = self.spinner.as_ref() {
+            spinner.update(message);
+        }
+    }
+
+    /// Override the completion message that gets printed by `.done()` / `.fail()`.
+    /// Useful when summary info (e.g. cost, duration) is only known after the step starts.
+    pub fn set_completion(&mut self, message: &str) {
+        self.completion_message = message.to_string();
     }
 
     /// Mark the step as done
@@ -311,7 +349,7 @@ impl Step {
         }
 
         let verbosity = Verbosity::current();
-        if verbosity == Verbosity::Quiet {
+        if !verbosity.show_normal() {
             return;
         }
 
@@ -387,6 +425,16 @@ impl LiveSpinner {
         }
     }
 
+    /// Print a line above the spinner without breaking the animation.
+    /// Indicatif handles the cursor manipulation; the spinner stays at the bottom.
+    pub fn println(&self, message: &str) {
+        if std::io::stdout().is_terminal() {
+            self.progress_bar.println(message);
+        } else {
+            println!("{message}");
+        }
+    }
+
     /// Finish and clear the spinner (doesn't print anything)
     pub fn finish(self) {
         self.progress_bar.finish_and_clear();
@@ -399,7 +447,9 @@ impl LiveSpinner {
 
 /// Print a success message (used for simple confirmations outside operations)
 pub fn success(message: &str) {
-    println!("{} {}", symbols::SUCCESS.green().bold(), message);
+    if Verbosity::current().show_quiet() {
+        println!("{} {}", symbols::SUCCESS.green().bold(), message);
+    }
 }
 
 /// Print a warning message
@@ -434,6 +484,7 @@ fn past_tense(verb: &str) -> String {
     match lower.as_str() {
         "adding" => "Added",
         "backing up" => "Backed up",
+        "bootstrapping" => "Bootstrapped",
         "building" | "build" => "Built",
         "checking" => "Checked",
         "compiling" => "Compiled",
@@ -476,8 +527,11 @@ mod tests {
 
     #[test]
     fn test_verbosity_ordering() {
+        assert!(Verbosity::Silent < Verbosity::Quiet);
         assert!(Verbosity::Quiet < Verbosity::Normal);
         assert!(Verbosity::Normal < Verbosity::Verbose);
+        assert!(!Verbosity::Silent.show_quiet());
+        assert!(Verbosity::Quiet.show_quiet());
         assert!(!Verbosity::Quiet.show_normal());
         assert!(Verbosity::Normal.show_normal());
         assert!(!Verbosity::Normal.show_verbose());

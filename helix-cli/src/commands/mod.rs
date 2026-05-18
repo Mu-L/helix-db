@@ -1,5 +1,6 @@
 pub mod add;
 pub mod auth;
+pub mod chef;
 pub mod config;
 pub mod dashboard;
 pub mod delete;
