@@ -50,7 +50,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "parity:generate:rust": "cargo run --manifest-path ../Cargo.toml --example generate_parity_fixtures -- ../tests/parity/generated/rust",
+    "parity:generate:rust": "cargo run --manifest-path ../rust/Cargo.toml --example generate_parity_fixtures -- ../tests/parity/generated/rust",
     "parity:generate:ts": "tsc -p tsconfig.json && node dist-dev/scripts/parity/generate-fixtures.js",
     "parity:generate": "npm run parity:generate:rust && npm run parity:generate:ts",
     "parity:compare-json": "tsc -p tsconfig.json && node dist-dev/scripts/parity/compare-json.js",
