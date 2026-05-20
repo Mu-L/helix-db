@@ -25,7 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fixtures.extend(json_only_fixtures());
 
     for fixture in fixtures {
-        let path = out.join(fixture.bucket).join(format!("{}.json", fixture.name));
+        let path = out
+            .join(fixture.bucket)
+            .join(format!("{}.json", fixture.name));
         fs::write(path, fixture.request.to_json_string()?)?;
     }
 
@@ -121,8 +123,14 @@ fn user_props(
         ("tenantId", PropertyInput::from("tenant-a")),
         ("city", PropertyInput::from(city)),
         ("bio", PropertyInput::from(bio)),
-        ("createdAt", PropertyInput::from(DateTime::from_millis(1_776_000_000_000))),
-        ("embedding", PropertyInput::from(PropertyValue::from(embedding))),
+        (
+            "createdAt",
+            PropertyInput::from(DateTime::from_millis(1_776_000_000_000)),
+        ),
+        (
+            "embedding",
+            PropertyInput::from(PropertyValue::from(embedding)),
+        ),
     ]
 }
 
@@ -189,7 +197,10 @@ fn runtime_fixtures() -> Vec<Fixture> {
                                 ("weight", PropertyInput::from(1.0f64)),
                                 ("since", PropertyInput::from("2024-01-01")),
                                 ("note", PropertyInput::from("Alice follows Bob")),
-                                ("embedding", PropertyInput::from(PropertyValue::from(vec![1.0f32, 0.0]))),
+                                (
+                                    "embedding",
+                                    PropertyInput::from(PropertyValue::from(vec![1.0f32, 0.0])),
+                                ),
                             ],
                         ),
                     )
@@ -202,11 +213,20 @@ fn runtime_fixtures() -> Vec<Fixture> {
                                 ("weight", PropertyInput::from(0.5f64)),
                                 ("since", PropertyInput::from("2024-02-01")),
                                 ("note", PropertyInput::from("Bob follows Carol")),
-                                ("embedding", PropertyInput::from(PropertyValue::from(vec![0.0f32, 1.0]))),
+                                (
+                                    "embedding",
+                                    PropertyInput::from(PropertyValue::from(vec![0.0f32, 1.0])),
+                                ),
                             ],
                         ),
                     )
-                    .returning(["alice", "bob", "carol", "alice_follows_bob", "bob_follows_carol"]),
+                    .returning([
+                        "alice",
+                        "bob",
+                        "carol",
+                        "alice_follows_bob",
+                        "bob_follows_carol",
+                    ]),
             ),
         ),
         runtime(
@@ -246,11 +266,17 @@ fn runtime_fixtures() -> Vec<Fixture> {
                             .project(vec![
                                 Projection::property("externalId", "id"),
                                 Projection::property("name", "name"),
-                                Projection::expr("score_plus_one", Expr::prop("score").add(Expr::val(1.0f64))),
+                                Projection::expr(
+                                    "score_plus_one",
+                                    Expr::prop("score").add(Expr::val(1.0f64)),
+                                ),
                                 Projection::expr(
                                     "status_label",
                                     Expr::case(
-                                        vec![(Predicate::eq("status", "active"), Expr::val("enabled"))],
+                                        vec![(
+                                            Predicate::eq("status", "active"),
+                                            Expr::val("enabled"),
+                                        )],
                                         Some(Expr::val("disabled")),
                                     ),
                                 ),
@@ -351,7 +377,9 @@ fn runtime_fixtures() -> Vec<Fixture> {
                     .var_as_if(
                         "fallback",
                         BatchCondition::VarEmpty("missing".to_string()),
-                        g().n_with_label("ParityUser").limit(1usize).value_map(Some(vec!["externalId"])),
+                        g().n_with_label("ParityUser")
+                            .limit(1usize)
+                            .value_map(Some(vec!["externalId"])),
                     )
                     .returning(["missing", "fallback"]),
             ),
@@ -397,7 +425,10 @@ fn runtime_fixtures() -> Vec<Fixture> {
                         object(vec![("externalId", string("user-carol"))]),
                     ]),
                 )],
-                vec![("lookups", QueryParamType::Array(Box::new(QueryParamType::Object)))],
+                vec![(
+                    "lookups",
+                    QueryParamType::Array(Box::new(QueryParamType::Object)),
+                )],
             ),
         ),
         runtime(
@@ -424,11 +455,22 @@ fn runtime_fixtures() -> Vec<Fixture> {
                 vec![(
                     "rows",
                     array(vec![
-                        object(vec![("eventId", string("event-1")), ("kind", string("click")), ("score", i64_value(10))]),
-                        object(vec![("eventId", string("event-2")), ("kind", string("view")), ("score", i64_value(5))]),
+                        object(vec![
+                            ("eventId", string("event-1")),
+                            ("kind", string("click")),
+                            ("score", i64_value(10)),
+                        ]),
+                        object(vec![
+                            ("eventId", string("event-2")),
+                            ("kind", string("view")),
+                            ("score", i64_value(5)),
+                        ]),
                     ]),
                 )],
-                vec![("rows", QueryParamType::Array(Box::new(QueryParamType::Object)))],
+                vec![(
+                    "rows",
+                    QueryParamType::Array(Box::new(QueryParamType::Object)),
+                )],
             ),
         ),
         runtime(
@@ -448,7 +490,10 @@ fn runtime_fixtures() -> Vec<Fixture> {
                         g().n_with_label("ParityUser")
                             .where_(Predicate::eq("externalId", "user-bob"))
                             .set_property("status", PropertyInput::from("inactive"))
-                            .set_property("updatedAt", PropertyInput::from(DateTime::from_millis(1_777_000_000_000)))
+                            .set_property(
+                                "updatedAt",
+                                PropertyInput::from(DateTime::from_millis(1_777_000_000_000)),
+                            )
                             .remove_property("city")
                             .count(),
                     )
@@ -476,7 +521,12 @@ fn runtime_fixtures() -> Vec<Fixture> {
                         "walked",
                         g().n_with_label("ParityUser")
                             .where_(Predicate::eq("externalId", "user-alice"))
-                            .repeat(RepeatConfig::new(sub().out(Some("FOLLOWS"))).times(2).emit_all().max_depth(4))
+                            .repeat(
+                                RepeatConfig::new(sub().out(Some("FOLLOWS")))
+                                    .times(2)
+                                    .emit_all()
+                                    .max_depth(4),
+                            )
                             .union(vec![sub().out(Some("FOLLOWS")), sub().in_(Some("FOLLOWS"))])
                             .dedup()
                             .value_map(Some(vec!["externalId", "name"])),
@@ -509,9 +559,20 @@ fn runtime_fixtures() -> Vec<Fixture> {
             "019-read-aggregations",
             read_request(
                 read_batch()
-                    .var_as("by_status", g().n_with_label("ParityUser").group_count("status"))
-                    .var_as("mean_score", g().n_with_label("ParityUser").aggregate_by(AggregateFunction::Mean, "score"))
-                    .var_as("max_age", g().n_with_label("ParityUser").aggregate_by(AggregateFunction::Max, "age"))
+                    .var_as(
+                        "by_status",
+                        g().n_with_label("ParityUser").group_count("status"),
+                    )
+                    .var_as(
+                        "mean_score",
+                        g().n_with_label("ParityUser")
+                            .aggregate_by(AggregateFunction::Mean, "score"),
+                    )
+                    .var_as(
+                        "max_age",
+                        g().n_with_label("ParityUser")
+                            .aggregate_by(AggregateFunction::Max, "age"),
+                    )
                     .returning(["by_status", "mean_score", "max_age"]),
             ),
         ),
@@ -519,10 +580,27 @@ fn runtime_fixtures() -> Vec<Fixture> {
             "020-write-index-create",
             write_request(
                 write_batch()
-                    .var_as("node_eq", g().create_index_if_not_exists(IndexSpec::node_equality("ParityUser", "externalId")))
-                    .var_as("node_range", g().create_index_if_not_exists(IndexSpec::node_range("ParityUser", "age")))
-                    .var_as("edge_eq", g().create_index_if_not_exists(IndexSpec::edge_equality("FOLLOWS", "since")))
-                    .var_as("edge_range", g().create_index_if_not_exists(IndexSpec::edge_range("FOLLOWS", "weight")))
+                    .var_as(
+                        "node_eq",
+                        g().create_index_if_not_exists(IndexSpec::node_equality(
+                            "ParityUser",
+                            "externalId",
+                        )),
+                    )
+                    .var_as(
+                        "node_range",
+                        g().create_index_if_not_exists(IndexSpec::node_range("ParityUser", "age")),
+                    )
+                    .var_as(
+                        "edge_eq",
+                        g().create_index_if_not_exists(IndexSpec::edge_equality(
+                            "FOLLOWS", "since",
+                        )),
+                    )
+                    .var_as(
+                        "edge_range",
+                        g().create_index_if_not_exists(IndexSpec::edge_range("FOLLOWS", "weight")),
+                    )
                     .returning(["node_eq", "node_range", "edge_eq", "edge_range"]),
             ),
         ),
@@ -542,12 +620,18 @@ fn runtime_fixtures() -> Vec<Fixture> {
                         .returning(["matches"]),
                 ),
                 vec![
-                    ("statuses", array(vec![string("active"), string("inactive")])),
+                    (
+                        "statuses",
+                        array(vec![string("active"), string("inactive")]),
+                    ),
                     ("created_after", string("2026-01-01T00:00:00.000Z")),
                     ("limit", i64_value(5)),
                 ],
                 vec![
-                    ("statuses", QueryParamType::Array(Box::new(QueryParamType::String))),
+                    (
+                        "statuses",
+                        QueryParamType::Array(Box::new(QueryParamType::String)),
+                    ),
                     ("created_after", QueryParamType::DateTime),
                     ("limit", QueryParamType::I64),
                 ],
@@ -564,16 +648,42 @@ fn runtime_fixtures() -> Vec<Fixture> {
                             vec![
                                 ("nullValue", PropertyInput::from(PropertyValue::Null)),
                                 ("boolValue", PropertyInput::from(true)),
-                                ("i64Value", PropertyInput::from(9_223_372_036_854_775_000i64)),
-                                ("dateTimeValue", PropertyInput::from(DateTime::from_millis(-1))),
+                                (
+                                    "i64Value",
+                                    PropertyInput::from(9_223_372_036_854_775_000i64),
+                                ),
+                                (
+                                    "dateTimeValue",
+                                    PropertyInput::from(DateTime::from_millis(-1)),
+                                ),
                                 ("f64Value", PropertyInput::from(3.25f64)),
                                 ("f32Value", PropertyInput::from(1.5f32)),
                                 ("stringValue", PropertyInput::from("variant")),
-                                ("bytesValue", PropertyInput::from(PropertyValue::from(vec![1u8, 2u8, 3u8]))),
-                                ("i64Array", PropertyInput::from(PropertyValue::from(vec![1i64, 2i64, 3i64]))),
-                                ("f64Array", PropertyInput::from(PropertyValue::from(vec![1.0f64, 2.0f64]))),
-                                ("f32Array", PropertyInput::from(PropertyValue::from(vec![1.0f32, 2.0f32]))),
-                                ("stringArray", PropertyInput::from(PropertyValue::from(vec!["a".to_string(), "b".to_string()]))),
+                                (
+                                    "bytesValue",
+                                    PropertyInput::from(PropertyValue::from(vec![1u8, 2u8, 3u8])),
+                                ),
+                                (
+                                    "i64Array",
+                                    PropertyInput::from(PropertyValue::from(vec![
+                                        1i64, 2i64, 3i64,
+                                    ])),
+                                ),
+                                (
+                                    "f64Array",
+                                    PropertyInput::from(PropertyValue::from(vec![1.0f64, 2.0f64])),
+                                ),
+                                (
+                                    "f32Array",
+                                    PropertyInput::from(PropertyValue::from(vec![1.0f32, 2.0f32])),
+                                ),
+                                (
+                                    "stringArray",
+                                    PropertyInput::from(PropertyValue::from(vec![
+                                        "a".to_string(),
+                                        "b".to_string(),
+                                    ])),
+                                ),
                             ],
                         ),
                     )
@@ -584,7 +694,11 @@ fn runtime_fixtures() -> Vec<Fixture> {
             "023-read-property-value-variants",
             read_request(
                 read_batch()
-                    .var_as("variant", g().n_with_label("ParityVariant").value_map(None::<Vec<&str>>))
+                    .var_as(
+                        "variant",
+                        g().n_with_label("ParityVariant")
+                            .value_map(None::<Vec<&str>>),
+                    )
                     .returning(["variant"]),
             ),
         ),
@@ -592,10 +706,22 @@ fn runtime_fixtures() -> Vec<Fixture> {
             "024-write-text-vector-indexes",
             write_request(
                 write_batch()
-                    .var_as("node_text", g().create_text_index_nodes("ParityUser", "bio", None::<&str>))
-                    .var_as("node_vector", g().create_vector_index_nodes("ParityUser", "embedding", None::<&str>))
-                    .var_as("edge_text", g().create_text_index_edges("FOLLOWS", "note", None::<&str>))
-                    .var_as("edge_vector", g().create_vector_index_edges("FOLLOWS", "embedding", None::<&str>))
+                    .var_as(
+                        "node_text",
+                        g().create_text_index_nodes("ParityUser", "bio", None::<&str>),
+                    )
+                    .var_as(
+                        "node_vector",
+                        g().create_vector_index_nodes("ParityUser", "embedding", None::<&str>),
+                    )
+                    .var_as(
+                        "edge_text",
+                        g().create_text_index_edges("FOLLOWS", "note", None::<&str>),
+                    )
+                    .var_as(
+                        "edge_vector",
+                        g().create_vector_index_edges("FOLLOWS", "embedding", None::<&str>),
+                    )
                     .returning(["node_text", "node_vector", "edge_text", "edge_vector"]),
             ),
         ),
@@ -605,7 +731,8 @@ fn runtime_fixtures() -> Vec<Fixture> {
                 read_batch()
                     .var_as(
                         "text_hits",
-                        g().text_search_nodes("ParityUser", "bio", "graph", 5, None).value_map(Some(vec!["externalId", "bio", "$distance"])),
+                        g().text_search_nodes("ParityUser", "bio", "graph", 5, None)
+                            .value_map(Some(vec!["externalId", "bio", "$distance"])),
                     )
                     .returning(["text_hits"]),
             ),
@@ -616,8 +743,17 @@ fn runtime_fixtures() -> Vec<Fixture> {
                 read_batch()
                     .var_as(
                         "vector_hits",
-                        g().vector_search_nodes("ParityUser", "embedding", vec![1.0, 0.0, 0.0], 3, None)
-                            .project(vec![Projection::property("externalId", "externalId"), Projection::property("$distance", "distance")]),
+                        g().vector_search_nodes(
+                            "ParityUser",
+                            "embedding",
+                            vec![1.0, 0.0, 0.0],
+                            3,
+                            None,
+                        )
+                        .project(vec![
+                            Projection::property("externalId", "externalId"),
+                            Projection::property("$distance", "distance"),
+                        ]),
                     )
                     .returning(["vector_hits"]),
             ),
@@ -628,7 +764,8 @@ fn runtime_fixtures() -> Vec<Fixture> {
                 read_batch()
                     .var_as(
                         "edge_text_hits",
-                        g().text_search_edges("FOLLOWS", "note", "follows", 5, None).edge_properties(),
+                        g().text_search_edges("FOLLOWS", "note", "follows", 5, None)
+                            .edge_properties(),
                     )
                     .returning(["edge_text_hits"]),
             ),
@@ -639,7 +776,8 @@ fn runtime_fixtures() -> Vec<Fixture> {
                 read_batch()
                     .var_as(
                         "edge_vector_hits",
-                        g().vector_search_edges("FOLLOWS", "embedding", vec![1.0, 0.0], 5, None).edge_properties(),
+                        g().vector_search_edges("FOLLOWS", "embedding", vec![1.0, 0.0], 5, None)
+                            .edge_properties(),
                     )
                     .returning(["edge_vector_hits"]),
             ),
@@ -648,7 +786,10 @@ fn runtime_fixtures() -> Vec<Fixture> {
             "029-write-drop-temp-node",
             write_request(
                 write_batch()
-                    .var_as("temp", g().add_n("ParityTemp", vec![("name", PropertyInput::from("temp"))]))
+                    .var_as(
+                        "temp",
+                        g().add_n("ParityTemp", vec![("name", PropertyInput::from("temp"))]),
+                    )
                     .var_as("dropped", g().n(NodeRef::var("temp")).drop().count())
                     .returning(["dropped"]),
             ),
@@ -716,9 +857,13 @@ fn node_permutation_fixtures() -> Vec<Fixture> {
         for filter in filters {
             for bound in bounds {
                 for terminal in terminals {
-                    let name = format!("{index:03}-combo-node-{source}-{filter}-{bound}-{terminal}");
+                    let name =
+                        format!("{index:03}-combo-node-{source}-{filter}-{bound}-{terminal}");
                     index += 1;
-                    fixtures.push(runtime(name, read_request(node_combo_batch(source, filter, bound, terminal))));
+                    fixtures.push(runtime(
+                        name,
+                        read_request(node_combo_batch(source, filter, bound, terminal)),
+                    ));
                 }
             }
         }
@@ -727,7 +872,8 @@ fn node_permutation_fixtures() -> Vec<Fixture> {
 }
 
 fn node_combo_batch(source: &str, filter: &str, bound: &str, terminal: &str) -> ReadBatch {
-    let traversal = apply_node_bound(apply_node_filter(node_source(source), filter), bound).order_by("externalId", Order::Asc);
+    let traversal = apply_node_bound(apply_node_filter(node_source(source), filter), bound)
+        .order_by("externalId", Order::Asc);
     let traversal = match terminal {
         "count" => traversal.count(),
         "exists" => traversal.exists(),
@@ -739,7 +885,9 @@ fn node_combo_batch(source: &str, filter: &str, bound: &str, terminal: &str) -> 
         ]),
         other => panic!("unknown terminal {other}"),
     };
-    read_batch().var_as("result", traversal).returning(["result"])
+    read_batch()
+        .var_as("result", traversal)
+        .returning(["result"])
 }
 
 fn node_source(source: &str) -> Traversal<OnNodes, ReadOnly> {
@@ -751,13 +899,19 @@ fn node_source(source: &str) -> Traversal<OnNodes, ReadOnly> {
     }
 }
 
-fn apply_node_filter(traversal: Traversal<OnNodes, ReadOnly>, filter: &str) -> Traversal<OnNodes, ReadOnly> {
+fn apply_node_filter(
+    traversal: Traversal<OnNodes, ReadOnly>,
+    filter: &str,
+) -> Traversal<OnNodes, ReadOnly> {
     match filter {
         "none" => traversal,
         "has" => traversal.has("status", "active"),
         "logic" => traversal.where_(Predicate::and(vec![
             Predicate::has_key("externalId"),
-            Predicate::or(vec![Predicate::starts_with("name", "A"), Predicate::ends_with("name", "b")]),
+            Predicate::or(vec![
+                Predicate::starts_with("name", "A"),
+                Predicate::ends_with("name", "b"),
+            ]),
             Predicate::not(Predicate::is_null("age")),
         ])),
         "expr" => traversal.where_(Predicate::compare(
@@ -769,7 +923,10 @@ fn apply_node_filter(traversal: Traversal<OnNodes, ReadOnly>, filter: &str) -> T
     }
 }
 
-fn apply_node_bound(traversal: Traversal<OnNodes, ReadOnly>, bound: &str) -> Traversal<OnNodes, ReadOnly> {
+fn apply_node_bound(
+    traversal: Traversal<OnNodes, ReadOnly>,
+    bound: &str,
+) -> Traversal<OnNodes, ReadOnly> {
     match bound {
         "none" => traversal,
         "limit" => traversal.limit(2usize),
@@ -794,7 +951,10 @@ fn json_only_fixtures() -> Vec<Fixture> {
                                 Step::Where(Predicate::contains_param("bio", "needle")),
                                 Step::LimitBy(Expr::param("limit")),
                                 Step::SkipBy(Expr::param("skip")),
-                                Step::RangeBy(StreamBound::literal(0), StreamBound::expr(Expr::param("end"))),
+                                Step::RangeBy(
+                                    StreamBound::literal(0),
+                                    StreamBound::expr(Expr::param("end")),
+                                ),
                                 Step::As("a".to_string()),
                                 Step::Store("stored".to_string()),
                                 Step::Select("stored".to_string()),
@@ -843,8 +1003,14 @@ fn json_only_fixtures() -> Vec<Fixture> {
                     ("end", i64_value(10)),
                 ],
                 vec![
-                    ("node_ids", QueryParamType::Array(Box::new(QueryParamType::I64))),
-                    ("edge_ids", QueryParamType::Array(Box::new(QueryParamType::I64))),
+                    (
+                        "node_ids",
+                        QueryParamType::Array(Box::new(QueryParamType::I64)),
+                    ),
+                    (
+                        "edge_ids",
+                        QueryParamType::Array(Box::new(QueryParamType::I64)),
+                    ),
                     ("needle", QueryParamType::String),
                     ("limit", QueryParamType::I64),
                     ("skip", QueryParamType::I64),
@@ -900,7 +1066,10 @@ fn json_only_fixtures() -> Vec<Fixture> {
                                 to: NodeRef::Var("raw_mutations".to_string()),
                                 properties: vec![("weight".to_string(), PropertyInput::from(1i64))],
                             },
-                            Step::SetProperty("name".to_string(), PropertyInput::Expr(Expr::param("name"))),
+                            Step::SetProperty(
+                                "name".to_string(),
+                                PropertyInput::Expr(Expr::param("name")),
+                            ),
                             Step::RemoveProperty("old".to_string()),
                             Step::DropEdge(NodeRef::Ids(vec![999_999])),
                             Step::DropEdgeLabeled {
@@ -917,7 +1086,11 @@ fn json_only_fixtures() -> Vec<Fixture> {
         json_only(
             "902-dynamic-value-and-param-type-shapes",
             with_params(
-                read_request(read_batch().var_as("empty", g().n_with_label("Missing").count()).returning(["empty"])),
+                read_request(
+                    read_batch()
+                        .var_as("empty", g().n_with_label("Missing").count())
+                        .returning(["empty"]),
+                ),
                 vec![
                     ("null", DynamicQueryValue::Null),
                     ("bool", DynamicQueryValue::Bool(true)),
@@ -926,7 +1099,10 @@ fn json_only_fixtures() -> Vec<Fixture> {
                     ("f32", DynamicQueryValue::F32(1.5)),
                     ("string", string("value")),
                     ("array", array(vec![i64_value(1), string("two")])),
-                    ("object", object(vec![("nested", DynamicQueryValue::Bool(true))])),
+                    (
+                        "object",
+                        object(vec![("nested", DynamicQueryValue::Bool(true))]),
+                    ),
                 ],
                 vec![
                     ("null", QueryParamType::Value),
@@ -935,7 +1111,10 @@ fn json_only_fixtures() -> Vec<Fixture> {
                     ("f64", QueryParamType::F64),
                     ("f32", QueryParamType::F32),
                     ("string", QueryParamType::String),
-                    ("array", QueryParamType::Array(Box::new(QueryParamType::Value))),
+                    (
+                        "array",
+                        QueryParamType::Array(Box::new(QueryParamType::Value)),
+                    ),
                     ("object", QueryParamType::Object),
                 ],
             ),
@@ -968,13 +1147,19 @@ fn json_only_fixtures() -> Vec<Fixture> {
                         .returning(["vector_nodes", "text_nodes"]),
                 ),
                 vec![
-                    ("query_vector", array(vec![f64_value(1.0), f64_value(0.0), f64_value(0.0)])),
+                    (
+                        "query_vector",
+                        array(vec![f64_value(1.0), f64_value(0.0), f64_value(0.0)]),
+                    ),
                     ("query_text", string("graph")),
                     ("limit", i64_value(5)),
                     ("tenant", string("tenant-a")),
                 ],
                 vec![
-                    ("query_vector", QueryParamType::Array(Box::new(QueryParamType::F64))),
+                    (
+                        "query_vector",
+                        QueryParamType::Array(Box::new(QueryParamType::F64)),
+                    ),
                     ("query_text", QueryParamType::String),
                     ("limit", QueryParamType::I64),
                     ("tenant", QueryParamType::String),
@@ -985,11 +1170,41 @@ fn json_only_fixtures() -> Vec<Fixture> {
             "904-empty-query-and-node-edge-ref-shapes",
             read_request(
                 read_batch()
-                    .var_as("all_nodes", Traversal::<OnNodes, ReadOnly>::from_steps(vec![Step::N(NodeRef::All), Step::Count]))
-                    .var_as("node_ids", Traversal::<OnNodes, ReadOnly>::from_steps(vec![Step::N(NodeRef::ids([1, 2])), Step::Id]))
-                    .var_as("node_var", Traversal::<OnNodes, ReadOnly>::from_steps(vec![Step::N(NodeRef::Var("all_nodes".to_string())), Step::Label]))
-                    .var_as("edge_ids", Traversal::<helix_dsl::OnEdges, ReadOnly>::from_steps(vec![Step::E(EdgeRef::ids([1, 2])), Step::Id]))
-                    .var_as("edge_var", Traversal::<helix_dsl::OnEdges, ReadOnly>::from_steps(vec![Step::E(EdgeRef::Var("edge_ids".to_string())), Step::Label]))
+                    .var_as(
+                        "all_nodes",
+                        Traversal::<OnNodes, ReadOnly>::from_steps(vec![
+                            Step::N(NodeRef::All),
+                            Step::Count,
+                        ]),
+                    )
+                    .var_as(
+                        "node_ids",
+                        Traversal::<OnNodes, ReadOnly>::from_steps(vec![
+                            Step::N(NodeRef::ids([1, 2])),
+                            Step::Id,
+                        ]),
+                    )
+                    .var_as(
+                        "node_var",
+                        Traversal::<OnNodes, ReadOnly>::from_steps(vec![
+                            Step::N(NodeRef::Var("all_nodes".to_string())),
+                            Step::Label,
+                        ]),
+                    )
+                    .var_as(
+                        "edge_ids",
+                        Traversal::<helix_dsl::OnEdges, ReadOnly>::from_steps(vec![
+                            Step::E(EdgeRef::ids([1, 2])),
+                            Step::Id,
+                        ]),
+                    )
+                    .var_as(
+                        "edge_var",
+                        Traversal::<helix_dsl::OnEdges, ReadOnly>::from_steps(vec![
+                            Step::E(EdgeRef::Var("edge_ids".to_string())),
+                            Step::Label,
+                        ]),
+                    )
                     .returning(["all_nodes", "node_ids", "node_var", "edge_ids", "edge_var"]),
             ),
         ),
@@ -997,8 +1212,16 @@ fn json_only_fixtures() -> Vec<Fixture> {
             "905-empty-traversal-source-mutators",
             write_request(
                 write_batch()
-                    .var_as("inject", Traversal::<Empty, ReadOnly>::new().inject("some_var").count())
-                    .var_as("drop_edge_by_id", g().drop_edge_by_id(EdgeRef::id(123_456)).count())
+                    .var_as(
+                        "inject",
+                        Traversal::<Empty, ReadOnly>::new()
+                            .inject("some_var")
+                            .count(),
+                    )
+                    .var_as(
+                        "drop_edge_by_id",
+                        g().drop_edge_by_id(EdgeRef::id(123_456)).count(),
+                    )
                     .returning(["inject", "drop_edge_by_id"]),
             ),
         ),

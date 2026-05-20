@@ -813,8 +813,8 @@ use std::marker::PhantomData;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
-pub use helix_dsl_macros::register;
 pub use crate::query_generator::*;
+pub use helix_dsl_macros::register;
 
 #[doc(hidden)]
 pub mod __private {

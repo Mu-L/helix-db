@@ -381,7 +381,8 @@ mod tests {
             r#"{"LteExpr":["score",{"Param":"max"}]}"#
         );
         assert_eq!(
-            sonic_rs::to_string(&SourcePredicate::between("age", Expr::param("lo"), 65i64)).unwrap(),
+            sonic_rs::to_string(&SourcePredicate::between("age", Expr::param("lo"), 65i64))
+                .unwrap(),
             r#"{"BetweenExpr":["age",{"Param":"lo"},{"Constant":{"I64":65}}]}"#
         );
     }
@@ -404,7 +405,10 @@ mod tests {
     #[test]
     fn query_ast_literal_vs_param_json() {
         let literal = read_batch()
-            .var_as("user", g().n_where(SourcePredicate::eq("username", "alice")))
+            .var_as(
+                "user",
+                g().n_where(SourcePredicate::eq("username", "alice")),
+            )
             .returning(["user"]);
         let literal_json = sonic_rs::to_string(&literal).unwrap();
         assert!(
