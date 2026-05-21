@@ -120,11 +120,12 @@ async function assertCommand(command: string, args: string[]) {
 
 function run(command: string, args: string[], cwd: string, timeout: number, allowFailure = false) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8", timeout, maxBuffer: 1024 * 1024 * 20 });
-  if (!allowFailure && result.status !== 0) {
+  if (!allowFailure && (result.error || result.status !== 0)) {
     throw new Error(
       [
         `command failed: ${command} ${args.map((arg) => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ")}`,
         `cwd: ${cwd}`,
+        result.error ? `error: ${result.error.message}` : "",
         result.stdout ? `stdout:\n${result.stdout}` : "",
         result.stderr ? `stderr:\n${result.stderr}` : "",
       ]

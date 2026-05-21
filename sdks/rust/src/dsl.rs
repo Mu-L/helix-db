@@ -4578,8 +4578,10 @@ pub mod prelude {
         NodeRef, Order, ParamObject, ParamValue, Predicate, Projection, PropertyInput,
         PropertyProjection, PropertyValue, ReadBatch, RepeatConfig, SourcePredicate, StreamBound,
         SubTraversal, Traversal, WriteBatch,
-        // query bundle generation
-        generate, generate_to_path, GenerateError, QueryBundle, QueryParameter, QueryParamType,
+    };
+    // query bundle generation
+    pub use crate::{
+        generate, generate_to_path, GenerateError, QueryBundle, QueryParamType, QueryParameter,
     };
 }
 
