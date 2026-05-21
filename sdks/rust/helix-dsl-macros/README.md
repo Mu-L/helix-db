@@ -7,7 +7,7 @@ This crate provides the `#[register]` attribute macro, which transforms query-bu
 ## Usage
 
 ```rust
-use helix_dsl::prelude::*;
+use helix_db::prelude::*;
 
 #[register]
 fn find_user(username: String) -> ReadBatch {
@@ -27,7 +27,7 @@ The macro:
 
 1. **Strips parameters** from the function signature and replaces them with `let` bindings to `Expr::param(...)`, making them available as typed query expressions inside the body.
 2. **Generates a metadata function** (`__helix_dsl_params_{name}`) that returns a `Vec<QueryParameter>` describing each parameter's name and type.
-3. **Registers the query** via [`inventory`](https://docs.rs/inventory) as a `RegisteredReadQuery` or `RegisteredWriteQuery`, making it discoverable at runtime by `helix_dsl::generate()`.
+3. **Registers the query** via [`inventory`](https://docs.rs/inventory) as a `RegisteredReadQuery` or `RegisteredWriteQuery`, making it discoverable at runtime by `helix_db::generate()`.
 
 ## Supported parameter types
 

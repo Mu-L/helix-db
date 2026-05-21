@@ -526,9 +526,7 @@ function runtimeFixtures(): Fixture[] {
             .varAs(
               "user",
               g()
-                .nWhere(
-                  SourcePredicate.and([SourcePredicate.eq("$label", "ParityUser"), SourcePredicate.eq("name", Expr.param("name"))]),
-                )
+                .nWhere(SourcePredicate.and([SourcePredicate.eq("$label", "ParityUser"), SourcePredicate.eq("name", Expr.param("name"))]))
                 .valueMap(["externalId", "name"]),
             )
             .returning(["user"]),
@@ -546,7 +544,10 @@ function runtimeFixtures(): Fixture[] {
               "adults",
               g()
                 .nWhere(
-                  SourcePredicate.and([SourcePredicate.eq("$label", "ParityUser"), SourcePredicate.between("age", Expr.param("min_age"), 65)]),
+                  SourcePredicate.and([
+                    SourcePredicate.eq("$label", "ParityUser"),
+                    SourcePredicate.between("age", Expr.param("min_age"), 65),
+                  ]),
                 )
                 .valueMap(["externalId", "age"]),
             )

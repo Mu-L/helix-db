@@ -1,23 +1,27 @@
-# helix-enterprise-ql
+# helix-db
 
 > There is good documentation in the crate doc comments, especially in `src/lib.rs`. AI agents should read the source code and doc comments to get a feel for the query-building patterns and the full API surface.
 
-`helix-enterprise-ql` (crate name: `helix_dsl`) is a query builder centered on two entry points:
+The `helix-db` crate (imported as `helix_db`) is the Rust SDK for [HelixDB](https://github.com/helix_db/helix-db). It pairs a query-builder DSL with a small async HTTP client ([`helix_db::Client`](#executing-queries-with-helix_dbclient)) for running those queries against a Helix instance.
+
+The DSL is centered on two entry points:
 - `read_batch()` for read-only transactions
 - `write_batch()` for write-capable transactions
 
-Everything in this crate is designed to be composed inside those batch chains. You write one or more named traversals with `.var_as(...)` / `.var_as_if(...)`, then choose the final payload with `.returning(...)`.
+Everything in the DSL is designed to be composed inside those batch chains. You write one or more named traversals with `.var_as(...)` / `.var_as_if(...)`, then choose the final payload with `.returning(...)`.
 
 ## Install
 
-Add `helix-dsl = { package = "helix-enterprise-ql", git = "https://github.com/helixdb/helix-enterprise-ql", branch = "main" }` under `[dependencies]`.
+Add the crate under `[dependencies]`:
 
-This package exports the Rust crate as `helix_dsl` for compatibility with existing code.
+```toml
+helix-db = "2.0.0"
+```
 
-For shorter query code, import the curated builder API:
+The crate is published under the name `helix-db` and its library is imported as `helix_db`. For shorter query code, bring the curated builder API into scope:
 
 ```rust
-use helix_dsl::prelude::*;
+use helix_db::dsl::prelude::*;
 ```
 
 The examples below assume that prelude is in scope.
@@ -140,19 +144,65 @@ write_batch()
     .returning(["deactivated_count"]);
 ```
 
-## Calling Registered Queries Over HTTP
+## Executing Queries with `helix_db::Client`
 
-Use `#[register]` on a `pub` query builder when you want a callable helper that serializes to the gateway `/query` route payload.
-
-For the HTTP example below, add these dependencies in your application:
-
-```toml
-reqwest = { version = "0.13.2", features = ["json"] }
-tokio = { version = "1", features = ["full"] }
-```
+`helix_db::Client` is a thin async wrapper over `reqwest` for running queries against a Helix
+instance. Construct it with an optional base URL, then optionally attach a bearer API key:
 
 ```rust
-use helix_dsl::*;
+use helix_db::Client;
+
+// Defaults to http://localhost:6969 when `url` is None.
+let client = Client::new(None)?;
+
+// Or point at a remote cluster and attach an API key:
+let client = Client::new(Some("https://11e2fc88c410fa5eb13e.cluster.helix-db.com"))?
+    .with_api_key(Some("hx_your_api_key"));
+```
+
+Requests are built with a small fluent builder. Start with `client.query::<R>()` (where `R` is
+the type you want the response deserialized into), optionally toggle request headers, then choose
+a query kind and `.send().await`:
+
+```rust
+// Inline / dynamic query: POSTs a `DynamicQueryRequest` (DSL query + parameters) to `/v1/query`.
+let response: MyResponse = client
+    .query()
+    .dynamic_query(request)        // `request` is a DynamicQueryRequest (see below)
+    .send()
+    .await?;
+
+// Stored query: POSTs a serializable payload to a deployed query's route
+// (`/v1/query/<name>`, e.g. `/v1/query/add_user`).
+let response: MyResponse = client
+    .query()
+    .body(&payload)?               // optional request body for the route
+    .stored_query("add_user".to_string())
+    .send()
+    .await?;
+```
+
+Optional header toggles can be chained before choosing the query kind:
+
+- `.writer_only()` — require the request to be served by a writer node (`x-helix-require-writer`).
+- `.warm_only()` — only execute if the query is already warm (`x-helix-warm`); reads only.
+- `.should_await_durability(true)` — block until the write is durable (`x-helix-await-durable`).
+
+`send()` is generic over the deserialized response type `R` and returns `Result<R, HelixError>`.
+`HelixError` distinguishes transport errors, non-200 responses from the server (`RemoteError`),
+serialization failures, and invalid URLs.
+
+### Registered queries + `dynamic_query`
+
+Annotate a query builder with `#[register]` to get a callable helper that builds a
+`DynamicQueryRequest` directly from typed arguments. The generated function returns the request
+value itself (not a `Result`) — parameter coercion that can fail (e.g. `DateTime`, bytes) panics
+with a descriptive message rather than returning an error.
+
+```rust
+use helix_db::dsl::prelude::*;
+use helix_db::Client;
+use serde::Deserialize;
 
 #[register]
 pub fn add_user(name: String) -> WriteBatch {
@@ -161,22 +211,31 @@ pub fn add_user(name: String) -> WriteBatch {
         .returning(vec!["user_id"])
 }
 
+#[derive(Deserialize)]
+struct AddUserResponse {
+    user_id: u64,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let url = "https://11e2fc88c410fa5eb13e.cluster.helix-db.com/v1/query";
+    let client = Client::new(Some("https://11e2fc88c410fa5eb13e.cluster.helix-db.com"))?
+        .with_api_key(Some("hx_your_api_key"));
 
-    let request = add_user("John".to_string())?;
+    // Building the request is infallible — no `?` needed here.
+    let request = add_user("John".to_string());
 
-    client.post(url).json(&request).send().await?;
+    let response: AddUserResponse = client.query().dynamic_query(request).send().await?;
+    println!("created user {}", response.user_id);
     Ok(())
 }
 ```
 
 Notes:
-- Keep the registered function `pub` if you want the callable request-building helper.
-- The generated payload includes `request_type`, `query`, and optional `parameters`.
-- Private `#[register]` functions are still registered for bundle generation, but they do not generate the public callable helper.
+- A `#[register]` builder generates a public callable helper only when the function is `pub`.
+- The serialized payload includes `request_type`, `query`, and optional `parameters` /
+  `parameter_types`.
+- Private `#[register]` functions are still registered for bundle generation
+  (`helix_db::query_generator::generate()`), but they do not generate the public callable helper.
 
 ## Vector Search Operations (End-to-End)
 

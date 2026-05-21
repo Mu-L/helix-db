@@ -15,7 +15,6 @@ categories = ["database", "data-structures"]
 # [workspace]
 
 [lib]
-name = "helix_dsl"
 path = "src/lib.rs"
 
 [dependencies]
@@ -23,7 +22,7 @@ chrono = "0.4"
 serde = { version = "1", features = ["derive"] }
 sonic-rs = "0.5.8"
 inventory = "0.3.24"
-helix-dsl-macros = { path = "helix-dsl-macros" }
+helix-dsl-macros = { version = "0.2.0", path = "helix-dsl-macros" }
 reqwest = { version = "0.13.3" }
 tokio = { version = "1", features = ["full"] }
 thiserror = "2.0.18"

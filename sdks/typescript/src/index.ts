@@ -762,11 +762,7 @@ export class SourcePredicate implements Encodable {
       ? new SourcePredicate("Lte", [property, input.payload])
       : new SourcePredicate("LteExpr", [property, input.payload]);
   }
-  static between(
-    property: string,
-    min: PropertyValueInput | Expr | ParamRef,
-    max: PropertyValueInput | Expr | ParamRef,
-  ): SourcePredicate {
+  static between(property: string, min: PropertyValueInput | Expr | ParamRef, max: PropertyValueInput | Expr | ParamRef): SourcePredicate {
     const lo = PropertyInput.from(min);
     const hi = PropertyInput.from(max);
     if (lo.variant === "Value" && hi.variant === "Value") {

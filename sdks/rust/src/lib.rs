@@ -5,30 +5,39 @@
 //!
 //! Most application code only needs the curated builder API:
 //! ```
-//! use helix_dsl::prelude::*;
+//! use helix_db::dsl::prelude::*;
 //! ```
 
-mod dsl;
+pub mod dsl;
 pub mod query_generator;
+
+use std::marker::PhantomData;
 
 // Re-export the DSL surface (types, builders, `prelude`, etc.) at the crate
 // root. This is also what makes the `crate::*` paths used inside `dsl.rs` and
 // `query_generator.rs` resolve.
 pub use dsl::*;
 
-// Convenience re-export so `helix_dsl::prelude::*` is reachable directly.
+// Convenience re-export so `helix_db::prelude::*` is reachable directly, in
+// addition to the canonical `helix_db::dsl::prelude::*`.
 pub use dsl::prelude;
 
-use reqwest::{Client, StatusCode};
+use reqwest::{Client as ReqwestClient, StatusCode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Async HTTP client for running queries against a Helix instance.
+///
+/// Reachable as `helix_db::Client`.
 #[derive(Debug, Clone)]
-pub struct HelixDBClient {
-    client: Client,
+pub struct Client {
+    client: ReqwestClient,
     url: reqwest::Url,
     api_key: Option<String>,
 }
+
+/// Backwards-compatible alias for [`Client`].
+pub type HelixDBClient = Client;
 
 #[derive(Debug, Error)]
 pub enum HelixError {
@@ -42,73 +51,125 @@ pub enum HelixError {
     InvalidURL(String),
 }
 
-// This trait allows users to implement their own client if needed
-
-impl HelixDBClient {
-    pub fn new(url: Option<&str>, api_key: Option<&str>) -> Result<Self, HelixError> {
+impl Client {
+    pub fn new(url: Option<&str>) -> Result<Self, HelixError> {
+        // Resolve the base query endpoint up front. `send()` reuses this for
+        // dynamic queries and appends `/<name>` for stored queries.
         let url = reqwest::Url::parse(url.unwrap_or("http://localhost:6969"))
+            .map_err(|e| HelixError::InvalidURL(e.to_string()))?
+            .join("/v1/query")
             .map_err(|e| HelixError::InvalidURL(e.to_string()))?;
         Ok(Self {
-            client: Client::new(),
+            client: ReqwestClient::new(),
             url,
-            api_key: api_key.map(|key| key.to_string()),
+            api_key: None,
         })
     }
 
-    pub async fn dynamic_query<R>(&self, query: &DynamicQueryRequest) -> Result<R, HelixError>
-    where
-        R: for<'de> Deserialize<'de>,
-    {
-        let mut request = self
-            .client
-            .post(self.url.join("/v1/query").unwrap())
-            .header("Content-Type", "application/json")
-            .body(sonic_rs::to_vec(query)?);
+    pub fn with_api_key(mut self, api_key: Option<&str>) -> Self {
+        self.api_key = api_key.map(|key| key.to_string());
+        self
+    }
 
-        // Add API key header if provided
-        if let Some(ref api_key) = self.api_key {
-            request = request.bearer_auth(api_key);
-        }
+    pub fn query<R: for<'de> Deserialize<'de>>(&self) -> QueryBuilder<'_, '_, R> {
+        QueryBuilder::new(self)
+    }
+}
 
-        let response = request.send().await?;
+pub struct QueryBuilder<'hlx, 'a, R> {
+    client: &'hlx HelixDBClient,
+    query_type: QueryType,
+    headers: [Option<(&'a str, &'a str)>; 4],
+    body: Option<Vec<u8>>,
+    _phantom: PhantomData<R>,
+}
 
-        match response.status() {
-            StatusCode::OK => {
-                let bytes = response.bytes().await?;
-                sonic_rs::from_slice::<R>(&bytes).map_err(Into::into)
-            }
-            code => match response.text().await {
-                Ok(t) => Err(HelixError::RemoteError { details: t }),
-                Err(_) => match code.canonical_reason() {
-                    Some(r) => Err(HelixError::RemoteError {
-                        details: r.to_string(),
-                    }),
-                    None => Err(HelixError::RemoteError {
-                        details: format!("unkown error with code: {code}"),
-                    }),
-                },
-            },
+#[derive(Default)]
+pub(crate) enum QueryType {
+    Stored(String),
+    Dynamic(DynamicQueryRequest),
+    #[default]
+    Empty,
+}
+
+impl<'hlx, 'a, R> QueryBuilder<'hlx, 'a, R> {
+    pub fn new(client: &'hlx HelixDBClient) -> Self {
+        let mut headers = [None; 4];
+        headers[0] = Some(("Content-Type", "application/json"));
+        Self {
+            client,
+            query_type: QueryType::default(),
+            headers,
+            body: None,
+            _phantom: PhantomData,
         }
     }
 
-    pub async fn stored_query<T, R>(&self, query_path: &str, data: &T) -> Result<R, HelixError>
-    where
-        T: Serialize + Sync,
-        R: for<'de> Deserialize<'de>,
-    {
-        let url = self
-            .url
-            .join(query_path)
-            .map_err(|e| HelixError::InvalidURL(e.to_string()))?;
-        let mut request = self
-            .client
-            .post(url)
-            .header("Content-Type", "application/json")
-            .body(sonic_rs::to_vec(data)?);
+    pub fn writer_only(mut self) -> Self {
+        self.headers[1] = Some(("x-helix-require-writer", "true"));
+        self
+    }
 
-        // Add API key header if provided
-        if let Some(ref api_key) = self.api_key {
+    #[must_use]
+    pub fn warm_only(mut self) -> Self {
+        self.headers[2] = Some(("x-helix-warm", "true"));
+        self
+    }
+
+    pub fn should_await_durability(mut self, should: bool) -> Self {
+        self.headers[3] = Some((
+            "x-helix-await-durable",
+            if should { "true" } else { "false" },
+        ));
+        self
+    }
+
+    pub fn body<T: Serialize + Sync>(mut self, data: &T) -> Result<Self, HelixError> {
+        self.body = Some(sonic_rs::to_vec(data)?);
+        Ok(self)
+    }
+
+    pub fn stored_query(mut self, query_name: String) -> QueryRequest<'hlx, 'a, R> {
+        self.query_type = QueryType::Stored(query_name);
+        QueryRequest { request: self }
+    }
+
+    pub fn dynamic_query(mut self, query: DynamicQueryRequest) -> QueryRequest<'hlx, 'a, R> {
+        self.query_type = QueryType::Dynamic(query);
+        QueryRequest { request: self }
+    }
+}
+
+pub struct QueryRequest<'hlx, 'a, R> {
+    request: QueryBuilder<'hlx, 'a, R>,
+}
+
+impl<'hlx, 'a, R: for<'de> Deserialize<'de>> QueryRequest<'hlx, 'a, R> {
+    pub async fn send(self) -> Result<R, HelixError> {
+        let query_request = self.request;
+        let (url, body) = match query_request.query_type {
+            QueryType::Dynamic(query) => ("/v1/query".to_string(), Some(sonic_rs::to_vec(&query)?)),
+            QueryType::Stored(name) => (format!("/v1/query/{name}"), query_request.body),
+            QueryType::Empty => unreachable!(
+                "send() is only reachable after stored_query() or dynamic_query() sets query_type"
+            ),
+        };
+        let url = query_request
+            .client
+            .url
+            .join(&url)
+            .map_err(|e| HelixError::InvalidURL(e.to_string()))?;
+
+        let mut request = query_request.client.client.post(url);
+
+        for (k, v) in query_request.headers.into_iter().flatten() {
+            request = request.header(k, v);
+        }
+        if let Some(ref api_key) = query_request.client.api_key {
             request = request.bearer_auth(api_key);
+        }
+        if let Some(body) = body {
+            request = request.body(body);
         }
 
         let response = request.send().await?;
@@ -133,16 +194,16 @@ impl HelixDBClient {
     }
 }
 
-extern crate self as helix_dsl;
+extern crate self as helix_db;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use helix_db::dsl::prelude::*;
     use std::collections::BTreeMap;
 
     #[register]
     fn query1(name: String) {
-        // helix_dsl query that returns read query or write query
+        // helix_db query that returns a read query or write query
         read_batch()
             .var_as("user", g().n_where(SourcePredicate::eq("username", name)))
             .var_as(
@@ -428,5 +489,180 @@ mod tests {
             param_json.contains(r#"{"NWhere":{"EqExpr":["username",{"Param":"name"}]}}"#),
             "param NWhere step missing EqExpr/Param: {param_json}"
         );
+    }
+}
+
+#[cfg(test)]
+mod client_tests {
+    //! Tests for the `Client` / `QueryBuilder` request-building surface. These
+    //! exercise everything up to (but not including) the network round-trip, so
+    //! they need no running Helix instance. As a child module of the crate root
+    //! they can read the builder's private fields directly.
+    use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct Resp;
+
+    fn sample_request() -> DynamicQueryRequest {
+        DynamicQueryRequest::read(
+            read_batch()
+                .var_as(
+                    "user",
+                    g().n_where(SourcePredicate::eq("username", "alice")),
+                )
+                .returning(["user"]),
+        )
+    }
+
+    // ---- Client construction ------------------------------------------------
+
+    #[test]
+    fn new_defaults_to_localhost() {
+        let client = Client::new(None).unwrap();
+        assert_eq!(client.url.as_str(), "http://localhost:6969/v1/query");
+        assert!(client.api_key.is_none());
+    }
+
+    #[test]
+    fn new_parses_custom_url() {
+        let client = Client::new(Some("https://cluster.helix-db.com")).unwrap();
+        assert_eq!(client.url.as_str(), "https://cluster.helix-db.com/v1/query");
+    }
+
+    #[test]
+    fn new_rejects_invalid_url() {
+        let err = Client::new(Some("not a url")).unwrap_err();
+        assert!(matches!(err, HelixError::InvalidURL(_)));
+    }
+
+    #[test]
+    fn with_api_key_sets_and_clears() {
+        let client = Client::new(None).unwrap().with_api_key(Some("hx_secret"));
+        assert_eq!(client.api_key.as_deref(), Some("hx_secret"));
+
+        let cleared = client.with_api_key(None);
+        assert!(cleared.api_key.is_none());
+    }
+
+    // ---- Header assembly ----------------------------------------------------
+
+    #[test]
+    fn query_builder_starts_with_only_content_type() {
+        let client = Client::new(None).unwrap();
+        let builder = client.query::<Resp>();
+        assert_eq!(
+            builder.headers[0],
+            Some(("Content-Type", "application/json"))
+        );
+        assert!(builder.headers[1..].iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn header_toggles_populate_slots() {
+        let client = Client::new(None).unwrap();
+        let builder = client
+            .query::<Resp>()
+            .writer_only()
+            .warm_only()
+            .should_await_durability(true);
+        assert_eq!(builder.headers[1], Some(("x-helix-require-writer", "true")));
+        assert_eq!(builder.headers[2], Some(("x-helix-warm", "true")));
+        assert_eq!(builder.headers[3], Some(("x-helix-await-durable", "true")));
+    }
+
+    #[test]
+    fn should_await_durability_false_sends_false() {
+        let client = Client::new(None).unwrap();
+        let builder = client.query::<Resp>().should_await_durability(false);
+        assert_eq!(builder.headers[3], Some(("x-helix-await-durable", "false")));
+    }
+
+    // ---- Query type + body --------------------------------------------------
+
+    #[test]
+    fn dynamic_query_sets_query_type() {
+        let client = Client::new(None).unwrap();
+        let request = client.query::<Resp>().dynamic_query(sample_request());
+        assert!(matches!(request.request.query_type, QueryType::Dynamic(_)));
+    }
+
+    #[test]
+    fn stored_query_sets_query_type() {
+        let client = Client::new(None).unwrap();
+        let request = client.query::<Resp>().stored_query("add_user".to_string());
+        assert!(
+            matches!(&request.request.query_type, QueryType::Stored(name) if name == "add_user")
+        );
+    }
+
+    #[derive(serde::Serialize)]
+    struct Payload {
+        name: String,
+    }
+
+    #[test]
+    fn body_serializes_payload() {
+        let client = Client::new(None).unwrap();
+        let payload = Payload {
+            name: "alice".to_string(),
+        };
+        let builder = client.query::<Resp>().body(&payload).unwrap();
+        assert_eq!(builder.body, Some(sonic_rs::to_vec(&payload).unwrap()));
+    }
+
+    // ---- Request routing (exercises the real `send()` path) -----------------
+
+    #[derive(serde::Deserialize)]
+    struct EmptyResp {}
+
+    /// Spawn a one-shot HTTP server on a random port. Returns its base URL and a
+    /// handle that resolves to the request-target (path) of the first request.
+    async fn spawn_capture_server() -> (String, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let n = socket.read(&mut buf).await.unwrap();
+            let request_line = String::from_utf8_lossy(&buf[..n])
+                .lines()
+                .next()
+                .unwrap()
+                .to_string();
+            // `METHOD <target> HTTP/1.1` -> the target.
+            let target = request_line.split_whitespace().nth(1).unwrap().to_string();
+            let resp = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+            socket.write_all(resp.as_bytes()).await.unwrap();
+            target
+        });
+        (base, handle)
+    }
+
+    #[tokio::test]
+    async fn dynamic_query_posts_to_v1_query() {
+        let (base, handle) = spawn_capture_server().await;
+        let client = Client::new(Some(&base)).unwrap();
+        let _: EmptyResp = client
+            .query()
+            .dynamic_query(sample_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(handle.await.unwrap(), "/v1/query");
+    }
+
+    #[tokio::test]
+    async fn stored_query_posts_to_named_route() {
+        let (base, handle) = spawn_capture_server().await;
+        let client = Client::new(Some(&base)).unwrap();
+        let _: EmptyResp = client
+            .query()
+            .stored_query("add_user".to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(handle.await.unwrap(), "/v1/query/add_user");
     }
 }

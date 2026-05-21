@@ -26,18 +26,18 @@ enum ParamTypeSpec {
 impl ParamTypeSpec {
     fn to_tokens(&self) -> proc_macro2::TokenStream {
         match self {
-            Self::Bool => quote! { ::helix_dsl::QueryParamType::Bool },
-            Self::I64 => quote! { ::helix_dsl::QueryParamType::I64 },
-            Self::F64 => quote! { ::helix_dsl::QueryParamType::F64 },
-            Self::F32 => quote! { ::helix_dsl::QueryParamType::F32 },
-            Self::String => quote! { ::helix_dsl::QueryParamType::String },
-            Self::DateTime => quote! { ::helix_dsl::QueryParamType::DateTime },
-            Self::Bytes => quote! { ::helix_dsl::QueryParamType::Bytes },
-            Self::Value => quote! { ::helix_dsl::QueryParamType::Value },
-            Self::Object(_) => quote! { ::helix_dsl::QueryParamType::Object },
+            Self::Bool => quote! { ::helix_db::QueryParamType::Bool },
+            Self::I64 => quote! { ::helix_db::QueryParamType::I64 },
+            Self::F64 => quote! { ::helix_db::QueryParamType::F64 },
+            Self::F32 => quote! { ::helix_db::QueryParamType::F32 },
+            Self::String => quote! { ::helix_db::QueryParamType::String },
+            Self::DateTime => quote! { ::helix_db::QueryParamType::DateTime },
+            Self::Bytes => quote! { ::helix_db::QueryParamType::Bytes },
+            Self::Value => quote! { ::helix_db::QueryParamType::Value },
+            Self::Object(_) => quote! { ::helix_db::QueryParamType::Object },
             Self::Array(inner) => {
                 let inner = inner.to_tokens();
-                quote! { ::helix_dsl::QueryParamType::Array(Box::new(#inner)) }
+                quote! { ::helix_db::QueryParamType::Array(Box::new(#inner)) }
             }
         }
     }
@@ -51,52 +51,52 @@ impl ParamTypeSpec {
         match self {
             Self::Bool => quote! {
                 ::std::result::Result::<
-                    ::helix_dsl::DynamicQueryValue,
-                    ::helix_dsl::DynamicQueryError,
-                >::Ok(::helix_dsl::DynamicQueryValue::Bool(#value))
+                    ::helix_db::DynamicQueryValue,
+                    ::helix_db::DynamicQueryError,
+                >::Ok(::helix_db::DynamicQueryValue::Bool(#value))
             },
             Self::I64 => quote! {
                 ::std::result::Result::<
-                    ::helix_dsl::DynamicQueryValue,
-                    ::helix_dsl::DynamicQueryError,
-                >::Ok(::helix_dsl::DynamicQueryValue::I64(#value))
+                    ::helix_db::DynamicQueryValue,
+                    ::helix_db::DynamicQueryError,
+                >::Ok(::helix_db::DynamicQueryValue::I64(#value))
             },
             Self::F64 => quote! {
                 ::std::result::Result::<
-                    ::helix_dsl::DynamicQueryValue,
-                    ::helix_dsl::DynamicQueryError,
-                >::Ok(::helix_dsl::DynamicQueryValue::F64(#value))
+                    ::helix_db::DynamicQueryValue,
+                    ::helix_db::DynamicQueryError,
+                >::Ok(::helix_db::DynamicQueryValue::F64(#value))
             },
             Self::F32 => quote! {
                 ::std::result::Result::<
-                    ::helix_dsl::DynamicQueryValue,
-                    ::helix_dsl::DynamicQueryError,
-                >::Ok(::helix_dsl::DynamicQueryValue::F32(#value))
+                    ::helix_db::DynamicQueryValue,
+                    ::helix_db::DynamicQueryError,
+                >::Ok(::helix_db::DynamicQueryValue::F32(#value))
             },
             Self::String => quote! {
                 ::std::result::Result::<
-                    ::helix_dsl::DynamicQueryValue,
-                    ::helix_dsl::DynamicQueryError,
-                >::Ok(::helix_dsl::DynamicQueryValue::String(#value))
+                    ::helix_db::DynamicQueryValue,
+                    ::helix_db::DynamicQueryError,
+                >::Ok(::helix_db::DynamicQueryValue::String(#value))
             },
             Self::DateTime => quote! {
                 ::std::result::Result::<
-                    ::helix_dsl::DynamicQueryValue,
-                    ::helix_dsl::DynamicQueryError,
-                >::Ok(::helix_dsl::DynamicQueryValue::String(
+                    ::helix_db::DynamicQueryValue,
+                    ::helix_db::DynamicQueryError,
+                >::Ok(::helix_db::DynamicQueryValue::String(
                     (#value)
                         .to_rfc3339()
-                        .ok_or_else(|| ::helix_dsl::DynamicQueryError::invalid_datetime(#path, (#value).millis()))?
+                        .ok_or_else(|| ::helix_db::DynamicQueryError::invalid_datetime(#path, (#value).millis()))?
                 ))
             },
             Self::Bytes => quote! {
                 ::std::result::Result::<
-                    ::helix_dsl::DynamicQueryValue,
-                    ::helix_dsl::DynamicQueryError,
-                >::Err(::helix_dsl::DynamicQueryError::unsupported_bytes(#path))
+                    ::helix_db::DynamicQueryValue,
+                    ::helix_db::DynamicQueryError,
+                >::Err(::helix_db::DynamicQueryError::unsupported_bytes(#path))
             },
             Self::Value => quote! {
-                ::helix_dsl::__private::dynamic_query_value_from_property_value(#value, #path)
+                ::helix_db::__private::dynamic_query_value_from_property_value(#value, #path)
             },
             Self::Object(inner) => {
                 let key_ident = format_ident!("__helix_param_key_{depth}");
@@ -110,9 +110,9 @@ impl ParamTypeSpec {
 
                 quote! {
                     ::std::result::Result::<
-                        ::helix_dsl::DynamicQueryValue,
-                        ::helix_dsl::DynamicQueryError,
-                    >::Ok(::helix_dsl::DynamicQueryValue::Object(
+                        ::helix_db::DynamicQueryValue,
+                        ::helix_db::DynamicQueryError,
+                    >::Ok(::helix_db::DynamicQueryValue::Object(
                         (#value)
                             .into_iter()
                             .map(|(#key_ident, #value_ident)| {
@@ -121,7 +121,7 @@ impl ParamTypeSpec {
                             })
                             .collect::<::std::result::Result<
                                 ::std::collections::BTreeMap<_, _>,
-                                ::helix_dsl::DynamicQueryError,
+                                ::helix_db::DynamicQueryError,
                             >>()?,
                     ))
                 }
@@ -138,9 +138,9 @@ impl ParamTypeSpec {
 
                 quote! {
                     ::std::result::Result::<
-                        ::helix_dsl::DynamicQueryValue,
-                        ::helix_dsl::DynamicQueryError,
-                    >::Ok(::helix_dsl::DynamicQueryValue::Array(
+                        ::helix_db::DynamicQueryValue,
+                        ::helix_db::DynamicQueryError,
+                    >::Ok(::helix_db::DynamicQueryValue::Array(
                         (#value)
                             .into_iter()
                             .enumerate()
@@ -150,7 +150,7 @@ impl ParamTypeSpec {
                             })
                             .collect::<::std::result::Result<
                                 ::std::vec::Vec<_>,
-                                ::helix_dsl::DynamicQueryError,
+                                ::helix_db::DynamicQueryError,
                             >>()?,
                     ))
                 }
@@ -399,7 +399,7 @@ pub fn register(attr: TokenStream, item: TokenStream) -> TokenStream {
         .map(|(param, name_str)| {
             let ident = &param.ident;
             quote! {
-                let #ident = ::helix_dsl::Expr::param(#name_str);
+                let #ident = ::helix_db::Expr::param(#name_str);
             }
         });
 
@@ -409,7 +409,7 @@ pub fn register(attr: TokenStream, item: TokenStream) -> TokenStream {
         .map(|(param, name)| {
             let ty = param.ty.to_tokens();
             quote! {
-                ::helix_dsl::QueryParameter {
+                ::helix_db::QueryParameter {
                     name: #name.to_string(),
                     ty: #ty,
                 }
@@ -418,7 +418,7 @@ pub fn register(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let parameters_fn = quote! {
         #[allow(non_snake_case)]
-        fn #params_fn_name() -> ::std::vec::Vec<::helix_dsl::QueryParameter> {
+        fn #params_fn_name() -> ::std::vec::Vec<::helix_db::QueryParameter> {
             vec![#(#parameter_entries),*]
         }
     };
@@ -428,13 +428,13 @@ pub fn register(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Decompose: strip params, prepend let bindings to body
     let decomposed_fn = match query_kind {
         QueryKind::Read => quote! {
-            fn #decomposed_fn_name() -> ::helix_dsl::ReadBatch {
+            fn #decomposed_fn_name() -> ::helix_db::ReadBatch {
                 #(#let_bindings)*
                 #fn_body
             }
         },
         QueryKind::Write => quote! {
-            fn #decomposed_fn_name() -> ::helix_dsl::WriteBatch {
+            fn #decomposed_fn_name() -> ::helix_db::WriteBatch {
                 #(#let_bindings)*
                 #fn_body
             }
@@ -447,10 +447,10 @@ pub fn register(attr: TokenStream, item: TokenStream) -> TokenStream {
     // `?` inside `to_dynamic_value_tokens` has a `Result` context; infallible scalars never panic.
     let callable_fn = {
         let mut request_sig = fn_item.sig.clone();
-        request_sig.output = parse_quote!(-> ::helix_dsl::DynamicQueryRequest);
+        request_sig.output = parse_quote!(-> ::helix_db::DynamicQueryRequest);
         let request_ctor = match query_kind {
-            QueryKind::Read => quote! { ::helix_dsl::DynamicQueryRequest::read },
-            QueryKind::Write => quote! { ::helix_dsl::DynamicQueryRequest::write },
+            QueryKind::Read => quote! { ::helix_db::DynamicQueryRequest::read },
+            QueryKind::Write => quote! { ::helix_db::DynamicQueryRequest::write },
         };
         let request_param_inserts =
             param_specs
@@ -468,8 +468,8 @@ pub fn register(attr: TokenStream, item: TokenStream) -> TokenStream {
                         request.insert_parameter_value(
                             #name,
                             (|| -> ::std::result::Result<
-                                ::helix_dsl::DynamicQueryValue,
-                                ::helix_dsl::DynamicQueryError,
+                                ::helix_db::DynamicQueryValue,
+                                ::helix_db::DynamicQueryError,
                             > { #value_tokens })()
                             .expect(#expect_msg),
                         );
@@ -490,8 +490,8 @@ pub fn register(attr: TokenStream, item: TokenStream) -> TokenStream {
     let submit_item = match query_kind {
         QueryKind::Read => {
             quote! {
-                ::helix_dsl::__private::inventory::submit! {
-                    ::helix_dsl::RegisteredReadQuery {
+                ::helix_db::__private::inventory::submit! {
+                    ::helix_db::RegisteredReadQuery {
                         name: stringify!(#fn_name),
                         build: #decomposed_fn_name,
                         parameters: #params_fn_name,
@@ -501,8 +501,8 @@ pub fn register(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
         QueryKind::Write => {
             quote! {
-                ::helix_dsl::__private::inventory::submit! {
-                    ::helix_dsl::RegisteredWriteQuery {
+                ::helix_db::__private::inventory::submit! {
+                    ::helix_db::RegisteredWriteQuery {
                         name: stringify!(#fn_name),
                         build: #decomposed_fn_name,
                         parameters: #params_fn_name,

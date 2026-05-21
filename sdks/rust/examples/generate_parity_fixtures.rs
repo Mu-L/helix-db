@@ -3,8 +3,8 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use helix_dsl::prelude::*;
-use helix_dsl::{Empty, OnNodes, QueryParamType, ReadOnly, Step, Traversal, WriteEnabled};
+use helix_db::dsl::prelude::*;
+use helix_db::{Empty, OnNodes, QueryParamType, ReadOnly, Step, Traversal, WriteEnabled};
 
 struct Fixture {
     bucket: &'static str,
@@ -977,7 +977,7 @@ fn json_only_fixtures() -> Vec<Fixture> {
                         )
                         .var_as(
                             "raw_edges",
-                            Traversal::<helix_dsl::OnEdges, ReadOnly>::from_steps(vec![
+                            Traversal::<helix_db::OnEdges, ReadOnly>::from_steps(vec![
                                 Step::E(EdgeRef::Param("edge_ids".to_string())),
                                 Step::EWhere(SourcePredicate::or(vec![
                                     SourcePredicate::has_key("since"),
@@ -1024,7 +1024,7 @@ fn json_only_fixtures() -> Vec<Fixture> {
                 write_batch()
                     .var_as(
                         "raw_indexes",
-                        Traversal::<helix_dsl::Terminal, WriteEnabled>::from_steps(vec![
+                        Traversal::<helix_db::Terminal, WriteEnabled>::from_steps(vec![
                             Step::CreateIndex {
                                 spec: IndexSpec::node_unique_equality("ParityUser", "externalId"),
                                 if_not_exists: true,
@@ -1193,14 +1193,14 @@ fn json_only_fixtures() -> Vec<Fixture> {
                     )
                     .var_as(
                         "edge_ids",
-                        Traversal::<helix_dsl::OnEdges, ReadOnly>::from_steps(vec![
+                        Traversal::<helix_db::OnEdges, ReadOnly>::from_steps(vec![
                             Step::E(EdgeRef::ids([1, 2])),
                             Step::Id,
                         ]),
                     )
                     .var_as(
                         "edge_var",
-                        Traversal::<helix_dsl::OnEdges, ReadOnly>::from_steps(vec![
+                        Traversal::<helix_db::OnEdges, ReadOnly>::from_steps(vec![
                             Step::E(EdgeRef::Var("edge_ids".to_string())),
                             Step::Label,
                         ]),
