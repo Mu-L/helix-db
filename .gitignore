@@ -1,5 +1,4 @@
 .helix/
-target/
 *.log
 test/
 /thoughts/
@@ -12,3 +11,10 @@ claude.md
 .cargo/
 **/dist
 **/node_modules
+
+**/target
+**/dist
+**/dist-dev
+**/tests/parity/results
+**/tests/parity/workspaces
+**/tests/parity/generated

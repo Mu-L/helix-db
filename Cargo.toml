@@ -2,6 +2,7 @@
 members = [
     "helix-cli",
     "metrics",
+    "sdks/rust",
 ]
 resolver = "2"
 

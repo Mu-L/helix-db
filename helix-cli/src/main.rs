@@ -36,6 +36,10 @@ enum Commands {
         target: Option<InitTarget>,
     },
 
+    /// Bootstrap a first Helix app for a coding agent
+    #[command(alias = "cook")]
+    Chef {},
+
     /// Add a local v2 or Enterprise Cloud instance
     Add {
         #[command(subcommand)]
@@ -265,25 +269,68 @@ fn display_welcome(update_available: Option<String>) {
         println!("  Run 'helix update' to upgrade\n");
     }
 
-    println!(
-        "{}",
-        if use_color {
-            "Getting Started".bold().to_string()
-        } else {
-            "Getting Started".to_string()
-        }
-    );
-    println!();
-    print_command("helix init", "Create a v2 project", use_color);
-    print_command("helix run dev", "Run local Enterprise dev", use_color);
+    print_section("Getting Started", use_color);
     print_command(
-        "helix query dev --file request.json",
+        "helix chef",
+        "Bootstrap a Helix app with an AI agent",
+        use_color,
+    );
+    print_command("helix init", "Create a new project", use_color);
+    print_command(
+        "helix add",
+        "Add a local or Enterprise Cloud instance",
+        use_color,
+    );
+
+    print_section("Local Development", use_color);
+    print_command(
+        "helix run <instance>",
+        "Run a local instance in the background",
+        use_color,
+    );
+    print_command(
+        "helix status",
+        "Show local and cloud instance status",
+        use_color,
+    );
+    print_command(
+        "helix logs <instance> -f",
+        "Follow logs for an instance",
+        use_color,
+    );
+    print_command(
+        "helix query <instance> --file request.json",
         "Send a dynamic query",
         use_color,
     );
-    print_command("helix auth login", "Login to Enterprise Cloud", use_color);
+
+    print_section("HelixDB Cloud", use_color);
+    print_command("helix auth login", "Login to the cloud", use_color);
+    print_command(
+        "helix push <instance>",
+        "Deploy a cloud instance",
+        use_color,
+    );
+    print_command(
+        "helix sync <instance>",
+        "Sync queries and config with a cloud instance",
+        use_color,
+    );
+    // print_command("helix dashboard", "Launch the Helix Dashboard", use_color);
+
     println!();
     println!("Docs: https://docs.helix-db.com");
+    println!("Rust DSL: https://docs.rs/helix-enterprise-ql")
+}
+
+fn print_section(title: &str, use_color: bool) {
+    println!();
+    if use_color {
+        println!("{}", title.bold());
+    } else {
+        println!("{title}");
+    }
+    println!();
 }
 
 fn print_command(cmd: &str, desc: &str, use_color: bool) {
@@ -315,6 +362,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some(Commands::Init { path, target }) => commands::init::run(path, target).await,
+        Some(Commands::Chef {}) => commands::chef::run().await,
         Some(Commands::Add { target }) => commands::add::run(target).await,
         Some(Commands::Run {
             instance,
@@ -461,6 +509,26 @@ mod tests {
                 assert!(disk);
             }
             _ => panic!("expected init local command"),
+        }
+    }
+
+    #[test]
+    fn chef_command_parses() {
+        let cli = Cli::parse_from(["helix", "chef"]);
+
+        match cli.command {
+            Some(Commands::Chef {}) => {}
+            _ => panic!("expected chef command"),
+        }
+    }
+
+    #[test]
+    fn cook_alias_parses() {
+        let cli = Cli::parse_from(["helix", "cook"]);
+
+        match cli.command {
+            Some(Commands::Chef {}) => {}
+            _ => panic!("expected chef command alias"),
         }
     }
 

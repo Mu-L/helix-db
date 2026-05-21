@@ -22,6 +22,9 @@ pub fn print_lines(lines: &[&str]) {
 }
 
 pub fn print_instructions(title: &str, steps: &[&str]) {
+    if !crate::output::Verbosity::current().show_normal() {
+        return;
+    }
     print_newline();
     println!("{}", title.bold());
     for (i, step) in steps.iter().enumerate() {
