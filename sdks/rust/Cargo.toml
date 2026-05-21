@@ -8,7 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/helixdb/helix-db/tree/main/sdks/rust"
 documentation = "https://docs.rs/helix-db"
 readme = "README.md"
-keywords = ["graph", "database", "gremlin", "dsl", "query", "sdk", "rust"]
+keywords = ["graph", "database", "helixdb", "dsl", "query"]
 categories = ["database", "data-structures"]
 
 # # Standalone crate, not part of the root helix-db workspace.
