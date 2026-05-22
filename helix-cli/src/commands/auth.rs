@@ -234,6 +234,34 @@ pub async fn require_auth() -> Result<Credentials> {
     ))
 }
 
+/// Ensure the user has Helix Cloud credentials, running the existing GitHub
+/// device login flow inline when credentials are missing or invalid.
+pub async fn ensure_auth_or_login() -> Result<Credentials> {
+    let home = dirs::home_dir().ok_or_eyre("Cannot find home directory")?;
+    let config_path = home.join(".helix");
+    let credentials_path = config_path.join("credentials");
+
+    if let Some(credentials) = Credentials::try_read_from_file(&credentials_path)
+        && credentials.is_authenticated()
+    {
+        return Ok(credentials);
+    }
+
+    fs::create_dir_all(&config_path)?;
+    let (key, user_id) = github_login().await?;
+    let credentials = Credentials {
+        user_id: user_id.clone(),
+        helix_admin_key: key,
+    };
+    credentials.write_to_file(&credentials_path);
+
+    let mut metrics = load_metrics_config()?;
+    metrics.user_id = Some(user_id.leak());
+    save_metrics_config(&metrics)?;
+
+    Ok(credentials)
+}
+
 pub async fn github_login() -> Result<(String, String)> {
     let url = format!("{}/github-login", cloud_base_url());
     let client = SseClient::new(url).post();

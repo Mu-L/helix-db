@@ -22,6 +22,8 @@ pub enum EventType {
     ReadError,
     #[serde(rename = "invalid_api_key")]
     InvalidApiKey,
+    #[serde(rename = "chef")]
+    Chef,
     #[serde(rename = "test")]
     Test,
 }
@@ -39,6 +41,7 @@ impl EventType {
             EventType::WriteError => "write_error",
             EventType::ReadError => "read_error",
             EventType::InvalidApiKey => "invalid_api_key",
+            EventType::Chef => "chef",
             EventType::Test => "test",
         }
     }
@@ -67,6 +70,7 @@ pub enum EventData {
     ReadError(ReadErrorEvent),
     QuerySuccess(QuerySuccessEvent),
     InvalidApiKey(InvalidApiKeyEvent),
+    Chef(ChefEvent),
     Test(TestEvent),
 }
 
@@ -128,6 +132,34 @@ impl From<InvalidApiKeyEvent> for EventData {
     fn from(e: InvalidApiKeyEvent) -> Self {
         EventData::InvalidApiKey(e)
     }
+}
+
+impl From<ChefEvent> for EventData {
+    fn from(e: ChefEvent) -> Self {
+        EventData::Chef(e)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChefEvent {
+    pub run_id: String,
+    pub phase: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_sec: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_mode: Option<String>,
+    pub has_custom_intent: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overview_size_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_snapshot_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

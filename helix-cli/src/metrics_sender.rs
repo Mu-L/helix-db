@@ -3,7 +3,7 @@ use dirs::home_dir;
 use eyre::{OptionExt, Result, eyre};
 use flume::{Receiver, Sender, unbounded};
 use helix_metrics::events::{
-    CompileEvent, DeployCloudEvent, DeployLocalEvent, EventData, EventType, RawEvent,
+    ChefEvent, CompileEvent, DeployCloudEvent, DeployLocalEvent, EventData, EventType, RawEvent,
     RedeployLocalEvent, TestEvent,
 };
 use reqwest::Client;
@@ -366,6 +366,18 @@ impl MetricsSender {
                 success,
                 error_messages,
             }),
+            user_id: get_user_id(),
+            email: get_email(),
+            timestamp: get_current_timestamp(),
+        };
+        self.send_event(event);
+    }
+
+    pub fn send_chef_event(&self, event_data: ChefEvent) {
+        let event = RawEvent {
+            os: get_os_string(),
+            event_type: EventType::Chef,
+            event_data: EventData::Chef(event_data),
             user_id: get_user_id(),
             email: get_email(),
             timestamp: get_current_timestamp(),

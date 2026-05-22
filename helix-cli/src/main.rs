@@ -362,7 +362,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some(Commands::Init { path, target }) => commands::init::run(path, target).await,
-        Some(Commands::Chef {}) => commands::chef::run().await,
+        Some(Commands::Chef {}) => commands::chef::run(&metrics_sender).await,
         Some(Commands::Add { target }) => commands::add::run(target).await,
         Some(Commands::Run {
             instance,
