@@ -85,6 +85,7 @@ Additional skills (Next.js, React, Tailwind, TypeScript) are NOT pre-installed. 
 
 Existing files you must read before touching:
 - `helix.toml` — project config. Do not edit.
+- `DESIGN.md` — the Helix brand + styling guide. **Apply it to every component you build.** It defines the color palette, typography, the signature tactical corner brackets, and copy-paste component recipes. Do not edit it; treat it as read-only input.
 - `examples/seed.json` — example write request that seeds Users via `ForEach` over `parameters.data`. Use it as the template for your own seed/write requests.
 - `examples/read_users.json` — example read request that lists Users. Use it as the template for your own read requests.
 
@@ -103,7 +104,7 @@ This project uses **JSON dynamic queries only**. Never write Rust `.hx` files; t
 5. **Install the Next.js / React / Tailwind / TypeScript skills** before you start writing the frontend. See `<install_more_skills>`.
 6. **Scaffold the Next.js app** by running this exact command from the project root: `npx create-next-app@latest web --typescript --tailwind --app --eslint --src-dir --import-alias '@/*' --use-npm --yes`. If `web/` already exists from a previous run, delete it first. The scaffold creates `web/package.json`, `web/src/app/`, `web/tailwind.config.ts`, `web/tsconfig.json`, etc.
 7. **Add one Next.js API route per query** at `web/src/app/api/<query_name>/route.ts`. Each handler reads `examples/<query_name>.json` from disk at runtime (`fs.readFile`), merges any client-supplied parameters into the request's top-level `parameters` field, POSTs the result to `http://localhost:8080/v1/query`, and returns the response. **The browser must NEVER hit `:8080` directly.**
-8. **Build the UI** under `web/src/app/`. Server Components (the default — no `'use client'`) for read-only views; they `fetch('/api/<name>')` at render time. Client Components (`'use client'`) only for forms or anything that needs state / handlers. Style with Tailwind utility classes; do not add global CSS beyond what create-next-app generates. See `<frontend>` for concrete examples.
+8. **Build the UI** under `web/src/app/`, following `DESIGN.md`. Server Components (the default — no `'use client'`) for read-only views; they `fetch('/api/<name>')` at render time. Client Components (`'use client'`) only for forms or anything that needs state / handlers. Style with Tailwind utility classes per the `DESIGN.md` recipes; the only global CSS you add is the one-time `DESIGN.md` setup block (base dark background + tactical-corner utilities) pasted into `web/src/app/globals.css`. See `<frontend>` for concrete examples.
 9. **Start the Next.js dev server in the background.** The dev server is **frontend and backend in one process** — it serves React on `/` and the TypeScript API routes on `/api/*`. Detach it so it survives your bash invocation. Use the shell-portable pattern (works for every agent CLI):
 
        cd web && nohup npm run dev > .next-dev.log 2>&1 & disown
@@ -431,6 +432,8 @@ Inside the `ForEach` body, each object's fields (`name`, `email`) are scoped as 
 <frontend>
 The frontend is a Next.js 15 app (App Router, TypeScript, Tailwind) under `web/`. Scaffolded by `npx create-next-app@latest web --typescript --tailwind --app --eslint --src-dir --import-alias '@/*' --use-npm --yes` (see step 6 of `<workflow>`).
 
+**All UI must follow `DESIGN.md` — the Helix brand guide at the project root. Read it before writing any component.** It is the source of truth for colors (forced dark theme, orange `#FF5C01` accent), typography (Geist sans + mono), shape (`rounded-none` everywhere), the signature tactical corner brackets, and copy-paste component recipes (buttons, cards, inputs, lists, badges). Right after scaffolding, paste the `globals.css` setup block from `DESIGN.md` (base dark background + the `.tactical-corners` / `.btn-tactical` / `.thin-scrollbar` utilities) into `web/src/app/globals.css` **once**, then build every component from its recipes. Install `lucide-react` (`cd web && npm i lucide-react`) for icons. The examples below show the *data flow*; their Tailwind classes already match `DESIGN.md` — keep that styling, don't revert to generic/light Tailwind.
+
 Three concrete file shapes you write. **Every Helix call is server-side; the browser never talks to `:8080`.**
 
 **1. API route — `web/src/app/api/list_contacts/route.ts`** (one per query under `examples/`):
@@ -486,17 +489,19 @@ async function getContacts() {
 export default async function Home() {
   const data = await getContacts();
   return (
-    <main className="mx-auto max-w-2xl space-y-6 p-6">
-      <h1 className="text-2xl font-semibold">Contacts</h1>
-      <AddContactForm />
-      <ul className="divide-y rounded-lg border bg-white">
-        {data.contacts.map((c: { $id: number; name: string; email: string }) => (
-          <li key={c.$id} className="p-3 hover:bg-slate-50">
-            <a href={`/contact/${c.$id}`} className="font-medium">{c.name}</a>
-            <span className="ml-2 text-sm text-slate-500">{c.email}</span>
-          </li>
-        ))}
-      </ul>
+    <main className="min-h-screen bg-[#1E1715] text-[#EBD9AF] font-sans">
+      <div className="mx-auto max-w-2xl space-y-6 px-6 py-10">
+        <h1 className="text-2xl font-semibold tracking-tight text-[#FDFBF0]">Contacts</h1>
+        <AddContactForm />
+        <ul className="divide-y divide-white/10 border border-white/10 bg-[#070504]">
+          {data.contacts.map((c: { $id: number; name: string; email: string }) => (
+            <li key={c.$id} className="px-4 py-3 transition-colors hover:bg-[#FF5C01]/10">
+              <a href={`/contact/${c.$id}`} className="text-[#FDFBF0]">{c.name}</a>
+              <span className="ml-2 text-sm text-[#EBD9AF]/60">{c.email}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
     </main>
   );
 }
@@ -529,14 +534,14 @@ export default function AddContactForm() {
   return (
     <form onSubmit={submit} className="flex flex-wrap gap-2">
       <input
-        className="flex-1 rounded border px-2 py-1"
+        className="flex-1 rounded-none border border-white/10 bg-transparent px-3 py-2 text-[#FDFBF0] placeholder:text-[#EBD9AF]/50 transition-colors focus:border-[#FF5C01]/50 focus:outline-none"
         placeholder="Name"
         value={name}
         onChange={(e) => setName(e.target.value)}
         required
       />
       <input
-        className="flex-1 rounded border px-2 py-1"
+        className="flex-1 rounded-none border border-white/10 bg-transparent px-3 py-2 text-[#FDFBF0] placeholder:text-[#EBD9AF]/50 transition-colors focus:border-[#FF5C01]/50 focus:outline-none"
         placeholder="Email"
         type="email"
         value={email}
@@ -546,7 +551,7 @@ export default function AddContactForm() {
       <button
         type="submit"
         disabled={pending}
-        className="rounded bg-slate-900 px-3 py-1 text-white disabled:opacity-50"
+        className="tactical-corners rounded-none bg-[#FF5C01]/15 px-4 py-2 font-mono text-sm uppercase tracking-wider text-[#FF5C01] transition-all hover:bg-[#FF5C01] hover:text-[#1E1715] disabled:opacity-50"
       >
         {pending ? 'Adding...' : 'Add'}
       </button>
@@ -562,7 +567,7 @@ export default function AddContactForm() {
 - Server Components (the default) for read-only views — they `fetch` from the API routes at render time. After mutations, call `router.refresh()` to re-run the server fetch.
 - Client Components (`'use client'` at the top of the file) only when you need `useState`, `onClick`, etc.
 - Place Client Components under `web/src/app/_components/`. The leading underscore opts the directory out of routing.
-- Tailwind utility classes only. No custom CSS files beyond `globals.css` from the scaffold.
+- Tailwind utility classes per `DESIGN.md`. The only global CSS is the `DESIGN.md` setup block in `globals.css` (base dark theme + tactical-corner / scrollbar utilities) — no other custom CSS files.
 - App Router (`web/src/app/`) only. Do not create `web/src/pages/` — that's the legacy router.
 </frontend>
 
@@ -614,6 +619,7 @@ When `helix query` fails, the response body (or stderr) contains the error. Comm
 - DO NOT use the legacy `pages/` router. The scaffold uses the App Router (`web/src/app/`) — keep it.
 - DO NOT omit the `--src-dir` flag when running `create-next-app`. Routes, examples, and paths throughout this prompt all assume `web/src/app/...`.
 - DO NOT install random npm packages directly. Install skill packs first (`npx skills add ...`) and let the skill guide what gets added.
+- DO NOT ignore `DESIGN.md`. The frontend must use the Helix dark theme — no `bg-white` / light surfaces, no `rounded-lg` / `rounded-xl` on cards or buttons (use `rounded-none`), no blue / slate / indigo accents (the accent is orange `#FF5C01`). Don't pull in a UI kit (shadcn / MUI / Chakra) — the `DESIGN.md` recipes are the system.
 - DO NOT add features the user did not ask for. Build the MVP, then stop.
 </antipatterns>
 
@@ -632,7 +638,7 @@ If any is not true: read the error, fix the query / route / component, retry. Ta
 One or two sentences naming the entities, edges, and what the Next.js frontend demonstrates. No marketing language.
 
 ### Files created
-Bullet list of every new file (`examples/*.json`, `SCHEMA.md`, `web/src/app/api/*/route.ts`, `web/src/app/page.tsx`, `web/src/app/_components/*.tsx`, `web/src/app/<route>/page.tsx`, anything else). One line per file with a 3–8-word description of its purpose. You can group the `web/` files generated by `create-next-app` under a single line like "web/ — Next.js scaffold (package.json, tsconfig.json, tailwind.config.ts, etc.)".
+Bullet list of every new file (`examples/*.json`, `SCHEMA.md`, `web/src/app/api/*/route.ts`, `web/src/app/page.tsx`, `web/src/app/_components/*.tsx`, `web/src/app/<route>/page.tsx`, anything else). One line per file with a 3–8-word description of its purpose. You can group the `web/` files generated by `create-next-app` under a single line like "web/ — Next.js scaffold (package.json, tsconfig.json, tailwind.config.ts, etc.)". Do NOT list `DESIGN.md`, `HELIX_CHEF_PROMPT.md`, `helix.toml`, or the starter `examples/{seed,read_users}.json` — those are pre-existing inputs created by `helix chef`, not by you (note `web/src/app/globals.css` under "Files modified" if you pasted the design setup block into it).
 
 ### Files modified
 Bullet list of files that already existed and were changed (typically `examples/seed.json`, possibly `examples/read_users.json`). One line per file describing what changed. Empty list if you didn't modify anything.
@@ -655,6 +661,304 @@ Anything you couldn't finish or that's flaky. Empty list if everything works. Be
 Nothing else after these seven sections. No closing pleasantries, no offer of next steps.
 </deploy_imperative>
 "#;
+
+/// The Helix brand + styling guide. Written verbatim to `DESIGN.md` in every chef
+/// project and referenced from `AGENT_PROMPT_TEMPLATE` (`<environment>` + `<frontend>`).
+/// It is fully self-contained — the generated project has no access to the
+/// helix-website repo, so every token, CSS utility, and component recipe is inlined
+/// here. Mirrors the real product (website / dashboard / explorer): forced dark
+/// theme, `#FF5C01` orange accent, `rounded-none`, tactical corner brackets.
+const DESIGN_GUIDE: &str = r##"# Helix Design Guide
+
+This is the visual identity for HelixDB. **Every UI you build for this project must follow it.**
+The goal: a frontend that looks like it belongs inside the Helix product (the dashboard and graph
+explorer), not a generic create-next-app demo.
+
+The aesthetic in three words: **dark, sharp, tactical.** Near-black backgrounds, a single hot
+orange accent, square corners (no rounding), thin hairline borders, and small monospaced labels in
+uppercase. Decorative orange "corner brackets" frame primary actions and key cards.
+
+---
+
+## 1. Color tokens
+
+Forced dark theme — there is no light mode. Use these exact values (as Tailwind arbitrary classes,
+e.g. `bg-[#1E1715]`, `text-[#EBD9AF]`, `border-[#FF5C01]`):
+
+| Role                     | Value                      | Usage                                                        |
+|--------------------------|----------------------------|--------------------------------------------------------------|
+| Page background          | `#1E1715`                  | `<body>` / outermost shell. Dark warm brown-black.           |
+| Panel / card background  | `#070504`                  | Cards, panels, sidebars, popovers. Almost pure black.        |
+| Brand accent (orange)    | `#FF5C01`                  | The ONLY accent. CTAs, active states, focus, links, corners. |
+| Primary text             | `#FDFBF0`                  | Headings, active labels, important values. Near-white.       |
+| Secondary / muted text   | `#EBD9AF`                  | Body text, labels. Tan/cream. Use opacities below for dimming.|
+| Borders / hairlines      | `rgba(255,255,255,0.10)`   | `border-white/10` — the default border everywhere.           |
+| Card border (alt)        | `#EBD9AF` @ 10%            | `border-[#EBD9AF]/10` — borders on `#070504` cards.          |
+| Destructive / error      | `hsl(0 62.8% 30.6%)`       | Delete buttons, error states. Use sparingly.                 |
+
+**Muted text opacities** (apply to `#EBD9AF`): `/70` and `/60` for secondary text, `/50` for
+placeholders, `/20` for the faintest hints/dividers. Example: `text-[#EBD9AF]/60`,
+`placeholder:text-[#EBD9AF]/50`.
+
+**Rules:**
+- Orange `#FF5C01` is an *accent*, not a fill. Most of the screen is dark; orange draws the eye to
+  the one thing that matters (primary action, current selection). Don't flood the page with it.
+- Never use white (`bg-white`), light grays (`slate`, `gray-100`), or any blue/indigo/violet accent.
+  The accent is always orange.
+- Hover states move *toward* orange: `hover:bg-[#FF5C01]/10`, `hover:text-[#FF5C01]`, or a solid
+  `hover:bg-[#FF5C01]` for primary buttons.
+
+**Data-viz / categorical palette** (charts, graph nodes, tags — when you need multiple distinct
+colors): `#FF7A00`, `#FFC857`, `#7ECBFF`, `#B084FF`, `#55E6A5`, `#FF8FA3`, `#8AF0FF`, `#F7A8FF`.
+Assign by hashing the category name so colors stay stable. Highlighted/selected edges use the
+brand orange `#FF5C01`.
+
+---
+
+## 2. Typography
+
+`create-next-app` already wires **Geist** (sans) and **Geist Mono** via `next/font` — no install
+needed. The variables are usually `--font-geist-sans` and `--font-geist-mono`, exposed as Tailwind's
+`font-sans` and `font-mono`.
+
+- **Body / prose:** `font-sans`.
+- **Labels, controls, table headers, metadata, code:** `font-mono`. The product leans heavily on
+  mono for chrome. Small mono labels are typically `text-[10px]` or `text-xs`, `uppercase`,
+  `tracking-wider`, dimmed (`text-[#EBD9AF]/60`).
+- **Headings:** `font-semibold` (or `font-bold`), `tracking-tight`. E.g. page title
+  `text-2xl font-semibold tracking-tight text-[#FDFBF0]`.
+
+---
+
+## 3. Shape & borders
+
+- **`rounded-none` everywhere.** Buttons, cards, inputs, modals — all square. The only exceptions
+  are avatars and status dots (`rounded-full`). Never `rounded-lg`/`rounded-xl` on cards/buttons.
+- **Hairline borders** (`border border-white/10`) are the primary way surfaces are separated — not
+  shadows. Use borders and the dark/darker background contrast (`#1E1715` vs `#070504`) for depth.
+- **Transitions:** `transition-colors` (or `transition-all`) ~`duration-200` on anything
+  interactive.
+
+---
+
+## 4. Tactical corner brackets (signature element)
+
+Small orange L-shaped brackets at the four corners of an element — Helix's most recognizable visual
+motif. Put them on **primary CTAs and hero/feature cards** (not every element — they're a highlight).
+
+Add these utilities **once** to `web/src/app/globals.css` (plain CSS, works under Tailwind v3 and
+v4), then apply the class names in JSX:
+
+```css
+/* ---- Helix tactical corner brackets ---- */
+.tactical-corners {
+  border-radius: 0px;
+  --corner-size: 12px;
+  --corner-thickness: 1px;
+  --corner-color: #FF5C01;
+  position: relative;
+  background-image:
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color));
+  background-position:
+    top left, top left, top right, top right,
+    bottom left, bottom left, bottom right, bottom right;
+  background-size:
+    var(--corner-thickness) var(--corner-size), var(--corner-size) var(--corner-thickness),
+    var(--corner-thickness) var(--corner-size), var(--corner-size) var(--corner-thickness),
+    var(--corner-thickness) var(--corner-size), var(--corner-size) var(--corner-thickness),
+    var(--corner-thickness) var(--corner-size), var(--corner-size) var(--corner-thickness);
+  background-repeat: no-repeat;
+  transition: all 0.2s ease;
+}
+.tactical-corners:hover {
+  --corner-color: #000;
+  --corner-size: 8px;
+  background-position:
+    4px 4px, 4px 4px,
+    calc(100% - 4px) 4px, calc(100% - 4px) 4px,
+    4px calc(100% - 4px), 4px calc(100% - 4px),
+    calc(100% - 4px) calc(100% - 4px), calc(100% - 4px) calc(100% - 4px);
+}
+
+/* Smaller, static (no hover animation) — for toolbars / compact controls */
+.tactical-corners-little-no-hover {
+  border-radius: 0px;
+  --corner-size: 6px;
+  --corner-thickness: 1px;
+  --corner-color: #FF5C01;
+  position: relative;
+  background-image:
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color)),
+    linear-gradient(var(--corner-color), var(--corner-color));
+  background-position:
+    top left, top left, top right, top right,
+    bottom left, bottom left, bottom right, bottom right;
+  background-size:
+    var(--corner-thickness) var(--corner-size), var(--corner-size) var(--corner-thickness),
+    var(--corner-thickness) var(--corner-size), var(--corner-size) var(--corner-thickness),
+    var(--corner-thickness) var(--corner-size), var(--corner-size) var(--corner-thickness),
+    var(--corner-thickness) var(--corner-size), var(--corner-size) var(--corner-thickness);
+  background-repeat: no-repeat;
+}
+
+/* Optional: drop-in tactical button (orange outline, mono, uppercase) */
+.btn-tactical {
+  position: relative;
+  height: 3rem;
+  border-radius: 0px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.875rem;
+  background: linear-gradient(to right, #292524, #1c1917);
+  border: 1px solid #FF5C01;
+  color: #FF5C01;
+  transition: all 0.2s ease;
+}
+.btn-tactical:hover {
+  border-color: #fb923c;
+  color: #fb923c;
+  box-shadow: 0 0 8px rgba(255, 140, 58, 0.3);
+}
+.btn-tactical:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Thin styled scrollbar for dark panels */
+.thin-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(235,217,175,0.15) transparent; }
+.thin-scrollbar::-webkit-scrollbar { width: 4px; }
+.thin-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.thin-scrollbar::-webkit-scrollbar-thumb { background: rgba(235,217,175,0.15); border-radius: 2px; }
+.thin-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,92,1,0.3); }
+```
+
+Also set the base background/text in `globals.css` so every page starts dark:
+
+```css
+html, body { background: #1E1715; color: #EBD9AF; }
+```
+
+---
+
+## 5. Component recipes
+
+Copy these Tailwind class strings. All use arbitrary hex + `rounded-none` so they need no Tailwind
+config.
+
+**Page shell**
+```tsx
+<main className="min-h-screen bg-[#1E1715] text-[#EBD9AF] font-sans">
+  <div className="mx-auto max-w-5xl px-6 py-10 space-y-6">{/* ... */}</div>
+</main>
+```
+
+**Heading**
+```tsx
+<h1 className="text-2xl font-semibold tracking-tight text-[#FDFBF0]">Contacts</h1>
+<p className="font-mono text-[10px] uppercase tracking-wider text-[#EBD9AF]/60">3 total</p>
+```
+
+**Card / panel**
+```tsx
+<div className="rounded-none border border-[#EBD9AF]/10 bg-[#070504] p-6">{/* ... */}</div>
+```
+Feature card / primary tile — add `tactical-corners`:
+```tsx
+<div className="tactical-corners rounded-none border border-white/10 bg-[#070504] p-6">{/* ... */}</div>
+```
+
+**Primary button** (the main CTA — orange, with corner brackets)
+```tsx
+<button className="tactical-corners rounded-none bg-[#FF5C01]/15 px-4 py-2 font-mono text-sm uppercase tracking-wider text-[#FF5C01] transition-all hover:bg-[#FF5C01] hover:text-[#1E1715] disabled:opacity-50">
+  Add contact
+</button>
+```
+
+**Secondary / ghost button**
+```tsx
+<button className="rounded-none border border-white/10 px-4 py-2 font-mono text-sm uppercase tracking-wider text-[#EBD9AF]/80 transition-colors hover:border-[#FF5C01]/50 hover:text-[#FF5C01]">
+  Cancel
+</button>
+```
+
+**Text input**
+```tsx
+<input className="w-full rounded-none border border-white/10 bg-transparent px-3 py-2 text-[#FDFBF0] placeholder:text-[#EBD9AF]/50 transition-colors focus:border-[#FF5C01]/50 focus:outline-none" />
+```
+Pair with a mono label: `<label className="font-mono text-[10px] uppercase tracking-wider text-[#EBD9AF]/60">Email</label>`.
+
+**Select** — same border/focus treatment as input; `rounded-none bg-[#070504]` for the dropdown.
+
+**List / table rows**
+```tsx
+<ul className="divide-y divide-white/10 border border-white/10 bg-[#070504]">
+  <li className="px-4 py-3 transition-colors hover:bg-[#FF5C01]/10">
+    <span className="text-[#FDFBF0]">Ada Lovelace</span>
+    <span className="ml-2 text-sm text-[#EBD9AF]/60">ada@example.com</span>
+  </li>
+</ul>
+```
+Table headers: `font-mono text-[10px] uppercase tracking-wider text-[#EBD9AF]/60`.
+
+**Nav / active tab** — active item gets an orange underline + bright text; inactive is dimmed:
+```tsx
+<a className="border-b-2 border-[#FF5C01] pb-1 text-[#FDFBF0]">Overview</a>
+<a className="border-b-2 border-transparent pb-1 text-[#EBD9AF]/60 hover:text-[#EBD9AF]">Settings</a>
+```
+
+**Badge / tag**
+```tsx
+<span className="rounded-none border border-[#FF5C01]/40 bg-[#FF5C01]/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[#FF5C01]">call</span>
+```
+
+**Loading skeleton**
+```tsx
+<div className="h-4 w-32 animate-pulse rounded-none bg-[#EBD9AF]/10" />
+```
+
+**Icons** — use `lucide-react` (`npm i lucide-react`). Common sizes `h-4 w-4` / `h-5 w-5`. Tint to
+match text (`text-[#EBD9AF]/70`, `text-[#FF5C01]` on accent).
+
+---
+
+## 6. Logo & wordmark
+
+Keep it simple: a lowercase **`helix`** wordmark in `font-sans font-semibold text-[#FDFBF0]` is
+enough for an MVP header. If you want the mark, reference the hosted asset
+`https://helix-db.com/helix-white.svg`. Favicon is optional.
+
+---
+
+## 7. Do / Don't
+
+**Do**
+- Use `rounded-none` on every surface (square corners).
+- Keep the page dark (`#1E1715` shell, `#070504` cards); use hairline `border-white/10` for
+  separation.
+- Use orange `#FF5C01` only as an accent — primary action, active state, focus, links.
+- Put `tactical-corners` on the primary CTA and feature cards.
+- Use `font-mono`, `uppercase`, `tracking-wider`, small sizes for labels/controls/table headers.
+- Use `lucide-react` for icons.
+
+**Don't**
+- Don't use `bg-white` or light surfaces, `slate`/`gray` light shades, or any blue/indigo/violet.
+- Don't use `rounded-lg`/`rounded-xl`/`rounded-md` on buttons or cards.
+- Don't lean on drop shadows for separation — use borders and bg contrast.
+- Don't paint large areas orange — it's a highlight, not a fill.
+- Don't pull in a UI kit (shadcn/MUI/Chakra) — these utility recipes are the system.
+"##;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SetupMode {
@@ -690,6 +994,7 @@ pub async fn run() -> Result<()> {
         init_project(&options.project_dir).await?;
     }
     write_agent_prompt(&options.project_dir, options.build_intent.as_deref())?;
+    write_design_guide(&options.project_dir)?;
     if options.write_queries {
         write_example_queries(&options.project_dir)?;
     }
@@ -1028,6 +1333,24 @@ pub(crate) fn write_agent_prompt(project_dir: &Path, build_intent: Option<&str>)
         starter_prompt(build_intent),
     )
     .map_err(eyre::Report::from);
+
+    match result {
+        Ok(()) => {
+            step.done();
+            Ok(())
+        }
+        Err(err) => {
+            step.fail();
+            Err(err)
+        }
+    }
+}
+
+pub(crate) fn write_design_guide(project_dir: &Path) -> Result<()> {
+    let mut step = Step::with_messages("Writing design guide", "Wrote design guide");
+    step.start();
+
+    let result = fs::write(project_dir.join("DESIGN.md"), DESIGN_GUIDE).map_err(eyre::Report::from);
 
     match result {
         Ok(()) => {
@@ -1792,6 +2115,46 @@ mod tests {
         assert!(prompt.contains("open http://localhost:3000"));
         assert!(prompt.contains("xdg-open http://localhost:3000"));
         assert!(prompt.contains("start http://localhost:3000"));
+    }
+
+    #[test]
+    fn design_guide_contains_brand_tokens() {
+        // The guide is the source of truth for the Helix look — assert the
+        // load-bearing tokens survive any future edits to the constant.
+        assert!(DESIGN_GUIDE.contains("#FF5C01")); // brand orange accent
+        assert!(DESIGN_GUIDE.contains("#1E1715")); // page background
+        assert!(DESIGN_GUIDE.contains("#070504")); // card/panel background
+        assert!(DESIGN_GUIDE.contains("tactical-corners")); // signature element + utility
+        assert!(DESIGN_GUIDE.contains("rounded-none")); // square-corner rule
+        assert!(DESIGN_GUIDE.contains("font-mono")); // typography convention
+    }
+
+    #[test]
+    fn prompt_references_design_guide() {
+        let prompt = starter_prompt(None);
+        // Referenced from both the environment file list and the frontend section.
+        assert!(prompt.contains("DESIGN.md"));
+        assert!(prompt.contains("Helix brand"));
+    }
+
+    #[test]
+    fn write_design_guide_creates_design_file() {
+        let dir = env::temp_dir().join(format!(
+            "helix-chef-test-design-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+
+        write_design_guide(&dir).unwrap();
+
+        let design = dir.join("DESIGN.md");
+        assert!(design.exists());
+        assert!(fs::read_to_string(&design).unwrap().contains("#FF5C01"));
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
