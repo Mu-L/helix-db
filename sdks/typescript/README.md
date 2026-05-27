@@ -84,6 +84,17 @@ queries.call.some_route({
 
 Dynamic JSON requests cannot represent bytes parameters, so schema conversion rejects `param.bytes()` with `DynamicQueryError.UnsupportedBytesParameter`.
 
+## Predicate Parameters
+
+`Predicate.eq`, `neq`, `gt`, `gte`, `lt`, `lte`, and `between` accept either literal property values or `Expr`/parameter references. Literal values keep the original literal variants in JSON, while expressions serialize as `EqExpr`, `GteExpr`, `BetweenExpr`, and so on. Use `Predicate.compare(...)` for arbitrary expression-to-expression comparisons.
+
+```ts
+g().nWithLabel("User").where(Predicate.eqParam("email", "email"));
+g()
+  .nWithLabel("User")
+  .where(Predicate.eq("email", Expr.param("email")));
+```
+
 ## Dynamic Requests
 
 For dynamic `/v1/query`, call your plain query function and serialize the returned batch as a request.

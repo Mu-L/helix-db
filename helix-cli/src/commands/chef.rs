@@ -212,7 +212,7 @@ const params = defineParams({ company: param.string(), contactId: param.array(pa
 
 **Mutations** (`writeBatch()` only): `g().addN('Contact', { name: PropertyInput.param('name'), createdAt: PropertyInput.expr(Expr.timestamp()) })`; `.addE('WORKS_AT', NodeRef.param('companyId'), { since: PropertyInput.param('since') })`; `.setProperty('name', PropertyInput.param('newName'))`; `.drop()`; `.dropEdge(NodeRef.param('targetId'))`.
 
-**Parameterized comparisons:** prefer the typed helpers — `.where(Predicate.eqParam('email', 'email'))` (also `gteParam`, `ltParam`, …). `addN`/`addE` property values accept `PropertyInput.param('x')` or a `ParamRef` directly.
+**Parameterized comparisons:** prefer the typed helpers — `.where(Predicate.eqParam('email', 'email'))` (also `gteParam`, `ltParam`, …), or pass an explicit expression like `Predicate.eq('email', Expr.param('email'))`. `addN`/`addE` property values accept `PropertyInput.param('x')` or a `ParamRef` directly.
 
 **Terminals:** `.count()`, `.exists()`, `.values(['name', 'email'])`, `.valueMap(['$id', 'name'])` (or `.valueMap(null)` for all), `.project([PropertyProjection.renamed('$id', 'id'), PropertyProjection.new('name')])`.
 
@@ -568,7 +568,7 @@ When `helix query` fails, the response body (or stderr) contains the error. Comm
 - DO NOT hand-write tagged-JSON query ASTs — author every query with the `@helix-db/helix-db` builder. Raw JSON is only a debugging fallback; its encoding rules live in the `helix-query-json-dynamic` skill.
 - DO NOT guess builder method names — check `<typescript_dsl_quickref>` / `<patterns>` or invoke the `helix-query-typescript` skill.
 - DO NOT put non-indexed predicates (`contains`, `isNull`, `isNotNull`, `endsWith`, `not`) at the source (`nWhere` / `nWithLabelWhere`) — use a `.where(Predicate...)` step after the source.
-- DO NOT use `Predicate.eq('prop', value)` to compare against a *parameter* — use `Predicate.eqParam('prop', 'paramName')` (and `gteParam`, etc.); in mutations use `PropertyInput.param('x')`.
+- DO NOT pass a plain runtime value to `Predicate.eq('prop', value)` expecting a parameter lookup — use `Predicate.eqParam('prop', 'paramName')` (and `gteParam`, etc.) or `Predicate.eq('prop', Expr.param('paramName'))`; in mutations use `PropertyInput.param('x')`.
 - DO NOT mix mutations into a `readBatch()` — use `writeBatch()` for anything that adds/updates/deletes.
 - DO NOT project `$distance` after `.out` / `.in` / `.both` — traversal drops it. Project it immediately after the search step.
 - DO NOT pass a single id as a scalar to `g().n(...)` — use an array (`[42n]`), `NodeRef.param('ids')` (param typed as an array of i64), or `NodeRef.var('stored')`.

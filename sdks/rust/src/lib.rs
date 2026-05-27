@@ -129,12 +129,12 @@ impl<'hlx, 'a, R> QueryBuilder<'hlx, 'a, R> {
         Ok(self)
     }
 
-    pub fn stored_query(mut self, query_name: String) -> QueryRequest<'hlx, 'a, R> {
+    pub fn stored(mut self, query_name: String) -> QueryRequest<'hlx, 'a, R> {
         self.query_type = QueryType::Stored(query_name);
         QueryRequest { request: self }
     }
 
-    pub fn dynamic_query(mut self, query: DynamicQueryRequest) -> QueryRequest<'hlx, 'a, R> {
+    pub fn dynamic(mut self, query: DynamicQueryRequest) -> QueryRequest<'hlx, 'a, R> {
         self.query_type = QueryType::Dynamic(query);
         QueryRequest { request: self }
     }
@@ -150,9 +150,9 @@ impl<'hlx, 'a, R: for<'de> Deserialize<'de>> QueryRequest<'hlx, 'a, R> {
         let (url, body) = match query_request.query_type {
             QueryType::Dynamic(query) => ("/v1/query".to_string(), Some(sonic_rs::to_vec(&query)?)),
             QueryType::Stored(name) => (format!("/v1/query/{name}"), query_request.body),
-            QueryType::Empty => unreachable!(
-                "send() is only reachable after stored_query() or dynamic_query() sets query_type"
-            ),
+            QueryType::Empty => {
+                unreachable!("send() is only reachable after stored() or dynamic() sets query_type")
+            }
         };
         let url = query_request
             .client
@@ -413,7 +413,54 @@ mod tests {
         let _ = q_bytes(vec![1, 2, 3]);
     }
 
-    // ---- Group 2: SourcePredicate JSON — old (literal) vs new (param) -------
+    // ---- Group 2: Predicate JSON — old (literal) vs new (param) ------------
+
+    #[test]
+    fn predicate_literal_json_is_unchanged() {
+        assert_eq!(
+            sonic_rs::to_string(&Predicate::eq("username", "alice")).unwrap(),
+            r#"{"Eq":["username",{"String":"alice"}]}"#
+        );
+        assert_eq!(
+            sonic_rs::to_string(&Predicate::gt("score", 10i64)).unwrap(),
+            r#"{"Gt":["score",{"I64":10}]}"#
+        );
+        assert_eq!(
+            sonic_rs::to_string(&Predicate::between("age", 18i64, 65i64)).unwrap(),
+            r#"{"Between":["age",{"I64":18},{"I64":65}]}"#
+        );
+    }
+
+    #[test]
+    fn predicate_param_json_uses_expr_variants() {
+        assert_eq!(
+            sonic_rs::to_string(&Predicate::eq("username", Expr::param("name"))).unwrap(),
+            r#"{"EqExpr":["username",{"Param":"name"}]}"#
+        );
+        assert_eq!(
+            sonic_rs::to_string(&Predicate::lte("score", Expr::param("max"))).unwrap(),
+            r#"{"LteExpr":["score",{"Param":"max"}]}"#
+        );
+        assert_eq!(
+            sonic_rs::to_string(&Predicate::between("age", Expr::param("lo"), 65i64)).unwrap(),
+            r#"{"BetweenExpr":["age",{"Param":"lo"},{"Constant":{"I64":65}}]}"#
+        );
+    }
+
+    #[test]
+    fn predicate_json_round_trips() {
+        for predicate in [
+            Predicate::eq("username", "alice"),
+            Predicate::eq("username", Expr::param("name")),
+            Predicate::between("age", Expr::param("lo"), 65i64),
+        ] {
+            let json = sonic_rs::to_string(&predicate).unwrap();
+            let back: Predicate = sonic_rs::from_str(&json).unwrap();
+            assert_eq!(predicate, back);
+        }
+    }
+
+    // ---- Group 3: SourcePredicate JSON — old (literal) vs new (param) -------
 
     #[test]
     fn source_predicate_literal_json_is_unchanged() {
@@ -461,7 +508,7 @@ mod tests {
         }
     }
 
-    // ---- Group 3: full query AST, literal vs param (self-contained) --------
+    // ---- Group 4: full query AST, literal vs param (self-contained) --------
 
     #[test]
     fn query_ast_literal_vs_param_json() {
@@ -583,14 +630,14 @@ mod client_tests {
     #[test]
     fn dynamic_query_sets_query_type() {
         let client = Client::new(None).unwrap();
-        let request = client.query::<Resp>().dynamic_query(sample_request());
+        let request = client.query::<Resp>().dynamic(sample_request());
         assert!(matches!(request.request.query_type, QueryType::Dynamic(_)));
     }
 
     #[test]
     fn stored_query_sets_query_type() {
         let client = Client::new(None).unwrap();
-        let request = client.query::<Resp>().stored_query("add_user".to_string());
+        let request = client.query::<Resp>().stored("add_user".to_string());
         assert!(
             matches!(&request.request.query_type, QueryType::Stored(name) if name == "add_user")
         );
@@ -646,7 +693,7 @@ mod client_tests {
         let client = Client::new(Some(&base)).unwrap();
         let _: EmptyResp = client
             .query()
-            .dynamic_query(sample_request())
+            .dynamic(sample_request())
             .send()
             .await
             .unwrap();
@@ -659,7 +706,7 @@ mod client_tests {
         let client = Client::new(Some(&base)).unwrap();
         let _: EmptyResp = client
             .query()
-            .stored_query("add_user".to_string())
+            .stored("add_user".to_string())
             .send()
             .await
             .unwrap();

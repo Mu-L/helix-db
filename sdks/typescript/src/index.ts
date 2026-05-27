@@ -626,26 +626,43 @@ export class Predicate implements Encodable {
     readonly variant: string,
     readonly payload?: unknown,
   ) {}
-  static eq(property: string, value: PropertyValueInput): Predicate {
-    return new Predicate("Eq", [property, PropertyValue.from(value)]);
+  static eq(property: string, value: PropertyValueInput | Expr | ParamRef): Predicate {
+    const input = PropertyInput.from(value);
+    return input.variant === "Value" ? new Predicate("Eq", [property, input.payload]) : new Predicate("EqExpr", [property, input.payload]);
   }
-  static neq(property: string, value: PropertyValueInput): Predicate {
-    return new Predicate("Neq", [property, PropertyValue.from(value)]);
+  static neq(property: string, value: PropertyValueInput | Expr | ParamRef): Predicate {
+    const input = PropertyInput.from(value);
+    return input.variant === "Value"
+      ? new Predicate("Neq", [property, input.payload])
+      : new Predicate("NeqExpr", [property, input.payload]);
   }
-  static gt(property: string, value: PropertyValueInput): Predicate {
-    return new Predicate("Gt", [property, PropertyValue.from(value)]);
+  static gt(property: string, value: PropertyValueInput | Expr | ParamRef): Predicate {
+    const input = PropertyInput.from(value);
+    return input.variant === "Value" ? new Predicate("Gt", [property, input.payload]) : new Predicate("GtExpr", [property, input.payload]);
   }
-  static gte(property: string, value: PropertyValueInput): Predicate {
-    return new Predicate("Gte", [property, PropertyValue.from(value)]);
+  static gte(property: string, value: PropertyValueInput | Expr | ParamRef): Predicate {
+    const input = PropertyInput.from(value);
+    return input.variant === "Value"
+      ? new Predicate("Gte", [property, input.payload])
+      : new Predicate("GteExpr", [property, input.payload]);
   }
-  static lt(property: string, value: PropertyValueInput): Predicate {
-    return new Predicate("Lt", [property, PropertyValue.from(value)]);
+  static lt(property: string, value: PropertyValueInput | Expr | ParamRef): Predicate {
+    const input = PropertyInput.from(value);
+    return input.variant === "Value" ? new Predicate("Lt", [property, input.payload]) : new Predicate("LtExpr", [property, input.payload]);
   }
-  static lte(property: string, value: PropertyValueInput): Predicate {
-    return new Predicate("Lte", [property, PropertyValue.from(value)]);
+  static lte(property: string, value: PropertyValueInput | Expr | ParamRef): Predicate {
+    const input = PropertyInput.from(value);
+    return input.variant === "Value"
+      ? new Predicate("Lte", [property, input.payload])
+      : new Predicate("LteExpr", [property, input.payload]);
   }
-  static between(property: string, min: PropertyValueInput, max: PropertyValueInput): Predicate {
-    return new Predicate("Between", [property, PropertyValue.from(min), PropertyValue.from(max)]);
+  static between(property: string, min: PropertyValueInput | Expr | ParamRef, max: PropertyValueInput | Expr | ParamRef): Predicate {
+    const lo = PropertyInput.from(min);
+    const hi = PropertyInput.from(max);
+    if (lo.variant === "Value" && hi.variant === "Value") {
+      return new Predicate("Between", [property, lo.payload, hi.payload]);
+    }
+    return new Predicate("BetweenExpr", [property, lo.toExpr(), hi.toExpr()]);
   }
   static hasKey(property: string): Predicate {
     return new Predicate("HasKey", property);
@@ -690,22 +707,22 @@ export class Predicate implements Encodable {
     return new Predicate("Compare", { left, op, right });
   }
   static eqParam(property: string, paramName: string): Predicate {
-    return Predicate.compare(Expr.prop(property), CompareOp.Eq, Expr.param(paramName));
+    return new Predicate("EqExpr", [property, Expr.param(paramName)]);
   }
   static neqParam(property: string, paramName: string): Predicate {
-    return Predicate.compare(Expr.prop(property), CompareOp.Neq, Expr.param(paramName));
+    return new Predicate("NeqExpr", [property, Expr.param(paramName)]);
   }
   static gtParam(property: string, paramName: string): Predicate {
-    return Predicate.compare(Expr.prop(property), CompareOp.Gt, Expr.param(paramName));
+    return new Predicate("GtExpr", [property, Expr.param(paramName)]);
   }
   static gteParam(property: string, paramName: string): Predicate {
-    return Predicate.compare(Expr.prop(property), CompareOp.Gte, Expr.param(paramName));
+    return new Predicate("GteExpr", [property, Expr.param(paramName)]);
   }
   static ltParam(property: string, paramName: string): Predicate {
-    return Predicate.compare(Expr.prop(property), CompareOp.Lt, Expr.param(paramName));
+    return new Predicate("LtExpr", [property, Expr.param(paramName)]);
   }
   static lteParam(property: string, paramName: string): Predicate {
-    return Predicate.compare(Expr.prop(property), CompareOp.Lte, Expr.param(paramName));
+    return new Predicate("LteExpr", [property, Expr.param(paramName)]);
   }
   static fromSource(predicate: SourcePredicate): Predicate {
     return predicate.toPredicate();
@@ -808,22 +825,19 @@ export class SourcePredicate implements Encodable {
       case "Or":
         return Predicate.or((this.payload as SourcePredicate[]).map((entry) => entry.toPredicate()));
       case "EqExpr":
-        return Predicate.compare(Expr.prop(p[0] as string), CompareOp.Eq, p[1] as Expr);
+        return Predicate.eq(p[0] as string, p[1] as Expr);
       case "NeqExpr":
-        return Predicate.compare(Expr.prop(p[0] as string), CompareOp.Neq, p[1] as Expr);
+        return Predicate.neq(p[0] as string, p[1] as Expr);
       case "GtExpr":
-        return Predicate.compare(Expr.prop(p[0] as string), CompareOp.Gt, p[1] as Expr);
+        return Predicate.gt(p[0] as string, p[1] as Expr);
       case "GteExpr":
-        return Predicate.compare(Expr.prop(p[0] as string), CompareOp.Gte, p[1] as Expr);
+        return Predicate.gte(p[0] as string, p[1] as Expr);
       case "LtExpr":
-        return Predicate.compare(Expr.prop(p[0] as string), CompareOp.Lt, p[1] as Expr);
+        return Predicate.lt(p[0] as string, p[1] as Expr);
       case "LteExpr":
-        return Predicate.compare(Expr.prop(p[0] as string), CompareOp.Lte, p[1] as Expr);
+        return Predicate.lte(p[0] as string, p[1] as Expr);
       case "BetweenExpr":
-        return Predicate.and([
-          Predicate.compare(Expr.prop(p[0] as string), CompareOp.Gte, p[1] as Expr),
-          Predicate.compare(Expr.prop(p[0] as string), CompareOp.Lte, p[2] as Expr),
-        ]);
+        return Predicate.between(p[0] as string, p[1] as Expr, p[2] as Expr);
       default:
         throw new Error(`unknown source predicate: ${this.variant}`);
     }
