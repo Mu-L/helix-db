@@ -83,6 +83,8 @@ read_batch()
     .returning(["matching_users"]);
 ```
 
+`Predicate::eq`, `neq`, `gt`, `gte`, `lt`, `lte`, and `between` accept either literal property values or `Expr` parameters. Literal values keep the original literal variants in JSON, while expressions serialize as `EqExpr`, `GteExpr`, `BetweenExpr`, and so on. Use `Predicate::compare(...)` for arbitrary expression-to-expression comparisons.
+
 ## Conditional Queries
 
 Use `BatchCondition` with `var_as_if` to run later queries only when earlier variables satisfy runtime conditions.
@@ -168,7 +170,7 @@ a query kind and `.send().await`:
 // Inline / dynamic query: POSTs a `DynamicQueryRequest` (DSL query + parameters) to `/v1/query`.
 let response: MyResponse = client
     .query()
-    .dynamic_query(request)        // `request` is a DynamicQueryRequest (see below)
+    .dynamic(request)              // `request` is a DynamicQueryRequest (see below)
     .send()
     .await?;
 
@@ -177,7 +179,7 @@ let response: MyResponse = client
 let response: MyResponse = client
     .query()
     .body(&payload)?               // optional request body for the route
-    .stored_query("add_user".to_string())
+    .stored("add_user".to_string())
     .send()
     .await?;
 ```
@@ -192,7 +194,7 @@ Optional header toggles can be chained before choosing the query kind:
 `HelixError` distinguishes transport errors, non-200 responses from the server (`RemoteError`),
 serialization failures, and invalid URLs.
 
-### Registered queries + `dynamic_query`
+### Registered queries + `dynamic`
 
 Annotate a query builder with `#[register]` to get a callable helper that builds a
 `DynamicQueryRequest` directly from typed arguments. The generated function returns the request
@@ -224,7 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Building the request is infallible — no `?` needed here.
     let request = add_user("John".to_string());
 
-    let response: AddUserResponse = client.query().dynamic_query(request).send().await?;
+    let response: AddUserResponse = client.query().dynamic(request).send().await?;
     println!("created user {}", response.user_id);
     Ok(())
 }

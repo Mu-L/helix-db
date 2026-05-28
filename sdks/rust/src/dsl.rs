@@ -1576,6 +1576,20 @@ pub enum Predicate {
     Lte(String, PropertyValue),
     /// Between (inclusive): min <= property <= max
     Between(String, PropertyValue, PropertyValue),
+    /// Equals against an expression/parameter: property == <expr>
+    EqExpr(String, Expr),
+    /// Not equals against an expression/parameter
+    NeqExpr(String, Expr),
+    /// Greater than an expression/parameter
+    GtExpr(String, Expr),
+    /// Greater than or equal to an expression/parameter
+    GteExpr(String, Expr),
+    /// Less than an expression/parameter
+    LtExpr(String, Expr),
+    /// Less than or equal to an expression/parameter
+    LteExpr(String, Expr),
+    /// Between two expressions/parameters (inclusive)
+    BetweenExpr(String, Expr, Expr),
     /// Property exists
     HasKey(String),
     /// Property is missing or explicitly null.
@@ -1762,90 +1776,81 @@ impl From<SourcePredicate> for Predicate {
             SourcePredicate::Or(predicates) => {
                 Predicate::Or(predicates.into_iter().map(Predicate::from).collect())
             }
-            SourcePredicate::EqExpr(prop, e) => Predicate::Compare {
-                left: Expr::Property(prop),
-                op: CompareOp::Eq,
-                right: e,
-            },
-            SourcePredicate::NeqExpr(prop, e) => Predicate::Compare {
-                left: Expr::Property(prop),
-                op: CompareOp::Neq,
-                right: e,
-            },
-            SourcePredicate::GtExpr(prop, e) => Predicate::Compare {
-                left: Expr::Property(prop),
-                op: CompareOp::Gt,
-                right: e,
-            },
-            SourcePredicate::GteExpr(prop, e) => Predicate::Compare {
-                left: Expr::Property(prop),
-                op: CompareOp::Gte,
-                right: e,
-            },
-            SourcePredicate::LtExpr(prop, e) => Predicate::Compare {
-                left: Expr::Property(prop),
-                op: CompareOp::Lt,
-                right: e,
-            },
-            SourcePredicate::LteExpr(prop, e) => Predicate::Compare {
-                left: Expr::Property(prop),
-                op: CompareOp::Lte,
-                right: e,
-            },
-            SourcePredicate::BetweenExpr(prop, min, max) => Predicate::And(vec![
-                Predicate::Compare {
-                    left: Expr::Property(prop.clone()),
-                    op: CompareOp::Gte,
-                    right: min,
-                },
-                Predicate::Compare {
-                    left: Expr::Property(prop),
-                    op: CompareOp::Lte,
-                    right: max,
-                },
-            ]),
+            SourcePredicate::EqExpr(prop, e) => Predicate::EqExpr(prop, e),
+            SourcePredicate::NeqExpr(prop, e) => Predicate::NeqExpr(prop, e),
+            SourcePredicate::GtExpr(prop, e) => Predicate::GtExpr(prop, e),
+            SourcePredicate::GteExpr(prop, e) => Predicate::GteExpr(prop, e),
+            SourcePredicate::LtExpr(prop, e) => Predicate::LtExpr(prop, e),
+            SourcePredicate::LteExpr(prop, e) => Predicate::LteExpr(prop, e),
+            SourcePredicate::BetweenExpr(prop, min, max) => Predicate::BetweenExpr(prop, min, max),
         }
     }
 }
 
 impl Predicate {
-    /// Create an equality predicate
-    pub fn eq(property: impl Into<String>, value: impl Into<PropertyValue>) -> Self {
-        Predicate::Eq(property.into(), value.into())
+    /// Create an equality predicate.
+    ///
+    /// Accepts a literal value or an `Expr`/query parameter. Literals keep the `Eq` variant;
+    /// expressions route to `EqExpr`.
+    pub fn eq(property: impl Into<String>, value: impl Into<PropertyInput>) -> Self {
+        match value.into() {
+            PropertyInput::Value(v) => Predicate::Eq(property.into(), v),
+            PropertyInput::Expr(e) => Predicate::EqExpr(property.into(), e),
+        }
     }
 
-    /// Create a not-equals predicate
-    pub fn neq(property: impl Into<String>, value: impl Into<PropertyValue>) -> Self {
-        Predicate::Neq(property.into(), value.into())
+    /// Create a not-equals predicate (literal or `Expr`/parameter).
+    pub fn neq(property: impl Into<String>, value: impl Into<PropertyInput>) -> Self {
+        match value.into() {
+            PropertyInput::Value(v) => Predicate::Neq(property.into(), v),
+            PropertyInput::Expr(e) => Predicate::NeqExpr(property.into(), e),
+        }
     }
 
-    /// Create a greater-than predicate
-    pub fn gt(property: impl Into<String>, value: impl Into<PropertyValue>) -> Self {
-        Predicate::Gt(property.into(), value.into())
+    /// Create a greater-than predicate (literal or `Expr`/parameter).
+    pub fn gt(property: impl Into<String>, value: impl Into<PropertyInput>) -> Self {
+        match value.into() {
+            PropertyInput::Value(v) => Predicate::Gt(property.into(), v),
+            PropertyInput::Expr(e) => Predicate::GtExpr(property.into(), e),
+        }
     }
 
-    /// Create a greater-than-or-equal predicate
-    pub fn gte(property: impl Into<String>, value: impl Into<PropertyValue>) -> Self {
-        Predicate::Gte(property.into(), value.into())
+    /// Create a greater-than-or-equal predicate (literal or `Expr`/parameter).
+    pub fn gte(property: impl Into<String>, value: impl Into<PropertyInput>) -> Self {
+        match value.into() {
+            PropertyInput::Value(v) => Predicate::Gte(property.into(), v),
+            PropertyInput::Expr(e) => Predicate::GteExpr(property.into(), e),
+        }
     }
 
-    /// Create a less-than predicate
-    pub fn lt(property: impl Into<String>, value: impl Into<PropertyValue>) -> Self {
-        Predicate::Lt(property.into(), value.into())
+    /// Create a less-than predicate (literal or `Expr`/parameter).
+    pub fn lt(property: impl Into<String>, value: impl Into<PropertyInput>) -> Self {
+        match value.into() {
+            PropertyInput::Value(v) => Predicate::Lt(property.into(), v),
+            PropertyInput::Expr(e) => Predicate::LtExpr(property.into(), e),
+        }
     }
 
-    /// Create a less-than-or-equal predicate
-    pub fn lte(property: impl Into<String>, value: impl Into<PropertyValue>) -> Self {
-        Predicate::Lte(property.into(), value.into())
+    /// Create a less-than-or-equal predicate (literal or `Expr`/parameter).
+    pub fn lte(property: impl Into<String>, value: impl Into<PropertyInput>) -> Self {
+        match value.into() {
+            PropertyInput::Value(v) => Predicate::Lte(property.into(), v),
+            PropertyInput::Expr(e) => Predicate::LteExpr(property.into(), e),
+        }
     }
 
-    /// Create a between predicate (inclusive)
+    /// Create a between predicate (inclusive). Accepts literals or `Expr`/parameters; if either
+    /// bound is an expression, both are promoted to `BetweenExpr`.
     pub fn between(
         property: impl Into<String>,
-        min: impl Into<PropertyValue>,
-        max: impl Into<PropertyValue>,
+        min: impl Into<PropertyInput>,
+        max: impl Into<PropertyInput>,
     ) -> Self {
-        Predicate::Between(property.into(), min.into(), max.into())
+        let prop = property.into();
+        match (min.into(), max.into()) {
+            (PropertyInput::Value(a), PropertyInput::Value(b)) => Predicate::Between(prop, a, b),
+            (min, max) => Predicate::BetweenExpr(prop, min.into_expr(), max.into_expr()),
+        }
     }
 
     /// Create a has-key predicate
@@ -1928,56 +1933,32 @@ impl Predicate {
     /// The parameter value is provided at query execution time.
     ///
     pub fn eq_param(property: impl Into<String>, param_name: impl Into<String>) -> Self {
-        Predicate::Compare {
-            left: Expr::Property(property.into()),
-            op: CompareOp::Eq,
-            right: Expr::Param(param_name.into()),
-        }
+        Predicate::EqExpr(property.into(), Expr::Param(param_name.into()))
     }
 
     /// Create a parameterized not-equals predicate: property != param
     pub fn neq_param(property: impl Into<String>, param_name: impl Into<String>) -> Self {
-        Predicate::Compare {
-            left: Expr::Property(property.into()),
-            op: CompareOp::Neq,
-            right: Expr::Param(param_name.into()),
-        }
+        Predicate::NeqExpr(property.into(), Expr::Param(param_name.into()))
     }
 
     /// Create a parameterized greater-than predicate: property > param
     pub fn gt_param(property: impl Into<String>, param_name: impl Into<String>) -> Self {
-        Predicate::Compare {
-            left: Expr::Property(property.into()),
-            op: CompareOp::Gt,
-            right: Expr::Param(param_name.into()),
-        }
+        Predicate::GtExpr(property.into(), Expr::Param(param_name.into()))
     }
 
     /// Create a parameterized greater-than-or-equal predicate: property >= param
     pub fn gte_param(property: impl Into<String>, param_name: impl Into<String>) -> Self {
-        Predicate::Compare {
-            left: Expr::Property(property.into()),
-            op: CompareOp::Gte,
-            right: Expr::Param(param_name.into()),
-        }
+        Predicate::GteExpr(property.into(), Expr::Param(param_name.into()))
     }
 
     /// Create a parameterized less-than predicate: property < param
     pub fn lt_param(property: impl Into<String>, param_name: impl Into<String>) -> Self {
-        Predicate::Compare {
-            left: Expr::Property(property.into()),
-            op: CompareOp::Lt,
-            right: Expr::Param(param_name.into()),
-        }
+        Predicate::LtExpr(property.into(), Expr::Param(param_name.into()))
     }
 
     /// Create a parameterized less-than-or-equal predicate: property <= param
     pub fn lte_param(property: impl Into<String>, param_name: impl Into<String>) -> Self {
-        Predicate::Compare {
-            left: Expr::Property(property.into()),
-            op: CompareOp::Lte,
-            right: Expr::Param(param_name.into()),
-        }
+        Predicate::LteExpr(property.into(), Expr::Param(param_name.into()))
     }
 }
 
@@ -4769,6 +4750,19 @@ mod tests {
             matches!(p1, Predicate::Eq(prop, PropertyValue::String(val)) if prop == "name" && val == "Alice")
         );
 
+        let p_expr = Predicate::eq("name", Expr::param("name"));
+        assert!(matches!(
+            p_expr,
+            Predicate::EqExpr(prop, Expr::Param(param)) if prop == "name" && param == "name"
+        ));
+
+        let p_between = Predicate::between("age", Expr::param("min"), 65i64);
+        assert!(matches!(
+            p_between,
+            Predicate::BetweenExpr(prop, Expr::Param(min), Expr::Constant(PropertyValue::I64(65)))
+                if prop == "age" && min == "min"
+        ));
+
         let p_in = Predicate::is_in("status", vec!["active".to_string(), "pending".to_string()]);
         assert!(matches!(
             p_in,
@@ -5212,12 +5206,12 @@ mod tests {
     }
 
     #[test]
-    fn source_predicate_expr_converts_to_compare() {
-        // From<SourcePredicate> for Predicate maps the *Expr variants to Predicate::Compare.
+    fn source_predicate_expr_converts_to_predicate_expr_variant() {
+        // From<SourcePredicate> for Predicate preserves the *Expr variant shape.
         let pred: Predicate = SourcePredicate::eq("username", Expr::param("name")).into();
         assert!(matches!(
             pred,
-            Predicate::Compare { left: Expr::Property(prop), op: CompareOp::Eq, right: Expr::Param(p) }
+            Predicate::EqExpr(prop, Expr::Param(p))
                 if prop == "username" && p == "name"
         ));
     }

@@ -454,8 +454,6 @@ main() {
     log_info ""
     log_info "1. Bootstrap your first HelixDB app:"
     log_info "     helix chef           # interactive — pick your app, customize each step"
-    log_info "     helix chef --agent   # USE IF YOU ARE AN AGENT - generates agent prompt"
-    log_info "     helix chef --auto    # one-shot — defaults, no prompts"
     log_info ""
     log_info "   This installs the Helix agent skills, scaffolds a project at"
     log_info "   ~/my-first-helix-project, starts a local DB, seeds example data,"
