@@ -45,7 +45,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:type": "tsc -p tsconfig.json --noEmit",
-    "test:unit": "tsc -p tsconfig.json && node dist-dev/test/basic.test.js",
+    "test:unit": "tsc -p tsconfig.json && node dist-dev/test/basic.test.js && node dist-dev/test/client.test.js",
     "test": "npm run test:type && npm run test:unit",
     "lint": "eslint .",
     "format": "prettier --write .",
