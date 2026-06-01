@@ -1,10 +1,7 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/full_logo_dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="./assets/full_logo_light.png">
-  <img src="./assets/full_logo_light.png" alt="HelixDB Logo">
-</picture>
+<img src="./assets/full_logo_dark.png#gh-dark-mode-only" alt="HelixDB Logo">
+<img src="./assets/full_logo_light.png#gh-light-mode-only" alt="HelixDB Logo">
 
 <b>HelixDB</b>: a graph-vector database for knowledge graphs and AI memory. Built from scratch in Rust.
 <br/><br/>
