@@ -6,14 +6,18 @@ use crate::config::{
 };
 use crate::output::Operation;
 use crate::prompts;
-use crate::utils::print_instructions;
+use crate::utils::{command_exists, print_instructions};
 use eyre::Result;
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-pub async fn run(path: Option<String>, target: Option<InitTarget>) -> Result<()> {
+pub async fn run(
+    path: Option<String>,
+    target: Option<InitTarget>,
+    skills: Option<bool>,
+) -> Result<()> {
     let project_dir = match path {
         Some(path) => std::path::PathBuf::from(path),
         None => env::current_dir()?,
@@ -61,6 +65,7 @@ pub async fn run(path: Option<String>, target: Option<InitTarget>) -> Result<()>
                 },
             );
             write_example_request(&project_dir)?;
+            crate::setup::warn_if_container_runtime_unavailable();
             local_next_steps(&instance_name)
         }
         InitTarget::Enterprise {
@@ -96,10 +101,46 @@ pub async fn run(path: Option<String>, target: Option<InitTarget>) -> Result<()>
     append_gitignore(&project_dir)?;
     op.success();
 
+    maybe_install_tooling(&project_dir, skills);
+
     let next_step_refs: Vec<&str> = next_steps.iter().map(String::as_str).collect();
     print_instructions("Next steps:", &next_step_refs);
 
     Ok(())
+}
+
+/// Install the Helix agent skills + docs MCP via `npx`, like `helix chef` does.
+///
+/// `skills` is `Some(true)`/`Some(false)` when set via `--skills`/`--no-skills`;
+/// when `None`, prompt in an interactive terminal (default yes) and skip otherwise.
+/// Tooling is a convenience, so failures degrade to a warning rather than aborting
+/// the freshly scaffolded project.
+fn maybe_install_tooling(project_dir: &Path, skills: Option<bool>) {
+    let install = match skills {
+        Some(value) => value,
+        None => {
+            prompts::is_interactive()
+                && prompts::confirm("Install Helix skills and docs MCP?").unwrap_or(false)
+        }
+    };
+    if !install {
+        return;
+    }
+
+    if !command_exists("npx") {
+        crate::output::warning(
+            "npx not found; skipping Helix skills + docs MCP install. Install Node.js/npm, \
+             then run 'npx skills add HelixDB/skills'.",
+        );
+        return;
+    }
+
+    if let Err(err) = crate::setup::install_skills(project_dir, true, true) {
+        crate::output::warning(&format!("Skipping Helix skills install: {err}"));
+    }
+    if let Err(err) = crate::setup::install_mcp(project_dir, true, true) {
+        crate::output::warning(&format!("Skipping Helix docs MCP install: {err}"));
+    }
 }
 
 fn local_next_steps(instance_name: &str) -> Vec<String> {

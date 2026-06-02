@@ -32,6 +32,12 @@ enum Commands {
         /// Project directory (defaults to current directory)
         #[arg(short, long)]
         path: Option<String>,
+        /// Install the Helix agent skills + docs MCP (prompted when interactive)
+        #[arg(long, conflicts_with = "no_skills")]
+        skills: bool,
+        /// Skip installing the Helix agent skills + docs MCP
+        #[arg(long = "no-skills", conflicts_with = "skills")]
+        no_skills: bool,
         #[command(subcommand)]
         target: Option<InitTarget>,
     },
@@ -361,7 +367,21 @@ async fn main() -> Result<()> {
             display_welcome(update_available);
             Ok(())
         }
-        Some(Commands::Init { path, target }) => commands::init::run(path, target).await,
+        Some(Commands::Init {
+            path,
+            skills,
+            no_skills,
+            target,
+        }) => {
+            let skills = if skills {
+                Some(true)
+            } else if no_skills {
+                Some(false)
+            } else {
+                None
+            };
+            commands::init::run(path, target, skills).await
+        }
         Some(Commands::Chef {}) => commands::chef::run(&metrics_sender).await,
         Some(Commands::Add { target }) => commands::add::run(target).await,
         Some(Commands::Run {
@@ -510,6 +530,58 @@ mod tests {
             }
             _ => panic!("expected init local command"),
         }
+    }
+
+    #[test]
+    fn init_skills_flag_parses() {
+        let cli = Cli::parse_from(["helix", "init", "--skills", "local"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                skills, no_skills, ..
+            }) => {
+                assert!(skills);
+                assert!(!no_skills);
+            }
+            _ => panic!("expected init command"),
+        }
+    }
+
+    #[test]
+    fn init_no_skills_flag_parses() {
+        let cli = Cli::parse_from(["helix", "init", "--no-skills", "local"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                skills, no_skills, ..
+            }) => {
+                assert!(!skills);
+                assert!(no_skills);
+            }
+            _ => panic!("expected init command"),
+        }
+    }
+
+    #[test]
+    fn init_defaults_to_no_skills_flags() {
+        let cli = Cli::parse_from(["helix", "init", "local"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                skills, no_skills, ..
+            }) => {
+                assert!(!skills);
+                assert!(!no_skills);
+            }
+            _ => panic!("expected init command"),
+        }
+    }
+
+    #[test]
+    fn init_skills_and_no_skills_conflict() {
+        assert!(
+            Cli::try_parse_from(["helix", "init", "--skills", "--no-skills", "local"]).is_err()
+        );
     }
 
     #[test]

@@ -20,30 +20,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_PROJECT_DIR: &str = "my-first-helix-project";
 const INSTANCE_NAME: &str = "dev";
-const HELIX_DOCS_MCP_URL: &str = "https://docs.helix-db.com/mcp";
 const CHEF_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 const CHEF_SNAPSHOT_MAX_FILES: usize = 2_000;
 const CHEF_SNAPSHOT_MAX_FILE_BYTES: u64 = 1024 * 1024;
 const CHEF_SNAPSHOT_MAX_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
-
-// add-mcp errors out non-zero when an incompatible agent is detected. Claude Desktop
-// only supports local stdio servers, so an http MCP install aborts the whole run.
-// Pin the agent list to the http-capable subset of `add-mcp list-agents`.
-const MCP_HTTP_COMPATIBLE_AGENTS: &[&str] = &[
-    "antigravity",
-    "claude-code",
-    "cline",
-    "cline-cli",
-    "codex",
-    "cursor",
-    "gemini-cli",
-    "github-copilot-cli",
-    "goose",
-    "mcporter",
-    "opencode",
-    "vscode",
-    "zed",
-];
 
 const DEFAULT_PROJECT_SPEC: &str = r#"You are building a **Personal CRM** as your default MVP because the user did not specify their own intent. Build exactly this — no extra features.
 
@@ -1036,11 +1016,12 @@ pub async fn run(metrics_sender: &MetricsSender) -> Result<()> {
 
     fs::create_dir_all(&options.project_dir)?;
 
+    let automatic = options.mode == SetupMode::Automatic;
     if options.install_skills {
-        install_skills(&options.project_dir, options.mode, options.install_global)?;
+        crate::setup::install_skills(&options.project_dir, automatic, options.install_global)?;
     }
     if options.install_mcp {
-        install_mcp(&options.project_dir, options.mode, options.install_global)?;
+        crate::setup::install_mcp(&options.project_dir, automatic, options.install_global)?;
     }
     if options.init_project {
         init_project(&options.project_dir).await?;
@@ -1052,6 +1033,8 @@ pub async fn run(metrics_sender: &MetricsSender) -> Result<()> {
     }
 
     env::set_current_dir(&options.project_dir)?;
+
+    crate::setup::warn_if_container_runtime_unavailable();
 
     if options.run_database {
         run_database().await?;
@@ -1221,72 +1204,6 @@ fn expand_home(path: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
-fn skills_install_args(mode: SetupMode, global: bool) -> Vec<&'static str> {
-    let mut args = match mode {
-        SetupMode::Automatic => vec![
-            "-y",
-            "skills",
-            "add",
-            "HelixDB/skills",
-            "--skill",
-            "*",
-            "-y",
-        ],
-        SetupMode::Manual => vec!["skills", "add", "HelixDB/skills"],
-    };
-    if global {
-        args.push("-g");
-    }
-    args
-}
-
-fn mcp_install_args(mode: SetupMode, global: bool) -> Vec<&'static str> {
-    let mut args = match mode {
-        SetupMode::Automatic => {
-            let mut args = vec![
-                "-y",
-                "add-mcp",
-                HELIX_DOCS_MCP_URL,
-                "--name",
-                "helixdb-docs",
-                "-y",
-            ];
-            for agent in MCP_HTTP_COMPATIBLE_AGENTS {
-                args.push("-a");
-                args.push(agent);
-            }
-            args
-        }
-        SetupMode::Manual => vec!["add-mcp", HELIX_DOCS_MCP_URL, "--name", "helixdb-docs"],
-    };
-    if global {
-        args.push("-g");
-    }
-    args
-}
-
-fn install_skills(project_dir: &Path, mode: SetupMode, global: bool) -> Result<()> {
-    let args = skills_install_args(mode, global);
-    run_external_command(
-        project_dir,
-        "Installing Helix skills",
-        "npx",
-        &args,
-        mode == SetupMode::Automatic,
-    )
-}
-
-fn install_mcp(project_dir: &Path, mode: SetupMode, global: bool) -> Result<()> {
-    let args = mcp_install_args(mode, global);
-    run_external_command(
-        project_dir,
-        "Installing Helix docs MCP",
-        "npx",
-        &args,
-        mode == SetupMode::Automatic,
-    )
-}
-
 async fn init_project(project_dir: &Path) -> Result<()> {
     if project_dir.join("helix.toml").exists() {
         let mut step = Step::with_messages("Initializing project", "Project already initialized");
@@ -1304,6 +1221,8 @@ async fn init_project(project_dir: &Path) -> Result<()> {
                 port: DEFAULT_LOCAL_PORT,
                 disk: false,
             }),
+            // chef installs skills + MCP itself; don't double-install via init.
+            Some(false),
         )
     })
     .await
@@ -1368,54 +1287,6 @@ where
             Err(err)
         }
     }
-}
-
-fn run_external_command(
-    project_dir: &Path,
-    description: &str,
-    program: &str,
-    args: &[&str],
-    quiet: bool,
-) -> Result<()> {
-    let quiet = quiet && Verbosity::current() != Verbosity::Verbose;
-
-    let mut step = Step::with_messages(description, description);
-    step.start();
-
-    if quiet {
-        let output = Command::new(program)
-            .args(args)
-            .current_dir(project_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()?;
-        if !output.status.success() {
-            step.fail();
-            if !output.stdout.is_empty() {
-                eprintln!("{}", String::from_utf8_lossy(&output.stdout));
-            }
-            if !output.stderr.is_empty() {
-                eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-            }
-            return Err(eyre!("{description} failed with status {}", output.status));
-        }
-    } else {
-        let status = Command::new(program)
-            .args(args)
-            .current_dir(project_dir)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()?;
-        if !status.success() {
-            step.fail();
-            return Err(eyre!("{description} failed with status {status}"));
-        }
-    }
-
-    step.done();
-    Ok(())
 }
 
 pub(crate) fn write_agent_prompt(project_dir: &Path, build_intent: Option<&str>) -> Result<()> {
@@ -2953,69 +2824,6 @@ mod tests {
         assert_eq!(argv[0], "run");
         assert_eq!(argv[1], "--dir");
         assert!(!argv.iter().any(|a| a == "--dangerously-skip-permissions"));
-    }
-
-    #[test]
-    fn skills_install_args_automatic_global() {
-        let args = skills_install_args(SetupMode::Automatic, true);
-        assert_eq!(args[0], "-y");
-        assert!(args.contains(&"skills"));
-        assert!(args.contains(&"add"));
-        assert!(args.contains(&"HelixDB/skills"));
-        assert_eq!(args.last(), Some(&"-g"));
-    }
-
-    #[test]
-    fn skills_install_args_automatic_project_local() {
-        let args = skills_install_args(SetupMode::Automatic, false);
-        assert!(!args.contains(&"-g"));
-        assert!(args.contains(&"HelixDB/skills"));
-    }
-
-    #[test]
-    fn skills_install_args_manual_global() {
-        let args = skills_install_args(SetupMode::Manual, true);
-        // Manual mode skips the -y flags so the user sees CLI prompts.
-        assert!(!args.contains(&"-y"));
-        assert!(args.contains(&"-g"));
-    }
-
-    #[test]
-    fn skills_install_args_manual_project_local() {
-        let args = skills_install_args(SetupMode::Manual, false);
-        assert!(!args.contains(&"-g"));
-        assert!(!args.contains(&"-y"));
-    }
-
-    #[test]
-    fn mcp_install_args_automatic_global() {
-        let args = mcp_install_args(SetupMode::Automatic, true);
-        assert_eq!(args[0], "-y");
-        assert!(args.contains(&"add-mcp"));
-        assert!(args.contains(&HELIX_DOCS_MCP_URL));
-        assert!(args.contains(&"helixdb-docs"));
-        assert!(args.contains(&"-g"));
-    }
-
-    #[test]
-    fn mcp_install_args_automatic_project_local() {
-        let args = mcp_install_args(SetupMode::Automatic, false);
-        assert!(!args.contains(&"-g"));
-        assert!(args.contains(&HELIX_DOCS_MCP_URL));
-    }
-
-    #[test]
-    fn mcp_install_args_manual_global() {
-        let args = mcp_install_args(SetupMode::Manual, true);
-        assert!(!args.contains(&"-y"));
-        assert!(args.contains(&"-g"));
-    }
-
-    #[test]
-    fn mcp_install_args_manual_project_local() {
-        let args = mcp_install_args(SetupMode::Manual, false);
-        assert!(!args.contains(&"-g"));
-        assert!(!args.contains(&"-y"));
     }
 
     // ---------- Claude stream-json event parsing ----------
