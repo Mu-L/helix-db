@@ -88,8 +88,9 @@ impl LocalRuntime {
             .into())
     }
 
-    /// Returns `true` if the runtime daemon answers an `info` probe.
-    fn runtime_info_ok(runtime: ContainerRuntime) -> bool {
+    /// Returns `true` if the runtime daemon answers an `info` probe. This is a
+    /// quick, non-blocking check — it never tries to auto-start the daemon.
+    pub(crate) fn is_running(runtime: ContainerRuntime) -> bool {
         Command::new(runtime.binary())
             .arg("info")
             .output()
@@ -122,14 +123,25 @@ impl LocalRuntime {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
-        if let Err(e) = launched {
-            step.fail();
-            return Err(eyre!("Failed to start {}: {e}", runtime.label()));
+        match launched {
+            Err(e) => {
+                step.fail();
+                return Err(eyre!("Failed to start {}: {e}", runtime.label()));
+            }
+            Ok(status) if !status.success() => {
+                step.fail();
+                return Err(eyre!(
+                    "Failed to start {}: exited with {}",
+                    runtime.label(),
+                    status
+                ));
+            }
+            Ok(_) => {}
         }
 
         let deadline = Instant::now() + RUNTIME_START_TIMEOUT;
         loop {
-            if Self::runtime_info_ok(runtime) {
+            if Self::is_running(runtime) {
                 step.done();
                 return Ok(());
             }

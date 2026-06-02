@@ -175,7 +175,9 @@ pub(crate) fn warn_if_container_runtime_unavailable() {
              to run local Helix instances with 'helix run'.",
         ),
         Ok(runtime) => {
-            if LocalRuntime::check_available(runtime).is_err() {
+            // Quick, non-blocking probe — must not trigger daemon auto-start
+            // (which can block for up to 120s) during project scaffolding.
+            if !LocalRuntime::is_running(runtime) {
                 crate::output::warning(&format!(
                     "{} is installed but not running. Start it before 'helix run'.",
                     runtime.label()
