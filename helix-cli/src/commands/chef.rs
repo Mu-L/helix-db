@@ -20,30 +20,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_PROJECT_DIR: &str = "my-first-helix-project";
 const INSTANCE_NAME: &str = "dev";
-const HELIX_DOCS_MCP_URL: &str = "https://docs.helix-db.com/mcp";
 const CHEF_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 const CHEF_SNAPSHOT_MAX_FILES: usize = 2_000;
 const CHEF_SNAPSHOT_MAX_FILE_BYTES: u64 = 1024 * 1024;
 const CHEF_SNAPSHOT_MAX_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
-
-// add-mcp errors out non-zero when an incompatible agent is detected. Claude Desktop
-// only supports local stdio servers, so an http MCP install aborts the whole run.
-// Pin the agent list to the http-capable subset of `add-mcp list-agents`.
-const MCP_HTTP_COMPATIBLE_AGENTS: &[&str] = &[
-    "antigravity",
-    "claude-code",
-    "cline",
-    "cline-cli",
-    "codex",
-    "cursor",
-    "gemini-cli",
-    "github-copilot-cli",
-    "goose",
-    "mcporter",
-    "opencode",
-    "vscode",
-    "zed",
-];
 
 const DEFAULT_PROJECT_SPEC: &str = r#"You are building a **Personal CRM** as your default MVP because the user did not specify their own intent. Build exactly this — no extra features.
 
@@ -90,7 +70,7 @@ You are a HelixDB expert. The user just ran `helix chef` to bootstrap a new proj
 <environment>
 `helix chef` already did all of this — do NOT redo any of it:
 
-- Created `helix.toml` with a local instance named `dev` on port `8080`.
+- Created `helix.toml` with a local instance named `dev` on port `6969`.
 - Started the local DB (`helix run dev`). It is running in the background, in-memory.
 {seed_state}
 - Installed the HelixDB query skills. This project is **TypeScript**, so you author queries with the **TypeScript DSL** (`@helix-db/helix-db`): `helix-query-typescript` is the skill you reach for first — it is the default and authoritative for the builder API. `helix-query-json-dynamic` documents the raw `/v1/query` JSON the DSL emits — your fallback for dynamic-shaped queries or debugging. Also installed: `helix-query-rust`, `helix-query-optimize`, `helix-query-from-gremlin`, `helix-query-from-cypher`, `helix-query-from-hql`, `helix-memory-system`. Invoke them when authoring queries — they are authoritative. Do not guess query syntax.
@@ -103,7 +83,7 @@ Existing files you must read before touching:
 - `helix.toml` — project config. Do not edit.
 - `DESIGN.md` — the Helix brand + styling guide. **Apply it to every component you build.** It defines the color palette, typography, the signature tactical corner brackets, and copy-paste component recipes. Do not edit it; treat it as read-only input.
 
-This project authors HelixDB queries with the **TypeScript DSL** (`@helix-db/helix-db`) — typed builder functions, not hand-written JSON. Never write Rust `.hx` files; there is no compile step. Queries live as builder modules under `web/src/lib/queries/*.ts`; a small server-only runner (`web/src/lib/helix.ts`) serializes them and POSTs to the local DB at `http://localhost:8080/v1/query`. Raw dynamic JSON (`helix query dev --file/--json`) stays available as a fallback for debugging or dynamic-shaped queries. The frontend that consumes these queries is a Next.js app under `web/` (App Router, TypeScript, Tailwind) — see `<frontend>`.
+This project authors HelixDB queries with the **TypeScript DSL** (`@helix-db/helix-db`) — typed builder functions, not hand-written JSON. Never write Rust `.hx` files; there is no compile step. Queries live as builder modules under `web/src/lib/queries/*.ts`; a small server-only runner (`web/src/lib/helix.ts`) serializes them and POSTs to the local DB at `http://localhost:6969/v1/query`. Raw dynamic JSON (`helix query dev --file/--json`) stays available as a fallback for debugging or dynamic-shaped queries. The frontend that consumes these queries is a Next.js app under `web/` (App Router, TypeScript, Tailwind) — see `<frontend>`.
 </environment>
 
 <user_intent>
@@ -119,7 +99,7 @@ This project authors HelixDB queries with the **TypeScript DSL** (`@helix-db/hel
 6. **Author your queries as TypeScript builder modules** under `web/src/lib/queries/` (group by entity, e.g. `contacts.ts`, `interactions.ts`). Each query is a function returning a `readBatch()` / `writeBatch()` built with `g()` and the builder steps; use `defineParams` + `param.*` for parameters. See `<typescript_dsl_quickref>` and `<patterns>`. For anything beyond them — `repeat`, `union`, `choose`, vector/text search, aggregations — invoke the `helix-query-typescript` skill. Do not guess.
 {seed_step}
 8. **Test each query against the running DB** before wiring the UI. Run a one-off script: `web/scripts/<name>.ts` that imports the builder + `runQuery` and prints the result — `cd web && npx tsx scripts/<name>.ts`. (Quick raw-JSON spot check: `console.log(myQuery().toDynamicJson(params, values))` and pipe into `helix query dev --json "$(...)"`.) Fix and retry until each returns the expected shape.
-9. **Add one Next.js API route per query** at `web/src/app/api/<query_name>/route.ts`. Each handler imports its builder from `@/lib/queries/...` and `runQuery` from `@/lib/helix`, maps any client-supplied parameters to typed values, runs the query, and returns the JSON. **The browser must NEVER hit `:8080` directly.**
+9. **Add one Next.js API route per query** at `web/src/app/api/<query_name>/route.ts`. Each handler imports its builder from `@/lib/queries/...` and `runQuery` from `@/lib/helix`, maps any client-supplied parameters to typed values, runs the query, and returns the JSON. **The browser must NEVER hit `:6969` directly.**
 10. **Build the UI** under `web/src/app/`, following `DESIGN.md`. Server Components (the default — no `'use client'`) for read-only views; they `fetch('/api/<name>')` at render time. Client Components (`'use client'`) only for forms or anything that needs state / handlers. Style with Tailwind utility classes per the `DESIGN.md` recipes; the only global CSS you add is the one-time `DESIGN.md` setup block (base dark background + tactical-corner utilities) pasted into `web/src/app/globals.css`. See `<frontend>` for concrete examples.
 11. **Start the Next.js dev server in the background.** The dev server is **frontend and backend in one process** — it serves React on `/` and the TypeScript API routes on `/api/*`. Detach it so it survives your bash invocation. Use the shell-portable pattern (works for every agent CLI):
 
@@ -344,14 +324,14 @@ The frontend is a Next.js 15 app (App Router, TypeScript, Tailwind) under `web/`
 
 **All UI must follow `DESIGN.md` — the Helix brand guide at the project root. Read it before writing any component.** It is the source of truth for colors (forced dark theme, orange `#FF5C01` accent), typography (Geist sans + mono), shape (`rounded-none` everywhere), the signature tactical corner brackets, and copy-paste component recipes (buttons, cards, inputs, lists, badges). Right after scaffolding, paste the `globals.css` setup block from `DESIGN.md` (base dark background + the `.tactical-corners` / `.btn-tactical` / `.thin-scrollbar` utilities) into `web/src/app/globals.css` **once**, then build every component from its recipes. Install `lucide-react` (`cd web && npm i lucide-react`) for icons. The examples below show the *data flow*; their Tailwind classes already match `DESIGN.md` — keep that styling, don't revert to generic/light Tailwind.
 
-Four concrete file shapes you write. **Every Helix call is server-side; the browser never talks to `:8080`.**
+Four concrete file shapes you write. **Every Helix call is server-side; the browser never talks to `:6969`.**
 
 **0. The query runner — `web/src/lib/helix.ts`** (write once; both API routes and seed/test scripts import it). It takes a built request and POSTs its JSON to the local DB:
 
 ```typescript
 import type { DynamicQueryRequest } from '@helix-db/helix-db';
 
-const HELIX_URL = process.env.HELIX_URL ?? 'http://localhost:8080/v1/query';
+const HELIX_URL = process.env.HELIX_URL ?? 'http://localhost:6969/v1/query';
 
 export async function runQuery(request: DynamicQueryRequest): Promise<unknown> {
   const res = await fetch(HELIX_URL, {
@@ -577,7 +557,7 @@ When `helix query` fails, the response body (or stderr) contains the error. Comm
 - DO NOT re-run `helix init` / `helix run dev` / `helix dashboard start` — already running.
 - DO NOT use plural label names (`Contacts`). Convention is singular (`Contact`). Edge labels are `SCREAMING_SNAKE` verbs (`WORKS_AT`).
 - DO NOT write static `.html` files or hand-rolled CSS / JS for the frontend. The frontend is a Next.js app under `web/`; everything goes through the App Router and Tailwind.
-- DO NOT have the browser fetch `http://localhost:8080/v1/query`. Every Helix call goes through a Next.js API route handler in `web/src/app/api/<name>/route.ts`. Server-only.
+- DO NOT have the browser fetch `http://localhost:6969/v1/query`. Every Helix call goes through a Next.js API route handler in `web/src/app/api/<name>/route.ts`. Server-only.
 - DO NOT write any server / glue code in JavaScript or in any language other than TypeScript. Helix itself is the DB; everything you add is TypeScript.
 - DO NOT use the legacy `pages/` router. The scaffold uses the App Router (`web/src/app/`) — keep it.
 - DO NOT omit the `--src-dir` flag when running `create-next-app`. Routes, examples, and paths throughout this prompt all assume `web/src/app/...`.
@@ -1036,11 +1016,12 @@ pub async fn run(metrics_sender: &MetricsSender) -> Result<()> {
 
     fs::create_dir_all(&options.project_dir)?;
 
+    let automatic = options.mode == SetupMode::Automatic;
     if options.install_skills {
-        install_skills(&options.project_dir, options.mode, options.install_global)?;
+        crate::setup::install_skills(&options.project_dir, automatic, options.install_global)?;
     }
     if options.install_mcp {
-        install_mcp(&options.project_dir, options.mode, options.install_global)?;
+        crate::setup::install_mcp(&options.project_dir, automatic, options.install_global)?;
     }
     if options.init_project {
         init_project(&options.project_dir).await?;
@@ -1052,6 +1033,8 @@ pub async fn run(metrics_sender: &MetricsSender) -> Result<()> {
     }
 
     env::set_current_dir(&options.project_dir)?;
+
+    crate::setup::warn_if_container_runtime_unavailable();
 
     if options.run_database {
         run_database().await?;
@@ -1221,72 +1204,6 @@ fn expand_home(path: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
-fn skills_install_args(mode: SetupMode, global: bool) -> Vec<&'static str> {
-    let mut args = match mode {
-        SetupMode::Automatic => vec![
-            "-y",
-            "skills",
-            "add",
-            "HelixDB/skills",
-            "--skill",
-            "*",
-            "-y",
-        ],
-        SetupMode::Manual => vec!["skills", "add", "HelixDB/skills"],
-    };
-    if global {
-        args.push("-g");
-    }
-    args
-}
-
-fn mcp_install_args(mode: SetupMode, global: bool) -> Vec<&'static str> {
-    let mut args = match mode {
-        SetupMode::Automatic => {
-            let mut args = vec![
-                "-y",
-                "add-mcp",
-                HELIX_DOCS_MCP_URL,
-                "--name",
-                "helixdb-docs",
-                "-y",
-            ];
-            for agent in MCP_HTTP_COMPATIBLE_AGENTS {
-                args.push("-a");
-                args.push(agent);
-            }
-            args
-        }
-        SetupMode::Manual => vec!["add-mcp", HELIX_DOCS_MCP_URL, "--name", "helixdb-docs"],
-    };
-    if global {
-        args.push("-g");
-    }
-    args
-}
-
-fn install_skills(project_dir: &Path, mode: SetupMode, global: bool) -> Result<()> {
-    let args = skills_install_args(mode, global);
-    run_external_command(
-        project_dir,
-        "Installing Helix skills",
-        "npx",
-        &args,
-        mode == SetupMode::Automatic,
-    )
-}
-
-fn install_mcp(project_dir: &Path, mode: SetupMode, global: bool) -> Result<()> {
-    let args = mcp_install_args(mode, global);
-    run_external_command(
-        project_dir,
-        "Installing Helix docs MCP",
-        "npx",
-        &args,
-        mode == SetupMode::Automatic,
-    )
-}
-
 async fn init_project(project_dir: &Path) -> Result<()> {
     if project_dir.join("helix.toml").exists() {
         let mut step = Step::with_messages("Initializing project", "Project already initialized");
@@ -1304,6 +1221,8 @@ async fn init_project(project_dir: &Path) -> Result<()> {
                 port: DEFAULT_LOCAL_PORT,
                 disk: false,
             }),
+            // chef installs skills + MCP itself; don't double-install via init.
+            Some(false),
         )
     })
     .await
@@ -1368,54 +1287,6 @@ where
             Err(err)
         }
     }
-}
-
-fn run_external_command(
-    project_dir: &Path,
-    description: &str,
-    program: &str,
-    args: &[&str],
-    quiet: bool,
-) -> Result<()> {
-    let quiet = quiet && Verbosity::current() != Verbosity::Verbose;
-
-    let mut step = Step::with_messages(description, description);
-    step.start();
-
-    if quiet {
-        let output = Command::new(program)
-            .args(args)
-            .current_dir(project_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()?;
-        if !output.status.success() {
-            step.fail();
-            if !output.stdout.is_empty() {
-                eprintln!("{}", String::from_utf8_lossy(&output.stdout));
-            }
-            if !output.stderr.is_empty() {
-                eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-            }
-            return Err(eyre!("{description} failed with status {}", output.status));
-        }
-    } else {
-        let status = Command::new(program)
-            .args(args)
-            .current_dir(project_dir)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()?;
-        if !status.success() {
-            step.fail();
-            return Err(eyre!("{description} failed with status {status}"));
-        }
-    }
-
-    step.done();
-    Ok(())
 }
 
 pub(crate) fn write_agent_prompt(project_dir: &Path, build_intent: Option<&str>) -> Result<()> {
@@ -2953,69 +2824,6 @@ mod tests {
         assert_eq!(argv[0], "run");
         assert_eq!(argv[1], "--dir");
         assert!(!argv.iter().any(|a| a == "--dangerously-skip-permissions"));
-    }
-
-    #[test]
-    fn skills_install_args_automatic_global() {
-        let args = skills_install_args(SetupMode::Automatic, true);
-        assert_eq!(args[0], "-y");
-        assert!(args.contains(&"skills"));
-        assert!(args.contains(&"add"));
-        assert!(args.contains(&"HelixDB/skills"));
-        assert_eq!(args.last(), Some(&"-g"));
-    }
-
-    #[test]
-    fn skills_install_args_automatic_project_local() {
-        let args = skills_install_args(SetupMode::Automatic, false);
-        assert!(!args.contains(&"-g"));
-        assert!(args.contains(&"HelixDB/skills"));
-    }
-
-    #[test]
-    fn skills_install_args_manual_global() {
-        let args = skills_install_args(SetupMode::Manual, true);
-        // Manual mode skips the -y flags so the user sees CLI prompts.
-        assert!(!args.contains(&"-y"));
-        assert!(args.contains(&"-g"));
-    }
-
-    #[test]
-    fn skills_install_args_manual_project_local() {
-        let args = skills_install_args(SetupMode::Manual, false);
-        assert!(!args.contains(&"-g"));
-        assert!(!args.contains(&"-y"));
-    }
-
-    #[test]
-    fn mcp_install_args_automatic_global() {
-        let args = mcp_install_args(SetupMode::Automatic, true);
-        assert_eq!(args[0], "-y");
-        assert!(args.contains(&"add-mcp"));
-        assert!(args.contains(&HELIX_DOCS_MCP_URL));
-        assert!(args.contains(&"helixdb-docs"));
-        assert!(args.contains(&"-g"));
-    }
-
-    #[test]
-    fn mcp_install_args_automatic_project_local() {
-        let args = mcp_install_args(SetupMode::Automatic, false);
-        assert!(!args.contains(&"-g"));
-        assert!(args.contains(&HELIX_DOCS_MCP_URL));
-    }
-
-    #[test]
-    fn mcp_install_args_manual_global() {
-        let args = mcp_install_args(SetupMode::Manual, true);
-        assert!(!args.contains(&"-y"));
-        assert!(args.contains(&"-g"));
-    }
-
-    #[test]
-    fn mcp_install_args_manual_project_local() {
-        let args = mcp_install_args(SetupMode::Manual, false);
-        assert!(!args.contains(&"-g"));
-        assert!(!args.contains(&"-y"));
     }
 
     // ---------- Claude stream-json event parsing ----------

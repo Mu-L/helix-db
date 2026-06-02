@@ -87,6 +87,14 @@ function userProps(
   ];
 }
 
+function nestedMetadataProperty(externalID: string, score: number): PropertyValue {
+  return PropertyValue.object({ externalID, score, tags: ["alpha", 7] });
+}
+
+function nestedMetadataParam(externalID: string, score: number) {
+  return { externalID, score, tags: ["alpha", 7] };
+}
+
 function runtimeFixtures(): Fixture[] {
   return [
     runtime(
@@ -841,6 +849,77 @@ function jsonOnlyFixtures(): Fixture[] {
           .varAs("inject", Traversal.new().inject("some_var").count())
           .varAs("drop_edge_by_id", g().dropEdgeById(EdgeRef.id(123_456)).count())
           .returning(["inject", "drop_edge_by_id"]),
+      ),
+    ),
+    jsonOnly(
+      "906-nested-dynamic-property-write-shapes",
+      withParams(
+        DynamicQueryRequest.write(
+          writeBatch()
+            .varAs(
+              "created",
+              g().addN("ParityNested", [
+                ["name", PropertyInput.value("nested")],
+                ["metadata", PropertyInput.value(nestedMetadataProperty("some_id", 20))],
+              ]),
+            )
+            .varAs(
+              "updated",
+              g().n(NodeRef.var("created")).setProperty("metadata", PropertyInput.param("metadata")).valueMap(["metadata.externalID"]),
+            )
+            .varAs("target", g().addN("ParityNestedTarget", [["name", PropertyInput.value("target")]]))
+            .varAs(
+              "edge",
+              g()
+                .n(NodeRef.var("created"))
+                .addE("NESTED_LINK", NodeRef.var("target"), [["metadata", PropertyInput.value(nestedMetadataProperty("edge_id", 5))]])
+                .count(),
+            )
+            .returning(["created", "updated", "edge"]),
+        ),
+        [["metadata", nestedMetadataParam("param_id", 22)]],
+        [["metadata", QueryParamType.object()]],
+      ),
+    ),
+    jsonOnly(
+      "907-nested-dynamic-property-read-shapes",
+      withParams(
+        DynamicQueryRequest.read(
+          readBatch()
+            .varAs(
+              "nested_users",
+              g()
+                .nWhere(
+                  SourcePredicate.and([
+                    SourcePredicate.eq("$label", "ParityNested"),
+                    SourcePredicate.eq("metadata.externalID", Expr.param("external_id")),
+                  ]),
+                )
+                .where(Predicate.compare(Expr.prop("metadata.score"), CompareOp.Gt, Expr.val(10)))
+                .orderByMultiple([
+                  ["metadata.score", Order.Desc],
+                  ["name", Order.Asc],
+                ])
+                .project([
+                  Projection.property("metadata.externalID", "external_id"),
+                  Projection.expr("score_copy", Expr.prop("metadata.score")),
+                ]),
+            )
+            .varAs("nested_values", g().nWithLabel("ParityNested").values(["metadata.externalID"]))
+            .varAs("nested_map", g().nWithLabel("ParityNested").valueMap(["metadata.externalID", "metadata.score"]))
+            .varAs(
+              "nested_edges",
+              g()
+                .eWhere(
+                  SourcePredicate.and([SourcePredicate.eq("$label", "NESTED_LINK"), SourcePredicate.eq("metadata.externalID", "edge_id")]),
+                )
+                .edgeHas("metadata.externalID", PropertyInput.value("edge_id"))
+                .edgeProperties(),
+            )
+            .returning(["nested_users", "nested_values", "nested_map", "nested_edges"]),
+        ),
+        [["external_id", "param_id"]],
+        [["external_id", QueryParamType.string()]],
       ),
     ),
   ];

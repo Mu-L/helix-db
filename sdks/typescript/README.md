@@ -1,13 +1,13 @@
-# @helixdb/enterprise-ql
+# @helix-db/helix-db
 
-TypeScript query DSL for Helix Enterprise. This package builds the same JSON AST shape as the Rust `helix-enterprise-ql` crate.
+TypeScript query DSL and HTTP client for HelixDB. This package builds the same JSON AST shape as the Rust `helix-db` SDK crate, and ships a network `Client` that mirrors the Rust client.
 
 The compatibility target is structural JSON equality with the Rust DSL. Object formatting and key order are not part of the contract, but enum tags, field names, omitted fields, explicit `null` fields, bundle metadata, and dynamic request payloads are intended to match Rust serde output.
 
 ## Quick Start
 
 ```ts
-import { defineParams, g, param, readBatch } from "@helixdb/enterprise-ql";
+import { defineParams, g, param, readBatch } from "@helix-db/helix-db";
 
 const params = defineParams({
   tenantId: param.string(),
@@ -33,6 +33,50 @@ findUsers().toJsonString(); // raw batch JSON
 findUsers().toDynamicJson(params, { tenantId: "acme", limit: 25n }); // full /v1/query request JSON
 findUsers().toDynamicRequest(params, { tenantId: "acme", limit: 25n }); // request object
 ```
+
+## Running Queries (Client)
+
+The SDK ships a `Client` that runs queries against a Helix instance over HTTP. It is a strict port of the Rust `helix_db::Client` and uses the built-in global `fetch`, so the package has no runtime dependencies.
+
+```ts
+import { Client, HelixError } from "@helix-db/helix-db";
+
+const client = new Client("http://localhost:6969") // defaults to http://localhost:6969
+  .withApiKey("hx_secret"); // optional Authorization: Bearer <key>
+
+// Dynamic query: POST /v1/query with the serialized request body.
+const request = findUsers().toDynamicRequest(params, { tenantId: "acme", limit: 25n });
+
+const rows = await client.query<UserRow[]>().dynamic(request).send();
+```
+
+`query<R>()` starts a `QueryBuilder`. Optional request headers map to the Rust toggles:
+
+```ts
+client.query<UserRow[]>().writerOnly(); // x-helix-require-writer: true
+client.query<UserRow[]>().warmOnly(); // x-helix-warm: true
+client.query<UserRow[]>().shouldAwaitDurability(false); // x-helix-await-durable: false
+```
+
+Stored query routes are reached with `.stored(name)` (POST `/v1/query/{name}`) and accept an optional JSON body:
+
+```ts
+const created = await client.query<UserRow>().body({ name: "Alice" }).stored("add_user").send();
+```
+
+`send()` resolves the parsed JSON response on HTTP 200. Any other status throws a `HelixError` whose `kind` is one of `"Network"`, `"Remote"`, `"Serialization"`, or `"InvalidUrl"` (a strict port of the Rust `HelixError` enum); `Remote` errors carry the server response body in `details`.
+
+```ts
+try {
+  await client.query().stored("missing_route").send();
+} catch (error) {
+  if (error instanceof HelixError && error.kind === "Remote") {
+    console.error(error.details);
+  }
+}
+```
+
+You can still build requests with `toDynamicJson(...)` / `toDynamicRequest(...)` and send them with your own HTTP client if you prefer; the `Client` is just the batteries-included path.
 
 ## Registration Model
 

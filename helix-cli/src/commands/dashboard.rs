@@ -3,7 +3,6 @@ use crate::config::{ContainerRuntime, InstanceInfo};
 use crate::local_runtime::LocalRuntime;
 use crate::output::Verbosity;
 use crate::project::ProjectContext;
-use crate::utils::command_exists;
 use eyre::{Result, eyre};
 use std::process::{Command, Stdio};
 
@@ -33,7 +32,7 @@ async fn start(
     attach: bool,
     restart: bool,
 ) -> Result<()> {
-    let runtime = detect_runtime()?;
+    let runtime = crate::setup::detect_runtime()?;
     LocalRuntime::check_available(runtime)?;
     if restart {
         let _ = stop();
@@ -109,7 +108,7 @@ fn resolve_helix_target(
 }
 
 fn stop() -> Result<()> {
-    let runtime = detect_runtime()?;
+    let runtime = crate::setup::detect_runtime()?;
     if remove_dashboard(runtime)? {
         crate::output::success("Dashboard stopped");
     } else {
@@ -154,7 +153,7 @@ fn pull_dashboard_image(runtime: ContainerRuntime) -> Result<()> {
 }
 
 fn status() -> Result<()> {
-    let runtime = detect_runtime()?;
+    let runtime = crate::setup::detect_runtime()?;
     let output = Command::new(runtime.binary())
         .args([
             "ps",
@@ -172,14 +171,4 @@ fn status() -> Result<()> {
         print!("{stdout}");
     }
     Ok(())
-}
-
-fn detect_runtime() -> Result<ContainerRuntime> {
-    if command_exists("docker") {
-        Ok(ContainerRuntime::Docker)
-    } else if command_exists("podman") {
-        Ok(ContainerRuntime::Podman)
-    } else {
-        Err(eyre!("Docker or Podman is required"))
-    }
 }

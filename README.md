@@ -1,128 +1,222 @@
-<div align="center">
-
-<picture>
-  <img src="/assets/full_logo.png" alt="HelixDB Logo">
-</picture>
-
-<b>HelixDB</b>: an open-source graph-vector database built from scratch in Rust.
-
-<h3>
-  <a href="https://helix-db.com">Website</a> |
-  <a href="https://docs.helix-db.com">Docs</a> |
-  <a href="https://discord.gg/2stgMPr5BD">Discord</a> |
-  <a href="https://x.com/helixdb">X/Twitter</a>
-</h3>
-
-[![Docs](https://img.shields.io/badge/docs-latest-blue)](https://docs.helix-db.com)
-[![Change Log](https://img.shields.io/badge/changelog-latest-blue)](https://docs.helix-db.com/change-log/helixdb)
-[![GitHub Repo stars](https://img.shields.io/github/stars/HelixDB/helix-db)](https://github.com/HelixDB/helix-db/stargazers)
-[![Discord](https://img.shields.io/discord/1354148209005559819?logo=discord)](https://discord.gg/2stgMPr5BD)
-[![LOC](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/HelixDB/helix-db/badge?filter=.rs$,.sh$&style=flat&logoColor=white&label=Lines%20of%20Code)](https://github.com/HelixDB/helix-db)
-[![Manta Graph](https://getmanta.ai/api/badges?text=Manta%20Graph&link=helixdb)](https://getmanta.ai/helixdb)
-
-<a href="https://www.ycombinator.com/launches/Naz-helixdb-the-database-for-rag-ai" target="_blank"><img src="https://www.ycombinator.com/launches/Naz-helixdb-the-database-for-rag-ai/upvote_embed.svg" alt="Launch YC: HelixDB - The Database for Intelligence" style="margin-left: 12px;"/></a>
-
-</div>
-
-<hr>
 
 
-HelixDB is a database that makes it easy to build all the components needed for an AI application in a single platform.
 
-You no longer need a separate application DB, vector DB, graph DB, or application layers to manage the multiple storage locations to build the backend of any application that uses AI, agents or RAG. Just use Helix.
 
-HelixDB primarily operates with a graph + vector data model, but it can also support KV, documents, and relational data.
+**HelixDB**: a graph-vector database for knowledge graphs and AI memory. Built from scratch in Rust.
+  
+  
 
-### Get started with HelixDB
 
-<div align="center">                                                                                                                                                                                                                                                                                                                                                                                   
-    <img src="/assets/readmeinit.gif" alt="Helix CLI Demo" width="100%">                                                                                                                                                                                                                                                                                                                                              
-</div>  
 
---- 
+### [website](https://helix-db.com) | [docs](https://docs.helix-db.com) | [discord](https://discord.gg/2stgMPr5BD) | [X/twitter](https://x.com/helixdb)
 
-## Key Features
+[Docs](https://docs.helix-db.com)
+[Change Log](https://docs.helix-db.com/change-log/helixdb)
+[GitHub Repo stars](https://github.com/HelixDB/helix-db/stargazers)
+[Discord](https://discord.gg/2stgMPr5BD)
+[LOC](https://github.com/HelixDB/helix-db)
 
-|                         |                                                                                                                                        |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| **Built-in MCP tools**  | Helix has built-in MCP support to allow your agents to discover data and walk the graph rather than generating human readable queries. |
-| **Built-in Embeddings** | No need to embed your data before sending it to Helix, just use the `Embed` function to vectorize text.                                |
-| **Tooling for RAG**     | HelixDB has a built-in vector search, keyword search, and graph traversals that can be used to power any type of RAG applications.     |
-| **Secure by Default**   | HelixDB is private by default and can be run locally or through Enterprise Cloud.                                                     |
-| **Ultra-Low Latency**   | Helix is built in Rust and uses LMDB as its storage engine to provide extremely low latencies.                                         |
-| **Dynamic Queries**     | The v2 query API accepts JSON requests through `POST /v1/query`, so local development does not require a compile/deploy loop.          |
 
-## Getting Started
-
-#### Helix CLI
-
-Start by installing the Helix CLI tool to deploy Helix locally.
-
-1. Install CLI
-
-   ```bash
-   curl -sSL "https://install.helix-db.com" | bash
-   ```
-
-2. Initialize a project
-
-   ```bash
-   mkdir <path-to-project> && cd <path-to-project>
-   helix init
-   ```
-
-3. Start a local v2 development instance
-
-   ```bash
-   helix run dev
-   ```
-
-4. Send a dynamic query
-
-   `helix init` creates `examples/request.json`, which is a ready-to-run dynamic query request.
-
-   ```bash
-   helix query dev --file examples/request.json
-   ```
-
-   Dynamic query requests are JSON payloads sent to `POST /v1/query`:
-
-   ```json
-   {
-     "request_type": "read",
-     "query": {
-       "queries": [{
-         "Query": {
-           "name": "node_count",
-           "steps": [
-             {"NWhere": {"Eq": ["$label", {"String": "User"}]}},
-             "Count"
-           ],
-           "condition": null
-         }
-       }],
-       "returns": ["node_count"]
-     },
-     "parameters": {}
-   }
-   ```
-
-5. Stop the local instance when finished
-
-   ```bash
-    helix stop dev
-    ```
-
-Enterprise Cloud clusters use a separate deploy path. After linking an Enterprise instance with `helix init enterprise` or `helix add enterprise`, run `helix push <instance>` to compile and upload the Enterprise query project, and `helix sync <instance>` to reconcile source snapshots and refresh cloud metadata.
-
-## License
-
-HelixDB is licensed under the The AGPL (Affero General Public License).
-
-## Commercial Support
-
-HelixDB is available as a managed service for selected users, if you're interested in using Helix's managed service or want enterprise support, [contact](mailto:founders@helix-db.com) us for more information and deployment options.
 
 ---
 
-Just Use Helix
+HelixDB is a database that makes it easy to build all the components needed for AI applications in a single platform.
+
+You don't need a separate application DB, relational DB, vector DB, graph DB, or application layers to manage the multiple storage locations. HelixDB gives your agents federated access to company data, for memory, company brains, and applications.
+
+Helix primarily operates with a graph + vector data model, but it also supports KV, documents, and relational data.
+
+## Getting Started
+
+### 1. Install the CLI
+
+The Helix CLI runs and manages local instances and talks to Helix Cloud.
+
+```bash
+curl -sSL "https://install.helix-db.com" | bash
+```
+
+Already installed? Update to the latest version with `helix update`.
+
+### 2. The quickest path — `helix chef`
+
+`helix chef` is an interactive, one-shot bootstrapper. It installs the HelixDB query skills and docs MCP, scaffolds a project, starts a local instance, seeds some example data, and writes a `HELIX_CHEF_PROMPT.md`. If a coding agent is available (Claude Code, Codex, or OpenCode), it can hand off and build a working app — frontend and all — from a one-line description of what you want.
+
+```bash
+helix chef
+```
+
+That's it — no flags. Answer "what do you want to build?" and follow the prompts.
+
+### 3. Manual local setup
+
+If you'd rather wire things up yourself:
+
+1. **Initialize a project.** This scaffolds `helix.toml`, a `.helix/` workspace dir, and a ready-to-run `examples/request.json`.
+  ```bash
+   mkdir my-helix-app && cd my-helix-app
+   helix init
+  ```
+2. **Start a local instance.** Runs a background container on port `6969` and waits until it accepts queries.
+  ```bash
+   helix run dev
+  ```
+  > ⚠️ The default storage mode is **in-memory** — stopping the instance wipes its data. Use `helix run dev --disk` to persist data across restarts, or `--foreground` to stream logs.
+3. **Send a query.**
+  ```bash
+   helix query dev --file examples/request.json
+  ```
+4. **Stop the instance when you're done.**
+  ```bash
+   helix stop dev
+  ```
+
+## Writing queries with the SDKs
+
+Queries are authored with the Rust or TypeScript DSL and sent straight to a running instance as dynamic requests against `POST /v1/query` — no build or deploy step. Both SDKs produce the same JSON AST. The examples below talk to a local instance on `http://localhost:6969` (the default `helix run dev` port). See the [Querying Guide](https://docs.helix-db.com/database/querying-guide/overview) for the full builder catalog and the dynamic-query wire format.
+
+### Rust
+
+Install the crate (published as `helix-db`, imported as `helix_db`):
+
+```bash
+cargo init && cargo add helix-db tokio sonic-rs
+```
+
+Define your queries as `#[register]` functions, then run them directly through the client:
+
+```rust
+use helix_db::Client;
+use helix_db::dsl::prelude::*;
+
+#[register]
+pub fn add_user(name: String) {
+    write_batch()
+        .var_as(
+            "user",
+            g().add_n("User", vec![("name", name)])
+                .value_map(None::<Vec<String>>),
+        )
+        .returning(["user"])
+}
+
+#[register]
+pub fn get_user(name: String) {
+    read_batch()
+        .var_as(
+            "user",
+            g().n_with_label("User")
+                .where_(Predicate::eq("name", name))
+                .value_map(None::<Vec<String>>),
+        )
+        .returning(["user"])
+}
+
+#[tokio::main]
+async fn main() {
+    let client = Client::new(None).unwrap(); // defaults to http://localhost:6969
+
+    // add user
+    let new_user = client
+        .query::<sonic_rs::Value>()
+        .dynamic(add_user("John Doe".to_string()))
+        .send()
+        .await
+        .unwrap();
+    println!("new user: {:#}", sonic_rs::to_string_pretty(&new_user).unwrap());
+
+    // get user
+    let user = client
+        .query::<sonic_rs::Value>()
+        .dynamic(get_user("John Doe".to_string()))
+        .send()
+        .await
+        .unwrap();
+    println!("user: {:#}", sonic_rs::to_string_pretty(&user).unwrap());
+}
+```
+
+### TypeScript
+
+Install the package (Node.js 20+):
+
+```bash
+npm init -y && npm install @helix-db/helix-db
+```
+
+Define your queries as functions, then `POST` them to the running instance:
+
+```ts
+import {
+  Predicate, PropertyInput, PropertyProjection,
+  defineParams, g, param, readBatch, writeBatch,
+} from "@helix-db/helix-db";
+
+const addUserParams = defineParams({ name: param.string() });
+function addUser(p = addUserParams) {
+  return writeBatch()
+    .varAs("user",
+      g().addN("User", { name: PropertyInput.param("name") })
+        .project([PropertyProjection.new("name")]),
+    )
+    .returning(["user"]);
+}
+
+const getUserParams = defineParams({ name: param.string() });
+function getUser(p = getUserParams) {
+  return readBatch()
+    .varAs("user",
+      g().nWithLabel("User")
+        .where(Predicate.eqParam("name", "name"))
+        .project([PropertyProjection.new("name")]),
+    )
+    .returning(["user"]);
+}
+
+const HELIX_URL = "http://localhost:6969/v1/query";
+
+// add user
+const newUser = await fetch(HELIX_URL, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: addUser().toDynamicJson(addUserParams, { name: "John Doe" }),
+}).then((r) => r.json());
+console.log("new user:", newUser);
+
+// get user
+const user = await fetch(HELIX_URL, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: getUser().toDynamicJson(getUserParams, { name: "John Doe" }),
+}).then((r) => r.json());
+console.log("user:", user);
+```
+
+## HelixDB Cloud
+
+HelixDB Cloud is an object-storage-backed deployment with integrated vector and full-text search, full ACID transactions, a single writer with auto-scaling reader nodes, and high availability (3+ gateways and DB nodes). Cloud clusters use a separate deploy path from local instances:
+
+```bash
+helix auth login                                  # authenticate
+helix workspace switch <workspace>                # select workspace + project
+helix project switch <project>
+helix init cloud --cluster-id <cluster-id>   # or: helix add cloud --name production --cluster-id <id>
+helix sync production                             # pull gateway URL + auth contract into helix.toml
+helix query production --file examples/request.json
+```
+
+## Commercial Support
+
+### HelixDB Cloud
+
+HelixDB is available as a distributed, high-availability, managed service. If you're interested in using Helix's managed service, go to [our website](https://helix-db.com/login) to get started or [contact us](mailto:founders@helix-db.com) to talk with a founder.
+
+## Docs & Community
+
+- 📚 [Documentation](https://docs.helix-db.com) · [Querying Guide](https://docs.helix-db.com/database/querying-guide/overview)
+- 💬 [Discord](https://discord.gg/2stgMPr5BD)
+- 🐦 [X / Twitter](https://x.com/helixdb)
+
+---
+
+Just Use Helix.

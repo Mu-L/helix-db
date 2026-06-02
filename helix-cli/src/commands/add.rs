@@ -17,7 +17,7 @@ pub async fn run(target: Option<AddTarget>) -> Result<()> {
         None if prompts::is_interactive() => prompts::select_add_target()?,
         None => {
             return Err(eyre!(
-                "Specify an instance type: 'helix add local' or 'helix add enterprise'"
+                "Specify an instance type: 'helix add local' or 'helix add cloud'"
             ));
         }
     };

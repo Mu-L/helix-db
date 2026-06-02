@@ -995,13 +995,35 @@ pub enum PropertyValue {
     F32Array(Vec<f32>),
     /// Array of strings
     StringArray(Vec<String>),
-    /// Heterogeneous array value for parameter payloads
+    /// Heterogeneous array value for stored properties and parameter payloads
     Array(Vec<PropertyValue>),
-    /// Object/map value for parameter payloads
+    /// Object/map value for stored properties and parameter payloads
     Object(BTreeMap<String, PropertyValue>),
 }
 
 impl PropertyValue {
+    /// Create a heterogeneous array value.
+    pub fn array<V>(values: impl IntoIterator<Item = V>) -> Self
+    where
+        V: Into<PropertyValue>,
+    {
+        Self::Array(values.into_iter().map(Into::into).collect())
+    }
+
+    /// Create an object/map value.
+    pub fn object<K, V>(values: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<String>,
+        V: Into<PropertyValue>,
+    {
+        Self::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect(),
+        )
+    }
+
     /// Get value as string reference if it is a String
     pub fn as_str(&self) -> Option<&str> {
         match self {
@@ -4572,8 +4594,6 @@ pub type PropertyMap = HashMap<String, PropertyValue>;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use crate::query_generator::{
         deserialize_query_bundle, serialize_query_bundle, GenerateError, QueryBundle,
         QueryParamType, QueryParameter, QUERY_BUNDLE_VERSION,
@@ -4946,11 +4966,11 @@ mod tests {
 
     #[test]
     fn test_property_value_nested_payload_variants() {
-        let mut row = BTreeMap::new();
-        row.insert("externalId".to_string(), PropertyValue::from("u-1"));
-        row.insert("active".to_string(), PropertyValue::from(true));
-
-        let payload = PropertyValue::from(vec![PropertyValue::from(row.clone())]);
+        let row = PropertyValue::object(vec![
+            ("externalId", PropertyValue::from("u-1")),
+            ("active", PropertyValue::from(true)),
+        ]);
+        let payload = PropertyValue::array([row]);
 
         assert!(matches!(payload.as_array(), Some(values) if values.len() == 1));
         assert_eq!(
@@ -4960,6 +4980,14 @@ mod tests {
                 .and_then(|map| map.get("externalId"))
                 .and_then(PropertyValue::as_str),
             Some("u-1")
+        );
+        assert_eq!(
+            payload
+                .as_array()
+                .and_then(|values| values[0].as_object())
+                .and_then(|map| map.get("active"))
+                .and_then(PropertyValue::as_bool),
+            Some(true)
         );
     }
 

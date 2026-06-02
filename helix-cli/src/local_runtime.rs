@@ -2,6 +2,7 @@ use crate::config::{ContainerRuntime, LocalInstanceConfig};
 use crate::errors::CliError;
 use crate::output::Step;
 use crate::project::ProjectContext;
+use crate::utils::command_exists;
 use eyre::{Result, eyre};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -11,6 +12,11 @@ use std::time::{Duration, Instant};
 use tokio::process::Command as TokioCommand;
 
 pub const CONTAINER_PORT: u16 = 8080;
+/// How long to wait for a runtime daemon to become ready after we start it.
+/// Docker Desktop cold-boot can take 30–60s, so we allow generous headroom.
+const RUNTIME_START_TIMEOUT: Duration = Duration::from_secs(120);
+/// How often to re-probe the daemon while waiting for it to come up.
+const RUNTIME_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MINIO_IMAGE: &str = "minio/minio:latest";
 const MINIO_MC_IMAGE: &str = "minio/mc:latest";
 const MINIO_ACCESS_KEY: &str = "minioadmin";
@@ -49,23 +55,106 @@ impl LocalRuntime {
     }
 
     pub fn check_available(runtime: ContainerRuntime) -> Result<()> {
-        let output = Command::new(runtime.binary())
-            .arg("info")
-            .output()
-            .map_err(|e| {
-                eyre!(
+        let output = match Command::new(runtime.binary()).arg("info").output() {
+            Ok(output) => output,
+            // The binary itself couldn't be spawned — the runtime isn't installed,
+            // so there's nothing for us to auto-start.
+            Err(e) => {
+                return Err(eyre!(
                     "{} is not available. Install/start {} and try again: {e}",
                     runtime.label(),
                     runtime.binary()
-                )
-            })?;
+                ));
+            }
+        };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("{} is not running:\n{}", runtime.label(), stderr));
+        if output.status.success() {
+            return Ok(());
         }
 
-        Ok(())
+        // The binary exists but the daemon is down. Try to start it automatically,
+        // then re-probe. Only surface an error if that doesn't bring it up.
+        if Self::try_start_runtime(runtime).is_ok() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(CliError::new(format!("{} is not running", runtime.label()))
+            .with_context(stderr.trim().to_string())
+            .with_hint(
+                "Start it manually, then retry — e.g. `open -a Docker`, `colima start`, \
+                 or `podman machine start`.",
+            )
+            .into())
+    }
+
+    /// Returns `true` if the runtime daemon answers an `info` probe. This is a
+    /// quick, non-blocking check — it never tries to auto-start the daemon.
+    pub(crate) fn is_running(runtime: ContainerRuntime) -> bool {
+        Command::new(runtime.binary())
+            .arg("info")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Auto-detect how to start the runtime daemon, launch it, and poll until it's
+    /// ready (or we time out). Returns `Err` if there's no known launcher for this
+    /// platform, the launch command fails, or the daemon never comes up.
+    fn try_start_runtime(runtime: ContainerRuntime) -> Result<()> {
+        let Some(start) = runtime_start_command(std::env::consts::OS, runtime, command_exists)
+        else {
+            return Err(eyre!(
+                "no known way to start {} on this platform",
+                runtime.label()
+            ));
+        };
+
+        let mut step = Step::with_messages(
+            &format!("Starting {}", runtime.label()),
+            &format!("{} started", runtime.label()),
+        );
+        step.start();
+
+        // Issue the start command. `open -a Docker` returns immediately; `colima start`
+        // and `podman machine start` block until the VM is up — either way we poll below.
+        let launched = Command::new(start.program)
+            .args(&start.args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        match launched {
+            Err(e) => {
+                step.fail();
+                return Err(eyre!("Failed to start {}: {e}", runtime.label()));
+            }
+            Ok(status) if !status.success() => {
+                step.fail();
+                return Err(eyre!(
+                    "Failed to start {}: exited with {}",
+                    runtime.label(),
+                    status
+                ));
+            }
+            Ok(_) => {}
+        }
+
+        let deadline = Instant::now() + RUNTIME_START_TIMEOUT;
+        loop {
+            if Self::is_running(runtime) {
+                step.done();
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                step.fail();
+                return Err(eyre!(
+                    "{} did not become ready within {}s",
+                    runtime.label(),
+                    RUNTIME_START_TIMEOUT.as_secs()
+                ));
+            }
+            thread::sleep(RUNTIME_POLL_INTERVAL);
+        }
     }
 
     pub fn runtime(&self) -> ContainerRuntime {
@@ -512,6 +601,52 @@ impl LocalRuntime {
     }
 }
 
+/// A command that starts a container runtime daemon, e.g. `open -a Docker`.
+struct StartCommand {
+    program: &'static str,
+    args: Vec<&'static str>,
+}
+
+/// Resolve the command to start the given runtime's daemon for the current OS.
+///
+/// Pure helper — the OS string and an installed-probe are injected so it can be
+/// unit-tested deterministically. Returns `None` when there's no known launcher
+/// (e.g. Podman on Linux is daemonless, or an unsupported OS).
+fn runtime_start_command(
+    os: &str,
+    runtime: ContainerRuntime,
+    is_installed: impl Fn(&str) -> bool,
+) -> Option<StartCommand> {
+    match (os, runtime) {
+        // macOS Docker: prefer Colima if it's installed, otherwise Docker Desktop.
+        ("macos", ContainerRuntime::Docker) => {
+            if is_installed("colima") {
+                Some(StartCommand {
+                    program: "colima",
+                    args: vec!["start"],
+                })
+            } else {
+                Some(StartCommand {
+                    program: "open",
+                    args: vec!["-a", "Docker"],
+                })
+            }
+        }
+        ("macos", ContainerRuntime::Podman) => Some(StartCommand {
+            program: "podman",
+            args: vec!["machine", "start"],
+        }),
+        // Linux Docker: best-effort via systemd (may need privileges; if it fails we
+        // fall back to the manual-hint error).
+        ("linux", ContainerRuntime::Docker) => Some(StartCommand {
+            program: "systemctl",
+            args: vec!["start", "docker"],
+        }),
+        // Podman on Linux is daemonless; nothing to start. Other OSes: unknown launcher.
+        _ => None,
+    }
+}
+
 fn helix_run_args(
     name: &str,
     image: &str,
@@ -705,5 +840,65 @@ mod tests {
         assert!(has_pair(&args, "--entrypoint", "/bin/sh"));
         assert!(args.contains(&"minio/mc:latest".to_string()));
         assert!(args.iter().any(|arg| arg.contains("mc alias set local")));
+    }
+
+    fn start_cmd(
+        os: &str,
+        runtime: ContainerRuntime,
+        colima: bool,
+    ) -> Option<(String, Vec<String>)> {
+        runtime_start_command(os, runtime, |bin| colima && bin == "colima").map(|c| {
+            (
+                c.program.to_string(),
+                c.args.iter().map(|a| a.to_string()).collect(),
+            )
+        })
+    }
+
+    #[test]
+    fn macos_docker_prefers_colima_when_installed() {
+        assert_eq!(
+            start_cmd("macos", ContainerRuntime::Docker, true),
+            Some(("colima".to_string(), vec!["start".to_string()]))
+        );
+    }
+
+    #[test]
+    fn macos_docker_falls_back_to_docker_desktop() {
+        assert_eq!(
+            start_cmd("macos", ContainerRuntime::Docker, false),
+            Some((
+                "open".to_string(),
+                vec!["-a".to_string(), "Docker".to_string()]
+            ))
+        );
+    }
+
+    #[test]
+    fn macos_podman_starts_machine() {
+        assert_eq!(
+            start_cmd("macos", ContainerRuntime::Podman, false),
+            Some((
+                "podman".to_string(),
+                vec!["machine".to_string(), "start".to_string()]
+            ))
+        );
+    }
+
+    #[test]
+    fn linux_docker_uses_systemctl() {
+        assert_eq!(
+            start_cmd("linux", ContainerRuntime::Docker, false),
+            Some((
+                "systemctl".to_string(),
+                vec!["start".to_string(), "docker".to_string()]
+            ))
+        );
+    }
+
+    #[test]
+    fn no_launcher_for_linux_podman_or_unknown_os() {
+        assert_eq!(start_cmd("linux", ContainerRuntime::Podman, false), None);
+        assert_eq!(start_cmd("windows", ContainerRuntime::Docker, false), None);
     }
 }
