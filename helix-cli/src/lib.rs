@@ -42,12 +42,13 @@ pub enum InitTarget {
         #[arg(long)]
         disk: bool,
     },
-    /// Initialize an Enterprise Cloud project
+    /// Initialize a Helix Cloud project
+    #[command(name = "cloud", alias = "enterprise")]
     Enterprise {
-        /// Enterprise instance name
+        /// Cloud instance name
         #[arg(short, long, default_value = "production")]
         name: String,
-        /// Enterprise cluster ID
+        /// Cloud cluster ID
         #[arg(long)]
         cluster_id: String,
         /// Runtime gateway URL for dynamic queries
@@ -70,12 +71,13 @@ pub enum AddTarget {
         #[arg(long)]
         disk: bool,
     },
-    /// Add an Enterprise Cloud instance
+    /// Add a Helix Cloud instance
+    #[command(name = "cloud", alias = "enterprise")]
     Enterprise {
-        /// Enterprise instance name
+        /// Cloud instance name
         #[arg(short, long)]
         name: String,
-        /// Enterprise cluster ID
+        /// Cloud cluster ID
         #[arg(long)]
         cluster_id: String,
         /// Runtime gateway URL for dynamic queries

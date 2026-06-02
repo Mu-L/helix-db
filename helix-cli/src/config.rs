@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const DEFAULT_LOCAL_PORT: u16 = 8080;
+pub const DEFAULT_LOCAL_PORT: u16 = 6969;
 pub const DEFAULT_ENTERPRISE_DEV_IMAGE: &str = "ghcr.io/helixdb/enterprise-dev";
 pub const DEFAULT_ENTERPRISE_DEV_TAG: &str = "latest";
 pub const DEFAULT_QUERY_AUTH_HEADER: &str = "Authorization";

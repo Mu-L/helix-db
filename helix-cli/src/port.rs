@@ -1,7 +1,7 @@
 use crate::errors::PortError;
 use std::net::TcpListener;
 
-pub const DEFAULT_PORT: u16 = 8080;
+pub const DEFAULT_PORT: u16 = 6969;
 const MAX_PORT_ATTEMPTS: u16 = 100;
 
 pub fn is_port_available(port: u16) -> bool {
