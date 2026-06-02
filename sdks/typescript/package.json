@@ -1,6 +1,6 @@
 {
   "name": "@helix-db/helix-db",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "TypeScript library for working with  HelixDB",
   "type": "module",
   "main": "dist/index.js",
@@ -45,7 +45,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:type": "tsc -p tsconfig.json --noEmit",
-    "test:unit": "tsc -p tsconfig.json && node dist-dev/test/basic.test.js && node dist-dev/test/client.test.js",
+    "test:unit": "tsc -p tsconfig.json && node dist-dev/test/basic.test.js && node dist-dev/test/client.test.js && node dist-dev/scripts/nested-dsl.test.js",
     "test": "npm run test:type && npm run test:unit",
     "lint": "eslint .",
     "format": "prettier --write .",

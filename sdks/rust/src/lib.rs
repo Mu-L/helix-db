@@ -537,6 +537,94 @@ mod tests {
             "param NWhere step missing EqExpr/Param: {param_json}"
         );
     }
+
+    #[test]
+    fn nested_dynamic_property_query_json() {
+        let metadata = PropertyValue::object(vec![
+            ("externalID", PropertyValue::from("some_id")),
+            ("score", PropertyValue::from(20i64)),
+            (
+                "tags",
+                PropertyValue::array(vec![
+                    PropertyValue::from("alpha"),
+                    PropertyValue::from(7i64),
+                ]),
+            ),
+        ]);
+
+        let write = write_batch()
+            .var_as(
+                "updated",
+                g().add_n(
+                    "User",
+                    vec![
+                        ("name", PropertyInput::from("john")),
+                        ("metadata", PropertyInput::from(metadata)),
+                    ],
+                )
+                .set_property("metadata", PropertyInput::param("metadata"))
+                .value_map(Some(vec!["metadata.externalID"])),
+            )
+            .returning(["updated"]);
+        let write_json = sonic_rs::to_string(&write).unwrap();
+        assert!(
+            write_json
+                .contains(r#""metadata",{"Value":{"Object":{"externalID":{"String":"some_id"}"#),
+            "AddN nested object value changed shape: {write_json}"
+        );
+        assert!(
+            write_json.contains(r#""tags":{"Array":[{"String":"alpha"},{"I64":7}]}"#),
+            "AddN nested array value changed shape: {write_json}"
+        );
+        assert!(
+            write_json.contains(r#"{"SetProperty":["metadata",{"Expr":{"Param":"metadata"}}]}"#),
+            "SetProperty param changed shape: {write_json}"
+        );
+        assert!(
+            write_json.contains(r#"{"ValueMap":["metadata.externalID"]}"#),
+            "filtered ValueMap dotted path changed shape: {write_json}"
+        );
+
+        let read = read_batch()
+            .var_as(
+                "users",
+                g().n_where(SourcePredicate::and(vec![
+                    SourcePredicate::eq("name", "john"),
+                    SourcePredicate::eq("metadata.externalID", "some_id"),
+                ]))
+                .order_by("metadata.score", Order::Desc)
+                .project(vec![
+                    Projection::property("metadata.externalID", "external_id"),
+                    Projection::expr("score_copy", Expr::prop("metadata.score")),
+                ]),
+            )
+            .var_as(
+                "external_ids",
+                g().n_with_label("User").values(vec!["metadata.externalID"]),
+            )
+            .returning(["users", "external_ids"]);
+        let read_json = sonic_rs::to_string(&read).unwrap();
+        assert!(
+            read_json.contains(r#"{"Eq":["metadata.externalID",{"String":"some_id"}]}"#),
+            "dotted SourcePredicate changed shape: {read_json}"
+        );
+        assert!(
+            read_json.contains(r#"{"OrderBy":["metadata.score","Desc"]}"#),
+            "dotted OrderBy changed shape: {read_json}"
+        );
+        assert!(
+            read_json.contains(r#""source":"metadata.externalID","alias":"external_id""#),
+            "dotted property projection changed shape: {read_json}"
+        );
+        assert!(
+            read_json.contains(r#""expr":{"Property":"metadata.score"}"#),
+            "dotted expression projection changed shape: {read_json}"
+        );
+        assert!(
+            read_json.contains(r#"{"Values":["metadata.externalID"]}"#),
+            "dotted Values changed shape: {read_json}"
+        );
+    }
 }
 
 #[cfg(test)]

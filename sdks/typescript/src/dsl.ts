@@ -320,7 +320,7 @@ export type PropertyValueInput =
   | number[]
   | string[]
   | PropertyValue
-  | PropertyValue[]
+  | PropertyValueInput[]
   | PropertyValueInputObject;
 
 export class PropertyValue implements Encodable {

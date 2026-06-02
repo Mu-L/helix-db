@@ -134,6 +134,28 @@ fn user_props(
     ]
 }
 
+fn nested_metadata_property(external_id: &str, score: i64) -> PropertyValue {
+    PropertyValue::object(vec![
+        ("externalID", PropertyValue::from(external_id)),
+        ("score", PropertyValue::from(score)),
+        (
+            "tags",
+            PropertyValue::array(vec![
+                PropertyValue::from("alpha"),
+                PropertyValue::from(7i64),
+            ]),
+        ),
+    ])
+}
+
+fn nested_metadata_param(external_id: &str, score: i64) -> DynamicQueryValue {
+    object(vec![
+        ("externalID", string(external_id)),
+        ("score", i64_value(score)),
+        ("tags", array(vec![string("alpha"), i64_value(7)])),
+    ])
+}
+
 fn runtime_fixtures() -> Vec<Fixture> {
     vec![
         runtime(
@@ -1223,6 +1245,116 @@ fn json_only_fixtures() -> Vec<Fixture> {
                         g().drop_edge_by_id(EdgeRef::id(123_456)).count(),
                     )
                     .returning(["inject", "drop_edge_by_id"]),
+            ),
+        ),
+        json_only(
+            "906-nested-dynamic-property-write-shapes",
+            with_params(
+                write_request(
+                    write_batch()
+                        .var_as(
+                            "created",
+                            g().add_n(
+                                "ParityNested",
+                                vec![
+                                    ("name", PropertyInput::from("nested")),
+                                    (
+                                        "metadata",
+                                        PropertyInput::from(nested_metadata_property(
+                                            "some_id", 20,
+                                        )),
+                                    ),
+                                ],
+                            ),
+                        )
+                        .var_as(
+                            "updated",
+                            g().n(NodeRef::var("created"))
+                                .set_property("metadata", PropertyInput::param("metadata"))
+                                .value_map(Some(vec!["metadata.externalID"])),
+                        )
+                        .var_as(
+                            "target",
+                            g().add_n(
+                                "ParityNestedTarget",
+                                vec![("name", PropertyInput::from("target"))],
+                            ),
+                        )
+                        .var_as(
+                            "edge",
+                            g().n(NodeRef::var("created"))
+                                .add_e(
+                                    "NESTED_LINK",
+                                    NodeRef::var("target"),
+                                    vec![(
+                                        "metadata",
+                                        PropertyInput::from(nested_metadata_property("edge_id", 5)),
+                                    )],
+                                )
+                                .count(),
+                        )
+                        .returning(["created", "updated", "edge"]),
+                ),
+                vec![("metadata", nested_metadata_param("param_id", 22))],
+                vec![("metadata", QueryParamType::Object)],
+            ),
+        ),
+        json_only(
+            "907-nested-dynamic-property-read-shapes",
+            with_params(
+                read_request(
+                    read_batch()
+                        .var_as(
+                            "nested_users",
+                            g().n_where(SourcePredicate::and(vec![
+                                SourcePredicate::eq("$label", "ParityNested"),
+                                SourcePredicate::eq(
+                                    "metadata.externalID",
+                                    Expr::param("external_id"),
+                                ),
+                            ]))
+                            .where_(Predicate::compare(
+                                Expr::prop("metadata.score"),
+                                CompareOp::Gt,
+                                Expr::val(10i64),
+                            ))
+                            .order_by_multiple(vec![
+                                ("metadata.score", Order::Desc),
+                                ("name", Order::Asc),
+                            ])
+                            .project(vec![
+                                Projection::property("metadata.externalID", "external_id"),
+                                Projection::expr("score_copy", Expr::prop("metadata.score")),
+                            ]),
+                        )
+                        .var_as(
+                            "nested_values",
+                            g().n_with_label("ParityNested")
+                                .values(vec!["metadata.externalID"]),
+                        )
+                        .var_as(
+                            "nested_map",
+                            g().n_with_label("ParityNested")
+                                .value_map(Some(vec!["metadata.externalID", "metadata.score"])),
+                        )
+                        .var_as(
+                            "nested_edges",
+                            g().e_where(SourcePredicate::and(vec![
+                                SourcePredicate::eq("$label", "NESTED_LINK"),
+                                SourcePredicate::eq("metadata.externalID", "edge_id"),
+                            ]))
+                            .edge_has("metadata.externalID", PropertyInput::from("edge_id"))
+                            .edge_properties(),
+                        )
+                        .returning([
+                            "nested_users",
+                            "nested_values",
+                            "nested_map",
+                            "nested_edges",
+                        ]),
+                ),
+                vec![("external_id", string("param_id"))],
+                vec![("external_id", QueryParamType::String)],
             ),
         ),
     ]
