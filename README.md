@@ -5,13 +5,15 @@
 **HelixDB**: a graph-vector database for knowledge graphs and AI memory. Built from scratch in Rust.
   
   
+<img src="./assets/full_logo_dark.png#gh-dark-mode-only" alt="HelixDB Logo">
+<img src="./assets/full_logo_light.png#gh-light-mode-only" alt="HelixDB Logo">
 
 
 
 ### [website](https://helix-db.com) | [docs](https://docs.helix-db.com) | [discord](https://discord.gg/2stgMPr5BD) | [X/twitter](https://x.com/helixdb)
 
 [Docs](https://docs.helix-db.com)
-[Change Log](https://docs.helix-db.com/change-log/helixdb)
+[Change Log](https://docs.helix-db.com/database/release-notes)
 [GitHub Repo stars](https://github.com/HelixDB/helix-db/stargazers)
 [Discord](https://discord.gg/2stgMPr5BD)
 [LOC](https://github.com/HelixDB/helix-db)
@@ -200,7 +202,7 @@ HelixDB Cloud is an object-storage-backed deployment with integrated vector and 
 helix auth login                                  # authenticate
 helix workspace switch <workspace>                # select workspace + project
 helix project switch <project>
-helix init cloud --cluster-id <cluster-id>   # or: helix add cloud --name production --cluster-id <id>
+helix init cloud --cluster-id <cluster-id>        # or: helix add cloud --name production --cluster-id <id>
 helix sync production                             # pull gateway URL + auth contract into helix.toml
 helix query production --file examples/request.json
 ```
