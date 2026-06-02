@@ -202,7 +202,7 @@ HelixDB Cloud is an object-storage-backed deployment with integrated vector and 
 helix auth login                                  # authenticate
 helix workspace switch <workspace>                # select workspace + project
 helix project switch <project>
-helix init cloud --cluster-id <cluster-id>   # or: helix add cloud --name production --cluster-id <id>
+helix init cloud --cluster-id <cluster-id>        # or: helix add cloud --name production --cluster-id <id>
 helix sync production                             # pull gateway URL + auth contract into helix.toml
 helix query production --file examples/request.json
 ```
