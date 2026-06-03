@@ -150,6 +150,20 @@ const body = findUsers().toDynamicJson(params, {
 });
 ```
 
+Unnamed dynamic requests serialize `query_name: null`. Pass a query name when you want gateway
+logs and query diagnostics to identify an inline query:
+
+```ts
+const body = findUsers().toDynamicJson(
+  params,
+  {
+    tenantId: "acme",
+    limit: 25n,
+  },
+  { queryName: "find_users" },
+);
+```
+
 Use `toDynamicRequest(...)` when you need the request object instead of a string.
 
 ```ts
@@ -170,8 +184,9 @@ countUsers().toDynamicJson();
 ```
 
 Registered routes still get callable helpers under `queries.call` for compatibility and stored-route workflows.
+Those helpers set `query_name` to the registered route key automatically.
 
-The request includes `request_type`, the batch query, converted `parameters`, and `parameter_types`, matching the Rust dynamic request shape.
+The request includes `request_type`, `query_name`, the batch query, converted `parameters`, and `parameter_types`, matching the Rust dynamic request shape.
 
 ## Bundle Generation
 

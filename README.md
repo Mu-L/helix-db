@@ -1,26 +1,29 @@
+<div align="center">
 
-
-
-
-**HelixDB**: a graph-vector database for knowledge graphs and AI memory. Built from scratch in Rust.
-  
-  
 <img src="./assets/full_logo_dark.png#gh-dark-mode-only" alt="HelixDB Logo">
 <img src="./assets/full_logo_light.png#gh-light-mode-only" alt="HelixDB Logo">
 
+<b>HelixDB</b>: a graph-vector database for knowledge graphs and AI memory. Built from scratch in Rust.
+<br/><br/>
+<a href="https://www.ycombinator.com/launches/Naz-helixdb-the-database-for-rag-ai" target="_blank"><img src="https://www.ycombinator.com/launches/Naz-helixdb-the-database-for-rag-ai/upvote_embed.svg" alt="Launch YC: HelixDB - The Database for Intelligence" style="margin-left: 12px;"/></a>
+<h3>
+  <a href="https://helix-db.com">website</a> |
+  <a href="https://docs.helix-db.com">docs</a> |
+  <a href="https://discord.gg/2stgMPr5BD">discord</a> |
+  <a href="https://x.com/helixdb">X/twitter</a>
+</h3>
+
+[![Docs](https://img.shields.io/badge/docs-latest-blue)](https://docs.helix-db.com)
+[![Change Log](https://img.shields.io/badge/changelog-latest-blue)](https://docs.helix-db.com/change-log/helixdb)
+[![GitHub Repo stars](https://img.shields.io/github/stars/HelixDB/helix-db)](https://github.com/HelixDB/helix-db/stargazers)
+[![Discord](https://img.shields.io/discord/1354148209005559819?logo=discord)](https://discord.gg/2stgMPr5BD)
+[![LOC](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/HelixDB/helix-db/badge?filter=.rs$,.sh$&style=flat&logoColor=white&label=Lines%20of%20Code)](https://github.com/HelixDB/helix-db)
 
 
-### [website](https://helix-db.com) | [docs](https://docs.helix-db.com) | [discord](https://discord.gg/2stgMPr5BD) | [X/twitter](https://x.com/helixdb)
 
-[Docs](https://docs.helix-db.com)
-[Change Log](https://docs.helix-db.com/database/release-notes)
-[GitHub Repo stars](https://github.com/HelixDB/helix-db/stargazers)
-[Discord](https://discord.gg/2stgMPr5BD)
-[LOC](https://github.com/HelixDB/helix-db)
+</div>
 
-
-
----
+<hr>
 
 HelixDB is a database that makes it easy to build all the components needed for AI applications in a single platform.
 

@@ -1,5 +1,4 @@
 use crate::InitTarget;
-use crate::commands::auth::require_auth;
 use crate::config::{
     DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER, EnterpriseInstanceConfig, HelixConfig,
     LocalInstanceConfig, LocalStorageMode,
@@ -54,6 +53,9 @@ pub async fn run(
 
     let next_steps = match target {
         InitTarget::Local { name, port, disk } => {
+            // Surface a missing/stopped container runtime before we write any files,
+            // so the user can react before the project is scaffolded.
+            crate::setup::warn_if_container_runtime_unavailable();
             let instance_name = name.clone();
             config.local.clear();
             config.local.insert(
@@ -65,7 +67,6 @@ pub async fn run(
                 },
             );
             write_example_request(&project_dir)?;
-            crate::setup::warn_if_container_runtime_unavailable();
             local_next_steps(&instance_name)
         }
         InitTarget::Enterprise {
@@ -74,15 +75,21 @@ pub async fn run(
             gateway_url,
         } => {
             let instance_name = name.clone();
-            require_auth().await?;
+            let target = crate::commands::config::resolve_enterprise_target(
+                cluster_id,
+                gateway_url,
+                None,
+                None,
+            )
+            .await?;
             config.local.clear();
             config.enterprise.insert(
                 name,
                 EnterpriseInstanceConfig {
-                    cluster_id,
-                    workspace_id: None,
-                    project_id: None,
-                    gateway_url,
+                    cluster_id: target.cluster_id,
+                    workspace_id: target.workspace_id,
+                    project_id: target.project_id,
+                    gateway_url: target.gateway_url,
                     query_auth_header: DEFAULT_QUERY_AUTH_HEADER.to_string(),
                     query_auth_env: DEFAULT_QUERY_AUTH_ENV.to_string(),
                     availability_mode: None,
@@ -148,15 +155,16 @@ fn local_next_steps(instance_name: &str) -> Vec<String> {
         format!(
             "Run 'helix run {instance_name}' to start local Helix Enterprise dev in the background"
         ),
-        "Create or edit a dynamic query JSON request".to_string(),
         format!("Run 'helix query {instance_name} --file examples/request.json'"),
+        format!(
+            "Or query in TypeScript: helix query {instance_name} -e 'readBatch().varAs(\"c\", g().nWithLabel(\"User\").count()).returning([\"c\"])'"
+        ),
     ]
 }
 
 fn enterprise_next_steps(instance_name: &str) -> Vec<String> {
     vec![
         format!("Run 'helix sync {instance_name}' to refresh Enterprise Cloud metadata"),
-        "Ensure gateway_url and query auth settings are configured".to_string(),
         format!("Run 'helix query {instance_name} --file <request.json>'"),
     ]
 }
@@ -255,6 +263,6 @@ mod tests {
         let steps = enterprise_next_steps("production");
 
         assert!(steps[0].contains("helix sync production"));
-        assert!(steps[2].contains("helix query production"));
+        assert!(steps[1].contains("helix query production"));
     }
 }

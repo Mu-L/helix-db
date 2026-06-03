@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
 use helix_cli::{
@@ -68,6 +68,9 @@ enum Commands {
         /// Use on-disk storage backed by a local MinIO container for this run
         #[arg(long)]
         disk: bool,
+        /// Persist the resolved port/storage settings back to helix.toml
+        #[arg(long)]
+        persist: bool,
     },
 
     /// Stop a background local v2 instance
@@ -107,26 +110,26 @@ enum Commands {
     },
 
     /// Send a dynamic query to POST /v1/query
+    #[command(group(
+        ArgGroup::new("query_input")
+            .required(true)
+            .args(["file", "json", "ts", "ts_file"])
+    ))]
     Query {
         /// Instance name
         instance: Option<String>,
         /// JSON request file
-        #[arg(
-            short,
-            long,
-            value_name = "REQUEST.json",
-            conflicts_with = "json",
-            required_unless_present = "json"
-        )]
+        #[arg(short, long, value_name = "REQUEST.json")]
         file: Option<String>,
         /// JSON request body
-        #[arg(
-            long,
-            value_name = "JSON",
-            conflicts_with = "file",
-            required_unless_present = "file"
-        )]
+        #[arg(long, value_name = "JSON")]
         json: Option<String>,
+        /// TypeScript DSL expression, like `mysql -e`. Auto-imports g/readBatch/writeBatch/defineParams/param.
+        #[arg(short = 'e', long = "ts", value_name = "TS")]
+        ts: Option<String>,
+        /// TypeScript DSL file containing a single builder expression
+        #[arg(long = "ts-file", value_name = "QUERY.ts")]
+        ts_file: Option<String>,
         /// Add X-Helix-Warm header. Only valid for read requests.
         #[arg(long)]
         warm: bool,
@@ -188,6 +191,9 @@ enum Commands {
         /// Overwrite local/remote source during reconciliation without confirmation prompts
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Show what would change without applying anything
+        #[arg(long, conflicts_with = "yes")]
+        dry_run: bool,
     },
 
     /// Prune local v2 containers/workspaces
@@ -390,7 +396,8 @@ async fn main() -> Result<()> {
             detach: _,
             port,
             disk,
-        }) => commands::run::run(instance, foreground, port, disk).await,
+            persist,
+        }) => commands::run::run(instance, foreground, port, disk, persist).await,
         Some(Commands::Stop { instance }) => commands::stop::run(instance).await,
         Some(Commands::Restart { instance }) => commands::restart::run(instance).await,
         Some(Commands::Status { instance }) => commands::status::run(instance).await,
@@ -405,11 +412,15 @@ async fn main() -> Result<()> {
             instance,
             file,
             json,
+            ts,
+            ts_file,
             warm,
             host,
             port,
             compact,
-        }) => commands::query::run(instance, file, json, warm, host, port, compact).await,
+        }) => {
+            commands::query::run(instance, file, json, ts, ts_file, warm, host, port, compact).await
+        }
         Some(Commands::Push { instance, dev }) => {
             commands::push::run(instance, dev, &metrics_sender).await
         }
@@ -418,7 +429,11 @@ async fn main() -> Result<()> {
         Some(Commands::Workspace { action }) => commands::config::run_workspace(action).await,
         Some(Commands::Project { action }) => commands::config::run_project(action).await,
         Some(Commands::Cluster { action }) => commands::config::run_cluster(action).await,
-        Some(Commands::Sync { instance, yes }) => commands::sync::run(instance, yes).await,
+        Some(Commands::Sync {
+            instance,
+            yes,
+            dry_run,
+        }) => commands::sync::run(instance, yes, dry_run).await,
         Some(Commands::Prune { instance, all, yes }) => {
             commands::prune::run(instance, all, yes).await
         }
@@ -464,12 +479,14 @@ mod tests {
                 detach,
                 port,
                 disk,
+                persist,
             }) => {
                 assert_eq!(instance.as_deref(), Some("qa"));
                 assert!(!foreground);
                 assert!(!detach);
                 assert_eq!(port, None);
                 assert!(!disk);
+                assert!(!persist);
             }
             _ => panic!("expected run command"),
         }
@@ -529,6 +546,76 @@ mod tests {
                 assert!(disk);
             }
             _ => panic!("expected init local command"),
+        }
+    }
+
+    #[test]
+    fn init_cloud_with_cluster_id_parses() {
+        let cli = Cli::parse_from(["helix", "init", "cloud", "--cluster-id", "abc"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                target:
+                    Some(InitTarget::Enterprise {
+                        name, cluster_id, ..
+                    }),
+                ..
+            }) => {
+                assert_eq!(name, "production");
+                assert_eq!(cluster_id.as_deref(), Some("abc"));
+            }
+            _ => panic!("expected init cloud command"),
+        }
+    }
+
+    #[test]
+    fn init_cloud_without_cluster_id_parses() {
+        let cli = Cli::parse_from(["helix", "init", "cloud"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                target: Some(InitTarget::Enterprise { cluster_id, .. }),
+                ..
+            }) => assert!(cluster_id.is_none()),
+            _ => panic!("expected init cloud command"),
+        }
+    }
+
+    #[test]
+    fn add_cloud_with_cluster_id_parses() {
+        let cli = Cli::parse_from([
+            "helix",
+            "add",
+            "cloud",
+            "--name",
+            "production",
+            "--cluster-id",
+            "abc",
+        ]);
+
+        match cli.command {
+            Some(Commands::Add {
+                target:
+                    Some(AddTarget::Enterprise {
+                        name, cluster_id, ..
+                    }),
+            }) => {
+                assert_eq!(name, "production");
+                assert_eq!(cluster_id.as_deref(), Some("abc"));
+            }
+            _ => panic!("expected add cloud command"),
+        }
+    }
+
+    #[test]
+    fn add_cloud_without_cluster_id_parses() {
+        let cli = Cli::parse_from(["helix", "add", "cloud", "--name", "production"]);
+
+        match cli.command {
+            Some(Commands::Add {
+                target: Some(AddTarget::Enterprise { cluster_id, .. }),
+            }) => assert!(cluster_id.is_none()),
+            _ => panic!("expected add cloud command"),
         }
     }
 
@@ -755,11 +842,80 @@ mod tests {
         let cli = Cli::parse_from(["helix", "sync", "production", "--yes"]);
 
         match cli.command {
-            Some(Commands::Sync { instance, yes }) => {
+            Some(Commands::Sync {
+                instance,
+                yes,
+                dry_run,
+            }) => {
                 assert_eq!(instance.as_deref(), Some("production"));
                 assert!(yes);
+                assert!(!dry_run);
             }
             _ => panic!("expected sync command"),
         }
+    }
+
+    #[test]
+    fn sync_accepts_dry_run() {
+        let cli = Cli::parse_from(["helix", "sync", "production", "--dry-run"]);
+
+        match cli.command {
+            Some(Commands::Sync { dry_run, yes, .. }) => {
+                assert!(dry_run);
+                assert!(!yes);
+            }
+            _ => panic!("expected sync command"),
+        }
+    }
+
+    #[test]
+    fn sync_rejects_dry_run_with_yes() {
+        assert!(
+            Cli::try_parse_from(["helix", "sync", "production", "--dry-run", "--yes"]).is_err()
+        );
+    }
+
+    #[test]
+    fn run_persist_flag_saves_settings() {
+        let cli = Cli::parse_from(["helix", "run", "qa", "--persist"]);
+
+        match cli.command {
+            Some(Commands::Run { persist, .. }) => assert!(persist),
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn query_accepts_ts_expression() {
+        let cli = Cli::parse_from(["helix", "query", "dev", "-e", "readBatch()"]);
+
+        match cli.command {
+            Some(Commands::Query { ts, file, json, .. }) => {
+                assert_eq!(ts.as_deref(), Some("readBatch()"));
+                assert!(file.is_none());
+                assert!(json.is_none());
+            }
+            _ => panic!("expected query command"),
+        }
+    }
+
+    #[test]
+    fn query_accepts_ts_file() {
+        let cli = Cli::parse_from(["helix", "query", "dev", "--ts-file", "query.ts"]);
+
+        match cli.command {
+            Some(Commands::Query { ts_file, .. }) => {
+                assert_eq!(ts_file.as_deref(), Some("query.ts"));
+            }
+            _ => panic!("expected query command"),
+        }
+    }
+
+    #[test]
+    fn query_rejects_json_and_ts_together() {
+        assert!(
+            Cli::try_parse_from(["helix", "query", "dev", "--json", "{}", "-e", "readBatch()"])
+                .is_err()
+        );
     }
 }

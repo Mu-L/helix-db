@@ -1,5 +1,16 @@
 import assert from "node:assert/strict";
-import { Expr, Order, Projection, PropertyInput, SourcePredicate, g, readBatch, stringifyJson, writeBatch } from "../src/index.js";
+import {
+  Expr,
+  Order,
+  Predicate,
+  Projection,
+  PropertyInput,
+  SourcePredicate,
+  g,
+  readBatch,
+  stringifyJson,
+  writeBatch,
+} from "../src/index.js";
 
 function parsed(value: unknown) {
   return JSON.parse(stringifyJson(value));
@@ -54,5 +65,23 @@ assert.deepEqual(nestedReadJson.queries[0].Query.steps[2], {
   ],
 });
 assert.deepEqual(nestedReadJson.queries[1].Query.steps.at(-1), { Values: ["metadata.externalID"] });
+
+const genericEdgeFilters = g()
+  .n([1])
+  .outE("FOLLOWS")
+  .has("status", "active")
+  .hasLabel("FOLLOWS")
+  .hasKey("weight")
+  .where(Predicate.gt("weight", 5))
+  .edgeProperties();
+assert.deepEqual(parsed(genericEdgeFilters).steps, [
+  { N: { Ids: [1] } },
+  { OutE: "FOLLOWS" },
+  { Has: ["status", { String: "active" }] },
+  { HasLabel: "FOLLOWS" },
+  { HasKey: "weight" },
+  { Where: { Gt: ["weight", { I64: 5 }] } },
+  "EdgeProperties",
+]);
 
 console.log("nested-dsl.test.ts passed");

@@ -3,13 +3,9 @@ use crate::commands::enterprise_deploy::{
     compile_enterprise_queries, deploy_enterprise_by_cluster_id, enterprise_queries_dir,
     should_descend_enterprise_source_dir, should_include_enterprise_source_file,
 };
-use crate::config::{
-    DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER, EnterpriseInstanceConfig, HelixConfig,
-    InstanceInfo,
-};
+use crate::config::{DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER, HelixConfig, InstanceInfo};
 use crate::enterprise_cloud::{
-    CliEnterpriseCluster, cloud_base_url, fetch_enterprise_cluster_project, fetch_project_clusters,
-    find_enterprise_cluster_by_id,
+    ResolvedEnterpriseCluster, cloud_base_url, resolve_enterprise_cluster,
 };
 use crate::output::{Operation, Step};
 use crate::project::ProjectContext;
@@ -119,14 +115,7 @@ enum SyncReconciliationOutcome {
     Pushed,
 }
 
-struct RemoteEnterpriseCluster {
-    project_id: String,
-    project_name: String,
-    workspace_id: Option<String>,
-    cluster: CliEnterpriseCluster,
-}
-
-pub async fn run(instance: Option<String>, assume_yes: bool) -> Result<()> {
+pub async fn run(instance: Option<String>, assume_yes: bool, dry_run: bool) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
     let instance_name = resolve_enterprise_instance_name(instance, &project)?;
     let credentials = require_auth().await?;
@@ -136,6 +125,7 @@ pub async fn run(instance: Option<String>, assume_yes: bool) -> Result<()> {
         &credentials.helix_admin_key,
         &instance_name,
         assume_yes,
+        dry_run,
     )
     .await
 }
@@ -178,6 +168,7 @@ async fn sync_enterprise_instance(
     api_key: &str,
     instance_name: &str,
     assume_yes: bool,
+    dry_run: bool,
 ) -> Result<()> {
     let config = match project.config.get_instance(instance_name)? {
         InstanceInfo::Enterprise(config) => config.clone(),
@@ -190,9 +181,16 @@ async fn sync_enterprise_instance(
 
     let client = reqwest::Client::new();
     let base_url = cloud_base_url();
-    let remote_cluster = fetch_remote_enterprise_cluster(&client, &base_url, api_key, &config)
-        .await
-        .ok();
+    let remote_cluster = resolve_enterprise_cluster(
+        &client,
+        &base_url,
+        api_key,
+        &config.cluster_id,
+        config.project_id.as_deref(),
+        config.workspace_id.as_deref(),
+    )
+    .await
+    .ok();
 
     let mut fetch_step = Step::with_messages(
         "Fetching enterprise cloud changes",
@@ -235,8 +233,14 @@ async fn sync_enterprise_instance(
         &target_queries_relative,
         &sync_response,
         assume_yes,
+        dry_run,
     )
     .await?;
+
+    // Dry runs only report what would change; never touch helix.toml or local files.
+    if dry_run {
+        return Ok(());
+    }
 
     if let SyncReconciliationOutcome::Pulled = sync_outcome
         && project.config.project.queries != target_queries_relative
@@ -260,46 +264,10 @@ async fn sync_enterprise_instance(
     Ok(())
 }
 
-async fn fetch_remote_enterprise_cluster(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    config: &EnterpriseInstanceConfig,
-) -> Result<RemoteEnterpriseCluster> {
-    let (project_id, project_name, workspace_id) = if let Some(project_id) = &config.project_id {
-        (project_id.clone(), None, config.workspace_id.clone())
-    } else {
-        let cluster_project =
-            fetch_enterprise_cluster_project(client, base_url, api_key, &config.cluster_id).await?;
-        (
-            cluster_project.project_id,
-            Some(cluster_project.project_name),
-            Some(cluster_project.workspace_id),
-        )
-    };
-    let project_clusters = fetch_project_clusters(client, base_url, api_key, &project_id).await?;
-    let cluster = find_enterprise_cluster_by_id(&project_clusters.enterprise, &config.cluster_id)
-        .cloned()
-        .ok_or_else(|| {
-            eyre!(
-                "Enterprise cluster '{}' was not found in project '{}'",
-                config.cluster_id,
-                project_id
-            )
-        })?;
-
-    Ok(RemoteEnterpriseCluster {
-        project_id: project_clusters.project_id,
-        project_name: project_name.unwrap_or(project_clusters.project_name),
-        workspace_id,
-        cluster,
-    })
-}
-
 fn refresh_enterprise_metadata(
     project_root: &Path,
     instance_name: &str,
-    remote: &RemoteEnterpriseCluster,
+    remote: &ResolvedEnterpriseCluster,
 ) -> Result<()> {
     let helix_toml_path = project_root.join("helix.toml");
     let mut config = HelixConfig::from_file(&helix_toml_path)
@@ -412,6 +380,7 @@ async fn reconcile_enterprise_cluster_snapshot(
     target_queries_relative: &Path,
     sync_response: &EnterpriseSyncResponse,
     assume_yes: bool,
+    dry_run: bool,
 ) -> Result<SyncReconciliationOutcome> {
     let op = Operation::new("Syncing", cluster_name);
     let current_queries_dir = project.root.join(&project.config.project.queries);
@@ -419,6 +388,12 @@ async fn reconcile_enterprise_cluster_snapshot(
     let local_manifest = collect_local_enterprise_manifest(&current_queries_dir)?;
     let remote_manifest = build_remote_enterprise_manifest(sync_response);
     let comparison = compare_manifests(&local_manifest, &remote_manifest);
+
+    if dry_run {
+        print_dry_run_summary(&comparison, &local_manifest, &remote_manifest);
+        op.success();
+        return Ok(SyncReconciliationOutcome::Unchanged);
+    }
     let apply_pull = || -> Result<()> {
         pull_remote_enterprise_snapshot_into_local(
             &current_queries_dir,
@@ -1033,6 +1008,54 @@ fn print_sync_action_plan(direction: SyncDirection, plan: &SyncActionPlan) {
 fn print_plan_for_direction(diff: &ManifestDiff, direction: SyncDirection) {
     let plan = build_sync_action_plan(diff, direction);
     print_sync_action_plan(direction, &plan);
+}
+
+/// Print what a real `helix sync` would do for the current divergence, without
+/// applying anything. Used by `--dry-run`.
+fn print_dry_run_summary(
+    comparison: &SnapshotComparison,
+    local_manifest: &HashMap<String, ManifestEntry>,
+    remote_manifest: &HashMap<String, ManifestEntry>,
+) {
+    match comparison {
+        SnapshotComparison::BothEmpty | SnapshotComparison::InSync => {
+            crate::output::info("Local and enterprise cloud changes are already in sync.");
+        }
+        SnapshotComparison::LocalOnly => {
+            crate::output::info(
+                "Cloud has no source snapshot; sync would push your local query project.",
+            );
+            let diff = compute_manifest_diff(local_manifest, remote_manifest);
+            print_plan_for_direction(&diff, SyncDirection::Push);
+        }
+        SnapshotComparison::RemoteOnly => {
+            crate::output::info("Local source is empty; sync would pull cloud files.");
+            let diff = compute_manifest_diff(local_manifest, remote_manifest);
+            print_plan_for_direction(&diff, SyncDirection::Pull);
+        }
+        SnapshotComparison::Diverged { authority, diff } => match authority {
+            DivergenceAuthority::LocalNewer => {
+                crate::output::info(
+                    "Local changes are newer; sync would offer to push (pull available as an alternative).",
+                );
+                print_plan_for_direction(diff, SyncDirection::Push);
+            }
+            DivergenceAuthority::RemoteNewer => {
+                crate::output::info("Cloud changes are newer; sync would offer to pull.");
+                print_plan_for_direction(diff, SyncDirection::Pull);
+            }
+            DivergenceAuthority::TieOrUnknown => {
+                crate::output::info(
+                    "Local and cloud have diverged; sync would ask which side wins.",
+                );
+                crate::output::info("If you push:");
+                print_plan_for_direction(diff, SyncDirection::Push);
+                crate::output::info("If you pull:");
+                print_plan_for_direction(diff, SyncDirection::Pull);
+            }
+        },
+    }
+    crate::output::info("Dry run: no changes were made.");
 }
 
 #[cfg(test)]

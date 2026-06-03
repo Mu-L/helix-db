@@ -1,9 +1,9 @@
 use crate::commands::auth::require_auth;
 use crate::config::WorkspaceConfig;
 use crate::enterprise_cloud::{
-    CliEnterpriseCluster, cloud_base_url, fetch_project_clusters, fetch_projects,
-    fetch_workspace_clusters, fetch_workspaces, find_project_by_id, find_project_by_name,
-    find_workspace_by_id, find_workspace_by_slug,
+    CliEnterpriseCluster, cloud_base_url, fetch_projects, fetch_workspaces, find_project_by_id,
+    find_project_by_name, find_workspace_by_id, find_workspace_by_slug, list_clusters_for_context,
+    resolve_enterprise_cluster,
 };
 use crate::project::ProjectContext;
 use crate::prompts;
@@ -299,34 +299,19 @@ async fn cluster_list(
 ) -> Result<()> {
     let credentials = require_auth().await?;
     let client = reqwest::Client::new();
-    let clusters = if let Some(project_id) = project_id {
-        fetch_project_clusters(
-            &client,
-            &cloud_base_url(),
-            &credentials.helix_admin_key,
-            &project_id,
-        )
-        .await?
-        .enterprise
-    } else {
-        let workspace_id = workspace_id
-            .or_else(|| {
-                WorkspaceConfig::load()
-                    .ok()
-                    .and_then(|config| config.workspace_id)
-            })
-            .ok_or_else(|| {
-                eyre!("No workspace selected. Run 'helix config workspace switch <workspace>'.")
-            })?;
-        fetch_workspace_clusters(
-            &client,
-            &cloud_base_url(),
-            &credentials.helix_admin_key,
-            &workspace_id,
-        )
-        .await?
-        .enterprise
-    };
+    let workspace_id = workspace_id.or_else(|| {
+        WorkspaceConfig::load()
+            .ok()
+            .and_then(|config| config.workspace_id)
+    });
+    let clusters = list_clusters_for_context(
+        &client,
+        &cloud_base_url(),
+        &credentials.helix_admin_key,
+        project_id.as_deref(),
+        workspace_id.as_deref(),
+    )
+    .await?;
 
     if format == ConfigOutputFormat::Json {
         return print_json(&clusters);
@@ -349,31 +334,24 @@ async fn cluster_select() -> Result<()> {
     let credentials = require_auth().await?;
     let client = reqwest::Client::new();
     let project_context = ProjectContext::find_and_load(None).ok();
-    let clusters = if let Some(project_id) = project_context
+    let project_id = project_context
         .as_ref()
-        .and_then(|project| project.config.project.id.as_deref())
-    {
-        fetch_project_clusters(
-            &client,
-            &cloud_base_url(),
-            &credentials.helix_admin_key,
-            project_id,
-        )
-        .await?
-        .enterprise
+        .and_then(|project| project.config.project.id.clone());
+    let workspace_id = if project_id.is_some() {
+        None
     } else {
-        let workspace_id = WorkspaceConfig::load()?.workspace_id.ok_or_else(|| {
+        Some(WorkspaceConfig::load()?.workspace_id.ok_or_else(|| {
             eyre!("No workspace selected. Run 'helix workspace' or 'helix workspace switch <workspace>'.")
-        })?;
-        fetch_workspace_clusters(
-            &client,
-            &cloud_base_url(),
-            &credentials.helix_admin_key,
-            &workspace_id,
-        )
-        .await?
-        .enterprise
+        })?)
     };
+    let clusters = list_clusters_for_context(
+        &client,
+        &cloud_base_url(),
+        &credentials.helix_admin_key,
+        project_id.as_deref(),
+        workspace_id.as_deref(),
+    )
+    .await?;
 
     let items: Vec<(String, String, String)> = clusters
         .iter()
@@ -402,4 +380,94 @@ async fn cluster_select() -> Result<()> {
         println!("  Gateway: {gateway_url}");
     }
     Ok(())
+}
+
+/// An Enterprise cluster resolved into the fields needed to write an
+/// `[enterprise.<name>]` block in helix.toml.
+pub struct EnterpriseTarget {
+    pub cluster_id: String,
+    pub project_id: Option<String>,
+    pub workspace_id: Option<String>,
+    pub gateway_url: Option<String>,
+}
+
+/// Resolve the cluster (and its owning project/workspace + gateway URL) for
+/// `helix init cloud` / `helix add cloud`.
+///
+/// When `cluster_id` is `None`, the user picks one from the cluster list (only in
+/// an interactive terminal). When it is `Some`, the cloud API is queried to fill in
+/// the owning project/workspace. In both cases an explicit `gateway_url_override`
+/// wins over the cluster's own gateway URL.
+pub async fn resolve_enterprise_target(
+    cluster_id: Option<String>,
+    gateway_url_override: Option<String>,
+    project_ctx: Option<String>,
+    workspace_ctx: Option<String>,
+) -> Result<EnterpriseTarget> {
+    let credentials = require_auth().await?;
+    let client = reqwest::Client::new();
+    let base_url = cloud_base_url();
+    let api_key = &credentials.helix_admin_key;
+
+    match cluster_id {
+        Some(cluster_id) => {
+            let resolved = resolve_enterprise_cluster(
+                &client,
+                &base_url,
+                api_key,
+                &cluster_id,
+                project_ctx.as_deref(),
+                workspace_ctx.as_deref(),
+            )
+            .await?;
+            Ok(EnterpriseTarget {
+                cluster_id,
+                project_id: Some(resolved.project_id),
+                workspace_id: resolved.workspace_id,
+                gateway_url: gateway_url_override.or(resolved.cluster.gateway_url),
+            })
+        }
+        None => {
+            if !prompts::is_interactive() {
+                return Err(eyre!(
+                    "Provide --cluster-id, or run interactively to pick a cluster from the list."
+                ));
+            }
+            let workspace_id = workspace_ctx.or_else(|| {
+                WorkspaceConfig::load()
+                    .ok()
+                    .and_then(|config| config.workspace_id)
+            });
+            let clusters = list_clusters_for_context(
+                &client,
+                &base_url,
+                api_key,
+                project_ctx.as_deref(),
+                workspace_id.as_deref(),
+            )
+            .await?;
+            let items: Vec<(String, String, String)> = clusters
+                .iter()
+                .map(|cluster| {
+                    let hint = cluster
+                        .project_name
+                        .as_deref()
+                        .unwrap_or("Enterprise cluster")
+                        .to_string();
+                    (cluster.cluster_id.clone(), cluster.name.clone(), hint)
+                })
+                .collect();
+            let selected_id = prompts::select_cluster(&items)?;
+            let cluster = clusters
+                .into_iter()
+                .find(|cluster| cluster.cluster_id == selected_id)
+                .ok_or_else(|| eyre!("Selected Enterprise cluster was not found"))?;
+            Ok(EnterpriseTarget {
+                cluster_id: cluster.cluster_id,
+                project_id: cluster.project_id.or(project_ctx),
+                workspace_id,
+                gateway_url: gateway_url_override.or(cluster.gateway_url),
+            })
+        }
+    }
 }

@@ -12,6 +12,7 @@ pub mod project;
 pub mod prompts;
 pub mod setup;
 pub mod sse_client;
+pub mod ts_query;
 pub mod update;
 pub mod utils;
 
@@ -48,9 +49,9 @@ pub enum InitTarget {
         /// Cloud instance name
         #[arg(short, long, default_value = "production")]
         name: String,
-        /// Cloud cluster ID
+        /// Cloud cluster ID; omit to pick one from the cluster list interactively
         #[arg(long)]
-        cluster_id: String,
+        cluster_id: Option<String>,
         /// Runtime gateway URL for dynamic queries
         #[arg(long)]
         gateway_url: Option<String>,
@@ -77,9 +78,9 @@ pub enum AddTarget {
         /// Cloud instance name
         #[arg(short, long)]
         name: String,
-        /// Cloud cluster ID
+        /// Cloud cluster ID; omit to pick one from the cluster list interactively
         #[arg(long)]
-        cluster_id: String,
+        cluster_id: Option<String>,
         /// Runtime gateway URL for dynamic queries
         #[arg(long)]
         gateway_url: Option<String>,

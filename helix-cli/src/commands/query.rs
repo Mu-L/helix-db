@@ -1,21 +1,28 @@
 use crate::config::InstanceInfo;
+use crate::errors::CliError;
 use crate::project::ProjectContext;
-use eyre::{Result, eyre};
+use eyre::{Report, Result, eyre};
 use reqwest::header::{CONTENT_TYPE, HeaderName, HeaderValue};
 use serde_json::Value;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     instance: Option<String>,
     file: Option<String>,
     json: Option<String>,
+    ts: Option<String>,
+    ts_file: Option<String>,
     warm: bool,
     host: Option<String>,
     port: Option<u16>,
     compact: bool,
 ) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
+    // Load a project-root .env so Enterprise query auth can come from a file
+    // instead of requiring the caller to export it in their shell.
+    let _ = dotenvy::from_path(project.root.join(".env"));
     let instance = instance.unwrap_or_else(|| "dev".to_string());
-    let request_json = parse_query_request(file, json)?;
+    let request_json = parse_query_request(file, json, ts, ts_file)?;
 
     validate_dynamic_request(&request_json, warm)?;
     let client = reqwest::Client::new();
@@ -31,11 +38,16 @@ pub async fn run(
                     "Enterprise gateway URL is not configured for '{instance}'. Run 'helix sync {instance}' or set gateway_url in helix.toml."
                 )
             })?;
-            let auth_value = std::env::var(&config.query_auth_env).map_err(|_| {
-                eyre!(
-                    "Environment variable {} is required for Enterprise query auth",
+            let auth_value = std::env::var(&config.query_auth_env).map_err(|_| -> Report {
+                CliError::new(format!(
+                    "environment variable {} is required for Enterprise query auth",
                     config.query_auth_env
-                )
+                ))
+                .with_hint(format!(
+                    "set {} in a .env file in your project root, or export it in your shell",
+                    config.query_auth_env
+                ))
+                .into()
             })?;
             let header_name = HeaderName::from_bytes(config.query_auth_header.as_bytes())?;
             client
@@ -73,21 +85,49 @@ pub async fn run(
     Ok(())
 }
 
-fn parse_query_request(file: Option<String>, json: Option<String>) -> Result<Value> {
-    match (file, json) {
-        (Some(file), None) => {
-            let request_text = std::fs::read_to_string(&file)
-                .map_err(|e| eyre!("Failed to read query request file '{file}': {e}"))?;
-            serde_json::from_str(&request_text)
-                .map_err(|e| eyre!("Failed to parse query request file '{file}': {e}"))
-        }
-        (None, Some(json)) => serde_json::from_str(&json)
-            .map_err(|e| eyre!("Failed to parse query request JSON: {e}")),
-        (Some(_), Some(_)) => Err(eyre!("--file and --json are mutually exclusive")),
-        (None, None) => Err(eyre!(
-            "Provide a query request with --file <path> or --json '<json>'"
-        )),
+fn parse_query_request(
+    file: Option<String>,
+    json: Option<String>,
+    ts: Option<String>,
+    ts_file: Option<String>,
+) -> Result<Value> {
+    let provided = [
+        file.is_some(),
+        json.is_some(),
+        ts.is_some(),
+        ts_file.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    if provided == 0 {
+        return Err(eyre!(
+            "Provide a query with --file <path>, --json '<json>', -e '<ts>', or --ts-file <path>"
+        ));
     }
+    if provided > 1 {
+        return Err(eyre!(
+            "--file, --json, -e/--ts, and --ts-file are mutually exclusive"
+        ));
+    }
+
+    if let Some(file) = file {
+        let request_text = std::fs::read_to_string(&file)
+            .map_err(|e| eyre!("Failed to read query request file '{file}': {e}"))?;
+        return serde_json::from_str(&request_text)
+            .map_err(|e| eyre!("Failed to parse query request file '{file}': {e}"));
+    }
+    if let Some(json) = json {
+        return serde_json::from_str(&json)
+            .map_err(|e| eyre!("Failed to parse query request JSON: {e}"));
+    }
+    if let Some(ts) = ts {
+        return crate::ts_query::build_request_from_ts(&ts);
+    }
+    let ts_file = ts_file.expect("exactly one query input is present");
+    let snippet = std::fs::read_to_string(&ts_file)
+        .map_err(|e| eyre!("Failed to read TypeScript query file '{ts_file}': {e}"))?;
+    crate::ts_query::build_request_from_ts(&snippet)
 }
 
 fn validate_dynamic_request(request: &Value, warm: bool) -> Result<()> {
@@ -116,6 +156,8 @@ mod tests {
         let request = parse_query_request(
             None,
             Some(r#"{"request_type":"read","query":{"queries":[]}}"#.to_string()),
+            None,
+            None,
         )
         .expect("inline JSON should parse");
 
@@ -124,16 +166,37 @@ mod tests {
 
     #[test]
     fn parse_query_request_rejects_missing_input() {
-        let error = parse_query_request(None, None).unwrap_err().to_string();
+        let error = parse_query_request(None, None, None, None)
+            .unwrap_err()
+            .to_string();
 
-        assert!(error.contains("--file <path> or --json"));
+        assert!(error.contains("--file <path>, --json"));
     }
 
     #[test]
     fn parse_query_request_rejects_both_inputs() {
-        let error = parse_query_request(Some("request.json".to_string()), Some("{}".to_string()))
-            .unwrap_err()
-            .to_string();
+        let error = parse_query_request(
+            Some("request.json".to_string()),
+            Some("{}".to_string()),
+            None,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn parse_query_request_rejects_json_and_ts_together() {
+        let error = parse_query_request(
+            None,
+            Some("{}".to_string()),
+            Some("readBatch()".to_string()),
+            None,
+        )
+        .unwrap_err()
+        .to_string();
 
         assert!(error.contains("mutually exclusive"));
     }

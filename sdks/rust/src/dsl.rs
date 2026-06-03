@@ -4043,6 +4043,37 @@ impl<M: MutationMode> Traversal<OnEdges, M> {
 
     // Edge Filter Steps: OnEdges -> OnEdges
 
+    /// Filter edges by property value.
+    ///
+    /// This emits the generic [`Step::Has`] filter on an edge stream. Use
+    /// [`Self::edge_has`] when the right-hand side must be an expression or
+    /// runtime parameter.
+    pub fn has(self, property: impl Into<String>, value: impl Into<PropertyValue>) -> Self {
+        self.push_step(Step::Has(property.into(), value.into()))
+    }
+
+    /// Filter edges by label.
+    ///
+    /// This emits the generic [`Step::HasLabel`] filter on an edge stream.
+    pub fn has_label(self, label: impl Into<String>) -> Self {
+        self.push_step(Step::HasLabel(label.into()))
+    }
+
+    /// Filter edges by property existence.
+    ///
+    /// This emits the generic [`Step::HasKey`] filter on an edge stream.
+    pub fn has_key(self, property: impl Into<String>) -> Self {
+        self.push_step(Step::HasKey(property.into()))
+    }
+
+    /// Filter edges by a complex predicate.
+    ///
+    /// Predicates may target stored edge properties and runtime-provided edge
+    /// fields such as `$id`, `$label`, `$from`, `$to`, `$distance`, and `$score`.
+    pub fn where_(self, predicate: Predicate) -> Self {
+        self.push_step(Step::Where(predicate))
+    }
+
     /// Filter edges by property value
     pub fn edge_has(self, property: impl Into<String>, value: impl Into<PropertyInput>) -> Self {
         self.push_step(Step::EdgeHas(property.into(), value.into()))
@@ -4483,6 +4514,9 @@ pub struct DynamicQueryRequest {
     /// Whether the inline query should execute as a read or write.
     #[serde(rename = "request_type")]
     pub request_type: DynamicQueryRequestType,
+    /// Optional query name used by gateway logs and slow-query diagnostics.
+    #[serde(default, rename = "query_name")]
+    pub query_name: Option<String>,
     /// Inline query AST payload.
     pub query: BatchQuery,
     /// Runtime parameters forwarded to the query engine.
@@ -4497,6 +4531,7 @@ impl DynamicQueryRequest {
     fn new(request_type: DynamicQueryRequestType, query: BatchQuery) -> Self {
         Self {
             request_type,
+            query_name: None,
             query,
             parameters: None,
             parameter_types: None,
@@ -4527,6 +4562,16 @@ impl DynamicQueryRequest {
             .insert(name.into(), ty);
     }
 
+    /// Set the query name used by gateway logs and slow-query diagnostics.
+    pub fn set_query_name(&mut self, name: impl Into<String>) {
+        self.query_name = Some(name.into());
+    }
+
+    /// Clear the query name so JSON serialization emits `query_name: null`.
+    pub fn clear_query_name(&mut self) {
+        self.query_name = None;
+    }
+
     /// Insert a named parameter value and return the updated request.
     pub fn with_parameter_value(
         mut self,
@@ -4540,6 +4585,12 @@ impl DynamicQueryRequest {
     /// Insert a named parameter type and return the updated request.
     pub fn with_parameter_type(mut self, name: impl Into<String>, ty: QueryParamType) -> Self {
         self.insert_parameter_type(name, ty);
+        self
+    }
+
+    /// Set the query name and return the updated request.
+    pub fn with_query_name(mut self, name: impl Into<String>) -> Self {
+        self.set_query_name(name);
         self
     }
 
@@ -4939,6 +4990,33 @@ mod tests {
             &traversal.steps[1],
             Step::EdgeHas(property, PropertyInput::Expr(Expr::Param(name)))
                 if property == "targetExternalId" && name == "targetExternalId"
+        ));
+    }
+
+    #[test]
+    fn test_generic_edge_filters_emit_generic_steps() {
+        let traversal = g()
+            .e([1u64])
+            .has("status", "active")
+            .has_label("FOLLOWS")
+            .has_key("weight")
+            .where_(Predicate::gt("weight", 5i64));
+
+        assert!(matches!(
+            &traversal.steps[1],
+            Step::Has(property, PropertyValue::String(value)) if property == "status" && value == "active"
+        ));
+        assert!(matches!(
+            &traversal.steps[2],
+            Step::HasLabel(label) if label == "FOLLOWS"
+        ));
+        assert!(matches!(
+            &traversal.steps[3],
+            Step::HasKey(property) if property == "weight"
+        ));
+        assert!(matches!(
+            &traversal.steps[4],
+            Step::Where(Predicate::Gt(property, PropertyValue::I64(5))) if property == "weight"
         ));
     }
 

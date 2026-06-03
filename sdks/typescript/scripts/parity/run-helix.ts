@@ -1,12 +1,12 @@
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { canonicalizeJson, parseJsonStructural, structuralJsonEqual } from "../../src/index.js";
-import { resultsRoot, rustGeneratedRoot, typescriptGeneratedRoot, workspacesRoot } from "./paths.js";
+import { goGeneratedRoot, resultsRoot, rustGeneratedRoot, typescriptGeneratedRoot, workspacesRoot } from "./paths.js";
 
 type Instance = {
-  label: "rust" | "typescript";
+  label: "rust" | "typescript" | "go";
   generatedRoot: string;
   workspace: string;
   results: string;
@@ -29,12 +29,22 @@ const typescript: Instance = {
   port: 18081,
 };
 
+const go: Instance = {
+  label: "go",
+  generatedRoot: goGeneratedRoot,
+  workspace: join(workspacesRoot, "go"),
+  results: join(resultsRoot, "go"),
+  port: 18082,
+};
+
 await assertCommand("helix", ["--version"]);
 await assertCommand("docker", ["--version"]);
 
 await runInstance(rust);
 await runInstance(typescript);
-await compareResults(rust.results, typescript.results);
+await runInstance(go);
+await compareResults(rust, typescript);
+await compareResults(rust, go);
 
 console.log("Helix runtime parity passed");
 
@@ -65,18 +75,18 @@ async function runInstance(instance: Instance) {
   run("helix", ["stop", "dev"], instance.workspace, 120_000, true);
 }
 
-async function compareResults(rustResults: string, tsResults: string) {
-  const rustFiles = await jsonFiles(rustResults);
-  const tsFiles = await jsonFiles(tsResults);
-  const tsSet = new Set(tsFiles);
+async function compareResults(baseline: Instance, candidate: Instance) {
+  const rustFiles = await jsonFiles(baseline.results);
+  const candidateFiles = await jsonFiles(candidate.results);
+  const candidateSet = new Set(candidateFiles);
   const rustSet = new Set(rustFiles);
-  const missingInTs = rustFiles.filter((file) => !tsSet.has(file));
-  const missingInRust = tsFiles.filter((file) => !rustSet.has(file));
-  if (missingInTs.length || missingInRust.length) {
+  const missingInCandidate = rustFiles.filter((file) => !candidateSet.has(file));
+  const extraInCandidate = candidateFiles.filter((file) => !rustSet.has(file));
+  if (missingInCandidate.length || extraInCandidate.length) {
     throw new Error(
       [
-        missingInTs.length ? `missing TypeScript runtime results:\n${missingInTs.join("\n")}` : "",
-        missingInRust.length ? `missing Rust runtime results:\n${missingInRust.join("\n")}` : "",
+        missingInCandidate.length ? `missing ${candidate.label} runtime results:\n${missingInCandidate.join("\n")}` : "",
+        extraInCandidate.length ? `extra ${candidate.label} runtime results:\n${extraInCandidate.join("\n")}` : "",
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -85,20 +95,20 @@ async function compareResults(rustResults: string, tsResults: string) {
 
   const mismatches: string[] = [];
   for (const file of rustFiles) {
-    const rustJson = await readFile(join(rustResults, file), "utf8");
-    const tsJson = await readFile(join(tsResults, file), "utf8");
-    if (!structuralJsonEqual(rustJson, tsJson)) {
+    const rustJson = await readFile(join(baseline.results, file), "utf8");
+    const candidateJson = await readFile(join(candidate.results, file), "utf8");
+    if (!structuralJsonEqual(rustJson, candidateJson)) {
       mismatches.push(
-        `${file}\nRust: ${JSON.stringify(canonicalizeJson(parseJsonStructural(rustJson)))}\nTS:   ${JSON.stringify(canonicalizeJson(parseJsonStructural(tsJson)))}`,
+        `${file}\nRust: ${JSON.stringify(canonicalizeJson(parseJsonStructural(rustJson)))}\n${candidate.label}: ${JSON.stringify(canonicalizeJson(parseJsonStructural(candidateJson)))}`,
       );
     }
   }
 
   if (mismatches.length) {
-    throw new Error(`Helix output parity failed for ${mismatches.length} fixture(s):\n\n${mismatches.join("\n\n")}`);
+    throw new Error(`Helix output parity failed for ${mismatches.length} ${candidate.label} fixture(s):\n\n${mismatches.join("\n\n")}`);
   }
 
-  console.log(`Helix output parity passed for ${rustFiles.length} fixture(s)`);
+  console.log(`Helix output parity passed for ${rustFiles.length} ${candidate.label} fixture(s)`);
 }
 
 async function jsonFiles(root: string, dir = ""): Promise<string[]> {
@@ -135,5 +145,3 @@ function run(command: string, args: string[], cwd: string, timeout: number, allo
   }
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
-
-void relative;
