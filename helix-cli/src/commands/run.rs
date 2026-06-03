@@ -1,4 +1,4 @@
-use crate::config::{InstanceInfo, LocalStorageMode};
+use crate::config::{InstanceInfo, LocalInstanceConfig, LocalStorageMode};
 use crate::local_runtime::LocalRuntime;
 use crate::output::{Operation, Verbosity};
 use crate::project::ProjectContext;
@@ -10,8 +10,9 @@ pub async fn run(
     foreground: bool,
     port: Option<u16>,
     disk: bool,
+    persist: bool,
 ) -> Result<()> {
-    let project = ProjectContext::find_and_load(None)?;
+    let mut project = ProjectContext::find_and_load(None)?;
     let instance = resolve_local_instance(&project, instance)?;
     let InstanceInfo::Local(config) = project.config.get_instance(&instance)? else {
         return Err(eyre!("'{instance}' is not a local v2 instance"));
@@ -25,17 +26,21 @@ pub async fn run(
     }
 
     let op = Operation::new(if foreground { "Running" } else { "Starting" }, &instance);
-    if config.storage.is_disk() {
-        crate::output::info(
-            "Local enterprise-dev is using on-disk storage. 'helix stop' preserves data; 'helix prune' deletes it.",
-        );
-    } else {
-        crate::output::warning(
-            "Local enterprise-dev uses in-memory storage. Stopping or restarting wipes local data.",
-        );
+
+    if persist {
+        project
+            .config
+            .local
+            .insert(instance.clone(), config.clone());
+        project
+            .config
+            .save_to_file(&project.root.join("helix.toml"))?;
+        crate::output::info("Saved port/storage settings to helix.toml.");
     }
 
     project.ensure_instance_dir(&instance)?;
+    warn_about_storage(&project, &instance, &config);
+
     let runtime = LocalRuntime::new(&project);
     if foreground {
         crate::output::info("Running in foreground. Press Ctrl-C to stop.");
@@ -53,6 +58,27 @@ pub async fn run(
     }
 
     Ok(())
+}
+
+/// On-disk mode prints a one-line info note every run; in-memory mode warns about
+/// data loss only the first time an instance is started (tracked with a marker in
+/// the instance workspace) so repeat runs stay quiet.
+fn warn_about_storage(project: &ProjectContext, instance: &str, config: &LocalInstanceConfig) {
+    if config.storage.is_disk() {
+        crate::output::info(
+            "Local enterprise-dev is using on-disk storage. 'helix stop' preserves data; 'helix prune' deletes it.",
+        );
+        return;
+    }
+
+    let marker = project.instance_workspace(instance).join(".warned-memory");
+    if marker.exists() {
+        return;
+    }
+    crate::output::warning(
+        "Local enterprise-dev uses in-memory storage. Stopping or restarting wipes local data.",
+    );
+    let _ = std::fs::write(&marker, b"");
 }
 
 fn resolve_local_instance(project: &ProjectContext, instance: Option<String>) -> Result<String> {

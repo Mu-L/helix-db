@@ -1230,7 +1230,7 @@ async fn init_project(project_dir: &Path) -> Result<()> {
 
 async fn run_database() -> Result<()> {
     run_quietly("Starting local database", "Local database started", || {
-        crate::commands::run::run(Some(INSTANCE_NAME.to_string()), false, None, false)
+        crate::commands::run::run(Some(INSTANCE_NAME.to_string()), false, None, false, false)
     })
     .await
 }
@@ -1240,6 +1240,8 @@ async fn seed_starter_data() -> Result<()> {
         crate::commands::query::run(
             Some(INSTANCE_NAME.to_string()),
             Some("examples/seed.json".to_string()),
+            None,
+            None,
             None,
             false,
             None,

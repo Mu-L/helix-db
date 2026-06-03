@@ -53,6 +53,9 @@ pub async fn run(
 
     let next_steps = match target {
         InitTarget::Local { name, port, disk } => {
+            // Surface a missing/stopped container runtime before we write any files,
+            // so the user can react before the project is scaffolded.
+            crate::setup::warn_if_container_runtime_unavailable();
             let instance_name = name.clone();
             config.local.clear();
             config.local.insert(
@@ -64,7 +67,6 @@ pub async fn run(
                 },
             );
             write_example_request(&project_dir)?;
-            crate::setup::warn_if_container_runtime_unavailable();
             local_next_steps(&instance_name)
         }
         InitTarget::Enterprise {
@@ -153,8 +155,10 @@ fn local_next_steps(instance_name: &str) -> Vec<String> {
         format!(
             "Run 'helix run {instance_name}' to start local Helix Enterprise dev in the background"
         ),
-        "Create or edit a dynamic query JSON request".to_string(),
         format!("Run 'helix query {instance_name} --file examples/request.json'"),
+        format!(
+            "Or query in TypeScript: helix query {instance_name} -e 'readBatch().varAs(\"c\", g().nWithLabel(\"User\").count()).returning([\"c\"])'"
+        ),
     ]
 }
 

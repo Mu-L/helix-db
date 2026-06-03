@@ -115,7 +115,7 @@ enum SyncReconciliationOutcome {
     Pushed,
 }
 
-pub async fn run(instance: Option<String>, assume_yes: bool) -> Result<()> {
+pub async fn run(instance: Option<String>, assume_yes: bool, dry_run: bool) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
     let instance_name = resolve_enterprise_instance_name(instance, &project)?;
     let credentials = require_auth().await?;
@@ -125,6 +125,7 @@ pub async fn run(instance: Option<String>, assume_yes: bool) -> Result<()> {
         &credentials.helix_admin_key,
         &instance_name,
         assume_yes,
+        dry_run,
     )
     .await
 }
@@ -167,6 +168,7 @@ async fn sync_enterprise_instance(
     api_key: &str,
     instance_name: &str,
     assume_yes: bool,
+    dry_run: bool,
 ) -> Result<()> {
     let config = match project.config.get_instance(instance_name)? {
         InstanceInfo::Enterprise(config) => config.clone(),
@@ -231,8 +233,14 @@ async fn sync_enterprise_instance(
         &target_queries_relative,
         &sync_response,
         assume_yes,
+        dry_run,
     )
     .await?;
+
+    // Dry runs only report what would change; never touch helix.toml or local files.
+    if dry_run {
+        return Ok(());
+    }
 
     if let SyncReconciliationOutcome::Pulled = sync_outcome
         && project.config.project.queries != target_queries_relative
@@ -372,6 +380,7 @@ async fn reconcile_enterprise_cluster_snapshot(
     target_queries_relative: &Path,
     sync_response: &EnterpriseSyncResponse,
     assume_yes: bool,
+    dry_run: bool,
 ) -> Result<SyncReconciliationOutcome> {
     let op = Operation::new("Syncing", cluster_name);
     let current_queries_dir = project.root.join(&project.config.project.queries);
@@ -379,6 +388,12 @@ async fn reconcile_enterprise_cluster_snapshot(
     let local_manifest = collect_local_enterprise_manifest(&current_queries_dir)?;
     let remote_manifest = build_remote_enterprise_manifest(sync_response);
     let comparison = compare_manifests(&local_manifest, &remote_manifest);
+
+    if dry_run {
+        print_dry_run_summary(&comparison, &local_manifest, &remote_manifest);
+        op.success();
+        return Ok(SyncReconciliationOutcome::Unchanged);
+    }
     let apply_pull = || -> Result<()> {
         pull_remote_enterprise_snapshot_into_local(
             &current_queries_dir,
@@ -993,6 +1008,54 @@ fn print_sync_action_plan(direction: SyncDirection, plan: &SyncActionPlan) {
 fn print_plan_for_direction(diff: &ManifestDiff, direction: SyncDirection) {
     let plan = build_sync_action_plan(diff, direction);
     print_sync_action_plan(direction, &plan);
+}
+
+/// Print what a real `helix sync` would do for the current divergence, without
+/// applying anything. Used by `--dry-run`.
+fn print_dry_run_summary(
+    comparison: &SnapshotComparison,
+    local_manifest: &HashMap<String, ManifestEntry>,
+    remote_manifest: &HashMap<String, ManifestEntry>,
+) {
+    match comparison {
+        SnapshotComparison::BothEmpty | SnapshotComparison::InSync => {
+            crate::output::info("Local and enterprise cloud changes are already in sync.");
+        }
+        SnapshotComparison::LocalOnly => {
+            crate::output::info(
+                "Cloud has no source snapshot; sync would push your local query project.",
+            );
+            let diff = compute_manifest_diff(local_manifest, remote_manifest);
+            print_plan_for_direction(&diff, SyncDirection::Push);
+        }
+        SnapshotComparison::RemoteOnly => {
+            crate::output::info("Local source is empty; sync would pull cloud files.");
+            let diff = compute_manifest_diff(local_manifest, remote_manifest);
+            print_plan_for_direction(&diff, SyncDirection::Pull);
+        }
+        SnapshotComparison::Diverged { authority, diff } => match authority {
+            DivergenceAuthority::LocalNewer => {
+                crate::output::info(
+                    "Local changes are newer; sync would offer to push (pull available as an alternative).",
+                );
+                print_plan_for_direction(diff, SyncDirection::Push);
+            }
+            DivergenceAuthority::RemoteNewer => {
+                crate::output::info("Cloud changes are newer; sync would offer to pull.");
+                print_plan_for_direction(diff, SyncDirection::Pull);
+            }
+            DivergenceAuthority::TieOrUnknown => {
+                crate::output::info(
+                    "Local and cloud have diverged; sync would ask which side wins.",
+                );
+                crate::output::info("If you push:");
+                print_plan_for_direction(diff, SyncDirection::Push);
+                crate::output::info("If you pull:");
+                print_plan_for_direction(diff, SyncDirection::Pull);
+            }
+        },
+    }
+    crate::output::info("Dry run: no changes were made.");
 }
 
 #[cfg(test)]

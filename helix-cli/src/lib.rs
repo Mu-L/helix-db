@@ -12,6 +12,7 @@ pub mod project;
 pub mod prompts;
 pub mod setup;
 pub mod sse_client;
+pub mod ts_query;
 pub mod update;
 pub mod utils;
 

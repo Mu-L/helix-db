@@ -1,5 +1,6 @@
 use crate::commands::enterprise_deploy::deploy_enterprise;
 use crate::config::InstanceInfo;
+use crate::errors::CliError;
 use crate::metrics_sender::MetricsSender;
 use crate::output::Operation;
 use crate::project::ProjectContext;
@@ -49,13 +50,23 @@ pub async fn run(
         error_messages,
     );
 
-    if deploy_result.is_ok() {
-        op.success();
-    } else {
-        op.failure();
+    match deploy_result {
+        Ok(()) => {
+            op.success();
+            Ok(())
+        }
+        Err(error) => {
+            op.failure();
+            Err(CliError::new(format!(
+                "Enterprise deploy of '{instance_name}' failed"
+            ))
+            .with_caused_by(error.to_string())
+            .with_hint(
+                "check the cluster with 'helix status', and re-authenticate with 'helix auth login' if needed",
+            )
+            .into())
+        }
     }
-
-    deploy_result
 }
 
 fn resolve_instance_name(
