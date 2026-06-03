@@ -48,6 +48,12 @@ jobs:
           cache: npm
           cache-dependency-path: sdks/typescript/package-lock.json
 
+      # --- Go (generate Go fixtures) ---
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: sdks/go/go.mod
+
       # --- helix CLI (released binary) ---
       # install.sh lives under helix-cli/ on main (not the repo root); installs to ~/.local/bin
       # and is non-interactive on Linux (the Docker Desktop prompt is macOS-only).
@@ -64,6 +70,14 @@ jobs:
 
       - name: Install npm deps
         run: npm ci
+
+      - name: Check Go formatting
+        working-directory: sdks/go
+        run: test -z "$(gofmt -l .)"
+
+      - name: Test Go SDK
+        working-directory: sdks/go
+        run: go test ./...
 
       - name: Run parity suite
         run: npm run test:parity
