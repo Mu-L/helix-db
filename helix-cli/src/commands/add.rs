@@ -1,5 +1,4 @@
 use crate::AddTarget;
-use crate::commands::auth::require_auth;
 use crate::config::{
     DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER, EnterpriseInstanceConfig,
     LocalInstanceConfig, LocalStorageMode,
@@ -42,16 +41,22 @@ pub async fn run(target: Option<AddTarget>) -> Result<()> {
             cluster_id,
             gateway_url,
         } => {
-            require_auth().await?;
             ensure_available(&project, &name)?;
+            let target = crate::commands::config::resolve_enterprise_target(
+                cluster_id,
+                gateway_url,
+                project.config.project.id.clone(),
+                project.config.project.workspace_id.clone(),
+            )
+            .await?;
             let op = Operation::new("Adding", &name);
             project.config.enterprise.insert(
                 name.clone(),
                 EnterpriseInstanceConfig {
-                    cluster_id,
-                    workspace_id: project.config.project.workspace_id.clone(),
-                    project_id: project.config.project.id.clone(),
-                    gateway_url,
+                    cluster_id: target.cluster_id,
+                    workspace_id: target.workspace_id,
+                    project_id: target.project_id,
+                    gateway_url: target.gateway_url,
                     query_auth_header: DEFAULT_QUERY_AUTH_HEADER.to_string(),
                     query_auth_env: DEFAULT_QUERY_AUTH_ENV.to_string(),
                     availability_mode: None,

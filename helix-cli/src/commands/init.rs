@@ -1,5 +1,4 @@
 use crate::InitTarget;
-use crate::commands::auth::require_auth;
 use crate::config::{
     DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER, EnterpriseInstanceConfig, HelixConfig,
     LocalInstanceConfig, LocalStorageMode,
@@ -74,15 +73,21 @@ pub async fn run(
             gateway_url,
         } => {
             let instance_name = name.clone();
-            require_auth().await?;
+            let target = crate::commands::config::resolve_enterprise_target(
+                cluster_id,
+                gateway_url,
+                None,
+                None,
+            )
+            .await?;
             config.local.clear();
             config.enterprise.insert(
                 name,
                 EnterpriseInstanceConfig {
-                    cluster_id,
-                    workspace_id: None,
-                    project_id: None,
-                    gateway_url,
+                    cluster_id: target.cluster_id,
+                    workspace_id: target.workspace_id,
+                    project_id: target.project_id,
+                    gateway_url: target.gateway_url,
                     query_auth_header: DEFAULT_QUERY_AUTH_HEADER.to_string(),
                     query_auth_env: DEFAULT_QUERY_AUTH_ENV.to_string(),
                     availability_mode: None,
@@ -156,7 +161,6 @@ fn local_next_steps(instance_name: &str) -> Vec<String> {
 fn enterprise_next_steps(instance_name: &str) -> Vec<String> {
     vec![
         format!("Run 'helix sync {instance_name}' to refresh Enterprise Cloud metadata"),
-        "Ensure gateway_url and query auth settings are configured".to_string(),
         format!("Run 'helix query {instance_name} --file <request.json>'"),
     ]
 }
@@ -255,6 +259,6 @@ mod tests {
         let steps = enterprise_next_steps("production");
 
         assert!(steps[0].contains("helix sync production"));
-        assert!(steps[2].contains("helix query production"));
+        assert!(steps[1].contains("helix query production"));
     }
 }

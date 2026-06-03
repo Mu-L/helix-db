@@ -533,6 +533,76 @@ mod tests {
     }
 
     #[test]
+    fn init_cloud_with_cluster_id_parses() {
+        let cli = Cli::parse_from(["helix", "init", "cloud", "--cluster-id", "abc"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                target:
+                    Some(InitTarget::Enterprise {
+                        name, cluster_id, ..
+                    }),
+                ..
+            }) => {
+                assert_eq!(name, "production");
+                assert_eq!(cluster_id.as_deref(), Some("abc"));
+            }
+            _ => panic!("expected init cloud command"),
+        }
+    }
+
+    #[test]
+    fn init_cloud_without_cluster_id_parses() {
+        let cli = Cli::parse_from(["helix", "init", "cloud"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                target: Some(InitTarget::Enterprise { cluster_id, .. }),
+                ..
+            }) => assert!(cluster_id.is_none()),
+            _ => panic!("expected init cloud command"),
+        }
+    }
+
+    #[test]
+    fn add_cloud_with_cluster_id_parses() {
+        let cli = Cli::parse_from([
+            "helix",
+            "add",
+            "cloud",
+            "--name",
+            "production",
+            "--cluster-id",
+            "abc",
+        ]);
+
+        match cli.command {
+            Some(Commands::Add {
+                target:
+                    Some(AddTarget::Enterprise {
+                        name, cluster_id, ..
+                    }),
+            }) => {
+                assert_eq!(name, "production");
+                assert_eq!(cluster_id.as_deref(), Some("abc"));
+            }
+            _ => panic!("expected add cloud command"),
+        }
+    }
+
+    #[test]
+    fn add_cloud_without_cluster_id_parses() {
+        let cli = Cli::parse_from(["helix", "add", "cloud", "--name", "production"]);
+
+        match cli.command {
+            Some(Commands::Add {
+                target: Some(AddTarget::Enterprise { cluster_id, .. }),
+            }) => assert!(cluster_id.is_none()),
+            _ => panic!("expected add cloud command"),
+        }
+    }
+
+    #[test]
     fn init_skills_flag_parses() {
         let cli = Cli::parse_from(["helix", "init", "--skills", "local"]);
 

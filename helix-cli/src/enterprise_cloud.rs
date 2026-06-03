@@ -303,3 +303,81 @@ pub fn find_enterprise_cluster_by_id<'a>(
 ) -> Option<&'a CliEnterpriseCluster> {
     clusters.iter().find(|cluster| cluster.cluster_id == id)
 }
+
+/// List the Enterprise clusters available for a project (preferred) or workspace.
+pub async fn list_clusters_for_context(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    project_id: Option<&str>,
+    workspace_id: Option<&str>,
+) -> Result<Vec<CliEnterpriseCluster>> {
+    if let Some(project_id) = project_id {
+        Ok(
+            fetch_project_clusters(client, base_url, api_key, project_id)
+                .await?
+                .enterprise,
+        )
+    } else if let Some(workspace_id) = workspace_id {
+        Ok(
+            fetch_workspace_clusters(client, base_url, api_key, workspace_id)
+                .await?
+                .enterprise,
+        )
+    } else {
+        Err(eyre!(
+            "No workspace selected. Run 'helix workspace switch <workspace>'."
+        ))
+    }
+}
+
+/// A cluster resolved to its full metadata plus the project/workspace it belongs to.
+pub struct ResolvedEnterpriseCluster {
+    pub cluster: CliEnterpriseCluster,
+    pub project_id: String,
+    pub project_name: String,
+    pub workspace_id: Option<String>,
+}
+
+/// Resolve a cluster ID to its full record and owning project/workspace.
+///
+/// Prefers the caller-supplied IDs; otherwise looks up the cluster's project via
+/// `fetch_enterprise_cluster_project`. The full cluster record is then pulled from
+/// the project's cluster list.
+pub async fn resolve_enterprise_cluster(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    cluster_id: &str,
+    known_project_id: Option<&str>,
+    known_workspace_id: Option<&str>,
+) -> Result<ResolvedEnterpriseCluster> {
+    let (project_id, project_name, workspace_id) = if let Some(project_id) = known_project_id {
+        (
+            project_id.to_string(),
+            None,
+            known_workspace_id.map(str::to_string),
+        )
+    } else {
+        let cluster_project =
+            fetch_enterprise_cluster_project(client, base_url, api_key, cluster_id).await?;
+        (
+            cluster_project.project_id,
+            Some(cluster_project.project_name),
+            Some(cluster_project.workspace_id),
+        )
+    };
+    let project_clusters = fetch_project_clusters(client, base_url, api_key, &project_id).await?;
+    let cluster = find_enterprise_cluster_by_id(&project_clusters.enterprise, cluster_id)
+        .cloned()
+        .ok_or_else(|| {
+            eyre!("Enterprise cluster '{cluster_id}' was not found in project '{project_id}'")
+        })?;
+
+    Ok(ResolvedEnterpriseCluster {
+        project_id: project_clusters.project_id,
+        project_name: project_name.unwrap_or(project_clusters.project_name),
+        workspace_id,
+        cluster,
+    })
+}

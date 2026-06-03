@@ -3,13 +3,9 @@ use crate::commands::enterprise_deploy::{
     compile_enterprise_queries, deploy_enterprise_by_cluster_id, enterprise_queries_dir,
     should_descend_enterprise_source_dir, should_include_enterprise_source_file,
 };
-use crate::config::{
-    DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER, EnterpriseInstanceConfig, HelixConfig,
-    InstanceInfo,
-};
+use crate::config::{DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER, HelixConfig, InstanceInfo};
 use crate::enterprise_cloud::{
-    CliEnterpriseCluster, cloud_base_url, fetch_enterprise_cluster_project, fetch_project_clusters,
-    find_enterprise_cluster_by_id,
+    ResolvedEnterpriseCluster, cloud_base_url, resolve_enterprise_cluster,
 };
 use crate::output::{Operation, Step};
 use crate::project::ProjectContext;
@@ -119,13 +115,6 @@ enum SyncReconciliationOutcome {
     Pushed,
 }
 
-struct RemoteEnterpriseCluster {
-    project_id: String,
-    project_name: String,
-    workspace_id: Option<String>,
-    cluster: CliEnterpriseCluster,
-}
-
 pub async fn run(instance: Option<String>, assume_yes: bool) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
     let instance_name = resolve_enterprise_instance_name(instance, &project)?;
@@ -190,9 +179,16 @@ async fn sync_enterprise_instance(
 
     let client = reqwest::Client::new();
     let base_url = cloud_base_url();
-    let remote_cluster = fetch_remote_enterprise_cluster(&client, &base_url, api_key, &config)
-        .await
-        .ok();
+    let remote_cluster = resolve_enterprise_cluster(
+        &client,
+        &base_url,
+        api_key,
+        &config.cluster_id,
+        config.project_id.as_deref(),
+        config.workspace_id.as_deref(),
+    )
+    .await
+    .ok();
 
     let mut fetch_step = Step::with_messages(
         "Fetching enterprise cloud changes",
@@ -260,46 +256,10 @@ async fn sync_enterprise_instance(
     Ok(())
 }
 
-async fn fetch_remote_enterprise_cluster(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    config: &EnterpriseInstanceConfig,
-) -> Result<RemoteEnterpriseCluster> {
-    let (project_id, project_name, workspace_id) = if let Some(project_id) = &config.project_id {
-        (project_id.clone(), None, config.workspace_id.clone())
-    } else {
-        let cluster_project =
-            fetch_enterprise_cluster_project(client, base_url, api_key, &config.cluster_id).await?;
-        (
-            cluster_project.project_id,
-            Some(cluster_project.project_name),
-            Some(cluster_project.workspace_id),
-        )
-    };
-    let project_clusters = fetch_project_clusters(client, base_url, api_key, &project_id).await?;
-    let cluster = find_enterprise_cluster_by_id(&project_clusters.enterprise, &config.cluster_id)
-        .cloned()
-        .ok_or_else(|| {
-            eyre!(
-                "Enterprise cluster '{}' was not found in project '{}'",
-                config.cluster_id,
-                project_id
-            )
-        })?;
-
-    Ok(RemoteEnterpriseCluster {
-        project_id: project_clusters.project_id,
-        project_name: project_name.unwrap_or(project_clusters.project_name),
-        workspace_id,
-        cluster,
-    })
-}
-
 fn refresh_enterprise_metadata(
     project_root: &Path,
     instance_name: &str,
-    remote: &RemoteEnterpriseCluster,
+    remote: &ResolvedEnterpriseCluster,
 ) -> Result<()> {
     let helix_toml_path = project_root.join("helix.toml");
     let mut config = HelixConfig::from_file(&helix_toml_path)
