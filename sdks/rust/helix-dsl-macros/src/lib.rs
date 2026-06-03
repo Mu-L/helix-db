@@ -481,6 +481,7 @@ pub fn register(attr: TokenStream, item: TokenStream) -> TokenStream {
             #(#fn_attrs)*
             #fn_visibility #request_sig {
                 let mut request = #request_ctor(#decomposed_fn_name());
+                request.set_query_name(stringify!(#fn_name));
                 #(#request_param_inserts)*
                 request
             }

@@ -222,11 +222,36 @@ mod tests {
         let query = query1(String::from("alice"));
 
         assert!(matches!(query.request_type, DynamicQueryRequestType::Read));
+        assert_eq!(query.query_name.as_deref(), Some("query1"));
         let params = query.parameters.expect("parameters present");
         assert!(matches!(
             params.get("name"),
             Some(DynamicQueryValue::String(s)) if s == "alice"
         ));
+    }
+
+    #[test]
+    fn dynamic_request_serializes_query_name() {
+        let unnamed = DynamicQueryRequest::read(
+            read_batch()
+                .var_as("count", g().n_with_label("User").count())
+                .returning(["count"]),
+        )
+        .to_json_string()
+        .expect("serialize unnamed dynamic request");
+        assert!(
+            unnamed.contains(r#""query_name":null"#),
+            "unnamed request should serialize query_name=null: {unnamed}"
+        );
+
+        let named = DynamicQueryRequest::read(read_batch())
+            .with_query_name("find_users")
+            .to_json_string()
+            .expect("serialize named dynamic request");
+        assert!(
+            named.contains(r#""query_name":"find_users""#),
+            "named request should serialize query_name: {named}"
+        );
     }
 
     // ---- Group 1: every #[register] param type coerces correctly -----------

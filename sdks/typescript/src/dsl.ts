@@ -1874,20 +1874,39 @@ export class ReadBatch implements Encodable {
   toJsonString(): string {
     return stringifyJson(this);
   }
+  toDynamicRequest(options?: DynamicQueryOptions): DynamicQueryRequest;
   toDynamicRequest(): DynamicQueryRequest;
-  toDynamicRequest<T extends ParamShape>(params: DefinedParams<T>, values: ParamInputs<T>): DynamicQueryRequest;
-  toDynamicRequest<T extends ParamShape>(params?: DefinedParams<T>, values?: ParamInputs<T>): DynamicQueryRequest {
-    return addDynamicParameters(DynamicQueryRequest.read(this), params, values);
+  toDynamicRequest<T extends ParamShape>(
+    params: DefinedParams<T>,
+    values: ParamInputs<T>,
+    options?: DynamicQueryOptions,
+  ): DynamicQueryRequest;
+  toDynamicRequest<T extends ParamShape>(
+    paramsOrOptions?: DefinedParams<T> | DynamicQueryOptions,
+    values?: ParamInputs<T>,
+    options?: DynamicQueryOptions,
+  ): DynamicQueryRequest {
+    return buildDynamicRequest(DynamicQueryRequest.read(this), paramsOrOptions, values, options);
   }
+  toDynamicJson(options?: DynamicQueryOptions): string;
   toDynamicJson(): string;
-  toDynamicJson<T extends ParamShape>(params: DefinedParams<T>, values: ParamInputs<T>): string;
-  toDynamicJson<T extends ParamShape>(params?: DefinedParams<T>, values?: ParamInputs<T>): string {
-    return this.toDynamicRequest(params as DefinedParams<T>, values as ParamInputs<T>).toJsonString();
+  toDynamicJson<T extends ParamShape>(params: DefinedParams<T>, values: ParamInputs<T>, options?: DynamicQueryOptions): string;
+  toDynamicJson<T extends ParamShape>(
+    paramsOrOptions?: DefinedParams<T> | DynamicQueryOptions,
+    values?: ParamInputs<T>,
+    options?: DynamicQueryOptions,
+  ): string {
+    return this.toDynamicRequest(paramsOrOptions as DefinedParams<T>, values as ParamInputs<T>, options).toJsonString();
   }
+  toDynamicBytes(options?: DynamicQueryOptions): Uint8Array;
   toDynamicBytes(): Uint8Array;
-  toDynamicBytes<T extends ParamShape>(params: DefinedParams<T>, values: ParamInputs<T>): Uint8Array;
-  toDynamicBytes<T extends ParamShape>(params?: DefinedParams<T>, values?: ParamInputs<T>): Uint8Array {
-    return this.toDynamicRequest(params as DefinedParams<T>, values as ParamInputs<T>).toJsonBytes();
+  toDynamicBytes<T extends ParamShape>(params: DefinedParams<T>, values: ParamInputs<T>, options?: DynamicQueryOptions): Uint8Array;
+  toDynamicBytes<T extends ParamShape>(
+    paramsOrOptions?: DefinedParams<T> | DynamicQueryOptions,
+    values?: ParamInputs<T>,
+    options?: DynamicQueryOptions,
+  ): Uint8Array {
+    return this.toDynamicRequest(paramsOrOptions as DefinedParams<T>, values as ParamInputs<T>, options).toJsonBytes();
   }
 }
 
@@ -1924,20 +1943,39 @@ export class WriteBatch implements Encodable {
   toJsonString(): string {
     return stringifyJson(this);
   }
+  toDynamicRequest(options?: DynamicQueryOptions): DynamicQueryRequest;
   toDynamicRequest(): DynamicQueryRequest;
-  toDynamicRequest<T extends ParamShape>(params: DefinedParams<T>, values: ParamInputs<T>): DynamicQueryRequest;
-  toDynamicRequest<T extends ParamShape>(params?: DefinedParams<T>, values?: ParamInputs<T>): DynamicQueryRequest {
-    return addDynamicParameters(DynamicQueryRequest.write(this), params, values);
+  toDynamicRequest<T extends ParamShape>(
+    params: DefinedParams<T>,
+    values: ParamInputs<T>,
+    options?: DynamicQueryOptions,
+  ): DynamicQueryRequest;
+  toDynamicRequest<T extends ParamShape>(
+    paramsOrOptions?: DefinedParams<T> | DynamicQueryOptions,
+    values?: ParamInputs<T>,
+    options?: DynamicQueryOptions,
+  ): DynamicQueryRequest {
+    return buildDynamicRequest(DynamicQueryRequest.write(this), paramsOrOptions, values, options);
   }
+  toDynamicJson(options?: DynamicQueryOptions): string;
   toDynamicJson(): string;
-  toDynamicJson<T extends ParamShape>(params: DefinedParams<T>, values: ParamInputs<T>): string;
-  toDynamicJson<T extends ParamShape>(params?: DefinedParams<T>, values?: ParamInputs<T>): string {
-    return this.toDynamicRequest(params as DefinedParams<T>, values as ParamInputs<T>).toJsonString();
+  toDynamicJson<T extends ParamShape>(params: DefinedParams<T>, values: ParamInputs<T>, options?: DynamicQueryOptions): string;
+  toDynamicJson<T extends ParamShape>(
+    paramsOrOptions?: DefinedParams<T> | DynamicQueryOptions,
+    values?: ParamInputs<T>,
+    options?: DynamicQueryOptions,
+  ): string {
+    return this.toDynamicRequest(paramsOrOptions as DefinedParams<T>, values as ParamInputs<T>, options).toJsonString();
   }
+  toDynamicBytes(options?: DynamicQueryOptions): Uint8Array;
   toDynamicBytes(): Uint8Array;
-  toDynamicBytes<T extends ParamShape>(params: DefinedParams<T>, values: ParamInputs<T>): Uint8Array;
-  toDynamicBytes<T extends ParamShape>(params?: DefinedParams<T>, values?: ParamInputs<T>): Uint8Array {
-    return this.toDynamicRequest(params as DefinedParams<T>, values as ParamInputs<T>).toJsonBytes();
+  toDynamicBytes<T extends ParamShape>(params: DefinedParams<T>, values: ParamInputs<T>, options?: DynamicQueryOptions): Uint8Array;
+  toDynamicBytes<T extends ParamShape>(
+    paramsOrOptions?: DefinedParams<T> | DynamicQueryOptions,
+    values?: ParamInputs<T>,
+    options?: DynamicQueryOptions,
+  ): Uint8Array {
+    return this.toDynamicRequest(paramsOrOptions as DefinedParams<T>, values as ParamInputs<T>, options).toJsonBytes();
   }
 }
 
@@ -2201,19 +2239,24 @@ export const DynamicQueryValue = {
   object: (values: Record<string, JsonValue>): JsonValue => values,
 };
 export type BatchQuery = ReadBatch | WriteBatch;
+export type DynamicQueryOptions = { queryName?: string | null };
 
 export class DynamicQueryRequest implements Encodable {
+  queryName: string | null = null;
   parameters?: Record<string, JsonValue>;
   parameterTypes?: Record<string, QueryParamType>;
   private constructor(
     readonly requestType: DynamicQueryRequestType,
     readonly query: BatchQuery,
-  ) {}
-  static read(query: ReadBatch): DynamicQueryRequest {
-    return new DynamicQueryRequest(DynamicQueryRequestType.Read, query);
+    queryName: string | null = null,
+  ) {
+    this.queryName = queryName;
   }
-  static write(query: WriteBatch): DynamicQueryRequest {
-    return new DynamicQueryRequest(DynamicQueryRequestType.Write, query);
+  static read(query: ReadBatch, queryName: string | null = null): DynamicQueryRequest {
+    return new DynamicQueryRequest(DynamicQueryRequestType.Read, query, queryName);
+  }
+  static write(query: WriteBatch, queryName: string | null = null): DynamicQueryRequest {
+    return new DynamicQueryRequest(DynamicQueryRequestType.Write, query, queryName);
   }
   insertParameterValue(name: string, value: JsonValue): void {
     this.parameters ??= {};
@@ -2231,8 +2274,24 @@ export class DynamicQueryRequest implements Encodable {
     this.insertParameterType(name, ty);
     return this;
   }
+  setQueryName(name: string): void {
+    this.queryName = name;
+  }
+  clearQueryName(): void {
+    this.queryName = null;
+  }
+  withQueryName(name: string): DynamicQueryRequest {
+    this.setQueryName(name);
+    return this;
+  }
   toJSON(): JsonValue {
-    return { request_type: this.requestType, query: this.query, parameters: this.parameters, parameter_types: this.parameterTypes };
+    return {
+      request_type: this.requestType,
+      query_name: this.queryName ?? null,
+      query: this.query,
+      parameters: this.parameters,
+      parameter_types: this.parameterTypes,
+    };
   }
   toJsonBytes(): Uint8Array {
     return new TextEncoder().encode(this.toJsonString());
@@ -2259,6 +2318,33 @@ function addDynamicParameters<T extends ParamShape>(
   for (const parameter of parameters) request.insertParameterType(parameter.name, parameter.ty);
   for (const [name, value] of Object.entries(converted)) request.insertParameterValue(name, value);
   return request;
+}
+
+function isDefinedParams(value: unknown): value is DefinedParams<ParamShape> {
+  return typeof value === "object" && value !== null && PARAMS_METADATA in value;
+}
+
+function applyDynamicQueryOptions(request: DynamicQueryRequest, options?: DynamicQueryOptions): DynamicQueryRequest {
+  if (!options || !("queryName" in options)) return request;
+  if (options.queryName === null || options.queryName === undefined) {
+    request.clearQueryName();
+  } else {
+    request.setQueryName(options.queryName);
+  }
+  return request;
+}
+
+function buildDynamicRequest<T extends ParamShape>(
+  request: DynamicQueryRequest,
+  paramsOrOptions?: DefinedParams<T> | DynamicQueryOptions,
+  values?: ParamInputs<T>,
+  options?: DynamicQueryOptions,
+): DynamicQueryRequest {
+  if (isDefinedParams(paramsOrOptions)) {
+    return applyDynamicQueryOptions(addDynamicParameters(request, paramsOrOptions, values), options);
+  }
+  if (values !== undefined) throw new TypeError("dynamic parameter values require a parameter schema");
+  return applyDynamicQueryOptions(request, paramsOrOptions);
 }
 
 export const QUERY_BUNDLE_VERSION = 4;
@@ -2363,6 +2449,7 @@ function buildRequest(
   input: Record<string, unknown>,
 ): DynamicQueryRequest {
   const request = route.kind === "read" ? DynamicQueryRequest.read(route.build()) : DynamicQueryRequest.write(route.build());
+  request.setQueryName(name);
   const parameters = route.parameters();
   rejectUnknownParameters(
     input,
@@ -2371,7 +2458,6 @@ function buildRequest(
   const values = route.convertInput ? route.convertInput(input) : convertInputFromSchema(parametersToSchemas(parameters), input);
   for (const parameter of parameters) request.insertParameterType(parameter.name, parameter.ty);
   for (const [paramName, value] of Object.entries(values)) request.insertParameterValue(paramName, value);
-  void name;
   return request;
 }
 
