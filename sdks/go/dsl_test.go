@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -71,5 +72,54 @@ func TestClientExec(t *testing.T) {
 	}
 	if got := out.Users[0].ID.String(); got != "9223372036854775807" {
 		t.Fatalf("large id lost precision: %s", got)
+	}
+}
+
+func TestClientAPIKeyMutationIsRaceSafe(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"users":[]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, WithAPIKey("initial"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2000; i++ {
+			if i%2 == 0 {
+				client.WithAPIKey("updated")
+			} else {
+				client.ClearAPIKey()
+			}
+		}
+	}()
+
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				var out findUsersResponse
+				if err := client.Exec(context.Background(), findUsers("acme", 1), &out); err != nil {
+					select {
+					case errs <- err:
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	if err := <-errs; err != nil {
+		t.Fatal(err)
 	}
 }

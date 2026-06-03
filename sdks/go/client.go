@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 )
 
 type ErrorKind string
@@ -40,6 +41,7 @@ func (e *HelixError) Unwrap() error { return e.Err }
 type Client struct {
 	baseURL    *url.URL
 	httpClient *http.Client
+	apiKeyMu   sync.RWMutex
 	apiKey     string
 }
 
@@ -54,7 +56,7 @@ func WithHTTPClient(httpClient *http.Client) ClientOption {
 }
 
 func WithAPIKey(apiKey string) ClientOption {
-	return func(c *Client) { c.apiKey = apiKey }
+	return func(c *Client) { c.setAPIKey(apiKey) }
 }
 
 func NewClient(baseURL string, opts ...ClientOption) (*Client, error) {
@@ -75,13 +77,29 @@ func NewClient(baseURL string, opts ...ClientOption) (*Client, error) {
 	return client, nil
 }
 
-func (c *Client) WithAPIKey(apiKey string) *Client { c.apiKey = apiKey; return c }
-func (c *Client) ClearAPIKey() *Client             { c.apiKey = ""; return c }
+func (c *Client) WithAPIKey(apiKey string) *Client { c.setAPIKey(apiKey); return c }
+func (c *Client) ClearAPIKey() *Client             { c.setAPIKey(""); return c }
 func (c *Client) BaseURL() string {
 	if c == nil || c.baseURL == nil {
 		return ""
 	}
 	return c.baseURL.String()
+}
+
+func (c *Client) setAPIKey(apiKey string) {
+	if c == nil {
+		return
+	}
+	c.apiKeyMu.Lock()
+	c.apiKey = apiKey
+	c.apiKeyMu.Unlock()
+}
+
+func (c *Client) getAPIKey() string {
+	c.apiKeyMu.RLock()
+	apiKey := c.apiKey
+	c.apiKeyMu.RUnlock()
+	return apiKey
 }
 
 type execOptions struct {
@@ -112,8 +130,8 @@ func (c *Client) Exec(ctx context.Context, req Request, out any, opts ...ExecOpt
 		return &HelixError{Kind: ErrorInvalidURL, Err: err, Details: err.Error()}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if apiKey := c.getAPIKey(); apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	options := execOptions{}
 	for _, opt := range opts {

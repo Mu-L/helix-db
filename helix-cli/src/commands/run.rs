@@ -27,6 +27,8 @@ pub async fn run(
 
     let op = Operation::new(if foreground { "Running" } else { "Starting" }, &instance);
 
+    project.ensure_instance_dir(&instance)?;
+
     if persist {
         project
             .config
@@ -38,7 +40,6 @@ pub async fn run(
         crate::output::info("Saved port/storage settings to helix.toml.");
     }
 
-    project.ensure_instance_dir(&instance)?;
     warn_about_storage(&project, &instance, &config);
 
     let runtime = LocalRuntime::new(&project);

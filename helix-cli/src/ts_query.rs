@@ -17,6 +17,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The TS SDK that exposes `g`, `readBatch`, `writeBatch`, `defineParams`, `param`
 /// and `toDynamicJson()`. `SDK_SPEC` is an npm semver range so we pick up the
@@ -24,7 +25,6 @@ use std::process::Command;
 const SDK_PACKAGE: &str = "@helix-db/helix-db";
 const SDK_SPEC: &str = "^2.0.2";
 const SPEC_MARKER: &str = ".sdk-spec";
-const WRAPPER_FILE: &str = "__helix_query.mjs";
 
 /// Build a dynamic-query request body from a raw TS DSL snippet (inline `-e` or a
 /// `--ts-file`). Returns the parsed JSON envelope, ready for the normal send path.
@@ -39,7 +39,14 @@ pub fn build_request_from_ts(snippet: &str) -> Result<Value> {
     ensure_node()?;
     let runtime_dir = ensure_sdk()?;
     let wrapper_path = write_wrapper(&runtime_dir, snippet)?;
-    let json = run_node(&runtime_dir, &wrapper_path)?;
+    let json = match run_node(&runtime_dir, &wrapper_path) {
+        Ok(json) => json,
+        Err(err) => {
+            let _ = fs::remove_file(&wrapper_path);
+            return Err(err);
+        }
+    };
+    let _ = fs::remove_file(&wrapper_path);
 
     serde_json::from_str(&json).map_err(|e| {
         CliError::new("the TypeScript query did not produce valid JSON")
@@ -154,9 +161,17 @@ if (__query == null || typeof __query.toDynamicJson !== "function") {{
 process.stdout.write(__query.toDynamicJson());
 "#
     );
-    let wrapper_path = runtime_dir.join(WRAPPER_FILE);
+    let wrapper_path = runtime_dir.join(unique_wrapper_file());
     fs::write(&wrapper_path, wrapper)?;
     Ok(wrapper_path)
+}
+
+fn unique_wrapper_file() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("__helix_query_{}_{}.mjs", std::process::id(), nanos)
 }
 
 /// Run the wrapper with Node from the runtime dir (so `node_modules` resolves) and
@@ -188,8 +203,8 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         let end = s
             .char_indices()
-            .map(|(i, _)| i)
-            .take_while(|i| *i <= max)
+            .take_while(|(i, c)| i + c.len_utf8() <= max)
+            .map(|(i, c)| i + c.len_utf8())
             .last()
             .unwrap_or(0);
         format!("{}…", &s[..end])
@@ -227,7 +242,9 @@ mod tests {
         let out = truncate(&s, 5);
         assert!(out.ends_with('…'));
         // Must not panic and must stay under the byte budget (+ ellipsis).
-        assert!(out.len() <= 5 + '…'.len_utf8() + 2);
+        assert!(out.len() <= 5 + '…'.len_utf8());
+        assert_eq!(truncate("hé_", 4), "hé_");
+        assert_eq!(truncate("hé_x", 4), "hé_…");
     }
 
     /// End-to-end: requires Node + npm + network (real `npm install`). Run with
