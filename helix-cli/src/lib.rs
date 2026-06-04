@@ -124,6 +124,28 @@ pub enum AddTarget {
 }
 
 #[derive(Subcommand)]
+pub enum SkillsAction {
+    /// Install the Helix agent skills (npx skills add HelixDB/skills)
+    Install {
+        /// Install into the current project (.<agent>/skills) instead of globally
+        #[arg(long)]
+        project: bool,
+    },
+    /// Refresh installed Helix agent skills to the latest version
+    Update {
+        /// Operate on the current project instead of globally
+        #[arg(long)]
+        project: bool,
+    },
+    /// List installed agent skills
+    List {
+        /// List project skills instead of global skills
+        #[arg(long)]
+        project: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum MetricsAction {
     /// Enable full metrics collection
     Full,

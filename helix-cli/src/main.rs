@@ -4,7 +4,8 @@ use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
 use helix_cli::{
     AddTarget, AuthAction, ClusterConfigAction, ConfigAction, InitTarget, MetricsAction,
-    ProjectConfigAction, WorkspaceConfigAction, commands, errors, metrics_sender, output, update,
+    ProjectConfigAction, SkillsAction, WorkspaceConfigAction, commands, errors, metrics_sender,
+    output, update,
 };
 use std::io::IsTerminal;
 use tui_banner::{Align, Banner, ColorMode, Fill, Gradient, Palette};
@@ -277,6 +278,12 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
         yes: bool,
     },
 
+    /// Install, update, and list the Helix agent skills
+    Skills {
+        #[command(subcommand)]
+        action: SkillsAction,
+    },
+
     /// Manage metrics collection
     Metrics {
         #[command(subcommand)]
@@ -346,7 +353,7 @@ fn removed_deploy_command_error() -> eyre::Report {
         .into()
 }
 
-fn display_welcome(update_available: Option<String>) {
+fn display_welcome(update_available: Option<String>, skills_update_available: bool) {
     let use_color = std::io::stdout().is_terminal();
 
     if let Ok(banner) = Banner::new("> HELIX DB") {
@@ -379,6 +386,11 @@ fn display_welcome(update_available: Option<String>) {
     if let Some(latest_version) = update_available {
         println!("  Update available: v{} -> v{}", version, latest_version);
         println!("  Run 'helix update' to upgrade\n");
+    }
+
+    if skills_update_available {
+        println!("  Helix skills update available");
+        println!("  Run 'helix skills update' to refresh\n");
     }
 
     print_section("Getting Started", use_color);
@@ -575,6 +587,12 @@ fn print_help() {
     print_command_w("cluster", "List and inspect Cloud clusters", W, use_color);
 
     print_section("CLI", use_color);
+    print_command_w(
+        "skills",
+        "Install, update, and list Helix agent skills",
+        W,
+        use_color,
+    );
     print_command_w("metrics", "Manage telemetry collection", W, use_color);
     print_command_w(
         "update",
@@ -617,13 +635,14 @@ async fn main() -> Result<()> {
     let metrics_sender = metrics_sender::MetricsSender::new()?;
     metrics_sender.send_cli_install_event_if_first_time();
     let update_available = update::check_for_updates().await?;
+    let skills_update_available = update::check_skills_update().await;
 
     let cli = Cli::parse();
     output::Verbosity::set(output::Verbosity::from_flags(cli.quiet, cli.verbose));
 
     let result = match cli.command {
         None => {
-            display_welcome(update_available);
+            display_welcome(update_available, skills_update_available);
             Ok(())
         }
         Some(Commands::Init {
@@ -692,6 +711,7 @@ async fn main() -> Result<()> {
             commands::prune::run(instance, all, yes).await
         }
         Some(Commands::Delete { instance, yes }) => commands::delete::run(instance, yes).await,
+        Some(Commands::Skills { action }) => commands::skills::run(action).await,
         Some(Commands::Metrics { action }) => commands::metrics::run(action).await,
         Some(Commands::Update { force, v1 }) => commands::update::run(force, v1).await,
         Some(Commands::Feedback { message }) => commands::feedback::run(message).await,
@@ -1309,6 +1329,39 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+    }
+
+    #[test]
+    fn skills_update_defaults_to_global() {
+        let cli = Cli::parse_from(["helix", "skills", "update"]);
+        match cli.command {
+            Some(Commands::Skills {
+                action: SkillsAction::Update { project },
+            }) => assert!(!project),
+            _ => panic!("expected skills update command"),
+        }
+    }
+
+    #[test]
+    fn skills_list_project_flag_parses() {
+        let cli = Cli::parse_from(["helix", "skills", "list", "--project"]);
+        match cli.command {
+            Some(Commands::Skills {
+                action: SkillsAction::List { project },
+            }) => assert!(project),
+            _ => panic!("expected skills list command"),
+        }
+    }
+
+    #[test]
+    fn skills_install_parses() {
+        let cli = Cli::parse_from(["helix", "skills", "install"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Skills {
+                action: SkillsAction::Install { project: false },
+            })
+        ));
     }
 
     #[test]

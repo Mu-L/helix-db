@@ -12,6 +12,7 @@ pub mod prune;
 pub mod push;
 pub mod query;
 pub mod restart;
+pub mod skills;
 pub mod start;
 pub mod status;
 pub mod stop;
