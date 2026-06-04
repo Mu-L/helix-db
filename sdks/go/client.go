@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,10 +21,13 @@ const (
 	ErrorInvalidURL    ErrorKind = "InvalidUrl"
 )
 
+var ErrConflict = errors.New("helix: conflict")
+
 type HelixError struct {
-	Kind    ErrorKind
-	Details string
-	Err     error
+	Kind       ErrorKind
+	Details    string
+	StatusCode int
+	Err        error
 }
 
 func (e *HelixError) Error() string {
@@ -37,6 +41,11 @@ func (e *HelixError) Error() string {
 }
 
 func (e *HelixError) Unwrap() error { return e.Err }
+
+func IsConflict(err error) bool {
+	var helixErr *HelixError
+	return errors.Is(err, ErrConflict) || errors.As(err, &helixErr) && helixErr.Kind == ErrorRemote && helixErr.StatusCode == http.StatusConflict
+}
 
 type Client struct {
 	baseURL    *url.URL
@@ -164,7 +173,11 @@ func (c *Client) Exec(ctx context.Context, req Request, out any, opts ...ExecOpt
 		if details == "" {
 			details = resp.Status
 		}
-		return &HelixError{Kind: ErrorRemote, Details: details}
+		remoteErr := &HelixError{Kind: ErrorRemote, Details: details, StatusCode: resp.StatusCode}
+		if resp.StatusCode == http.StatusConflict {
+			remoteErr.Err = ErrConflict
+		}
+		return remoteErr
 	}
 	if out == nil || len(respBody) == 0 {
 		return nil

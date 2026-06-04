@@ -1155,6 +1155,13 @@ type batchBase struct {
 	err     error
 }
 
+func returningVars(vars []string) []string {
+	if len(vars) == 0 {
+		return []string{}
+	}
+	return append([]string(nil), vars...)
+}
+
 func (b *batchBase) Validate() error {
 	if b == nil {
 		return errors.New("helix: nil batch")
@@ -1197,7 +1204,7 @@ func (b *ReadBatch) ForEachParam(param string, body *ReadBatch) *ReadBatch {
 	return b
 }
 func (b *ReadBatch) Returning(vars ...string) *ReadBatch {
-	b.returns = append([]string(nil), vars...)
+	b.returns = returningVars(vars)
 	return b
 }
 func (b *ReadBatch) MarshalJSON() ([]byte, error) {
@@ -1236,7 +1243,7 @@ func (b *WriteBatch) ForEachParam(param string, body *WriteBatch) *WriteBatch {
 	return b
 }
 func (b *WriteBatch) Returning(vars ...string) *WriteBatch {
-	b.returns = append([]string(nil), vars...)
+	b.returns = returningVars(vars)
 	return b
 }
 func (b *WriteBatch) MarshalJSON() ([]byte, error) {
@@ -1423,7 +1430,7 @@ func (q *ReadQueryBuilder) ForEachParam(param string, body *ReadBatch) *ReadQuer
 	return q
 }
 func (q *ReadQueryBuilder) Returning(vars ...string) Request {
-	q.batch.returns = append([]string(nil), vars...)
+	q.batch.returns = returningVars(vars)
 	return &q.queryBuilder
 }
 func (q *ReadQueryBuilder) ParamBool(name string, value bool) ParamRef {
@@ -1480,7 +1487,7 @@ func (q *WriteQueryBuilder) ForEachParam(param string, body *WriteBatch) *WriteQ
 	return q
 }
 func (q *WriteQueryBuilder) Returning(vars ...string) Request {
-	q.batch.returns = append([]string(nil), vars...)
+	q.batch.returns = returningVars(vars)
 	return &q.queryBuilder
 }
 func (q *WriteQueryBuilder) ParamBool(name string, value bool) ParamRef {

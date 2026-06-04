@@ -3,6 +3,7 @@ package helix
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,6 +45,21 @@ func TestReadQueryRejectsWriteTraversal(t *testing.T) {
 	}
 }
 
+func TestReturningEmptySerializesSequence(t *testing.T) {
+	req := ReadQuery("warm_users").VarAs("users", G().NWithLabel("User").Count()).Returning()
+	body, err := MarshalRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonText := string(body)
+	if !strings.Contains(jsonText, `"returns":[]`) {
+		t.Fatalf("request JSON should serialize empty returns as []: %s", jsonText)
+	}
+	if strings.Contains(jsonText, `"returns":null`) {
+		t.Fatalf("request JSON should not serialize empty returns as null: %s", jsonText)
+	}
+}
+
 func TestClientExec(t *testing.T) {
 	var capturedPath string
 	var capturedAuth string
@@ -72,6 +88,39 @@ func TestClientExec(t *testing.T) {
 	}
 	if got := out.Users[0].ID.String(); got != "9223372036854775807" {
 		t.Fatalf("large id lost precision: %s", got)
+	}
+}
+
+func TestClientExecConflictError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "conflict", http.StatusConflict)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out findUsersResponse
+	err = client.Exec(context.Background(), findUsers("acme", 25), &out)
+	if err == nil {
+		t.Fatal("expected conflict error")
+	}
+	var helixErr *HelixError
+	if !errors.As(err, &helixErr) {
+		t.Fatalf("expected HelixError, got %T", err)
+	}
+	if helixErr.Kind != ErrorRemote || helixErr.StatusCode != http.StatusConflict {
+		t.Fatalf("unexpected error kind/status: kind=%s status=%d", helixErr.Kind, helixErr.StatusCode)
+	}
+	if !strings.Contains(helixErr.Details, "conflict") {
+		t.Fatalf("expected conflict details, got %q", helixErr.Details)
+	}
+	if !errors.Is(err, ErrConflict) {
+		t.Fatal("expected errors.Is to detect ErrConflict")
+	}
+	if !IsConflict(err) {
+		t.Fatal("expected IsConflict to detect HTTP 409")
 	}
 }
 
