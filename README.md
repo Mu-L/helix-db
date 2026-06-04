@@ -64,9 +64,9 @@ If you'd rather wire things up yourself:
   ```
 2. **Start a local instance.** Runs a background container on port `6969` and waits until it accepts queries.
   ```bash
-   helix run dev
+   helix start dev
   ```
-  > ⚠️ The default storage mode is **in-memory** — stopping the instance wipes its data. Use `helix run dev --disk` to persist data across restarts, or `--foreground` to stream logs.
+  > ⚠️ The default storage mode is **in-memory** — stopping the instance wipes its data. Use `helix start dev --disk` to persist data across restarts, or `--foreground` to stream logs.
 3. **Send a query.**
   ```bash
    helix query dev --file examples/request.json
@@ -78,7 +78,7 @@ If you'd rather wire things up yourself:
 
 ## Writing queries with the SDKs
 
-Queries are authored with the Rust or TypeScript DSL and sent straight to a running instance as dynamic requests against `POST /v1/query` — no build or deploy step. Both SDKs produce the same JSON AST. The examples below talk to a local instance on `http://localhost:6969` (the default `helix run dev` port). See the [Querying Guide](https://docs.helix-db.com/database/querying-guide/overview) for the full builder catalog and the dynamic-query wire format.
+Queries are authored with the Rust or TypeScript DSL and sent straight to a running instance as dynamic requests against `POST /v1/query` — no build or deploy step. Both SDKs produce the same JSON AST. The examples below talk to a local instance on `http://localhost:6969` (the default `helix start dev` port). See the [Querying Guide](https://docs.helix-db.com/database/querying-guide/overview) for the full builder catalog and the dynamic-query wire format.
 
 ### Rust
 

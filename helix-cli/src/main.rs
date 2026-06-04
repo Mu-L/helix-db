@@ -1,17 +1,49 @@
+use clap::builder::styling::{AnsiColor, Color, RgbColor, Style, Styles};
 use clap::{ArgGroup, Parser, Subcommand};
 use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
 use helix_cli::{
-    AddTarget, AuthAction, ClusterConfigAction, ConfigAction, DashboardAction, InitTarget,
-    MetricsAction, ProjectConfigAction, WorkspaceConfigAction, commands, errors, metrics_sender,
-    output, update,
+    AddTarget, AuthAction, ClusterConfigAction, ConfigAction, InitTarget, MetricsAction,
+    ProjectConfigAction, WorkspaceConfigAction, commands, errors, metrics_sender, output, update,
 };
 use std::io::IsTerminal;
 use tui_banner::{Align, Banner, ColorMode, Fill, Gradient, Palette};
 
+/// Helix brand orange, matching the welcome banner.
+const HELIX_ORANGE: Color = Color::Rgb(RgbColor(255, 165, 54));
+
+/// Coloured help styling applied to every command (`--help`).
+///
+/// clap colours the structural parts of help output — section headers, the
+/// usage line, flag literals, and value placeholders — automatically when
+/// stdout is a TTY (and honours `NO_COLOR`). Free-form prose in `long_about`
+/// and `after_long_help` is left uncoloured on purpose so it stays readable
+/// when piped or redirected.
+const HELP_STYLES: Styles = Styles::styled()
+    .header(Style::new().bold().fg_color(Some(HELIX_ORANGE)))
+    .usage(Style::new().bold().fg_color(Some(HELIX_ORANGE)))
+    .literal(
+        Style::new()
+            .bold()
+            .fg_color(Some(Color::Ansi(AnsiColor::Cyan))),
+    )
+    .placeholder(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))))
+    .error(
+        Style::new()
+            .bold()
+            .fg_color(Some(Color::Ansi(AnsiColor::Red))),
+    )
+    .valid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))))
+    .invalid(
+        Style::new()
+            .bold()
+            .fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
+    );
+
 #[derive(Parser)]
 #[command(name = "Helix CLI")]
 #[command(version)]
+#[command(styles = HELP_STYLES)]
 struct Cli {
     /// Suppress output (errors and final result only)
     #[arg(long, global = true)]
@@ -52,9 +84,10 @@ enum Commands {
         target: Option<AddTarget>,
     },
 
-    /// Run a local v2 instance in the background
-    Run {
-        /// Instance name to run
+    /// Start a local v2 instance in the background
+    #[command(alias = "run")]
+    Start {
+        /// Instance name to start
         instance: Option<String>,
         /// Run in the foreground and stop on Ctrl-C
         #[arg(long, conflicts_with = "detach")]
@@ -109,38 +142,65 @@ enum Commands {
         end: Option<String>,
     },
 
-    /// Send a dynamic query to POST /v1/query
+    /// Send a query to a running Helix instance
     #[command(group(
         ArgGroup::new("query_input")
             .required(true)
             .args(["file", "json", "ts", "ts_file"])
     ))]
+    // Use the compact (short) help layout for both `-h` and `--help`. clap's
+    // long-help layout hardcodes a blank line between every option, which is
+    // too sparse here, so we render the short layout and supply examples via
+    // `after_help` instead of `after_long_help`.
+    #[command(disable_help_flag = true)]
+    #[command(after_help = r#"Examples:
+  helix query --file examples/request.json
+  helix query -e 'readBatch().varAs("c", g().nWithLabel("User").count()).returning(["c"])'
+
+Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
     Query {
-        /// Instance name
+        /// Print help
+        #[arg(short = 'h', long = "help", action = clap::ArgAction::HelpShort)]
+        help: Option<bool>,
+        /// Instance to query (default: dev)
         instance: Option<String>,
-        /// JSON request file
-        #[arg(short, long, value_name = "REQUEST.json")]
+        /// Query from a JSON request file
+        #[arg(
+            short,
+            long,
+            value_name = "REQUEST.json",
+            help_heading = "Input (pick one)"
+        )]
         file: Option<String>,
-        /// JSON request body
-        #[arg(long, value_name = "JSON")]
+        /// Query from an inline JSON string
+        #[arg(long, value_name = "JSON", help_heading = "Input (pick one)")]
         json: Option<String>,
-        /// TypeScript DSL expression, like `mysql -e`. Auto-imports g/readBatch/writeBatch/defineParams/param.
-        #[arg(short = 'e', long = "ts", value_name = "TS")]
+        /// Query from a TypeScript DSL expression, like `mysql -e`
+        #[arg(
+            short = 'e',
+            long = "ts",
+            value_name = "TS",
+            help_heading = "Input (pick one)"
+        )]
         ts: Option<String>,
-        /// TypeScript DSL file containing a single builder expression
-        #[arg(long = "ts-file", value_name = "QUERY.ts")]
+        /// Query from a TypeScript DSL file
+        #[arg(
+            long = "ts-file",
+            value_name = "QUERY.ts",
+            help_heading = "Input (pick one)"
+        )]
         ts_file: Option<String>,
-        /// Add X-Helix-Warm header. Only valid for read requests.
-        #[arg(long)]
-        warm: bool,
-        /// Override host for local query execution
-        #[arg(long)]
+        /// Override the host (local instances only)
+        #[arg(long, value_name = "HOST", help_heading = "Connection")]
         host: Option<String>,
-        /// Override port for local query execution
-        #[arg(long)]
+        /// Override the port (local instances only)
+        #[arg(long, value_name = "PORT", help_heading = "Connection")]
         port: Option<u16>,
-        /// Print compact JSON instead of pretty JSON
-        #[arg(long)]
+        /// Pre-warm caches with X-Helix-Warm (read requests only)
+        #[arg(long, help_heading = "Output")]
+        warm: bool,
+        /// Print compact single-line JSON
+        #[arg(long, help_heading = "Output")]
         compact: bool,
     },
 
@@ -223,12 +283,6 @@ enum Commands {
         action: MetricsAction,
     },
 
-    /// Launch the Helix Dashboard
-    Dashboard {
-        #[command(subcommand)]
-        action: DashboardAction,
-    },
-
     /// Update to the latest CLI version
     Update {
         /// Force update even if already on latest version
@@ -244,6 +298,52 @@ enum Commands {
         /// Feedback message
         message: Option<String>,
     },
+
+    // --- Removed v2 commands -------------------------------------------------
+    // Hidden so they don't clutter `--help`, but caught explicitly to return a
+    // helpful "this moved" message instead of clap's bare "unrecognized
+    // subcommand". The trailing args make `helix compile path --flag` route here
+    // (a friendly error) rather than failing on an unexpected-argument parse.
+    /// (removed) HelixDB v2 validates queries server-side; there is no compile step
+    #[command(hide = true)]
+    Compile {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        args: Vec<String>,
+    },
+    /// (removed) HelixDB v2 validates queries server-side; there is no check step
+    #[command(hide = true)]
+    Check {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        args: Vec<String>,
+    },
+    /// (removed) use `helix push` to deploy an Enterprise instance
+    #[command(hide = true)]
+    Deploy {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        args: Vec<String>,
+    },
+}
+
+/// Build the friendly error shown when an agent guesses a removed query
+/// command (`helix compile` / `helix check`). HelixDB v2 has no client-side
+/// compile step — queries are validated server-side when sent to a running
+/// instance.
+fn removed_query_command_error(command: &str) -> eyre::Report {
+    errors::CliError::new(format!("`helix {command}` is not a command in HelixDB v2"))
+        .with_hint(
+            "HelixDB v2 validates queries server-side — there is no compile/check step. \
+             Send a dynamic query to a running instance with \
+             `helix query <instance> --file <request.json>`.",
+        )
+        .into()
+}
+
+/// Build the friendly error shown when `helix deploy` is guessed instead of
+/// the real `helix push`.
+fn removed_deploy_command_error() -> eyre::Report {
+    errors::CliError::new("`helix deploy` is not a command in HelixDB v2")
+        .with_hint("Use `helix push <instance>` to deploy an Enterprise Cloud instance.")
+        .into()
 }
 
 fn display_welcome(update_available: Option<String>) {
@@ -296,8 +396,8 @@ fn display_welcome(update_available: Option<String>) {
 
     print_section("Local Development", use_color);
     print_command(
-        "helix run <instance>",
-        "Run a local instance in the background",
+        "helix start <instance>",
+        "Start a local instance in the background",
         use_color,
     );
     print_command(
@@ -328,7 +428,6 @@ fn display_welcome(update_available: Option<String>) {
         "Sync queries and config with a cloud instance",
         use_color,
     );
-    // print_command("helix dashboard", "Launch the Helix Dashboard", use_color);
 
     println!();
     println!("Docs: https://docs.helix-db.com");
@@ -346,7 +445,11 @@ fn print_section(title: &str, use_color: bool) {
 }
 
 fn print_command(cmd: &str, desc: &str, use_color: bool) {
-    let padded = format!("{cmd:<38}");
+    print_command_w(cmd, desc, 38, use_color);
+}
+
+fn print_command_w(cmd: &str, desc: &str, width: usize, use_color: bool) {
+    let padded = format!("{cmd:<width$}");
     if use_color {
         println!(
             "  {} {}",
@@ -358,9 +461,159 @@ fn print_command(cmd: &str, desc: &str, use_color: bool) {
     }
 }
 
+/// True when the invocation is a bare top-level help request (`helix help`,
+/// `helix --help`, `helix -h`) that should render our grouped overview. A help
+/// flag/word that follows a subcommand (e.g. `helix query --help`, `helix help
+/// query`) returns false so clap renders that command's own detailed help.
+fn wants_top_level_help() -> bool {
+    is_top_level_help_request(std::env::args().skip(1))
+}
+
+/// Pure core of [`wants_top_level_help`] so the arg matching can be unit tested
+/// without touching the process argv.
+fn is_top_level_help_request<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut args = args.into_iter();
+    match args.next().as_ref().map(AsRef::as_ref) {
+        Some("-h") | Some("--help") => true,
+        // `helix help` alone is ours; `helix help <command>` falls through to
+        // clap so it prints that command's detailed help.
+        Some("help") => args.next().is_none(),
+        _ => false,
+    }
+}
+
+/// Render a clean, grouped overview of every command — used for `helix help`,
+/// `helix --help`, and `helix -h`. Subcommand-level detail still comes from
+/// clap's per-command `--help` (e.g. `helix query --help`).
+fn print_help() {
+    let use_color = std::io::stdout().is_terminal();
+    let version = update::current_version();
+    const W: usize = 14;
+
+    if use_color {
+        println!(
+            "{} {}",
+            "Helix DB CLI".bold(),
+            format!("v{version}").dimmed()
+        );
+    } else {
+        println!("Helix DB CLI v{version}");
+    }
+    println!();
+    println!("Usage: helix [OPTIONS] <COMMAND>");
+
+    print_section("Getting started", use_color);
+    print_command_w(
+        "chef",
+        "Bootstrap a Helix app with a coding agent (alias: cook)",
+        W,
+        use_color,
+    );
+    print_command_w(
+        "init",
+        "Scaffold a new project (init local | init cloud)",
+        W,
+        use_color,
+    );
+    print_command_w(
+        "add",
+        "Add a local or Cloud instance to an existing project",
+        W,
+        use_color,
+    );
+
+    print_section("Local development", use_color);
+    print_command_w(
+        "start",
+        "Start a local instance in the background (alias: run)",
+        W,
+        use_color,
+    );
+    print_command_w("stop", "Stop a background local instance", W, use_color);
+    print_command_w(
+        "restart",
+        "Restart a background local instance",
+        W,
+        use_color,
+    );
+    print_command_w(
+        "status",
+        "Show local and Cloud instance status",
+        W,
+        use_color,
+    );
+    print_command_w("logs", "View or follow instance logs", W, use_color);
+    print_command_w(
+        "query",
+        "Send a dynamic query to POST /v1/query",
+        W,
+        use_color,
+    );
+    print_command_w(
+        "prune",
+        "Remove Helix-owned local containers and state",
+        W,
+        use_color,
+    );
+    print_command_w("delete", "Delete an instance from helix.toml", W, use_color);
+
+    print_section("Helix Cloud", use_color);
+    print_command_w("auth", "Log in/out and manage Cloud API keys", W, use_color);
+    print_command_w("push", "Deploy an Enterprise Cloud instance", W, use_color);
+    print_command_w("sync", "Sync Cloud metadata into helix.toml", W, use_color);
+    print_command_w(
+        "workspace",
+        "Manage the active Cloud workspace",
+        W,
+        use_color,
+    );
+    print_command_w("project", "Manage the linked Cloud project", W, use_color);
+    print_command_w("cluster", "List and inspect Cloud clusters", W, use_color);
+
+    print_section("CLI", use_color);
+    print_command_w("metrics", "Manage telemetry collection", W, use_color);
+    print_command_w(
+        "update",
+        "Update the CLI to the latest version",
+        W,
+        use_color,
+    );
+    print_command_w("feedback", "Send feedback to the Helix team", W, use_color);
+    print_command_w("help", "Show this help", W, use_color);
+
+    print_section("Options", use_color);
+    print_command_w("--quiet", "Errors and final result only", W, use_color);
+    print_command_w(
+        "-v, --verbose",
+        "Detailed output with timing information",
+        W,
+        use_color,
+    );
+    print_command_w("-h, --help", "Show this help", W, use_color);
+    print_command_w("-V, --version", "Show the CLI version", W, use_color);
+
+    println!();
+    println!("Run 'helix <command> --help' for details on a specific command.");
+    println!("Docs: https://docs.helix-db.com");
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
+
+    // Render our grouped overview for a bare top-level help request before doing
+    // any setup — keeps `helix help` / `helix --help` instant and offline. clap
+    // still owns per-command help (`helix query --help`) and the welcome banner
+    // on a no-arg invocation.
+    if wants_top_level_help() {
+        print_help();
+        return Ok(());
+    }
+
     let metrics_sender = metrics_sender::MetricsSender::new()?;
     metrics_sender.send_cli_install_event_if_first_time();
     let update_available = update::check_for_updates().await?;
@@ -390,14 +643,14 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Chef {}) => commands::chef::run(&metrics_sender).await,
         Some(Commands::Add { target }) => commands::add::run(target).await,
-        Some(Commands::Run {
+        Some(Commands::Start {
             instance,
             foreground,
             detach: _,
             port,
             disk,
             persist,
-        }) => commands::run::run(instance, foreground, port, disk, persist).await,
+        }) => commands::start::run(instance, foreground, port, disk, persist).await,
         Some(Commands::Stop { instance }) => commands::stop::run(instance).await,
         Some(Commands::Restart { instance }) => commands::restart::run(instance).await,
         Some(Commands::Status { instance }) => commands::status::run(instance).await,
@@ -418,6 +671,7 @@ async fn main() -> Result<()> {
             host,
             port,
             compact,
+            ..
         }) => {
             commands::query::run(instance, file, json, ts, ts_file, warm, host, port, compact).await
         }
@@ -439,9 +693,11 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Delete { instance, yes }) => commands::delete::run(instance, yes).await,
         Some(Commands::Metrics { action }) => commands::metrics::run(action).await,
-        Some(Commands::Dashboard { action }) => commands::dashboard::run(action).await,
         Some(Commands::Update { force, v1 }) => commands::update::run(force, v1).await,
         Some(Commands::Feedback { message }) => commands::feedback::run(message).await,
+        Some(Commands::Compile { .. }) => Err(removed_query_command_error("compile")),
+        Some(Commands::Check { .. }) => Err(removed_query_command_error("check")),
+        Some(Commands::Deploy { .. }) => Err(removed_deploy_command_error()),
     };
 
     metrics_sender.shutdown().await?;
@@ -469,11 +725,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn run_defaults_to_background() {
-        let cli = Cli::parse_from(["helix", "run", "qa"]);
+    fn start_defaults_to_background() {
+        let cli = Cli::parse_from(["helix", "start", "qa"]);
 
         match cli.command {
-            Some(Commands::Run {
+            Some(Commands::Start {
                 instance,
                 foreground,
                 detach,
@@ -488,48 +744,60 @@ mod tests {
                 assert!(!disk);
                 assert!(!persist);
             }
-            _ => panic!("expected run command"),
+            _ => panic!("expected start command"),
         }
     }
 
     #[test]
-    fn run_foreground_flag_enables_attached_mode() {
-        let cli = Cli::parse_from(["helix", "run", "qa", "--foreground"]);
+    fn run_alias_maps_to_start_command() {
+        let cli = Cli::parse_from(["helix", "run", "qa"]);
 
         match cli.command {
-            Some(Commands::Run { foreground, .. }) => assert!(foreground),
-            _ => panic!("expected run command"),
+            Some(Commands::Start { instance, .. }) => {
+                assert_eq!(instance.as_deref(), Some("qa"));
+            }
+            _ => panic!("expected run alias to map to start command"),
         }
     }
 
     #[test]
-    fn run_disk_flag_enables_on_disk_mode() {
-        let cli = Cli::parse_from(["helix", "run", "qa", "--disk"]);
+    fn start_foreground_flag_enables_attached_mode() {
+        let cli = Cli::parse_from(["helix", "start", "qa", "--foreground"]);
 
         match cli.command {
-            Some(Commands::Run { disk, .. }) => assert!(disk),
-            _ => panic!("expected run command"),
+            Some(Commands::Start { foreground, .. }) => assert!(foreground),
+            _ => panic!("expected start command"),
         }
     }
 
     #[test]
-    fn run_detach_flag_remains_background_alias() {
-        let cli = Cli::parse_from(["helix", "run", "qa", "--detach"]);
+    fn start_disk_flag_enables_on_disk_mode() {
+        let cli = Cli::parse_from(["helix", "start", "qa", "--disk"]);
 
         match cli.command {
-            Some(Commands::Run {
+            Some(Commands::Start { disk, .. }) => assert!(disk),
+            _ => panic!("expected start command"),
+        }
+    }
+
+    #[test]
+    fn start_detach_flag_remains_background_alias() {
+        let cli = Cli::parse_from(["helix", "start", "qa", "--detach"]);
+
+        match cli.command {
+            Some(Commands::Start {
                 foreground, detach, ..
             }) => {
                 assert!(!foreground);
                 assert!(detach);
             }
-            _ => panic!("expected run command"),
+            _ => panic!("expected start command"),
         }
     }
 
     #[test]
-    fn run_foreground_conflicts_with_detach_alias() {
-        assert!(Cli::try_parse_from(["helix", "run", "qa", "--foreground", "--detach"]).is_err());
+    fn start_foreground_conflicts_with_detach_alias() {
+        assert!(Cli::try_parse_from(["helix", "start", "qa", "--foreground", "--detach"]).is_err());
     }
 
     #[test]
@@ -538,7 +806,10 @@ mod tests {
 
         match cli.command {
             Some(Commands::Init {
-                target: Some(InitTarget::Local { name, port, disk }),
+                target:
+                    Some(InitTarget::Local {
+                        name, port, disk, ..
+                    }),
                 ..
             }) => {
                 assert_eq!(name, "dev");
@@ -566,6 +837,61 @@ mod tests {
             }
             _ => panic!("expected init cloud command"),
         }
+    }
+
+    #[test]
+    fn init_no_skills_parses_before_subcommand() {
+        let cli = Cli::parse_from(["helix", "init", "--no-skills", "local"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                no_skills,
+                target: Some(target),
+                ..
+            }) => {
+                assert!(no_skills);
+                assert!(matches!(target, InitTarget::Local { .. }));
+            }
+            _ => panic!("expected init local command"),
+        }
+    }
+
+    #[test]
+    fn init_no_skills_parses_after_subcommand() {
+        // Agents naturally type `helix init local --no-skills`; the flag lives on
+        // the subcommand too, so this must parse and resolve to "skip skills".
+        let cli = Cli::parse_from(["helix", "init", "local", "--no-skills"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                target: Some(target),
+                ..
+            }) => {
+                assert!(matches!(target, InitTarget::Local { .. }));
+                assert_eq!(target.skills_override(), Some(false));
+            }
+            _ => panic!("expected init local command"),
+        }
+    }
+
+    #[test]
+    fn init_skills_parses_after_subcommand() {
+        let cli = Cli::parse_from(["helix", "init", "local", "--skills"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                target: Some(target),
+                ..
+            }) => assert_eq!(target.skills_override(), Some(true)),
+            _ => panic!("expected init local command"),
+        }
+    }
+
+    #[test]
+    fn init_skills_and_no_skills_conflict_after_subcommand() {
+        assert!(
+            Cli::try_parse_from(["helix", "init", "local", "--skills", "--no-skills"]).is_err()
+        );
     }
 
     #[test]
@@ -876,12 +1202,12 @@ mod tests {
     }
 
     #[test]
-    fn run_persist_flag_saves_settings() {
-        let cli = Cli::parse_from(["helix", "run", "qa", "--persist"]);
+    fn start_persist_flag_saves_settings() {
+        let cli = Cli::parse_from(["helix", "start", "qa", "--persist"]);
 
         match cli.command {
-            Some(Commands::Run { persist, .. }) => assert!(persist),
-            _ => panic!("expected run command"),
+            Some(Commands::Start { persist, .. }) => assert!(persist),
+            _ => panic!("expected start command"),
         }
     }
 
@@ -917,5 +1243,88 @@ mod tests {
             Cli::try_parse_from(["helix", "query", "dev", "--json", "{}", "-e", "readBatch()"])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn removed_compile_command_parses_to_hidden_variant() {
+        let cli = Cli::parse_from(["helix", "compile"]);
+        assert!(matches!(cli.command, Some(Commands::Compile { .. })));
+    }
+
+    #[test]
+    fn removed_check_command_parses_to_hidden_variant() {
+        let cli = Cli::parse_from(["helix", "check"]);
+        assert!(matches!(cli.command, Some(Commands::Check { .. })));
+    }
+
+    #[test]
+    fn removed_deploy_command_parses_to_hidden_variant() {
+        let cli = Cli::parse_from(["helix", "deploy"]);
+        assert!(matches!(cli.command, Some(Commands::Deploy { .. })));
+    }
+
+    #[test]
+    fn removed_commands_tolerate_trailing_args() {
+        // Agents guess `helix compile <path>` / extra flags; these must still
+        // route to the friendly-error handler instead of failing to parse.
+        assert!(matches!(
+            Cli::parse_from(["helix", "compile", "queries/", "--path", "x"]).command,
+            Some(Commands::Compile { .. })
+        ));
+        assert!(matches!(
+            Cli::parse_from(["helix", "check", "src/main.hx"]).command,
+            Some(Commands::Check { .. })
+        ));
+    }
+
+    #[test]
+    fn top_level_help_requests_are_recognized() {
+        assert!(is_top_level_help_request(["help"]));
+        assert!(is_top_level_help_request(["--help"]));
+        assert!(is_top_level_help_request(["-h"]));
+    }
+
+    #[test]
+    fn help_following_a_command_is_left_to_clap() {
+        // `helix help <command>` and `helix <command> --help` must NOT be claimed
+        // by our top-level renderer — clap shows that command's detailed help.
+        assert!(!is_top_level_help_request(["help", "query"]));
+        assert!(!is_top_level_help_request(["query", "--help"]));
+        assert!(!is_top_level_help_request(["start", "-h"]));
+    }
+
+    #[test]
+    fn non_help_invocations_are_not_claimed() {
+        assert!(!is_top_level_help_request(Vec::<String>::new()));
+        assert!(!is_top_level_help_request(["status"]));
+        assert!(!is_top_level_help_request(["--version"]));
+    }
+
+    #[test]
+    fn subcommand_help_flag_is_left_to_clap() {
+        // With clap defaults intact, `helix query --help` still triggers clap's
+        // per-command help (which surfaces as a DisplayHelp "error" from the
+        // parser before exit).
+        let err = Cli::try_parse_from(["helix", "query", "--help"])
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+    }
+
+    #[test]
+    fn query_help_is_informative() {
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        let query = cmd
+            .get_subcommands_mut()
+            .find(|c| c.get_name() == "query")
+            .expect("query subcommand should exist");
+        // `query` renders the compact (short) help layout for both -h and --help.
+        let help = query.render_help().to_string();
+        assert!(help.contains("Examples:"), "examples block missing");
+        // Options are grouped under scannable headings.
+        assert!(help.contains("Input (pick one):"), "input heading missing");
+        assert!(help.contains("Connection:"), "connection heading missing");
+        assert!(help.contains("Output:"), "output heading missing");
     }
 }

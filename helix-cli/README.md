@@ -5,7 +5,7 @@ Command-line interface for managing v2 Helix projects, local development instanc
 ## Commands
 
 - `init`: initialize a v2 project with `helix.toml` and a dynamic query example.
-- `chef`: bootstrap a first Helix app with skills, docs MCP, local runtime, starter queries, seed data, and dashboard launch.
+- `chef`: bootstrap a first Helix app with skills, docs MCP, local runtime, starter queries, seed data, and a launched coding agent.
 - `add`: add a local v2 or Enterprise Cloud instance to an existing project.
 - `run`: run a local v2 instance in the background by default, attached with `--foreground`, or with persistent local storage using `--disk`.
 - `stop` / `restart` / `status`: manage local v2 instances and inspect Enterprise Cloud config.
@@ -20,7 +20,6 @@ Command-line interface for managing v2 Helix projects, local development instanc
 - `prune`: clean Helix-owned local containers, disk-mode volumes, and workspaces.
 - `delete`: remove an instance from `helix.toml` and clean local runtime state.
 - `metrics`: manage telemetry level.
-- `dashboard`: manage the Helix Dashboard.
 - `update`: update the CLI.
 - `feedback`: send feedback to the Helix team.
 

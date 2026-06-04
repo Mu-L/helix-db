@@ -2,6 +2,7 @@ use dirs::home_dir;
 use eyre::{Result, eyre};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -9,6 +10,23 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const GITHUB_API_URL: &str = "https://api.github.com/repos/helixdb/helix-db/releases/latest";
 const UPDATE_CHECK_INTERVAL: u64 = 24 * 60 * 60; // 24 hours in seconds
+
+/// Returns true when the user has opted out of the background update check via
+/// `HELIX_NO_UPDATE_CHECK` or `HELIX_DISABLE_UPDATE_CHECK`. Lets sandboxes, CI,
+/// and restricted-network environments skip the GitHub API call (and its
+/// up-to-10s timeout) on the first command of a fresh machine.
+fn update_check_disabled() -> bool {
+    env_disables_update_check(
+        std::env::var_os("HELIX_NO_UPDATE_CHECK"),
+        std::env::var_os("HELIX_DISABLE_UPDATE_CHECK"),
+    )
+}
+
+/// Pure core of [`update_check_disabled`] so the opt-out logic can be unit
+/// tested without mutating process-global environment state.
+fn env_disables_update_check(no_update_check: Option<OsString>, disable: Option<OsString>) -> bool {
+    no_update_check.is_some() || disable.is_some()
+}
 
 #[derive(Deserialize)]
 #[allow(unused)]
@@ -117,6 +135,12 @@ fn is_newer_version(current: &str, latest: &str) -> bool {
 /// Check for updates and return the latest version if an update is available.
 /// Returns `Some(latest_version)` when an update is available, `None` otherwise.
 pub async fn check_for_updates() -> Result<Option<String>> {
+    // Honor the opt-out before touching the cache or the network, so restricted
+    // environments never block on the GitHub API.
+    if update_check_disabled() {
+        return Ok(None);
+    }
+
     // Skip update check if not needed (to avoid slowing down every command)
     if !should_check_for_updates().unwrap_or(true) {
         // Still check cache for any previously found updates
@@ -157,4 +181,31 @@ pub async fn check_for_updates() -> Result<Option<String>> {
 /// Get the current version of the CLI.
 pub const fn current_version() -> &'static str {
     CURRENT_VERSION
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_check_enabled_when_no_env_vars_set() {
+        assert!(!env_disables_update_check(None, None));
+    }
+
+    #[test]
+    fn update_check_disabled_by_either_env_var() {
+        assert!(env_disables_update_check(Some(OsString::from("1")), None));
+        assert!(env_disables_update_check(None, Some(OsString::from("1"))));
+        assert!(env_disables_update_check(
+            Some(OsString::from("1")),
+            Some(OsString::from("1"))
+        ));
+    }
+
+    #[test]
+    fn update_check_disabled_even_when_value_is_empty() {
+        // Presence is what matters (`HELIX_NO_UPDATE_CHECK=` still opts out),
+        // matching how `var_os` reports a set-but-empty variable.
+        assert!(env_disables_update_check(Some(OsString::new()), None));
+    }
 }

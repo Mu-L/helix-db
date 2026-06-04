@@ -27,7 +27,7 @@ pub async fn run(
     let InstanceInfo::Enterprise(config) = instance_config else {
         if instance_config.is_local() {
             return Err(eyre!(
-                "Local instance '{instance_name}' uses the v2 runtime. Run 'helix run {instance_name}' instead."
+                "Local instance '{instance_name}' uses the v2 runtime. Run 'helix start {instance_name}' instead."
             ));
         }
         return Err(eyre!(

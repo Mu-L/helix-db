@@ -167,19 +167,21 @@ pub(crate) fn detect_runtime() -> Result<ContainerRuntime> {
 /// Warn (never error) if no container runtime is installed or it isn't running.
 ///
 /// Lets `init`/`chef` give an early heads-up without blocking project scaffolding —
-/// users can install or start a runtime before `helix run`.
+/// users can install or start a runtime before `helix start`.
 pub(crate) fn warn_if_container_runtime_unavailable() {
     match detect_runtime() {
         Err(_) => crate::output::warning(
             "No container runtime found. Install Docker, OrbStack, Podman, or Colima \
-             to run local Helix instances with 'helix run'.",
+             to run local Helix instances with 'helix start'.",
         ),
         Ok(runtime) => {
             // Quick, non-blocking probe — must not trigger daemon auto-start
             // (which can block for up to 120s) during project scaffolding.
             if !LocalRuntime::is_running(runtime) {
                 crate::output::warning(&format!(
-                    "{} is installed but not running. Start it before 'helix run'.",
+                    "{} is installed but not running. Start it before 'helix start' — \
+                     `open -a Docker` / `colima start` on macOS, `sudo systemctl start docker` \
+                     (or `sudo dockerd &`) on Linux/headless.",
                     runtime.label()
                 ));
             }

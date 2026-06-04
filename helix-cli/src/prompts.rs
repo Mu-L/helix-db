@@ -133,7 +133,14 @@ pub fn select_init_target() -> Result<InitTarget> {
             let name = input_project_instance_name("dev")?;
             let port = input_port(DEFAULT_LOCAL_PORT)?;
             let disk = select_local_disk_mode()?;
-            Ok(InitTarget::Local { name, port, disk })
+            Ok(InitTarget::Local {
+                name,
+                port,
+                disk,
+                // Skills install is decided by a separate interactive prompt.
+                skills: false,
+                no_skills: false,
+            })
         }
         InstanceKind::Enterprise => Ok(InitTarget::Enterprise {
             name: input_project_instance_name("production")?,
@@ -141,6 +148,8 @@ pub fn select_init_target() -> Result<InitTarget> {
             // available clusters and lets the user pick one.
             cluster_id: None,
             gateway_url: None,
+            skills: false,
+            no_skills: false,
         }),
     }
 }
