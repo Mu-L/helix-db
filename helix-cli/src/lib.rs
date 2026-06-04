@@ -42,6 +42,12 @@ pub enum InitTarget {
         /// Use on-disk storage backed by a local MinIO container
         #[arg(long)]
         disk: bool,
+        /// Install the Helix agent skills + docs MCP (prompted when interactive)
+        #[arg(long, conflicts_with = "no_skills")]
+        skills: bool,
+        /// Skip installing the Helix agent skills + docs MCP
+        #[arg(long = "no-skills", conflicts_with = "skills")]
+        no_skills: bool,
     },
     /// Initialize a Helix Cloud project
     #[command(name = "cloud", alias = "enterprise")]
@@ -55,7 +61,37 @@ pub enum InitTarget {
         /// Runtime gateway URL for dynamic queries
         #[arg(long)]
         gateway_url: Option<String>,
+        /// Install the Helix agent skills + docs MCP (prompted when interactive)
+        #[arg(long, conflicts_with = "no_skills")]
+        skills: bool,
+        /// Skip installing the Helix agent skills + docs MCP
+        #[arg(long = "no-skills", conflicts_with = "skills")]
+        no_skills: bool,
     },
+}
+
+impl InitTarget {
+    /// Resolve the `--skills`/`--no-skills` flags supplied *after* the
+    /// subcommand (e.g. `helix init local --no-skills`) into the same
+    /// `Option<bool>` shape used for the top-level flags. Returns `None` when
+    /// neither was set, so the caller can fall back to the parent-level flag.
+    pub fn skills_override(&self) -> Option<bool> {
+        let (skills, no_skills) = match self {
+            InitTarget::Local {
+                skills, no_skills, ..
+            }
+            | InitTarget::Enterprise {
+                skills, no_skills, ..
+            } => (*skills, *no_skills),
+        };
+        if skills {
+            Some(true)
+        } else if no_skills {
+            Some(false)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -88,6 +124,28 @@ pub enum AddTarget {
 }
 
 #[derive(Subcommand)]
+pub enum SkillsAction {
+    /// Install the Helix agent skills (npx skills add HelixDB/skills)
+    Install {
+        /// Install into the current project (.<agent>/skills) instead of globally
+        #[arg(long)]
+        project: bool,
+    },
+    /// Refresh installed Helix agent skills to the latest version
+    Update {
+        /// Operate on the current project instead of globally
+        #[arg(long)]
+        project: bool,
+    },
+    /// List installed agent skills
+    List {
+        /// List project skills instead of global skills
+        #[arg(long)]
+        project: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum MetricsAction {
     /// Enable full metrics collection
     Full,
@@ -96,34 +154,6 @@ pub enum MetricsAction {
     /// Disable metrics collection
     Off,
     /// Show metrics status
-    Status,
-}
-
-#[derive(Subcommand)]
-pub enum DashboardAction {
-    /// Start the dashboard
-    Start {
-        /// Instance to connect to
-        instance: Option<String>,
-        /// Port to run dashboard on
-        #[arg(short, long, default_value = "3000")]
-        port: u16,
-        /// Helix host to connect to
-        #[arg(long)]
-        host: Option<String>,
-        /// Helix port to connect to
-        #[arg(long, default_value_t = crate::config::DEFAULT_LOCAL_PORT)]
-        helix_port: u16,
-        /// Run dashboard in foreground with logs
-        #[arg(long)]
-        attach: bool,
-        /// Restart if dashboard is already running
-        #[arg(long)]
-        restart: bool,
-    },
-    /// Stop the dashboard
-    Stop,
-    /// Show dashboard status
     Status,
 }
 

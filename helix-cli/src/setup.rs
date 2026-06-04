@@ -55,6 +55,18 @@ fn skills_install_args(automatic: bool, global: bool) -> Vec<&'static str> {
     args
 }
 
+/// Build the `npx skills list` argument list.
+///
+/// `skills list` defaults to project scope, so `-g` is what surfaces the
+/// globally-installed Helix skills (the default for `helix init`/`chef`).
+fn skills_list_args(global: bool) -> Vec<&'static str> {
+    let mut args = vec!["-y", "skills", "list"];
+    if global {
+        args.push("-g");
+    }
+    args
+}
+
 /// Build the `npx add-mcp <docs url>` argument list.
 fn mcp_install_args(automatic: bool, global: bool) -> Vec<&'static str> {
     let mut args = if automatic {
@@ -90,6 +102,12 @@ pub(crate) fn install_skills(project_dir: &Path, automatic: bool, global: bool) 
         &args,
         automatic,
     )
+}
+
+/// List installed agent skills with `npx skills list`.
+pub(crate) fn list_skills(project_dir: &Path, global: bool) -> Result<()> {
+    let args = skills_list_args(global);
+    run_external_command(project_dir, "Listing skills", "npx", &args, false)
 }
 
 /// Install the Helix docs MCP with `npx add-mcp`.
@@ -167,19 +185,21 @@ pub(crate) fn detect_runtime() -> Result<ContainerRuntime> {
 /// Warn (never error) if no container runtime is installed or it isn't running.
 ///
 /// Lets `init`/`chef` give an early heads-up without blocking project scaffolding —
-/// users can install or start a runtime before `helix run`.
+/// users can install or start a runtime before `helix start`.
 pub(crate) fn warn_if_container_runtime_unavailable() {
     match detect_runtime() {
         Err(_) => crate::output::warning(
             "No container runtime found. Install Docker, OrbStack, Podman, or Colima \
-             to run local Helix instances with 'helix run'.",
+             to run local Helix instances with 'helix start'.",
         ),
         Ok(runtime) => {
             // Quick, non-blocking probe — must not trigger daemon auto-start
             // (which can block for up to 120s) during project scaffolding.
             if !LocalRuntime::is_running(runtime) {
                 crate::output::warning(&format!(
-                    "{} is installed but not running. Start it before 'helix run'.",
+                    "{} is installed but not running. Start it before 'helix start' — \
+                     `open -a Docker` / `colima start` on macOS, `sudo systemctl start docker` \
+                     (or `sudo dockerd &`) on Linux/headless.",
                     runtime.label()
                 ));
             }
@@ -224,6 +244,22 @@ mod tests {
         let args = skills_install_args(false, false);
         assert!(!args.contains(&"-g"));
         assert!(!args.contains(&"-y"));
+    }
+
+    #[test]
+    fn skills_list_args_global() {
+        let args = skills_list_args(true);
+        assert_eq!(args[0], "-y");
+        assert!(args.contains(&"skills"));
+        assert!(args.contains(&"list"));
+        assert_eq!(args.last(), Some(&"-g"));
+    }
+
+    #[test]
+    fn skills_list_args_project() {
+        let args = skills_list_args(false);
+        assert!(args.contains(&"list"));
+        assert!(!args.contains(&"-g"));
     }
 
     #[test]

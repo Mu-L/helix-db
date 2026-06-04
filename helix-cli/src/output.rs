@@ -36,7 +36,7 @@ static VERBOSITY: AtomicU8 = AtomicU8::new(2); // Default: Normal
 pub enum Verbosity {
     /// Suppress everything, even the per-command final result line.
     /// Set internally when one command wraps another (e.g. `helix chef` driving
-    /// `init::run` and `run::run` behind its own progress spinners).
+    /// `init::run` and `start::run` behind its own progress spinners).
     Silent = 0,
     /// Only errors and final result
     Quiet = 1,

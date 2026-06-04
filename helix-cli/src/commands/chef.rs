@@ -71,7 +71,7 @@ You are a HelixDB expert. The user just ran `helix chef` to bootstrap a new proj
 `helix chef` already did all of this — do NOT redo any of it:
 
 - Created `helix.toml` with a local instance named `dev` on port `6969`.
-- Started the local DB (`helix run dev`). It is running in the background, in-memory.
+- Started the local DB (`helix start dev`). It is running in the background, in-memory.
 {seed_state}
 - Installed the HelixDB query skills. This project is **TypeScript**, so you author queries with the **TypeScript DSL** (`@helix-db/helix-db`): `helix-query-typescript` is the skill you reach for first — it is the default and authoritative for the builder API. `helix-query-json-dynamic` documents the raw `/v1/query` JSON the DSL emits — your fallback for dynamic-shaped queries or debugging. Also installed: `helix-query-rust`, `helix-query-optimize`, `helix-query-from-gremlin`, `helix-query-from-cypher`, `helix-query-from-hql`, `helix-memory-system`. Invoke them when authoring queries — they are authoritative. Do not guess query syntax.
 - If the user wants anything involving **memory or retrieval** — long-term memory, recall/"remember", personalization, agent memory, RAG, semantic/full-text search over their own data, or recommendations — invoke the `helix-memory-system` skill. It is authoritative for the memory/retrieval data model and the generation, updating, deletion, and categorisation lifecycle.
@@ -537,7 +537,7 @@ The commands you should run while building:
 - `cd web && npm run build && npm run start` — production-ish check; not required for the MVP.
 
 Do NOT run:
-- `helix init`, `helix chef`, `helix run dev`, `helix dashboard start` — already done. Re-running can fail or duplicate state.
+- `helix init`, `helix chef`, `helix start dev` — already done. Re-running can fail or duplicate state.
 - `helix push`, `helix sync`, `helix deploy` — V2 Cloud commands; the user is on a local DB.
 - `helix prune`, `helix delete` — destructive. Only the user runs these.
 
@@ -554,7 +554,7 @@ When `helix query` fails, the response body (or stderr) contains the error. Comm
 - DO NOT pass a single id as a scalar to `g().n(...)` — use an array (`[42n]`), `NodeRef.param('ids')` (param typed as an array of i64), or `NodeRef.var('stored')`.
 - DO NOT call `JSON.stringify` on a request — use `.toJsonString()` / `.toDynamicJson(...)` (bigint-safe).
 - DO NOT write `.hx` files or invoke `helix compile` — there is no compile step.
-- DO NOT re-run `helix init` / `helix run dev` / `helix dashboard start` — already running.
+- DO NOT re-run `helix init` / `helix start dev` — already running.
 - DO NOT use plural label names (`Contacts`). Convention is singular (`Contact`). Edge labels are `SCREAMING_SNAKE` verbs (`WORKS_AT`).
 - DO NOT write static `.html` files or hand-rolled CSS / JS for the frontend. The frontend is a Next.js app under `web/`; everything goes through the App Router and Tailwind.
 - DO NOT have the browser fetch `http://localhost:6969/v1/query`. Every Helix call goes through a Next.js API route handler in `web/src/app/api/<name>/route.ts`. Server-only.
@@ -978,23 +978,38 @@ fn new_chef_run_id() -> String {
 pub async fn run(metrics_sender: &MetricsSender) -> Result<()> {
     let run_id = new_chef_run_id();
     let started_at = Instant::now();
-    let credentials = match ensure_auth_or_login().await {
-        Ok(credentials) => credentials,
-        Err(err) => {
-            metrics_sender.send_chef_event(chef_metric(
-                &run_id,
-                "auth_failed",
-                false,
-                Some(started_at.elapsed().as_secs() as u32),
-                None,
-                false,
-                None,
-                Some("auth"),
-                Some(err.to_string()),
-                None,
-                None,
-            ));
-            return Ok(());
+
+    // The only thing chef needs Cloud credentials for is the optional, best-effort
+    // snapshot upload. Device-flow login can't complete without a TTY anyway, so
+    // skip it when running non-interactively (agents, CI, sandboxes) or when the
+    // user explicitly opts out — otherwise every headless `helix chef` blocks on a
+    // GitHub login it can never finish. The build itself proceeds without auth.
+    let skip_cloud_auth =
+        std::env::var_os("HELIX_SKIP_CLOUD_AUTH").is_some() || !prompts::is_interactive();
+    let credentials = if skip_cloud_auth {
+        crate::output::info(
+            "Running `helix chef` without Helix Cloud auth; snapshot upload will be skipped.",
+        );
+        None
+    } else {
+        match ensure_auth_or_login().await {
+            Ok(credentials) => Some(credentials),
+            Err(err) => {
+                metrics_sender.send_chef_event(chef_metric(
+                    &run_id,
+                    "auth_failed",
+                    false,
+                    Some(started_at.elapsed().as_secs() as u32),
+                    None,
+                    false,
+                    None,
+                    Some("auth"),
+                    Some(err.to_string()),
+                    None,
+                    None,
+                ));
+                return Ok(());
+            }
         }
     };
 
@@ -1057,26 +1072,33 @@ pub async fn run(metrics_sender: &MetricsSender) -> Result<()> {
         }
     };
 
-    let upload_sizes =
-        match upload_chef_snapshot(&credentials, &run_id, &options, agent_report.as_ref()).await {
-            Ok(sizes) => sizes,
-            Err(err) => {
-                metrics_sender.send_chef_event(chef_metric(
-                    &run_id,
-                    "upload_failed",
-                    false,
-                    Some(started_at.elapsed().as_secs() as u32),
-                    Some(options.mode),
-                    has_custom_intent,
-                    agent_report.as_ref().map(|r| r.agent.display().to_string()),
-                    Some("upload"),
-                    Some(err.to_string()),
-                    None,
-                    None,
-                ));
-                None
+    // Snapshot upload requires Cloud credentials; when chef ran without auth
+    // (non-interactive / opted out) there's nothing to upload to.
+    let upload_sizes = match &credentials {
+        Some(credentials) => {
+            match upload_chef_snapshot(credentials, &run_id, &options, agent_report.as_ref()).await
+            {
+                Ok(sizes) => sizes,
+                Err(err) => {
+                    metrics_sender.send_chef_event(chef_metric(
+                        &run_id,
+                        "upload_failed",
+                        false,
+                        Some(started_at.elapsed().as_secs() as u32),
+                        Some(options.mode),
+                        has_custom_intent,
+                        agent_report.as_ref().map(|r| r.agent.display().to_string()),
+                        Some("upload"),
+                        Some(err.to_string()),
+                        None,
+                        None,
+                    ));
+                    None
+                }
             }
-        };
+        }
+        None => None,
+    };
 
     let success = agent_report.as_ref().is_some_and(|report| report.success);
     metrics_sender.send_chef_event(chef_metric(
@@ -1149,7 +1171,7 @@ fn collect_options() -> Result<ChefOptions> {
             prompts::confirm("Initialize the Helix project with helix init local?")?;
         options.write_queries =
             prompts::confirm("Write the starter query JSON files (User-shaped examples)?")?;
-        options.run_database = prompts::confirm("Start the local database with helix run dev?")?;
+        options.run_database = prompts::confirm("Start the local database with helix start dev?")?;
         options.seed_data = options.write_queries
             && prompts::confirm("Run the seed query to insert starter data?")?;
     }
@@ -1220,6 +1242,8 @@ async fn init_project(project_dir: &Path) -> Result<()> {
                 name: INSTANCE_NAME.to_string(),
                 port: DEFAULT_LOCAL_PORT,
                 disk: false,
+                skills: false,
+                no_skills: false,
             }),
             // chef installs skills + MCP itself; don't double-install via init.
             Some(false),
@@ -1230,7 +1254,7 @@ async fn init_project(project_dir: &Path) -> Result<()> {
 
 async fn run_database() -> Result<()> {
     run_quietly("Starting local database", "Local database started", || {
-        crate::commands::run::run(Some(INSTANCE_NAME.to_string()), false, None, false, false)
+        crate::commands::start::run(Some(INSTANCE_NAME.to_string()), false, None, false, false)
     })
     .await
 }
@@ -1254,7 +1278,7 @@ async fn seed_starter_data() -> Result<()> {
 
 /// Run an async op behind a Step spinner with the inner command's output silenced.
 ///
-/// `init::run` and `run::run` write through the shared `Verbosity` knob (Operation
+/// `init::run` and `start::run` write through the shared `Verbosity` knob (Operation
 /// headers, info/warning lines, print_details summaries). We snapshot the current
 /// level, flip to Quiet for the duration of the op, then restore it — so chef can
 /// show a single clean spinner line per step. `-v` users keep the detailed output.

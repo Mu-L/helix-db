@@ -88,7 +88,7 @@ err = client.Exec(ctx, CreateUser("Alice", "acme"), &created,
 
 ## Parameters
 
-Inline parameter helpers insert both runtime values and `parameter_types` metadata:
+Parameter helpers insert both runtime values and `parameter_types` metadata:
 
 ```go
 q := helix.ReadQuery("recent_users")
@@ -99,6 +99,40 @@ limit := q.ParamI64("limit", int64(10))
 
 Parameter refs can be used in predicates, property inputs, and bounds.
 
+Direct Go values are serialized as literals in the inline AST. For example,
+`helix.SourceEq("id", "foo")` inlines the string `"foo"`; it does not create a
+runtime parameter. For request-specific values, declare a `q.Param*` value and
+pass the returned ref so stable query shapes can reuse server caches:
+
+```go
+id := q.ParamString("id", userID)
+helix.G().NWhere(helix.SourceEq("id", id))
+```
+
+Always pass explicit names to `Returning(...)` for values you want back. A
+zero-arg `Returning()` is supported for intentional empty responses and
+serializes as `"returns":[]`.
+
+## Conflicts And Retries
+
+`Client.Exec` does not retry HTTP 409 conflicts automatically. Callers should
+retry only when the operation is safe to replay. Remote errors are returned as
+`*helix.HelixError` with `StatusCode` populated, and `helix.IsConflict(err)`
+or `errors.Is(err, helix.ErrConflict)` checks for HTTP 409:
+
+```go
+func ExecWithConflictRetry(ctx context.Context, client *helix.Client, build func() helix.Request, out any) error {
+	for attempt := 0; attempt < 3; attempt++ {
+		err := client.Exec(ctx, build(), out)
+		if err == nil || !helix.IsConflict(err) || attempt == 2 {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+	}
+	return nil
+}
+```
+
 ## Notes
 
 - Go v1 is dynamic-first and posts to `/v1/query` through `client.Exec`.
@@ -107,3 +141,4 @@ Parameter refs can be used in predicates, property inputs, and bounds.
 - `int64` values serialize as JSON numbers; response decoding uses `json.Decoder.UseNumber()`.
 - Dynamic datetime parameters serialize as RFC3339 UTC strings with millisecond precision.
 - Dynamic JSON cannot represent bytes parameters; bytes remain valid stored property values.
+- Non-200 responses return `*HelixError` with `Kind: ErrorRemote`, `Details`, and `StatusCode`.

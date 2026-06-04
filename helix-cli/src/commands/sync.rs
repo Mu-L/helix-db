@@ -174,7 +174,7 @@ async fn sync_enterprise_instance(
         InstanceInfo::Enterprise(config) => config.clone(),
         InstanceInfo::Local(_) => {
             return Err(eyre!(
-                "Sync is only supported for Enterprise instances; local v2 instances are managed with 'helix run' and dynamic query files."
+                "Sync is only supported for Enterprise instances; local v2 instances are managed with 'helix start' and dynamic query files."
             ));
         }
     };

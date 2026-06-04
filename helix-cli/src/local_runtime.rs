@@ -82,8 +82,11 @@ impl LocalRuntime {
         Err(CliError::new(format!("{} is not running", runtime.label()))
             .with_context(stderr.trim().to_string())
             .with_hint(
-                "Start it manually, then retry — e.g. `open -a Docker`, `colima start`, \
-                 or `podman machine start`.",
+                "Start the daemon, then retry. macOS: `open -a Docker`, `colima start`, or \
+                 `podman machine start`. Linux/headless (CI, sandboxes): `sudo systemctl start \
+                 docker`, or run `sudo dockerd &` where there is no init system. Rootless Podman \
+                 needs newuidmap/subuid setup and often fails in restricted containers — install \
+                 Docker or use a privileged container there.",
             )
             .into())
     }

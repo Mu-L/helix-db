@@ -1,12 +1,77 @@
 //! # helix-db Rust SDK
 //!
-//! Crate root. The query-builder DSL lives in [`dsl`] and the query bundle /
-//! code-generation support lives in [`query_generator`].
+//! The `helix-db` crate (imported as `helix_db`) is the Rust SDK for
+//! [HelixDB](https://github.com/helixdb/helix-db). It pairs a query-builder DSL
+//! with a small async HTTP client ([`Client`]) for running those queries
+//! against a Helix instance.
 //!
-//! Most application code only needs the curated builder API:
+//! ## Crate layout
+//!
+//! - [`dsl`] — the query-builder DSL: traversals, predicates, batches, and the
+//!   [`DynamicQueryRequest`] payload type. This is the bulk of the public API.
+//! - [`query_generator`] — query-bundle generation, used to emit deployable
+//!   stored queries from `#[register]`-annotated builders.
+//! - The crate root ([`Client`], [`QueryBuilder`], [`QueryRequest`],
+//!   [`HelixError`]) — the async execution surface that sends DSL queries over
+//!   HTTP.
+//!
+//! ## The DSL
+//!
+//! The DSL is centered on two entry points — [`read_batch`] for read-only
+//! transactions and [`write_batch`] for write-capable ones. You attach one or
+//! more named traversals (each usually starting with [`g`]) via `.var_as(...)`,
+//! then choose the result payload with `.returning(...)`:
+//!
+//! ```
+//! use helix_db::dsl::prelude::*;
+//!
+//! let query = read_batch()
+//!     .var_as(
+//!         "user",
+//!         g().n_where(SourcePredicate::eq("username", "alice")),
+//!     )
+//!     .var_as(
+//!         "friends",
+//!         g().n(NodeRef::var("user")).out(Some("FOLLOWS")).dedup().limit(100),
+//!     )
+//!     .returning(["user", "friends"]);
+//! # let _ = query;
+//! ```
+//!
+//! Most application code only needs this curated builder API, so bring the
+//! prelude into scope:
+//!
 //! ```
 //! use helix_db::dsl::prelude::*;
 //! ```
+//!
+//! ## Running queries
+//!
+//! Build a [`Client`], then use its fluent request builder. Pick a query kind —
+//! [`dynamic`](QueryBuilder::dynamic) to POST an inline [`DynamicQueryRequest`]
+//! to `/v1/query`, or [`stored`](QueryBuilder::stored) to call a deployed query
+//! at `/v1/query/<name>` — and `await` the response:
+//!
+//! ```no_run
+//! use helix_db::Client;
+//! use helix_db::dsl::prelude::*;
+//! use serde::Deserialize;
+//!
+//! #[derive(Deserialize)]
+//! struct Friends { friends: Vec<u64> }
+//!
+//! # async fn run(request: DynamicQueryRequest) -> Result<(), helix_db::HelixError> {
+//! let client = Client::new(Some("https://cluster.helix-db.com"))?
+//!     .with_api_key(Some("hx_your_api_key"));
+//!
+//! let response: Friends = client.query().dynamic(request).send().await?;
+//! # let _ = response.friends;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! See [`Client`] for the full request-building surface (header toggles,
+//! request bodies, error handling).
 
 pub mod dsl;
 pub mod query_generator;
@@ -28,7 +93,32 @@ use thiserror::Error;
 
 /// Async HTTP client for running queries against a Helix instance.
 ///
+/// A thin async wrapper over [`reqwest`] that knows how to reach a Helix
+/// gateway's query routes. Construct it with [`Client::new`], optionally attach
+/// a bearer API key via [`Client::with_api_key`], then build and send requests
+/// through [`Client::query`].
+///
+/// The client is cheap to [`Clone`] — the underlying `reqwest::Client` shares
+/// its connection pool — so a single instance can be reused across tasks.
+///
 /// Reachable as `helix_db::Client`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use helix_db::Client;
+///
+/// # fn run() -> Result<(), helix_db::HelixError> {
+/// // Defaults to http://localhost:6969 when the URL is `None`.
+/// let local = Client::new(None)?;
+///
+/// // Or point at a remote cluster and attach an API key.
+/// let remote = Client::new(Some("https://cluster.helix-db.com"))?
+///     .with_api_key(Some("hx_your_api_key"));
+/// # let _ = (local, remote);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct Client {
     client: ReqwestClient,
@@ -39,19 +129,42 @@ pub struct Client {
 /// Backwards-compatible alias for [`Client`].
 pub type HelixDBClient = Client;
 
+/// Errors returned while building or executing a query request.
 #[derive(Debug, Error)]
 pub enum HelixError {
+    /// Transport-level failure talking to the server (connection refused,
+    /// timeout, TLS error, …), surfaced from [`reqwest`].
     #[error("Error communicating with server: {0}")]
     ReqwestError(#[from] reqwest::Error),
+    /// The server responded with a non-`200` status. `details` carries the
+    /// response body, or the status' canonical reason phrase when no body is
+    /// available.
     #[error("Got Error from server: {details}")]
-    RemoteError { details: String },
+    RemoteError {
+        /// Server-provided error text, or a fallback description of the status.
+        details: String,
+    },
+    /// Failed to (de)serialize a request body or response payload.
     #[error("Error serializing data: {0}")]
     SerializationError(#[from] sonic_rs::Error),
+    /// The base URL passed to [`Client::new`] could not be parsed, or the
+    /// resolved query route was not a valid URL.
     #[error("Invalid URL: {0}")]
     InvalidURL(String),
 }
 
 impl Client {
+    /// Create a client pointed at a Helix instance.
+    ///
+    /// `url` is the instance base URL; when `None`, it defaults to
+    /// `http://localhost:6969`. The `/v1/query` base route is resolved up front
+    /// and reused by every request — dynamic queries POST to it directly and
+    /// stored queries append `/<name>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HelixError::InvalidURL`] if `url` (or the resolved query route)
+    /// cannot be parsed.
     pub fn new(url: Option<&str>) -> Result<Self, HelixError> {
         // Resolve the base query endpoint up front. `send()` reuses this for
         // dynamic queries and appends `/<name>` for stored queries.
@@ -66,16 +179,53 @@ impl Client {
         })
     }
 
+    /// Attach (or clear) the bearer API key sent with every request.
+    ///
+    /// Passing `Some(key)` sets an `Authorization: Bearer <key>` header on each
+    /// request; passing `None` clears any previously set key.
     pub fn with_api_key(mut self, api_key: Option<&str>) -> Self {
         self.api_key = api_key.map(|key| key.to_string());
         self
     }
 
+    /// Start building a request.
+    ///
+    /// `R` is the type the JSON response body is deserialized into by
+    /// [`QueryRequest::send`]. Returns a [`QueryBuilder`] on which you can toggle
+    /// request headers, then pick a query kind with [`QueryBuilder::dynamic`] or
+    /// [`QueryBuilder::stored`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use helix_db::Client;
+    /// use helix_db::dsl::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Users { count: u64 }
+    ///
+    /// # async fn run(client: &Client, request: DynamicQueryRequest) -> Result<(), helix_db::HelixError> {
+    /// let response: Users = client.query().dynamic(request).send().await?;
+    /// # let _ = response;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn query<R: for<'de> Deserialize<'de>>(&self) -> QueryBuilder<'_, '_, R> {
         QueryBuilder::new(self)
     }
 }
 
+/// Fluent builder for a single request, produced by [`Client::query`].
+///
+/// Optional header toggles ([`writer_only`](Self::writer_only),
+/// [`warm_only`](Self::warm_only),
+/// [`should_await_durability`](Self::should_await_durability)) and an optional
+/// [`body`](Self::body) can be chained, then exactly one query kind is selected
+/// with [`stored`](Self::stored) or [`dynamic`](Self::dynamic) — both of which
+/// transition to a [`QueryRequest`] ready to [`send`](QueryRequest::send).
+///
+/// `R` is the response deserialization target carried through to `send()`.
 pub struct QueryBuilder<'hlx, 'a, R> {
     client: &'hlx HelixDBClient,
     query_type: QueryType,
@@ -84,15 +234,27 @@ pub struct QueryBuilder<'hlx, 'a, R> {
     _phantom: PhantomData<R>,
 }
 
+/// Which Helix query route a [`QueryBuilder`] targets.
+///
+/// Set internally by [`QueryBuilder::stored`] / [`QueryBuilder::dynamic`]; the
+/// [`Empty`](QueryType::Empty) default is never observed by `send()` because
+/// reaching it requires picking a query kind first.
 #[derive(Default)]
 pub(crate) enum QueryType {
+    /// A deployed stored query, posted to `/v1/query/<name>`.
     Stored(String),
+    /// An inline dynamic query, posted to `/v1/query`.
     Dynamic(DynamicQueryRequest),
+    /// No query kind chosen yet (builder default).
     #[default]
     Empty,
 }
 
 impl<'hlx, 'a, R> QueryBuilder<'hlx, 'a, R> {
+    /// Create a builder seeded with the `Content-Type: application/json` header.
+    ///
+    /// Prefer [`Client::query`], which calls this for you.
+    #[must_use]
     pub fn new(client: &'hlx HelixDBClient) -> Self {
         let mut headers = [None; 4];
         headers[0] = Some(("Content-Type", "application/json"));
@@ -105,17 +267,28 @@ impl<'hlx, 'a, R> QueryBuilder<'hlx, 'a, R> {
         }
     }
 
+    /// Require the request to be served by a writer node.
+    ///
+    /// Sets the `x-helix-require-writer` header.
+    #[must_use]
     pub fn writer_only(mut self) -> Self {
         self.headers[1] = Some(("x-helix-require-writer", "true"));
         self
     }
 
+    /// Only execute if the query is already warm (reads only).
+    ///
+    /// Sets the `x-helix-warm` header.
     #[must_use]
     pub fn warm_only(mut self) -> Self {
         self.headers[2] = Some(("x-helix-warm", "true"));
         self
     }
 
+    /// Choose whether a write request blocks until the write is durable.
+    ///
+    /// Sets the `x-helix-await-durable` header to `"true"` or `"false"`.
+    #[must_use]
     pub fn should_await_durability(mut self, should: bool) -> Self {
         self.headers[3] = Some((
             "x-helix-await-durable",
@@ -124,27 +297,83 @@ impl<'hlx, 'a, R> QueryBuilder<'hlx, 'a, R> {
         self
     }
 
+    /// Attach a serialized JSON request body.
+    ///
+    /// Used to pass parameters to a [`stored`](Self::stored) query route.
+    /// [`dynamic`](Self::dynamic) requests ignore this body — they serialize the
+    /// [`DynamicQueryRequest`] itself as the payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HelixError::SerializationError`] if `data` cannot be serialized
+    /// to JSON.
+    #[must_use]
     pub fn body<T: Serialize + Sync>(mut self, data: &T) -> Result<Self, HelixError> {
         self.body = Some(sonic_rs::to_vec(data)?);
         Ok(self)
     }
 
+    /// Target a deployed stored query at `/v1/query/<query_name>`.
+    ///
+    /// Pair with [`body`](Self::body) to supply the query's parameters, then
+    /// call [`QueryRequest::send`].
+    #[must_use]
     pub fn stored(mut self, query_name: String) -> QueryRequest<'hlx, 'a, R> {
         self.query_type = QueryType::Stored(query_name);
         QueryRequest { request: self }
     }
 
+    /// Target an inline dynamic query at `/v1/query`.
+    ///
+    /// The [`DynamicQueryRequest`] (DSL query plus parameters) is serialized as
+    /// the request body. Build one directly or with a `#[register]` helper, then
+    /// call [`QueryRequest::send`].
+    #[must_use]
     pub fn dynamic(mut self, query: DynamicQueryRequest) -> QueryRequest<'hlx, 'a, R> {
         self.query_type = QueryType::Dynamic(query);
         QueryRequest { request: self }
     }
 }
 
+/// A fully addressed request, ready to [`send`](Self::send).
+///
+/// Produced once a query kind has been chosen via [`QueryBuilder::stored`] or
+/// [`QueryBuilder::dynamic`]; the only remaining step is `send()`.
 pub struct QueryRequest<'hlx, 'a, R> {
     request: QueryBuilder<'hlx, 'a, R>,
 }
 
 impl<'hlx, 'a, R: for<'de> Deserialize<'de>> QueryRequest<'hlx, 'a, R> {
+    /// Send the request and deserialize the response body into `R`.
+    ///
+    /// Resolves the route (`/v1/query` for dynamic, `/v1/query/<name>` for
+    /// stored), applies the toggled headers and bearer API key, attaches the
+    /// body, and awaits the response.
+    ///
+    /// # Errors
+    ///
+    /// - [`HelixError::ReqwestError`] for transport failures.
+    /// - [`HelixError::RemoteError`] for any non-`200` response (carrying the
+    ///   server's body or status reason).
+    /// - [`HelixError::SerializationError`] if the request payload cannot be
+    ///   serialized or the response body cannot be deserialized into `R`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use helix_db::Client;
+    /// use helix_db::dsl::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct AddUserResponse { user_id: u64 }
+    ///
+    /// # async fn run(client: &Client, request: DynamicQueryRequest) -> Result<(), helix_db::HelixError> {
+    /// let response: AddUserResponse = client.query().dynamic(request).send().await?;
+    /// # let _ = response.user_id;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send(self) -> Result<R, HelixError> {
         let query_request = self.request;
         let (url, body) = match query_request.query_type {

@@ -48,11 +48,20 @@ pub async fn run(
             name: "dev".to_string(),
             port: crate::config::DEFAULT_LOCAL_PORT,
             disk: false,
+            skills: false,
+            no_skills: false,
         },
     };
 
+    // `--skills`/`--no-skills` may be given after the subcommand
+    // (`helix init local --no-skills`); the subcommand-level flag wins over the
+    // top-level one when both are present.
+    let skills = target.skills_override().or(skills);
+
     let next_steps = match target {
-        InitTarget::Local { name, port, disk } => {
+        InitTarget::Local {
+            name, port, disk, ..
+        } => {
             // Surface a missing/stopped container runtime before we write any files,
             // so the user can react before the project is scaffolded.
             crate::setup::warn_if_container_runtime_unavailable();
@@ -73,6 +82,7 @@ pub async fn run(
             name,
             cluster_id,
             gateway_url,
+            ..
         } => {
             let instance_name = name.clone();
             let target = crate::commands::config::resolve_enterprise_target(
@@ -153,7 +163,7 @@ fn maybe_install_tooling(project_dir: &Path, skills: Option<bool>) {
 fn local_next_steps(instance_name: &str) -> Vec<String> {
     vec![
         format!(
-            "Run 'helix run {instance_name}' to start local Helix Enterprise dev in the background"
+            "Run 'helix start {instance_name}' to start local Helix Enterprise dev in the background"
         ),
         format!("Run 'helix query {instance_name} --file examples/request.json'"),
         format!(
@@ -254,7 +264,7 @@ mod tests {
     fn local_next_steps_use_instance_name() {
         let steps = local_next_steps("qa");
 
-        assert!(steps[0].contains("helix run qa"));
+        assert!(steps[0].contains("helix start qa"));
         assert!(steps[2].contains("helix query qa"));
     }
 

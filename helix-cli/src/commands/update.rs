@@ -1,9 +1,10 @@
 use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
 use self_update::cargo_crate_version;
+use std::env;
 
 use crate::output::{Operation, Step, Verbosity};
-use crate::utils::print_error_with_hint;
+use crate::utils::{command_exists, print_error_with_hint};
 
 const V1_TARGET_VERSION: &str = "2.3.5";
 const V1_TARGET_TAG: &str = "v2.3.5";
@@ -51,6 +52,9 @@ fn run_sync(force: bool, v1: bool) -> Result<()> {
             check_step.done_with_info("already up to date");
             op.success();
             println!("  Use --force to reinstall");
+            // Still refresh skills — `helix update` keeps the whole toolchain
+            // current, even when the binary itself is already on latest.
+            refresh_skills_if_installed();
             return Ok(());
         }
 
@@ -94,7 +98,25 @@ fn run_sync(force: bool, v1: bool) -> Result<()> {
         }
     }
 
+    refresh_skills_if_installed();
+
     Ok(())
+}
+
+/// Refresh the Helix agent skills as part of `helix update`, but only when they
+/// were already installed (via `helix init`/`chef`/`helix skills`) and `npx` is
+/// available. A skills-refresh failure degrades to a warning — it must never
+/// fail the CLI self-update. Global scope only, matching how they're installed.
+fn refresh_skills_if_installed() {
+    if !crate::update::skills_installed() || !command_exists("npx") {
+        return;
+    }
+
+    let project_dir = env::current_dir().unwrap_or_else(|_| ".".into());
+    match crate::setup::install_skills(&project_dir, true, true) {
+        Ok(()) => crate::update::record_skills_refreshed(),
+        Err(e) => crate::output::warning(&format!("Skipping Helix skills refresh: {e}")),
+    }
 }
 
 fn is_v3_update(current_version: &str, latest_version: &str) -> bool {
