@@ -342,6 +342,17 @@ impl InstanceInfo<'_> {
 
 impl HelixConfig {
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
+        Self::from_file_inner(path, true)
+    }
+
+    /// Like [`from_file`](Self::from_file), but tolerates a `helix.toml` that defines zero
+    /// instances. Used by `helix add`, whose whole job is to add the first instance back —
+    /// it would otherwise be locked out by the "at least one instance" check.
+    pub fn from_file_allow_no_instances(path: &Path) -> Result<Self, ConfigError> {
+        Self::from_file_inner(path, false)
+    }
+
+    fn from_file_inner(path: &Path, require_instances: bool) -> Result<Self, ConfigError> {
         let content = fs::read_to_string(path).map_err(|source| ConfigError::ReadHelixConfig {
             path: path.to_path_buf(),
             source,
@@ -353,7 +364,7 @@ impl HelixConfig {
                 source,
             })?;
 
-        config.validate(path)?;
+        config.validate(path, require_instances)?;
         Ok(config)
     }
 
@@ -367,7 +378,7 @@ impl HelixConfig {
         Ok(())
     }
 
-    fn validate(&self, path: &Path) -> Result<(), ConfigError> {
+    fn validate(&self, path: &Path, require_instances: bool) -> Result<(), ConfigError> {
         let relative_path = std::env::current_dir()
             .ok()
             .and_then(|cwd| path.strip_prefix(&cwd).ok())
@@ -380,7 +391,7 @@ impl HelixConfig {
             });
         }
 
-        if self.local.is_empty() && self.enterprise.is_empty() {
+        if require_instances && self.local.is_empty() && self.enterprise.is_empty() {
             return Err(ConfigError::MissingInstances {
                 path: relative_path,
             });
@@ -507,6 +518,61 @@ tag = "latest"
 
         let local = config.local.get("dev").unwrap();
         assert_eq!(local.storage, LocalStorageMode::Memory);
+    }
+
+    #[test]
+    fn zero_instance_config_rejected_by_default_but_allowed_leniently() {
+        let config: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "demo"
+"#,
+        )
+        .expect("config with no instances should still deserialize");
+
+        let path = Path::new("helix.toml");
+        // Default validation (used by every command except `add`) rejects it.
+        assert!(matches!(
+            config.validate(path, true),
+            Err(ConfigError::MissingInstances { .. })
+        ));
+        // Lenient validation (used by `helix add`) accepts it so the first
+        // instance can be re-added after the last one was deleted.
+        assert!(config.validate(path, false).is_ok());
+    }
+
+    #[test]
+    fn lenient_validation_still_enforces_other_checks() {
+        let path = Path::new("helix.toml");
+
+        // Empty project name is rejected even leniently.
+        let empty_name: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "  "
+"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            empty_name.validate(path, false),
+            Err(ConfigError::EmptyProjectName { .. })
+        ));
+
+        // Enterprise instance without a cluster_id is rejected even leniently.
+        let no_cluster: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "demo"
+
+[enterprise.production]
+cluster_id = ""
+"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            no_cluster.validate(path, false),
+            Err(ConfigError::MissingClusterId { .. })
+        ));
     }
 
     #[test]

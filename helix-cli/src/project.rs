@@ -12,6 +12,19 @@ pub struct ProjectContext {
 
 impl ProjectContext {
     pub fn find_and_load(start_dir: Option<&Path>) -> Result<Self, ProjectError> {
+        Self::load_with(start_dir, true)
+    }
+
+    /// Like [`find_and_load`](Self::find_and_load), but tolerates a `helix.toml` that defines
+    /// zero instances. Used by `helix add` so it can re-add the first instance after the last
+    /// one was deleted.
+    pub fn find_and_load_allow_no_instances(
+        start_dir: Option<&Path>,
+    ) -> Result<Self, ProjectError> {
+        Self::load_with(start_dir, false)
+    }
+
+    fn load_with(start_dir: Option<&Path>, require_instances: bool) -> Result<Self, ProjectError> {
         let start = match start_dir {
             Some(dir) => dir.to_path_buf(),
             None => env::current_dir().map_err(|source| ProjectError::CurrentDir { source })?,
@@ -19,7 +32,11 @@ impl ProjectContext {
 
         let root = find_project_root(&start)?;
         let config_path = root.join("helix.toml");
-        let config = HelixConfig::from_file(&config_path)?;
+        let config = if require_instances {
+            HelixConfig::from_file(&config_path)?
+        } else {
+            HelixConfig::from_file_allow_no_instances(&config_path)?
+        };
         let helix_dir = root.join(".helix");
 
         Ok(Self {

@@ -9,7 +9,7 @@ use crate::prompts;
 use eyre::{Result, eyre};
 
 pub async fn run(target: Option<AddTarget>) -> Result<()> {
-    let mut project = ProjectContext::find_and_load(None)?;
+    let mut project = ProjectContext::find_and_load_allow_no_instances(None)?;
     let config_path = project.root.join("helix.toml");
     let target = match target {
         Some(target) => target,
