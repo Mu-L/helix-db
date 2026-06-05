@@ -1113,6 +1113,22 @@ mod tests {
     }
 
     #[test]
+    fn root_cluster_indexes_command_parses() {
+        let cli = Cli::parse_from(["helix", "cluster", "indexes", "--cluster-id", "ent_123"]);
+
+        match cli.command {
+            Some(Commands::Cluster {
+                action:
+                    Some(ClusterConfigAction::Indexes {
+                        cluster_id,
+                        format: _,
+                    }),
+            }) => assert_eq!(cluster_id.as_deref(), Some("ent_123")),
+            _ => panic!("expected cluster indexes command"),
+        }
+    }
+
+    #[test]
     fn status_accepts_optional_instance() {
         let cli = Cli::parse_from(["helix", "status", "qa"]);
 

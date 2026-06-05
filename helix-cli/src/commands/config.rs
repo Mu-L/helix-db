@@ -1,7 +1,8 @@
 use crate::commands::auth::require_auth;
 use crate::config::WorkspaceConfig;
 use crate::enterprise_cloud::{
-    CliEnterpriseCluster, cloud_base_url, fetch_projects, fetch_workspaces, find_project_by_id,
+    CliClusterIndex, CliClusterIndexes, CliEnterpriseCluster, cloud_base_url,
+    fetch_indexes_for_cluster, fetch_projects, fetch_workspaces, find_project_by_id,
     find_project_by_name, find_workspace_by_id, find_workspace_by_slug, list_clusters_for_context,
     resolve_enterprise_cluster,
 };
@@ -63,8 +64,13 @@ pub async fn run_cluster(action: Option<ClusterConfigAction>) -> Result<()> {
             project_id,
             format,
         }) => cluster_list(workspace_id, project_id, format).await,
+        Some(ClusterConfigAction::Indexes { cluster_id, format }) => {
+            list_indexes_for_cluster(cluster_id, format).await
+        }
         None if prompts::is_interactive() => cluster_select().await,
-        None => Err(eyre!("Specify a cluster command: 'helix cluster list'")),
+        None => Err(eyre!(
+            "Specify a cluster command: 'helix cluster list' or 'helix cluster indexes'"
+        )),
     }
 }
 
@@ -318,6 +324,106 @@ async fn cluster_list(
     }
     print_enterprise_clusters(&clusters);
     Ok(())
+}
+
+async fn list_indexes_for_cluster(
+    cluster_id: Option<String>,
+    format: ConfigOutputFormat,
+) -> Result<()> {
+    let cluster_id = resolve_cluster_id_for_indexes(cluster_id)?;
+    let credentials = require_auth().await?;
+    let client = reqwest::Client::new();
+    let indexes = fetch_indexes_for_cluster(
+        &client,
+        &cloud_base_url(),
+        &credentials.helix_admin_key,
+        cluster_id.as_str(),
+    )
+    .await?;
+
+    if format == ConfigOutputFormat::Json {
+        return print_json(&indexes);
+    }
+
+    print_cluster_indexes(&cluster_id, &indexes);
+    Ok(())
+}
+
+fn resolve_cluster_id_for_indexes(cluster_id: Option<String>) -> Result<String> {
+    if let Some(cluster_id) = cluster_id {
+        let cluster_id = cluster_id.trim();
+        if !cluster_id.is_empty() {
+            return Ok(cluster_id.to_string());
+        }
+    }
+
+    let project = ProjectContext::find_and_load(None).map_err(|_| {
+        eyre!("Provide --cluster-id, or run inside a Helix project with an Enterprise instance.")
+    })?;
+
+    let mut enterprise_instances = project
+        .config
+        .enterprise
+        .keys()
+        .map(|name| (name.clone(), "Enterprise".to_string()))
+        .collect::<Vec<_>>();
+    enterprise_instances.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let instance_name = match enterprise_instances.len() {
+        0 => return Err(eyre!("No Enterprise instances found in helix.toml")),
+        1 => enterprise_instances[0].0.clone(),
+        _ if prompts::is_interactive() => prompts::select_instance(
+            &enterprise_instances,
+            "List indexes for which Enterprise instance?",
+        )?,
+        _ => {
+            let available = enterprise_instances
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(eyre!(
+                "No Enterprise instance specified. Available Enterprise instances: {available}. Pass --cluster-id to select one."
+            ));
+        }
+    };
+
+    project
+        .config
+        .enterprise
+        .get(&instance_name)
+        .map(|config| config.cluster_id.clone())
+        .ok_or_else(|| eyre!("Enterprise instance '{instance_name}' was not found"))
+}
+
+fn print_cluster_indexes(cluster_id: &str, indexes: &CliClusterIndexes) {
+    println!("{}", "Cluster indexes".bold());
+    println!("  Cluster: {cluster_id}");
+    print_index_group("Vector indexes", &indexes.vector_indexes);
+    print_index_group("Equality indexes", &indexes.equality_indexes);
+    print_index_group("Range indexes", &indexes.range_indexes);
+}
+
+fn print_index_group(title: &str, indexes: &[CliClusterIndex]) {
+    println!("  {title}:");
+    if indexes.is_empty() {
+        println!("    (none)");
+        return;
+    }
+
+    for index in indexes {
+        let name = if index.index_name.trim().is_empty() {
+            "<unnamed>"
+        } else {
+            index.index_name.as_str()
+        };
+        match index.index_type.as_deref() {
+            Some(index_type) if !index_type.trim().is_empty() => {
+                println!("    {name} ({index_type})");
+            }
+            _ => println!("    {name}"),
+        }
+    }
 }
 
 fn print_enterprise_clusters(clusters: &[CliEnterpriseCluster]) {
