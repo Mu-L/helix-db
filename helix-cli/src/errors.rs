@@ -299,7 +299,8 @@ impl ConfigError {
             ConfigError::MissingInstances { path } => CliError::new(format!(
                 "at least one instance must be defined in {}",
                 path.display()
-            )),
+            ))
+            .with_hint("add one with `helix add local --name dev` (or `helix add enterprise`)"),
             ConfigError::EmptyInstanceName { path } => CliError::new(format!(
                 "instance name cannot be empty in {}",
                 path.display()

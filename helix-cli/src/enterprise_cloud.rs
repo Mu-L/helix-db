@@ -1,6 +1,7 @@
 use eyre::{Result, eyre};
 use reqwest::Client;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 const DEFAULT_CLOUD_AUTHORITY: &str = "cloud.helix-db.com";
@@ -60,6 +61,26 @@ pub struct CliProjectClusters {
 pub struct CliWorkspaceClusters {
     #[serde(default)]
     pub enterprise: Vec<CliEnterpriseCluster>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CliClusterIndex {
+    #[serde(default, rename = "name", alias = "index_name")]
+    pub index_name: String,
+    #[serde(default, rename = "type", alias = "index_type")]
+    pub index_type: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CliClusterIndexes {
+    #[serde(default)]
+    pub vector_indexes: Vec<CliClusterIndex>,
+    #[serde(default)]
+    pub equality_indexes: Vec<CliClusterIndex>,
+    #[serde(default)]
+    pub range_indexes: Vec<CliClusterIndex>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,6 +275,21 @@ pub async fn fetch_workspace_clusters(
         format!("{base_url}/api/cli/workspaces/{workspace_id}/clusters"),
         api_key,
         "fetch workspace clusters",
+    )
+    .await
+}
+
+pub async fn fetch_indexes_for_cluster(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    cluster_id: &str,
+) -> Result<CliClusterIndexes> {
+    get_json(
+        client,
+        format!("{base_url}/api/cli/enterprise-clusters/{cluster_id}/indexes"),
+        api_key,
+        "fetch cluster indexes",
     )
     .await
 }

@@ -236,4 +236,14 @@ pub enum ClusterConfigAction {
         #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
         format: ConfigOutputFormat,
     },
+
+    /// List indexes in an Enterprise cluster
+    #[command(alias = "indices")]
+    Indexes {
+        /// Enterprise cluster ID; defaults to the current project's Enterprise instance
+        #[arg(long, value_name = "CLUSTER_ID")]
+        cluster_id: Option<String>,
+        #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
+        format: ConfigOutputFormat,
+    },
 }
