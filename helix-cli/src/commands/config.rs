@@ -13,7 +13,7 @@ use crate::{
     WorkspaceConfigAction,
 };
 use color_eyre::owo_colors::OwoColorize;
-use eyre::{Result, eyre};
+use eyre::{Result, WrapErr, eyre};
 use serde::Serialize;
 
 pub async fn run(action: Option<ConfigAction>) -> Result<()> {
@@ -357,9 +357,9 @@ fn resolve_cluster_id_for_indexes(cluster_id: Option<String>) -> Result<String> 
         }
     }
 
-    let project = ProjectContext::find_and_load(None).map_err(|_| {
-        eyre!("Provide --cluster-id, or run inside a Helix project with an Enterprise instance.")
-    })?;
+    let project = ProjectContext::find_and_load(None).wrap_err(
+        "Provide --cluster-id, or run inside a Helix project with an Enterprise instance.",
+    )?;
 
     let mut enterprise_instances = project
         .config

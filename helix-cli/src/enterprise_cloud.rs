@@ -65,9 +65,9 @@ pub struct CliWorkspaceClusters {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliClusterIndex {
-    #[serde(default, alias = "name")]
+    #[serde(default, rename = "name", alias = "index_name")]
     pub index_name: String,
-    #[serde(default, alias = "type")]
+    #[serde(default, rename = "type", alias = "index_type")]
     pub index_type: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
