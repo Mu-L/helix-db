@@ -63,7 +63,7 @@ enum Commands {
     /// Initialize a v2 Helix project
     Init {
         /// Project directory (defaults to current directory)
-        #[arg(short, long)]
+        #[arg(short, long, global = true)]
         path: Option<String>,
         /// Install the Helix agent skills + docs MCP (prompted when interactive)
         #[arg(long, conflicts_with = "no_skills")]
@@ -82,7 +82,7 @@ enum Commands {
     /// Add a local v2 or Enterprise Cloud instance
     Add {
         /// Project directory (defaults to current directory)
-        #[arg(short, long)]
+        #[arg(short, long, global = true)]
         path: Option<String>,
         #[command(subcommand)]
         target: Option<AddTarget>,
@@ -859,6 +859,58 @@ mod tests {
                 assert_eq!(cluster_id.as_deref(), Some("abc"));
             }
             _ => panic!("expected init cloud command"),
+        }
+    }
+
+    #[test]
+    fn init_path_parses_before_subcommand() {
+        let cli = Cli::parse_from(["helix", "init", "--path", "/tmp/proj", "local"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                path,
+                target: Some(InitTarget::Local { .. }),
+                ..
+            }) => assert_eq!(path.as_deref(), Some("/tmp/proj")),
+            _ => panic!("expected init local command with path"),
+        }
+    }
+
+    #[test]
+    fn init_path_parses_after_subcommand() {
+        let cli = Cli::parse_from(["helix", "init", "local", "--path", "/tmp/proj"]);
+
+        match cli.command {
+            Some(Commands::Init {
+                path,
+                target: Some(InitTarget::Local { .. }),
+                ..
+            }) => assert_eq!(path.as_deref(), Some("/tmp/proj")),
+            _ => panic!("expected init local command with path"),
+        }
+    }
+
+    #[test]
+    fn add_path_parses_after_subcommand() {
+        let cli = Cli::parse_from([
+            "helix",
+            "add",
+            "local",
+            "--name",
+            "qa",
+            "--path",
+            "/tmp/proj",
+        ]);
+
+        match cli.command {
+            Some(Commands::Add {
+                path,
+                target: Some(AddTarget::Local { name, .. }),
+            }) => {
+                assert_eq!(path.as_deref(), Some("/tmp/proj"));
+                assert_eq!(name, "qa");
+            }
+            _ => panic!("expected add local command with path"),
         }
     }
 
