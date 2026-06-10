@@ -81,6 +81,9 @@ enum Commands {
 
     /// Add a local v2 or Enterprise Cloud instance
     Add {
+        /// Project directory (defaults to current directory)
+        #[arg(short, long)]
+        path: Option<String>,
         #[command(subcommand)]
         target: Option<AddTarget>,
     },
@@ -661,7 +664,7 @@ async fn main() -> Result<()> {
             commands::init::run(path, target, skills).await
         }
         Some(Commands::Chef {}) => commands::chef::run(&metrics_sender).await,
-        Some(Commands::Add { target }) => commands::add::run(target).await,
+        Some(Commands::Add { path, target }) => commands::add::run(path, target).await,
         Some(Commands::Start {
             instance,
             foreground,
@@ -945,6 +948,7 @@ mod tests {
                     Some(AddTarget::Enterprise {
                         name, cluster_id, ..
                     }),
+                ..
             }) => {
                 assert_eq!(name, "production");
                 assert_eq!(cluster_id.as_deref(), Some("abc"));
@@ -960,6 +964,7 @@ mod tests {
         match cli.command {
             Some(Commands::Add {
                 target: Some(AddTarget::Enterprise { cluster_id, .. }),
+                ..
             }) => assert!(cluster_id.is_none()),
             _ => panic!("expected add cloud command"),
         }
@@ -1044,6 +1049,7 @@ mod tests {
         match cli.command {
             Some(Commands::Add {
                 target: Some(AddTarget::Local { name, port, disk }),
+                ..
             }) => {
                 assert_eq!(name, "qa");
                 assert_eq!(port, helix_cli::config::DEFAULT_LOCAL_PORT);
@@ -1071,8 +1077,32 @@ mod tests {
         let cli = Cli::parse_from(["helix", "add"]);
 
         match cli.command {
-            Some(Commands::Add { target }) => assert!(target.is_none()),
+            Some(Commands::Add { target, .. }) => assert!(target.is_none()),
             _ => panic!("expected add command"),
+        }
+    }
+
+    #[test]
+    fn add_path_flag_parses() {
+        let cli = Cli::parse_from([
+            "helix",
+            "add",
+            "--path",
+            "/tmp/proj",
+            "local",
+            "--name",
+            "qa",
+        ]);
+
+        match cli.command {
+            Some(Commands::Add {
+                path,
+                target: Some(AddTarget::Local { name, .. }),
+            }) => {
+                assert_eq!(path.as_deref(), Some("/tmp/proj"));
+                assert_eq!(name, "qa");
+            }
+            _ => panic!("expected add local command with path"),
         }
     }
 
