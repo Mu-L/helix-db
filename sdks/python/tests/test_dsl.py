@@ -20,6 +20,7 @@ from helixdb import (
     PropertyInput,
     PropertyValue,
     QueryParamType,
+    RangeIndexDirection,
     RepeatConfig,
     SourcePredicate,
     Step,
@@ -264,6 +265,24 @@ class DslParityTests(unittest.TestCase):
         self.assert_json_equal(
             request.to_json_string(),
             fixture("json-only", "901-exhaustive-raw-write-steps.json"),
+        )
+
+    def test_range_index_direction_serialization(self) -> None:
+        self.assertEqual(
+            IndexSpec.node_range("User", "age").to_json(),
+            {"NodeRange": {"label": "User", "property": "age"}},
+        )
+        self.assertEqual(
+            IndexSpec.node_range_with_direction("User", "age", RangeIndexDirection.ASC).to_json(),
+            {"NodeRange": {"label": "User", "property": "age"}},
+        )
+        self.assertEqual(
+            IndexSpec.node_range_desc("User", "age").to_json(),
+            {"NodeRange": {"label": "User", "property": "age", "direction": "Desc"}},
+        )
+        self.assertEqual(
+            IndexSpec.edge_range_desc("FOLLOWS", "weight").to_json(),
+            {"EdgeRange": {"label": "FOLLOWS", "property": "weight", "direction": "Desc"}},
         )
 
     def test_value_params_reject_bytes_for_dynamic_json(self) -> None:

@@ -558,6 +558,15 @@ Order.Asc = Order.ASC  # type: ignore[attr-defined]
 Order.Desc = Order.DESC  # type: ignore[attr-defined]
 
 
+class RangeIndexDirection(str, Enum):
+    ASC = "Asc"
+    DESC = "Desc"
+
+
+RangeIndexDirection.Asc = RangeIndexDirection.ASC  # type: ignore[attr-defined]
+RangeIndexDirection.Desc = RangeIndexDirection.DESC  # type: ignore[attr-defined]
+
+
 class EmitBehavior(str, Enum):
     NONE = "None"
     BEFORE = "Before"
@@ -1103,6 +1112,13 @@ class IndexSpec:
     variant: str
     fields: Mapping[str, Any]
 
+    @staticmethod
+    def _range_fields(label: str, property: str, direction: RangeIndexDirection) -> Mapping[str, Any]:
+        fields: dict[str, Any] = {"label": label, "property": property}
+        if direction != RangeIndexDirection.ASC:
+            fields["direction"] = direction.value
+        return fields
+
     @classmethod
     def node_equality(cls, label: str, property: str) -> "IndexSpec":
         return cls("NodeEquality", {"label": label, "property": property, "unique": False})
@@ -1113,7 +1129,17 @@ class IndexSpec:
 
     @classmethod
     def node_range(cls, label: str, property: str) -> "IndexSpec":
-        return cls("NodeRange", {"label": label, "property": property})
+        return cls.node_range_with_direction(label, property, RangeIndexDirection.ASC)
+
+    @classmethod
+    def node_range_desc(cls, label: str, property: str) -> "IndexSpec":
+        return cls.node_range_with_direction(label, property, RangeIndexDirection.DESC)
+
+    @classmethod
+    def node_range_with_direction(
+        cls, label: str, property: str, direction: RangeIndexDirection = RangeIndexDirection.ASC
+    ) -> "IndexSpec":
+        return cls("NodeRange", cls._range_fields(label, property, direction))
 
     @classmethod
     def edge_equality(cls, label: str, property: str) -> "IndexSpec":
@@ -1121,7 +1147,17 @@ class IndexSpec:
 
     @classmethod
     def edge_range(cls, label: str, property: str) -> "IndexSpec":
-        return cls("EdgeRange", {"label": label, "property": property})
+        return cls.edge_range_with_direction(label, property, RangeIndexDirection.ASC)
+
+    @classmethod
+    def edge_range_desc(cls, label: str, property: str) -> "IndexSpec":
+        return cls.edge_range_with_direction(label, property, RangeIndexDirection.DESC)
+
+    @classmethod
+    def edge_range_with_direction(
+        cls, label: str, property: str, direction: RangeIndexDirection = RangeIndexDirection.ASC
+    ) -> "IndexSpec":
+        return cls("EdgeRange", cls._range_fields(label, property, direction))
 
     @classmethod
     def node_vector(cls, label: str, property: str, tenant_property: str | None = None) -> "IndexSpec":
@@ -3152,6 +3188,7 @@ prelude = {
     "AggregateFunction": AggregateFunction,
     "RepeatConfig": RepeatConfig,
     "IndexSpec": IndexSpec,
+    "RangeIndexDirection": RangeIndexDirection,
     "Traversal": Traversal,
     "SubTraversal": SubTraversal,
     "ReadBatch": ReadBatch,
@@ -3187,6 +3224,7 @@ __all__ = [
     "F64Literal",
     "I64Literal",
     "IndexSpec",
+    "RangeIndexDirection",
     "JsonValue",
     "NodeId",
     "NodeRef",
