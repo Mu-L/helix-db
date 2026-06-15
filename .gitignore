@@ -20,3 +20,4 @@ claude.md
 **/tests/parity/results
 **/tests/parity/workspaces
 **/tests/parity/generated
+**/__pycache__
