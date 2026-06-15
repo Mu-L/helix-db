@@ -1,6 +1,9 @@
 .helix/
 *.log
 test/
+# but keep the TypeScript SDK's committed unit tests (CI runs them)
+!sdks/typescript/test/
+!sdks/typescript/test/**
 /thoughts/
 .claude/
 hack/
