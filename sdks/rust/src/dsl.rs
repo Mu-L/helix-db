@@ -2049,6 +2049,16 @@ impl Projection {
         Self::Property(PropertyProjection::renamed(source, alias))
     }
 
+    /// Project a property from the source endpoint of the current edge.
+    pub fn from_endpoint(source: impl Into<String>, alias: impl Into<String>) -> Self {
+        Self::property(format!("$from.{}", source.into()), alias)
+    }
+
+    /// Project a property from the target endpoint of the current edge.
+    pub fn to_endpoint(source: impl Into<String>, alias: impl Into<String>) -> Self {
+        Self::property(format!("$to.{}", source.into()), alias)
+    }
+
     /// Project a computed expression.
     pub fn expr(alias: impl Into<String>, expr: Expr) -> Self {
         Self::Expr(ExprProjection::new(alias, expr))
@@ -4195,6 +4205,16 @@ impl<M: MutationMode> Traversal<OnEdges, M> {
         self.push_step(Step::Label)
     }
 
+    /// Project edge, ranking, and endpoint-qualified properties with optional renaming.
+    pub fn project<P>(self, projections: Vec<P>) -> Traversal<Terminal, M>
+    where
+        P: Into<Projection>,
+    {
+        self.push_step(Step::Project(
+            projections.into_iter().map(Into::into).collect(),
+        ))
+    }
+
     /// Get edge properties
     pub fn edge_properties(self) -> Traversal<Terminal, M> {
         self.push_step(Step::EdgeProperties)
@@ -4712,6 +4732,35 @@ mod tests {
             BatchEntry::Query(query) => query,
             other => panic!("expected query entry, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn edge_project_endpoint_helpers_serialize_as_property_projections() {
+        let batch = read_batch()
+            .var_as(
+                "relationships",
+                g().e_with_label("DESCRIBES").project(vec![
+                    Projection::from_endpoint("resource_id", "from_id"),
+                    Projection::to_endpoint("resource_id", "to_id"),
+                    Projection::property("$id", "edge_id"),
+                ]),
+            )
+            .returning(["relationships"]);
+        let query = query_entry(&batch.queries[0]);
+
+        assert!(matches!(&query.steps[0], Step::EWhere(_)));
+        let Step::Project(projections) = &query.steps[1] else {
+            panic!("expected project step");
+        };
+        assert_eq!(
+            projections[0],
+            Projection::property("$from.resource_id", "from_id")
+        );
+        assert_eq!(
+            projections[1],
+            Projection::property("$to.resource_id", "to_id")
+        );
+        assert_eq!(projections[2], Projection::property("$id", "edge_id"));
     }
 
     #[test]

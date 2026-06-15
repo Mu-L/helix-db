@@ -591,8 +591,14 @@ type Projection struct {
 	Expr   *Expr  `json:"expr,omitempty"`
 }
 
-func ProjectProp(source string) Projection           { return Projection{Source: source, Alias: source} }
-func ProjectPropAs(source, alias string) Projection  { return Projection{Source: source, Alias: alias} }
+func ProjectProp(source string) Projection          { return Projection{Source: source, Alias: source} }
+func ProjectPropAs(source, alias string) Projection { return Projection{Source: source, Alias: alias} }
+func ProjectFromEndpoint(source, alias string) Projection {
+	return ProjectPropAs("$from."+source, alias)
+}
+func ProjectToEndpoint(source, alias string) Projection {
+	return ProjectPropAs("$to."+source, alias)
+}
 func ProjectExpr(alias string, expr Expr) Projection { return Projection{Alias: alias, Expr: &expr} }
 
 func (p Projection) MarshalJSON() ([]byte, error) {

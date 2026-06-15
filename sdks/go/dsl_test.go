@@ -38,6 +38,30 @@ func TestDynamicRequestJSON(t *testing.T) {
 	}
 }
 
+func TestEdgeEndpointProjectionJSON(t *testing.T) {
+	req := ReadQuery("list_relationships_by_type").
+		VarAs("relationships", G().EWithLabel("DESCRIBES").Project(
+			ProjectFromEndpoint("resource_id", "from_id"),
+			ProjectToEndpoint("resource_id", "to_id"),
+			ProjectPropAs("$id", "edge_id"),
+		)).
+		Returning("relationships")
+	body, err := MarshalRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonText := string(body)
+	for _, want := range []string{
+		`"source":"$from.resource_id","alias":"from_id"`,
+		`"source":"$to.resource_id","alias":"to_id"`,
+		`"source":"$id","alias":"edge_id"`,
+	} {
+		if !strings.Contains(jsonText, want) {
+			t.Fatalf("request JSON missing %s in %s", want, jsonText)
+		}
+	}
+}
+
 func TestReadQueryRejectsWriteTraversal(t *testing.T) {
 	req := ReadQuery("bad").VarAs("created", G().AddN("User", Props{Prop("name", "Alice")})).Returning("created")
 	if err := req.Validate(); err == nil {

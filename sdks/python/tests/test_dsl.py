@@ -98,6 +98,44 @@ class DslParityTests(unittest.TestCase):
             fixture("runtime", "004-read-value-map-projection.json"),
         )
 
+    def test_edge_endpoint_projection_helpers(self) -> None:
+        request = DynamicQueryRequest.read(
+            read_batch()
+            .var_as(
+                "relationships",
+                g()
+                .e_with_label("DESCRIBES")
+                .project(
+                    [
+                        Projection.from_endpoint("resource_id", "from_id"),
+                        Projection.to_endpoint("resource_id", "to_id"),
+                        Projection.property("$id", "edge_id"),
+                    ]
+                ),
+            )
+            .returning(["relationships"])
+        )
+
+        project_step = json.loads(request.to_json_string())["query"]["queries"][0]["Query"][
+            "steps"
+        ][1]["Project"]
+        self.assertEqual(
+            project_step,
+            [
+                {"source": "$from.resource_id", "alias": "from_id"},
+                {"source": "$to.resource_id", "alias": "to_id"},
+                {"source": "$id", "alias": "edge_id"},
+            ],
+        )
+        self.assertEqual(
+            Projection.fromEndpoint("resource_id", "from_id").to_json(),
+            {"source": "$from.resource_id", "alias": "from_id"},
+        )
+        self.assertEqual(
+            Projection.toEndpoint("resource_id", "to_id").to_json(),
+            {"source": "$to.resource_id", "alias": "to_id"},
+        )
+
     def test_repeat_union_matches_typescript_fixture(self) -> None:
         request = DynamicQueryRequest.read(
             read_batch()

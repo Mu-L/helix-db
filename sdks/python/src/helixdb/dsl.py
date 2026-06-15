@@ -1013,6 +1013,16 @@ class Projection:
         return cls(PropertyProjection.renamed(source, alias or source))
 
     @classmethod
+    def from_endpoint(cls, source: str, alias: str | None = None) -> "Projection":
+        endpoint_source = f"$from.{source}"
+        return cls.property(endpoint_source, alias or endpoint_source)
+
+    @classmethod
+    def to_endpoint(cls, source: str, alias: str | None = None) -> "Projection":
+        endpoint_source = f"$to.{source}"
+        return cls.property(endpoint_source, alias or endpoint_source)
+
+    @classmethod
     def expr(cls, alias: str, expr: Expr) -> "Projection":
         return cls(ExprProjection(alias, expr))
 
@@ -3117,7 +3127,11 @@ def _install_aliases() -> None:
             "dateTime": "date_time_now",
         },
         StreamBound: {"fromValue": "from_value"},
-        Projection: {"fromValue": "from_value"},
+        Projection: {
+            "fromEndpoint": "from_endpoint",
+            "toEndpoint": "to_endpoint",
+            "fromValue": "from_value",
+        },
         IndexSpec: {
             "nodeEquality": "node_equality",
             "nodeUniqueEquality": "node_unique_equality",

@@ -895,6 +895,12 @@ export class Projection implements Encodable {
   static property(source: string, alias: string): Projection {
     return new Projection(PropertyProjection.renamed(source, alias));
   }
+  static fromEndpoint(source: string, alias: string): Projection {
+    return Projection.property(`$from.${source}`, alias);
+  }
+  static toEndpoint(source: string, alias: string): Projection {
+    return Projection.property(`$to.${source}`, alias);
+  }
   static expr(alias: string, expr: Expr): Projection {
     return new Projection(ExprProjection.new(alias, expr));
   }
