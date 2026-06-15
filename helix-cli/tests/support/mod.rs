@@ -61,6 +61,15 @@ impl CliFixture {
     }
 }
 
+/// Pick a port the OS currently considers free.
+///
+/// There is an unavoidable TOCTOU window here: we release the listener before
+/// the caller can bind, and the caller hands the port to a Docker container in
+/// a child process, so we cannot keep the `fd` alive and pass it through (the
+/// usual `from_std` / `SO_REUSEPORT` mitigations don't cross the container
+/// boundary). This is acceptable for these e2e tests because they are
+/// `#[ignore]`d behind Docker and are not run concurrently in CI; collisions
+/// would surface as a loud `helix start` failure rather than silent corruption.
 pub fn free_port() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind free TCP port");
     let port = listener.local_addr().expect("read local addr").port();

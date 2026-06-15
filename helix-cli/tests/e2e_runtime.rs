@@ -167,8 +167,17 @@ fn local_runtime_lifecycle_and_query_smoke() {
             .assert()
             .success(),
     );
-    assert!(read_output.contains("e2e_count"));
-    assert!(read_output.contains('1'));
+    // Anchor the count check to the region after the `e2e_count` key so we
+    // don't get a false positive from an incidental `1` elsewhere in the
+    // output (ports, ids, etc.). Robust to compact-vs-spaced JSON formatting.
+    let count_idx = read_output
+        .find("e2e_count")
+        .unwrap_or_else(|| panic!("expected e2e_count in output: {read_output}"));
+    let count_region = &read_output[count_idx..];
+    assert!(
+        count_region.contains('1'),
+        "expected a count of 1 for e2e_count in output: {read_output}"
+    );
 
     fixture
         .command()
