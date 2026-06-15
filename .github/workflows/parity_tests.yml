@@ -62,6 +62,12 @@ jobs:
         run: npm test
 
       # --- Python SDK ---
+      # The Python parity tests compare against the TypeScript-generated
+      # fixtures (sdks/tests/parity/generated/typescript), which are gitignored
+      # and produced at build time — generate them first.
+      - name: Generate TypeScript parity fixtures
+        working-directory: sdks/typescript
+        run: npm run parity:generate:ts
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
