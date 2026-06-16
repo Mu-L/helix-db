@@ -1357,5 +1357,47 @@ fn json_only_fixtures() -> Vec<Fixture> {
                 vec![("external_id", QueryParamType::String)],
             ),
         ),
+        json_only(
+            "908-edge-endpoint-projection",
+            read_request(
+                read_batch()
+                    .var_as(
+                        "endpoints",
+                        g().e_with_label("FOLLOWS").project(vec![
+                            Projection::from_endpoint("externalId", "from_id"),
+                            Projection::to_endpoint("externalId", "to_id"),
+                            Projection::property("$id", "edge_id"),
+                        ]),
+                    )
+                    .returning(["endpoints"]),
+            ),
+        ),
+        json_only(
+            "909-range-index-direction",
+            write_request(
+                write_batch()
+                    .var_as(
+                        "node_desc",
+                        g().create_index_if_not_exists(IndexSpec::node_range_desc(
+                            "ParityUser",
+                            "age",
+                        )),
+                    )
+                    .var_as(
+                        "edge_desc",
+                        g().create_index_if_not_exists(IndexSpec::edge_range_desc(
+                            "FOLLOWS", "weight",
+                        )),
+                    )
+                    .var_as(
+                        "node_asc",
+                        g().create_index_if_not_exists(IndexSpec::node_range(
+                            "ParityUser",
+                            "score",
+                        )),
+                    )
+                    .returning(["node_desc", "edge_desc", "node_asc"]),
+            ),
+        ),
     ]
 }

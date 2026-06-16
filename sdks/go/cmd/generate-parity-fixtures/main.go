@@ -67,8 +67,8 @@ func run() error {
 	if runtimeCount != 224 {
 		return fmt.Errorf("generated %d runtime fixtures, expected 224", runtimeCount)
 	}
-	if jsonOnlyCount != 8 {
-		return fmt.Errorf("generated %d json-only fixtures, expected 8", jsonOnlyCount)
+	if jsonOnlyCount != 10 {
+		return fmt.Errorf("generated %d json-only fixtures, expected 10", jsonOnlyCount)
 	}
 
 	return nil
@@ -478,6 +478,22 @@ func jsonOnlyFixtures() []fixture {
 		),
 		fixtureNestedDynamicPropertyWriteShapes(),
 		fixtureNestedDynamicPropertyReadShapes(),
+		jsonOnly(
+			"908-edge-endpoint-projection",
+			read().VarAs("endpoints", helix.G().EWithLabel("FOLLOWS").Project(
+				helix.ProjectFromEndpoint("externalId", "from_id"),
+				helix.ProjectToEndpoint("externalId", "to_id"),
+				helix.ProjectPropAs("$id", "edge_id"),
+			)).Returning("endpoints"),
+		),
+		jsonOnly(
+			"909-range-index-direction",
+			write().
+				VarAs("node_desc", helix.G().CreateIndexIfNotExists(helix.NodeRangeDescIndex("ParityUser", "age"))).
+				VarAs("edge_desc", helix.G().CreateIndexIfNotExists(helix.EdgeRangeDescIndex("FOLLOWS", "weight"))).
+				VarAs("node_asc", helix.G().CreateIndexIfNotExists(helix.NodeRangeIndex("ParityUser", "score"))).
+				Returning("node_desc", "edge_desc", "node_asc"),
+		),
 	}
 }
 

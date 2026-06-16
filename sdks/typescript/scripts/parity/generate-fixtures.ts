@@ -922,6 +922,33 @@ function jsonOnlyFixtures(): Fixture[] {
         [["external_id", QueryParamType.string()]],
       ),
     ),
+    jsonOnly(
+      "908-edge-endpoint-projection",
+      DynamicQueryRequest.read(
+        readBatch()
+          .varAs(
+            "endpoints",
+            g()
+              .eWithLabel("FOLLOWS")
+              .project([
+                Projection.fromEndpoint("externalId", "from_id"),
+                Projection.toEndpoint("externalId", "to_id"),
+                Projection.property("$id", "edge_id"),
+              ]),
+          )
+          .returning(["endpoints"]),
+      ),
+    ),
+    jsonOnly(
+      "909-range-index-direction",
+      DynamicQueryRequest.write(
+        writeBatch()
+          .varAs("node_desc", g().createIndexIfNotExists(IndexSpec.nodeRangeDesc("ParityUser", "age")))
+          .varAs("edge_desc", g().createIndexIfNotExists(IndexSpec.edgeRangeDesc("FOLLOWS", "weight")))
+          .varAs("node_asc", g().createIndexIfNotExists(IndexSpec.nodeRange("ParityUser", "score")))
+          .returning(["node_desc", "edge_desc", "node_asc"]),
+      ),
+    ),
   ];
 }
 

@@ -4,7 +4,7 @@ import { canonicalizeJson, parseJsonStructural, structuralJsonEqual } from "../.
 import { goGeneratedRoot, rustGeneratedRoot, typescriptGeneratedRoot } from "./paths.js";
 
 const EXPECTED_RUNTIME = 224;
-const EXPECTED_JSON_ONLY = 8;
+const EXPECTED_JSON_ONLY = 10;
 const EXPECTED_TOTAL = EXPECTED_RUNTIME + EXPECTED_JSON_ONLY;
 
 type Generated = {
