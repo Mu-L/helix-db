@@ -614,6 +614,64 @@ func (p Projection) MarshalJSON() ([]byte, error) {
 	}{p.Source, p.Alias})
 }
 
+type BindingTarget struct {
+	current bool
+	name    string
+}
+
+func CurrentBinding() BindingTarget { return BindingTarget{current: true} }
+func Binding(name string) BindingTarget {
+	return BindingTarget{name: name}
+}
+
+func (t BindingTarget) MarshalJSON() ([]byte, error) {
+	if t.current {
+		return json.Marshal("Current")
+	}
+	return json.Marshal(map[string]string{"Binding": t.name})
+}
+
+type BindingValueRef struct {
+	Target BindingTarget `json:"target"`
+	Source string        `json:"source"`
+}
+
+func BindingValue(target BindingTarget, source string) BindingValueRef {
+	return BindingValueRef{Target: target, Source: source}
+}
+func CurrentBindingValue(source string) BindingValueRef {
+	return BindingValue(CurrentBinding(), source)
+}
+func NamedBindingValue(name, source string) BindingValueRef {
+	return BindingValue(Binding(name), source)
+}
+
+type BindingProjection struct {
+	Kind   string            `json:"kind"`
+	Target *BindingTarget    `json:"target,omitempty"`
+	Source string            `json:"source,omitempty"`
+	Alias  string            `json:"alias"`
+	Refs   []BindingValueRef `json:"refs,omitempty"`
+}
+
+func ProjectBinding(target BindingTarget, source, alias string) BindingProjection {
+	return BindingProjection{Kind: "Property", Target: &target, Source: source, Alias: alias}
+}
+func ProjectCurrentBinding(source, alias string) BindingProjection {
+	return ProjectBinding(CurrentBinding(), source, alias)
+}
+func ProjectNamedBinding(name, source, alias string) BindingProjection {
+	return ProjectBinding(Binding(name), source, alias)
+}
+func ProjectBindingCoalesce(refs []BindingValueRef, alias string) BindingProjection {
+	return BindingProjection{Kind: "Coalesce", Refs: refs, Alias: alias}
+}
+
+type projectBindingsStep struct {
+	Projections []BindingProjection `json:"projections"`
+	Distinct    bool                `json:"distinct"`
+}
+
 type Order string
 
 const (
@@ -960,10 +1018,16 @@ func (t *Traversal) As(name string) *Traversal     { return t.add(step("As", nam
 func (t *Traversal) Store(name string) *Traversal  { return t.add(step("Store", name)) }
 func (t *Traversal) Select(name string) *Traversal { return t.add(step("Select", name)) }
 func (t *Traversal) Inject(name string) *Traversal { return t.add(step("Inject", name)) }
-func (t *Traversal) Count() *Traversal             { return t.addTerminal(unitStep("Count")) }
-func (t *Traversal) Exists() *Traversal            { return t.addTerminal(unitStep("Exists")) }
-func (t *Traversal) ID() *Traversal                { return t.addTerminal(unitStep("Id")) }
-func (t *Traversal) Label() *Traversal             { return t.addTerminal(unitStep("Label")) }
+func (t *Traversal) Bind(name string) *Traversal {
+	if name == "" {
+		return t.record(errors.New("helix: binding name must not be empty"))
+	}
+	return t.add(step("Bind", name))
+}
+func (t *Traversal) Count() *Traversal  { return t.addTerminal(unitStep("Count")) }
+func (t *Traversal) Exists() *Traversal { return t.addTerminal(unitStep("Exists")) }
+func (t *Traversal) ID() *Traversal     { return t.addTerminal(unitStep("Id")) }
+func (t *Traversal) Label() *Traversal  { return t.addTerminal(unitStep("Label")) }
 func (t *Traversal) Values(properties ...string) *Traversal {
 	return t.addTerminal(step("Values", properties))
 }
@@ -976,6 +1040,12 @@ func (t *Traversal) ValueMap(properties ...string) *Traversal {
 func (t *Traversal) ValueMapAll() *Traversal { return t.addTerminal(step("ValueMap", nil)) }
 func (t *Traversal) Project(projections ...Projection) *Traversal {
 	return t.addTerminal(step("Project", projections))
+}
+func (t *Traversal) ProjectBindings(projections ...BindingProjection) *Traversal {
+	return t.addTerminal(step("ProjectBindings", projectBindingsStep{Projections: projections, Distinct: false}))
+}
+func (t *Traversal) ProjectDistinctBindings(projections ...BindingProjection) *Traversal {
+	return t.addTerminal(step("ProjectBindings", projectBindingsStep{Projections: projections, Distinct: true}))
 }
 func (t *Traversal) EdgeProperties() *Traversal { return t.addTerminal(unitStep("EdgeProperties")) }
 func (t *Traversal) AddN(label string, props Props) *Traversal {
@@ -1136,6 +1206,12 @@ func (s SubTraversal) Limit(bound any) SubTraversal {
 	return s.add(step("Limit", *b.literal))
 }
 func (s SubTraversal) Count() SubTraversal { return s.add(unitStep("Count")) }
+func (s SubTraversal) Bind(name string) SubTraversal {
+	if name == "" {
+		return s
+	}
+	return s.add(step("Bind", name))
+}
 
 type BatchCondition struct {
 	kind  string

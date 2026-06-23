@@ -2,8 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Last query-bundle wire-format version before row-binding steps were added.
+pub const LEGACY_QUERY_BUNDLE_VERSION_V4: u32 = 4;
+
 /// Current wire-format version for generated query bundles.
-pub const QUERY_BUNDLE_VERSION: u32 = 4;
+pub const QUERY_BUNDLE_VERSION: u32 = 5;
+
+/// Query-bundle versions this SDK can deserialize.
+pub const SUPPORTED_QUERY_BUNDLE_VERSIONS: &[u32] =
+    &[LEGACY_QUERY_BUNDLE_VERSION_V4, QUERY_BUNDLE_VERSION];
 
 /// Declared shape of a registered query parameter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,7 +196,7 @@ pub fn serialize_query_bundle(bundle: &QueryBundle) -> Result<Vec<u8>, GenerateE
 pub fn deserialize_query_bundle(bytes: &[u8]) -> Result<QueryBundle, GenerateError> {
     let bundle: QueryBundle = sonic_rs::from_slice(bytes)?;
 
-    if bundle.version != QUERY_BUNDLE_VERSION {
+    if !SUPPORTED_QUERY_BUNDLE_VERSIONS.contains(&bundle.version) {
         return Err(GenerateError::UnsupportedVersion {
             found: bundle.version,
             expected: QUERY_BUNDLE_VERSION,

@@ -14,6 +14,7 @@ import {
   Order,
   Predicate,
   Projection,
+  BindingProjection,
   PropertyInput,
   PropertyValue,
   QueryParamType,
@@ -940,7 +941,53 @@ function jsonOnlyFixtures(): Fixture[] {
       ),
     ),
     jsonOnly(
-      "909-range-index-direction",
+      "909-row-binding-basic-projection",
+      DynamicQueryRequest.read(
+        readBatch()
+          .varAs(
+            "bindings",
+            g()
+              .nWithLabel("ParityService")
+              .bind("service")
+              .projectBindings([
+                BindingProjection.binding("service", "$id", "service_id"),
+                BindingProjection.current("metadata.name", "current_name"),
+                BindingProjection.binding("missing_binding", "externalId", "missing_external_id"),
+              ]),
+          )
+          .returning(["bindings"]),
+      ),
+    ),
+    jsonOnly(
+      "910-row-binding-branch-distinct-projection",
+      DynamicQueryRequest.read(
+        readBatch()
+          .varAs(
+            "workloads",
+            g()
+              .nWithLabel("ParityService")
+              .bind("service")
+              .out("ROUTES_TO")
+              .bind("pod")
+              .optional(sub().in("CREATES").bind("deployment"))
+              .union([sub().in("MANAGES").bind("owner"), sub().out("ROUTES_TO").bind("workload")])
+              .projectDistinctBindings([
+                BindingProjection.binding("service", "$id", "service_id"),
+                BindingProjection.coalesce(
+                  [
+                    BindingProjection.bindingRef("deployment", "$id"),
+                    BindingProjection.bindingRef("owner", "$id"),
+                    BindingProjection.bindingRef("workload", "$id"),
+                  ],
+                  "workload_id",
+                ),
+              ]),
+          )
+          .returning(["workloads"]),
+      ),
+    ),
+    jsonOnly(
+      "911-range-index-direction",
       DynamicQueryRequest.write(
         writeBatch()
           .varAs("node_desc", g().createIndexIfNotExists(IndexSpec.nodeRangeDesc("ParityUser", "age")))

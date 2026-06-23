@@ -1373,7 +1373,58 @@ fn json_only_fixtures() -> Vec<Fixture> {
             ),
         ),
         json_only(
-            "909-range-index-direction",
+            "909-row-binding-basic-projection",
+            read_request(
+                read_batch()
+                    .var_as(
+                        "bindings",
+                        g().n_with_label("ParityService")
+                            .bind("service")
+                            .project_bindings(vec![
+                                BindingProjection::binding("service", "$id", "service_id"),
+                                BindingProjection::current("metadata.name", "current_name"),
+                                BindingProjection::binding(
+                                    "missing_binding",
+                                    "externalId",
+                                    "missing_external_id",
+                                ),
+                            ]),
+                    )
+                    .returning(["bindings"]),
+            ),
+        ),
+        json_only(
+            "910-row-binding-branch-distinct-projection",
+            read_request(
+                read_batch()
+                    .var_as(
+                        "workloads",
+                        g().n_with_label("ParityService")
+                            .bind("service")
+                            .out(Some("ROUTES_TO"))
+                            .bind("pod")
+                            .optional(sub().in_(Some("CREATES")).bind("deployment"))
+                            .union(vec![
+                                sub().in_(Some("MANAGES")).bind("owner"),
+                                sub().out(Some("ROUTES_TO")).bind("workload"),
+                            ])
+                            .project_distinct_bindings(vec![
+                                BindingProjection::binding("service", "$id", "service_id"),
+                                BindingProjection::coalesce(
+                                    vec![
+                                        BindingValueRef::binding("deployment", "$id"),
+                                        BindingValueRef::binding("owner", "$id"),
+                                        BindingValueRef::binding("workload", "$id"),
+                                    ],
+                                    "workload_id",
+                                ),
+                            ]),
+                    )
+                    .returning(["workloads"]),
+            ),
+        ),
+        json_only(
+            "911-range-index-direction",
             write_request(
                 write_batch()
                     .var_as(

@@ -454,6 +454,52 @@ read_batch()
     .returning(["heavy_edges", "targets"]);
 ```
 
+## Row Bindings
+
+Use `.bind(...)` when a multi-hop traversal needs to keep earlier elements correlated with later results. Row bindings are row-local: each path keeps its own named bindings, and `.project_distinct_bindings(...)` can emit one output row per projected tuple.
+
+```rust
+read_batch()
+    .var_as(
+        "dependencies",
+        g()
+            .n_with_label("Service")
+            .where_(Predicate::eq("tenant_id", "acme"))
+            .bind("service")
+            .out(Some("ROUTES_TO"))
+            .where_(Predicate::eq("tenant_id", "acme"))
+            .bind("pod")
+            .in_(Some("MANAGES"))
+            .where_(Predicate::eq("tenant_id", "acme"))
+            .bind("owner")
+            .union(vec![
+                sub()
+                    .where_(Predicate::eq("type", "ReplicaSet"))
+                    .in_(Some("CREATES"))
+                    .where_(Predicate::eq("type", "Deployment"))
+                    .where_(Predicate::eq("tenant_id", "acme"))
+                    .bind("workload"),
+                sub()
+                    .where_(Predicate::is_in(
+                        "type",
+                        vec![
+                            "Deployment".to_string(),
+                            "StatefulSet".to_string(),
+                            "DaemonSet".to_string(),
+                        ],
+                    ))
+                    .bind("workload"),
+            ])
+            .project_distinct_bindings(vec![
+                BindingProjection::binding("service", "$id", "service_id"),
+                BindingProjection::binding("workload", "$id", "workload_id"),
+            ]),
+    )
+    .returning(["dependencies"]);
+```
+
+Binding projections can read virtual fields such as `$id`, `$label`, `$from`, `$to`, `$distance`, and `$score` from either `BindingTarget::Current` or a named binding. Use `BindingProjection::coalesce(...)` when optional branches may or may not create a binding.
+
 ## Branching and Repetition
 
 ```rust

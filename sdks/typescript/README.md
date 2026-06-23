@@ -139,6 +139,49 @@ g()
   .where(Predicate.eq("email", Expr.param("email")));
 ```
 
+## Row Bindings
+
+Use `bind(...)` when a multi-hop traversal needs to keep earlier elements correlated with later results. Row bindings are row-local: each path keeps its own named bindings, and `projectDistinctBindings(...)` can emit one output row per projected tuple.
+
+```ts
+import { BindingProjection, Predicate, g, readBatch, sub } from "@helix-db/helix-db";
+
+function serviceWorkloads(tenantId: string) {
+  return readBatch()
+    .varAs(
+      "dependencies",
+      g()
+        .nWithLabel("Service")
+        .where(Predicate.eq("tenantId", tenantId))
+        .bind("service")
+        .out("ROUTES_TO")
+        .where(Predicate.eq("tenantId", tenantId))
+        .bind("pod")
+        .in("MANAGES")
+        .where(Predicate.eq("tenantId", tenantId))
+        .bind("owner")
+        .union([
+          sub()
+            .where(Predicate.eq("type", "ReplicaSet"))
+            .in("CREATES")
+            .where(Predicate.eq("type", "Deployment"))
+            .where(Predicate.eq("tenantId", tenantId))
+            .bind("workload"),
+          sub()
+            .where(Predicate.isIn("type", ["Deployment", "StatefulSet", "DaemonSet"]))
+            .bind("workload"),
+        ])
+        .projectDistinctBindings([
+          BindingProjection.binding("service", "$id", "service_id"),
+          BindingProjection.binding("workload", "$id", "workload_id"),
+        ]),
+    )
+    .returning(["dependencies"]);
+}
+```
+
+Binding projections can read virtual fields such as `$id`, `$label`, `$from`, `$to`, `$distance`, and `$score` from either `BindingTarget.current()` or a named binding. Use `BindingProjection.coalesce(...)` when optional branches may or may not create a binding.
+
 ## Dynamic Requests
 
 For dynamic `/v1/query`, call your plain query function and serialize the returned batch as a request.
@@ -197,7 +240,7 @@ const json = serializeQueryBundle(bundle);
 await queries.generate("queries.json");
 ```
 
-Bundles use `QUERY_BUNDLE_VERSION = 4` and contain read routes, write routes, and per-route parameter metadata. `deserializeQueryBundle` validates the bundle version for TypeScript consumers.
+Bundles use `QUERY_BUNDLE_VERSION = 5` and contain read routes, write routes, and per-route parameter metadata. `deserializeQueryBundle` accepts the wire-compatible legacy version `4` plus version `5`, and rejects unknown future versions for TypeScript consumers.
 
 ## Number Handling
 

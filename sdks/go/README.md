@@ -113,6 +113,55 @@ Always pass explicit names to `Returning(...)` for values you want back. A
 zero-arg `Returning()` is supported for intentional empty responses and
 serializes as `"returns":[]`.
 
+## Row Bindings
+
+Use `Bind(...)` when a multi-hop traversal needs to keep earlier elements
+correlated with later results. Row bindings are row-local: each path keeps its
+own named bindings, and `ProjectDistinctBindings(...)` can emit one output row
+per projected tuple.
+
+```go
+func ServiceWorkloads(tenantID string) helix.Request {
+	q := helix.ReadQuery("service_workloads")
+	tenant := q.ParamString("tenant_id", tenantID)
+
+	return q.
+		VarAs("dependencies",
+			helix.G().
+				NWithLabel("Service").
+				Where(helix.PredEq("tenantId", tenant)).
+				Bind("service").
+				Out("ROUTES_TO").
+				Where(helix.PredEq("tenantId", tenant)).
+				Bind("pod").
+				In("MANAGES").
+				Where(helix.PredEq("tenantId", tenant)).
+				Bind("owner").
+				Union(
+					helix.Sub().
+						Where(helix.PredEq("type", "ReplicaSet")).
+						In("CREATES").
+						Where(helix.PredEq("type", "Deployment")).
+						Where(helix.PredEq("tenantId", tenant)).
+						Bind("workload"),
+					helix.Sub().
+						Where(helix.PredIsIn("type", []string{"Deployment", "StatefulSet", "DaemonSet"})).
+						Bind("workload"),
+				).
+				ProjectDistinctBindings(
+					helix.ProjectNamedBinding("service", "$id", "service_id"),
+					helix.ProjectNamedBinding("workload", "$id", "workload_id"),
+				),
+		).
+		Returning("dependencies")
+}
+```
+
+Binding projections can read virtual fields such as `$id`, `$label`, `$from`,
+`$to`, `$distance`, and `$score` from either the current element or a named
+binding. Use `ProjectBindingCoalesce(...)` when optional branches may or may not
+create a binding.
+
 ## Conflicts And Retries
 
 `Client.Exec` does not retry HTTP 409 conflicts automatically. Callers should

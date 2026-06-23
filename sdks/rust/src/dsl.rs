@@ -2077,6 +2077,121 @@ impl From<ExprProjection> for Projection {
     }
 }
 
+/// Target for a row-binding projection reference.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum BindingTarget {
+    /// The current traverser element.
+    Current,
+    /// A named row-local binding captured by `bind()`.
+    Binding(String),
+}
+
+impl BindingTarget {
+    /// Reference the current traverser element.
+    pub fn current() -> Self {
+        Self::Current
+    }
+
+    /// Reference a named row-local binding.
+    pub fn binding(name: impl Into<String>) -> Self {
+        Self::Binding(name.into())
+    }
+}
+
+/// A property reference used by binding projection expressions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BindingValueRef {
+    /// Current element or named binding to read from.
+    pub target: BindingTarget,
+    /// Property or virtual field to read.
+    pub source: String,
+}
+
+impl BindingValueRef {
+    /// Create a binding projection value reference.
+    pub fn new(target: BindingTarget, source: impl Into<String>) -> Self {
+        Self {
+            target,
+            source: source.into(),
+        }
+    }
+
+    /// Reference a property on the current traverser element.
+    pub fn current(source: impl Into<String>) -> Self {
+        Self::new(BindingTarget::Current, source)
+    }
+
+    /// Reference a property on a named row binding.
+    pub fn binding(name: impl Into<String>, source: impl Into<String>) -> Self {
+        Self::new(BindingTarget::Binding(name.into()), source)
+    }
+}
+
+/// A terminal projection entry for row-local bindings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum BindingProjection {
+    /// Project a property or virtual field from the current element or a binding.
+    Property {
+        /// Current element or named binding to read from.
+        target: BindingTarget,
+        /// Property or virtual field to read.
+        source: String,
+        /// Name to use in the output row.
+        alias: String,
+    },
+    /// Project the first present non-null property from a list of references.
+    Coalesce {
+        /// Candidate references in fallback order.
+        refs: Vec<BindingValueRef>,
+        /// Name to use in the output row.
+        alias: String,
+    },
+}
+
+impl BindingProjection {
+    /// Project a property or virtual field from the current element or a binding.
+    pub fn property(
+        target: BindingTarget,
+        source: impl Into<String>,
+        alias: impl Into<String>,
+    ) -> Self {
+        Self::Property {
+            target,
+            source: source.into(),
+            alias: alias.into(),
+        }
+    }
+
+    /// Project a property or virtual field from the current traverser element.
+    pub fn current(source: impl Into<String>, alias: impl Into<String>) -> Self {
+        Self::property(BindingTarget::Current, source, alias)
+    }
+
+    /// Project a property or virtual field from a named row binding.
+    pub fn binding(
+        name: impl Into<String>,
+        source: impl Into<String>,
+        alias: impl Into<String>,
+    ) -> Self {
+        Self::property(BindingTarget::Binding(name.into()), source, alias)
+    }
+
+    /// Project the first present non-null property from a list of references.
+    pub fn coalesce(refs: Vec<BindingValueRef>, alias: impl Into<String>) -> Self {
+        Self::Coalesce {
+            refs,
+            alias: alias.into(),
+        }
+    }
+}
+
+fn validate_binding_name(name: impl Into<String>) -> String {
+    let name = name.into();
+    assert!(!name.is_empty(), "binding name must not be empty");
+    name
+}
+
 /// Sort order for ordering steps
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Order {
@@ -2322,6 +2437,12 @@ impl SubTraversal {
     /// Replace current traversal with nodes from a variable
     pub fn select(mut self, name: impl Into<String>) -> Self {
         self.steps.push(Step::Select(name.into()));
+        self
+    }
+
+    /// Capture the current element as a row-local binding and enter row mode.
+    pub fn bind(mut self, name: impl Into<String>) -> Self {
+        self.steps.push(Step::Bind(validate_binding_name(name)));
         self
     }
 
@@ -2887,6 +3008,9 @@ pub enum Step {
     /// Builder form: `.select("x")`
     Select(String),
 
+    /// Capture the current element as a row-local binding and enter row mode.
+    Bind(String),
+
     // Terminal Steps - End the traversal
     /// Count results (returns single value)
     Count,
@@ -2915,6 +3039,14 @@ pub enum Step {
 
     /// Project properties and expressions with optional renaming.
     Project(Vec<Projection>),
+
+    /// Project row-local bindings and optionally deduplicate projected rows.
+    ProjectBindings {
+        /// Projection entries to evaluate for each traverser row.
+        projections: Vec<BindingProjection>,
+        /// Whether to deduplicate identical projected property rows.
+        distinct: bool,
+    },
 
     /// Return edge properties for the current edge stream.
     ///
@@ -3213,6 +3345,7 @@ impl<S: TraversalState, M: MutationMode> Traversal<S, M> {
                     | Step::Values(_)
                     | Step::ValueMap(_)
                     | Step::Project(_)
+                    | Step::ProjectBindings { .. }
                     | Step::EdgeProperties
                     | Step::CreateIndex { .. }
                     | Step::DropIndex { .. }
@@ -3768,6 +3901,11 @@ impl<M: MutationMode> Traversal<OnNodes, M> {
         self.push_step(Step::Select(name.into()))
     }
 
+    /// Capture the current node as a row-local binding and enter row mode.
+    pub fn bind(self, name: impl Into<String>) -> Self {
+        self.push_step(Step::Bind(validate_binding_name(name)))
+    }
+
     /// Union the current node stream with nodes stored in `var_name`.
     ///
     /// This keeps the current stream and adds any nodes stored in the named
@@ -3828,6 +3966,25 @@ impl<M: MutationMode> Traversal<OnNodes, M> {
         self.push_step(Step::Project(
             projections.into_iter().map(Into::into).collect(),
         ))
+    }
+
+    /// Project row-local bindings, preserving duplicate projected rows.
+    pub fn project_bindings(self, projections: Vec<BindingProjection>) -> Traversal<Terminal, M> {
+        self.push_step(Step::ProjectBindings {
+            projections,
+            distinct: false,
+        })
+    }
+
+    /// Project row-local bindings and deduplicate identical projected rows.
+    pub fn project_distinct_bindings(
+        self,
+        projections: Vec<BindingProjection>,
+    ) -> Traversal<Terminal, M> {
+        self.push_step(Step::ProjectBindings {
+            projections,
+            distinct: true,
+        })
     }
 
     // Ordering Steps: OnNodes -> OnNodes
@@ -4183,6 +4340,11 @@ impl<M: MutationMode> Traversal<OnEdges, M> {
         self.push_step(Step::Store(name.into()))
     }
 
+    /// Capture the current edge as a row-local binding and enter row mode.
+    pub fn bind(self, name: impl Into<String>) -> Self {
+        self.push_step(Step::Bind(validate_binding_name(name)))
+    }
+
     // Terminal Steps: OnEdges -> Terminal
 
     /// Count the number of edges
@@ -4213,6 +4375,25 @@ impl<M: MutationMode> Traversal<OnEdges, M> {
         self.push_step(Step::Project(
             projections.into_iter().map(Into::into).collect(),
         ))
+    }
+
+    /// Project row-local bindings, preserving duplicate projected rows.
+    pub fn project_bindings(self, projections: Vec<BindingProjection>) -> Traversal<Terminal, M> {
+        self.push_step(Step::ProjectBindings {
+            projections,
+            distinct: false,
+        })
+    }
+
+    /// Project row-local bindings and deduplicate identical projected rows.
+    pub fn project_distinct_bindings(
+        self,
+        projections: Vec<BindingProjection>,
+    ) -> Traversal<Terminal, M> {
+        self.push_step(Step::ProjectBindings {
+            projections,
+            distinct: true,
+        })
     }
 
     /// Get edge properties
@@ -4702,15 +4883,16 @@ pub fn write_batch() -> WriteBatch {
 pub mod prelude {
     pub use crate::{
         g, read_batch, register, sub, write_batch, AggregateFunction, BatchCondition, BatchEntry,
-        CompareOp, DateTime, DynamicQueryError, DynamicQueryRequest, DynamicQueryRequestType,
-        DynamicQueryValue, EdgeId, EdgeRef, EmitBehavior, Expr, ExprProjection, IndexSpec, NodeId,
-        NodeRef, Order, ParamObject, ParamValue, Predicate, Projection, PropertyInput,
-        PropertyProjection, PropertyValue, ReadBatch, RepeatConfig, SourcePredicate, StreamBound,
-        SubTraversal, Traversal, WriteBatch,
+        BindingProjection, BindingTarget, BindingValueRef, CompareOp, DateTime, DynamicQueryError,
+        DynamicQueryRequest, DynamicQueryRequestType, DynamicQueryValue, EdgeId, EdgeRef,
+        EmitBehavior, Expr, ExprProjection, IndexSpec, NodeId, NodeRef, Order, ParamObject,
+        ParamValue, Predicate, Projection, PropertyInput, PropertyProjection, PropertyValue,
+        ReadBatch, RepeatConfig, SourcePredicate, StreamBound, SubTraversal, Traversal, WriteBatch,
     };
     // query bundle generation
     pub use crate::{
         generate, generate_to_path, GenerateError, QueryBundle, QueryParamType, QueryParameter,
+        LEGACY_QUERY_BUNDLE_VERSION_V4, QUERY_BUNDLE_VERSION, SUPPORTED_QUERY_BUNDLE_VERSIONS,
     };
 }
 
@@ -4722,7 +4904,7 @@ pub type PropertyMap = HashMap<String, PropertyValue>;
 mod tests {
     use crate::query_generator::{
         deserialize_query_bundle, serialize_query_bundle, GenerateError, QueryBundle,
-        QueryParamType, QueryParameter, QUERY_BUNDLE_VERSION,
+        QueryParamType, QueryParameter, LEGACY_QUERY_BUNDLE_VERSION_V4, QUERY_BUNDLE_VERSION,
     };
 
     use super::*;
@@ -4761,6 +4943,63 @@ mod tests {
             Projection::property("$to.resource_id", "to_id")
         );
         assert_eq!(projections[2], Projection::property("$id", "edge_id"));
+    }
+
+    #[test]
+    fn row_binding_steps_serialize_expected_wire_shape() {
+        let traversal = g()
+            .n_with_label("Service")
+            .bind("service")
+            .out(Some("ROUTES_TO"))
+            .bind("pod")
+            .optional(sub().in_(Some("CREATES")).bind("deployment"))
+            .union(vec![
+                sub().in_(Some("MANAGES")).bind("owner"),
+                sub().out(Some("ROUTES_TO")).bind("workload"),
+            ])
+            .project_distinct_bindings(vec![
+                BindingProjection::binding("service", "$id", "service_id"),
+                BindingProjection::current("$id", "current_id"),
+                BindingProjection::coalesce(
+                    vec![
+                        BindingValueRef::binding("deployment", "$id"),
+                        BindingValueRef::binding("owner", "$id"),
+                        BindingValueRef::binding("missing", "$id"),
+                    ],
+                    "workload_id",
+                ),
+            ]);
+
+        assert!(traversal.has_terminal());
+        assert!(matches!(&traversal.steps[1], Step::Bind(name) if name == "service"));
+        assert!(matches!(
+            &traversal.steps[6],
+            Step::ProjectBindings { distinct: true, .. }
+        ));
+
+        let step_json =
+            sonic_rs::to_string(&Step::Bind("service".to_string())).expect("serialize bind step");
+        assert_eq!(step_json, r#"{"Bind":"service"}"#);
+
+        let projection_step = Step::ProjectBindings {
+            projections: vec![
+                BindingProjection::binding("service", "$id", "service_id"),
+                BindingProjection::coalesce(
+                    vec![
+                        BindingValueRef::binding("deployment", "$id"),
+                        BindingValueRef::binding("owner", "$id"),
+                    ],
+                    "workload_id",
+                ),
+            ],
+            distinct: true,
+        };
+        let projection_json =
+            sonic_rs::to_string(&projection_step).expect("serialize projection step");
+        assert_eq!(
+            projection_json,
+            r#"{"ProjectBindings":{"projections":[{"kind":"Property","target":{"Binding":"service"},"source":"$id","alias":"service_id"},{"kind":"Coalesce","refs":[{"target":{"Binding":"deployment"},"source":"$id"},{"target":{"Binding":"owner"},"source":"$id"}],"alias":"workload_id"}],"distinct":true}}"#
+        );
     }
 
     #[test]
@@ -4836,6 +5075,17 @@ mod tests {
                 expected: QUERY_BUNDLE_VERSION,
             }
         ));
+    }
+
+    #[test]
+    fn query_bundle_accepts_legacy_v4_version() {
+        let mut bundle = QueryBundle::default();
+        bundle.version = LEGACY_QUERY_BUNDLE_VERSION_V4;
+
+        let bytes = serialize_query_bundle(&bundle).expect("serialize query bundle");
+        let decoded = deserialize_query_bundle(&bytes).expect("legacy version should deserialize");
+
+        assert_eq!(decoded.version, LEGACY_QUERY_BUNDLE_VERSION_V4);
     }
 
     #[test]

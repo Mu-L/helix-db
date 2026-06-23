@@ -912,6 +912,55 @@ export class Projection implements Encodable {
   }
 }
 
+export type BindingTarget = "Current" | { Binding: string };
+
+export const BindingTarget = {
+  current(): BindingTarget {
+    return "Current";
+  },
+  binding(name: string): BindingTarget {
+    return { Binding: name };
+  },
+};
+
+export type BindingValueRef = {
+  target: BindingTarget;
+  source: string;
+};
+
+export type BindingProjection =
+  | { kind: "Property"; target: BindingTarget; source: string; alias: string }
+  | { kind: "Coalesce"; refs: BindingValueRef[]; alias: string };
+
+export const BindingProjection = {
+  property(target: BindingTarget, source: string, alias: string): BindingProjection {
+    return { kind: "Property", target, source, alias };
+  },
+  current(source: string, alias: string): BindingProjection {
+    return BindingProjection.property(BindingTarget.current(), source, alias);
+  },
+  binding(name: string, source: string, alias: string): BindingProjection {
+    return BindingProjection.property(BindingTarget.binding(name), source, alias);
+  },
+  valueRef(target: BindingTarget, source: string): BindingValueRef {
+    return { target, source };
+  },
+  currentRef(source: string): BindingValueRef {
+    return BindingProjection.valueRef(BindingTarget.current(), source);
+  },
+  bindingRef(name: string, source: string): BindingValueRef {
+    return BindingProjection.valueRef(BindingTarget.binding(name), source);
+  },
+  coalesce(refs: BindingValueRef[], alias: string): BindingProjection {
+    return { kind: "Coalesce", refs, alias };
+  },
+};
+
+function validateBindingName(name: string): string {
+  if (name.length === 0) throw new TypeError("binding name must not be empty");
+  return name;
+}
+
 export class RepeatConfig implements Encodable {
   readonly timesValue: number | null;
   readonly untilValue: Predicate | null;
@@ -1182,6 +1231,9 @@ export class Step implements Encodable {
   static select(name: string): Step {
     return Step.newtype("Select", name);
   }
+  static bind(name: string): Step {
+    return Step.newtype("Bind", validateBindingName(name));
+  }
   static count(): Step {
     return Step.unit("Count");
   }
@@ -1202,6 +1254,9 @@ export class Step implements Encodable {
   }
   static project(projections: ProjectionInput[]): Step {
     return Step.newtype("Project", projections.map(Projection.from));
+  }
+  static projectBindings(projections: BindingProjection[], distinct = false): Step {
+    return Step.struct("ProjectBindings", { projections, distinct });
   }
   static edgeProperties(): Step {
     return Step.unit("EdgeProperties");
@@ -1356,6 +1411,7 @@ export class Traversal<S extends TraversalState = "nodes", M extends MutationMod
         "Values",
         "ValueMap",
         "Project",
+        "ProjectBindings",
         "EdgeProperties",
         "CreateIndex",
         "DropIndex",
@@ -1607,6 +1663,9 @@ export class Traversal<S extends TraversalState = "nodes", M extends MutationMod
   select(name: string): Traversal<S, M> {
     return this.push(Step.select(name), this.state, this.mode) as Traversal<S, M>;
   }
+  bind(name: string): Traversal<S, M> {
+    return this.push(Step.bind(name), this.state, this.mode) as Traversal<S, M>;
+  }
   inject(name: string): Traversal<"nodes", M> {
     return this.push(Step.inject(name), "nodes", this.mode) as Traversal<"nodes", M>;
   }
@@ -1630,6 +1689,12 @@ export class Traversal<S extends TraversalState = "nodes", M extends MutationMod
   }
   project(projections: ProjectionInput[]): Traversal<"terminal", M> {
     return this.push(Step.project(projections), "terminal", this.mode) as Traversal<"terminal", M>;
+  }
+  projectBindings(projections: BindingProjection[]): Traversal<"terminal", M> {
+    return this.push(Step.projectBindings(projections, false), "terminal", this.mode) as Traversal<"terminal", M>;
+  }
+  projectDistinctBindings(projections: BindingProjection[]): Traversal<"terminal", M> {
+    return this.push(Step.projectBindings(projections, true), "terminal", this.mode) as Traversal<"terminal", M>;
   }
   edgeProperties(): Traversal<"terminal", M> {
     return this.push(Step.edgeProperties(), "terminal", this.mode) as Traversal<"terminal", M>;
@@ -1797,6 +1862,9 @@ export class SubTraversal implements Encodable {
   }
   select(name: string): SubTraversal {
     return this.push(Step.select(name));
+  }
+  bind(name: string): SubTraversal {
+    return this.push(Step.bind(name));
   }
   orderBy(property: string, order: Order): SubTraversal {
     return this.push(Step.orderBy(property, order));
@@ -2376,7 +2444,9 @@ function buildDynamicRequest<T extends ParamShape>(
   return applyDynamicQueryOptions(request, paramsOrOptions);
 }
 
-export const QUERY_BUNDLE_VERSION = 4;
+export const LEGACY_QUERY_BUNDLE_VERSION_V4 = 4;
+export const QUERY_BUNDLE_VERSION = 5;
+export const SUPPORTED_QUERY_BUNDLE_VERSIONS = [LEGACY_QUERY_BUNDLE_VERSION_V4, QUERY_BUNDLE_VERSION] as const;
 
 export interface QueryBundle extends Encodable {
   version: number;
@@ -2572,7 +2642,8 @@ export function serializeQueryBundle(bundle: QueryBundle): string {
 export function deserializeQueryBundle(json: string | Uint8Array): unknown {
   const text = typeof json === "string" ? json : new TextDecoder().decode(json);
   const parsed = JSON.parse(text) as { version?: number };
-  if (parsed.version !== QUERY_BUNDLE_VERSION) throw GenerateError.unsupportedVersion(parsed.version ?? -1, QUERY_BUNDLE_VERSION);
+  if (!SUPPORTED_QUERY_BUNDLE_VERSIONS.includes(parsed.version as (typeof SUPPORTED_QUERY_BUNDLE_VERSIONS)[number]))
+    throw GenerateError.unsupportedVersion(parsed.version ?? -1, QUERY_BUNDLE_VERSION);
   return parsed;
 }
 
