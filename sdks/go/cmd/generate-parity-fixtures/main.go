@@ -67,8 +67,8 @@ func run() error {
 	if runtimeCount != 224 {
 		return fmt.Errorf("generated %d runtime fixtures, expected 224", runtimeCount)
 	}
-	if jsonOnlyCount != 10 {
-		return fmt.Errorf("generated %d json-only fixtures, expected 10", jsonOnlyCount)
+	if jsonOnlyCount != 12 {
+		return fmt.Errorf("generated %d json-only fixtures, expected 12", jsonOnlyCount)
 	}
 
 	return nil
@@ -487,7 +487,29 @@ func jsonOnlyFixtures() []fixture {
 			)).Returning("endpoints"),
 		),
 		jsonOnly(
-			"909-range-index-direction",
+			"909-row-binding-basic-projection",
+			read().VarAs("bindings", helix.G().NWithLabel("ParityService").Bind("service").ProjectBindings(
+				helix.ProjectNamedBinding("service", "$id", "service_id"),
+				helix.ProjectCurrentBinding("metadata.name", "current_name"),
+				helix.ProjectNamedBinding("missing_binding", "externalId", "missing_external_id"),
+			)).Returning("bindings"),
+		),
+		jsonOnly(
+			"910-row-binding-branch-distinct-projection",
+			read().VarAs("workloads", helix.G().NWithLabel("ParityService").Bind("service").Out("ROUTES_TO").Bind("pod").Optional(helix.Sub().In("CREATES").Bind("deployment")).Union(
+				helix.Sub().In("MANAGES").Bind("owner"),
+				helix.Sub().Out("ROUTES_TO").Bind("workload"),
+			).ProjectDistinctBindings(
+				helix.ProjectNamedBinding("service", "$id", "service_id"),
+				helix.ProjectBindingCoalesce([]helix.BindingValueRef{
+					helix.NamedBindingValue("deployment", "$id"),
+					helix.NamedBindingValue("owner", "$id"),
+					helix.NamedBindingValue("workload", "$id"),
+				}, "workload_id"),
+			)).Returning("workloads"),
+		),
+		jsonOnly(
+			"911-range-index-direction",
 			write().
 				VarAs("node_desc", helix.G().CreateIndexIfNotExists(helix.NodeRangeDescIndex("ParityUser", "age"))).
 				VarAs("edge_desc", helix.G().CreateIndexIfNotExists(helix.EdgeRangeDescIndex("FOLLOWS", "weight"))).

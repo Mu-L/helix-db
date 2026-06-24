@@ -62,6 +62,47 @@ func TestEdgeEndpointProjectionJSON(t *testing.T) {
 	}
 }
 
+func TestRowBindingProjectionJSON(t *testing.T) {
+	req := ReadQuery("service_workloads").
+		VarAs("workloads", G().NWithLabel("Service").Bind("service").Out("ROUTES_TO").Bind("pod").Optional(Sub().In("CREATES").Bind("deployment")).Union(
+			Sub().In("MANAGES").Bind("owner"),
+			Sub().Out("ROUTES_TO").Bind("workload"),
+		).ProjectDistinctBindings(
+			ProjectNamedBinding("service", "$id", "service_id"),
+			ProjectCurrentBinding("$id", "current_id"),
+			ProjectNamedBinding("missing_binding", "externalId", "missing_external_id"),
+			ProjectBindingCoalesce([]BindingValueRef{
+				NamedBindingValue("deployment", "$id"),
+				NamedBindingValue("owner", "$id"),
+				NamedBindingValue("workload", "$id"),
+			}, "workload_id"),
+		)).
+		Returning("workloads")
+	body, err := MarshalRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonText := string(body)
+	for _, want := range []string{
+		`"Bind":"service"`,
+		`"Bind":"deployment"`,
+		`"ProjectBindings":{"projections":[{"kind":"Property","target":{"Binding":"service"},"source":"$id","alias":"service_id"}`,
+		`{"kind":"Property","target":"Current","source":"$id","alias":"current_id"}`,
+		`{"kind":"Coalesce","alias":"workload_id","refs":[{"target":{"Binding":"deployment"},"source":"$id"},{"target":{"Binding":"owner"},"source":"$id"},{"target":{"Binding":"workload"},"source":"$id"}]}`,
+		`"distinct":true`,
+	} {
+		if !strings.Contains(jsonText, want) {
+			t.Fatalf("request JSON missing %s in %s", want, jsonText)
+		}
+	}
+}
+
+func TestBindRejectsEmptyName(t *testing.T) {
+	if err := G().NWithLabel("Service").Bind("").ProjectBindings(ProjectCurrentBinding("$id", "id")).Validate(); err == nil {
+		t.Fatal("expected empty binding name to fail validation")
+	}
+}
+
 func TestReadQueryRejectsWriteTraversal(t *testing.T) {
 	req := ReadQuery("bad").VarAs("created", G().AddN("User", Props{Prop("name", "Alice")})).Returning("created")
 	if err := req.Validate(); err == nil {

@@ -1,4 +1,16 @@
-import { DateTime, defineParams, defineQueries, g, param, readBatch, registerRead, registerWrite, writeBatch } from "../src/index.js";
+import {
+  BindingProjection,
+  DateTime,
+  defineParams,
+  defineQueries,
+  g,
+  param,
+  readBatch,
+  registerRead,
+  registerWrite,
+  sub,
+  writeBatch,
+} from "../src/index.js";
 
 const readParams = defineParams({
   tenant: param.string(),
@@ -73,6 +85,22 @@ writeBatch()
     values: [{ id: 1, nested: { ok: true } }],
   });
 readBatch().varAs("count", g().nWithLabel("User").count()).toDynamicJson();
+readBatch()
+  .varAs(
+    "bindings",
+    g()
+      .nWithLabel("Service")
+      .bind("service")
+      .optional(sub().in("CREATES").bind("deployment"))
+      .projectDistinctBindings([
+        BindingProjection.binding("service", "$id", "service_id"),
+        BindingProjection.coalesce(
+          [BindingProjection.bindingRef("deployment", "$id"), BindingProjection.bindingRef("service", "$id")],
+          "workload_id",
+        ),
+      ]),
+  )
+  .toDynamicJson();
 
 // @ts-expect-error missing required parameters
 queries.call.find_users({ tenant: "acme" });

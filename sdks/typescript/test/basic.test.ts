@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   BatchCondition,
+  BindingProjection,
   DateTime,
   DynamicQueryError,
   DynamicQueryValue,
@@ -20,6 +21,9 @@ import {
   SourcePredicate,
   Step,
   StreamBound,
+  LEGACY_QUERY_BUNDLE_VERSION_V4,
+  QUERY_BUNDLE_VERSION,
+  deserializeQueryBundle,
   defineParams,
   defineQueries,
   g,
@@ -161,6 +165,69 @@ assert.deepEqual(parsed(Projection.expr("age2", Expr.prop("age").add(Expr.val(1)
   alias: "age2",
   expr: { Add: [{ Property: "age" }, { Constant: { I64: 1 } }] },
 });
+assert.deepEqual(parsed(Step.bind("service")), { Bind: "service" });
+assert.deepEqual(
+  parsed(
+    Step.projectBindings(
+      [
+        BindingProjection.binding("service", "$id", "service_id"),
+        BindingProjection.coalesce(
+          [BindingProjection.bindingRef("deployment", "$id"), BindingProjection.bindingRef("owner", "$id")],
+          "workload_id",
+        ),
+      ],
+      true,
+    ),
+  ),
+  {
+    ProjectBindings: {
+      projections: [
+        { kind: "Property", target: { Binding: "service" }, source: "$id", alias: "service_id" },
+        {
+          kind: "Coalesce",
+          refs: [
+            { target: { Binding: "deployment" }, source: "$id" },
+            { target: { Binding: "owner" }, source: "$id" },
+          ],
+          alias: "workload_id",
+        },
+      ],
+      distinct: true,
+    },
+  },
+);
+
+const rowBindingTraversal = g()
+  .nWithLabel("Service")
+  .bind("service")
+  .optional(sub().in("CREATES").bind("deployment"))
+  .union([sub().in("MANAGES").bind("owner"), sub().out("ROUTES_TO").bind("workload")])
+  .projectDistinctBindings([
+    BindingProjection.binding("service", "$id", "service_id"),
+    BindingProjection.current("$id", "current_id"),
+    BindingProjection.binding("missing_binding", "externalId", "missing_external_id"),
+    BindingProjection.coalesce(
+      [
+        BindingProjection.bindingRef("deployment", "$id"),
+        BindingProjection.bindingRef("owner", "$id"),
+        BindingProjection.bindingRef("workload", "$id"),
+      ],
+      "workload_id",
+    ),
+  ]);
+assert.equal(rowBindingTraversal.hasTerminal(), true);
+assert.deepEqual(parsed(rowBindingTraversal).steps[1], { Bind: "service" });
+assert.equal(parsed(rowBindingTraversal).steps.at(-1).ProjectBindings.distinct, true);
+
+const legacyBundle = JSON.stringify({
+  version: LEGACY_QUERY_BUNDLE_VERSION_V4,
+  read_routes: {},
+  write_routes: {},
+  read_parameters: {},
+  write_parameters: {},
+});
+assert.equal((deserializeQueryBundle(legacyBundle) as { version: number }).version, LEGACY_QUERY_BUNDLE_VERSION_V4);
+assert.equal(QUERY_BUNDLE_VERSION, 5);
 
 const read = readBatch()
   .varAs("user", g().nWhere(SourcePredicate.eq("username", "alice")))
@@ -262,7 +329,7 @@ const queries = defineQueries({
 });
 
 const bundle = JSON.parse(serializeQueryBundle(queries.buildQueryBundle()));
-assert.equal(bundle.version, 4);
+assert.equal(bundle.version, QUERY_BUNDLE_VERSION);
 assert.deepEqual(bundle.read_parameters.registered_read, [
   { name: "tenant_id", ty: "String" },
   { name: "limit", ty: "I64" },
