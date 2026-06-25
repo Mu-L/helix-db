@@ -1,7 +1,7 @@
 use crate::commands::auth::require_auth;
 use crate::config::WorkspaceConfig;
 use crate::enterprise_cloud::{
-    CliClusterIndex, CliClusterIndexes, CliEnterpriseCluster, cloud_base_url,
+    CliClusterIndexes, CliEnterpriseCluster, CliIndexSnapshot, cloud_base_url,
     fetch_indexes_for_cluster, fetch_projects, fetch_workspaces, find_project_by_id,
     find_project_by_name, find_workspace_by_id, find_workspace_by_slug, list_clusters_for_context,
     resolve_enterprise_cluster,
@@ -333,7 +333,7 @@ async fn list_indexes_for_cluster(
     let cluster_id = resolve_cluster_id_for_indexes(cluster_id)?;
     let credentials = require_auth().await?;
     let client = reqwest::Client::new();
-    let indexes = fetch_indexes_for_cluster(
+    let (indexes, raw) = fetch_indexes_for_cluster(
         &client,
         &cloud_base_url(),
         &credentials.helix_admin_key,
@@ -342,10 +342,11 @@ async fn list_indexes_for_cluster(
     .await?;
 
     if format == ConfigOutputFormat::Json {
-        return print_json(&indexes);
+        // Print the raw API body so JSON output always mirrors the API exactly.
+        return print_json(&raw);
     }
 
-    print_cluster_indexes(&cluster_id, &indexes);
+    print_cluster_indexes(&cluster_id, &indexes, &raw);
     Ok(())
 }
 
@@ -396,34 +397,117 @@ fn resolve_cluster_id_for_indexes(cluster_id: Option<String>) -> Result<String> 
         .ok_or_else(|| eyre!("Enterprise instance '{instance_name}' was not found"))
 }
 
-fn print_cluster_indexes(cluster_id: &str, indexes: &CliClusterIndexes) {
-    println!("{}", "Cluster indexes".bold());
-    println!("  Cluster: {cluster_id}");
-    print_index_group("Vector indexes", &indexes.vector_indexes);
-    print_index_group("Equality indexes", &indexes.equality_indexes);
-    print_index_group("Range indexes", &indexes.range_indexes);
-}
-
-fn print_index_group(title: &str, indexes: &[CliClusterIndex]) {
-    println!("  {title}:");
-    if indexes.is_empty() {
-        println!("    (none)");
+fn print_cluster_indexes(cluster_id: &str, indexes: &CliClusterIndexes, raw: &serde_json::Value) {
+    // If we couldn't recognize any backend in the response, fall back to the raw
+    // JSON so the user always sees what the API actually returned.
+    let Some(canonical) = indexes.canonical_backend() else {
+        println!("{}", "Cluster indexes".bold());
+        println!("  Cluster: {cluster_id}");
+        println!(
+            "  {}",
+            "Unrecognized response shape; raw API response:".yellow()
+        );
+        if let Ok(pretty) = serde_json::to_string_pretty(raw) {
+            println!("{pretty}");
+        }
         return;
-    }
+    };
 
-    for index in indexes {
-        let name = if index.index_name.trim().is_empty() {
-            "<unnamed>"
-        } else {
-            index.index_name.as_str()
-        };
-        match index.index_type.as_deref() {
-            Some(index_type) if !index_type.trim().is_empty() => {
-                println!("    {name} ({index_type})");
-            }
-            _ => println!("    {name}"),
+    let mode = indexes.mode.as_deref().unwrap_or("unknown");
+    let backend_count = indexes.readable_backends.len().max(indexes.backends.len());
+    let writer = if canonical.pod.is_empty() {
+        "unknown"
+    } else {
+        canonical.pod.as_str()
+    };
+
+    println!(
+        "{} (mode: {mode}, {backend_count} backend(s), writer {writer})",
+        "Cluster indexes".bold()
+    );
+    println!("  Cluster: {cluster_id}");
+
+    let snap = &canonical.snapshot;
+    print_snapshot_counts("Node", snap, true);
+    print_snapshot_counts("Edge", snap, false);
+    println!(
+        "  {}",
+        "Run with --format json for the full per-index listing.".dimmed()
+    );
+
+    // Surface any errors reported by the cluster.
+    if !indexes.errors.is_empty() {
+        println!("  {}", "Errors:".red());
+        for err in &indexes.errors {
+            println!("    {err}");
         }
     }
+
+    // Warn if any readable backend diverges from the writer's index counts
+    // (a replication-lag signal). Counts are sufficient; no full diff.
+    let writer_sig = snapshot_signature(snap);
+    let diverging: Vec<&str> = indexes
+        .backends
+        .iter()
+        .filter(|b| b.pod != canonical.pod && snapshot_signature(&b.snapshot) != writer_sig)
+        .map(|b| b.pod.as_str())
+        .collect();
+    if !diverging.is_empty() {
+        println!(
+            "  {} backend(s) diverge from the writer (replication lag?): {}",
+            "Warning:".yellow(),
+            diverging.join(", ")
+        );
+    }
+}
+
+/// Prints a one-line per-category count summary for the node or edge half of a
+/// snapshot.
+fn print_snapshot_counts(label: &str, snap: &CliIndexSnapshot, node: bool) {
+    let (label_index, equality, range, range_desc, text, vector) = if node {
+        (
+            snap.node_label_index,
+            snap.node_equality_indexes.len(),
+            snap.node_range_indexes.len(),
+            snap.node_range_desc_indexes.len(),
+            snap.node_text_indexes.len(),
+            snap.node_vector_indexes.len(),
+        )
+    } else {
+        (
+            snap.edge_label_index,
+            snap.edge_equality_indexes.len(),
+            snap.edge_range_indexes.len(),
+            snap.edge_range_desc_indexes.len(),
+            snap.edge_text_indexes.len(),
+            snap.edge_vector_indexes.len(),
+        )
+    };
+    let label_index = if label_index { "enabled" } else { "disabled" };
+    println!(
+        "  {label}:  label index {label_index} | equality {equality} | text {text} | vector {vector} | range {range} | range_desc {range_desc}"
+    );
+}
+
+/// A cheap comparable signature of a snapshot's per-category counts, used to
+/// detect backend divergence without a full diff. Counts (not contents) are
+/// compared deliberately: backends return the same indexes in differing orders,
+/// so a content/Vec comparison would report spurious divergence.
+fn snapshot_signature(snap: &CliIndexSnapshot) -> Vec<usize> {
+    vec![
+        snap.node_label_index as usize,
+        snap.edge_label_index as usize,
+        snap.node_equality_indexes.len(),
+        snap.node_range_indexes.len(),
+        snap.node_range_desc_indexes.len(),
+        snap.node_text_indexes.len(),
+        snap.node_vector_indexes.len(),
+        snap.edge_equality_indexes.len(),
+        snap.edge_range_indexes.len(),
+        snap.edge_range_desc_indexes.len(),
+        snap.edge_text_indexes.len(),
+        snap.edge_vector_indexes.len(),
+    ]
 }
 
 fn print_enterprise_clusters(clusters: &[CliEnterpriseCluster]) {
