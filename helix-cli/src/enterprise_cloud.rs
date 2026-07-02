@@ -54,13 +54,80 @@ pub struct CliProjectClusters {
     pub project_id: String,
     pub project_name: String,
     #[serde(default)]
+    pub standard: Vec<CliStandardCluster>,
+    #[serde(default)]
     pub enterprise: Vec<CliEnterpriseCluster>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliWorkspaceClusters {
     #[serde(default)]
+    pub standard: Vec<CliStandardCluster>,
+    #[serde(default)]
     pub enterprise: Vec<CliEnterpriseCluster>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CliClusterList {
+    #[serde(default)]
+    pub standard: Vec<CliStandardCluster>,
+    #[serde(default)]
+    pub enterprise: Vec<CliEnterpriseCluster>,
+}
+
+impl From<CliProjectClusters> for CliClusterList {
+    fn from(clusters: CliProjectClusters) -> Self {
+        let CliProjectClusters {
+            project_id,
+            project_name,
+            mut standard,
+            mut enterprise,
+        } = clusters;
+
+        for cluster in &mut standard {
+            cluster.project_id.get_or_insert_with(|| project_id.clone());
+            cluster
+                .project_name
+                .get_or_insert_with(|| project_name.clone());
+        }
+        for cluster in &mut enterprise {
+            cluster.project_id.get_or_insert_with(|| project_id.clone());
+            cluster
+                .project_name
+                .get_or_insert_with(|| project_name.clone());
+        }
+
+        Self {
+            standard,
+            enterprise,
+        }
+    }
+}
+
+impl From<CliWorkspaceClusters> for CliClusterList {
+    fn from(clusters: CliWorkspaceClusters) -> Self {
+        Self {
+            standard: clusters.standard,
+            enterprise: clusters.enterprise,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CliStandardCluster {
+    pub cluster_id: String,
+    #[serde(alias = "cluster_name")]
+    pub name: String,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub project_name: Option<String>,
+    #[serde(default)]
+    pub build_mode: Option<String>,
+    #[serde(default)]
+    pub max_memory_gb: Option<u32>,
+    #[serde(default)]
+    pub max_vcpus: Option<f32>,
 }
 
 /// A per-backend index snapshot. Each index entry is a `[label, property]`
@@ -404,25 +471,25 @@ pub fn find_enterprise_cluster_by_id<'a>(
     clusters.iter().find(|cluster| cluster.cluster_id == id)
 }
 
-/// List the Enterprise clusters available for a project (preferred) or workspace.
+/// List the Cloud clusters available for a project (preferred) or workspace.
 pub async fn list_clusters_for_context(
     client: &Client,
     base_url: &str,
     api_key: &str,
     project_id: Option<&str>,
     workspace_id: Option<&str>,
-) -> Result<Vec<CliEnterpriseCluster>> {
+) -> Result<CliClusterList> {
     if let Some(project_id) = project_id {
         Ok(
             fetch_project_clusters(client, base_url, api_key, project_id)
                 .await?
-                .enterprise,
+                .into(),
         )
     } else if let Some(workspace_id) = workspace_id {
         Ok(
             fetch_workspace_clusters(client, base_url, api_key, workspace_id)
                 .await?
-                .enterprise,
+                .into(),
         )
     } else {
         Err(eyre!(
@@ -480,6 +547,75 @@ pub async fn resolve_enterprise_cluster(
         workspace_id,
         cluster,
     })
+}
+
+#[cfg(test)]
+mod cluster_list_tests {
+    use super::*;
+
+    #[test]
+    fn project_clusters_preserve_standard_and_enterprise() {
+        let response: CliProjectClusters = serde_json::from_value(serde_json::json!({
+            "project_id": "project-1",
+            "project_name": "demo",
+            "standard": [{
+                "cluster_id": "standard-1",
+                "cluster_name": "standard-a",
+                "build_mode": "prod",
+                "max_memory_gb": 4,
+                "max_vcpus": 2.0
+            }],
+            "enterprise": [{
+                "cluster_id": "enterprise-1",
+                "cluster_name": "enterprise-a",
+                "availability_mode": "ha",
+                "gateway_node_type": "GW-40",
+                "db_node_type": "HLX-160",
+                "min_gateway_count": 3,
+                "max_gateway_count": 3,
+                "min_hyperscale_count": 3,
+                "max_hyperscale_count": 3
+            }]
+        }))
+        .unwrap();
+
+        let list = CliClusterList::from(response);
+
+        assert_eq!(list.standard.len(), 1);
+        assert_eq!(list.enterprise.len(), 1);
+        assert_eq!(list.standard[0].name, "standard-a");
+        assert_eq!(list.standard[0].project_id.as_deref(), Some("project-1"));
+        assert_eq!(list.standard[0].project_name.as_deref(), Some("demo"));
+        assert_eq!(list.standard[0].build_mode.as_deref(), Some("prod"));
+        assert_eq!(list.standard[0].max_memory_gb, Some(4));
+        assert_eq!(list.standard[0].max_vcpus, Some(2.0));
+        assert_eq!(list.enterprise[0].project_id.as_deref(), Some("project-1"));
+        assert_eq!(list.enterprise[0].project_name.as_deref(), Some("demo"));
+    }
+
+    #[test]
+    fn workspace_clusters_preserve_project_scoped_standard_metadata() {
+        let response: CliWorkspaceClusters = serde_json::from_value(serde_json::json!({
+            "standard": [{
+                "cluster_id": "standard-1",
+                "cluster_name": "standard-a",
+                "project_id": "project-1",
+                "project_name": "demo",
+                "build_mode": "dev",
+                "max_memory_gb": 1,
+                "max_vcpus": 1.0
+            }],
+            "enterprise": []
+        }))
+        .unwrap();
+
+        let list = CliClusterList::from(response);
+
+        assert_eq!(list.standard.len(), 1);
+        assert!(list.enterprise.is_empty());
+        assert_eq!(list.standard[0].cluster_id, "standard-1");
+        assert_eq!(list.standard[0].project_name.as_deref(), Some("demo"));
+    }
 }
 
 #[cfg(test)]

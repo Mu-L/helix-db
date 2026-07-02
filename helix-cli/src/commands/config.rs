@@ -1,10 +1,10 @@
 use crate::commands::auth::require_auth;
 use crate::config::WorkspaceConfig;
 use crate::enterprise_cloud::{
-    CliClusterIndexes, CliEnterpriseCluster, CliIndexSnapshot, cloud_base_url,
-    fetch_indexes_for_cluster, fetch_projects, fetch_workspaces, find_project_by_id,
-    find_project_by_name, find_workspace_by_id, find_workspace_by_slug, list_clusters_for_context,
-    resolve_enterprise_cluster,
+    CliClusterIndexes, CliClusterList, CliEnterpriseCluster, CliIndexSnapshot, CliStandardCluster,
+    cloud_base_url, fetch_indexes_for_cluster, fetch_projects, fetch_workspaces,
+    find_project_by_id, find_project_by_name, find_workspace_by_id, find_workspace_by_slug,
+    list_clusters_for_context, resolve_enterprise_cluster,
 };
 use crate::project::ProjectContext;
 use crate::prompts;
@@ -322,7 +322,7 @@ async fn cluster_list(
     if format == ConfigOutputFormat::Json {
         return print_json(&clusters);
     }
-    print_enterprise_clusters(&clusters);
+    print_cloud_clusters(&clusters);
     Ok(())
 }
 
@@ -510,10 +510,48 @@ fn snapshot_signature(snap: &CliIndexSnapshot) -> Vec<usize> {
     ]
 }
 
-fn print_enterprise_clusters(clusters: &[CliEnterpriseCluster]) {
-    println!("{}", "Enterprise clusters".bold());
+fn print_cloud_clusters(clusters: &CliClusterList) {
+    print_standard_clusters(&clusters.standard);
+    println!();
+    print_enterprise_clusters(&clusters.enterprise);
+}
+
+fn print_standard_clusters(clusters: &[CliStandardCluster]) {
+    println!("{}", "Standard clusters".bold());
+    if clusters.is_empty() {
+        println!("  (none)");
+        return;
+    }
     for cluster in clusters {
         println!("  {} ({})", cluster.name, cluster.cluster_id);
+        if let Some(project_name) = &cluster.project_name {
+            println!("    project: {project_name}");
+        }
+        if let Some(build_mode) = &cluster.build_mode {
+            println!("    build mode: {build_mode}");
+        }
+        match (cluster.max_memory_gb, cluster.max_vcpus) {
+            (Some(memory_gb), Some(vcpus)) => {
+                println!("    resources: {memory_gb} GB, {vcpus} vCPU");
+            }
+            (Some(memory_gb), None) => println!("    memory: {memory_gb} GB"),
+            (None, Some(vcpus)) => println!("    vCPU: {vcpus}"),
+            (None, None) => {}
+        }
+    }
+}
+
+fn print_enterprise_clusters(clusters: &[CliEnterpriseCluster]) {
+    println!("{}", "Enterprise clusters".bold());
+    if clusters.is_empty() {
+        println!("  (none)");
+        return;
+    }
+    for cluster in clusters {
+        println!("  {} ({})", cluster.name, cluster.cluster_id);
+        if let Some(project_name) = &cluster.project_name {
+            println!("    project: {project_name}");
+        }
         if let Some(gateway_url) = &cluster.gateway_url {
             println!("    gateway: {gateway_url}");
         }
@@ -541,7 +579,8 @@ async fn cluster_select() -> Result<()> {
         project_id.as_deref(),
         workspace_id.as_deref(),
     )
-    .await?;
+    .await?
+    .enterprise;
 
     let items: Vec<(String, String, String)> = clusters
         .iter()
@@ -635,7 +674,8 @@ pub async fn resolve_enterprise_target(
                 project_ctx.as_deref(),
                 workspace_id.as_deref(),
             )
-            .await?;
+            .await?
+            .enterprise;
             let items: Vec<(String, String, String)> = clusters
                 .iter()
                 .map(|cluster| {
