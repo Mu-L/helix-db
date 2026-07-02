@@ -242,7 +242,7 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
         action: Option<ProjectConfigAction>,
     },
 
-    /// List and inspect Enterprise Cloud clusters
+    /// List and inspect Cloud clusters
     Cluster {
         #[command(subcommand)]
         action: Option<ClusterConfigAction>,

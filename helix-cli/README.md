@@ -15,7 +15,7 @@ Command-line interface for managing v2 Helix projects, local development instanc
 - `auth`: login, logout, or create an Enterprise Cloud API key.
 - `workspace`: manage active Enterprise Cloud workspace selection.
 - `project`: manage linked Enterprise Cloud project selection.
-- `cluster`: list and inspect Enterprise Cloud clusters.
+- `cluster`: list standard and Enterprise Cloud clusters.
 - `sync`: reconcile Enterprise query project source and sync Enterprise Cloud metadata into `helix.toml`.
 - `prune`: clean Helix-owned local containers, disk-mode volumes, and workspaces.
 - `delete`: remove an instance from `helix.toml` and clean local runtime state.

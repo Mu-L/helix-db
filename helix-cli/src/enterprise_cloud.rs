@@ -54,33 +54,158 @@ pub struct CliProjectClusters {
     pub project_id: String,
     pub project_name: String,
     #[serde(default)]
+    pub standard: Vec<CliStandardCluster>,
+    #[serde(default)]
     pub enterprise: Vec<CliEnterpriseCluster>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliWorkspaceClusters {
     #[serde(default)]
+    pub standard: Vec<CliStandardCluster>,
+    #[serde(default)]
     pub enterprise: Vec<CliEnterpriseCluster>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CliClusterList {
+    #[serde(default)]
+    pub standard: Vec<CliStandardCluster>,
+    #[serde(default)]
+    pub enterprise: Vec<CliEnterpriseCluster>,
+}
+
+impl From<CliProjectClusters> for CliClusterList {
+    fn from(clusters: CliProjectClusters) -> Self {
+        let CliProjectClusters {
+            project_id,
+            project_name,
+            mut standard,
+            mut enterprise,
+        } = clusters;
+
+        for cluster in &mut standard {
+            cluster.project_id.get_or_insert_with(|| project_id.clone());
+            cluster
+                .project_name
+                .get_or_insert_with(|| project_name.clone());
+        }
+        for cluster in &mut enterprise {
+            cluster.project_id.get_or_insert_with(|| project_id.clone());
+            cluster
+                .project_name
+                .get_or_insert_with(|| project_name.clone());
+        }
+
+        Self {
+            standard,
+            enterprise,
+        }
+    }
+}
+
+impl From<CliWorkspaceClusters> for CliClusterList {
+    fn from(clusters: CliWorkspaceClusters) -> Self {
+        Self {
+            standard: clusters.standard,
+            enterprise: clusters.enterprise,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CliClusterIndex {
-    #[serde(default, rename = "name", alias = "index_name")]
-    pub index_name: String,
-    #[serde(default, rename = "type", alias = "index_type")]
-    pub index_type: Option<String>,
+pub struct CliStandardCluster {
+    pub cluster_id: String,
+    #[serde(alias = "cluster_name")]
+    pub name: String,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub project_name: Option<String>,
+    #[serde(default)]
+    pub build_mode: Option<String>,
+    #[serde(default)]
+    pub max_memory_gb: Option<u32>,
+    #[serde(default)]
+    pub max_vcpus: Option<f32>,
+}
+
+/// A per-backend index snapshot. Each index entry is a `[label, property]`
+/// tuple. Unknown sibling keys are captured in `extra` so future schema
+/// additions are not silently dropped.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CliIndexSnapshot {
+    #[serde(default)]
+    pub node_label_index: bool,
+    #[serde(default)]
+    pub edge_label_index: bool,
+    #[serde(default)]
+    pub node_equality_indexes: Vec<(String, String)>,
+    #[serde(default)]
+    pub node_range_indexes: Vec<(String, String)>,
+    #[serde(default)]
+    pub node_range_desc_indexes: Vec<(String, String)>,
+    #[serde(default)]
+    pub node_text_indexes: Vec<(String, String)>,
+    #[serde(default)]
+    pub node_vector_indexes: Vec<(String, String)>,
+    #[serde(default)]
+    pub edge_equality_indexes: Vec<(String, String)>,
+    #[serde(default)]
+    pub edge_range_indexes: Vec<(String, String)>,
+    #[serde(default)]
+    pub edge_range_desc_indexes: Vec<(String, String)>,
+    #[serde(default)]
+    pub edge_text_indexes: Vec<(String, String)>,
+    #[serde(default)]
+    pub edge_vector_indexes: Vec<(String, String)>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CliClusterBackend {
+    #[serde(default)]
+    pub pod: String,
+    #[serde(default)]
+    pub snapshot: CliIndexSnapshot,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CliClusterIndexes {
     #[serde(default)]
-    pub vector_indexes: Vec<CliClusterIndex>,
+    pub mode: Option<String>,
     #[serde(default)]
-    pub equality_indexes: Vec<CliClusterIndex>,
+    pub backends: Vec<CliClusterBackend>,
     #[serde(default)]
-    pub range_indexes: Vec<CliClusterIndex>,
+    pub readable_backends: Vec<String>,
+    /// Authoritative backend; only its `pod` field is needed for display.
+    #[serde(default)]
+    pub writer_backend: Option<serde_json::Value>,
+    #[serde(default)]
+    pub errors: Vec<serde_json::Value>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+impl CliClusterIndexes {
+    /// The pod id of the writer backend, if present in the response.
+    pub fn writer_pod(&self) -> Option<&str> {
+        self.writer_backend
+            .as_ref()?
+            .get("pod")
+            .and_then(|v| v.as_str())
+    }
+
+    /// The writer backend's snapshot, falling back to the first backend.
+    pub fn canonical_backend(&self) -> Option<&CliClusterBackend> {
+        if let Some(pod) = self.writer_pod()
+            && let Some(b) = self.backends.iter().find(|b| b.pod == pod)
+        {
+            return Some(b);
+        }
+        self.backends.first()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,19 +404,25 @@ pub async fn fetch_workspace_clusters(
     .await
 }
 
+/// Fetches the cluster index snapshot. Returns the typed view alongside the raw
+/// JSON body so callers can render the typed summary while still emitting the
+/// exact API response for `--format json` (and as a fallback when the shape is
+/// unrecognized).
 pub async fn fetch_indexes_for_cluster(
     client: &Client,
     base_url: &str,
     api_key: &str,
     cluster_id: &str,
-) -> Result<CliClusterIndexes> {
-    get_json(
+) -> Result<(CliClusterIndexes, serde_json::Value)> {
+    let raw: serde_json::Value = get_json(
         client,
         format!("{base_url}/api/cli/enterprise-clusters/{cluster_id}/indexes"),
         api_key,
         "fetch cluster indexes",
     )
-    .await
+    .await?;
+    let typed: CliClusterIndexes = serde_json::from_value(raw.clone())?;
+    Ok((typed, raw))
 }
 
 pub async fn fetch_enterprise_cluster_project(
@@ -340,25 +471,25 @@ pub fn find_enterprise_cluster_by_id<'a>(
     clusters.iter().find(|cluster| cluster.cluster_id == id)
 }
 
-/// List the Enterprise clusters available for a project (preferred) or workspace.
+/// List the Cloud clusters available for a project (preferred) or workspace.
 pub async fn list_clusters_for_context(
     client: &Client,
     base_url: &str,
     api_key: &str,
     project_id: Option<&str>,
     workspace_id: Option<&str>,
-) -> Result<Vec<CliEnterpriseCluster>> {
+) -> Result<CliClusterList> {
     if let Some(project_id) = project_id {
         Ok(
             fetch_project_clusters(client, base_url, api_key, project_id)
                 .await?
-                .enterprise,
+                .into(),
         )
     } else if let Some(workspace_id) = workspace_id {
         Ok(
             fetch_workspace_clusters(client, base_url, api_key, workspace_id)
                 .await?
-                .enterprise,
+                .into(),
         )
     } else {
         Err(eyre!(
@@ -416,4 +547,181 @@ pub async fn resolve_enterprise_cluster(
         workspace_id,
         cluster,
     })
+}
+
+#[cfg(test)]
+mod cluster_list_tests {
+    use super::*;
+
+    #[test]
+    fn project_clusters_preserve_standard_and_enterprise() {
+        let response: CliProjectClusters = serde_json::from_value(serde_json::json!({
+            "project_id": "project-1",
+            "project_name": "demo",
+            "standard": [{
+                "cluster_id": "standard-1",
+                "cluster_name": "standard-a",
+                "build_mode": "prod",
+                "max_memory_gb": 4,
+                "max_vcpus": 2.0
+            }],
+            "enterprise": [{
+                "cluster_id": "enterprise-1",
+                "cluster_name": "enterprise-a",
+                "availability_mode": "ha",
+                "gateway_node_type": "GW-40",
+                "db_node_type": "HLX-160",
+                "min_gateway_count": 3,
+                "max_gateway_count": 3,
+                "min_hyperscale_count": 3,
+                "max_hyperscale_count": 3
+            }]
+        }))
+        .unwrap();
+
+        let list = CliClusterList::from(response);
+
+        assert_eq!(list.standard.len(), 1);
+        assert_eq!(list.enterprise.len(), 1);
+        assert_eq!(list.standard[0].name, "standard-a");
+        assert_eq!(list.standard[0].project_id.as_deref(), Some("project-1"));
+        assert_eq!(list.standard[0].project_name.as_deref(), Some("demo"));
+        assert_eq!(list.standard[0].build_mode.as_deref(), Some("prod"));
+        assert_eq!(list.standard[0].max_memory_gb, Some(4));
+        assert_eq!(list.standard[0].max_vcpus, Some(2.0));
+        assert_eq!(list.enterprise[0].project_id.as_deref(), Some("project-1"));
+        assert_eq!(list.enterprise[0].project_name.as_deref(), Some("demo"));
+    }
+
+    #[test]
+    fn workspace_clusters_preserve_project_scoped_standard_metadata() {
+        let response: CliWorkspaceClusters = serde_json::from_value(serde_json::json!({
+            "standard": [{
+                "cluster_id": "standard-1",
+                "cluster_name": "standard-a",
+                "project_id": "project-1",
+                "project_name": "demo",
+                "build_mode": "dev",
+                "max_memory_gb": 1,
+                "max_vcpus": 1.0
+            }],
+            "enterprise": []
+        }))
+        .unwrap();
+
+        let list = CliClusterList::from(response);
+
+        assert_eq!(list.standard.len(), 1);
+        assert!(list.enterprise.is_empty());
+        assert_eq!(list.standard[0].cluster_id, "standard-1");
+        assert_eq!(list.standard[0].project_name.as_deref(), Some("demo"));
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+
+    // A trimmed but structurally-faithful sample of the real
+    // `/api/cli/enterprise-clusters/{id}/indexes` response (pod_pool, 2 replicas).
+    const REAL_RESPONSE: &str = r#"{
+        "phase": { "phase": "stable", "writer": { "pod": "pod-a", "term": 15 } },
+        "mode": "pod_pool",
+        "errors": [],
+        "readable_backends": ["pod-a", "pod-b"],
+        "writer_backend": { "pod": "pod-a", "healthy": true, "accepting_writes": true },
+        "backends": [
+            { "pod": "pod-a", "snapshot": {
+                "node_label_index": true,
+                "edge_label_index": true,
+                "node_equality_indexes": [["User","externalId"], ["Project","firmId"]],
+                "node_text_indexes": [["User","firstName"]],
+                "node_vector_indexes": [["DocumentChunk","embedding"]],
+                "node_range_indexes": [],
+                "node_range_desc_indexes": [],
+                "edge_equality_indexes": [["ForClient","firmId"]],
+                "edge_text_indexes": [],
+                "edge_vector_indexes": [],
+                "edge_range_indexes": [],
+                "edge_range_desc_indexes": []
+            }},
+            { "pod": "pod-b", "snapshot": {
+                "node_label_index": true,
+                "edge_label_index": true,
+                "node_equality_indexes": [["User","externalId"], ["Project","firmId"]],
+                "node_text_indexes": [["User","firstName"]],
+                "node_vector_indexes": [["DocumentChunk","embedding"]],
+                "node_range_indexes": [],
+                "node_range_desc_indexes": [],
+                "edge_equality_indexes": [["ForClient","firmId"]],
+                "edge_text_indexes": [],
+                "edge_vector_indexes": [],
+                "edge_range_indexes": [],
+                "edge_range_desc_indexes": []
+            }}
+        ]
+    }"#;
+
+    #[test]
+    fn deserializes_real_multi_backend_response() {
+        let parsed: CliClusterIndexes = serde_json::from_str(REAL_RESPONSE).unwrap();
+
+        assert_eq!(parsed.mode.as_deref(), Some("pod_pool"));
+        assert_eq!(parsed.readable_backends.len(), 2);
+        assert_eq!(parsed.writer_pod(), Some("pod-a"));
+
+        let canonical = parsed.canonical_backend().expect("writer backend resolved");
+        assert_eq!(canonical.pod, "pod-a");
+
+        let snap = &canonical.snapshot;
+        assert!(snap.node_label_index);
+        assert!(snap.edge_label_index);
+        assert_eq!(
+            snap.node_equality_indexes,
+            vec![
+                ("User".to_string(), "externalId".to_string()),
+                ("Project".to_string(), "firmId".to_string())
+            ]
+        );
+        assert_eq!(
+            snap.node_vector_indexes,
+            vec![("DocumentChunk".to_string(), "embedding".to_string())]
+        );
+        assert_eq!(
+            snap.node_text_indexes,
+            vec![("User".to_string(), "firstName".to_string())]
+        );
+        assert_eq!(
+            snap.edge_equality_indexes,
+            vec![("ForClient".to_string(), "firmId".to_string())]
+        );
+        assert!(snap.node_range_indexes.is_empty());
+    }
+
+    #[test]
+    fn canonical_falls_back_to_first_backend_without_writer() {
+        // No writer_backend field -> fall back to the first backend.
+        let body = r#"{
+            "mode": "pod_pool",
+            "backends": [ { "pod": "only-pod", "snapshot": { "node_label_index": true } } ]
+        }"#;
+        let parsed: CliClusterIndexes = serde_json::from_str(body).unwrap();
+        assert_eq!(parsed.writer_pod(), None);
+        assert_eq!(
+            parsed.canonical_backend().map(|b| b.pod.as_str()),
+            Some("only-pod")
+        );
+    }
+
+    #[test]
+    fn unrecognized_shape_yields_no_backend() {
+        // The old/wrong shape (or any body without `backends`) must not pretend
+        // success: there is no canonical backend, so the caller prints raw JSON.
+        let old_shape = r#"{ "vector_indexes": [], "equality_indexes": [], "range_indexes": [] }"#;
+        let parsed: CliClusterIndexes = serde_json::from_str(old_shape).unwrap();
+        assert!(parsed.backends.is_empty());
+        assert!(parsed.canonical_backend().is_none());
+        // The unknown keys are captured in `extra`, not silently dropped.
+        assert!(parsed.extra.contains_key("vector_indexes"));
+    }
 }

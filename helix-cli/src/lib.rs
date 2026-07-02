@@ -176,7 +176,7 @@ pub enum ConfigAction {
         #[command(subcommand)]
         action: ProjectConfigAction,
     },
-    /// List Enterprise clusters
+    /// List Cloud clusters
     Cluster {
         #[command(subcommand)]
         action: ClusterConfigAction,
@@ -227,7 +227,7 @@ pub enum ProjectConfigAction {
 
 #[derive(Subcommand)]
 pub enum ClusterConfigAction {
-    /// List Enterprise clusters
+    /// List Cloud clusters
     List {
         #[arg(long)]
         workspace_id: Option<String>,
