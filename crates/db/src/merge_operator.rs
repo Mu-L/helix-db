@@ -909,6 +909,35 @@ mod tests {
     }
 
     #[test]
+    fn bitmap_add_operands_commute_for_every_existing_bitmap() {
+        let key = Key::Data {
+            scope: DataScope::LegacyUnscoped,
+            kind: DataKeyKind::EdgePairIndex(EdgePairIndexKey::new(1, 3)),
+        }
+        .to_bytes();
+        let mut existing = RoaringTreemap::new();
+        existing.insert(41);
+        let existing = BitmapMergeOperator::encode(&existing).expect("existing bitmap encodes");
+        let operator = HelixMergeOperator::new();
+
+        let left_then_right = operator
+            .merge(&key, Some(existing.clone()), encode_bitmap_add(42))
+            .and_then(|value| operator.merge(&key, Some(value), encode_bitmap_add(43)))
+            .expect("left-then-right bitmap operands merge");
+        let right_then_left = operator
+            .merge(&key, Some(existing), encode_bitmap_add(43))
+            .and_then(|value| operator.merge(&key, Some(value), encode_bitmap_add(42)))
+            .expect("right-then-left bitmap operands merge");
+
+        let left_then_right = RoaringTreemap::deserialize_from(Cursor::new(left_then_right))
+            .expect("left-then-right bitmap decodes");
+        let right_then_left = RoaringTreemap::deserialize_from(Cursor::new(right_then_left))
+            .expect("right-then-left bitmap decodes");
+        assert_eq!(left_then_right, right_then_left);
+        assert_eq!(left_then_right.iter().collect::<Vec<_>>(), vec![41, 42, 43],);
+    }
+
+    #[test]
     fn layer0_merge_preserves_simhash_across_neighbor_delta() {
         let mut key = vec![VECTOR_HOT_KEYSPACE_PREFIX];
         key.extend_from_slice(&9_u64.to_be_bytes());

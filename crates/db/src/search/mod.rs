@@ -638,7 +638,7 @@ pub async fn add_to_equality_index_scoped(
     }
     .to_bytes();
 
-    txn.merge(&key, crate::merge_operator::encode_bitmap_add(node_id))?;
+    txn.merge_commutative(&key, crate::merge_operator::encode_bitmap_add(node_id))?;
     Ok(())
 }
 
@@ -1599,7 +1599,7 @@ pub async fn add_to_edge_label_index_scoped(
             )),
         }
         .to_bytes();
-    txn.merge(&out_key, crate::merge_operator::encode_bitmap_add(to))?;
+    txn.merge_commutative(&out_key, crate::merge_operator::encode_bitmap_add(to))?;
 
     // Update incoming index: to + label -> from
     let in_key =
@@ -1610,7 +1610,7 @@ pub async fn add_to_edge_label_index_scoped(
             )),
         }
         .to_bytes();
-    txn.merge(&in_key, crate::merge_operator::encode_bitmap_add(from))?;
+    txn.merge_commutative(&in_key, crate::merge_operator::encode_bitmap_add(from))?;
 
     Ok(())
 }
@@ -1783,7 +1783,7 @@ pub async fn add_to_edge_equality_index_scoped(
         ))),
     }
     .to_bytes();
-    txn.merge(&out_key, crate::merge_operator::encode_bitmap_add(edge_id))?;
+    txn.merge_commutative(&out_key, crate::merge_operator::encode_bitmap_add(edge_id))?;
 
     let in_key = Key::Data {
         scope: tenant_scope,
@@ -1795,7 +1795,7 @@ pub async fn add_to_edge_equality_index_scoped(
         ))),
     }
     .to_bytes();
-    txn.merge(&in_key, crate::merge_operator::encode_bitmap_add(edge_id))?;
+    txn.merge_commutative(&in_key, crate::merge_operator::encode_bitmap_add(edge_id))?;
 
     let global_key = Key::Data {
         scope: tenant_scope,
@@ -1807,7 +1807,7 @@ pub async fn add_to_edge_equality_index_scoped(
         )),
     }
     .to_bytes();
-    txn.merge(
+    txn.merge_commutative(
         &global_key,
         crate::merge_operator::encode_bitmap_add(edge_id),
     )?;
@@ -2020,7 +2020,7 @@ pub async fn add_to_global_edge_label_index_scoped(
         ))),
     }
     .to_bytes();
-    txn.merge(&key, crate::merge_operator::encode_bitmap_add(edge_id))?;
+    txn.merge_commutative(&key, crate::merge_operator::encode_bitmap_add(edge_id))?;
     Ok(())
 }
 
@@ -2163,7 +2163,7 @@ pub async fn add_to_edge_pair_index_scoped(
         kind: DataKeyKind::EdgePairIndex(crate::encoding::keys::EdgePairIndexKey::new(from, to)),
     }
     .to_bytes();
-    txn.merge(&key, crate::merge_operator::encode_bitmap_add(edge_id))?;
+    txn.merge_commutative(&key, crate::merge_operator::encode_bitmap_add(edge_id))?;
     Ok(())
 }
 
@@ -3723,6 +3723,232 @@ mod tests {
             .expect_err("malformed bitmap should fail")
             .to_string()
             .contains("Failed to decode RoaringTreemap"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_bitmap_inserts_cover_every_family_and_tenant_scope() {
+        const INSERTS_PER_TENANT: u64 = 16;
+
+        let db = crate::HelixDB::open(crate::HelixDbSource::InMemory {
+            database: "search-concurrent-bitmap-families".to_string(),
+        })
+        .await
+        .expect("db opens");
+        let tenant_a =
+            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000A")
+                .expect("valid tenant");
+        let tenant_b =
+            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000B")
+                .expect("valid tenant");
+        let normal_property = scoped_secondary_index_property("User", "status");
+
+        for (scope, node_start, edge_start) in [
+            (DataScope::Tenant(tenant_a), 1_000_u64, 10_000_u64),
+            (DataScope::Tenant(tenant_b), 2_000_u64, 20_000_u64),
+        ] {
+            let mut transactions = Vec::new();
+            for offset in 0..INSERTS_PER_TENANT {
+                let node_id = node_start + offset;
+                let edge_id = edge_start + offset;
+                let txn = db
+                    .inner_db()
+                    .begin(IsolationLevel::SerializableSnapshot)
+                    .await
+                    .expect("transaction starts");
+
+                add_to_equality_index_scoped(&txn, "$label", "User", node_id, scope)
+                    .await
+                    .expect("node label insert succeeds");
+                add_to_equality_index_scoped(&txn, &normal_property, "active", node_id, scope)
+                    .await
+                    .expect("node equality insert succeeds");
+                add_to_edge_label_index_scoped(&txn, 31, node_id + 30_000, "FOLLOWS", scope)
+                    .await
+                    .expect("outgoing edge-label insert succeeds");
+                add_to_edge_label_index_scoped(&txn, node_id + 40_000, 32, "FOLLOWS", scope)
+                    .await
+                    .expect("incoming edge-label insert succeeds");
+                add_to_edge_equality_index_scoped(&txn, 41, 42, edge_id, "status", "active", scope)
+                    .await
+                    .expect("edge equality insert succeeds");
+                add_to_global_edge_label_index_scoped(&txn, "FOLLOWS", edge_id, scope)
+                    .await
+                    .expect("global edge-label insert succeeds");
+                add_to_edge_pair_index_scoped(&txn, 51, 52, edge_id, scope)
+                    .await
+                    .expect("edge-pair insert succeeds");
+                transactions.push(txn);
+            }
+
+            for result in
+                futures::future::join_all(transactions.into_iter().map(|txn| txn.commit())).await
+            {
+                result.expect("commutative bitmap transaction commits");
+            }
+        }
+
+        let read = db
+            .inner_db()
+            .begin(IsolationLevel::Snapshot)
+            .await
+            .expect("read transaction starts");
+        for (scope, node_start, edge_start) in [
+            (DataScope::Tenant(tenant_a), 1_000_u64, 10_000_u64),
+            (DataScope::Tenant(tenant_b), 2_000_u64, 20_000_u64),
+        ] {
+            let expected_nodes = (node_start..node_start + INSERTS_PER_TENANT).collect::<Vec<_>>();
+            let expected_edges = (edge_start..edge_start + INSERTS_PER_TENANT).collect::<Vec<_>>();
+
+            assert_eq!(
+                lookup_equality_index_scoped(&read, "$label", "User", scope)
+                    .await
+                    .expect("node-label lookup succeeds"),
+                expected_nodes,
+            );
+            assert_eq!(
+                lookup_equality_index_scoped(&read, &normal_property, "active", scope)
+                    .await
+                    .expect("node-equality lookup succeeds"),
+                expected_nodes,
+            );
+            assert_eq!(
+                lookup_out_neighbors_by_label_scoped(&read, 31, "FOLLOWS", scope)
+                    .await
+                    .expect("outgoing edge-label lookup succeeds")
+                    .iter()
+                    .collect::<Vec<_>>(),
+                expected_nodes
+                    .iter()
+                    .map(|node_id| node_id + 30_000)
+                    .collect::<Vec<_>>(),
+            );
+            assert_eq!(
+                lookup_in_neighbors_by_label_scoped(&read, 32, "FOLLOWS", scope)
+                    .await
+                    .expect("incoming edge-label lookup succeeds")
+                    .iter()
+                    .collect::<Vec<_>>(),
+                expected_nodes
+                    .iter()
+                    .map(|node_id| node_id + 40_000)
+                    .collect::<Vec<_>>(),
+            );
+            assert_eq!(
+                lookup_edges_out_by_equality_scoped(&read, 41, "status", "active", scope,)
+                    .await
+                    .expect("outgoing edge-equality lookup succeeds")
+                    .iter()
+                    .collect::<Vec<_>>(),
+                expected_edges,
+            );
+            assert_eq!(
+                lookup_edges_in_by_equality_scoped(&read, 42, "status", "active", scope)
+                    .await
+                    .expect("incoming edge-equality lookup succeeds")
+                    .iter()
+                    .collect::<Vec<_>>(),
+                expected_edges,
+            );
+            assert_eq!(
+                lookup_global_edge_equality_index_scoped(&read, "status", "active", scope,)
+                    .await
+                    .expect("global edge-equality lookup succeeds")
+                    .iter()
+                    .collect::<Vec<_>>(),
+                expected_edges,
+            );
+            assert_eq!(
+                lookup_global_edge_label_index_scoped(&read, "FOLLOWS", scope)
+                    .await
+                    .expect("global edge-label lookup succeeds")
+                    .iter()
+                    .collect::<Vec<_>>(),
+                expected_edges,
+            );
+            assert_eq!(
+                lookup_edge_pair_index_scoped(&read, 51, 52, scope)
+                    .await
+                    .expect("edge-pair lookup succeeds")
+                    .iter()
+                    .collect::<Vec<_>>(),
+                expected_edges,
+            );
+        }
+        assert!(
+            lookup_equality_index(&read, "$label", "User")
+                .await
+                .expect("legacy node-label lookup succeeds")
+                .is_empty(),
+            "tenant writes must not leak into the legacy scope",
+        );
+    }
+
+    #[tokio::test]
+    async fn bitmap_insert_and_remove_races_conflict_in_both_commit_orders() {
+        let db = crate::HelixDB::open(crate::HelixDbSource::InMemory {
+            database: "search-bitmap-insert-remove-races".to_string(),
+        })
+        .await
+        .expect("db opens");
+
+        for (value, insert_commits_first) in [("insert-first", true), ("remove-first", false)] {
+            let seed = db
+                .inner_db()
+                .begin(IsolationLevel::SerializableSnapshot)
+                .await
+                .expect("seed transaction starts");
+            add_to_equality_index(&seed, "race", value, 1)
+                .await
+                .expect("seed insert succeeds");
+            seed.commit().await.expect("seed transaction commits");
+
+            let insert = db
+                .inner_db()
+                .begin(IsolationLevel::SerializableSnapshot)
+                .await
+                .expect("insert transaction starts");
+            let remove = db
+                .inner_db()
+                .begin(IsolationLevel::SerializableSnapshot)
+                .await
+                .expect("remove transaction starts");
+            add_to_equality_index(&insert, "race", value, 2)
+                .await
+                .expect("racing insert buffers");
+            remove_from_equality_index(&remove, "race", value, 1)
+                .await
+                .expect("racing removal buffers");
+
+            if insert_commits_first {
+                insert.commit().await.expect("insert commits first");
+                assert!(
+                    remove.commit().await.is_err(),
+                    "read-modify-write removal must conflict with a committed insert",
+                );
+            } else {
+                remove.commit().await.expect("removal commits first");
+                assert!(
+                    insert.commit().await.is_err(),
+                    "insert must conflict with a committed read-modify-write removal",
+                );
+            }
+        }
+
+        let read = db
+            .inner_db()
+            .begin(IsolationLevel::Snapshot)
+            .await
+            .expect("read transaction starts");
+        assert_eq!(
+            lookup_equality_index(&read, "race", "insert-first")
+                .await
+                .expect("insert-first lookup succeeds"),
+            vec![1, 2],
+        );
+        assert!(lookup_equality_index(&read, "race", "remove-first")
+            .await
+            .expect("remove-first lookup succeeds")
+            .is_empty(),);
     }
 
     #[tokio::test]
