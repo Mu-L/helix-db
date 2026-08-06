@@ -1,9 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+	"time"
 
 	helix "github.com/helixdb/helix-db/sdks/go"
 )
@@ -13,6 +21,9 @@ type fixture struct {
 	name    string
 	request helix.Request
 }
+
+const transactionConflictAttempts = 8
+const transactionConflictMessage = "Storage error: Transaction error: transaction conflict"
 
 func main() {
 	if err := run(); err != nil {
@@ -64,14 +75,264 @@ func run() error {
 		}
 	}
 
-	if runtimeCount != 224 {
-		return fmt.Errorf("generated %d runtime fixtures, expected 224", runtimeCount)
+	if runtimeCount != 233 {
+		return fmt.Errorf("generated %d runtime fixtures, expected 233", runtimeCount)
 	}
-	if jsonOnlyCount != 12 {
-		return fmt.Errorf("generated %d json-only fixtures, expected 12", jsonOnlyCount)
+	if jsonOnlyCount != 15 {
+		return fmt.Errorf("generated %d json-only fixtures, expected 15", jsonOnlyCount)
+	}
+	if results := os.Getenv("HELIX_EMBEDDED_PARITY_RESULTS"); results != "" {
+		if err := executeEmbeddedFixtures(fixtures, results); err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+func executeEmbeddedFixtures(fixtures []fixture, results string) error {
+	if err := resetDir(results); err != nil {
+		return err
+	}
+	database := os.Getenv("HELIX_EMBEDDED_PARITY_DATABASE")
+	if database == "" {
+		database = "go-sdk-embedded-parity"
+	}
+	storage := os.Getenv("HELIX_EMBEDDED_PARITY_STORAGE")
+	if storage == "" {
+		storage = "memory"
+	}
+	var source helix.HelixDbSource
+	switch storage {
+	case "memory":
+		source = helix.InMemorySource{Database: database}
+	case "disk":
+		root := os.Getenv("HELIX_EMBEDDED_PARITY_DISK_ROOT")
+		if root == "" {
+			return fmt.Errorf("HELIX_EMBEDDED_PARITY_DISK_ROOT is required for disk parity")
+		}
+		source = helix.DiskSource{Root: root, Database: database}
+	default:
+		return fmt.Errorf("unsupported embedded parity storage %s", storage)
+	}
+	cache := helix.EmbeddedCacheConfig{
+		VectorMemoryBytes: 256 * 1024 * 1024,
+		Mode:              helix.MemoryCache{},
+	}
+	client, err := helix.NewEmbeddedClientWithConfig(
+		source,
+		cache,
+	)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = client.Close()
+	}()
+
+	runtimeFixtures := make([]fixture, 0, len(fixtures))
+	for _, candidate := range fixtures {
+		if candidate.bucket == "runtime" {
+			runtimeFixtures = append(runtimeFixtures, candidate)
+		}
+	}
+	sort.Slice(runtimeFixtures, func(left, right int) bool {
+		return runtimeFixtures[left].name < runtimeFixtures[right].name
+	})
+	for _, fixture := range runtimeFixtures {
+		if storage == "disk" && fixture.name == "900-write-active-text-items" {
+			if err := client.Close(); err != nil {
+				return err
+			}
+			reader, err := helix.NewEmbeddedReaderClientWithConfig(source, cache)
+			if err != nil {
+				return err
+			}
+			for _, searchName := range []string{
+				"025-read-text-search-nodes",
+				"027-read-text-search-edges",
+			} {
+				search, err := requiredFixture(fixtures, searchName)
+				if err != nil {
+					_ = reader.Close()
+					return err
+				}
+				var actual any
+				if err := execEmbeddedWithRetry(reader, search.request, &actual); err != nil {
+					_ = reader.Close()
+					return fmt.Errorf("%s after disk reader reopen: %w", search.name, err)
+				}
+				expected, err := readJSONResult(filepath.Join(results, search.name+".json"))
+				if err != nil {
+					_ = reader.Close()
+					return err
+				}
+				if !reflect.DeepEqual(actual, expected) {
+					_ = reader.Close()
+					return fmt.Errorf("%s changed after reopening a disk reader", search.name)
+				}
+			}
+			if err := reader.Close(); err != nil {
+				return err
+			}
+			client, err = helix.NewEmbeddedClientWithConfig(source, cache)
+			if err != nil {
+				return err
+			}
+		}
+		var result any
+		if err := execEmbeddedWithRetry(client, fixture.request, &result); err != nil {
+			return fmt.Errorf("%s: %w", fixture.name, err)
+		}
+		if err := awaitIndexOperations(client, result); err != nil {
+			return fmt.Errorf("%s: %w", fixture.name, err)
+		}
+		normalizeOperationIDs(result)
+		body, err := json.Marshal(result)
+		if err != nil {
+			return fmt.Errorf("marshal %s result: %w", fixture.name, err)
+		}
+		if err := os.WriteFile(filepath.Join(results, fixture.name+".json"), body, 0o644); err != nil {
+			return err
+		}
+	}
+	for _, searchName := range []string{
+		"025-read-text-search-nodes",
+		"027-read-text-search-edges",
+	} {
+		search, err := requiredFixture(fixtures, searchName)
+		if err != nil {
+			return err
+		}
+		var result any
+		err = execEmbeddedWithRetry(client, search.request, &result)
+		if err == nil {
+			return fmt.Errorf("%s unexpectedly succeeded after index DROP", search.name)
+		}
+		if !strings.Contains(err.Error(), "index_not_found") {
+			return fmt.Errorf("%s returned the wrong post-DROP error: %w", search.name, err)
+		}
+	}
+	return nil
+}
+
+func requiredFixture(fixtures []fixture, name string) (fixture, error) {
+	for _, candidate := range fixtures {
+		if candidate.name == name {
+			return candidate, nil
+		}
+	}
+	return fixture{}, fmt.Errorf("missing fixture %s", name)
+}
+
+// execEmbeddedWithRetry retries only conflicts whose embedded storage
+// transaction did not commit. Every other error, and exhaustion, is terminal.
+func execEmbeddedWithRetry(client *helix.Client, request helix.Request, result any) error {
+	for attempt := range transactionConflictAttempts {
+		err := client.Exec(context.Background(), request, result)
+		if err == nil {
+			return nil
+		}
+		var helixError *helix.HelixError
+		isTransactionConflict := errors.As(err, &helixError) &&
+			helixError.Kind == helix.ErrorEmbedded &&
+			strings.Contains(helixError.Details, transactionConflictMessage)
+		if !isTransactionConflict || attempt+1 == transactionConflictAttempts {
+			return err
+		}
+		time.Sleep((10 * time.Millisecond) << attempt)
+	}
+	panic("transaction conflict retry loop exhausted without an error")
+}
+
+func readJSONResult(path string) (any, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", path, err)
+	}
+	return value, nil
+}
+
+// awaitIndexOperations waits for asynchronous DDL before later fixtures use an index.
+func awaitIndexOperations(client *helix.Client, result any) error {
+	operationIDs := make(map[string]struct{})
+	collectOperationIDs(result, operationIDs)
+	for operationID := range operationIDs {
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			request := helix.NewReadQueryRequest(
+				helix.Read().
+					VarAs("status", helix.G().GetIndexOperation(operationID)).
+					Returning("status"),
+			)
+			var statusResult map[string]any
+			if err := execEmbeddedWithRetry(client, request, &statusResult); err != nil {
+				return fmt.Errorf("operation %s status: %w", operationID, err)
+			}
+			statusObject, ok := statusResult["status"].(map[string]any)
+			if !ok {
+				return fmt.Errorf("operation %s returned malformed status: %v", operationID, statusResult)
+			}
+			status, ok := statusObject["status"].(string)
+			if !ok {
+				return fmt.Errorf("operation %s returned malformed status: %v", operationID, statusResult)
+			}
+			if status == "succeeded" {
+				break
+			}
+			if status != "queued" && status != "running" {
+				return fmt.Errorf("operation %s reached unexpected status %s: %v", operationID, status, statusResult)
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("operation %s did not finish within 60s", operationID)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	return nil
+}
+
+// collectOperationIDs collects operation IDs only from DDL receipt objects.
+func collectOperationIDs(value any, ids map[string]struct{}) {
+	switch value := value.(type) {
+	case []any:
+		for _, entry := range value {
+			collectOperationIDs(entry, ids)
+		}
+	case map[string]any:
+		kind, _ := value["kind"].(string)
+		operationID, _ := value["operation_id"].(string)
+		if (kind == "accepted" || kind == "existing_operation") && operationID != "" {
+			ids[operationID] = struct{}{}
+		}
+		for _, entry := range value {
+			collectOperationIDs(entry, ids)
+		}
+	}
+}
+
+// normalizeOperationIDs replaces random UUIDs while retaining the receipt shape.
+func normalizeOperationIDs(value any) {
+	switch value := value.(type) {
+	case []any:
+		for _, entry := range value {
+			normalizeOperationIDs(entry)
+		}
+	case map[string]any:
+		kind, _ := value["kind"].(string)
+		if (kind == "accepted" || kind == "existing_operation") && value["operation_id"] != nil {
+			value["operation_id"] = "<operation-id>"
+		}
+		for _, entry := range value {
+			normalizeOperationIDs(entry)
+		}
+	}
 }
 
 func resetDir(path string) error {
@@ -160,7 +421,7 @@ func runtimeFixtures() []fixture {
 				helix.ProjectPropAs("externalId", "id"),
 				helix.ProjectPropAs("name", "name"),
 				helix.ProjectExpr("score_plus_one", helix.ExprProp("score").Add(helix.ExprVal(helix.F64(1.0)))),
-				helix.ProjectExpr("status_label", helix.ExprCase([]helix.CaseBranch{{When: helix.PredEq("status", "active"), Then: helix.ExprVal("enabled")}}, exprPtr(helix.ExprVal("disabled")))),
+				helix.ProjectExpr("status_label", helix.ExprCase([]helix.WhenThen{{When: helix.PredEq("status", "active"), Then: helix.ExprVal("enabled")}}, exprPtr(helix.ExprVal("disabled")))),
 			)).Returning("alice"),
 		),
 		runtime(
@@ -272,9 +533,9 @@ func runtimeFixtures() []fixture {
 			"024-write-text-vector-indexes",
 			write().
 				VarAs("node_text", helix.G().CreateTextIndexNodes("ParityUser", "bio")).
-				VarAs("node_vector", helix.G().CreateVectorIndexNodes("ParityUser", "embedding")).
+				VarAs("node_vector", helix.G().CreateVectorIndexNodes("ParityUser", "embedding", 3, helix.VectorDistanceCosine)).
 				VarAs("edge_text", helix.G().CreateTextIndexEdges("FOLLOWS", "note")).
-				VarAs("edge_vector", helix.G().CreateVectorIndexEdges("FOLLOWS", "embedding")).
+				VarAs("edge_vector", helix.G().CreateVectorIndexEdges("FOLLOWS", "embedding", 2, helix.VectorDistanceCosine)).
 				Returning("node_text", "node_vector", "edge_text", "edge_vector"),
 		),
 		runtime(
@@ -306,6 +567,89 @@ func runtimeFixtures() []fixture {
 		),
 		fixtureReadSourcePredicateEqParam(),
 		fixtureReadSourcePredicateBetweenParam(),
+		runtime(
+			"900-write-active-text-items",
+			write().
+				VarAs("source", helix.G().AddN("ParityUser", helix.Props{
+					helix.Prop("externalId", "active-text-source"),
+					helix.Prop("bio", "activeinsertnode"),
+				})).
+				VarAs("target", helix.G().AddN("ParityUser", helix.Props{
+					helix.Prop("externalId", "active-text-target"),
+				})).
+				VarAs("edge", helix.G().N(helix.NodeVar("source")).AddE("FOLLOWS", helix.NodeVar("target"), helix.Props{
+					helix.Prop("note", "activeinsertedge"),
+				})).
+				Returning("source", "target", "edge"),
+		),
+		runtime(
+			"901-read-active-text-items",
+			read().
+				VarAs("nodes", helix.G().TextSearchNodes("ParityUser", "bio", "activeinsertnode", 5).Count()).
+				VarAs("edges", helix.G().TextSearchEdges("FOLLOWS", "note", "activeinsertedge", 5).Count()).
+				Returning("nodes", "edges"),
+		),
+		runtime(
+			"902-write-remove-indexed-properties",
+			write().
+				VarAs("nodes", helix.G().NWithLabel("ParityUser").Where(helix.PredEq("externalId", "active-text-source")).RemoveProperty("bio").Count()).
+				VarAs("edges", helix.G().EWithLabel("FOLLOWS").Where(helix.PredEq("note", "activeinsertedge")).RemoveProperty("note").Count()).
+				Returning("nodes", "edges"),
+		),
+		runtime(
+			"903-read-removed-indexed-properties",
+			read().
+				VarAs("nodes", helix.G().TextSearchNodes("ParityUser", "bio", "activeinsertnode", 5).Count()).
+				VarAs("edges", helix.G().TextSearchEdges("FOLLOWS", "note", "activeinsertedge", 5).Count()).
+				Returning("nodes", "edges"),
+		),
+		runtime(
+			"904-write-text-drop-candidates",
+			write().
+				VarAs("source", helix.G().AddN("ParityUser", helix.Props{
+					helix.Prop("externalId", "drop-text-source"),
+					helix.Prop("bio", "dropitemnode"),
+				})).
+				VarAs("target", helix.G().AddN("ParityUser", helix.Props{
+					helix.Prop("externalId", "drop-text-target"),
+				})).
+				VarAs("edge", helix.G().N(helix.NodeVar("source")).AddE("FOLLOWS", helix.NodeVar("target"), helix.Props{
+					helix.Prop("note", "dropitemedge"),
+				})).
+				Returning("source", "target", "edge"),
+		),
+		runtime(
+			"905-read-text-drop-candidates",
+			read().
+				VarAs("nodes", helix.G().TextSearchNodes("ParityUser", "bio", "dropitemnode", 5).Count()).
+				VarAs("edges", helix.G().TextSearchEdges("FOLLOWS", "note", "dropitemedge", 5).Count()).
+				Returning("nodes", "edges"),
+		),
+		runtime(
+			"906-write-drop-indexed-items",
+			write().
+				VarAs("edge_matches", helix.G().EWithLabel("FOLLOWS").Where(helix.PredEq("note", "dropitemedge"))).
+				VarAs("edges", helix.G().DropEdgeByID(helix.EdgeVar("edge_matches")).Count()).
+				VarAs("source", helix.G().NWithLabel("ParityUser").Where(helix.PredEq("externalId", "drop-text-source")).Drop().Count()).
+				VarAs("target", helix.G().NWithLabel("ParityUser").Where(helix.PredEq("externalId", "drop-text-target")).Drop().Count()).
+				VarAs("active_source", helix.G().NWithLabel("ParityUser").Where(helix.PredEq("externalId", "active-text-source")).Drop().Count()).
+				VarAs("active_target", helix.G().NWithLabel("ParityUser").Where(helix.PredEq("externalId", "active-text-target")).Drop().Count()).
+				Returning("edges", "source", "target", "active_source", "active_target"),
+		),
+		runtime(
+			"907-read-dropped-indexed-items",
+			read().
+				VarAs("nodes", helix.G().TextSearchNodes("ParityUser", "bio", "dropitemnode", 5).Count()).
+				VarAs("edges", helix.G().TextSearchEdges("FOLLOWS", "note", "dropitemedge", 5).Count()).
+				Returning("nodes", "edges"),
+		),
+		runtime(
+			"908-write-drop-text-indexes",
+			write().
+				VarAs("node_text", helix.G().DropIndex(helix.NodeTextIndex("ParityUser", "bio"))).
+				VarAs("edge_text", helix.G().DropIndex(helix.EdgeTextIndex("FOLLOWS", "note"))).
+				Returning("node_text", "edge_text"),
+		),
 	}
 }
 
@@ -457,7 +801,7 @@ func jsonOnlyFixtures() []fixture {
 	return []fixture{
 		fixtureRawReadSteps(),
 		fixtureRawWriteSteps(),
-		fixtureDynamicValueShapes(),
+		fixtureQueryValueShapes(),
 		fixtureEmptySourceVectorTextRuntimeInputs(),
 		jsonOnly(
 			"904-empty-query-and-node-edge-ref-shapes",
@@ -476,8 +820,8 @@ func jsonOnlyFixtures() []fixture {
 				VarAs("drop_edge_by_id", helix.G().DropEdgeByID(helix.EdgeID(123_456)).Count()).
 				Returning("inject", "drop_edge_by_id"),
 		),
-		fixtureNestedDynamicPropertyWriteShapes(),
-		fixtureNestedDynamicPropertyReadShapes(),
+		fixtureNestedQueryPropertyWriteShapes(),
+		fixtureNestedQueryPropertyReadShapes(),
 		jsonOnly(
 			"908-edge-endpoint-projection",
 			read().VarAs("endpoints", helix.G().EWithLabel("FOLLOWS").Project(
@@ -516,6 +860,9 @@ func jsonOnlyFixtures() []fixture {
 				VarAs("node_asc", helix.G().CreateIndexIfNotExists(helix.NodeRangeIndex("ParityUser", "score"))).
 				Returning("node_desc", "edge_desc", "node_asc"),
 		),
+		fixtureShortestPathTerminal(),
+		fixtureRemainingReadContract(),
+		fixtureRemainingWriteContract(),
 	}
 }
 
@@ -534,30 +881,30 @@ func fixtureRawReadSteps() fixture {
 				helix.ProjectPropAs("externalId", "externalId"),
 				helix.ProjectExpr("neg_age", helix.ExprProp("age").Neg()),
 			)).
-			VarAs("raw_edges", helix.G().E(helix.EdgeParam("edge_ids")).EWhere(helix.SourceOr(helix.SourceHasKey("since"), helix.SourceStartsWith("note", "Alice"))).OutN().InN().OtherN().EdgeHas("weight", helix.F64(1.0)).EdgeHasLabel("FOLLOWS").OrderBy("weight", helix.OrderDesc).EdgeProperties()).
-			Returning("raw_nodes", "raw_edges"),
+			VarAs("raw_edges", helix.G().E(helix.EdgeParam("edge_ids")).Where(helix.PredOr(helix.PredHasKey("since"), helix.PredStartsWith("note", "Alice"))).EdgeHas("weight", helix.F64(1.0)).EdgeHasLabel("FOLLOWS").OrderBy("weight", helix.OrderDesc).EdgeProperties()).
+			VarAs("index_operation", helix.G().GetIndexOperation("018f0c58-6bc7-7c56-8d3d-9c5f18a0f001")).
+			Returning("raw_nodes", "raw_edges", "index_operation"),
 	)
 }
 
 func fixtureRawWriteSteps() fixture {
-	rawIndexSteps := helix.G().CreateIndexIfNotExists(helix.NodeUniqueEqualityIndex("ParityUser", "externalId")).DropIndex(helix.NodeRangeIndex("ParityUser", "age")).Steps()
-	rawIndexSteps = append(rawIndexSteps,
-		helix.CreateVectorIndexNodesStep("ParityUser", "embedding", "tenantId"),
-		helix.CreateVectorIndexEdgesStep("FOLLOWS", "embedding", "tenantId"),
-		helix.CreateTextIndexNodesStep("ParityUser", "bio", "tenantId"),
-		helix.CreateTextIndexEdgesStep("FOLLOWS", "note", "tenantId"),
-	)
-
 	return jsonOnly(
 		"901-exhaustive-raw-write-steps",
 		write().
-			VarAs("raw_indexes", helix.TraversalFromSteps(rawIndexSteps)).
+			VarAs("raw_unique_index", helix.G().CreateIndexIfNotExists(helix.NodeUniqueEqualityIndex("ParityUser", "externalId"))).
+			VarAs("raw_drop_range_index", helix.G().DropIndex(helix.NodeRangeIndex("ParityUser", "age"))).
+			VarAs("raw_node_vector_index", helix.G().CreateVectorIndexNodes("ParityUser", "embedding", 3, helix.VectorDistanceCosine, "tenantId")).
+			VarAs("raw_edge_vector_index", helix.G().CreateVectorIndexEdges("FOLLOWS", "embedding", 2, helix.VectorDistanceCosine, "tenantId")).
+			VarAs("raw_node_text_index", helix.G().CreateTextIndexNodes("ParityUser", "bio", "tenantId")).
+			VarAs("raw_edge_text_index", helix.G().CreateTextIndexEdges("FOLLOWS", "note", "tenantId")).
 			VarAs("raw_mutations", helix.G().AddN("RawNode", helix.Props{helix.Prop("name", "raw")}).AddE("RAW_EDGE", helix.NodeVar("raw_mutations"), helix.Props{helix.Prop("weight", int64(1))}).SetProperty("name", helix.ExprParam("name")).RemoveProperty("old").DropEdge(helix.NodeID(999_999)).DropEdgeLabeled(helix.NodeID(999_999), "RAW_EDGE").DropEdgeByID(helix.EdgeID(999_999)).Drop()).
-			Returning("raw_indexes", "raw_mutations"),
+			VarAs("retry_index_operation", helix.G().RetryIndexOperation("018f0c58-6bc7-7c56-8d3d-9c5f18a0f001")).
+			VarAs("abort_index_operation", helix.G().AbortIndexOperation("018f0c58-6bc7-7c56-8d3d-9c5f18a0f001")).
+			Returning("raw_unique_index", "raw_drop_range_index", "raw_node_vector_index", "raw_edge_vector_index", "raw_node_text_index", "raw_edge_text_index", "raw_mutations", "retry_index_operation", "abort_index_operation"),
 	)
 }
 
-func fixtureDynamicValueShapes() fixture {
+func fixtureQueryValueShapes() fixture {
 	q := read()
 	q.ParamValue("null", nil)
 	q.ParamBool("bool", true)
@@ -568,7 +915,7 @@ func fixtureDynamicValueShapes() fixture {
 	q.ParamArray("array", []any{int64(1), "two"}, helix.ParamTypeValue())
 	q.ParamObject("object", map[string]any{"nested": true})
 	return jsonOnly(
-		"902-dynamic-value-and-param-type-shapes",
+		"902-query-value-and-param-type-shapes",
 		q.VarAs("empty", helix.G().NWithLabel("Missing").Count()).Returning("empty"),
 	)
 }
@@ -588,11 +935,11 @@ func fixtureEmptySourceVectorTextRuntimeInputs() fixture {
 	)
 }
 
-func fixtureNestedDynamicPropertyWriteShapes() fixture {
+func fixtureNestedQueryPropertyWriteShapes() fixture {
 	q := write()
 	metadata := q.ParamObject("metadata", nestedMetadataParam("param_id", 22))
 	return jsonOnly(
-		"906-nested-dynamic-property-write-shapes",
+		"906-nested-query-property-write-shapes",
 		q.
 			VarAs("created", helix.G().AddN("ParityNested", helix.Props{
 				helix.Prop("name", "nested"),
@@ -605,11 +952,11 @@ func fixtureNestedDynamicPropertyWriteShapes() fixture {
 	)
 }
 
-func fixtureNestedDynamicPropertyReadShapes() fixture {
+func fixtureNestedQueryPropertyReadShapes() fixture {
 	q := read()
 	externalID := q.ParamString("external_id", "param_id")
 	return jsonOnly(
-		"907-nested-dynamic-property-read-shapes",
+		"907-nested-query-property-read-shapes",
 		q.
 			VarAs("nested_users", helix.G().NWhere(helix.SourceAnd(helix.SourceEq("$label", "ParityNested"), helix.SourceEq("metadata.externalID", externalID))).Where(helix.PredCompare(helix.ExprProp("metadata.score"), helix.CompareGt, helix.ExprVal(int64(10)))).OrderByMultiple(
 				helix.Ordering{Property: "metadata.score", Order: helix.OrderDesc},
@@ -622,5 +969,118 @@ func fixtureNestedDynamicPropertyReadShapes() fixture {
 			VarAs("nested_map", helix.G().NWithLabel("ParityNested").ValueMap("metadata.externalID", "metadata.score")).
 			VarAs("nested_edges", helix.G().EWhere(helix.SourceAnd(helix.SourceEq("$label", "NESTED_LINK"), helix.SourceEq("metadata.externalID", "edge_id"))).EdgeHas("metadata.externalID", "edge_id").EdgeProperties()).
 			Returning("nested_users", "nested_values", "nested_map", "nested_edges"),
+	)
+}
+
+func fixtureShortestPathTerminal() fixture {
+	q := read()
+	q.ParamI64("target", int64(3))
+	return jsonOnly(
+		"912-shortest-path-terminal",
+		q.VarAs("path", helix.G().ShortestPath(helix.NodeID(1), helix.NodeParam("target"), 5, helix.ShortestPathOptions{
+			Label:     "FOLLOWS",
+			Direction: helix.ShortestPathBoth,
+		})).Returning("path"),
+	)
+}
+
+func fixtureRemainingReadContract() fixture {
+	comparisons := helix.PredAnd(
+		helix.PredNeq("neq", int64(1)),
+		helix.PredGt("gt", int64(1)),
+		helix.PredGte("gte", int64(1)),
+		helix.PredLt("lt", int64(1)),
+		helix.PredLte("lte", int64(1)),
+		helix.PredBetween("between", int64(1), int64(3)),
+		helix.PredEndsWith("suffix", "end"),
+		helix.PredIsIn("status", []string{"active", "inactive"}),
+		helix.PredIsNull("missing"),
+		helix.PredIsNotNull("present"),
+		helix.PredNot(helix.PredEq("disabled", true)),
+		helix.PredCompare(helix.ExprID(), helix.CompareEq, helix.ExprVal(int64(1))),
+		helix.PredCompare(helix.ExprID(), helix.CompareNeq, helix.ExprVal(int64(1))),
+		helix.PredCompare(helix.ExprID(), helix.CompareGt, helix.ExprVal(int64(1))),
+		helix.PredCompare(helix.ExprID(), helix.CompareGte, helix.ExprVal(int64(1))),
+		helix.PredCompare(helix.ExprID(), helix.CompareLt, helix.ExprVal(int64(1))),
+		helix.PredCompare(helix.ExprID(), helix.CompareLte, helix.ExprVal(int64(1))),
+	)
+	q := read().
+		WithTypedParameter(
+			"date_time",
+			helix.ParamTypeDateTime(),
+			helix.QueryString("2026-01-01T00:00:00.000Z"),
+		).
+		VarAs("expressions_and_predicates", helix.G().N(helix.AllNodes()).Where(comparisons).Project(
+			helix.ProjectExpr("id", helix.ExprID()),
+			helix.ProjectExpr("timestamp", helix.ExprTimestamp()),
+			helix.ProjectExpr("datetime", helix.ExprDateTime()),
+			helix.ProjectExpr("null", helix.ExprVal(helix.Null())),
+			helix.ProjectExpr("date_value", helix.ExprVal(helix.DateTimeMillis(1_777_000_000_000))),
+			helix.ProjectExpr("f32", helix.ExprVal(helix.F32(1.25))),
+			helix.ProjectExpr("bytes", helix.ExprVal(helix.Bytes([]byte{1, 2, 3}))),
+			helix.ProjectExpr("i64_array", helix.ExprVal(helix.I64Array(1, 2, 3))),
+			helix.ProjectExpr("f64_array", helix.ExprVal(helix.F64Array(1.25, 2.5))),
+			helix.ProjectExpr("add", helix.ExprVal(int64(4)).Add(helix.ExprVal(int64(1)))),
+			helix.ProjectExpr("sub", helix.ExprVal(int64(4)).Sub(helix.ExprVal(int64(1)))),
+			helix.ProjectExpr("mul", helix.ExprVal(int64(4)).Mul(helix.ExprVal(int64(2)))),
+			helix.ProjectExpr("div", helix.ExprVal(int64(4)).Div(helix.ExprVal(int64(2)))),
+			helix.ProjectExpr("mod", helix.ExprVal(int64(5)).Mod(helix.ExprVal(int64(2)))),
+			helix.ProjectExpr("case", helix.ExprCase(
+				[]helix.WhenThen{{When: helix.PredEq("status", "active"), Then: helix.ExprVal("enabled")}},
+				exprPtr(helix.ExprVal("disabled")),
+			)),
+		)).
+		VarAs("both", helix.G().N(helix.NodeID(1)).Both().Count()).
+		VarAs("in_e", helix.G().N(helix.NodeID(1)).InE().EdgeProperties()).
+		VarAs("out_e", helix.G().N(helix.NodeID(1)).OutE().EdgeProperties()).
+		VarAs("both_e", helix.G().N(helix.NodeID(1)).BothE().EdgeProperties()).
+		VarAs("in_n", helix.G().E(helix.AllEdges()).InN().ValueMapAll()).
+		VarAs("out_n", helix.G().E(helix.AllEdges()).OutN().ValueMapAll()).
+		VarAs("other_n", helix.G().E(helix.AllEdges()).OtherN().ValueMapAll()).
+		VarAs("direct_has_key", helix.G().N(helix.AllNodes()).HasKey("externalId").Count()).
+		VarAs("has_label", helix.G().N(helix.AllNodes()).HasLabel("ParityUser").Count()).
+		VarAs("exists", helix.G().N(helix.AllNodes()).Exists()).
+		VarAs("choose", helix.G().N(helix.AllNodes()).Choose(helix.PredIsNotNull("status"), helix.Sub().Out(), helix.Sub().In()).Count()).
+		VarAs("coalesce", helix.G().N(helix.AllNodes()).Coalesce(helix.Sub().Out(), helix.Sub().In()).Count()).
+		VarAs("group", helix.G().N(helix.AllNodes()).Group("status")).
+		VarAs("group_count", helix.G().N(helix.AllNodes()).GroupCount("status")).
+		VarAs("aggregate_count", helix.G().N(helix.AllNodes()).AggregateBy(helix.AggregateCount, "age")).
+		VarAs("aggregate_sum", helix.G().N(helix.AllNodes()).AggregateBy(helix.AggregateSum, "age")).
+		VarAs("aggregate_min", helix.G().N(helix.AllNodes()).AggregateBy(helix.AggregateMin, "age")).
+		VarAs("aggregate_max", helix.G().N(helix.AllNodes()).AggregateBy(helix.AggregateMax, "age")).
+		VarAs("aggregate_mean", helix.G().N(helix.AllNodes()).AggregateBy(helix.AggregateMean, "age")).
+		VarAs("repeat_none", helix.G().N(helix.NodeID(1)).Repeat(helix.Repeat(helix.Sub().Out())).Count()).
+		VarAs("repeat_before", helix.G().N(helix.NodeID(1)).Repeat(helix.Repeat(helix.Sub().Out()).EmitBefore()).Count()).
+		VarAs("repeat_after", helix.G().N(helix.NodeID(1)).Repeat(helix.Repeat(helix.Sub().Out()).EmitAfter()).Count()).
+		VarAs("repeat_all", helix.G().N(helix.NodeID(1)).Repeat(helix.Repeat(helix.Sub().Out()).EmitAll()).Count()).
+		VarAs("shortest_out", helix.G().ShortestPath(helix.NodeID(1), helix.NodeID(2), 5, helix.ShortestPathOptions{Direction: helix.ShortestPathOut})).
+		VarAs("shortest_in", helix.G().ShortestPath(helix.NodeID(1), helix.NodeID(2), 5, helix.ShortestPathOptions{Direction: helix.ShortestPathIn})).
+		VarAs("vector_edges", helix.G().VectorSearchEdges("FOLLOWS", "embedding", []float32{1, 0}, 5).EdgeProperties()).
+		VarAs("vector_nodes_within", helix.G().NWithLabel("ParityUser").VectorSearchNodesWithin("ParityUser", "embedding", []float32{1, 0, 0}, 5)).
+		VarAs("vector_edges_within", helix.G().E(helix.AllEdges()).HasLabel("FOLLOWS").VectorSearchEdgesWithin("FOLLOWS", "embedding", []float32{1, 0}, 5)).
+		VarAs("text_edges", helix.G().TextSearchEdges("FOLLOWS", "note", "graph", 5).EdgeProperties()).
+		VarAsIf("previous", helix.PrevNotEmpty(), helix.G().N(helix.AllNodes()).Count()).
+		VarAsIf("not_empty", helix.VarNotEmpty("expressions_and_predicates"), helix.G().N(helix.AllNodes()).Count()).
+		VarAsIf("empty", helix.VarEmpty("missing"), helix.G().N(helix.AllNodes()).Count()).
+		VarAsIf("min_size", helix.VarMinSize("expressions_and_predicates", 1), helix.G().N(helix.AllNodes()).Count()).
+		ForEachParam("rows", helix.Read().VarAs("foreach", helix.G().N(helix.AllNodes()).Count())).
+		Returning(
+			"expressions_and_predicates", "both", "in_e", "out_e", "both_e", "in_n", "out_n", "other_n",
+			"direct_has_key", "has_label", "exists", "choose", "coalesce", "group", "group_count",
+			"aggregate_count", "aggregate_sum", "aggregate_min", "aggregate_max", "aggregate_mean",
+			"repeat_none", "repeat_before", "repeat_after", "repeat_all",
+			"shortest_out", "shortest_in", "vector_edges", "vector_nodes_within", "vector_edges_within", "text_edges", "previous", "not_empty", "empty", "min_size", "foreach",
+		)
+	return jsonOnly("913-remaining-read-contract", q)
+}
+
+func fixtureRemainingWriteContract() fixture {
+	return jsonOnly(
+		"914-remaining-write-contract",
+		write().
+			VarAs("edge_equality", helix.G().CreateIndexIfNotExists(helix.EdgeEqualityIndex("FOLLOWS", "since"))).
+			VarAs("node_euclidean", helix.G().CreateIndexIfNotExists(helix.NodeVectorIndex("ParityUser", "euclidean_embedding", 4, helix.VectorDistanceEuclidean))).
+			VarAs("edge_manhattan", helix.G().CreateIndexIfNotExists(helix.EdgeVectorIndex("FOLLOWS", "manhattan_embedding", 4, helix.VectorDistanceManhattan))).
+			Returning("edge_equality", "node_euclidean", "edge_manhattan"),
 	)
 }

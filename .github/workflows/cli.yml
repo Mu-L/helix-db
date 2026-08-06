@@ -14,7 +14,7 @@ on:
           - major
 
 permissions:
-  contents: write  
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,10 +25,12 @@ jobs:
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       release_id: ${{ steps.create_release.outputs.id }}
+
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Create GitHub Release
         id: create_release
         uses: zendesk/action-create-release@v1
@@ -45,37 +47,50 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15-intel, macos-latest, windows-latest]
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             binary_name: helix-x86_64-unknown-linux-gnu
+            executable_name: helix
+
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             binary_name: helix-aarch64-unknown-linux-gnu
+            executable_name: helix
+
           - os: macos-15-intel
             target: x86_64-apple-darwin
             binary_name: helix-x86_64-apple-darwin
+            executable_name: helix
+
           - os: macos-latest
             target: aarch64-apple-darwin
             binary_name: helix-aarch64-apple-darwin
+            executable_name: helix
+
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             binary_name: helix-x86_64-pc-windows-msvc.exe
+            executable_name: helix.exe
 
     steps:
-      - uses: actions/checkout@v3
-      - name: Build
-        run: |
-          cd helix-cli
-          cargo build --release --target ${{ matrix.target }}
-      - name: Upload Release Asset
+      - uses: actions/checkout@v4
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build CLI
+        working-directory: crates/cli
+        run: cargo build --release --target ${{ matrix.target }} --bin helix
+
+      - name: Upload release asset
         uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ needs.create_release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/${{ matrix.os == 'windows-latest' && 'helix.exe' || 'helix' }}
-          asset_name: ${{ matrix.binary_name }}
-          asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_release.outputs.upload_url }}
+          asset_path: target/${{ matrix.target }}/release/${{ matrix.executable_name }}
+          asset_name: ${{ matrix.binary_name }}
+          asset_content_type: application/octet-stream

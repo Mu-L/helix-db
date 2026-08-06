@@ -1,0 +1,120 @@
+---
+title: "Helix Cloud"
+description: "Authenticate, link a project, and query a Helix Cloud cluster from the CLI"
+sidebarTitle: "Helix Cloud"
+icon: "cloud"
+pageType: "Guide"
+---
+
+<div className="flex flex-wrap gap-2"><Badge color="blue" size="sm">Guide</Badge></div>
+
+> For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
+
+The CLI handles authentication, workspace/project/cluster selection, metadata sync, log retrieval, and dynamic queries against a remote gateway. Cluster provisioning and scaling happen in the Helix control plane, not the CLI.
+
+## Prerequisites
+
+- A Helix Cloud account with at least one workspace and Helix Cloud cluster.
+- A local Helix project (`helix init` in any directory).
+
+## End-to-end flow
+
+<Steps>
+  <Step title="Authenticate">
+    ```bash
+    helix auth login
+    ```
+
+    Opens a browser-based GitHub device flow. Credentials are stored in `~/.helix/credentials`.
+
+    To use the CLI from CI or another non-browser environment, rotate a cluster API key and export it as `HELIX_API_KEY`:
+
+    ```bash
+    helix auth create-key <cluster-id>
+    export HELIX_API_KEY="..."
+    ```
+  </Step>
+
+  <Step title="Pick a workspace">
+    ```bash
+    helix workspace list
+    helix workspace switch <workspace-slug>
+    ```
+
+    The selection is persisted in `~/.helix/config` and applies to all subsequent Helix Cloud commands.
+  </Step>
+
+  <Step title="Link a project">
+    ```bash
+    helix project list
+    helix project switch <project>
+    ```
+
+    Linking writes `[project] workspace_id` and `[project] id` to your local `helix.toml`.
+  </Step>
+
+  <Step title="Discover clusters and add an instance">
+    ```bash
+    helix cluster list
+    helix add cloud --name production --cluster-id <cluster-id>
+    ```
+
+    Or scaffold a brand-new Helix Cloud-linked project with [`helix init cloud --cluster-id <cluster-id>`](/cli/command-reference/init).
+  </Step>
+
+  <Step title="Sync gateway and auth metadata">
+    ```bash
+    helix sync production
+    ```
+
+    `helix sync` writes the latest `gateway_url`, `query_auth_header`, `query_auth_env`, and node-type values from the cloud into `[enterprise.production]` in `helix.toml`. Re-run after any cluster change.
+
+    If the cluster has not published a `gateway_url` yet, the CLI prints a warning. Set `gateway_url` manually under `[enterprise.production]` once you know it, or re-run `helix sync` later.
+  </Step>
+
+  <Step title="Send dynamic queries">
+    ```bash
+    export HELIX_API_KEY="..."   # value for the configured query_auth_env
+    helix query production --file examples/request.json
+    ```
+
+    `helix query` posts to `<gateway_url>/v2/query` with the header named by `query_auth_header` (default `Authorization`).
+  </Step>
+
+  <Step title="Pull historical logs">
+    ```bash
+    helix logs production \
+      --range \
+      --start 2026-05-12T00:00:00Z \
+      --end   2026-05-12T01:00:00Z
+    ```
+
+    Helix Cloud logs are queried over a time range. Live `--follow` is not yet supported for Helix Cloud instances.
+  </Step>
+</Steps>
+
+## Reference: per-instance auth contract
+
+Each `[enterprise.<instance>]` block stores the auth contract used by `helix query`:
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `query_auth_header` | `Authorization` | HTTP header name set on every query request. |
+| `query_auth_env` | `HELIX_API_KEY` | Environment variable the CLI reads to populate the header value. |
+
+Override the variable name per-instance by setting `query_auth_env` under `[enterprise.<instance>]` and exporting whatever name you choose.
+
+## Common errors
+
+For Helix Cloud auth, gateway, and logging errors, see [Troubleshooting](/cli/troubleshooting).
+
+## What next?
+
+<CardGroup cols={2}>
+  <Card title="Local workflow" icon="computer" href="/cli/workflows/local">
+    Run the local dev runtime and iterate on JSON requests
+  </Card>
+  <Card title="CLI Command Reference" icon="terminal" href="/cli/command-reference">
+    Every command, subcommand, and flag
+  </Card>
+</CardGroup>

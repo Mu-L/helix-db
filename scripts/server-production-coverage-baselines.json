@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "uncovered_source_lines": {
+    "count": 124,
+    "sha256": "28c154df35f4126c6a8075491e2ee1847ee004e91dc897872f3ff04c2468f0ac",
+    "classification": "test-required",
+    "reason": "Every remaining uncovered production line in the transport server and its production-compiled query-service dependency remains in the explicit launch test backlog. The exact digest makes coverage changes require a reviewed ratchet update."
+  },
+  "scopes": {
+    "query_service": {
+      "minimum_covered_lines": 381,
+      "minimum_percent": 86.98
+    },
+    "server": {
+      "minimum_covered_lines": 594,
+      "minimum_percent": 83.89
+    }
+  }
+}

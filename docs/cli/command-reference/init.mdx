@@ -1,0 +1,132 @@
+---
+title: "helix init"
+sidebarTitle: "init"
+pageType: "Reference"
+---
+
+<div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
+
+> For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
+
+Initialize a v2 Helix project. Creates `helix.toml`, a `.helix/` workspace directory, a `.gitignore` entry, and — for local projects — an `AGENTS.md` for coding agents and an `examples/request.json` scaffold.
+
+## Usage
+
+```bash
+helix init [OPTIONS] [SUBCOMMAND]
+```
+
+If you omit the subcommand in a TTY, the CLI prompts you to choose between `local` and `enterprise`.
+
+## Available sub-commands
+
+| Sub-command | Description |
+|-------------|-------------|
+| `local` | Initialize a local v2 development project. |
+| `enterprise` | Initialize a Helix Cloud project linked to a cluster. |
+
+## Top-level flags
+
+| Flag | Type | Description | Default |
+|------|------|-------------|---------|
+| `-p`, `--path` | Path | Project directory to initialize. | Current directory |
+| `--skills` | Boolean | Install the Helix agent skills + docs MCP (the install you'd otherwise be prompted for). | Prompted in a TTY |
+| `--no-skills` | Boolean | Skip installing the Helix agent skills + docs MCP. | Prompted in a TTY |
+
+<Note>
+All top-level flags are accepted **either before or after** the subcommand — `helix init --path ./app local`, `helix init local --path ./app`, and `helix init local --no-skills` all work. `--skills` / `--no-skills` are mutually exclusive; when neither is given, an interactive run prompts you and a non-interactive run skips the install. To install or refresh the skills later, use [`helix skills`](/cli/command-reference/skills).
+</Note>
+
+### `helix init local`
+
+| Flag | Type | Description | Default |
+|------|------|-------------|---------|
+| `-n`, `--name` | String | Local instance name. | `dev` |
+| `--port` | Number | Host port for the local gateway. The container always listens on `8080` internally. | `6969` |
+| `--disk` | Boolean | Persist local data with on-disk storage backed by a CLI-managed MinIO volume. | `false` |
+
+Interactive local init prompts for the storage mode and defaults to in-memory.
+
+### `helix init cloud`
+
+| Flag | Type | Required | Description | Default |
+|------|------|----------|-------------|---------|
+| `-n`, `--name` | String | No | Helix Cloud instance name. | `production` |
+| `--cluster-id` | String | Yes | Helix Cloud cluster ID. Find one with [`helix cluster list`](/cli/command-reference/cluster). | — |
+| `--gateway-url` | URL | No | Runtime gateway URL for dynamic queries. If omitted, run [`helix sync`](/cli/command-reference/sync) after init to fetch it. | — |
+
+`helix init cloud` requires Helix Cloud authentication. Run [`helix auth login`](/cli/command-reference/auth) first.
+
+## What `helix init` produces
+
+- `helix.toml` — project configuration with one `[local.<name>]` or `[enterprise.<name>]` instance.
+- `.helix/` — CLI-managed workspace state (ignored from git).
+- `.gitignore` — entries appended for `.helix/`, `target/`, and `*.log`.
+- `AGENTS.md` (local only) — instructions for coding agents picking up the project (never overwrites an existing `AGENTS.md`).
+- `examples/request.json` (local only) — a runnable read request you can send with `helix query`:
+
+```json
+{
+  "request_type": "read",
+  "query_name": "node_count",
+  "query": {
+    "read": {
+      "entries": [
+        {
+          "query": {
+            "name": "node_count",
+            "root": {
+              "count": {
+                "input": {
+                  "nodes_where": {
+                    "predicate": {
+                      "eq": {
+                        "left": { "property": "$label" },
+                        "right": { "constant": { "string": "User" } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "returns": ["node_count"]
+    }
+  }
+}
+```
+
+## Examples
+
+```bash
+# Interactive init in the current directory (prompts in a TTY)
+helix init
+
+# Initialize a local project in a new directory
+helix init --path ./my-helix-app local
+
+# Local with a custom instance name and port
+helix init local --name staging --port 9090
+
+# Local with persistent on-disk storage by default
+helix init local --disk
+
+# Helix Cloud project linked to an existing cluster
+helix init cloud --cluster-id ec_01HX... --gateway-url https://gateway.example.com
+```
+
+## Next steps after `helix init local`
+
+```bash
+helix start dev
+helix query dev --file examples/request.json
+```
+
+## Next steps after `helix init cloud`
+
+```bash
+helix sync <instance>
+helix query <instance> --file <request.json>
+```
