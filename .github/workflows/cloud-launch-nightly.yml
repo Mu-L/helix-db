@@ -1,0 +1,131 @@
+name: Cloud launch nightly
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-launch-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  planner-matrix:
+    name: Planner matrix shard ${{ matrix.shard }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Run complete normalized planner shard
+        env:
+          HELIX_PLANNER_SHARD_COUNT: "4"
+          HELIX_PLANNER_SHARD_INDEX: ${{ matrix.shard }}
+        run: cargo run --release -p helix-db-testkit --example check_planner_matrix
+
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fuzz_dir: crates/db-testkit/fuzz
+            target: query_json
+          - fuzz_dir: crates/db-testkit/fuzz
+            target: planner_context_ast
+          - fuzz_dir: crates/db-testkit/fuzz
+            target: planner_interpreter
+          - fuzz_dir: crates/db-testkit/fuzz
+            target: stateful_action_trace
+          - fuzz_dir: crates/db/fuzz
+            target: current_secondary_records
+          - fuzz_dir: crates/db/fuzz
+            target: current_search_records
+          - fuzz_dir: crates/db/fuzz
+            target: current_index_v2_keys
+          - fuzz_dir: crates/db/fuzz
+            target: current_index_v2_records
+          - fuzz_dir: crates/db/fuzz
+            target: current_index_v2_work
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.fuzz_dir }} -> target
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Run checked-in regression corpus and five-minute fuzz window
+        working-directory: ${{ matrix.fuzz_dir }}
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+
+  workload-matrix:
+    name: Deterministic workload seeds
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Nightly lifecycle histories
+        run: >-
+          cargo test -p helix-db-testkit
+          lifecycle_workload::tests::nightly_seed_matrix_runs_long_multi_index_histories
+          -- --ignored --exact
+      - name: Real LocalFileSystem matrix
+        run: cargo test -p helix-db-testkit --test sustained_local_disk
+      - name: Isolation and transport restart contracts
+        run: cargo test -p helix-db-testkit --test isolation_histories && cargo test -p server
+
+  vector-lifecycle:
+    name: Bounded 8k vector lifecycle
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Public vector create, search, drop, and residue contract
+        run: >-
+          cargo test --release -p db --features production-scale
+          --test production_index_v2_scale index_v2_vector_ci_contract
+          -- --exact --nocapture --test-threads=1
+
+  coverage:
+    name: ${{ matrix.name }}
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Planner all-target coverage
+            script: scripts/workspace-coverage.sh planner
+          - name: DB all-target coverage
+            script: scripts/workspace-coverage.sh db
+          - name: DB production coverage
+            script: scripts/db-production-coverage.sh
+          - name: Server production coverage
+            script: scripts/server-production-coverage.sh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: ${{ matrix.script }}

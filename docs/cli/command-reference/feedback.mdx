@@ -1,0 +1,33 @@
+---
+title: "helix feedback"
+sidebarTitle: "feedback"
+pageType: "Reference"
+---
+
+<div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
+
+> For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
+
+Send feedback to the Helix team.
+
+## Usage
+
+```bash
+helix feedback [MESSAGE]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `MESSAGE` | Feedback message. If omitted, the CLI prompts for one in a TTY. |
+
+## Examples
+
+```bash
+# Send feedback inline
+helix feedback "love the new dynamic query flow"
+
+# Open an interactive prompt
+helix feedback
+```

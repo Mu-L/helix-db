@@ -1,0 +1,2394 @@
+//! Secondary-index access and canonical-row integration tests.
+
+use super::support::*;
+use crate::config::SecondaryIndexDefinition;
+use crate::encoding::indexes::equality::{EqualityIndexKey, GlobalEdgeEqualityIndexKey};
+use crate::encoding::indexes::range::RangeIndexDirection as StorageRangeIndexDirection;
+use crate::encoding::indexes::{hash_property_name, hash_property_value, IndexKey};
+use crate::encoding::v1::keys::index_v2::{
+    CanonicalSecondaryValue, IndexV2Key, SecondaryEntryKey, SecondaryEntryLane,
+};
+use crate::encoding::v1::keys::tenant::DataScope;
+use crate::encoding::v1::keys::{DataKeyKind, Key};
+use crate::encoding::v1::values::index_v2::{
+    encode_index_record, encode_work_value, IndexV2WorkValue,
+};
+use crate::error::{HelixDbError, IndexFamily, IndexLifecycleUnavailableReason};
+use crate::execution::interpreter::ExecutionContext;
+use crate::index_v2::work::SecondaryEntryValue;
+use crate::index_v2::{
+    IndexEntityId, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
+    IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
+    ValidatedSecondaryIndexDefinition,
+};
+
+/// Seeds one Active secondary generation.
+async fn seed_active_secondary_generation(
+    db: &HelixDB,
+    definition: SecondaryIndexDefinition,
+    index_id: u64,
+    rows: &[(&str, u64)],
+) -> crate::index_v2::IndexIdentity {
+    let definition = ValidatedDynamicIndexDefinition::try_from(definition)
+        .expect("managed secondary fixture definition validates");
+    let identity = definition.identity();
+    let index_id = IndexId::new(index_id).expect("managed fixture index ID is positive");
+    let generation = IndexGenerationId::initial();
+    let building = IndexRecordV2::building(
+        index_id,
+        definition,
+        IndexRevision::initial(),
+        PhysicalGeneration::Secondary { generation },
+        IndexOperationId::new_v4(),
+    )
+    .expect("managed secondary fixture starts building");
+    let active = building
+        .transition(IndexStateTransition::Activate)
+        .expect("managed secondary fixture activates");
+    let handle =
+        crate::index_v2::ActiveIndexHandle::try_from_record(DataScope::LegacyUnscoped, &active)
+            .expect("managed secondary fixture projects an Active handle");
+    db.inner_db()
+        .put(
+            Key::Data {
+                scope: DataScope::LegacyUnscoped,
+                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(identity.clone())),
+            }
+            .to_bytes(),
+            encode_index_record(&active),
+        )
+        .await
+        .expect("managed secondary Active record persists");
+
+    let definition = handle.secondary_definition().unwrap();
+    let lane = match definition {
+        ValidatedSecondaryIndexDefinition::NodeEquality { unique: false, .. } => {
+            SecondaryEntryLane::NodeEquality
+        }
+        ValidatedSecondaryIndexDefinition::NodeEquality { unique: true, .. } => {
+            SecondaryEntryLane::NodeUniqueEquality
+        }
+        ValidatedSecondaryIndexDefinition::NodeRange {
+            direction: crate::config::RangeIndexDirection::Asc,
+            ..
+        } => SecondaryEntryLane::NodeRangeAscending,
+        ValidatedSecondaryIndexDefinition::NodeRange {
+            direction: crate::config::RangeIndexDirection::Desc,
+            ..
+        } => SecondaryEntryLane::NodeRangeDescending,
+        ValidatedSecondaryIndexDefinition::EdgeEquality { .. } => SecondaryEntryLane::EdgeEquality,
+        ValidatedSecondaryIndexDefinition::EdgeRange {
+            direction: crate::config::RangeIndexDirection::Asc,
+            ..
+        } => SecondaryEntryLane::EdgeRangeAscending,
+        ValidatedSecondaryIndexDefinition::EdgeRange {
+            direction: crate::config::RangeIndexDirection::Desc,
+            ..
+        } => SecondaryEntryLane::EdgeRangeDescending,
+    };
+    for (value, entity_id) in rows {
+        let canonical = match definition {
+            ValidatedSecondaryIndexDefinition::NodeEquality { .. }
+            | ValidatedSecondaryIndexDefinition::EdgeEquality { .. } => {
+                CanonicalSecondaryValue::equality_string(value)
+            }
+            ValidatedSecondaryIndexDefinition::NodeRange { direction, .. }
+            | ValidatedSecondaryIndexDefinition::EdgeRange { direction, .. } => {
+                let direction = match direction {
+                    crate::config::RangeIndexDirection::Asc => StorageRangeIndexDirection::Asc,
+                    crate::config::RangeIndexDirection::Desc => StorageRangeIndexDirection::Desc,
+                };
+                CanonicalSecondaryValue::range_string(direction, value)
+            }
+        };
+        let entity_id = IndexEntityId::new(*entity_id);
+        let key = SecondaryEntryKey::try_new(
+            index_id,
+            generation,
+            lane,
+            canonical,
+            (!lane.is_unique()).then_some(entity_id),
+        )
+        .expect("managed secondary entry key validates");
+        db.inner_db()
+            .put(
+                Key::Data {
+                    scope: DataScope::LegacyUnscoped,
+                    kind: DataKeyKind::IndexV2(IndexV2Key::SecondaryEntry(key)),
+                }
+                .to_bytes(),
+                encode_work_value(&IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+                    index_id,
+                    generation,
+                    lane,
+                    entity_id,
+                })),
+            )
+            .await
+            .expect("managed secondary entry persists");
+    }
+    identity
+}
+
+fn node_range_plan(
+    property: &str,
+    direction: helix_ast::index::RangeIndexDirection,
+    range: ir::IndexRange,
+) -> exec::ExecNodeAccessPlan {
+    let suffix = match direction {
+        helix_ast::index::RangeIndexDirection::Asc => "asc",
+        helix_ast::index::RangeIndexDirection::Desc => "desc",
+    };
+    exec::ExecNodeAccessPlan::RangeIndex {
+        index: catalog::NodeRangeIndexMeta::new(test_support::name(&format!(
+            "node_range:User:{property}:{suffix}"
+        ))),
+        key: catalog::ScopedPropertyDirectionKey::try_new("User", property, direction)
+            .expect("valid node range key"),
+        range,
+    }
+}
+
+fn edge_range_plan(
+    property: &str,
+    direction: helix_ast::index::RangeIndexDirection,
+    range: ir::IndexRange,
+) -> exec::ExecEdgeAccessPlan {
+    let suffix = match direction {
+        helix_ast::index::RangeIndexDirection::Asc => "asc",
+        helix_ast::index::RangeIndexDirection::Desc => "desc",
+    };
+    exec::ExecEdgeAccessPlan::RangeIndex {
+        index: catalog::EdgeRangeIndexMeta::new(test_support::name(&format!(
+            "edge_range:FOLLOWS:{property}:{suffix}"
+        ))),
+        key: catalog::ScopedPropertyDirectionKey::try_new("FOLLOWS", property, direction)
+            .expect("valid edge range key"),
+        range,
+    }
+}
+
+#[tokio::test]
+async fn managed_secondary_access_uses_active_v2_rows() {
+    let db = test_support::open_db("access-managed-secondary-v2").await;
+    let active_one = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![
+            ("status", PropertyValue::from("active")),
+            ("score", PropertyValue::from("a")),
+        ],
+    )
+    .await;
+    let inactive = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![
+            ("status", PropertyValue::from("inactive")),
+            ("score", PropertyValue::from("aa")),
+        ],
+    )
+    .await;
+    let active_two = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![
+            ("status", PropertyValue::from("active")),
+            ("score", PropertyValue::from("b")),
+        ],
+    )
+    .await;
+    let from = test_support::add_user(&db, "from").await;
+    let to = test_support::add_user(&db, "to").await;
+    let range_a = test_support::add_edge_with_properties(
+        &db,
+        from,
+        to,
+        "FOLLOWS",
+        vec![("weight", PropertyValue::from("a"))],
+    )
+    .await;
+    let range_aa = test_support::add_edge_with_properties(
+        &db,
+        from,
+        to,
+        "FOLLOWS",
+        vec![("weight", PropertyValue::from("aa"))],
+    )
+    .await;
+    let range_b = test_support::add_edge_with_properties(
+        &db,
+        from,
+        to,
+        "FOLLOWS",
+        vec![("weight", PropertyValue::from("b"))],
+    )
+    .await;
+    let equality_identity = seed_active_secondary_generation(
+        &db,
+        SecondaryIndexDefinition::node_equality("User", "status").unwrap(),
+        41,
+        &[
+            ("active", active_one),
+            ("inactive", inactive),
+            ("active", active_two),
+        ],
+    )
+    .await;
+    let node_range_identity = seed_active_secondary_generation(
+        &db,
+        SecondaryIndexDefinition::node_range("User", "score").unwrap(),
+        42,
+        &[("a", active_one), ("aa", inactive), ("b", active_two)],
+    )
+    .await;
+    seed_active_secondary_generation(
+        &db,
+        SecondaryIndexDefinition::edge_range_desc("FOLLOWS", "weight").unwrap(),
+        43,
+        &[("a", range_a), ("aa", range_aa), ("b", range_b)],
+    )
+    .await;
+
+    let equality_plan = exec::ExecNodeAccessPlan::EqualityIndex {
+        index: catalog::NodeEqualityIndexMeta::new(test_support::name("node_eq:User:status")),
+        key: catalog::ScopedPropertyKey::try_new("User", "status").unwrap(),
+        value: ir::IndexValue::Literal(
+            ir::SecondaryIndexLiteral::new(PropertyValue::from("active")).unwrap(),
+        ),
+    };
+    let mut active_ids = vec![active_one, active_two];
+    active_ids.sort_unstable();
+    assert_eq!(
+        run_node_access(&db, equality_plan.clone()).await,
+        ExecutionValue::Scalars(
+            active_ids
+                .into_iter()
+                .map(ExecutionScalar::NodeId)
+                .collect(),
+        )
+    );
+    let node_range_plan = exec::ExecNodeAccessPlan::RangeIndex {
+        index: catalog::NodeRangeIndexMeta::new(test_support::name("node_range:User:score:asc")),
+        key: catalog::ScopedPropertyDirectionKey::try_new(
+            "User",
+            "score",
+            helix_ast::index::RangeIndexDirection::Asc,
+        )
+        .unwrap(),
+        range: ir::IndexRange::All,
+    };
+    assert_eq!(
+        run_node_access(&db, node_range_plan.clone()).await,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::NodeId(active_one),
+            ExecutionScalar::NodeId(inactive),
+            ExecutionScalar::NodeId(active_two),
+        ])
+    );
+    let direction_mismatch = db
+        .execute(
+            &node_access_ids_plan(exec::ExecNodeAccessPlan::RangeIndex {
+                index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                    "node_range:User:score:desc",
+                )),
+                key: catalog::ScopedPropertyDirectionKey::try_new(
+                    "User",
+                    "score",
+                    helix_ast::index::RangeIndexDirection::Desc,
+                )
+                .unwrap(),
+                range: ir::IndexRange::All,
+            }),
+            context::ParamBindings::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        direction_mismatch,
+        HelixDbError::IndexCatalogCorruption(message)
+            if message.contains("direction disagrees")
+    ));
+    assert_eq!(
+        run_edge_access(
+            &db,
+            exec::ExecEdgeAccessPlan::RangeIndex {
+                index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                    "edge_range:FOLLOWS:weight:desc",
+                )),
+                key: catalog::ScopedPropertyDirectionKey::try_new(
+                    "FOLLOWS",
+                    "weight",
+                    helix_ast::index::RangeIndexDirection::Desc,
+                )
+                .unwrap(),
+                range: ir::IndexRange::All,
+            },
+        )
+        .await,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::EdgeId(range_b),
+            ExecutionScalar::EdgeId(range_aa),
+            ExecutionScalar::EdgeId(range_a),
+        ])
+    );
+
+    let node_range_record = crate::index_v2::repository::load_index_record(
+        db.inner_db().as_ref(),
+        DataScope::LegacyUnscoped,
+        &node_range_identity,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let dropping_node_range = node_range_record
+        .transition(IndexStateTransition::BeginDrop {
+            drop_operation_id: IndexOperationId::new_v4(),
+        })
+        .unwrap();
+    db.inner_db()
+        .put(
+            Key::Data {
+                scope: DataScope::LegacyUnscoped,
+                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(node_range_identity)),
+            }
+            .to_bytes(),
+            encode_index_record(&dropping_node_range),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        db.execute(
+            &node_access_ids_plan(node_range_plan),
+            context::ParamBindings::default(),
+        )
+        .await,
+        Err(HelixDbError::IndexLifecycleUnavailable {
+            family: IndexFamily::Secondary,
+            reason: IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+        })
+    ));
+
+    let record = crate::index_v2::repository::load_index_record(
+        db.inner_db().as_ref(),
+        DataScope::LegacyUnscoped,
+        &equality_identity,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let dropping = record
+        .transition(IndexStateTransition::BeginDrop {
+            drop_operation_id: IndexOperationId::new_v4(),
+        })
+        .unwrap();
+    db.inner_db()
+        .put(
+            Key::Data {
+                scope: DataScope::LegacyUnscoped,
+                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(equality_identity)),
+            }
+            .to_bytes(),
+            encode_index_record(&dropping),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        db.execute(
+            &node_access_ids_plan(equality_plan),
+            context::ParamBindings::default(),
+        )
+        .await,
+        Err(HelixDbError::IndexLifecycleUnavailable {
+            family: IndexFamily::Secondary,
+            reason: IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+        })
+    ));
+}
+
+#[tokio::test]
+async fn edge_equality_access_uses_global_label_scoped_index() {
+    let config = test_support::in_memory_config("access-edge-equality-index")
+        .with_edge_equality_index("FOLLOWS", "status");
+    let db = test_support::open_db_with_config(config).await;
+    let alice = test_support::add_user(&db, "alice").await;
+    let bob = test_support::add_user(&db, "bob").await;
+    let carol = test_support::add_user(&db, "carol").await;
+    let active_one = test_support::add_edge_with_properties(
+        &db,
+        alice,
+        bob,
+        "FOLLOWS",
+        vec![("status", PropertyValue::from("active"))],
+    )
+    .await;
+    let _inactive = test_support::add_edge_with_properties(
+        &db,
+        bob,
+        carol,
+        "FOLLOWS",
+        vec![("status", PropertyValue::from("inactive"))],
+    )
+    .await;
+    let active_two = test_support::add_edge_with_properties(
+        &db,
+        carol,
+        alice,
+        "FOLLOWS",
+        vec![("status", PropertyValue::from("active"))],
+    )
+    .await;
+    let _different_label = test_support::add_edge_with_properties(
+        &db,
+        alice,
+        carol,
+        "LIKES",
+        vec![("status", PropertyValue::from("active"))],
+    )
+    .await;
+
+    let value = run_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::EqualityIndex {
+            index: catalog::EdgeEqualityIndexMeta::new(test_support::name(
+                "edge_eq:FOLLOWS:status",
+            )),
+            key: catalog::ScopedPropertyKey::try_new("FOLLOWS", "status").expect("valid key"),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::from("active"))
+                    .expect("indexable value"),
+            ),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        value,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::EdgeId(active_one),
+            ExecutionScalar::EdgeId(active_two),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn regression_equality_lookup_exactly_filters_a_shared_digest_bucket() {
+    let db = test_support::open_db("access-equality-digest-collision").await;
+    let matching = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("status", PropertyValue::from("needle"))],
+    )
+    .await;
+    let collision = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("status", PropertyValue::from("different canonical value"))],
+    )
+    .await;
+    seed_active_secondary_generation(
+        &db,
+        SecondaryIndexDefinition::node_equality("User", "status").unwrap(),
+        44,
+        &[("needle", matching), ("needle", collision)],
+    )
+    .await;
+
+    let actual = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::EqualityIndex {
+            index: catalog::NodeEqualityIndexMeta::new(test_support::name("node_eq:User:status")),
+            key: catalog::ScopedPropertyKey::try_new("User", "status").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::from("needle")).unwrap(),
+            ),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(matching)]),
+        "managed equality lookup must verify the exact stored property after digest lookup"
+    );
+}
+
+#[tokio::test]
+async fn regression_edge_equality_lookup_exactly_filters_a_shared_digest_bucket() {
+    let db = test_support::open_db("access-edge-equality-digest-collision").await;
+    let from = test_support::add_user(&db, "from").await;
+    let to = test_support::add_user(&db, "to").await;
+    let matching = test_support::add_edge_with_properties(
+        &db,
+        from,
+        to,
+        "FOLLOWS",
+        vec![("status", PropertyValue::from("needle"))],
+    )
+    .await;
+    let collision = test_support::add_edge_with_properties(
+        &db,
+        from,
+        to,
+        "FOLLOWS",
+        vec![("status", PropertyValue::from("different canonical value"))],
+    )
+    .await;
+    seed_active_secondary_generation(
+        &db,
+        SecondaryIndexDefinition::edge_equality("FOLLOWS", "status").unwrap(),
+        45,
+        &[("needle", matching), ("needle", collision)],
+    )
+    .await;
+
+    let actual = run_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::EqualityIndex {
+            index: catalog::EdgeEqualityIndexMeta::new(test_support::name(
+                "edge_eq:FOLLOWS:status",
+            )),
+            key: catalog::ScopedPropertyKey::try_new("FOLLOWS", "status").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::from("needle")).unwrap(),
+            ),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(matching)]),
+        "managed edge equality lookup must verify exact property bytes"
+    );
+}
+
+#[tokio::test]
+async fn regression_equality_lookup_matches_cross_numeric_full_scan_semantics() {
+    let config = test_support::in_memory_config("access-cross-numeric-equality")
+        .with_equality_index("User", "score");
+    let db = test_support::open_db_with_config(config).await;
+    let expected = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("score", PropertyValue::I64(42))],
+    )
+    .await;
+
+    let actual = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::EqualityIndex {
+            index: catalog::NodeEqualityIndexMeta::new(test_support::name("node_eq:User:score")),
+            key: catalog::ScopedPropertyKey::try_new("User", "score").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::F64(42.0)).unwrap(),
+            ),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(expected)]),
+        "indexed equality must match the independent full-scan numeric equality contract"
+    );
+}
+
+#[tokio::test]
+async fn regression_equality_lookup_treats_positive_and_negative_zero_as_equal() {
+    let config = test_support::in_memory_config("access-signed-zero-equality")
+        .with_equality_index("User", "score");
+    let db = test_support::open_db_with_config(config).await;
+    let expected = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("score", PropertyValue::F64(-0.0))],
+    )
+    .await;
+
+    let actual = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::EqualityIndex {
+            index: catalog::NodeEqualityIndexMeta::new(test_support::name("node_eq:User:score")),
+            key: catalog::ScopedPropertyKey::try_new("User", "score").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::F64(0.0)).unwrap(),
+            ),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(expected)]),
+        "indexed equality must match full-scan equality for signed zero"
+    );
+}
+
+#[tokio::test]
+async fn regression_equality_lookup_keeps_nan_non_reflexive_like_a_full_scan() {
+    let config =
+        test_support::in_memory_config("access-nan-equality").with_equality_index("User", "score");
+    let db = test_support::open_db_with_config(config).await;
+    test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("score", PropertyValue::F64(f64::NAN))],
+    )
+    .await;
+
+    let actual = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::EqualityIndex {
+            index: catalog::NodeEqualityIndexMeta::new(test_support::name("node_eq:User:score")),
+            key: catalog::ScopedPropertyKey::try_new("User", "score").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::F64(f64::NAN)).unwrap(),
+            ),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(Vec::new()),
+        "NaN is not equal to itself under the independent full-scan predicate"
+    );
+}
+
+#[tokio::test]
+async fn regression_unique_equality_allows_distinct_typed_values_with_the_same_text() {
+    let config = test_support::in_memory_config("access-typed-unique-equality")
+        .with_unique_equality_index("User", "external_id");
+    let db = test_support::open_db_with_config(config).await;
+    test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("external_id", PropertyValue::Bool(true))],
+    )
+    .await;
+
+    let second = test_support::try_add_node_with_properties(
+        &db,
+        "User",
+        vec![("external_id", PropertyValue::String("true".into()))],
+    )
+    .await;
+
+    assert!(
+        second.is_ok(),
+        "distinct Bool(true) and String(\"true\") values must not violate uniqueness: {second:?}"
+    );
+}
+
+#[tokio::test]
+async fn regression_unique_equality_uses_exact_cross_numeric_semantics_above_two_to_the_53() {
+    let config = test_support::in_memory_config("access-exact-cross-numeric-unique")
+        .with_unique_equality_index("User", "external_id");
+    let db = test_support::open_db_with_config(config).await;
+    let exact_owner = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("external_id", PropertyValue::I64(9_007_199_254_740_992))],
+    )
+    .await;
+    let equal_float = test_support::try_add_node_with_properties(
+        &db,
+        "User",
+        vec![("external_id", PropertyValue::F64(9_007_199_254_740_992.0))],
+    )
+    .await;
+    assert!(matches!(
+        equal_float,
+        Err(HelixDbError::UniqueConstraintViolation {
+            existing_node_id,
+            ..
+        }) if existing_node_id == exact_owner
+    ));
+
+    let reverse_config = test_support::in_memory_config("access-exact-cross-numeric-distinct")
+        .with_unique_equality_index("User", "external_id");
+    let reverse_db = test_support::open_db_with_config(reverse_config).await;
+    test_support::add_node_with_properties(
+        &reverse_db,
+        "User",
+        vec![("external_id", PropertyValue::F64(9_007_199_254_740_992.0))],
+    )
+    .await;
+    let distinct = test_support::try_add_node_with_properties(
+        &reverse_db,
+        "User",
+        vec![("external_id", PropertyValue::I64(9_007_199_254_740_993))],
+    )
+    .await;
+    assert!(
+        distinct.is_ok(),
+        "the adjacent integer must remain a distinct unique value: {distinct:?}"
+    );
+}
+
+#[tokio::test]
+async fn regression_equality_distinguishes_distinct_same_length_arrays() {
+    let config = test_support::in_memory_config("access-array-equality")
+        .with_equality_index("User", "external_id");
+    let db = test_support::open_db_with_config(config).await;
+    let expected = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("external_id", PropertyValue::I64Array(vec![1, 2]))],
+    )
+    .await;
+    test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("external_id", PropertyValue::I64Array(vec![8, 9]))],
+    )
+    .await;
+
+    let actual = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::EqualityIndex {
+            index: catalog::NodeEqualityIndexMeta::new(test_support::name(
+                "node_eq:User:external_id",
+            )),
+            key: catalog::ScopedPropertyKey::try_new("User", "external_id").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::I64Array(vec![1, 2])).unwrap(),
+            ),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(expected)]),
+        "equality lookup must compare array contents, not only array length"
+    );
+}
+
+#[tokio::test]
+async fn regression_null_equality_uses_authoritative_missing_and_null_semantics() {
+    let config = test_support::in_memory_config("access-null-equality")
+        .with_equality_index("User", "external_id");
+    let db = test_support::open_db_with_config(config).await;
+    let missing = test_support::add_node_with_properties(&db, "User", Vec::new()).await;
+    let explicit_null = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("external_id", PropertyValue::Null)],
+    )
+    .await;
+    let string_null = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("external_id", PropertyValue::String("null".to_string()))],
+    )
+    .await;
+    let access = |value| exec::ExecNodeAccessPlan::EqualityIndex {
+        index: catalog::NodeEqualityIndexMeta::new(test_support::name("node_eq:User:external_id")),
+        key: catalog::ScopedPropertyKey::try_new("User", "external_id").unwrap(),
+        value: ir::IndexValue::Literal(ir::SecondaryIndexLiteral::new(value).unwrap()),
+    };
+
+    assert_eq!(
+        run_node_access(&db, access(PropertyValue::Null)).await,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::NodeId(missing),
+            ExecutionScalar::NodeId(explicit_null),
+        ])
+    );
+    assert_eq!(
+        run_node_access(&db, access(PropertyValue::String("null".to_string()))).await,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(string_null)])
+    );
+}
+
+#[tokio::test]
+async fn regression_node_dynamic_equality_never_falls_back_to_colliding_legacy_property_rows() {
+    let db = test_support::open_db("access-node-property-hash-collision").await;
+    let first_property = crate::config::scoped_secondary_index_property("User", "property_16755");
+    let second_property = crate::config::scoped_secondary_index_property("User", "property_36911");
+    assert_eq!(
+        hash_property_name(&first_property),
+        hash_property_name(&second_property)
+    );
+
+    let entity_id = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("property_16755", PropertyValue::from("collision"))],
+    )
+    .await;
+    let transaction = db
+        .inner_db()
+        .begin(slatedb::IsolationLevel::SerializableSnapshot)
+        .await
+        .unwrap();
+    crate::search::add_to_equality_index_scoped(
+        &transaction,
+        &first_property,
+        "collision",
+        entity_id,
+        DataScope::LegacyUnscoped,
+    )
+    .await
+    .unwrap();
+    transaction.commit().await.unwrap();
+
+    let result = db
+        .execute(
+            &node_access_ids_plan(exec::ExecNodeAccessPlan::EqualityIndex {
+                index: catalog::NodeEqualityIndexMeta::new(test_support::name(
+                    "node_eq:User:property_36911",
+                )),
+                key: catalog::ScopedPropertyKey::try_new("User", "property_36911").unwrap(),
+                value: ir::IndexValue::Literal(
+                    ir::SecondaryIndexLiteral::new(PropertyValue::from("collision")).unwrap(),
+                ),
+            }),
+            context::ParamBindings::default(),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(HelixDbError::IndexLifecycleUnavailable {
+            family: IndexFamily::Secondary,
+            reason: IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+        })
+    ));
+}
+
+#[tokio::test]
+async fn regression_edge_dynamic_equality_never_falls_back_to_colliding_legacy_property_rows() {
+    let db = test_support::open_db("access-edge-property-hash-collision").await;
+    let first_property = crate::config::scoped_secondary_index_property("User", "property_16755");
+    let second_property = crate::config::scoped_secondary_index_property("User", "property_36911");
+    assert_eq!(
+        hash_property_name(&first_property),
+        hash_property_name(&second_property)
+    );
+
+    let from = test_support::add_user(&db, "from").await;
+    let to = test_support::add_user(&db, "to").await;
+    let entity_id = test_support::add_edge_with_properties(
+        &db,
+        from,
+        to,
+        "User",
+        vec![("property_16755", PropertyValue::from("collision"))],
+    )
+    .await;
+    let transaction = db
+        .inner_db()
+        .begin(slatedb::IsolationLevel::SerializableSnapshot)
+        .await
+        .unwrap();
+    crate::search::add_to_edge_equality_index_scoped(
+        &transaction,
+        from,
+        to,
+        entity_id,
+        &first_property,
+        "collision",
+        DataScope::LegacyUnscoped,
+    )
+    .await
+    .unwrap();
+    transaction.commit().await.unwrap();
+
+    let result = db
+        .execute(
+            &edge_access_ids_plan(exec::ExecEdgeAccessPlan::EqualityIndex {
+                index: catalog::EdgeEqualityIndexMeta::new(test_support::name(
+                    "edge_eq:User:property_36911",
+                )),
+                key: catalog::ScopedPropertyKey::try_new("User", "property_36911").unwrap(),
+                value: ir::IndexValue::Literal(
+                    ir::SecondaryIndexLiteral::new(PropertyValue::from("collision")).unwrap(),
+                ),
+            }),
+            context::ParamBindings::default(),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(HelixDbError::IndexLifecycleUnavailable {
+            family: IndexFamily::Secondary,
+            reason: IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+        })
+    ));
+}
+
+#[tokio::test]
+async fn regression_colliding_property_names_keep_independent_managed_node_and_edge_indexes() {
+    let db = test_support::open_db("access-managed-property-hash-isolation").await;
+    let first_node = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("property_16755", PropertyValue::from("first"))],
+    )
+    .await;
+    let second_node = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("property_36911", PropertyValue::from("second"))],
+    )
+    .await;
+    seed_active_secondary_generation(
+        &db,
+        SecondaryIndexDefinition::node_equality("User", "property_16755").unwrap(),
+        80,
+        &[("first", first_node)],
+    )
+    .await;
+    seed_active_secondary_generation(
+        &db,
+        SecondaryIndexDefinition::node_equality("User", "property_36911").unwrap(),
+        81,
+        &[("second", second_node)],
+    )
+    .await;
+
+    let first_result = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::EqualityIndex {
+            index: catalog::NodeEqualityIndexMeta::new(test_support::name(
+                "node_eq:User:property_16755",
+            )),
+            key: catalog::ScopedPropertyKey::try_new("User", "property_16755").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::from("first")).unwrap(),
+            ),
+        },
+    )
+    .await;
+    let second_result = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::EqualityIndex {
+            index: catalog::NodeEqualityIndexMeta::new(test_support::name(
+                "node_eq:User:property_36911",
+            )),
+            key: catalog::ScopedPropertyKey::try_new("User", "property_36911").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::from("second")).unwrap(),
+            ),
+        },
+    )
+    .await;
+    assert_eq!(
+        first_result,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(first_node)])
+    );
+    assert_eq!(
+        second_result,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(second_node)])
+    );
+
+    let from = test_support::add_user(&db, "from").await;
+    let to = test_support::add_user(&db, "to").await;
+    let first_edge = test_support::add_edge_with_properties(
+        &db,
+        from,
+        to,
+        "User",
+        vec![("property_16755", PropertyValue::from("first"))],
+    )
+    .await;
+    let second_edge = test_support::add_edge_with_properties(
+        &db,
+        from,
+        to,
+        "User",
+        vec![("property_36911", PropertyValue::from("second"))],
+    )
+    .await;
+    seed_active_secondary_generation(
+        &db,
+        SecondaryIndexDefinition::edge_equality("User", "property_16755").unwrap(),
+        82,
+        &[("first", first_edge)],
+    )
+    .await;
+    seed_active_secondary_generation(
+        &db,
+        SecondaryIndexDefinition::edge_equality("User", "property_36911").unwrap(),
+        83,
+        &[("second", second_edge)],
+    )
+    .await;
+
+    let first_result = run_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::EqualityIndex {
+            index: catalog::EdgeEqualityIndexMeta::new(test_support::name(
+                "edge_eq:User:property_16755",
+            )),
+            key: catalog::ScopedPropertyKey::try_new("User", "property_16755").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::from("first")).unwrap(),
+            ),
+        },
+    )
+    .await;
+    let second_result = run_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::EqualityIndex {
+            index: catalog::EdgeEqualityIndexMeta::new(test_support::name(
+                "edge_eq:User:property_36911",
+            )),
+            key: catalog::ScopedPropertyKey::try_new("User", "property_36911").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::from("second")).unwrap(),
+            ),
+        },
+    )
+    .await;
+    assert_eq!(
+        first_result,
+        ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(first_edge)])
+    );
+    assert_eq!(
+        second_result,
+        ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(second_edge)])
+    );
+}
+
+#[tokio::test]
+async fn regression_dynamic_range_never_falls_back_to_colliding_legacy_property_rows() {
+    let db = test_support::open_db("access-range-property-hash-collision").await;
+    let first_node_property =
+        crate::config::scoped_secondary_index_property("User", "property_16755");
+    let second_node_property =
+        crate::config::scoped_secondary_index_property("User", "property_36911");
+    let node_id = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("property_16755", PropertyValue::I64(7))],
+    )
+    .await;
+    let from = test_support::add_user(&db, "from-range").await;
+    let to = test_support::add_user(&db, "to-range").await;
+    let edge_id = test_support::add_edge_with_properties(
+        &db,
+        from,
+        to,
+        "User",
+        vec![("property_16755", PropertyValue::I64(7))],
+    )
+    .await;
+    let first_edge_property =
+        crate::config::scoped_secondary_index_property("User", "property_16755");
+    let transaction = db
+        .inner_db()
+        .begin(slatedb::IsolationLevel::SerializableSnapshot)
+        .await
+        .unwrap();
+    crate::search::add_to_range_index_with_direction_scoped(
+        &transaction,
+        &first_node_property,
+        "7",
+        node_id,
+        StorageRangeIndexDirection::Asc,
+        DataScope::LegacyUnscoped,
+    )
+    .await
+    .unwrap();
+    crate::search::add_to_edge_range_index_with_direction_scoped(
+        &transaction,
+        from,
+        to,
+        edge_id,
+        &first_edge_property,
+        "7",
+        StorageRangeIndexDirection::Asc,
+        DataScope::LegacyUnscoped,
+    )
+    .await
+    .unwrap();
+    transaction.commit().await.unwrap();
+
+    assert_eq!(
+        hash_property_name(&first_node_property),
+        hash_property_name(&second_node_property)
+    );
+    let node_result = db
+        .execute(
+            &node_access_ids_plan(node_range_plan(
+                "property_36911",
+                helix_ast::index::RangeIndexDirection::Asc,
+                ir::IndexRange::All,
+            )),
+            context::ParamBindings::default(),
+        )
+        .await;
+    assert!(matches!(
+        node_result,
+        Err(HelixDbError::IndexLifecycleUnavailable {
+            family: IndexFamily::Secondary,
+            reason: IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+        })
+    ));
+
+    let edge_result = db
+        .execute(
+            &edge_access_ids_plan(exec::ExecEdgeAccessPlan::RangeIndex {
+                index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                    "edge_range:User:property_36911:asc",
+                )),
+                key: catalog::ScopedPropertyDirectionKey::try_new(
+                    "User",
+                    "property_36911",
+                    helix_ast::index::RangeIndexDirection::Asc,
+                )
+                .unwrap(),
+                range: ir::IndexRange::All,
+            }),
+            context::ParamBindings::default(),
+        )
+        .await;
+    assert!(matches!(
+        edge_result,
+        Err(HelixDbError::IndexLifecycleUnavailable {
+            family: IndexFamily::Secondary,
+            reason: IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+        })
+    ));
+}
+
+#[tokio::test]
+async fn dynamic_equality_ignores_legacy_bitmaps_while_builtin_label_scan_remains_fail_closed() {
+    let db = test_support::open_db("access-corrupt-equality-bitmaps").await;
+    let node_property = crate::config::scoped_secondary_index_property("User", "status");
+    let edge_property = crate::config::scoped_secondary_index_property("FOLLOWS", "status");
+    for key in [
+        Key::Data {
+            scope: DataScope::LegacyUnscoped,
+            kind: DataKeyKind::PropertyIndex(IndexKey::Equality(EqualityIndexKey::new(
+                hash_property_name("$label"),
+                hash_property_value("User"),
+            ))),
+        }
+        .to_bytes(),
+        Key::Data {
+            scope: DataScope::LegacyUnscoped,
+            kind: DataKeyKind::PropertyIndex(IndexKey::Equality(EqualityIndexKey::new(
+                hash_property_name(&node_property),
+                hash_property_value("active"),
+            ))),
+        }
+        .to_bytes(),
+        Key::Data {
+            scope: DataScope::LegacyUnscoped,
+            kind: DataKeyKind::PropertyIndex(IndexKey::GlobalEdgeEquality(
+                GlobalEdgeEqualityIndexKey::new(
+                    hash_property_name(&edge_property),
+                    hash_property_value("active"),
+                ),
+            )),
+        }
+        .to_bytes(),
+    ] {
+        db.inner_db()
+            .put(key, bytes::Bytes::from_static(b"corrupt bitmap"))
+            .await
+            .expect("corrupt equality bitmap writes");
+    }
+
+    let node = exec::ExecNodeAccessPlan::EqualityIndex {
+        index: catalog::NodeEqualityIndexMeta::new(test_support::name("node_eq:User:status")),
+        key: catalog::ScopedPropertyKey::try_new("User", "status").unwrap(),
+        value: ir::IndexValue::Literal(
+            ir::SecondaryIndexLiteral::new(PropertyValue::from("active")).unwrap(),
+        ),
+    };
+    assert!(matches!(
+        db.execute(
+            &node_access_ids_plan(node),
+            context::ParamBindings::default(),
+        )
+        .await,
+        Err(HelixDbError::IndexLifecycleUnavailable {
+            family: IndexFamily::Secondary,
+            reason: IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+        })
+    ));
+
+    assert!(matches!(
+        db.execute(
+            &node_access_ids_plan(exec::ExecNodeAccessPlan::LabelScan {
+                label: test_support::name("User"),
+            }),
+            context::ParamBindings::default(),
+        )
+        .await,
+        Err(HelixDbError::Encoding(_))
+    ));
+
+    let edge = exec::ExecEdgeAccessPlan::EqualityIndex {
+        index: catalog::EdgeEqualityIndexMeta::new(test_support::name("edge_eq:FOLLOWS:status")),
+        key: catalog::ScopedPropertyKey::try_new("FOLLOWS", "status").unwrap(),
+        value: ir::IndexValue::Literal(
+            ir::SecondaryIndexLiteral::new(PropertyValue::from("active")).unwrap(),
+        ),
+    };
+    assert!(matches!(
+        db.execute(
+            &edge_access_ids_plan(edge),
+            context::ParamBindings::default(),
+        )
+        .await,
+        Err(HelixDbError::IndexLifecycleUnavailable {
+            family: IndexFamily::Secondary,
+            reason: IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+        })
+    ));
+}
+
+#[tokio::test]
+async fn managed_secondary_access_propagates_corrupt_canonical_records() {
+    let config = test_support::in_memory_config("access-corrupt-secondary-records")
+        .with_equality_index("User", "status")
+        .with_range_index("User", "score");
+    let db = test_support::open_db_with_config(config).await;
+    for definition in [
+        SecondaryIndexDefinition::node_equality("User", "status").unwrap(),
+        SecondaryIndexDefinition::node_range("User", "score").unwrap(),
+    ] {
+        let identity = ValidatedDynamicIndexDefinition::try_from(definition)
+            .expect("secondary definition validates")
+            .identity();
+        db.inner_db()
+            .put(
+                Key::Data {
+                    scope: DataScope::LegacyUnscoped,
+                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(identity)),
+                }
+                .to_bytes(),
+                bytes::Bytes::from_static(b"corrupt canonical record"),
+            )
+            .await
+            .expect("corrupt canonical record writes");
+    }
+
+    for plan in [
+        exec::ExecNodeAccessPlan::EqualityIndex {
+            index: catalog::NodeEqualityIndexMeta::new(test_support::name("node_eq:User:status")),
+            key: catalog::ScopedPropertyKey::try_new("User", "status").unwrap(),
+            value: ir::IndexValue::Literal(
+                ir::SecondaryIndexLiteral::new(PropertyValue::from("active")).unwrap(),
+            ),
+        },
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score:asc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "User",
+                "score",
+                helix_ast::index::RangeIndexDirection::Asc,
+            )
+            .unwrap(),
+            range: ir::IndexRange::All,
+        },
+    ] {
+        assert!(matches!(
+            db.execute(
+                &node_access_ids_plan(plan),
+                context::ParamBindings::default(),
+            )
+            .await,
+            Err(HelixDbError::Encoding(_))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn range_access_rejects_oversized_identity_components() {
+    let db = test_support::open_db("access-oversized-range-identity").await;
+    let oversized = "x".repeat(crate::index_v2::INDEX_COMPONENT_MAX_LEN + 1);
+    let node = exec::ExecNodeAccessPlan::RangeIndex {
+        index: catalog::NodeRangeIndexMeta::new(test_support::name("oversized-node-range")),
+        key: catalog::ScopedPropertyDirectionKey::try_new(
+            oversized.clone(),
+            "score",
+            helix_ast::index::RangeIndexDirection::Asc,
+        )
+        .unwrap(),
+        range: ir::IndexRange::All,
+    };
+    let edge = exec::ExecEdgeAccessPlan::RangeIndex {
+        index: catalog::EdgeRangeIndexMeta::new(test_support::name("oversized-edge-range")),
+        key: catalog::ScopedPropertyDirectionKey::try_new(
+            oversized,
+            "weight",
+            helix_ast::index::RangeIndexDirection::Asc,
+        )
+        .unwrap(),
+        range: ir::IndexRange::All,
+    };
+
+    assert!(matches!(
+        db.execute(
+            &node_access_ids_plan(node),
+            context::ParamBindings::default(),
+        )
+        .await,
+        Err(HelixDbError::InvalidIndexV2Model(_))
+    ));
+    assert!(matches!(
+        db.execute(
+            &edge_access_ids_plan(edge),
+            context::ParamBindings::default(),
+        )
+        .await,
+        Err(HelixDbError::InvalidIndexV2Model(_))
+    ));
+}
+
+#[tokio::test]
+async fn regression_ascending_node_range_matches_typed_oracle_across_signed_extremes() {
+    let config = test_support::in_memory_config("access-signed-node-range-ascending")
+        .with_range_index("User", "score");
+    let db = test_support::open_db_with_config(config).await;
+    let mut expected = Vec::new();
+    for score in [i64::MIN, -10, -2, -1, 0, 1, 2, 10, i64::MAX] {
+        expected.push(
+            test_support::add_node_with_properties(
+                &db,
+                "User",
+                vec![("score", PropertyValue::I64(score))],
+            )
+            .await,
+        );
+    }
+
+    let actual = run_node_access(
+        &db,
+        node_range_plan(
+            "score",
+            helix_ast::index::RangeIndexDirection::Asc,
+            ir::IndexRange::All,
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(expected.into_iter().map(ExecutionScalar::NodeId).collect()),
+        "ascending index order must equal independent signed-i64 order"
+    );
+}
+
+#[tokio::test]
+async fn regression_descending_node_range_matches_typed_oracle_across_signed_extremes() {
+    let config = test_support::in_memory_config("access-signed-node-range-descending")
+        .with_range_desc_index("User", "score");
+    let db = test_support::open_db_with_config(config).await;
+    let mut expected = Vec::new();
+    for score in [i64::MIN, -10, -2, -1, 0, 1, 2, 10, i64::MAX] {
+        expected.push(
+            test_support::add_node_with_properties(
+                &db,
+                "User",
+                vec![("score", PropertyValue::I64(score))],
+            )
+            .await,
+        );
+    }
+    expected.reverse();
+
+    let actual = run_node_access(
+        &db,
+        node_range_plan(
+            "score",
+            helix_ast::index::RangeIndexDirection::Desc,
+            ir::IndexRange::All,
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(expected.into_iter().map(ExecutionScalar::NodeId).collect()),
+        "descending index order must reverse independent signed-i64 order"
+    );
+}
+
+#[tokio::test]
+async fn regression_signed_node_range_bounds_and_limit_match_typed_oracle() {
+    let config = test_support::in_memory_config("access-signed-node-range-bounds")
+        .with_range_index("User", "score");
+    let db = test_support::open_db_with_config(config).await;
+    let mut ids = Vec::new();
+    for score in [-100, -10, -2, -1, 0, 1] {
+        ids.push(
+            test_support::add_node_with_properties(
+                &db,
+                "User",
+                vec![("score", PropertyValue::I64(score))],
+            )
+            .await,
+        );
+    }
+    let range = ir::IndexRange::Between(
+        ir::IndexBetweenRange::new(
+            ir::IndexBound::Inclusive(
+                ir::RangeIndexValue::literal(PropertyValue::I64(-10)).unwrap(),
+            ),
+            ir::IndexBound::Exclusive(ir::RangeIndexValue::literal(PropertyValue::I64(0)).unwrap()),
+        )
+        .unwrap(),
+    );
+
+    let actual = run_limited_node_access(
+        &db,
+        node_range_plan("score", helix_ast::index::RangeIndexDirection::Asc, range),
+        2,
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::NodeId(ids[1]),
+            ExecutionScalar::NodeId(ids[2]),
+        ]),
+        "bounds must be applied semantically before LIMIT"
+    );
+}
+
+#[tokio::test]
+async fn regression_edge_range_matches_typed_oracle_for_negative_values() {
+    let config = test_support::in_memory_config("access-signed-edge-range")
+        .with_edge_range_index("FOLLOWS", "weight");
+    let db = test_support::open_db_with_config(config).await;
+    let from = test_support::add_user(&db, "from").await;
+    let to = test_support::add_user(&db, "to").await;
+    let mut expected = Vec::new();
+    for weight in [-10, -2, -1, 0, 1] {
+        expected.push(
+            test_support::add_edge_with_properties(
+                &db,
+                from,
+                to,
+                "FOLLOWS",
+                vec![("weight", PropertyValue::I64(weight))],
+            )
+            .await,
+        );
+    }
+
+    let actual = run_edge_access(
+        &db,
+        edge_range_plan(
+            "weight",
+            helix_ast::index::RangeIndexDirection::Asc,
+            ir::IndexRange::All,
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(expected.into_iter().map(ExecutionScalar::EdgeId).collect()),
+        "edge range order must equal independent signed-i64 order"
+    );
+}
+
+#[tokio::test]
+async fn regression_node_range_remains_correct_after_reopen() {
+    let config = test_support::in_memory_config("access-signed-node-range-reopen")
+        .with_range_index("User", "score");
+    let writer = test_support::open_db_with_config(config.clone()).await;
+    let lower = test_support::add_node_with_properties(
+        &writer,
+        "User",
+        vec![("score", PropertyValue::I64(-10))],
+    )
+    .await;
+    let higher = test_support::add_node_with_properties(
+        &writer,
+        "User",
+        vec![("score", PropertyValue::I64(-2))],
+    )
+    .await;
+    writer.close().await.expect("writer closes");
+    let reader = test_support::open_db_with_config(config).await;
+
+    let actual = run_node_access(
+        &reader,
+        node_range_plan(
+            "score",
+            helix_ast::index::RangeIndexDirection::Asc,
+            ir::IndexRange::All,
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        actual,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::NodeId(lower),
+            ExecutionScalar::NodeId(higher),
+        ]),
+        "persisted range rows must preserve semantic order after reopen"
+    );
+}
+
+#[tokio::test]
+async fn node_range_access_uses_configured_directional_index() {
+    let config = test_support::in_memory_config("access-node-range-index")
+        .with_range_index("User", "score_asc")
+        .with_range_desc_index("User", "score_desc");
+    let db = test_support::open_db_with_config(config).await;
+    let low = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![
+            ("name", PropertyValue::from("low")),
+            ("score_asc", PropertyValue::I64(10)),
+            ("score_desc", PropertyValue::I64(10)),
+        ],
+    )
+    .await;
+    let medium = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![
+            ("name", PropertyValue::from("medium")),
+            ("score_asc", PropertyValue::I64(20)),
+            ("score_desc", PropertyValue::I64(20)),
+        ],
+    )
+    .await;
+    let _high = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![
+            ("name", PropertyValue::from("high")),
+            ("score_asc", PropertyValue::I64(30)),
+            ("score_desc", PropertyValue::I64(30)),
+        ],
+    )
+    .await;
+
+    let range = ir::IndexRange::Upper {
+        upper: ir::IndexBound::Exclusive(
+            ir::RangeIndexValue::literal(PropertyValue::I64(25)).expect("range value is indexable"),
+        ),
+    };
+    let asc = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score_asc:asc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "User",
+                "score_asc",
+                helix_ast::index::RangeIndexDirection::Asc,
+            )
+            .expect("valid key"),
+            range: range.clone(),
+        },
+    )
+    .await;
+    let desc = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score_desc:desc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "User",
+                "score_desc",
+                helix_ast::index::RangeIndexDirection::Desc,
+            )
+            .expect("valid key"),
+            range: range.clone(),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        asc,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::NodeId(low),
+            ExecutionScalar::NodeId(medium),
+        ])
+    );
+    assert_eq!(
+        desc,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::NodeId(medium),
+            ExecutionScalar::NodeId(low),
+        ])
+    );
+
+    let limited_asc_all = run_limited_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score_asc:asc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "User",
+                "score_asc",
+                helix_ast::index::RangeIndexDirection::Asc,
+            )
+            .expect("valid key"),
+            range: ir::IndexRange::All,
+        },
+        2,
+    )
+    .await;
+    let limited_desc_upper = run_limited_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score_desc:desc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "User",
+                "score_desc",
+                helix_ast::index::RangeIndexDirection::Desc,
+            )
+            .expect("valid key"),
+            range: range.clone(),
+        },
+        1,
+    )
+    .await;
+
+    assert_eq!(
+        limited_asc_all,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::NodeId(low),
+            ExecutionScalar::NodeId(medium),
+        ])
+    );
+    assert_eq!(
+        limited_desc_upper,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(medium)])
+    );
+
+    let exclusive_between = exclusive_i64_between(10, 30);
+    let asc_between = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score_asc:asc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "User",
+                "score_asc",
+                helix_ast::index::RangeIndexDirection::Asc,
+            )
+            .expect("valid key"),
+            range: exclusive_between.clone(),
+        },
+    )
+    .await;
+    let desc_between = run_node_access(
+        &db,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score_desc:desc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "User",
+                "score_desc",
+                helix_ast::index::RangeIndexDirection::Desc,
+            )
+            .expect("valid key"),
+            range: exclusive_between,
+        },
+    )
+    .await;
+
+    assert_eq!(
+        asc_between,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(medium)])
+    );
+    assert_eq!(
+        desc_between,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(medium)])
+    );
+}
+
+#[tokio::test]
+async fn node_range_access_resolves_runtime_parameter_bounds() {
+    let config = test_support::in_memory_config("access-node-range-params")
+        .with_range_index("User", "score_asc")
+        .with_range_desc_index("User", "score_desc");
+    let db = test_support::open_db_with_config(config).await;
+    let _low = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![
+            ("name", PropertyValue::from("low")),
+            ("score_asc", PropertyValue::I64(10)),
+            ("score_desc", PropertyValue::I64(10)),
+        ],
+    )
+    .await;
+    let medium = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![
+            ("name", PropertyValue::from("medium")),
+            ("score_asc", PropertyValue::I64(20)),
+            ("score_desc", PropertyValue::I64(20)),
+        ],
+    )
+    .await;
+    let high = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![
+            ("name", PropertyValue::from("high")),
+            ("score_asc", PropertyValue::I64(30)),
+            ("score_desc", PropertyValue::I64(30)),
+        ],
+    )
+    .await;
+
+    let min = test_support::name("min_score");
+    let max = test_support::name("max_score");
+    let params = context::ParamBindings::default()
+        .with_value(min.clone(), PropertyValue::I64(20))
+        .with_value(max.clone(), PropertyValue::I64(40));
+    let range = parameterized_i64_between(min, max);
+
+    let asc = run_node_access_with_params(
+        &db,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score_asc:asc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "User",
+                "score_asc",
+                helix_ast::index::RangeIndexDirection::Asc,
+            )
+            .expect("valid key"),
+            range: range.clone(),
+        },
+        params.clone(),
+    )
+    .await;
+    let desc = run_node_access_with_params(
+        &db,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score_desc:desc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "User",
+                "score_desc",
+                helix_ast::index::RangeIndexDirection::Desc,
+            )
+            .expect("valid key"),
+            range,
+        },
+        params,
+    )
+    .await;
+
+    assert_eq!(
+        asc,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::NodeId(medium),
+            ExecutionScalar::NodeId(high),
+        ])
+    );
+    assert_eq!(
+        desc,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::NodeId(high),
+            ExecutionScalar::NodeId(medium),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn edge_range_access_uses_global_ordered_index() {
+    let config = test_support::in_memory_config("access-edge-range-index")
+        .with_edge_range_index("FOLLOWS", "weight_asc")
+        .with_edge_range_desc_index("FOLLOWS", "weight_desc");
+    let db = test_support::open_db_with_config(config).await;
+    let alice = test_support::add_user(&db, "alice").await;
+    let bob = test_support::add_user(&db, "bob").await;
+    let carol = test_support::add_user(&db, "carol").await;
+    let light = test_support::add_edge_with_properties(
+        &db,
+        alice,
+        bob,
+        "FOLLOWS",
+        vec![
+            ("weight_asc", PropertyValue::I64(10)),
+            ("weight_desc", PropertyValue::I64(10)),
+        ],
+    )
+    .await;
+    let heavy = test_support::add_edge_with_properties(
+        &db,
+        alice,
+        carol,
+        "FOLLOWS",
+        vec![
+            ("weight_asc", PropertyValue::I64(30)),
+            ("weight_desc", PropertyValue::I64(30)),
+        ],
+    )
+    .await;
+    let medium = test_support::add_edge_with_properties(
+        &db,
+        bob,
+        carol,
+        "FOLLOWS",
+        vec![
+            ("weight_asc", PropertyValue::I64(20)),
+            ("weight_desc", PropertyValue::I64(20)),
+        ],
+    )
+    .await;
+
+    let asc_all = run_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight_asc:asc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                "weight_asc",
+                helix_ast::index::RangeIndexDirection::Asc,
+            )
+            .expect("valid key"),
+            range: ir::IndexRange::All,
+        },
+    )
+    .await;
+    let desc_all = run_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight_desc:desc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                "weight_desc",
+                helix_ast::index::RangeIndexDirection::Desc,
+            )
+            .expect("valid key"),
+            range: ir::IndexRange::All,
+        },
+    )
+    .await;
+
+    let range = ir::IndexRange::Upper {
+        upper: ir::IndexBound::Exclusive(
+            ir::RangeIndexValue::literal(PropertyValue::I64(25)).expect("range value is indexable"),
+        ),
+    };
+    let asc = run_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight_asc:asc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                "weight_asc",
+                helix_ast::index::RangeIndexDirection::Asc,
+            )
+            .expect("valid key"),
+            range: range.clone(),
+        },
+    )
+    .await;
+    let desc = run_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight_desc:desc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                "weight_desc",
+                helix_ast::index::RangeIndexDirection::Desc,
+            )
+            .expect("valid key"),
+            range: range.clone(),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        asc_all,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::EdgeId(light),
+            ExecutionScalar::EdgeId(medium),
+            ExecutionScalar::EdgeId(heavy),
+        ])
+    );
+    assert_eq!(
+        desc_all,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::EdgeId(heavy),
+            ExecutionScalar::EdgeId(medium),
+            ExecutionScalar::EdgeId(light),
+        ])
+    );
+    assert_eq!(
+        asc,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::EdgeId(light),
+            ExecutionScalar::EdgeId(medium),
+        ])
+    );
+    assert_eq!(
+        desc,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::EdgeId(medium),
+            ExecutionScalar::EdgeId(light),
+        ])
+    );
+
+    let limited_asc_all = run_limited_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight_asc:asc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                "weight_asc",
+                helix_ast::index::RangeIndexDirection::Asc,
+            )
+            .expect("valid key"),
+            range: ir::IndexRange::All,
+        },
+        2,
+    )
+    .await;
+    let limited_desc_upper = run_limited_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight_desc:desc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                "weight_desc",
+                helix_ast::index::RangeIndexDirection::Desc,
+            )
+            .expect("valid key"),
+            range: range.clone(),
+        },
+        1,
+    )
+    .await;
+
+    assert_eq!(
+        limited_asc_all,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::EdgeId(light),
+            ExecutionScalar::EdgeId(medium),
+        ])
+    );
+    assert_eq!(
+        limited_desc_upper,
+        ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(medium)])
+    );
+
+    let exclusive_between = exclusive_i64_between(10, 30);
+    let asc_between = run_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight_asc:asc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                "weight_asc",
+                helix_ast::index::RangeIndexDirection::Asc,
+            )
+            .expect("valid key"),
+            range: exclusive_between.clone(),
+        },
+    )
+    .await;
+    let desc_between = run_edge_access(
+        &db,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight_desc:desc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                "weight_desc",
+                helix_ast::index::RangeIndexDirection::Desc,
+            )
+            .expect("valid key"),
+            range: exclusive_between,
+        },
+    )
+    .await;
+
+    assert_eq!(
+        asc_between,
+        ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(medium)])
+    );
+    assert_eq!(
+        desc_between,
+        ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(medium)])
+    );
+}
+
+#[tokio::test]
+async fn edge_range_access_resolves_runtime_parameter_bounds() {
+    let config = test_support::in_memory_config("access-edge-range-params")
+        .with_edge_range_index("FOLLOWS", "weight_asc")
+        .with_edge_range_desc_index("FOLLOWS", "weight_desc");
+    let db = test_support::open_db_with_config(config).await;
+    let alice = test_support::add_user(&db, "alice").await;
+    let bob = test_support::add_user(&db, "bob").await;
+    let carol = test_support::add_user(&db, "carol").await;
+    let _light = test_support::add_edge_with_properties(
+        &db,
+        alice,
+        bob,
+        "FOLLOWS",
+        vec![
+            ("weight_asc", PropertyValue::I64(10)),
+            ("weight_desc", PropertyValue::I64(10)),
+        ],
+    )
+    .await;
+    let heavy = test_support::add_edge_with_properties(
+        &db,
+        alice,
+        carol,
+        "FOLLOWS",
+        vec![
+            ("weight_asc", PropertyValue::I64(30)),
+            ("weight_desc", PropertyValue::I64(30)),
+        ],
+    )
+    .await;
+    let medium = test_support::add_edge_with_properties(
+        &db,
+        bob,
+        carol,
+        "FOLLOWS",
+        vec![
+            ("weight_asc", PropertyValue::I64(20)),
+            ("weight_desc", PropertyValue::I64(20)),
+        ],
+    )
+    .await;
+
+    let min = test_support::name("min_weight");
+    let max = test_support::name("max_weight");
+    let params = context::ParamBindings::default()
+        .with_value(min.clone(), PropertyValue::I64(20))
+        .with_value(max.clone(), PropertyValue::I64(40));
+    let range = parameterized_i64_between(min, max);
+
+    let asc = run_edge_access_with_params(
+        &db,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight_asc:asc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                "weight_asc",
+                helix_ast::index::RangeIndexDirection::Asc,
+            )
+            .expect("valid key"),
+            range: range.clone(),
+        },
+        params.clone(),
+    )
+    .await;
+    let desc = run_edge_access_with_params(
+        &db,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight_desc:desc",
+            )),
+            key: catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                "weight_desc",
+                helix_ast::index::RangeIndexDirection::Desc,
+            )
+            .expect("valid key"),
+            range,
+        },
+        params,
+    )
+    .await;
+
+    assert_eq!(
+        asc,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::EdgeId(medium),
+            ExecutionScalar::EdgeId(heavy),
+        ])
+    );
+    assert_eq!(
+        desc,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::EdgeId(heavy),
+            ExecutionScalar::EdgeId(medium),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn direct_range_access_covers_writer_reader_and_active_transaction_views() {
+    let config = test_support::in_memory_config("access-direct-range-views")
+        .with_range_index("User", "score")
+        .with_edge_range_index("FOLLOWS", "weight");
+    let writer = test_support::open_db_with_config(config.clone()).await;
+    let low = test_support::add_node_with_properties(
+        &writer,
+        "User",
+        vec![("score", PropertyValue::I64(10))],
+    )
+    .await;
+    let high = test_support::add_node_with_properties(
+        &writer,
+        "User",
+        vec![("score", PropertyValue::I64(20))],
+    )
+    .await;
+    let edge = test_support::add_edge_with_properties(
+        &writer,
+        low,
+        high,
+        "FOLLOWS",
+        vec![("weight", PropertyValue::I64(30))],
+    )
+    .await;
+    let node_key = catalog::ScopedPropertyDirectionKey::try_new(
+        "User",
+        "score",
+        helix_ast::index::RangeIndexDirection::Asc,
+    )
+    .expect("valid node range key");
+    let edge_key = catalog::ScopedPropertyDirectionKey::try_new(
+        "FOLLOWS",
+        "weight",
+        helix_ast::index::RangeIndexDirection::Asc,
+    )
+    .expect("valid edge range key");
+
+    let writer_context = ExecutionContext::new(&writer, context::ParamBindings::default());
+    assert_eq!(
+        writer_context
+            .node_range_index_ids(&node_key, &ir::IndexRange::All, None)
+            .await
+            .expect("direct writer range access succeeds"),
+        vec![low, high]
+    );
+    assert_eq!(
+        writer_context
+            .edge_range_index_ids(&edge_key, &ir::IndexRange::All, None)
+            .await
+            .expect("direct writer edge range access succeeds"),
+        vec![edge]
+    );
+
+    let mut transaction_context = ExecutionContext::new(&writer, context::ParamBindings::default());
+    transaction_context
+        .enable_request_write_scope()
+        .await
+        .expect("request transaction opens");
+    assert_eq!(
+        transaction_context
+            .node_range_index_ids(&node_key, &ir::IndexRange::All, None)
+            .await
+            .expect("transaction-owned node range access succeeds"),
+        vec![low, high]
+    );
+    assert_eq!(
+        transaction_context
+            .edge_range_index_ids(&edge_key, &ir::IndexRange::All, None)
+            .await
+            .expect("transaction-owned edge range access succeeds"),
+        vec![edge]
+    );
+    transaction_context.abort_request_write_scope();
+
+    drop(writer);
+    let reader = test_support::open_reader_with_config(config).await;
+    let reader_context = ExecutionContext::new(&reader, context::ParamBindings::default());
+    assert_eq!(
+        reader_context
+            .node_range_index_ids(&node_key, &ir::IndexRange::All, None)
+            .await
+            .expect("direct reader node range access succeeds"),
+        vec![low, high]
+    );
+    assert_eq!(
+        reader_context
+            .edge_range_index_ids(&edge_key, &ir::IndexRange::All, None)
+            .await
+            .expect("direct reader edge range access succeeds"),
+        vec![edge]
+    );
+}
+
+#[tokio::test]
+async fn reader_range_access_covers_node_and_edge_bound_shapes() {
+    let config = test_support::in_memory_config("access-reader-range-indexes")
+        .with_range_index("User", "score")
+        .with_edge_range_index("FOLLOWS", "weight");
+    let writer = test_support::open_db_with_config(config.clone()).await;
+    let low = test_support::add_node_with_properties(
+        &writer,
+        "User",
+        vec![("score", PropertyValue::I64(10))],
+    )
+    .await;
+    let high = test_support::add_node_with_properties(
+        &writer,
+        "User",
+        vec![("score", PropertyValue::I64(20))],
+    )
+    .await;
+    let light = test_support::add_edge_with_properties(
+        &writer,
+        low,
+        high,
+        "FOLLOWS",
+        vec![("weight", PropertyValue::I64(10))],
+    )
+    .await;
+    let heavy = test_support::add_edge_with_properties(
+        &writer,
+        high,
+        low,
+        "FOLLOWS",
+        vec![("weight", PropertyValue::I64(20))],
+    )
+    .await;
+    drop(writer);
+    let reader = test_support::open_reader_with_config(config).await;
+    let node_key = catalog::ScopedPropertyDirectionKey::try_new(
+        "User",
+        "score",
+        helix_ast::index::RangeIndexDirection::Asc,
+    )
+    .expect("valid node range key");
+    let edge_key = catalog::ScopedPropertyDirectionKey::try_new(
+        "FOLLOWS",
+        "weight",
+        helix_ast::index::RangeIndexDirection::Asc,
+    )
+    .expect("valid edge range key");
+
+    let all_nodes = run_node_access(
+        &reader,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score:asc",
+            )),
+            key: node_key.clone(),
+            range: ir::IndexRange::All,
+        },
+    )
+    .await;
+    let inclusive_lower_nodes = run_node_access(
+        &reader,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score:asc",
+            )),
+            key: node_key.clone(),
+            range: ir::IndexRange::Lower {
+                lower: ir::IndexBound::Inclusive(
+                    ir::RangeIndexValue::literal(PropertyValue::I64(20))
+                        .expect("range value is indexable"),
+                ),
+            },
+        },
+    )
+    .await;
+    let exclusive_lower_nodes = run_node_access(
+        &reader,
+        exec::ExecNodeAccessPlan::RangeIndex {
+            index: catalog::NodeRangeIndexMeta::new(test_support::name(
+                "node_range:User:score:asc",
+            )),
+            key: node_key,
+            range: ir::IndexRange::Lower {
+                lower: ir::IndexBound::Exclusive(
+                    ir::RangeIndexValue::literal(PropertyValue::I64(10))
+                        .expect("range value is indexable"),
+                ),
+            },
+        },
+    )
+    .await;
+    let all_edges = run_edge_access(
+        &reader,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight:asc",
+            )),
+            key: edge_key.clone(),
+            range: ir::IndexRange::All,
+        },
+    )
+    .await;
+    let inclusive_upper_edges = run_edge_access(
+        &reader,
+        exec::ExecEdgeAccessPlan::RangeIndex {
+            index: catalog::EdgeRangeIndexMeta::new(test_support::name(
+                "edge_range:FOLLOWS:weight:asc",
+            )),
+            key: edge_key,
+            range: ir::IndexRange::Upper {
+                upper: ir::IndexBound::Inclusive(
+                    ir::RangeIndexValue::literal(PropertyValue::I64(10))
+                        .expect("range value is indexable"),
+                ),
+            },
+        },
+    )
+    .await;
+
+    assert_eq!(
+        all_nodes,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::NodeId(low),
+            ExecutionScalar::NodeId(high),
+        ])
+    );
+    assert_eq!(
+        inclusive_lower_nodes,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(high)])
+    );
+    assert_eq!(
+        exclusive_lower_nodes,
+        ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(high)])
+    );
+    assert_eq!(
+        all_edges,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::EdgeId(light),
+            ExecutionScalar::EdgeId(heavy),
+        ])
+    );
+    assert_eq!(
+        inclusive_upper_edges,
+        ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(light)])
+    );
+}

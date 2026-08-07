@@ -15,13 +15,17 @@ import (
 type ErrorKind string
 
 const (
-	ErrorNetwork       ErrorKind = "Network"
-	ErrorRemote        ErrorKind = "Remote"
-	ErrorSerialization ErrorKind = "Serialization"
-	ErrorInvalidURL    ErrorKind = "InvalidUrl"
+	ErrorNetwork             ErrorKind = "Network"
+	ErrorRemote              ErrorKind = "Remote"
+	ErrorSerialization       ErrorKind = "Serialization"
+	ErrorInvalidURL          ErrorKind = "InvalidUrl"
+	ErrorInvalidRequest      ErrorKind = "InvalidRequest"
+	ErrorEmbedded            ErrorKind = "Embedded"
+	ErrorEmbeddedUnavailable ErrorKind = "EmbeddedUnavailable"
 )
 
 var ErrConflict = errors.New("helix: conflict")
+var ErrNativeBindingsUnavailable = errors.New("helix embedded native bindings are not linked")
 
 type HelixError struct {
 	Kind       ErrorKind
@@ -50,8 +54,68 @@ func IsConflict(err error) bool {
 type Client struct {
 	baseURL    *url.URL
 	httpClient *http.Client
+	embedded   nativeDB
 	apiKeyMu   sync.RWMutex
 	apiKey     string
+}
+
+type nativeDB interface {
+	QueryJson([]byte) ([]byte, error)
+	Close() error
+}
+
+type HelixDbSource interface {
+	helixDbSource()
+}
+
+type InMemorySource struct {
+	Database string
+}
+
+func (InMemorySource) helixDbSource() {}
+
+type DiskSource struct {
+	Root     string
+	Database string
+}
+
+func (DiskSource) helixDbSource() {}
+
+type ObjectStorageSource struct {
+	Database  string
+	Bucket    string
+	Region    string
+	Endpoint  string
+	AllowHTTP bool
+}
+
+func (ObjectStorageSource) helixDbSource() {}
+
+type EmbeddedCacheMode interface {
+	embeddedCacheMode()
+}
+
+type VectorMemoryOnlyCache struct{}
+
+func (VectorMemoryOnlyCache) embeddedCacheMode() {}
+
+type MemoryCache struct{}
+
+func (MemoryCache) embeddedCacheMode() {}
+
+type HybridCache struct {
+	SlateMemoryBytes     uint64
+	SlateDiskPath        string
+	SlateDiskBytes       uint64
+	ObjectStoreDiskPath  string
+	ObjectStoreDiskBytes uint64
+}
+
+func (HybridCache) embeddedCacheMode() {}
+
+type EmbeddedCacheConfig struct {
+	VectorMemoryBytes uint64
+	Mode              EmbeddedCacheMode
 }
 
 type ClientOption func(*Client)
@@ -84,6 +148,38 @@ func NewClient(baseURL string, opts ...ClientOption) (*Client, error) {
 		opt(client)
 	}
 	return client, nil
+}
+
+func NewEmbeddedClient(source HelixDbSource, opts ...ClientOption) (*Client, error) {
+	return newEmbeddedClient(source, nil, false, opts...)
+}
+
+func NewEmbeddedClientWithConfig(source HelixDbSource, cache EmbeddedCacheConfig, opts ...ClientOption) (*Client, error) {
+	return newEmbeddedClient(source, &cache, false, opts...)
+}
+
+func newEmbeddedClient(source HelixDbSource, cache *EmbeddedCacheConfig, reader bool, opts ...ClientOption) (*Client, error) {
+	db, err := openEmbedded(source, reader, cache)
+	if err != nil {
+		kind := ErrorEmbedded
+		if errors.Is(err, ErrNativeBindingsUnavailable) {
+			kind = ErrorEmbeddedUnavailable
+		}
+		return nil, &HelixError{Kind: kind, Err: err, Details: err.Error()}
+	}
+	client := &Client{embedded: db, httpClient: http.DefaultClient}
+	for _, opt := range opts {
+		opt(client)
+	}
+	return client, nil
+}
+
+func NewEmbeddedReaderClient(source HelixDbSource, opts ...ClientOption) (*Client, error) {
+	return newEmbeddedClient(source, nil, true, opts...)
+}
+
+func NewEmbeddedReaderClientWithConfig(source HelixDbSource, cache EmbeddedCacheConfig, opts ...ClientOption) (*Client, error) {
+	return newEmbeddedClient(source, &cache, true, opts...)
 }
 
 func (c *Client) WithAPIKey(apiKey string) *Client { c.setAPIKey(apiKey); return c }
@@ -126,14 +222,39 @@ func AwaitDurability(should bool) ExecOption {
 }
 
 func (c *Client) Exec(ctx context.Context, req Request, out any, opts ...ExecOption) error {
-	if c == nil || c.baseURL == nil {
+	if c == nil {
 		return &HelixError{Kind: ErrorInvalidURL, Details: "nil client"}
 	}
 	body, err := MarshalRequest(req)
 	if err != nil {
 		return &HelixError{Kind: ErrorSerialization, Err: err, Details: err.Error()}
 	}
-	endpoint := c.baseURL.ResolveReference(&url.URL{Path: "/v1/query"})
+	options := execOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	if c.embedded != nil {
+		if options.writerOnly || options.warmOnly || options.awaitDurability != nil {
+			return &HelixError{Kind: ErrorInvalidRequest, Details: "exec options require server mode"}
+		}
+		response, err := c.embedded.QueryJson(body)
+		if err != nil {
+			return &HelixError{Kind: ErrorEmbedded, Err: err, Details: err.Error()}
+		}
+		if out == nil || len(response) == 0 {
+			return nil
+		}
+		decoder := json.NewDecoder(bytes.NewReader(response))
+		decoder.UseNumber()
+		if err := decoder.Decode(out); err != nil {
+			return &HelixError{Kind: ErrorSerialization, Err: err, Details: err.Error()}
+		}
+		return nil
+	}
+	if c.baseURL == nil {
+		return &HelixError{Kind: ErrorInvalidURL, Details: "nil server client"}
+	}
+	endpoint := c.baseURL.ResolveReference(&url.URL{Path: "/v2/query"})
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
 	if err != nil {
 		return &HelixError{Kind: ErrorInvalidURL, Err: err, Details: err.Error()}
@@ -141,10 +262,6 @@ func (c *Client) Exec(ctx context.Context, req Request, out any, opts ...ExecOpt
 	httpReq.Header.Set("Content-Type", "application/json")
 	if apiKey := c.getAPIKey(); apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	options := execOptions{}
-	for _, opt := range opts {
-		opt(&options)
 	}
 	if options.writerOnly {
 		httpReq.Header.Set("x-helix-require-writer", "true")
@@ -186,6 +303,16 @@ func (c *Client) Exec(ctx context.Context, req Request, out any, opts ...ExecOpt
 	decoder.UseNumber()
 	if err := decoder.Decode(out); err != nil {
 		return &HelixError{Kind: ErrorSerialization, Err: err, Details: err.Error()}
+	}
+	return nil
+}
+
+func (c *Client) Close() error {
+	if c == nil || c.embedded == nil {
+		return nil
+	}
+	if err := c.embedded.Close(); err != nil {
+		return &HelixError{Kind: ErrorEmbedded, Err: err, Details: err.Error()}
 	}
 	return nil
 }
