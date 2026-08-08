@@ -909,3 +909,199 @@ fn take_execution_state(
         unknown => Err(unknown_discriminant("operation execution state", unknown)),
     }
 }
+
+#[cfg(test)]
+mod wire_fixtures {
+    use std::fmt::Write;
+
+    use bytes::Bytes;
+
+    use super::*;
+    use crate::config::SecondaryIndexDefinition;
+    use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
+    use crate::index_v2::{
+        IndexCursor, IndexGenerationId, IndexId, IndexOperationExecutionState, IndexOperationId,
+        IndexOperationRevision, IndexRevision, IndexStorageVersion,
+        LegacyVectorPhysicalReservation, LogicalIndexIdWatermark, OperationCounters,
+        OperationQueuePointerValue, PhysicalGeneration, SourceScanProgress,
+        TextCompactionPointerValue, TextManifestRevision, ValidatedDynamicIndexDefinition,
+        VectorPhysicalIdWatermark, VectorPhysicalIndexId,
+    };
+
+    fn index_id() -> IndexId {
+        IndexId::new(1).unwrap()
+    }
+
+    fn generation() -> IndexGenerationId {
+        IndexGenerationId::new(2).unwrap()
+    }
+
+    fn operation_id() -> IndexOperationId {
+        IndexOperationId::from_bytes([0x11; 16]).unwrap()
+    }
+
+    fn definition() -> ValidatedDynamicIndexDefinition {
+        SecondaryIndexDefinition::node_equality("L", "p")
+            .unwrap()
+            .try_into()
+            .unwrap()
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::new(), |mut output, byte| {
+            write!(output, "{byte:02x}").expect("writing to String cannot fail");
+            output
+        })
+    }
+
+    #[test]
+    fn lifecycle_record_value_bytes_are_frozen() {
+        let definition = definition();
+        let record = IndexRecordV2::building(
+            index_id(),
+            definition.clone(),
+            IndexRevision::new(3).unwrap(),
+            PhysicalGeneration::Secondary {
+                generation: generation(),
+            },
+            operation_id(),
+        )
+        .unwrap();
+        let operation = IndexOperationRecord::try_new(
+            operation_id(),
+            index_id(),
+            definition.identity(),
+            generation(),
+            IndexRevision::new(3).unwrap(),
+            IndexOperationRevision::new(4).unwrap(),
+            IndexOperationKind::Build,
+            IndexOperationFamily::Secondary,
+            IndexOperationProgress::SecondaryBuild(SecondaryBuildProgress::Constructing(
+                SecondaryBuildStage::Scan(SourceScanProgress {
+                    inclusive_upper_bound: IndexCursor::try_new(Bytes::from_static(b"upper"))
+                        .unwrap(),
+                    cursor: Some(IndexCursor::try_new(Bytes::from_static(b"cursor")).unwrap()),
+                    counters: OperationCounters {
+                        entities: 5,
+                        input_bytes: 6,
+                        output_operations: 7,
+                        output_bytes: 8,
+                    },
+                }),
+            )),
+            9,
+            IndexOperationExecutionState::Queued {
+                not_before_unix_millis: None,
+            },
+        )
+        .unwrap();
+
+        let encoded_record = encode_index_record(&record);
+        let encoded_operation = encode_operation_record(&operation);
+        assert_eq!(decode_index_record(&encoded_record).unwrap(), record);
+        assert_eq!(
+            decode_operation_record(&encoded_operation).unwrap(),
+            operation
+        );
+        insta::assert_snapshot!(
+            format!(
+                "index_record={}\noperation_record={}\n",
+                hex(&encoded_record),
+                hex(&encoded_operation)
+            ),
+            @"
+index_record=010100000000000000010101000000014c00000001700101000000014c00000001700000000000000000030101000000000000000211111111111111111111111111111111
+operation_record=01021111111111111111111111111111111100000000000000010101000000014c0000000170000000000000000200000000000000030000000000000004010101010000000575707065720100000006637572736f720000000000000005000000000000000600000000000000070000000000000008000000090101
+"
+        );
+    }
+
+    #[test]
+    fn global_value_bytes_are_frozen() {
+        let values = [
+            (
+                "storage_version",
+                IndexV2MetadataValue::StorageVersion(IndexStorageVersion::new(3).unwrap()),
+            ),
+            (
+                "logical_index_watermark",
+                IndexV2MetadataValue::LogicalIndexIdWatermark(LogicalIndexIdWatermark {
+                    next_id: index_id(),
+                }),
+            ),
+            (
+                "vector_physical_watermark",
+                IndexV2MetadataValue::VectorPhysicalIdWatermark(VectorPhysicalIdWatermark {
+                    next_id: VectorPhysicalIndexId::new(4).unwrap(),
+                }),
+            ),
+            (
+                "operation_pointer",
+                IndexV2MetadataValue::OperationQueuePointer(OperationQueuePointerValue {
+                    scope: DataScope::Tenant(TenantId::from_u128(7)),
+                    index_id: index_id(),
+                    generation: generation(),
+                    record_revision: IndexOperationRevision::new(4).unwrap(),
+                }),
+            ),
+            (
+                "legacy_vector_source",
+                IndexV2MetadataValue::LegacyVectorPhysicalReservation(
+                    LegacyVectorPhysicalReservation::LegacySource,
+                ),
+            ),
+            (
+                "legacy_vector_adoption",
+                IndexV2MetadataValue::LegacyVectorPhysicalReservation(
+                    LegacyVectorPhysicalReservation::AdoptionBuilding {
+                        index_id: index_id(),
+                        generation: generation(),
+                        operation_id: operation_id(),
+                    },
+                ),
+            ),
+            (
+                "legacy_vector_active",
+                IndexV2MetadataValue::LegacyVectorPhysicalReservation(
+                    LegacyVectorPhysicalReservation::AdoptedActive {
+                        index_id: index_id(),
+                        generation: generation(),
+                    },
+                ),
+            ),
+            (
+                "legacy_vector_retiring",
+                IndexV2MetadataValue::LegacyVectorPhysicalReservation(
+                    LegacyVectorPhysicalReservation::RetiringSource {
+                        index_id: index_id(),
+                        generation: generation(),
+                    },
+                ),
+            ),
+            (
+                "text_compaction_pointer",
+                IndexV2MetadataValue::TextCompactionPointer(TextCompactionPointerValue {
+                    revision: TextManifestRevision::new(4).unwrap(),
+                }),
+            ),
+        ];
+
+        let mut rendered = String::new();
+        for (name, value) in values {
+            let encoded = encode_metadata_value(&value);
+            assert_eq!(decode_metadata_value(&encoded).unwrap(), value);
+            writeln!(rendered, "{name}={}", hex(&encoded)).expect("writing to String cannot fail");
+        }
+        insta::assert_snapshot!(rendered, @"
+storage_version=01010003
+logical_index_watermark=01020000000000000001
+vector_physical_watermark=01030000000000000004
+operation_pointer=01040100000000000000000000000000000007000000000000000100000000000000020000000000000004
+legacy_vector_source=010601
+legacy_vector_adoption=0106020000000000000001000000000000000211111111111111111111111111111111
+legacy_vector_active=01060300000000000000010000000000000002
+legacy_vector_retiring=01060400000000000000010000000000000002
+text_compaction_pointer=01070000000000000004
+");
+    }
+}

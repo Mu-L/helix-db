@@ -366,7 +366,25 @@ fn take_manifest_page(
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write;
+
     use super::*;
+    use crate::encoding::v1::keys::index_v2::{CanonicalSecondaryValue, SecondaryEntryLane};
+
+    fn index_id() -> crate::index_v2::IndexId {
+        crate::index_v2::IndexId::new(1).unwrap()
+    }
+
+    fn generation() -> crate::index_v2::IndexGenerationId {
+        crate::index_v2::IndexGenerationId::new(2).unwrap()
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::new(), |mut output, byte| {
+            write!(output, "{byte:02x}").expect("writing to String cannot fail");
+            output
+        })
+    }
 
     fn split(pruning: SplitPruning) -> SplitRef {
         SplitRef::try_new(BlobRef::new([7; 32], 100), 80, 20, 0, 100, pruning).unwrap()
@@ -421,5 +439,202 @@ mod tests {
         let mut future = encode_work_value(&page(vec![split(SplitPruning::Unavailable)])).to_vec();
         future[0] = INDEX_V3_SPLIT_VALUE_VERSION + 1;
         assert!(decode_work_value(&future).is_err());
+    }
+
+    #[test]
+    fn managed_work_value_bytes_are_frozen() {
+        let tenant_partition = TextPartition::try_tenant_value(Bytes::from_static(b"tenant"))
+            .expect("fixture partition is valid");
+        let vector_partition = VectorTenantPartition::try_new(Bytes::from_static(b"tenant"))
+            .expect("fixture vector partition is valid");
+        let split = split(SplitPruning::TermBloom256([1, 2, 3, 4]));
+        let values = vec![
+            (
+                "lifecycle.build_delta",
+                IndexV2WorkValue::CoalescedBuildDelta(CoalescedBuildDeltaValue {
+                    index_id: index_id(),
+                    generation: generation(),
+                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_id: IndexEntityId::new(3),
+                }),
+            ),
+            (
+                "lifecycle.applied_secondary",
+                IndexV2WorkValue::AppliedEntityState(AppliedEntityStateValue {
+                    index_id: index_id(),
+                    generation: generation(),
+                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_id: IndexEntityId::new(3),
+                    state: AppliedFamilyState::Secondary(Some(
+                        CanonicalSecondaryValue::equality_string("shared"),
+                    )),
+                }),
+            ),
+            (
+                "lifecycle.applied_vector",
+                IndexV2WorkValue::AppliedEntityState(AppliedEntityStateValue {
+                    index_id: index_id(),
+                    generation: generation(),
+                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_id: IndexEntityId::new(3),
+                    state: AppliedFamilyState::Vector(Some(tenant_partition.clone())),
+                }),
+            ),
+            (
+                "lifecycle.applied_text",
+                IndexV2WorkValue::AppliedEntityState(AppliedEntityStateValue {
+                    index_id: index_id(),
+                    generation: generation(),
+                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_id: IndexEntityId::new(3),
+                    state: AppliedFamilyState::Text(Some((
+                        tenant_partition.clone(),
+                        crate::index_v2::TextLogicalVersion::new(4).unwrap(),
+                    ))),
+                }),
+            ),
+            (
+                "equality.secondary_entry",
+                IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+                    index_id: index_id(),
+                    generation: generation(),
+                    lane: SecondaryEntryLane::NodeEquality,
+                    entity_id: IndexEntityId::new(3),
+                }),
+            ),
+            (
+                "text.manifest_root",
+                IndexV2WorkValue::TextManifestRoot(
+                    TextManifestRootValue::try_new(
+                        index_id(),
+                        generation(),
+                        tenant_partition.clone(),
+                        crate::index_v2::TextManifestRevision::new(4).unwrap(),
+                        1,
+                        1,
+                    )
+                    .unwrap(),
+                ),
+            ),
+            (
+                "text.manifest_page",
+                IndexV2WorkValue::TextManifestPage(
+                    TextManifestPageValue::try_new(
+                        index_id(),
+                        generation(),
+                        tenant_partition.clone(),
+                        4,
+                        vec![split],
+                    )
+                    .unwrap(),
+                ),
+            ),
+            (
+                "text.build_artifact",
+                IndexV2WorkValue::TextBuildArtifact(TextBuildArtifactValue {
+                    index_id: index_id(),
+                    generation: generation(),
+                    partition: tenant_partition.clone(),
+                    artifact_ordinal: 4,
+                    split,
+                }),
+            ),
+            (
+                "text.entity_state",
+                IndexV2WorkValue::TextEntityState(TextEntityStateValue {
+                    index_id: index_id(),
+                    generation: generation(),
+                    partition: tenant_partition.clone(),
+                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_id: IndexEntityId::new(3),
+                    logical_version: crate::index_v2::TextLogicalVersion::new(4).unwrap(),
+                    live: true,
+                }),
+            ),
+            (
+                "text.corpus_statistics",
+                IndexV2WorkValue::TextCorpusStatistics(
+                    TextCorpusStatisticsValue::try_new(
+                        index_id(),
+                        generation(),
+                        tenant_partition.clone(),
+                        5,
+                        9,
+                    )
+                    .unwrap(),
+                ),
+            ),
+            (
+                "text.term_statistics",
+                IndexV2WorkValue::TextTermStatistics(
+                    TextTermStatisticsValue::try_new(
+                        index_id(),
+                        generation(),
+                        tenant_partition.clone(),
+                        Bytes::from_static(b"term"),
+                        5,
+                    )
+                    .unwrap(),
+                ),
+            ),
+            (
+                "text.statistics_entity_absent",
+                IndexV2WorkValue::TextStatisticsEntity(TextStatisticsEntityValue {
+                    index_id: index_id(),
+                    generation: generation(),
+                    entity_kind: crate::index_v2::IndexElementKind::Edge,
+                    entity_id: IndexEntityId::new(3),
+                    contribution: TextStatisticsContribution::Absent,
+                }),
+            ),
+            (
+                "text.statistics_entity_present",
+                IndexV2WorkValue::TextStatisticsEntity(TextStatisticsEntityValue {
+                    index_id: index_id(),
+                    generation: generation(),
+                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_id: IndexEntityId::new(3),
+                    contribution: TextStatisticsContribution::try_present(
+                        tenant_partition,
+                        [0x44; 32],
+                        9,
+                        vec![Bytes::from_static(b"alpha"), Bytes::from_static(b"beta")],
+                    )
+                    .unwrap(),
+                }),
+            ),
+            (
+                "vector.partition_mapping",
+                IndexV2WorkValue::VectorPartitionMapping(VectorPartitionMappingValue {
+                    index_id: index_id(),
+                    generation: generation(),
+                    partition: vector_partition,
+                    physical_index_id: crate::index_v2::VectorPhysicalIndexId::new(4).unwrap(),
+                }),
+            ),
+        ];
+
+        let mut rendered = String::new();
+        for (name, value) in values {
+            let encoded = encode_work_value(&value);
+            assert_eq!(decode_work_value(&encoded).unwrap(), value);
+            writeln!(rendered, "{name}={}", hex(&encoded)).expect("writing to String cannot fail");
+        }
+        insta::assert_snapshot!(rendered, @"
+lifecycle.build_delta=010300000000000000010000000000000002010000000000000003
+lifecycle.applied_secondary=010400000000000000010000000000000002010000000000000003010101e9cf50951f33fb140000000b0400000006736861726564
+lifecycle.applied_vector=0104000000000000000100000000000000020100000000000000030201020000000674656e616e74
+lifecycle.applied_text=0104000000000000000100000000000000020100000000000000030301020000000674656e616e740000000000000004
+equality.secondary_entry=010500000000000000010000000000000002010000000000000003
+text.manifest_root=010600000000000000010000000000000002020000000674656e616e740000000000000004000000010000000000000001
+text.manifest_page=020700000000000000010000000000000002020000000674656e616e74000000040000000107070707070707070707070707070707070707070707070707070707070707070000000000000064000000000000005000000014000000000000000000000064010000000000000001000000000000000200000000000000030000000000000004
+text.build_artifact=020900000000000000010000000000000002020000000674656e616e740000000407070707070707070707070707070707070707070707070707070707070707070000000000000064000000000000005000000014000000000000000000000064010000000000000001000000000000000200000000000000030000000000000004
+text.entity_state=010c00000000000000010000000000000002020000000674656e616e74010000000000000003000000000000000401
+text.corpus_statistics=011000000000000000010000000000000002020000000674656e616e7400000000000000050000000000000009
+text.term_statistics=011100000000000000010000000000000002020000000674656e616e74000000047465726d0000000000000005
+text.statistics_entity_absent=01120000000000000001000000000000000202000000000000000301
+text.statistics_entity_present=01120000000000000001000000000000000201000000000000000302020000000674656e616e74444444444444444444444444444444444444444444444444444444444444444400000000000000090000000200000005616c7068610000000462657461
+vector.partition_mapping=010f00000000000000010000000000000002020000000674656e616e740000000000000004
+");
     }
 }

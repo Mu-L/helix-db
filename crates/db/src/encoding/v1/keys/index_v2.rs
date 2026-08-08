@@ -1134,3 +1134,323 @@ impl<'a> KeyDecoder<'a> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod wire_fixtures {
+    use std::fmt::Write;
+
+    use super::*;
+    use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind};
+
+    fn index_id() -> IndexId {
+        IndexId::new(1).unwrap()
+    }
+
+    fn generation() -> IndexGenerationId {
+        IndexGenerationId::new(2).unwrap()
+    }
+
+    fn entity(kind: IndexElementKind) -> IndexEntity {
+        IndexEntity {
+            kind,
+            id: IndexEntityId::new(3),
+        }
+    }
+
+    fn identity(family: IndexIdentityFamily) -> IndexIdentity {
+        IndexIdentity::new(
+            family,
+            IndexElementKind::Node,
+            IndexComponent::try_new("label", "L").unwrap(),
+            IndexComponent::try_new("property", "p").unwrap(),
+        )
+    }
+
+    fn root() -> TextManifestRootKey {
+        TextManifestRootKey {
+            index_id: index_id(),
+            generation: generation(),
+            partition: PartitionFingerprint::new([0x22; HASH_LEN]),
+        }
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::new(), |mut output, byte| {
+            write!(output, "{byte:02x}").expect("writing to String cannot fail");
+            output
+        })
+    }
+
+    fn scoped_fixtures() -> Vec<(&'static str, IndexV2Key)> {
+        let equality = |lane, entity_id| {
+            IndexV2Key::SecondaryEntry(
+                SecondaryEntryKey::try_new(
+                    index_id(),
+                    generation(),
+                    lane,
+                    CanonicalSecondaryValue::equality_string("shared"),
+                    entity_id,
+                )
+                .unwrap(),
+            )
+        };
+        let range = |lane, direction| {
+            IndexV2Key::SecondaryEntry(
+                SecondaryEntryKey::try_new(
+                    index_id(),
+                    generation(),
+                    lane,
+                    CanonicalSecondaryValue::range_string(direction, "shared"),
+                    Some(IndexEntityId::new(3)),
+                )
+                .unwrap(),
+            )
+        };
+        vec![
+            (
+                "lifecycle.index_record",
+                IndexV2Key::index_record(identity(IndexIdentityFamily::SecondaryEquality)),
+            ),
+            (
+                "lifecycle.operation",
+                IndexV2Key::operation(IndexOperationId::from_bytes([0x11; UUID_LEN]).unwrap()),
+            ),
+            (
+                "lifecycle.build_delta",
+                IndexV2Key::BuildDelta(IndexEntityStateKey {
+                    index_id: index_id(),
+                    generation: generation(),
+                    entity: entity(IndexElementKind::Node),
+                }),
+            ),
+            (
+                "lifecycle.applied_state",
+                IndexV2Key::AppliedState(IndexEntityStateKey {
+                    index_id: index_id(),
+                    generation: generation(),
+                    entity: entity(IndexElementKind::Edge),
+                }),
+            ),
+            (
+                "equality.node_nonunique",
+                equality(
+                    SecondaryEntryLane::NodeEquality,
+                    Some(IndexEntityId::new(3)),
+                ),
+            ),
+            (
+                "equality.node_unique",
+                equality(SecondaryEntryLane::NodeUniqueEquality, None),
+            ),
+            (
+                "equality.edge_nonunique",
+                equality(
+                    SecondaryEntryLane::EdgeEquality,
+                    Some(IndexEntityId::new(3)),
+                ),
+            ),
+            (
+                "range.node_ascending",
+                range(
+                    SecondaryEntryLane::NodeRangeAscending,
+                    RangeIndexDirection::Asc,
+                ),
+            ),
+            (
+                "range.node_descending",
+                range(
+                    SecondaryEntryLane::NodeRangeDescending,
+                    RangeIndexDirection::Desc,
+                ),
+            ),
+            (
+                "range.edge_ascending",
+                range(
+                    SecondaryEntryLane::EdgeRangeAscending,
+                    RangeIndexDirection::Asc,
+                ),
+            ),
+            (
+                "range.edge_descending",
+                range(
+                    SecondaryEntryLane::EdgeRangeDescending,
+                    RangeIndexDirection::Desc,
+                ),
+            ),
+            ("text.manifest_root", IndexV2Key::TextManifestRoot(root())),
+            (
+                "text.manifest_page",
+                IndexV2Key::TextManifestPage(TextManifestPageKey {
+                    root: root(),
+                    page: 4,
+                }),
+            ),
+            (
+                "text.build_artifact",
+                IndexV2Key::TextBuildArtifact(TextBuildArtifactKey {
+                    root: root(),
+                    ordinal: 5,
+                }),
+            ),
+            (
+                "text.entity_state",
+                IndexV2Key::TextEntityState(TextEntityStateKey {
+                    root: root(),
+                    entity: entity(IndexElementKind::Node),
+                }),
+            ),
+            (
+                "text.corpus_statistics",
+                IndexV2Key::TextCorpusStatistics(TextCorpusStatisticsKey {
+                    index_id: index_id(),
+                    generation: generation(),
+                    partition: PartitionFingerprint::new([0x22; HASH_LEN]),
+                }),
+            ),
+            (
+                "text.term_statistics",
+                IndexV2Key::TextTermStatistics(TextTermStatisticsKey {
+                    corpus: TextCorpusStatisticsKey {
+                        index_id: index_id(),
+                        generation: generation(),
+                        partition: PartitionFingerprint::new([0x22; HASH_LEN]),
+                    },
+                    term: TextTermFingerprint::new([0x33; HASH_LEN]),
+                }),
+            ),
+            (
+                "text.statistics_entity",
+                IndexV2Key::TextStatisticsEntity(TextStatisticsEntityKey {
+                    index_id: index_id(),
+                    generation: generation(),
+                    entity: entity(IndexElementKind::Edge),
+                }),
+            ),
+            (
+                "vector.partition_mapping",
+                IndexV2Key::VectorPartitionMapping(VectorPartitionMappingKey {
+                    index_id: index_id(),
+                    generation: generation(),
+                    partition: PartitionFingerprint::new([0x22; HASH_LEN]),
+                }),
+            ),
+        ]
+    }
+
+    #[test]
+    fn managed_scoped_key_bytes_are_frozen() {
+        let mut rendered = String::new();
+        for (name, key) in scoped_fixtures() {
+            let mut encoded = Vec::with_capacity(key.encoded_len());
+            key.encode_into(&mut encoded);
+            assert_eq!(IndexV2Key::parse_from_slice(&encoded).unwrap(), key);
+            writeln!(rendered, "{name}={}", hex(&encoded)).expect("writing to String cannot fail");
+        }
+        insta::assert_snapshot!(rendered, @"
+lifecycle.index_record=06010101000000014c0000000170
+lifecycle.operation=060211111111111111111111111111111111
+lifecycle.build_delta=060300000000000000010000000000000002010000000000000003
+lifecycle.applied_state=060400000000000000010000000000000002020000000000000003
+equality.node_nonunique=06050000000000000001000000000000000201e9cf50951f33fb140000000b04000000067368617265640000000000000003
+equality.node_unique=06050000000000000001000000000000000202e9cf50951f33fb140000000b0400000006736861726564
+equality.edge_nonunique=06050000000000000001000000000000000205e9cf50951f33fb140000000b04000000067368617265640000000000000003
+range.node_ascending=060500000000000000010000000000000002030373686172656400000000000000000003
+range.node_descending=06050000000000000001000000000000000204fc8c979e8d9a9bffff0000000000000003
+range.edge_ascending=060500000000000000010000000000000002060373686172656400000000000000000003
+range.edge_descending=06050000000000000001000000000000000207fc8c979e8d9a9bffff0000000000000003
+text.manifest_root=0606000000000000000100000000000000022222222222222222222222222222222222222222222222222222222222222222
+text.manifest_page=060700000000000000010000000000000002222222222222222222222222222222222222222222222222222222222222222200000004
+text.build_artifact=060900000000000000010000000000000002222222222222222222222222222222222222222222222222222222222222222200000005
+text.entity_state=060c000000000000000100000000000000022222222222222222222222222222222222222222222222222222222222222222010000000000000003
+text.corpus_statistics=0610000000000000000100000000000000022222222222222222222222222222222222222222222222222222222222222222
+text.term_statistics=06110000000000000001000000000000000222222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333
+text.statistics_entity=061200000000000000010000000000000002020000000000000003
+vector.partition_mapping=060f000000000000000100000000000000022222222222222222222222222222222222222222222222222222222222222222
+");
+    }
+
+    #[test]
+    fn managed_scope_envelopes_are_frozen() {
+        let equality = scoped_fixtures()
+            .into_iter()
+            .find_map(|(name, key)| (name == "equality.node_nonunique").then_some(key))
+            .unwrap();
+        let tenant = DataScope::Tenant(TenantId::from_u128(
+            0x0102_0304_0506_0708_1112_1314_1516_1718,
+        ));
+        let unscoped = Key::Data {
+            scope: DataScope::LegacyUnscoped,
+            kind: DataKeyKind::IndexV2(equality.clone()),
+        }
+        .to_bytes();
+        let scoped = Key::Data {
+            scope: tenant,
+            kind: DataKeyKind::IndexV2(equality),
+        }
+        .to_bytes();
+        insta::assert_snapshot!(
+            format!("unscoped={}\ntenant={}\n", hex(&unscoped), hex(&scoped)),
+            @"
+unscoped=06050000000000000001000000000000000201e9cf50951f33fb140000000b04000000067368617265640000000000000003
+tenant=0102030405060708111213141516171806050000000000000001000000000000000201e9cf50951f33fb140000000b04000000067368617265640000000000000003
+"
+        );
+    }
+
+    #[test]
+    fn managed_global_key_bytes_are_frozen() {
+        let target = TextCompactionTarget::try_new(
+            DataScope::Tenant(TenantId::from_u128(7)),
+            identity(IndexIdentityFamily::Text),
+            index_id(),
+            generation(),
+            PartitionFingerprint::new([0x22; HASH_LEN]),
+            4,
+        )
+        .unwrap();
+        let fixtures = [
+            ("storage_version", GlobalIndexV2Key::StorageVersion),
+            (
+                "logical_index_watermark",
+                GlobalIndexV2Key::LogicalIndexIdWatermark,
+            ),
+            (
+                "vector_physical_watermark",
+                GlobalIndexV2Key::VectorPhysicalIdWatermark,
+            ),
+            (
+                "operation_pointer",
+                GlobalIndexV2Key::OperationPointer(
+                    IndexOperationId::from_bytes([0x11; UUID_LEN]).unwrap(),
+                ),
+            ),
+            (
+                "legacy_vector_reservation",
+                GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+                    VectorPhysicalIndexId::new(9).unwrap(),
+                ),
+            ),
+            (
+                "text_compaction_pointer",
+                GlobalIndexV2Key::TextCompactionPointer(target),
+            ),
+        ];
+        let mut rendered = String::new();
+        for (name, key) in fixtures {
+            let encoded = Key::Global {
+                kind: GlobalKeyKind::IndexV2(key.clone()),
+            }
+            .to_bytes();
+            assert_eq!(GlobalIndexV2Key::parse_from_slice(&encoded).unwrap(), key);
+            writeln!(rendered, "{name}={}", hex(&encoded)).expect("writing to String cannot fail");
+        }
+        insta::assert_snapshot!(rendered, @"
+storage_version=fefefefefefefefefefefefefefefefefe01
+logical_index_watermark=fefefefefefefefefefefefefefefefefe02
+vector_physical_watermark=fefefefefefefefefefefefefefefefefe03
+operation_pointer=fefefefefefefefefefefefefefefefefe0411111111111111111111111111111111
+legacy_vector_reservation=fefefefefefefefefefefefefefefefefe0a0000000000000009
+text_compaction_pointer=fefefefefefefefefefefefefefefefefe0b01000000000000000000000000000000070401000000014c000000017000000000000000010000000000000002222222222222222222222222222222222222222222222222222222222222222200000004
+");
+    }
+}
