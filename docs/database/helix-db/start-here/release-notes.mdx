@@ -13,19 +13,14 @@ pageType: "Reference"
 <Update
   label="July 2026"
   rss={{
-    title: "HelixDB V3",
-    description: "A new transactional engine, unified query model, and consistent Cloud, local-server, and embedded execution paths"
+    title: "HelixDB is now open source",
+    description: "Open-source HelixDB, a new query planner, embedded execution, and vector prefiltering"
   }}
 >
-HelixDB V3 is a full-stack implementation of one graph database with native vector and
-full-text search, shared query semantics, and multiple deployment modes.
-
-- **[Unified query model](/database/helix-db/query-guides/advanced)** — Rust, TypeScript, Go, and Python build the same typed operation-tree request. Networked clients send it to `POST /v2/query`; embedded clients execute it in process.
-- **[New transactional engine](/database/helix-cloud/operate/guarantees)** — the SlateDB-based engine uses serializable snapshot isolation, MVCC conflict detection, atomic write batches, and memory, disk, or S3-compatible object storage.
-- **Integrated indexes** — graph traversals, equality and range filters, vector search, and BM25 full-text search participate in the same request and transactional state.
-- **[Cloud, local, and embedded modes](/database/helix-db/start-here/run-modes)** — applications can keep the same query model while moving between managed Helix Cloud, the standalone Docker server, and in-process execution.
-- **[CLI v3](/cli/getting-started)** — the CLI is now a runtime orchestrator for project setup, local containers, queries, and Cloud deployment. The old `compile`, `check`, and `.hx` workflow is no longer part of the current CLI.
-- **Reliability foundation** — cross-SDK parity suites, deterministic lifecycle and transaction models, fuzz targets, production-scale index coverage, Docker packaging checks, and Cloud launch gates now exercise the implementation end to end.
+- **Open-source database** — the engine moved out of `helix-hyperscale` into the public, modular `helix-db` workspace.
+- **New query planner** — a dedicated logical and physical planning layer optimizes the typed operation-tree AST before execution.
+- **[Embedded database](/database/helix-db/start-here/local-development/embedded-database)** — run the same engine and queries in process with memory, disk, or object storage.
+- **[Vector prefiltering](/database/helix-db/query-guides/filtering#vector-prefiltering)** — traverse and filter an exact candidate set before vector ranking, so results cannot escape graph or permission boundaries.
 </Update>
 
 <Update
