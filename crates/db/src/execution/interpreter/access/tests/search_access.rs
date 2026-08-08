@@ -599,19 +599,15 @@ async fn text_dispatch_reports_missing_definition_and_manifest_corruption() {
     db.refresh_runtime_catalog(crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped)
         .await
         .unwrap();
-    let root_key = crate::encoding::v1::keys::Key::Data {
+    let root_key = crate::encoding::v2::keys::Key::Data {
         scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-        kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-            crate::encoding::v1::keys::index_v2::IndexV2Key::TextManifestRoot(root),
-        ),
+        kind: crate::encoding::v2::keys::ScopedKey::TextManifestRoot(root),
     }
     .to_bytes();
-    let page_key = crate::encoding::v1::keys::Key::Data {
+    let page_key = crate::encoding::v2::keys::Key::Data {
         scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-        kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-            crate::encoding::v1::keys::index_v2::IndexV2Key::TextManifestPage(
-                crate::encoding::v1::keys::index_v2::TextManifestPageKey { root, page: 0 },
-            ),
+        kind: crate::encoding::v2::keys::ScopedKey::TextManifestPage(
+            crate::encoding::v2::keys::TextManifestPageKey { root, page: 0 },
         ),
     }
     .to_bytes();
@@ -688,11 +684,9 @@ async fn text_dispatch_reports_missing_definition_and_manifest_corruption() {
     db.inner_db()
         .put(
             &root_key,
-            crate::encoding::v1::values::index_v2::encode_work_value(
-                &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(
+            crate::encoding::v2::values::encode_manifest_root(&
                     mismatched_root,
                 ),
-            ),
         )
         .await
         .expect("mismatched manifest root writes");
@@ -733,16 +727,14 @@ async fn text_dispatch_returns_empty_for_an_absent_managed_tenant_partition() {
     .expect("tenant text record activates");
     db.inner_db()
         .put(
-            crate::encoding::v1::keys::Key::Data {
+            crate::encoding::v2::keys::Key::Data {
                 scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-                kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-                    crate::encoding::v1::keys::index_v2::IndexV2Key::index_record(
-                        record.identity().clone(),
-                    ),
+                kind: crate::encoding::v2::keys::ScopedKey::index_record(
+                    record.identity().clone(),
                 ),
             }
             .to_bytes(),
-            crate::encoding::v1::values::index_v2::encode_index_record(&record),
+            crate::encoding::v2::values::encode_index_record(&record),
         )
         .await
         .expect("active tenant text record writes");

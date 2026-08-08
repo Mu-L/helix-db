@@ -5,7 +5,7 @@ use std::num::NonZeroU32;
 use bytes::{BufMut, Bytes};
 use sha2::{Digest, Sha256};
 
-use crate::encoding::v1::keys::index_v2::{
+use crate::encoding::v2::keys::{
     BlobHash, CanonicalSecondaryValue, PartitionFingerprint, SecondaryEntryLane,
 };
 

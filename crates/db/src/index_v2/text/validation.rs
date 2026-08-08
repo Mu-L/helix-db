@@ -16,10 +16,10 @@ use bytes::Bytes;
 use slatedb::DbTransaction;
 
 use crate::config::SearchIndexBatchLimits;
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::outbox::IndexOperationStepResult;
 use crate::index_v2::work;
@@ -163,7 +163,7 @@ async fn select_page(
 ) -> Result<ValidationSelection> {
     let prefix = generation_prefix(
         scope,
-        index_keys::IndexV2RecordKind::TextManifestPage,
+        index_keys::RecordKind::TextManifestPage,
         operation,
     );
     let (range, row) = select_one(transaction, prefix, progress.cursor()).await?;
@@ -187,20 +187,19 @@ async fn select_page(
 
     let page_key = match Key::parse_from_slice(scope, &row_key) {
         Ok(Key::Data {
-            kind: DataKeyKind::IndexV2(index_keys::IndexV2Key::TextManifestPage(key)),
+            kind: index_keys::ScopedKey::TextManifestPage(key),
             ..
         }) => key,
         Ok(Key::Data { .. } | Key::Global { .. }) | Err(_) => {
             return Ok(blocked_database(vec![range], Vec::new()));
         }
     };
-    let page = match index_values::decode_work_value(&row_value) {
-        Ok(index_values::IndexV2WorkValue::TextManifestPage(page)) => page,
-        Ok(_) | Err(_) => return Ok(blocked_database(vec![range], Vec::new())),
+    let Ok(page) = index_values::decode_manifest_page(&row_value) else {
+        return Ok(blocked_database(vec![range], Vec::new()));
     };
     let root_key = scoped_key(
         scope,
-        index_keys::IndexV2Key::TextManifestRoot(page_key.root),
+        index_keys::ScopedKey::TextManifestRoot(page_key.root),
     );
     let root_value = transaction.get(&root_key).await?;
     let observations = vec![RowObservation {
@@ -210,9 +209,8 @@ async fn select_page(
     let Some(root_value) = root_value.as_ref() else {
         return Ok(blocked_database(vec![range], observations));
     };
-    let root = match index_values::decode_work_value(root_value) {
-        Ok(index_values::IndexV2WorkValue::TextManifestRoot(root)) => root,
-        Ok(_) | Err(_) => return Ok(blocked_database(vec![range], observations)),
+    let Ok(root) = index_values::decode_manifest_root(root_value) else {
+        return Ok(blocked_database(vec![range], observations));
     };
 
     let minimum_revision = u64::from(root.page_count()).saturating_add(1);
@@ -340,7 +338,7 @@ async fn select_root(
 ) -> Result<ValidationSelection> {
     let prefix = generation_prefix(
         scope,
-        index_keys::IndexV2RecordKind::TextManifestRoot,
+        index_keys::RecordKind::TextManifestRoot,
         operation,
     );
     let (range, row) = select_one(transaction, prefix, progress.cursor.as_ref()).await?;
@@ -358,16 +356,15 @@ async fn select_root(
     };
     let root_key = match Key::parse_from_slice(scope, &row_key) {
         Ok(Key::Data {
-            kind: DataKeyKind::IndexV2(index_keys::IndexV2Key::TextManifestRoot(key)),
+            kind: index_keys::ScopedKey::TextManifestRoot(key),
             ..
         }) => key,
         Ok(Key::Data { .. } | Key::Global { .. }) | Err(_) => {
             return Ok(blocked_database(vec![range], Vec::new()));
         }
     };
-    let root = match index_values::decode_work_value(&row_value) {
-        Ok(index_values::IndexV2WorkValue::TextManifestRoot(root)) => root,
-        Ok(_) | Err(_) => return Ok(blocked_database(vec![range], Vec::new())),
+    let Ok(root) = index_values::decode_manifest_root(&row_value) else {
+        return Ok(blocked_database(vec![range], Vec::new()));
     };
     let partition_mode_is_valid = match (definition.tenant_property(), root.partition()) {
         (None, TextPartition::Unpartitioned) | (Some(_), TextPartition::TenantValue(_)) => true,
@@ -415,21 +412,19 @@ async fn select_root(
     if root.page_count() != 0 {
         let page_key = scoped_key(
             scope,
-            index_keys::IndexV2Key::TextManifestPage(index_keys::TextManifestPageKey {
+            index_keys::ScopedKey::TextManifestPage(index_keys::TextManifestPageKey {
                 root: root_key,
                 page: 0,
             }),
         );
         let page_value = transaction.get(&page_key).await?;
         let exact_page_zero = page_value.as_ref().is_some_and(|value| {
-            matches!(
-                index_values::decode_work_value(value),
-                Ok(index_values::IndexV2WorkValue::TextManifestPage(page))
-                    if page.index_id() == operation.index_id()
-                        && page.generation() == operation.generation()
-                        && page.partition() == root.partition()
-                        && page.page() == 0
-            )
+            index_values::decode_manifest_page(value).is_ok_and(|page| {
+                page.index_id() == operation.index_id()
+                    && page.generation() == operation.generation()
+                    && page.partition() == root.partition()
+                    && page.page() == 0
+            })
         });
         observations.push(RowObservation {
             key: page_key,
@@ -487,7 +482,7 @@ async fn select_entity_state(
 ) -> Result<ValidationSelection> {
     let prefix = generation_prefix(
         scope,
-        index_keys::IndexV2RecordKind::TextEntityState,
+        index_keys::RecordKind::TextEntityState,
         operation,
     );
     let (range, row) = select_one(transaction, prefix, progress.cursor.as_ref()).await?;
@@ -503,20 +498,19 @@ async fn select_entity_state(
     };
     let state_key = match Key::parse_from_slice(scope, &row_key) {
         Ok(Key::Data {
-            kind: DataKeyKind::IndexV2(index_keys::IndexV2Key::TextEntityState(key)),
+            kind: index_keys::ScopedKey::TextEntityState(key),
             ..
         }) => key,
         Ok(Key::Data { .. } | Key::Global { .. }) | Err(_) => {
             return Ok(blocked_database(vec![range], Vec::new()));
         }
     };
-    let state = match index_values::decode_work_value(&row_value) {
-        Ok(index_values::IndexV2WorkValue::TextEntityState(state)) => state,
-        Ok(_) | Err(_) => return Ok(blocked_database(vec![range], Vec::new())),
+    let Ok(state) = index_values::decode_text_entity_state(&row_value) else {
+        return Ok(blocked_database(vec![range], Vec::new()));
     };
     let root_key = scoped_key(
         scope,
-        index_keys::IndexV2Key::TextManifestRoot(state_key.root),
+        index_keys::ScopedKey::TextManifestRoot(state_key.root),
     );
     let root_value = transaction.get(&root_key).await?;
     let mut observations = vec![RowObservation {
@@ -526,9 +520,8 @@ async fn select_entity_state(
     let Some(root_value) = root_value.as_ref() else {
         return Ok(blocked_database(vec![range], observations));
     };
-    let root = match index_values::decode_work_value(root_value) {
-        Ok(index_values::IndexV2WorkValue::TextManifestRoot(root)) => root,
-        Ok(_) | Err(_) => return Ok(blocked_database(vec![range], observations)),
+    let Ok(root) = index_values::decode_manifest_root(root_value) else {
+        return Ok(blocked_database(vec![range], observations));
     };
     if state_key.root.index_id != operation.index_id()
         || state_key.root.generation != operation.generation()
@@ -547,7 +540,7 @@ async fn select_entity_state(
     }
     let marker_key = scoped_key(
         scope,
-        index_keys::IndexV2Key::TextStatisticsEntity(index_keys::TextStatisticsEntityKey {
+        index_keys::ScopedKey::TextStatisticsEntity(index_keys::TextStatisticsEntityKey {
             index_id: operation.index_id(),
             generation: operation.generation(),
             entity: state_key.entity,
@@ -561,9 +554,8 @@ async fn select_entity_state(
     let Some(marker_value) = marker_value.as_ref() else {
         return Ok(blocked_database(vec![range], observations));
     };
-    let marker = match index_values::decode_work_value(marker_value) {
-        Ok(index_values::IndexV2WorkValue::TextStatisticsEntity(marker)) => marker,
-        Ok(_) | Err(_) => return Ok(blocked_database(vec![range], observations)),
+    let Ok(marker) = index_values::decode_statistics_entity(marker_value) else {
+        return Ok(blocked_database(vec![range], observations));
     };
     if marker.index_id != operation.index_id()
         || marker.generation != operation.generation()
@@ -582,7 +574,7 @@ async fn select_entity_state(
         {
             let live_key = scoped_key(
                 scope,
-                index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+                index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                     root: index_keys::TextManifestRootKey {
                         index_id: operation.index_id(),
                         generation: operation.generation(),
@@ -593,16 +585,14 @@ async fn select_entity_state(
             );
             let live_value = transaction.get(&live_key).await?;
             let exact_live_state = live_value.as_ref().is_some_and(|value| {
-                matches!(
-                    index_values::decode_work_value(value),
-                    Ok(index_values::IndexV2WorkValue::TextEntityState(live))
-                        if live.index_id == operation.index_id()
-                            && live.generation == operation.generation()
-                            && live.partition == *partition
-                            && live.entity_kind == state_key.entity.kind
-                            && live.entity_id == state_key.entity.id
-                            && live.live
-                )
+                index_values::decode_text_entity_state(value).is_ok_and(|live| {
+                    live.index_id == operation.index_id()
+                        && live.generation == operation.generation()
+                        && live.partition == *partition
+                        && live.entity_kind == state_key.entity.kind
+                        && live.entity_id == state_key.entity.id
+                        && live.live
+                })
             });
             observations.push(RowObservation {
                 key: live_key,
@@ -665,11 +655,11 @@ async fn select_activation_prerequisites(
     entity_state_range: PreparedValidationRange,
 ) -> Result<ValidationSelection> {
     let delta_prefix =
-        generation_prefix(scope, index_keys::IndexV2RecordKind::BuildDelta, operation);
+        generation_prefix(scope, index_keys::RecordKind::BuildDelta, operation);
     let (delta_range, delta) = select_one(transaction, delta_prefix, None).await?;
     let artifact_prefix = generation_prefix(
         scope,
-        index_keys::IndexV2RecordKind::TextBuildArtifact,
+        index_keys::RecordKind::TextBuildArtifact,
         operation,
     );
     let (artifact_range, artifact) = select_one(transaction, artifact_prefix, None).await?;
@@ -754,12 +744,12 @@ fn blocked_database(
 /// Encodes a complete generation prefix through the canonical V1 key codec.
 fn generation_prefix(
     scope: DataScope,
-    kind: index_keys::IndexV2RecordKind,
+    kind: index_keys::RecordKind,
     operation: &IndexOperationRecord,
 ) -> Bytes {
     Key::data_prefix(
         scope,
-        index_keys::IndexV2Key::generation_prefix(
+        index_keys::ScopedKey::generation_prefix(
             kind,
             operation.index_id(),
             operation.generation(),
@@ -768,10 +758,10 @@ fn generation_prefix(
 }
 
 /// Encodes one scoped logical key through the canonical V1 key codec.
-fn scoped_key(scope: DataScope, key: index_keys::IndexV2Key) -> Bytes {
+fn scoped_key(scope: DataScope, key: index_keys::ScopedKey) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }

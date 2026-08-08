@@ -19,12 +19,12 @@ use bytes::Bytes;
 use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
 use crate::config::SearchIndexBatchLimits;
-use crate::encoding::v1::keys::index_v2::{
-    GlobalIndexV2Key, GlobalIndexV2Kind, IndexV2Key, IndexV2RecordKind,
+use crate::encoding::v2::keys::{
+    GlobalKey, GlobalKind, ScopedKey, RecordKind,
 };
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key};
-use crate::encoding::v1::values::index_v2::{
+use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, decode_operation_record,
     decode_operation_record_with_compatibility, encode_index_record, encode_metadata_value,
     encode_operation_record,
@@ -621,7 +621,7 @@ pub(crate) async fn scan_operation_queue_page(
     resume_after: Option<IndexOperationId>,
     page_size: OperationQueuePageSize,
 ) -> Result<OperationQueuePage> {
-    let prefix = GlobalIndexV2Key::logical_prefix(GlobalIndexV2Kind::OperationPointer);
+    let prefix = GlobalKey::logical_prefix(GlobalKind::OperationPointer);
     let start = resume_after.map_or(Bound::Unbounded, |operation_id| {
         Bound::Excluded(Bytes::copy_from_slice(operation_id.as_bytes()))
     });
@@ -633,8 +633,8 @@ pub(crate) async fn scan_operation_queue_page(
         let Some(row) = rows.next().await? else {
             break;
         };
-        let GlobalIndexV2Key::OperationPointer(operation_id) =
-            GlobalIndexV2Key::parse_from_slice(&row.key)?
+        let GlobalKey::OperationPointer(operation_id) =
+            GlobalKey::parse_from_slice(&row.key)?
         else {
             return Err(corruption(
                 "operation-pointer prefix yielded a different global key",
@@ -710,7 +710,7 @@ pub(crate) async fn reconcile_legacy_reader_coordination_operations(
     const RECONCILIATION_PAGE_SIZE: usize = 64;
     let prefix = Key::data_prefix(
         scope,
-        IndexV2Key::logical_prefix(IndexV2RecordKind::Operation),
+        ScopedKey::logical_prefix(RecordKind::Operation),
     );
     let mut repaired = 0_u64;
     let mut resume_after = None;
@@ -728,7 +728,7 @@ pub(crate) async fn reconcile_legacy_reader_coordination_operations(
             };
             let Key::Data {
                 scope: row_scope,
-                kind: DataKeyKind::IndexV2(IndexV2Key::Operation(operation_key)),
+                kind: ScopedKey::Operation(operation_key),
             } = Key::parse_from_slice(scope, &row.key)?
             else {
                 return Err(corruption(
@@ -1722,7 +1722,7 @@ pub(super) fn scoped_index_key_for_identity(
 ) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(IndexV2Key::index_record(identity.clone())),
+        kind: ScopedKey::index_record(identity.clone()),
     }
     .to_bytes()
 }
@@ -1730,14 +1730,14 @@ pub(super) fn scoped_index_key_for_identity(
 pub(super) fn scoped_operation_key(scope: DataScope, operation_id: IndexOperationId) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(IndexV2Key::operation(operation_id)),
+        kind: ScopedKey::operation(operation_id),
     }
     .to_bytes()
 }
 
 pub(super) fn global_operation_key(operation_id: IndexOperationId) -> Bytes {
     Key::Global {
-        kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::OperationPointer(operation_id)),
+        kind: GlobalKey::OperationPointer(operation_id),
     }
     .to_bytes()
 }

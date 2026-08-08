@@ -735,8 +735,8 @@ async fn schedule_text_compaction_task(
     let Some(driver) = capabilities.automatic_text_compactor() else {
         return Ok(DispatchAttempt::Idle);
     };
-    let prefix = crate::encoding::v1::keys::index_v2::GlobalIndexV2Key::logical_prefix(
-        crate::encoding::v1::keys::index_v2::GlobalIndexV2Kind::TextCompactionPointer,
+    let prefix = crate::encoding::v2::keys::GlobalKey::logical_prefix(
+        crate::encoding::v2::keys::GlobalKind::TextCompactionPointer,
     );
     let mut pointers = db.scan_prefix(prefix, ..).await?;
     if pointers.next().await?.is_none() {

@@ -27,14 +27,17 @@ use crate::config::{
     IndexLifecycleScanTuning, SearchIndexBatchLimits, TextBackfillCompactionLimits,
 };
 use crate::encoding::property;
-use crate::encoding::v1::keys::index_v2::{
-    IndexEntity, IndexEntityStateKey, IndexV2Key, IndexV2RecordKind, PartitionFingerprint,
+use crate::encoding::v2::keys::{
+    IndexEntity, IndexEntityStateKey, ScopedKey, RecordKind, PartitionFingerprint,
     TextBuildArtifactKey, TextEntityStateKey, TextManifestRootKey,
 };
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{DataKeyKind, Key, KeyPrefix};
-use crate::encoding::v1::values::index_v2::{
-    decode_index_record, decode_work_value, encode_work_value, IndexV2WorkValue,
+use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::values::{
+    decode_applied_state, decode_build_delta, decode_index_record, decode_manifest_root,
+    decode_text_entity_state, encode_applied_state, encode_build_artifact, encode_manifest_root,
+    encode_text_entity_state,
 };
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::outbox::{
@@ -290,7 +293,7 @@ async fn prepare_empty_manifest_root(
 ) -> Result<PreparedEmptyManifestRoot> {
     let key = scoped_index_key(
         scope,
-        IndexV2Key::TextManifestRoot(TextManifestRootKey {
+        ScopedKey::TextManifestRoot(TextManifestRootKey {
             index_id: operation.index_id(),
             generation: operation.generation(),
             partition: partition.fingerprint(),
@@ -310,15 +313,11 @@ async fn prepare_empty_manifest_root(
             },
             write: Some((
                 key,
-                encode_work_value(&IndexV2WorkValue::TextManifestRoot(empty)),
+                encode_manifest_root(&empty),
             )),
         });
     };
-    let IndexV2WorkValue::TextManifestRoot(root) = decode_work_value(observed_value)? else {
-        return Err(corruption(
-            "text empty-manifest root key contains another work value",
-        ));
-    };
+    let root = decode_manifest_root(observed_value)?;
     if root != empty {
         return Err(corruption(
             "text partition root is not its exact initial empty manifest",
@@ -379,7 +378,7 @@ impl PreparedCatchUpManifestRoot {
         })?;
         self.write = Some((
             self.observation.key.clone(),
-            encode_work_value(&IndexV2WorkValue::TextManifestRoot(self.root.clone())),
+            encode_manifest_root(&self.root.clone()),
         ));
         Ok(Some(logical_version))
     }
@@ -403,7 +402,7 @@ async fn prepare_catch_up_manifest_root(
 ) -> Result<PreparedCatchUpManifestRoot> {
     let key = scoped_index_key(
         scope,
-        IndexV2Key::TextManifestRoot(TextManifestRootKey {
+        ScopedKey::TextManifestRoot(TextManifestRootKey {
             index_id: operation.index_id(),
             generation: operation.generation(),
             partition: partition.fingerprint(),
@@ -423,16 +422,12 @@ async fn prepare_catch_up_manifest_root(
             },
             write: Some((
                 key,
-                encode_work_value(&IndexV2WorkValue::TextManifestRoot(root.clone())),
+                encode_manifest_root(&root.clone()),
             )),
             root,
         });
     };
-    let IndexV2WorkValue::TextManifestRoot(root) = decode_work_value(observed_value)? else {
-        return Err(corruption(
-            "text catch-up manifest-root key contains another work value",
-        ));
-    };
+    let root = decode_manifest_root(observed_value)?;
     let minimum_revision = u64::from(root.page_count()).saturating_add(1);
     let revision_is_valid = if root.page_count() == 0 {
         root.split_count() == 0
@@ -1056,8 +1051,8 @@ async fn prepare_build_upload(
         },
         ordinal: artifact_ordinal,
     };
-    let artifact_key = scoped_index_key(scope, IndexV2Key::TextBuildArtifact(artifact_owner));
-    let artifact_value = encode_work_value(&IndexV2WorkValue::TextBuildArtifact(
+    let artifact_key = scoped_index_key(scope, ScopedKey::TextBuildArtifact(artifact_owner));
+    let artifact_value = encode_build_artifact(&
         work::TextBuildArtifactValue {
             index_id: operation.index_id(),
             generation: operation.generation(),
@@ -1065,7 +1060,7 @@ async fn prepare_build_upload(
             artifact_ordinal,
             split,
         },
-    ));
+    );
     let artifact_bytes =
         u64::try_from(artifact_key.len().saturating_add(artifact_value.len())).unwrap_or(u64::MAX);
     if artifact_bytes > limits.max_output_bytes().get() {
@@ -1363,8 +1358,8 @@ async fn prepare_compaction_step(
         },
         ordinal: artifact_ordinal,
     };
-    let artifact_key = scoped_index_key(scope, IndexV2Key::TextBuildArtifact(artifact_owner));
-    let artifact_value = encode_work_value(&IndexV2WorkValue::TextBuildArtifact(
+    let artifact_key = scoped_index_key(scope, ScopedKey::TextBuildArtifact(artifact_owner));
+    let artifact_value = encode_build_artifact(&
         work::TextBuildArtifactValue {
             index_id: operation.index_id(),
             generation: operation.generation(),
@@ -1372,7 +1367,7 @@ async fn prepare_compaction_step(
             artifact_ordinal,
             split,
         },
-    ));
+    );
     let artifact_bytes =
         u64::try_from(artifact_key.len().saturating_add(artifact_value.len())).unwrap_or(u64::MAX);
     if artifact_bytes > batch_limits.max_output_bytes().get() {
@@ -1625,7 +1620,7 @@ async fn activate(
     operation: &IndexOperationRecord,
     counters: OperationCounters,
 ) -> Result<IndexOperationStepResult> {
-    if generation_has_rows(transaction, scope, IndexV2RecordKind::BuildDelta, operation).await? {
+    if generation_has_rows(transaction, scope, RecordKind::BuildDelta, operation).await? {
         return Ok(progressed_build(TextBuildStage::CatchUp(
             PrefixScanProgress {
                 cursor: None,
@@ -1636,7 +1631,7 @@ async fn activate(
     if generation_has_rows(
         transaction,
         scope,
-        IndexV2RecordKind::TextBuildArtifact,
+        RecordKind::TextBuildArtifact,
         operation,
     )
     .await?
@@ -1787,7 +1782,7 @@ async fn read_catch_up_entity_state(
 ) -> Result<ObservedTextEntityState> {
     let key = scoped_index_key(
         scope,
-        IndexV2Key::TextEntityState(TextEntityStateKey {
+        ScopedKey::TextEntityState(TextEntityStateKey {
             root: TextManifestRootKey {
                 index_id: operation.index_id(),
                 generation: operation.generation(),
@@ -1799,11 +1794,7 @@ async fn read_catch_up_entity_state(
     let Some(value) = transaction.get(&key).await? else {
         return Ok(ObservedTextEntityState::Absent { partition, key });
     };
-    let IndexV2WorkValue::TextEntityState(state) = decode_work_value(&value)? else {
-        return Err(corruption(
-            "text catch-up entity-state key contains another value kind",
-        ));
-    };
+    let state = decode_text_entity_state(&value)?;
     if state.index_id != operation.index_id()
         || state.generation != operation.generation()
         || state.partition != partition
@@ -1989,10 +1980,10 @@ async fn plan_next_catch_up(
             "text catch-up progress must restart from the coalesced delta prefix",
         ));
     }
-    let prefix = Key::data_prefix(
+    let prefix = IndexKey::data_prefix(
         scope,
-        IndexV2Key::generation_prefix(
-            IndexV2RecordKind::BuildDelta,
+        ScopedKey::generation_prefix(
+            RecordKind::BuildDelta,
             operation.index_id(),
             operation.generation(),
         ),
@@ -2001,20 +1992,16 @@ async fn plan_next_catch_up(
     let Some(row) = rows.next().await? else {
         return Ok(TextCatchUpPlanRead::Exhausted);
     };
-    let Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::BuildDelta(delta_key)),
+    let IndexKey::Data {
+        kind: ScopedKey::BuildDelta(delta_key),
         ..
-    } = Key::parse_from_slice(scope, &row.key)?
+    } = IndexKey::parse_from_slice(scope, &row.key)?
     else {
         return Err(corruption(
             "text build-delta prefix yielded another key kind",
         ));
     };
-    let IndexV2WorkValue::CoalescedBuildDelta(delta) = decode_work_value(&row.value)? else {
-        return Err(corruption(
-            "text build-delta key contains another value kind",
-        ));
-    };
+    let delta = decode_build_delta(&row.value)?;
     if delta_key.index_id != operation.index_id()
         || delta_key.generation != operation.generation()
         || delta_key.entity.kind != definition.element_kind()
@@ -2028,7 +2015,7 @@ async fn plan_next_catch_up(
     let entity = delta_key.entity;
     let applied_key = scoped_index_key(
         scope,
-        IndexV2Key::AppliedState(IndexEntityStateKey {
+        ScopedKey::AppliedState(IndexEntityStateKey {
             index_id: operation.index_id(),
             generation: operation.generation(),
             entity,
@@ -2037,11 +2024,7 @@ async fn plan_next_catch_up(
     let applied_value = transaction.get(&applied_key).await?;
     let previous = match applied_value.as_ref() {
         Some(value) => {
-            let IndexV2WorkValue::AppliedEntityState(applied) = decode_work_value(value)? else {
-                return Err(corruption(
-                    "text applied-state key contains another value kind",
-                ));
-            };
+            let applied = decode_applied_state(value)?;
             if applied.index_id != operation.index_id()
                 || applied.generation != operation.generation()
                 || applied.entity_kind != entity.kind
@@ -2231,7 +2214,7 @@ fn build_text_catch_up_plan(
     mut manifest_roots: PreparedCatchUpManifestRoots,
 ) -> Result<TextCatchUpPlanRead> {
     let state_row = |key, partition: &TextPartition, logical_version, live| {
-        let value = encode_work_value(&IndexV2WorkValue::TextEntityState(TextEntityStateValue {
+        let value = encode_text_entity_state(&TextEntityStateValue {
             index_id: operation.index_id(),
             generation: operation.generation(),
             partition: partition.clone(),
@@ -2239,12 +2222,12 @@ fn build_text_catch_up_plan(
             entity_id: entity.id,
             logical_version,
             live,
-        }));
+        });
         PreparedTextWrite::Put { key, value }
     };
     let applied_row = |partition: TextPartition, logical_version| PreparedTextWrite::Put {
         key: applied_key.clone(),
-        value: encode_work_value(&IndexV2WorkValue::AppliedEntityState(
+        value: encode_applied_state(&
             AppliedEntityStateValue {
                 index_id: operation.index_id(),
                 generation: operation.generation(),
@@ -2252,7 +2235,7 @@ fn build_text_catch_up_plan(
                 entity_id: entity.id,
                 state: AppliedFamilyState::Text(Some((partition, logical_version))),
             },
-        )),
+        ),
     };
     let mut writes = vec![PreparedTextWrite::Delete {
         key: delta_key.clone(),
@@ -2538,10 +2521,10 @@ async fn scan_partition_documents(
             "text partition scan does not retain its exact maximal generation key",
         ));
     }
-    let prefix = Key::data_prefix(
+    let prefix = IndexKey::data_prefix(
         scope,
-        IndexV2Key::generation_prefix(
-            IndexV2RecordKind::TextEntityState,
+        ScopedKey::generation_prefix(
+            RecordKind::TextEntityState,
             operation.index_id(),
             operation.generation(),
         ),
@@ -2894,20 +2877,16 @@ fn decode_entity_state(
     value: &[u8],
     operation: &IndexOperationRecord,
 ) -> Result<(TextEntityStateKey, TextEntityStateValue)> {
-    let Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::TextEntityState(key)),
+    let IndexKey::Data {
+        kind: ScopedKey::TextEntityState(key),
         ..
-    } = Key::parse_from_slice(scope, key)?
+    } = IndexKey::parse_from_slice(scope, key)?
     else {
         return Err(corruption(
             "text entity-state prefix yielded another key kind",
         ));
     };
-    let IndexV2WorkValue::TextEntityState(state) = decode_work_value(value)? else {
-        return Err(corruption(
-            "text entity-state key contains another value kind",
-        ));
-    };
+    let state = decode_text_entity_state(value)?;
     if key.root.index_id != operation.index_id()
         || key.root.generation != operation.generation()
         || key.root.partition != state.partition.fingerprint()
@@ -3129,7 +3108,7 @@ async fn scan_source(
             }
             let key = scoped_index_key(
                 scope,
-                IndexV2Key::TextEntityState(TextEntityStateKey {
+                ScopedKey::TextEntityState(TextEntityStateKey {
                     root: TextManifestRootKey {
                         index_id: operation.index_id(),
                         generation: operation.generation(),
@@ -3140,7 +3119,7 @@ async fn scan_source(
             );
             let applied_key = scoped_index_key(
                 scope,
-                IndexV2Key::AppliedState(IndexEntityStateKey {
+                ScopedKey::AppliedState(IndexEntityStateKey {
                     index_id: operation.index_id(),
                     generation: operation.generation(),
                     entity,
@@ -3154,7 +3133,7 @@ async fn scan_source(
                 ));
             }
             let value =
-                encode_work_value(&IndexV2WorkValue::TextEntityState(TextEntityStateValue {
+                encode_text_entity_state(&TextEntityStateValue {
                     index_id: operation.index_id(),
                     generation: operation.generation(),
                     partition: partition.clone(),
@@ -3162,8 +3141,8 @@ async fn scan_source(
                     entity_id,
                     logical_version: TextLogicalVersion::initial(),
                     live: true,
-                }));
-            let applied_value = encode_work_value(&IndexV2WorkValue::AppliedEntityState(
+                });
+            let applied_value = encode_applied_state(&
                 AppliedEntityStateValue {
                     index_id: operation.index_id(),
                     generation: operation.generation(),
@@ -3174,7 +3153,7 @@ async fn scan_source(
                         TextLogicalVersion::initial(),
                     ))),
                 },
-            ));
+            );
             let state_output_bytes = u64::try_from(
                 key.len()
                     .saturating_add(value.len())
@@ -3326,7 +3305,7 @@ fn initial_partition_scan(
 ) -> Result<SourceScanProgress> {
     let upper = scoped_index_key(
         scope,
-        IndexV2Key::TextEntityState(TextEntityStateKey {
+        ScopedKey::TextEntityState(TextEntityStateKey {
             root: TextManifestRootKey {
                 index_id: operation.index_id(),
                 generation: operation.generation(),
@@ -3353,7 +3332,7 @@ async fn load_operation_index(
 ) -> Result<IndexRecordV2> {
     let key = scoped_index_key(
         scope,
-        IndexV2Key::index_record(operation.identity().clone()),
+        ScopedKey::index_record(operation.identity().clone()),
     );
     let Some(value) = transaction.get(key).await? else {
         return Err(corruption("text operation has no canonical index"));
@@ -3373,12 +3352,12 @@ async fn load_operation_index(
 async fn generation_has_rows(
     transaction: &DbTransaction,
     scope: DataScope,
-    kind: IndexV2RecordKind,
+    kind: RecordKind,
     operation: &IndexOperationRecord,
 ) -> Result<bool> {
-    let prefix = Key::data_prefix(
+    let prefix = IndexKey::data_prefix(
         scope,
-        IndexV2Key::generation_prefix(kind, operation.index_id(), operation.generation()),
+        ScopedKey::generation_prefix(kind, operation.index_id(), operation.generation()),
     );
     let mut rows = transaction.scan_prefix(prefix, ..).await?;
     Ok(rows.next().await?.is_some())
@@ -3434,10 +3413,10 @@ fn cursor_suffix(prefix: &Bytes, cursor: Option<&IndexCursor>) -> Result<Option<
 }
 
 /// Encodes one scoped V2 key through the canonical `encoding/v1` boundary.
-fn scoped_index_key(scope: DataScope, key: IndexV2Key) -> Bytes {
-    Key::Data {
+fn scoped_index_key(scope: DataScope, key: ScopedKey) -> Bytes {
+    IndexKey::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }

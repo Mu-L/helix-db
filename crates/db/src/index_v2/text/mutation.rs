@@ -17,13 +17,13 @@ use slatedb::DbTransaction;
 
 use crate::encoding::property::Property;
 #[cfg(test)]
-use crate::encoding::v1::keys::index_v2::IndexV2RecordKind;
-use crate::encoding::v1::keys::index_v2::{IndexEntity, IndexEntityStateKey, IndexV2Key};
+use crate::encoding::v2::keys::RecordKind;
+use crate::encoding::v2::keys::{IndexEntity, IndexEntityStateKey, ScopedKey};
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
+use crate::encoding::v2::keys::Key;
 #[cfg(test)]
-use crate::encoding::v1::values::index_v2::decode_index_record;
-use crate::encoding::v1::values::index_v2::{encode_work_value, IndexV2WorkValue};
+use crate::encoding::v2::values::decode_index_record;
+use crate::encoding::v2::values::encode_build_delta;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::work::CoalescedBuildDeltaValue;
 #[cfg(test)]
@@ -273,13 +273,13 @@ pub(crate) async fn load_mutation_set(
     transaction: &DbTransaction,
     scope: DataScope,
 ) -> Result<TextMutationSet> {
-    let logical_prefix = IndexV2Key::logical_prefix(IndexV2RecordKind::IndexRecord);
+    let logical_prefix = ScopedKey::logical_prefix(RecordKind::IndexRecord);
     let physical_prefix = Key::data_prefix(scope, logical_prefix);
     let mut rows = transaction.scan_prefix(&physical_prefix, ..).await?;
     let mut mutations = TextMutationSet::default();
     while let Some(row) = rows.next().await? {
         let Key::Data {
-            kind: DataKeyKind::IndexV2(IndexV2Key::IndexRecord(key)),
+            kind: ScopedKey::IndexRecord(key),
             ..
         } = Key::parse_from_slice(scope, &row.key)?
         else {
@@ -413,7 +413,7 @@ async fn prepare_text_build_deltas_from(
 
         let key = scoped_index_key(
             scope,
-            IndexV2Key::BuildDelta(IndexEntityStateKey {
+            ScopedKey::BuildDelta(IndexEntityStateKey {
                 index_id: target.index_id,
                 generation: target.generation,
                 entity: IndexEntity {
@@ -422,18 +422,18 @@ async fn prepare_text_build_deltas_from(
                 },
             }),
         );
-        let value = IndexV2WorkValue::CoalescedBuildDelta(CoalescedBuildDeltaValue {
+        let value = CoalescedBuildDeltaValue {
             index_id: target.index_id,
             generation: target.generation,
             entity_kind: entity.entity_kind,
             entity_id: entity.entity_id,
-        });
+        };
         if !destination_keys.insert(key.clone()) {
             return Err(corruption(
                 "text mutation set produced a duplicate hidden-build delta",
             ));
         }
-        candidates.push((ordinal, key, encode_work_value(&value)));
+        candidates.push((ordinal, key, encode_build_delta(&value)));
     }
 
     let candidate_keys = candidates
@@ -598,10 +598,10 @@ pub(super) fn stage_validated_text_build_deltas(
 }
 
 /// Encodes one scoped V2 key through the canonical `encoding/v1` boundary.
-fn scoped_index_key(scope: DataScope, key: IndexV2Key) -> bytes::Bytes {
+fn scoped_index_key(scope: DataScope, key: ScopedKey) -> bytes::Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }
@@ -620,7 +620,7 @@ mod tests {
     use super::*;
     use crate::config::TextAnalyzerKind;
     use crate::encoding::property::property_value::PropertyValue;
-    use crate::encoding::v1::values::index_v2::{decode_work_value, encode_index_record};
+    use crate::encoding::v2::values::{decode_build_delta, encode_index_record};
     use crate::index_v2::{
         IndexOperationId, IndexRevision, IndexStateTransition, PhysicalGeneration,
     };
@@ -713,7 +713,7 @@ mod tests {
 
         let prefix = Key::data_prefix(
             scope,
-            IndexV2Key::generation_prefix(IndexV2RecordKind::BuildDelta, index_id, generation),
+            ScopedKey::generation_prefix(RecordKind::BuildDelta, index_id, generation),
         );
         let mut rows = db
             .scan_prefix(prefix, ..)
@@ -729,11 +729,7 @@ mod tests {
             .await
             .expect("text delta exhaustion is readable")
             .is_none());
-        let IndexV2WorkValue::CoalescedBuildDelta(delta) =
-            decode_work_value(&row.value).expect("coalesced text delta decodes")
-        else {
-            panic!("text build delta key contains its typed value");
-        };
+        let delta = decode_build_delta(&row.value).expect("coalesced text delta decodes");
         assert_eq!(delta.index_id, index_id);
         assert_eq!(delta.generation, generation);
         assert_eq!(delta.entity_kind, IndexElementKind::Node);
@@ -755,20 +751,20 @@ mod tests {
         let after = properties("after", "acme", 1);
         let key = scoped_index_key(
             scope,
-            IndexV2Key::BuildDelta(IndexEntityStateKey {
+            ScopedKey::BuildDelta(IndexEntityStateKey {
                 index_id,
                 generation,
                 entity,
             }),
         );
-        let value = encode_work_value(&IndexV2WorkValue::CoalescedBuildDelta(
+        let value = encode_build_delta(&
             CoalescedBuildDeltaValue {
                 index_id,
                 generation,
                 entity_kind: entity.kind,
                 entity_id: entity.id,
             },
-        ));
+        );
 
         let original = db
             .begin(IsolationLevel::SerializableSnapshot)
@@ -899,7 +895,7 @@ mod tests {
         };
         let delta_key = scoped_index_key(
             scope,
-            IndexV2Key::BuildDelta(IndexEntityStateKey {
+            ScopedKey::BuildDelta(IndexEntityStateKey {
                 index_id,
                 generation,
                 entity: delta_entity,
@@ -1002,7 +998,7 @@ mod tests {
         .transition(IndexStateTransition::Activate)
         .expect("text record activates");
         db.put(
-            scoped_index_key(scope, IndexV2Key::index_record(record.identity().clone())),
+            scoped_index_key(scope, ScopedKey::index_record(record.identity().clone())),
             encode_index_record(&record),
         )
         .await
@@ -1050,7 +1046,7 @@ mod tests {
         db.put(
             scoped_index_key(
                 scope,
-                IndexV2Key::index_record(secondary_record.identity().clone()),
+                ScopedKey::index_record(secondary_record.identity().clone()),
             ),
             encode_index_record(&secondary_record),
         )
@@ -1073,7 +1069,7 @@ mod tests {
         db.put(
             scoped_index_key(
                 scope,
-                IndexV2Key::index_record(dropped_text_record.identity().clone()),
+                ScopedKey::index_record(dropped_text_record.identity().clone()),
             ),
             encode_index_record(&dropped_text_record),
         )
@@ -1103,7 +1099,7 @@ mod tests {
         db.put(
             scoped_index_key(
                 scope,
-                IndexV2Key::index_record(building_text_record.identity().clone()),
+                ScopedKey::index_record(building_text_record.identity().clone()),
             ),
             encode_index_record(&building_text_record),
         )
@@ -1150,7 +1146,7 @@ mod tests {
         )
         .expect("different text identity is valid");
         db.put(
-            scoped_index_key(scope, IndexV2Key::index_record(wrong_definition.identity())),
+            scoped_index_key(scope, ScopedKey::index_record(wrong_definition.identity())),
             encode_index_record(&text_record),
         )
         .await

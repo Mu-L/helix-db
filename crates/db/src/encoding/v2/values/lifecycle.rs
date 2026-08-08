@@ -7,20 +7,50 @@ use crate::index_v2::{
     BuildOperationOutcome, IndexOperationExecutionState, IndexOperationFamily, IndexOperationKind,
     IndexOperationOutcome, IndexOperationProgress, IndexOperationQueueSchedule,
     IndexOperationRecord, IndexRecordV2, IndexStateV2, LegacyVectorDirectoryValidationProgress,
-    LegacyVectorPhysicalReservation, LegacyVectorValidationLane, LegacyVectorValidationProgress,
-    LogicalIndexIdWatermark, NoCursorProgress, OperationQueuePointerValue, PrefixScanProgress,
-    SecondaryBuildProgress, SecondaryBuildStage, SecondaryCleanupProgress, SourceScanProgress,
-    TextBuildProgress, TextBuildStage, TextCleanupProgress, TextCompactionPointerValue,
+    LegacyVectorValidationLane, LegacyVectorValidationProgress, NoCursorProgress,
+    PrefixScanProgress, SecondaryBuildProgress, SecondaryBuildStage, SecondaryCleanupProgress,
+    SourceScanProgress, TextBuildProgress, TextBuildStage, TextCleanupProgress,
     TextManifestPageValidationProgress, TextManifestPartitionValidation,
     TextManifestValidationProgress, VectorBuildProgress, VectorBuildStage, VectorCleanupProgress,
-    VectorPhysicalIdWatermark,
 };
-use crate::index_v2::{IndexStorageVersion, IndexV2MetadataValue};
 
-use super::codec::*;
+use super::indexes::{decode_value, encode_value, WorkValue};
+use super::*;
 
 const INDEX_RECORD_KIND: u8 = 0x01;
 const OPERATION_RECORD_KIND: u8 = 0x02;
+
+pub(crate) fn encode_build_delta(value: &crate::index_v2::work::CoalescedBuildDeltaValue) -> Bytes {
+    encode_value(&WorkValue::CoalescedBuildDelta(*value))
+}
+
+pub(crate) fn decode_build_delta(
+    value: &[u8],
+) -> Result<crate::index_v2::work::CoalescedBuildDeltaValue, EncodingError> {
+    let WorkValue::CoalescedBuildDelta(value) = decode_value(value)? else {
+        return Err(EncodingError::Custom(
+            "build-delta key contains another value kind".to_string(),
+        ));
+    };
+    Ok(value)
+}
+
+pub(crate) fn encode_applied_state(
+    value: &crate::index_v2::work::AppliedEntityStateValue,
+) -> Bytes {
+    encode_value(&WorkValue::AppliedEntityState(value.clone()))
+}
+
+pub(crate) fn decode_applied_state(
+    value: &[u8],
+) -> Result<crate::index_v2::work::AppliedEntityStateValue, EncodingError> {
+    let WorkValue::AppliedEntityState(value) = decode_value(value)? else {
+        return Err(EncodingError::Custom(
+            "applied-state key contains another value kind".to_string(),
+        ));
+    };
+    Ok(value)
+}
 
 /// Encodes the only persisted logical index record.
 pub(crate) fn encode_index_record(record: &IndexRecordV2) -> Bytes {
@@ -117,119 +147,6 @@ fn take_index_state(decoder: &mut ValueDecoder<'_>) -> Result<IndexStateV2, Enco
         }),
         unknown => Err(unknown_discriminant("index state", unknown)),
     }
-}
-
-/// Encodes a typed global V2 metadata/pointer value.
-pub(crate) fn encode_metadata_value(value: &IndexV2MetadataValue) -> Bytes {
-    let kind = match value {
-        IndexV2MetadataValue::StorageVersion(_) => 0x01,
-        IndexV2MetadataValue::LogicalIndexIdWatermark(_) => 0x02,
-        IndexV2MetadataValue::VectorPhysicalIdWatermark(_) => 0x03,
-        IndexV2MetadataValue::OperationQueuePointer(_) => 0x04,
-        IndexV2MetadataValue::LegacyVectorPhysicalReservation(_) => 0x06,
-        IndexV2MetadataValue::TextCompactionPointer(_) => 0x07,
-    };
-    let mut encoder = ValueEncoder::with_header(kind);
-    match value {
-        IndexV2MetadataValue::StorageVersion(version) => encoder.put_u16(version.get()),
-        IndexV2MetadataValue::LogicalIndexIdWatermark(watermark) => {
-            put_index_id(&mut encoder, watermark.next_id)
-        }
-        IndexV2MetadataValue::VectorPhysicalIdWatermark(watermark) => {
-            encoder.put_u64(watermark.next_id.get())
-        }
-        IndexV2MetadataValue::OperationQueuePointer(pointer) => {
-            put_scope(&mut encoder, pointer.scope);
-            put_index_id(&mut encoder, pointer.index_id);
-            put_generation(&mut encoder, pointer.generation);
-            put_operation_revision(&mut encoder, pointer.record_revision);
-        }
-        IndexV2MetadataValue::LegacyVectorPhysicalReservation(reservation) => match reservation {
-            LegacyVectorPhysicalReservation::LegacySource => encoder.put_u8(0x01),
-            LegacyVectorPhysicalReservation::AdoptionBuilding {
-                index_id,
-                generation,
-                operation_id,
-            } => {
-                encoder.put_u8(0x02);
-                put_index_id(&mut encoder, *index_id);
-                put_generation(&mut encoder, *generation);
-                put_operation_id(&mut encoder, *operation_id);
-            }
-            LegacyVectorPhysicalReservation::AdoptedActive {
-                index_id,
-                generation,
-            } => {
-                encoder.put_u8(0x03);
-                put_index_id(&mut encoder, *index_id);
-                put_generation(&mut encoder, *generation);
-            }
-            LegacyVectorPhysicalReservation::RetiringSource {
-                index_id,
-                generation,
-            } => {
-                encoder.put_u8(0x04);
-                put_index_id(&mut encoder, *index_id);
-                put_generation(&mut encoder, *generation);
-            }
-        },
-        IndexV2MetadataValue::TextCompactionPointer(pointer) => {
-            encoder.put_u64(pointer.revision.get())
-        }
-    }
-    encoder.finish()
-}
-
-/// Decodes a global V2 metadata/pointer value under key context.
-pub(crate) fn decode_metadata_value(value: &[u8]) -> Result<IndexV2MetadataValue, EncodingError> {
-    let mut decoder = ValueDecoder::new(value)?;
-    let decoded = match decoder.kind() {
-        0x01 => {
-            IndexV2MetadataValue::StorageVersion(IndexStorageVersion::new(decoder.take_u16()?)?)
-        }
-        0x02 => IndexV2MetadataValue::LogicalIndexIdWatermark(LogicalIndexIdWatermark {
-            next_id: take_index_id(&mut decoder)?,
-        }),
-        0x03 => IndexV2MetadataValue::VectorPhysicalIdWatermark(VectorPhysicalIdWatermark {
-            next_id: crate::index_v2::VectorPhysicalIndexId::new(decoder.take_u64()?)
-                .map_err(model_error)?,
-        }),
-        0x04 => IndexV2MetadataValue::OperationQueuePointer(OperationQueuePointerValue {
-            scope: take_scope(&mut decoder)?,
-            index_id: take_index_id(&mut decoder)?,
-            generation: take_generation(&mut decoder)?,
-            record_revision: take_operation_revision(&mut decoder)?,
-        }),
-        0x06 => IndexV2MetadataValue::LegacyVectorPhysicalReservation(match decoder.take_u8()? {
-            0x01 => LegacyVectorPhysicalReservation::LegacySource,
-            0x02 => LegacyVectorPhysicalReservation::AdoptionBuilding {
-                index_id: take_index_id(&mut decoder)?,
-                generation: take_generation(&mut decoder)?,
-                operation_id: take_operation_id(&mut decoder)?,
-            },
-            0x03 => LegacyVectorPhysicalReservation::AdoptedActive {
-                index_id: take_index_id(&mut decoder)?,
-                generation: take_generation(&mut decoder)?,
-            },
-            0x04 => LegacyVectorPhysicalReservation::RetiringSource {
-                index_id: take_index_id(&mut decoder)?,
-                generation: take_generation(&mut decoder)?,
-            },
-            unknown => {
-                return Err(unknown_discriminant(
-                    "legacy vector physical reservation",
-                    unknown,
-                ))
-            }
-        }),
-        0x07 => IndexV2MetadataValue::TextCompactionPointer(TextCompactionPointerValue {
-            revision: crate::index_v2::TextManifestRevision::new(decoder.take_u64()?)
-                .map_err(model_error)?,
-        }),
-        unknown => return Err(unknown_discriminant("metadata value", unknown)),
-    };
-    decoder.finish()?;
-    Ok(decoded)
 }
 
 /// Encodes one durable outbox operation.
@@ -919,9 +836,10 @@ mod wire_fixtures {
     use super::*;
     use crate::config::SecondaryIndexDefinition;
     use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
+    use crate::encoding::v2::values::global::{decode_metadata_value, encode_metadata_value};
     use crate::index_v2::{
         IndexCursor, IndexGenerationId, IndexId, IndexOperationExecutionState, IndexOperationId,
-        IndexOperationRevision, IndexRevision, IndexStorageVersion,
+        IndexOperationRevision, IndexRevision, IndexStorageVersion, IndexV2MetadataValue,
         LegacyVectorPhysicalReservation, LogicalIndexIdWatermark, OperationCounters,
         OperationQueuePointerValue, PhysicalGeneration, SourceScanProgress,
         TextCompactionPointerValue, TextManifestRevision, ValidatedDynamicIndexDefinition,

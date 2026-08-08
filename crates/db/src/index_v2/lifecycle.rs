@@ -8,14 +8,15 @@
 use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
 use crate::config::NonEmptyDefinitionDifferences;
-use crate::encoding::v1::keys::index_v2::GlobalIndexV2Key;
+use crate::encoding::v2::keys::GlobalKey;
 use crate::encoding::v1::keys::metadata::MetadataKey;
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{
     DataKeyKind, EdgePropertyByIdKey, GlobalKeyKind, Key, NodePropertyKey,
 };
+use crate::encoding::v2::keys::Key as IndexKey;
 use crate::encoding::v1::values::id_allocation::IdAllocationWatermarkValue;
-use crate::encoding::v1::values::index_v2::{
+use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, decode_operation_record, encode_index_record,
     encode_metadata_value, encode_operation_record,
 };
@@ -280,10 +281,10 @@ async fn create_index_operation_in_transaction_with_physical(
             ));
         };
         transaction.put(
-            Key::Global {
-                kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+            IndexKey::Global {
+                kind: GlobalKey::LegacyVectorPhysicalReservation(
                     physical_index_id,
-                )),
+                ),
             }
             .to_bytes(),
             encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(
@@ -1382,11 +1383,8 @@ mod tests {
         let db = test_db("lifecycle-vector-id-exhaustion").await;
         let scope = DataScope::LegacyUnscoped;
         db.put(
-            Key::Global {
-                kind: GlobalKeyKind::IndexV2(
-                    crate::encoding::v1::keys::index_v2::GlobalIndexV2Key::
-                        VectorPhysicalIdWatermark,
-                ),
+            IndexKey::Global {
+                kind: crate::encoding::v2::keys::GlobalKey::VectorPhysicalIdWatermark,
             }
             .to_bytes(),
             encode_metadata_value(&IndexV2MetadataValue::VectorPhysicalIdWatermark(

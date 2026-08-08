@@ -18,7 +18,7 @@ use crate::config::{
     TextBackfillCompactionLimits, TextBuildArtifactLimits,
 };
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
+use crate::encoding::v2::keys::Key;
 use crate::index_v2::{
     IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2,
     IndexRevision, IndexStateTransition, PhysicalGeneration, TextLogicalVersion,
@@ -41,10 +41,10 @@ async fn raw_db(name: &str) -> Db {
 }
 
 /// Encodes one scoped V2 key through the current typed boundary.
-fn scoped_key(scope: DataScope, logical: index_keys::IndexV2Key) -> Bytes {
+fn scoped_key(scope: DataScope, logical: index_keys::ScopedKey) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(logical),
+        kind: logical,
     }
     .to_bytes()
 }
@@ -77,7 +77,7 @@ async fn seed_text_fixture(db: &Db, scope: DataScope) -> RetirementFixture {
     db.put(
         scoped_key(
             scope,
-            index_keys::IndexV2Key::index_record(active.identity().clone()),
+            index_keys::ScopedKey::index_record(active.identity().clone()),
         ),
         index_values::encode_index_record(&active),
     )
@@ -94,10 +94,10 @@ async fn seed_text_fixture(db: &Db, scope: DataScope) -> RetirementFixture {
     };
     RetirementFixture {
         handle,
-        root_key: scoped_key(scope, index_keys::IndexV2Key::TextManifestRoot(root_typed)),
+        root_key: scoped_key(scope, index_keys::ScopedKey::TextManifestRoot(root_typed)),
         state_key: scoped_key(
             scope,
-            index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+            index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                 root: root_typed,
                 entity,
             }),
@@ -140,7 +140,7 @@ async fn put_root(
 ) {
     db.put(
         fixture.root_key.clone(),
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+        index_values::encode_manifest_root(&
             work::TextManifestRootValue::try_new(
                 fixture.handle.index_id(),
                 fixture.handle.generation(),
@@ -150,7 +150,7 @@ async fn put_root(
                 u64::from(page_count),
             )
             .expect("manifest root validates"),
-        )),
+        ),
     )
     .await
     .expect("manifest root writes");
@@ -160,7 +160,7 @@ async fn put_root(
 async fn put_state(db: &Db, fixture: &RetirementFixture, version: u64, live: bool) {
     db.put(
         fixture.state_key.clone(),
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+        index_values::encode_text_entity_state(&
             work::TextEntityStateValue {
                 index_id: fixture.handle.index_id(),
                 generation: fixture.handle.generation(),
@@ -171,7 +171,7 @@ async fn put_state(db: &Db, fixture: &RetirementFixture, version: u64, live: boo
                     .expect("logical version is non-zero"),
                 live,
             },
-        )),
+        ),
     )
     .await
     .expect("entity state writes");
@@ -265,7 +265,7 @@ async fn exercise_root_shape_rejections() {
     let fixture = seed_text_fixture(&db, scope).await;
     db.put(
         fixture.root_key.clone(),
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+        index_values::encode_text_entity_state(&
             work::TextEntityStateValue {
                 index_id: fixture.handle.index_id(),
                 generation: fixture.handle.generation(),
@@ -275,7 +275,7 @@ async fn exercise_root_shape_rejections() {
                 logical_version: TextLogicalVersion::initial(),
                 live: true,
             },
-        )),
+        ),
     )
     .await
     .expect("mistyped root writes");
@@ -300,7 +300,7 @@ async fn exercise_root_shape_rejections() {
         .expect("other partition validates");
     db.put(
         fixture.root_key.clone(),
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+        index_values::encode_manifest_root(&
             work::TextManifestRootValue::try_new(
                 fixture.handle.index_id(),
                 fixture.handle.generation(),
@@ -310,7 +310,7 @@ async fn exercise_root_shape_rejections() {
                 1,
             )
             .expect("cross-owned root remains structurally valid"),
-        )),
+        ),
     )
     .await
     .expect("cross-owned root writes");
@@ -333,13 +333,13 @@ async fn exercise_root_shape_rejections() {
 
     db.put(
         fixture.root_key.clone(),
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+        index_values::encode_manifest_root(&
             work::TextManifestRootValue::empty(
                 fixture.handle.index_id(),
                 fixture.handle.generation(),
                 work::TextPartition::Unpartitioned,
             ),
-        )),
+        ),
     )
     .await
     .expect("empty root writes");
@@ -416,13 +416,13 @@ async fn exercise_state_and_staging_contracts() {
 
     db.put(
         fixture.state_key.clone(),
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+        index_values::encode_manifest_root(&
             work::TextManifestRootValue::empty(
                 fixture.handle.index_id(),
                 fixture.handle.generation(),
                 work::TextPartition::Unpartitioned,
             ),
-        )),
+        ),
     )
     .await
     .expect("mistyped state writes");
@@ -500,7 +500,7 @@ async fn exercise_state_and_staging_contracts() {
     transaction
         .put(
             fixture.state_key.clone(),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+            index_values::encode_text_entity_state(&
                 work::TextEntityStateValue {
                     index_id: fixture.handle.index_id(),
                     generation: fixture.handle.generation(),
@@ -511,7 +511,7 @@ async fn exercise_state_and_staging_contracts() {
                         .expect("changed logical version is non-zero"),
                     live: true,
                 },
-            )),
+            ),
         )
         .expect("conflicting state stages");
     assert!(matches!(
@@ -533,15 +533,13 @@ async fn exercise_state_and_staging_contracts() {
         .commit()
         .await
         .expect("retirement transaction commits");
-    let index_values::IndexV2WorkValue::TextEntityState(state) = index_values::decode_work_value(
+    let state = index_values::decode_text_entity_state(
         &db.get(&fixture.state_key)
             .await
             .expect("state lookup succeeds")
             .expect("dead state exists"),
     )
-    .expect("dead state decodes") else {
-        panic!("retirement writes a text entity state");
-    };
+    .expect("dead state decodes");
     assert!(!state.live);
     assert_eq!(state.logical_version.get(), 3);
     db.close().await.expect("state-contract database closes");

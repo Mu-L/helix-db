@@ -91,7 +91,7 @@ fn root_key(
         typed,
         scoped_key(
             authority.scope(),
-            index_keys::IndexV2Key::TextManifestRoot(typed),
+            index_keys::ScopedKey::TextManifestRoot(typed),
         ),
     )
 }
@@ -107,7 +107,7 @@ async fn put_root(
     let (typed, key) = root_key(authority, partition);
     db.put(
         key,
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+        index_values::encode_manifest_root(&
             work::TextManifestRootValue::try_new(
                 authority.index_id(),
                 authority.generation(),
@@ -117,7 +117,7 @@ async fn put_root(
                 split_count,
             )
             .expect("manifest root validates"),
-        )),
+        ),
     )
     .await
     .expect("manifest root writes");
@@ -129,7 +129,7 @@ async fn put_root(
                 authority.generation(),
                 partition,
             ),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextCorpusStatistics(
+            index_values::encode_corpus_statistics(&
                 work::TextCorpusStatisticsValue::try_new(
                     authority.index_id(),
                     authority.generation(),
@@ -138,7 +138,7 @@ async fn put_root(
                     1,
                 )
                 .expect("non-empty root corpus statistics validate"),
-            )),
+            ),
         )
         .await
         .expect("non-empty root corpus statistics write");
@@ -161,7 +161,7 @@ fn wrong_kind_value(authority: &ActiveTextServingAuthority) -> bytes::Bytes {
     let split =
         work::SplitRef::try_new(blob, 0, 0, 0, blob.size(), work::SplitPruning::Unavailable)
             .expect("wrong-kind split validates");
-    index_values::encode_work_value(&index_values::IndexV2WorkValue::TextBuildArtifact(
+    index_values::encode_build_artifact(&
         work::TextBuildArtifactValue {
             index_id: authority.index_id(),
             generation: authority.generation(),
@@ -169,7 +169,7 @@ fn wrong_kind_value(authority: &ActiveTextServingAuthority) -> bytes::Bytes {
             artifact_ordinal: 0,
             split,
         },
-    ))
+    )
 }
 
 /// Proves family refinement, getters, and partition-shape validation.
@@ -228,7 +228,7 @@ async fn exercise_root_rejections() {
     ));
     db.put(
         key,
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+        index_values::encode_manifest_root(&
             work::TextManifestRootValue::try_new(
                 IndexId::new(99).expect("wrong index ID is non-zero"),
                 unpartitioned.generation(),
@@ -238,7 +238,7 @@ async fn exercise_root_rejections() {
                 0,
             )
             .expect("cross-owned root value remains structurally valid"),
-        )),
+        ),
     )
     .await
     .expect("cross-owned root value writes");
@@ -265,7 +265,7 @@ async fn exercise_page_rejections() {
     ));
     let page_key = scoped_key(
         authority.scope(),
-        index_keys::IndexV2Key::TextManifestPage(index_keys::TextManifestPageKey {
+        index_keys::ScopedKey::TextManifestPage(index_keys::TextManifestPageKey {
             root: root.key,
             page: 0,
         }),
@@ -288,7 +288,7 @@ async fn exercise_page_rejections() {
     .expect("split validates");
     db.put(
         page_key.clone(),
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestPage(
+        index_values::encode_manifest_page(&
             work::TextManifestPageValue::try_new(
                 IndexId::new(99).expect("wrong index ID is non-zero"),
                 authority.generation(),
@@ -297,7 +297,7 @@ async fn exercise_page_rejections() {
                 vec![split],
             )
             .expect("cross-owned page remains structurally valid"),
-        )),
+        ),
     )
     .await
     .expect("cross-owned page value writes");
@@ -307,7 +307,7 @@ async fn exercise_page_rejections() {
     ));
     db.put(
         page_key,
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestPage(
+        index_values::encode_manifest_page(&
             work::TextManifestPageValue::try_new(
                 authority.index_id(),
                 authority.generation(),
@@ -316,7 +316,7 @@ async fn exercise_page_rejections() {
                 vec![split],
             )
             .expect("owned page validates"),
-        )),
+        ),
     )
     .await
     .expect("owned page value writes");
@@ -345,7 +345,7 @@ async fn exercise_entity_state_rejections() {
     };
     let state_key = scoped_key(
         authority.scope(),
-        index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+        index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
             root: root.key,
             entity,
         }),
@@ -359,7 +359,7 @@ async fn exercise_entity_state_rejections() {
     ));
     db.put(
         state_key.clone(),
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+        index_values::encode_text_entity_state(&
             work::TextEntityStateValue {
                 index_id: authority.index_id(),
                 generation: authority.generation(),
@@ -369,7 +369,7 @@ async fn exercise_entity_state_rejections() {
                 logical_version: TextLogicalVersion::new(3).expect("logical version is non-zero"),
                 live: true,
             },
-        )),
+        ),
     )
     .await
     .expect("future state value writes");
@@ -379,7 +379,7 @@ async fn exercise_entity_state_rejections() {
     ));
     db.put(
         state_key,
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+        index_values::encode_text_entity_state(&
             work::TextEntityStateValue {
                 index_id: authority.index_id(),
                 generation: authority.generation(),
@@ -389,7 +389,7 @@ async fn exercise_entity_state_rejections() {
                 logical_version: TextLogicalVersion::new(2).expect("logical version is non-zero"),
                 live: false,
             },
-        )),
+        ),
     )
     .await
     .expect("owned state value writes");

@@ -13,8 +13,8 @@ use bytes::Bytes;
 use slatedb::DbTransaction;
 
 use crate::config::ActiveTextMutationLimits;
-use crate::encoding::v1::keys::index_v2 as index_keys;
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::keys as index_keys;
+use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::{self, work};
 
@@ -87,7 +87,7 @@ pub(super) async fn prepare_active_text_retirement(
         partition: partition.fingerprint(),
     };
     let root_key =
-        super::attachment::scoped_key(scope, index_keys::IndexV2Key::TextManifestRoot(root_typed));
+        super::attachment::scoped_key(scope, index_keys::ScopedKey::TextManifestRoot(root_typed));
     let Some(root_bytes) = transaction.get(&root_key).await? else {
         return Err(corruption("Active text retirement found no manifest root"));
     };
@@ -95,13 +95,7 @@ pub(super) async fn prepare_active_text_retirement(
         key: root_key.clone(),
         value: Some(root_bytes.clone()),
     });
-    let index_values::IndexV2WorkValue::TextManifestRoot(root) =
-        index_values::decode_work_value(&root_bytes)?
-    else {
-        return Err(corruption(
-            "Active text retirement root key contains another value kind",
-        ));
-    };
+    let root = index_values::decode_manifest_root(&root_bytes)?;
     if root.index_id() != index_id
         || root.generation() != generation
         || root.partition() != &partition
@@ -129,7 +123,7 @@ pub(super) async fn prepare_active_text_retirement(
         entity,
     };
     let state_key =
-        super::attachment::scoped_key(scope, index_keys::IndexV2Key::TextEntityState(state_typed));
+        super::attachment::scoped_key(scope, index_keys::ScopedKey::TextEntityState(state_typed));
     let Some(state_bytes) = transaction.get(&state_key).await? else {
         return Err(corruption(
             "Active text retirement found no live entity state",
@@ -139,13 +133,7 @@ pub(super) async fn prepare_active_text_retirement(
         key: state_key.clone(),
         value: Some(state_bytes.clone()),
     });
-    let index_values::IndexV2WorkValue::TextEntityState(state) =
-        index_values::decode_work_value(&state_bytes)?
-    else {
-        return Err(corruption(
-            "Active text retirement state key contains another value kind",
-        ));
-    };
+    let state = index_values::decode_text_entity_state(&state_bytes)?;
     if state.index_id != index_id
         || state.generation != generation
         || state.partition != partition
@@ -168,11 +156,8 @@ pub(super) async fn prepare_active_text_retirement(
         root.split_count(),
     )
     .map_err(|error| corruption(format!("Active text retirement root is invalid: {error}")))?;
-    let root_value = index_values::encode_work_value(
-        &index_values::IndexV2WorkValue::TextManifestRoot(next_root),
-    );
-    let state_value = index_values::encode_work_value(
-        &index_values::IndexV2WorkValue::TextEntityState(work::TextEntityStateValue {
+    let root_value = index_values::encode_manifest_root(&next_root);
+    let state_value = index_values::encode_text_entity_state(&work::TextEntityStateValue {
             index_id,
             generation,
             partition: partition.clone(),
@@ -180,8 +165,7 @@ pub(super) async fn prepare_active_text_retirement(
             entity_id: entity.id,
             logical_version,
             live: false,
-        }),
-    );
+        });
     let observed_bytes = observations.iter().fold(0_u64, |bytes, observation| {
         bytes
             .saturating_add(u64::try_from(observation.key.len()).unwrap_or(u64::MAX))
@@ -268,7 +252,7 @@ mod tests {
         TextAnalyzerKind, TextBackfillCompactionLimits, TextBuildArtifactLimits,
     };
     use crate::encoding::v1::keys::tenant::DataScope;
-    use crate::encoding::v1::keys::{DataKeyKind, Key};
+    use crate::encoding::v2::keys::Key;
     use crate::index_v2::{
         IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexOperationId,
         IndexRecordV2, IndexRevision, IndexStateTransition, PhysicalGeneration, TextLogicalVersion,
@@ -286,10 +270,10 @@ mod tests {
         Db::open(name, Arc::new(InMemory::new())).await.unwrap()
     }
 
-    fn scoped_key(scope: DataScope, logical: index_keys::IndexV2Key) -> Bytes {
+    fn scoped_key(scope: DataScope, logical: index_keys::ScopedKey) -> Bytes {
         Key::Data {
             scope,
-            kind: DataKeyKind::IndexV2(logical),
+            kind: logical,
         }
         .to_bytes()
     }
@@ -319,7 +303,7 @@ mod tests {
         db.put(
             scoped_key(
                 scope,
-                index_keys::IndexV2Key::index_record(active.identity().clone()),
+                index_keys::ScopedKey::index_record(active.identity().clone()),
             ),
             index_values::encode_index_record(&active),
         )
@@ -334,10 +318,10 @@ mod tests {
             generation: handle.generation(),
             partition: work::TextPartition::Unpartitioned.fingerprint(),
         };
-        let root_key = scoped_key(scope, index_keys::IndexV2Key::TextManifestRoot(root_typed));
+        let root_key = scoped_key(scope, index_keys::ScopedKey::TextManifestRoot(root_typed));
         let state_key = scoped_key(
             scope,
-            index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+            index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                 root: root_typed,
                 entity,
             }),
@@ -465,8 +449,7 @@ mod tests {
         let db = raw_db("active-text-retirement-root-shapes").await;
         let scope = DataScope::LegacyUnscoped;
         let fixture = seed_text_fixture(&db, scope).await;
-        let wrong_value =
-            index_values::IndexV2WorkValue::TextEntityState(work::TextEntityStateValue {
+        let wrong_value = work::TextEntityStateValue {
                 index_id: fixture.handle.index_id(),
                 generation: fixture.handle.generation(),
                 partition: work::TextPartition::Unpartitioned,
@@ -474,10 +457,10 @@ mod tests {
                 entity_id: fixture.entity.id,
                 logical_version: TextLogicalVersion::initial(),
                 live: true,
-            });
+            };
         db.put(
             fixture.root_key.clone(),
-            index_values::encode_work_value(&wrong_value),
+            index_values::encode_text_entity_state(&wrong_value),
         )
         .await
         .unwrap();
@@ -503,7 +486,7 @@ mod tests {
             work::TextPartition::try_tenant_value(Bytes::from_static(b"other")).unwrap();
         db.put(
             fixture.root_key.clone(),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::try_new(
                     fixture.handle.index_id(),
                     fixture.handle.generation(),
@@ -513,7 +496,7 @@ mod tests {
                     1,
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -537,13 +520,13 @@ mod tests {
 
         db.put(
             fixture.root_key.clone(),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::empty(
                     fixture.handle.index_id(),
                     fixture.handle.generation(),
                     work::TextPartition::Unpartitioned,
                 ),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -567,7 +550,7 @@ mod tests {
 
         db.put(
             fixture.root_key.clone(),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::try_new(
                     fixture.handle.index_id(),
                     fixture.handle.generation(),
@@ -577,7 +560,7 @@ mod tests {
                     1,
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -608,7 +591,7 @@ mod tests {
         let fixture = seed_text_fixture(&db, scope).await;
         db.put(
             fixture.root_key.clone(),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::try_new(
                     fixture.handle.index_id(),
                     fixture.handle.generation(),
@@ -618,7 +601,7 @@ mod tests {
                     1,
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -642,13 +625,13 @@ mod tests {
 
         db.put(
             fixture.state_key.clone(),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::empty(
                     fixture.handle.index_id(),
                     fixture.handle.generation(),
                     work::TextPartition::Unpartitioned,
                 ),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -681,9 +664,9 @@ mod tests {
         };
         db.put(
             fixture.state_key.clone(),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+            index_values::encode_text_entity_state(&
                 dead_state.clone(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -711,9 +694,9 @@ mod tests {
         };
         db.put(
             fixture.state_key.clone(),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+            index_values::encode_text_entity_state(&
                 live_state,
-            )),
+            ),
         )
         .await
         .unwrap();

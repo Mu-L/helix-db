@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::encoding::v1::keys::index_v2::IndexEntity;
+use crate::encoding::v2::keys::IndexEntity;
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{DataKeyKind, Key};
 use crate::encoding::v1::property::{self, Property};

@@ -2946,10 +2946,10 @@ mod tests {
         use bytes::Bytes;
         use slatedb::IsolationLevel;
 
-        use crate::encoding::v1::keys::index_v2::IndexV2Key;
+        use crate::encoding::v2::keys::ScopedKey;
         use crate::encoding::v1::keys::vectors::{VectorKey, VectorUpperVectorKey};
         use crate::encoding::v1::keys::{DataKeyKind, Key};
-        use crate::encoding::v1::values::index_v2::encode_index_record;
+        use crate::encoding::v2::values::encode_index_record;
 
         let db = HelixDB::open(HelixDbSource::InMemory {
             database: "facade-canonical-vector-hydration".to_string(),
@@ -3003,9 +3003,9 @@ mod tests {
             physical_index_id,
         )
         .unwrap();
-        let record_key = Key::Data {
+        let record_key = crate::encoding::v2::keys::Key::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::index_record(record.identity().clone())),
+            kind: ScopedKey::index_record(record.identity().clone()),
         }
         .to_bytes();
         let vector_key = Key::Data {

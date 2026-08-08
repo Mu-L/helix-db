@@ -9,10 +9,10 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Bound;
 use std::time::{Duration, Instant};
 
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::values as index_values;
 use crate::index_v2::work::{AppliedFamilyState, SplitRef};
 use crate::HelixStorage;
 
@@ -51,19 +51,19 @@ pub(super) async fn verify_dropped(db: &crate::HelixDB) {
         loop {
             let mut residue = 0_usize;
             for kind in [
-                index_keys::IndexV2RecordKind::BuildDelta,
-                index_keys::IndexV2RecordKind::AppliedState,
-                index_keys::IndexV2RecordKind::TextManifestRoot,
-                index_keys::IndexV2RecordKind::TextManifestPage,
-                index_keys::IndexV2RecordKind::TextBuildArtifact,
-                index_keys::IndexV2RecordKind::TextEntityState,
-                index_keys::IndexV2RecordKind::TextCorpusStatistics,
-                index_keys::IndexV2RecordKind::TextTermStatistics,
-                index_keys::IndexV2RecordKind::TextStatisticsEntity,
+                index_keys::RecordKind::BuildDelta,
+                index_keys::RecordKind::AppliedState,
+                index_keys::RecordKind::TextManifestRoot,
+                index_keys::RecordKind::TextManifestPage,
+                index_keys::RecordKind::TextBuildArtifact,
+                index_keys::RecordKind::TextEntityState,
+                index_keys::RecordKind::TextCorpusStatistics,
+                index_keys::RecordKind::TextTermStatistics,
+                index_keys::RecordKind::TextStatisticsEntity,
             ] {
                 let prefix = Key::data_prefix(
                     DataScope::LegacyUnscoped,
-                    index_keys::IndexV2Key::logical_prefix(kind),
+                    index_keys::ScopedKey::logical_prefix(kind),
                 );
                 let mut rows = writer
                     .db()
@@ -84,8 +84,8 @@ pub(super) async fn verify_dropped(db: &crate::HelixDB) {
                         .expect("bounded text cleanup residue count does not overflow");
                 }
             }
-            for kind in [index_keys::GlobalIndexV2Kind::OperationPointer] {
-                let prefix = index_keys::GlobalIndexV2Key::logical_prefix(kind);
+            for kind in [index_keys::GlobalKind::OperationPointer] {
+                let prefix = index_keys::GlobalKey::logical_prefix(kind);
                 let mut rows = writer
                     .db()
                     .scan_prefix(
@@ -127,10 +127,10 @@ async fn observe_steady_state(
     let scope = DataScope::LegacyUnscoped;
     let mut transient_rows = Vec::new();
     for kind in [
-        index_keys::IndexV2RecordKind::BuildDelta,
-        index_keys::IndexV2RecordKind::TextBuildArtifact,
+        index_keys::RecordKind::BuildDelta,
+        index_keys::RecordKind::TextBuildArtifact,
     ] {
-        let prefix = Key::data_prefix(scope, index_keys::IndexV2Key::logical_prefix(kind));
+        let prefix = Key::data_prefix(scope, index_keys::ScopedKey::logical_prefix(kind));
         let mut rows = writer
             .db()
             .scan_prefix(
@@ -154,8 +154,8 @@ async fn observe_steady_state(
             transient_rows.push(format!("scoped {kind:?}: {count}"));
         }
     }
-    for kind in [index_keys::GlobalIndexV2Kind::OperationPointer] {
-        let prefix = index_keys::GlobalIndexV2Key::logical_prefix(kind);
+    for kind in [index_keys::GlobalKind::OperationPointer] {
+        let prefix = index_keys::GlobalKey::logical_prefix(kind);
         let mut rows = writer
             .db()
             .scan_prefix(
@@ -188,7 +188,7 @@ async fn observe_steady_state(
     let mut roots = HashMap::new();
     let root_prefix = Key::data_prefix(
         scope,
-        index_keys::IndexV2Key::logical_prefix(index_keys::IndexV2RecordKind::TextManifestRoot),
+        index_keys::ScopedKey::logical_prefix(index_keys::RecordKind::TextManifestRoot),
     );
     let mut root_rows = writer
         .db()
@@ -204,17 +204,14 @@ async fn observe_steady_state(
         .expect("text manifest root scan succeeds")
     {
         let Key::Data {
-            kind: DataKeyKind::IndexV2(index_keys::IndexV2Key::TextManifestRoot(root_key)),
+            kind: index_keys::ScopedKey::TextManifestRoot(root_key),
             ..
         } = Key::parse_from_slice(scope, &row.key).expect("text manifest root key decodes")
         else {
             panic!("text manifest root prefix returned a different typed key");
         };
-        let index_values::IndexV2WorkValue::TextManifestRoot(root) =
-            index_values::decode_work_value(&row.value).expect("text manifest root value decodes")
-        else {
-            panic!("text manifest root key carried a different typed value");
-        };
+        let root = index_values::decode_manifest_root(&row.value)
+            .expect("text manifest root value decodes");
         assert_eq!(root_key.index_id, root.index_id());
         assert_eq!(root_key.generation, root.generation());
         assert_eq!(root_key.partition, root.partition().fingerprint());
@@ -231,7 +228,7 @@ async fn observe_steady_state(
     let mut pages = HashMap::<index_keys::TextManifestPageKey, Vec<SplitRef>>::new();
     let page_prefix = Key::data_prefix(
         scope,
-        index_keys::IndexV2Key::logical_prefix(index_keys::IndexV2RecordKind::TextManifestPage),
+        index_keys::ScopedKey::logical_prefix(index_keys::RecordKind::TextManifestPage),
     );
     let mut page_rows = writer
         .db()
@@ -247,17 +244,14 @@ async fn observe_steady_state(
         .expect("text manifest page scan succeeds")
     {
         let Key::Data {
-            kind: DataKeyKind::IndexV2(index_keys::IndexV2Key::TextManifestPage(page_key)),
+            kind: index_keys::ScopedKey::TextManifestPage(page_key),
             ..
         } = Key::parse_from_slice(scope, &row.key).expect("text manifest page key decodes")
         else {
             panic!("text manifest page prefix returned a different typed key");
         };
-        let index_values::IndexV2WorkValue::TextManifestPage(page) =
-            index_values::decode_work_value(&row.value).expect("text manifest page value decodes")
-        else {
-            panic!("text manifest page key carried a different typed value");
-        };
+        let page = index_values::decode_manifest_page(&row.value)
+            .expect("text manifest page value decodes");
         assert_eq!(page_key.root.index_id, page.index_id());
         assert_eq!(page_key.root.generation, page.generation());
         assert_eq!(page_key.root.partition, page.partition().fingerprint());
@@ -290,7 +284,7 @@ async fn observe_steady_state(
 
     let state_prefix = Key::data_prefix(
         scope,
-        index_keys::IndexV2Key::logical_prefix(index_keys::IndexV2RecordKind::TextEntityState),
+        index_keys::ScopedKey::logical_prefix(index_keys::RecordKind::TextEntityState),
     );
     let mut state_rows = writer
         .db()
@@ -308,17 +302,14 @@ async fn observe_steady_state(
         .expect("text entity-state scan succeeds")
     {
         let Key::Data {
-            kind: DataKeyKind::IndexV2(index_keys::IndexV2Key::TextEntityState(state_key)),
+            kind: index_keys::ScopedKey::TextEntityState(state_key),
             ..
         } = Key::parse_from_slice(scope, &row.key).expect("text entity-state key decodes")
         else {
             panic!("text entity-state prefix returned a different typed key");
         };
-        let index_values::IndexV2WorkValue::TextEntityState(state) =
-            index_values::decode_work_value(&row.value).expect("text entity-state value decodes")
-        else {
-            panic!("text entity-state key carried a different typed value");
-        };
+        let state = index_values::decode_text_entity_state(&row.value)
+            .expect("text entity-state value decodes");
         assert_eq!(state_key.root.index_id, state.index_id);
         assert_eq!(state_key.root.generation, state.generation);
         assert_eq!(state_key.root.partition, state.partition.fingerprint());
@@ -340,7 +331,7 @@ async fn observe_steady_state(
 
     let applied_prefix = Key::data_prefix(
         scope,
-        index_keys::IndexV2Key::logical_prefix(index_keys::IndexV2RecordKind::AppliedState),
+        index_keys::ScopedKey::logical_prefix(index_keys::RecordKind::AppliedState),
     );
     let mut applied_rows = writer
         .db()
@@ -356,18 +347,14 @@ async fn observe_steady_state(
         .expect("builder-applied text-state scan succeeds")
     {
         let Key::Data {
-            kind: DataKeyKind::IndexV2(index_keys::IndexV2Key::AppliedState(applied_key)),
+            kind: index_keys::ScopedKey::AppliedState(applied_key),
             ..
         } = Key::parse_from_slice(scope, &row.key).expect("builder-applied state key decodes")
         else {
             panic!("builder-applied prefix returned a different typed key");
         };
-        let index_values::IndexV2WorkValue::AppliedEntityState(applied) =
-            index_values::decode_work_value(&row.value)
-                .expect("builder-applied text-state value decodes")
-        else {
-            panic!("builder-applied key carried a different typed value");
-        };
+        let applied = index_values::decode_applied_state(&row.value)
+            .expect("builder-applied text-state value decodes");
         assert_eq!(applied_key.index_id, applied.index_id);
         assert_eq!(applied_key.generation, applied.generation);
         assert_eq!(applied_key.entity.kind, applied.entity_kind);

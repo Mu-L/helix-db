@@ -14,7 +14,7 @@ use helix_planner::{catalog, context, cost, exec, ir, properties, trace};
 use serde::Serialize;
 
 use crate::config::SecondaryIndexDefinition;
-use crate::encoding::v1::keys::index_v2::{IndexV2Key, IndexV2RecordKind};
+use crate::encoding::v2::keys::{ScopedKey, RecordKind};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::Key;
 use crate::execution::interpreter::ExecutionValue;
@@ -138,7 +138,7 @@ impl SecondaryEqualityHotPathFixture {
         };
         let prefix = Key::data_prefix(
             DataScope::LegacyUnscoped,
-            IndexV2Key::logical_prefix(IndexV2RecordKind::SecondaryEntry),
+            ScopedKey::logical_prefix(RecordKind::SecondaryEntry),
         );
         let mut rows = writer.db().scan_prefix(&prefix, ..).await?;
         let mut physical_secondary_rows = 0_u64;

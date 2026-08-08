@@ -7,16 +7,17 @@
 //! key construction nor value serialization.
 
 use crate::encoding::v1::{
-    keys::{
-        index_v2::GlobalIndexV2Key,
-        tenant::{DataScope, TenantId},
-        Key,
-    },
+    keys::tenant::{DataScope, TenantId},
+    values::{secondary, text_index, vectors},
+};
+use crate::encoding::v2::{
+    keys::{GlobalKey, Key},
     values::{
-        index_v2::{
-            decode_index_record, decode_metadata_value, decode_operation_record, decode_work_value,
-        },
-        secondary, text_index, vectors,
+        decode_applied_state, decode_build_artifact, decode_build_delta,
+        decode_corpus_statistics, decode_index_record, decode_manifest_page,
+        decode_manifest_root, decode_metadata_value, decode_operation_record,
+        decode_partition_mapping, decode_secondary_entry, decode_statistics_entity,
+        decode_term_statistics, decode_text_entity_state,
     },
 };
 
@@ -36,7 +37,7 @@ pub fn decode_current_index_v2_key(selector: u8, data: &[u8]) {
             let _ = Key::parse_from_slice(scope, data);
         }
         _ => {
-            let _ = GlobalIndexV2Key::parse_from_slice(data);
+            let _ = GlobalKey::parse_from_slice(data);
         }
     }
 }
@@ -62,7 +63,21 @@ pub fn decode_current_index_v2_record(selector: u8, data: &[u8]) {
 
 /// Exercises all V2 physical-work, upload, proof, reachability, and GC values.
 pub fn decode_current_index_v2_work(data: &[u8]) {
-    let _ = decode_work_value(data);
+    let _ = typed_work_value_is_valid(data);
+}
+
+fn typed_work_value_is_valid(data: &[u8]) -> bool {
+    decode_build_delta(data).is_ok()
+        || decode_applied_state(data).is_ok()
+        || decode_secondary_entry(data).is_ok()
+        || decode_manifest_root(data).is_ok()
+        || decode_manifest_page(data).is_ok()
+        || decode_build_artifact(data).is_ok()
+        || decode_text_entity_state(data).is_ok()
+        || decode_partition_mapping(data).is_ok()
+        || decode_corpus_statistics(data).is_ok()
+        || decode_term_statistics(data).is_ok()
+        || decode_statistics_entity(data).is_ok()
 }
 
 /// Exercises one deployed secondary row decoder.
@@ -204,7 +219,7 @@ mod tests {
         let global = hex_seed(include_bytes!(
             "../fuzz/corpus/current_index_v2_keys/valid-global-storage-version"
         ));
-        assert!(GlobalIndexV2Key::parse_from_slice(&global[1..]).is_ok());
+        assert!(GlobalKey::parse_from_slice(&global[1..]).is_ok());
 
         let index = hex_seed(include_bytes!(
             "../fuzz/corpus/current_index_v2_records/valid-index-record"
@@ -231,7 +246,7 @@ mod tests {
             include_bytes!("../fuzz/corpus/current_index_v2_work/valid-gc-reachability-mark")
                 .as_slice(),
         ] {
-            assert!(decode_work_value(&hex_seed(seed)).is_ok());
+            assert!(typed_work_value_is_valid(&hex_seed(seed)));
         }
     }
 }

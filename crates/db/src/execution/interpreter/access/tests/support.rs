@@ -388,19 +388,15 @@ pub(super) async fn seed_vector_index<D: search::vector::Distance>(
             .await
             .expect("vector inserts");
     }
-    let key = crate::encoding::v1::keys::Key::Data {
+    let key = crate::encoding::v2::keys::Key::Data {
         scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-        kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-            crate::encoding::v1::keys::index_v2::IndexV2Key::index_record(
-                record.identity().clone(),
-            ),
-        ),
+        kind: crate::encoding::v2::keys::ScopedKey::index_record(record.identity().clone()),
     }
     .to_bytes();
     transaction
         .put(
             key,
-            crate::encoding::v1::values::index_v2::encode_index_record(&record),
+            crate::encoding::v2::values::encode_index_record(&record),
         )
         .expect("active canonical vector row stages");
     transaction
@@ -440,7 +436,7 @@ pub(super) async fn seed_managed_text_index(
     db: &HelixDB,
     definition: &config::TextIndexDefinition,
     documents: &[search::text::TextDocumentInput],
-) -> crate::encoding::v1::keys::index_v2::TextManifestRootKey {
+) -> crate::encoding::v2::keys::TextManifestRootKey {
     let index_name = search::text_index_name(
         definition.element_type(),
         definition.label(),
@@ -495,20 +491,16 @@ pub(super) async fn seed_managed_text_index(
     let scope = crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped;
     transaction
         .put(
-            crate::encoding::v1::keys::Key::Data {
+            crate::encoding::v2::keys::Key::Data {
                 scope,
-                kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-                    crate::encoding::v1::keys::index_v2::IndexV2Key::index_record(
-                        record.identity().clone(),
-                    ),
-                ),
+                kind: crate::encoding::v2::keys::ScopedKey::index_record(record.identity().clone()),
             }
             .to_bytes(),
-            crate::encoding::v1::values::index_v2::encode_index_record(&record),
+            crate::encoding::v2::values::encode_index_record(&record),
         )
         .expect("managed text Active record stages");
     let partition = crate::index_v2::work::TextPartition::Unpartitioned;
-    let root = crate::encoding::v1::keys::index_v2::TextManifestRootKey {
+    let root = crate::encoding::v2::keys::TextManifestRootKey {
         index_id,
         generation,
         partition: partition.fingerprint(),
@@ -516,15 +508,12 @@ pub(super) async fn seed_managed_text_index(
     let split_count = u64::try_from(splits.len()).expect("fixture split count fits u64");
     transaction
         .put(
-            crate::encoding::v1::keys::Key::Data {
+            crate::encoding::v2::keys::Key::Data {
                 scope,
-                kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-                    crate::encoding::v1::keys::index_v2::IndexV2Key::TextManifestRoot(root),
-                ),
+                kind: crate::encoding::v2::keys::ScopedKey::TextManifestRoot(root),
             }
             .to_bytes(),
-            crate::encoding::v1::values::index_v2::encode_work_value(
-                &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(
+            crate::encoding::v2::values::encode_manifest_root(&
                     crate::index_v2::work::TextManifestRootValue::try_new(
                         index_id,
                         generation,
@@ -536,22 +525,18 @@ pub(super) async fn seed_managed_text_index(
                     )
                     .expect("managed text root validates"),
                 ),
-            ),
         )
         .expect("managed text root stages");
     transaction
         .put(
-            crate::encoding::v1::keys::Key::Data {
+            crate::encoding::v2::keys::Key::Data {
                 scope,
-                kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-                    crate::encoding::v1::keys::index_v2::IndexV2Key::TextManifestPage(
-                        crate::encoding::v1::keys::index_v2::TextManifestPageKey { root, page: 0 },
-                    ),
+                kind: crate::encoding::v2::keys::ScopedKey::TextManifestPage(
+                    crate::encoding::v2::keys::TextManifestPageKey { root, page: 0 },
                 ),
             }
             .to_bytes(),
-            crate::encoding::v1::values::index_v2::encode_work_value(
-                &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestPage(
+            crate::encoding::v2::values::encode_manifest_page(&
                     crate::index_v2::work::TextManifestPageValue::try_new(
                         index_id,
                         generation,
@@ -561,12 +546,11 @@ pub(super) async fn seed_managed_text_index(
                     )
                     .expect("managed text page validates"),
                 ),
-            ),
         )
         .expect("managed text page stages");
     let mut statistics = crate::index_v2::text::statistics::PreparedTextStatisticsBatch::default();
     for document in documents {
-        let entity = crate::encoding::v1::keys::index_v2::IndexEntity {
+        let entity = crate::encoding::v2::keys::IndexEntity {
             kind: match definition.element_type() {
                 config::TextElementType::Node => crate::index_v2::IndexElementKind::Node,
                 config::TextElementType::Edge => crate::index_v2::IndexElementKind::Edge,
@@ -596,20 +580,14 @@ pub(super) async fn seed_managed_text_index(
             .expect("managed text fixture statistics compose");
         transaction
             .put(
-                crate::encoding::v1::keys::Key::Data {
+                crate::encoding::v2::keys::Key::Data {
                     scope,
-                    kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-                        crate::encoding::v1::keys::index_v2::IndexV2Key::TextEntityState(
-                            crate::encoding::v1::keys::index_v2::TextEntityStateKey {
-                                root,
-                                entity,
-                            },
-                        ),
+                    kind: crate::encoding::v2::keys::ScopedKey::TextEntityState(
+                        crate::encoding::v2::keys::TextEntityStateKey { root, entity },
                     ),
                 }
                 .to_bytes(),
-                crate::encoding::v1::values::index_v2::encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextEntityState(
+                crate::encoding::v2::values::encode_text_entity_state(&
                         crate::index_v2::work::TextEntityStateValue {
                             index_id,
                             generation,
@@ -620,7 +598,6 @@ pub(super) async fn seed_managed_text_index(
                             live: true,
                         },
                     ),
-                ),
             )
             .expect("managed text live state stages");
     }

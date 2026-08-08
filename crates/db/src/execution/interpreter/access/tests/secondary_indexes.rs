@@ -5,14 +5,13 @@ use crate::config::SecondaryIndexDefinition;
 use crate::encoding::indexes::equality::{EqualityIndexKey, GlobalEdgeEqualityIndexKey};
 use crate::encoding::indexes::range::RangeIndexDirection as StorageRangeIndexDirection;
 use crate::encoding::indexes::{hash_property_name, hash_property_value, IndexKey};
-use crate::encoding::v1::keys::index_v2::{
-    CanonicalSecondaryValue, IndexV2Key, SecondaryEntryKey, SecondaryEntryLane,
+use crate::encoding::v2::keys::{
+    CanonicalSecondaryValue, ScopedKey, SecondaryEntryKey, SecondaryEntryLane,
 };
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2::{
-    encode_index_record, encode_work_value, IndexV2WorkValue,
-};
+use crate::encoding::v2::keys::Key as ManagedKey;
+use crate::encoding::v2::values::{encode_index_record, encode_secondary_entry};
 use crate::error::{HelixDbError, IndexFamily, IndexLifecycleUnavailableReason};
 use crate::execution::interpreter::ExecutionContext;
 use crate::index_v2::work::SecondaryEntryValue;
@@ -50,9 +49,9 @@ async fn seed_active_secondary_generation(
             .expect("managed secondary fixture projects an Active handle");
     db.inner_db()
         .put(
-            Key::Data {
+            ManagedKey::Data {
                 scope: DataScope::LegacyUnscoped,
-                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(identity.clone())),
+                kind: ScopedKey::index_record(identity.clone()),
             }
             .to_bytes(),
             encode_index_record(&active),
@@ -112,17 +111,17 @@ async fn seed_active_secondary_generation(
         .expect("managed secondary entry key validates");
         db.inner_db()
             .put(
-                Key::Data {
+                ManagedKey::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::SecondaryEntry(key)),
+                    kind: ScopedKey::SecondaryEntry(key),
                 }
                 .to_bytes(),
-                encode_work_value(&IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+                encode_secondary_entry(&SecondaryEntryValue {
                     index_id,
                     generation,
                     lane,
                     entity_id,
-                })),
+                }),
             )
             .await
             .expect("managed secondary entry persists");
@@ -348,9 +347,9 @@ async fn managed_secondary_access_uses_active_v2_rows() {
         .unwrap();
     db.inner_db()
         .put(
-            Key::Data {
+            ManagedKey::Data {
                 scope: DataScope::LegacyUnscoped,
-                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(node_range_identity)),
+                kind: ScopedKey::index_record(node_range_identity),
             }
             .to_bytes(),
             encode_index_record(&dropping_node_range),
@@ -384,9 +383,9 @@ async fn managed_secondary_access_uses_active_v2_rows() {
         .unwrap();
     db.inner_db()
         .put(
-            Key::Data {
+            ManagedKey::Data {
                 scope: DataScope::LegacyUnscoped,
-                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(equality_identity)),
+                kind: ScopedKey::index_record(equality_identity),
             }
             .to_bytes(),
             encode_index_record(&dropping),
@@ -1261,9 +1260,9 @@ async fn managed_secondary_access_propagates_corrupt_canonical_records() {
             .identity();
         db.inner_db()
             .put(
-                Key::Data {
+                ManagedKey::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(identity)),
+                    kind: ScopedKey::index_record(identity),
                 }
                 .to_bytes(),
                 bytes::Bytes::from_static(b"corrupt canonical record"),

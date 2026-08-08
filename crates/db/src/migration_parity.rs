@@ -25,16 +25,18 @@ use slatedb::DbReadOps;
 
 use crate::encoding::keys::tenant::DataScope;
 use crate::encoding::property::{property_value::PropertyValue, Property};
-use crate::encoding::v1::keys::index_v2::{
-    CanonicalSecondaryValue, GlobalIndexV2Key, IndexV2Key, GLOBAL_INDEX_V2_SENTINEL,
+use crate::encoding::v2::keys::{
+    CanonicalSecondaryValue, GlobalKey, ScopedKey, GLOBAL_SENTINEL,
 };
-use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key, KeyPrefix, MetadataKey};
+use crate::encoding::v1::keys::{DataKeyKind, Key, KeyPrefix, MetadataKey};
+use crate::encoding::v2::keys::Key as IndexKey;
 use crate::encoding::v1::read_u64;
 use crate::encoding::v1::values;
 use crate::encoding::v1::values::id_allocation::IdAllocationWatermarkValue;
-use crate::encoding::v1::values::index_v2::{
-    decode_index_record, decode_metadata_value, decode_operation_record, decode_work_value,
-    encode_metadata_value, encode_work_value, IndexV2WorkValue,
+use crate::encoding::v2::values::{
+    decode_corpus_statistics, decode_index_record, decode_metadata_value, decode_operation_record,
+    decode_secondary_entry, decode_statistics_entity, decode_term_statistics,
+    encode_corpus_statistics, encode_metadata_value,
 };
 use crate::{migrations, search, HelixDB, HelixStorage, Result};
 
@@ -367,8 +369,8 @@ impl HelixDB {
         let db = self.migration_parity_inner_db()?;
         let version = crate::index_v2::IndexStorageVersion::new(0x0002)?;
         db.put(
-            Key::Global {
-                kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::StorageVersion),
+            IndexKey::Global {
+                kind: GlobalKey::StorageVersion,
             }
             .to_bytes(),
             encode_metadata_value(&crate::index_v2::IndexV2MetadataValue::StorageVersion(
@@ -415,15 +417,15 @@ impl HelixDB {
             MigrationParityTextStatisticsDamage::MissingCorpus { tenant } => {
                 let partition = migration_parity_text_partition(&definition, tenant)?;
                 (
-                    Key::Data {
+                    IndexKey::Data {
                         scope: authority.scope(),
-                        kind: DataKeyKind::IndexV2(IndexV2Key::TextCorpusStatistics(
-                            crate::encoding::v1::keys::index_v2::TextCorpusStatisticsKey {
+                        kind: ScopedKey::TextCorpusStatistics(
+                            crate::encoding::v2::keys::TextCorpusStatisticsKey {
                                 index_id: authority.index_id(),
                                 generation: authority.generation(),
                                 partition: partition.fingerprint(),
                             },
-                        )),
+                        ),
                     }
                     .to_bytes(),
                     None,
@@ -444,35 +446,35 @@ impl HelixDB {
                 )
                 .map_err(|error| crate::error::HelixDbError::Config(error.to_string()))?;
                 (
-                    Key::Data {
+                    IndexKey::Data {
                         scope: authority.scope(),
-                        kind: DataKeyKind::IndexV2(IndexV2Key::TextCorpusStatistics(
-                            crate::encoding::v1::keys::index_v2::TextCorpusStatisticsKey {
+                        kind: ScopedKey::TextCorpusStatistics(
+                            crate::encoding::v2::keys::TextCorpusStatisticsKey {
                                 index_id: authority.index_id(),
                                 generation: authority.generation(),
                                 partition: partition.fingerprint(),
                             },
-                        )),
+                        ),
                     }
                     .to_bytes(),
-                    Some(encode_work_value(&IndexV2WorkValue::TextCorpusStatistics(
+                    Some(encode_corpus_statistics(&
                         statistics,
-                    ))),
+                    )),
                 )
             }
             MigrationParityTextStatisticsDamage::MissingEntityMarker { entity_id } => (
-                Key::Data {
+                IndexKey::Data {
                     scope: authority.scope(),
-                    kind: DataKeyKind::IndexV2(IndexV2Key::TextStatisticsEntity(
-                        crate::encoding::v1::keys::index_v2::TextStatisticsEntityKey {
+                    kind: ScopedKey::TextStatisticsEntity(
+                        crate::encoding::v2::keys::TextStatisticsEntityKey {
                             index_id: authority.index_id(),
                             generation: authority.generation(),
-                            entity: crate::encoding::v1::keys::index_v2::IndexEntity {
+                            entity: crate::encoding::v2::keys::IndexEntity {
                                 kind: definition.element_kind(),
                                 id: crate::index_v2::IndexEntityId::new(entity_id),
                             },
                         },
-                    )),
+                    ),
                 }
                 .to_bytes(),
                 None,
@@ -1901,23 +1903,23 @@ async fn scan_v2_state(
 ) -> Result<()> {
     let mut completed_vector_builds =
         BTreeMap::<(u64, u64), crate::index_v2::OperationCounters>::new();
-    let scoped_prefix = Key::data_prefix(
+    let scoped_prefix = IndexKey::data_prefix(
         scope,
-        Bytes::copy_from_slice(IndexV2Key::key_prefix().as_slice()),
+        Bytes::from(vec![ScopedKey::key_prefix()]),
     );
     let mut scoped = read.scan_prefix(scoped_prefix, ..).await?;
     while let Some(row) = scoped.next().await? {
-        let Key::Data {
-            kind: DataKeyKind::IndexV2(key),
+        let IndexKey::Data {
+            kind: key,
             ..
-        } = Key::parse_from_slice(scope, &row.key)?
+        } = IndexKey::parse_from_slice(scope, &row.key)?
         else {
             continue;
         };
         let kind = format!("{:?}", key.record_kind());
         increment_count(&mut state.scoped_row_counts, &kind);
         match key {
-            IndexV2Key::IndexRecord(_) => {
+            ScopedKey::IndexRecord(_) => {
                 let record = decode_index_record(&row.value)?;
                 let identity = parity_identity(record.identity());
                 if record.state().name() == "active" {
@@ -1936,7 +1938,7 @@ async fn scan_v2_state(
                         .map(|physical| format!("{physical:?}")),
                 });
             }
-            IndexV2Key::Operation(_) => {
+            ScopedKey::Operation(_) => {
                 let operation = decode_operation_record(&row.value)?;
                 if matches!(
                     operation.execution_state(),
@@ -1967,14 +1969,8 @@ async fn scan_v2_state(
                     })?,
                 );
             }
-            IndexV2Key::TextCorpusStatistics(key) => {
-                let IndexV2WorkValue::TextCorpusStatistics(statistics) =
-                    decode_work_value(&row.value)?
-                else {
-                    return Err(crate::error::HelixDbError::InvariantViolation(
-                        "text corpus-statistics key contains another work value".to_string(),
-                    ));
-                };
+            ScopedKey::TextCorpusStatistics(key) => {
+                let statistics = decode_corpus_statistics(&row.value)?;
                 if statistics.index_id != key.index_id
                     || statistics.generation != key.generation
                     || statistics.partition.fingerprint() != key.partition
@@ -1993,18 +1989,12 @@ async fn scan_v2_state(
                         total_token_count: statistics.total_token_count,
                     });
             }
-            IndexV2Key::TextTermStatistics(key) => {
-                let IndexV2WorkValue::TextTermStatistics(statistics) =
-                    decode_work_value(&row.value)?
-                else {
-                    return Err(crate::error::HelixDbError::InvariantViolation(
-                        "text term-statistics key contains another work value".to_string(),
-                    ));
-                };
+            ScopedKey::TextTermStatistics(key) => {
+                let statistics = decode_term_statistics(&row.value)?;
                 if statistics.index_id != key.corpus.index_id
                     || statistics.generation != key.corpus.generation
                     || statistics.partition.fingerprint() != key.corpus.partition
-                    || crate::encoding::v1::keys::index_v2::TextTermFingerprint::new(
+                    || crate::encoding::v2::keys::TextTermFingerprint::new(
                         Sha256::digest(&statistics.term).into(),
                     ) != key.term
                 {
@@ -2022,14 +2012,8 @@ async fn scan_v2_state(
                         document_frequency: statistics.document_frequency,
                     });
             }
-            IndexV2Key::TextStatisticsEntity(key) => {
-                let IndexV2WorkValue::TextStatisticsEntity(statistics) =
-                    decode_work_value(&row.value)?
-                else {
-                    return Err(crate::error::HelixDbError::InvariantViolation(
-                        "text entity-statistics key contains another work value".to_string(),
-                    ));
-                };
+            ScopedKey::TextStatisticsEntity(key) => {
+                let statistics = decode_statistics_entity(&row.value)?;
                 if statistics.index_id != key.index_id
                     || statistics.generation != key.generation
                     || statistics.entity_kind != key.entity.kind
@@ -2065,14 +2049,14 @@ async fn scan_v2_state(
                         contribution,
                     });
             }
-            IndexV2Key::BuildDelta(_)
-            | IndexV2Key::AppliedState(_)
-            | IndexV2Key::SecondaryEntry(_)
-            | IndexV2Key::TextManifestRoot(_)
-            | IndexV2Key::TextManifestPage(_)
-            | IndexV2Key::TextBuildArtifact(_)
-            | IndexV2Key::TextEntityState(_)
-            | IndexV2Key::VectorPartitionMapping(_) => {}
+            ScopedKey::BuildDelta(_)
+            | ScopedKey::AppliedState(_)
+            | ScopedKey::SecondaryEntry(_)
+            | ScopedKey::TextManifestRoot(_)
+            | ScopedKey::TextManifestPage(_)
+            | ScopedKey::TextBuildArtifact(_)
+            | ScopedKey::TextEntityState(_)
+            | ScopedKey::VectorPartitionMapping(_) => {}
         }
     }
     state
@@ -2085,14 +2069,14 @@ async fn scan_v2_state(
     state.text_entity_statistics.sort();
 
     let mut global = read
-        .scan_prefix(Bytes::copy_from_slice(&GLOBAL_INDEX_V2_SENTINEL), ..)
+        .scan_prefix(Bytes::copy_from_slice(&GLOBAL_SENTINEL), ..)
         .await?;
     while let Some(row) = global.next().await? {
-        let key = GlobalIndexV2Key::parse_from_slice(&row.key)?;
+        let key = GlobalKey::parse_from_slice(&row.key)?;
         let kind = format!("{:?}", key.kind());
         increment_count(&mut state.global_row_counts, &kind);
         match key {
-            GlobalIndexV2Key::StorageVersion => {
+            GlobalKey::StorageVersion => {
                 let crate::index_v2::IndexV2MetadataValue::StorageVersion(version) =
                     decode_metadata_value(&row.value)?
                 else {
@@ -2102,10 +2086,10 @@ async fn scan_v2_state(
                 };
                 state.storage_version = Some(version.get());
             }
-            GlobalIndexV2Key::OperationPointer(_) => {
+            GlobalKey::OperationPointer(_) => {
                 state.pending_operation_pointers += 1;
             }
-            GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_id) => {
+            GlobalKey::LegacyVectorPhysicalReservation(physical_id) => {
                 let crate::index_v2::IndexV2MetadataValue::LegacyVectorPhysicalReservation(
                     reservation,
                 ) = decode_metadata_value(&row.value)?
@@ -2203,9 +2187,9 @@ async fn scan_v2_state(
                         })?;
                 }
             }
-            GlobalIndexV2Key::TextCompactionPointer(_)
-            | GlobalIndexV2Key::LogicalIndexIdWatermark
-            | GlobalIndexV2Key::VectorPhysicalIdWatermark => {}
+            GlobalKey::TextCompactionPointer(_)
+            | GlobalKey::LogicalIndexIdWatermark
+            | GlobalKey::VectorPhysicalIdWatermark => {}
         }
     }
     state.vector_migration.rebuilt_indexes =
@@ -2229,18 +2213,14 @@ pub fn decode_migration_parity_secondary_membership(
     key: &[u8],
     value: &[u8],
 ) -> Result<Option<MigrationParitySecondaryMembership>> {
-    let Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::SecondaryEntry(key)),
+    let IndexKey::Data {
+        kind: ScopedKey::SecondaryEntry(key),
         ..
-    } = Key::parse_from_slice(DataScope::LegacyUnscoped, key)?
+    } = IndexKey::parse_from_slice(DataScope::LegacyUnscoped, key)?
     else {
         return Ok(None);
     };
-    let IndexV2WorkValue::SecondaryEntry(entry) = decode_work_value(value)? else {
-        return Err(crate::error::HelixDbError::Query(
-            "V2 secondary key has a non-secondary value".to_string(),
-        ));
-    };
+    let entry = decode_secondary_entry(value)?;
     if entry.index_id != key.index_id
         || entry.generation != key.generation
         || entry.lane != key.lane
@@ -2373,7 +2353,6 @@ async fn scan_edge_properties(
             | DataKeyKind::EdgeEndpoints(_)
             | DataKeyKind::EdgePairIndex(_)
             | DataKeyKind::Vector(_)
-            | DataKeyKind::IndexV2(_)
             | DataKeyKind::IndexMetadata(_) => {}
         }
     }

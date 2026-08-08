@@ -21,7 +21,7 @@ use crate::config::{
 };
 use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::property::{encode_properties, Property};
-use crate::encoding::v1::keys::index_v2::{IndexV2Key, IndexV2RecordKind};
+use crate::encoding::v2::keys::{ScopedKey, RecordKind};
 use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
 use crate::encoding::v1::keys::{DataKeyKind, EdgePropertyByIdKey, Key, NodePropertyKey};
 use crate::error::HelixDbError;
@@ -1780,8 +1780,8 @@ async fn assert_build_delta_count_at_least(
             .expect("delta count canonical row exists");
     let prefix = Key::data_prefix(
         scope,
-        IndexV2Key::generation_prefix(
-            IndexV2RecordKind::BuildDelta,
+        ScopedKey::generation_prefix(
+            RecordKind::BuildDelta,
             record.index_id(),
             record.state().generation(),
         ),
@@ -2049,8 +2049,8 @@ async fn assert_build_deltas_empty(
             .expect("delta canonical row exists");
     let prefix = Key::data_prefix(
         scope,
-        IndexV2Key::generation_prefix(
-            IndexV2RecordKind::BuildDelta,
+        ScopedKey::generation_prefix(
+            RecordKind::BuildDelta,
             record.index_id(),
             record.state().generation(),
         ),

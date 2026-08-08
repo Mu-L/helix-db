@@ -6,12 +6,38 @@ use crate::encoding::error::EncodingError;
 use crate::index_v2::work::*;
 use crate::index_v2::IndexEntityId;
 
-use super::codec::*;
+use super::*;
 use super::{INDEX_V2_VALUE_VERSION, INDEX_V3_SPLIT_VALUE_VERSION};
+
+pub(crate) mod equality;
+pub(crate) mod range;
+pub(crate) mod text;
+pub(crate) mod vector;
+
+pub(crate) fn encode_secondary_entry(value: &SecondaryEntryValue) -> Bytes {
+    if value.lane.is_equality() {
+        equality::encode_entry(value).expect("equality lane selects its typed value codec")
+    } else {
+        range::encode_entry(value).expect("range lane selects its typed value codec")
+    }
+}
+
+pub(crate) fn decode_secondary_entry(value: &[u8]) -> Result<SecondaryEntryValue, EncodingError> {
+    let WorkValue::SecondaryEntry(decoded) = decode_value(value)? else {
+        return Err(EncodingError::Custom(
+            "secondary entry key contains another value kind".to_string(),
+        ));
+    };
+    if decoded.lane.is_equality() {
+        equality::validate_entry(decoded)
+    } else {
+        range::validate_entry(decoded)
+    }
+}
 
 /// Closed dispatch value for record kinds `0x03..=0x0F`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum IndexV2WorkValue {
+pub(super) enum WorkValue {
     CoalescedBuildDelta(CoalescedBuildDeltaValue),
     AppliedEntityState(AppliedEntityStateValue),
     SecondaryEntry(SecondaryEntryValue),
@@ -25,7 +51,7 @@ pub(crate) enum IndexV2WorkValue {
     TextStatisticsEntity(TextStatisticsEntityValue),
 }
 
-impl IndexV2WorkValue {
+impl WorkValue {
     const fn record_kind(&self) -> u8 {
         match self {
             Self::CoalescedBuildDelta(_) => 0x03,
@@ -43,30 +69,30 @@ impl IndexV2WorkValue {
     }
 }
 
-pub(crate) fn encode_work_value(value: &IndexV2WorkValue) -> Bytes {
+pub(super) fn encode_value(value: &WorkValue) -> Bytes {
     let version = match value {
-        IndexV2WorkValue::TextManifestPage(_) | IndexV2WorkValue::TextBuildArtifact(_) => {
+        WorkValue::TextManifestPage(_) | WorkValue::TextBuildArtifact(_) => {
             INDEX_V3_SPLIT_VALUE_VERSION
         }
-        IndexV2WorkValue::CoalescedBuildDelta(_)
-        | IndexV2WorkValue::AppliedEntityState(_)
-        | IndexV2WorkValue::SecondaryEntry(_)
-        | IndexV2WorkValue::TextManifestRoot(_)
-        | IndexV2WorkValue::TextEntityState(_)
-        | IndexV2WorkValue::VectorPartitionMapping(_)
-        | IndexV2WorkValue::TextCorpusStatistics(_)
-        | IndexV2WorkValue::TextTermStatistics(_)
-        | IndexV2WorkValue::TextStatisticsEntity(_) => INDEX_V2_VALUE_VERSION,
+        WorkValue::CoalescedBuildDelta(_)
+        | WorkValue::AppliedEntityState(_)
+        | WorkValue::SecondaryEntry(_)
+        | WorkValue::TextManifestRoot(_)
+        | WorkValue::TextEntityState(_)
+        | WorkValue::VectorPartitionMapping(_)
+        | WorkValue::TextCorpusStatistics(_)
+        | WorkValue::TextTermStatistics(_)
+        | WorkValue::TextStatisticsEntity(_) => INDEX_V2_VALUE_VERSION,
     };
     let mut encoder = ValueEncoder::with_versioned_header(version, value.record_kind());
     match value {
-        IndexV2WorkValue::CoalescedBuildDelta(value) => {
+        WorkValue::CoalescedBuildDelta(value) => {
             put_index_id(&mut encoder, value.index_id);
             put_generation(&mut encoder, value.generation);
             put_element_kind(&mut encoder, value.entity_kind);
             encoder.put_u64(value.entity_id.get());
         }
-        IndexV2WorkValue::AppliedEntityState(value) => {
+        WorkValue::AppliedEntityState(value) => {
             put_index_id(&mut encoder, value.index_id);
             put_generation(&mut encoder, value.generation);
             put_element_kind(&mut encoder, value.entity_kind);
@@ -89,13 +115,13 @@ pub(crate) fn encode_work_value(value: &IndexV2WorkValue) -> Bytes {
                 }
             }
         }
-        IndexV2WorkValue::SecondaryEntry(value) => {
+        WorkValue::SecondaryEntry(value) => {
             put_index_id(&mut encoder, value.index_id);
             put_generation(&mut encoder, value.generation);
             put_secondary_lane(&mut encoder, value.lane);
             encoder.put_u64(value.entity_id.get());
         }
-        IndexV2WorkValue::TextManifestRoot(value) => {
+        WorkValue::TextManifestRoot(value) => {
             put_index_id(&mut encoder, value.index_id());
             put_generation(&mut encoder, value.generation());
             put_partition(&mut encoder, value.partition());
@@ -103,7 +129,7 @@ pub(crate) fn encode_work_value(value: &IndexV2WorkValue) -> Bytes {
             encoder.put_u32(value.page_count());
             encoder.put_u64(value.split_count());
         }
-        IndexV2WorkValue::TextManifestPage(value) => {
+        WorkValue::TextManifestPage(value) => {
             put_index_id(&mut encoder, value.index_id());
             put_generation(&mut encoder, value.generation());
             put_partition(&mut encoder, value.partition());
@@ -115,14 +141,14 @@ pub(crate) fn encode_work_value(value: &IndexV2WorkValue) -> Bytes {
                 put_split_ref(&mut encoder, *split);
             }
         }
-        IndexV2WorkValue::TextBuildArtifact(value) => {
+        WorkValue::TextBuildArtifact(value) => {
             put_index_id(&mut encoder, value.index_id);
             put_generation(&mut encoder, value.generation);
             put_partition(&mut encoder, &value.partition);
             encoder.put_u32(value.artifact_ordinal);
             put_split_ref(&mut encoder, value.split);
         }
-        IndexV2WorkValue::TextEntityState(value) => {
+        WorkValue::TextEntityState(value) => {
             put_index_id(&mut encoder, value.index_id);
             put_generation(&mut encoder, value.generation);
             put_partition(&mut encoder, &value.partition);
@@ -131,27 +157,27 @@ pub(crate) fn encode_work_value(value: &IndexV2WorkValue) -> Bytes {
             encoder.put_u64(value.logical_version.get());
             encoder.put_bool(value.live);
         }
-        IndexV2WorkValue::VectorPartitionMapping(value) => {
+        WorkValue::VectorPartitionMapping(value) => {
             put_index_id(&mut encoder, value.index_id);
             put_generation(&mut encoder, value.generation);
             put_partition(&mut encoder, value.partition.as_partition());
             encoder.put_u64(value.physical_index_id.get());
         }
-        IndexV2WorkValue::TextCorpusStatistics(value) => {
+        WorkValue::TextCorpusStatistics(value) => {
             put_index_id(&mut encoder, value.index_id);
             put_generation(&mut encoder, value.generation);
             put_partition(&mut encoder, &value.partition);
             encoder.put_u64(value.document_count);
             encoder.put_u64(value.total_token_count);
         }
-        IndexV2WorkValue::TextTermStatistics(value) => {
+        WorkValue::TextTermStatistics(value) => {
             put_index_id(&mut encoder, value.index_id);
             put_generation(&mut encoder, value.generation);
             put_partition(&mut encoder, &value.partition);
             encoder.put_bytes(&value.term);
             encoder.put_u64(value.document_frequency);
         }
-        IndexV2WorkValue::TextStatisticsEntity(value) => {
+        WorkValue::TextStatisticsEntity(value) => {
             put_index_id(&mut encoder, value.index_id);
             put_generation(&mut encoder, value.generation);
             put_element_kind(&mut encoder, value.entity_kind);
@@ -182,7 +208,7 @@ pub(crate) fn encode_work_value(value: &IndexV2WorkValue) -> Bytes {
     encoder.finish()
 }
 
-pub(crate) fn decode_work_value(value: &[u8]) -> Result<IndexV2WorkValue, EncodingError> {
+pub(super) fn decode_value(value: &[u8]) -> Result<WorkValue, EncodingError> {
     let mut decoder = ValueDecoder::with_supported_versions(
         value,
         &[INDEX_V2_VALUE_VERSION, INDEX_V3_SPLIT_VALUE_VERSION],
@@ -196,20 +222,20 @@ pub(crate) fn decode_work_value(value: &[u8]) -> Result<IndexV2WorkValue, Encodi
         )));
     }
     let decoded = match decoder.kind() {
-        0x03 => IndexV2WorkValue::CoalescedBuildDelta(CoalescedBuildDeltaValue {
+        0x03 => WorkValue::CoalescedBuildDelta(CoalescedBuildDeltaValue {
             index_id: take_index_id(&mut decoder)?,
             generation: take_generation(&mut decoder)?,
             entity_kind: take_element_kind(&mut decoder)?,
             entity_id: IndexEntityId::new(decoder.take_u64()?),
         }),
-        0x04 => IndexV2WorkValue::AppliedEntityState(take_applied_state(&mut decoder)?),
-        0x05 => IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+        0x04 => WorkValue::AppliedEntityState(take_applied_state(&mut decoder)?),
+        0x05 => WorkValue::SecondaryEntry(SecondaryEntryValue {
             index_id: take_index_id(&mut decoder)?,
             generation: take_generation(&mut decoder)?,
             lane: take_secondary_lane(&mut decoder)?,
             entity_id: IndexEntityId::new(decoder.take_u64()?),
         }),
-        0x06 => IndexV2WorkValue::TextManifestRoot(
+        0x06 => WorkValue::TextManifestRoot(
             TextManifestRootValue::try_new(
                 take_index_id(&mut decoder)?,
                 take_generation(&mut decoder)?,
@@ -220,17 +246,15 @@ pub(crate) fn decode_work_value(value: &[u8]) -> Result<IndexV2WorkValue, Encodi
             )
             .map_err(work_model_error)?,
         ),
-        0x07 => {
-            IndexV2WorkValue::TextManifestPage(take_manifest_page(&mut decoder, pruning_version)?)
-        }
-        0x09 => IndexV2WorkValue::TextBuildArtifact(TextBuildArtifactValue {
+        0x07 => WorkValue::TextManifestPage(take_manifest_page(&mut decoder, pruning_version)?),
+        0x09 => WorkValue::TextBuildArtifact(TextBuildArtifactValue {
             index_id: take_index_id(&mut decoder)?,
             generation: take_generation(&mut decoder)?,
             partition: take_partition(&mut decoder)?,
             artifact_ordinal: decoder.take_u32()?,
             split: take_split_ref(&mut decoder, pruning_version)?,
         }),
-        0x0C => IndexV2WorkValue::TextEntityState(TextEntityStateValue {
+        0x0C => WorkValue::TextEntityState(TextEntityStateValue {
             index_id: take_index_id(&mut decoder)?,
             generation: take_generation(&mut decoder)?,
             partition: take_partition(&mut decoder)?,
@@ -239,7 +263,7 @@ pub(crate) fn decode_work_value(value: &[u8]) -> Result<IndexV2WorkValue, Encodi
             logical_version: take_logical_version(&mut decoder)?,
             live: decoder.take_bool()?,
         }),
-        0x0F => IndexV2WorkValue::VectorPartitionMapping(VectorPartitionMappingValue {
+        0x0F => WorkValue::VectorPartitionMapping(VectorPartitionMappingValue {
             index_id: take_index_id(&mut decoder)?,
             generation: take_generation(&mut decoder)?,
             partition: VectorTenantPartition::try_from_partition(take_partition(&mut decoder)?)
@@ -247,7 +271,7 @@ pub(crate) fn decode_work_value(value: &[u8]) -> Result<IndexV2WorkValue, Encodi
             physical_index_id: crate::index_v2::VectorPhysicalIndexId::new(decoder.take_u64()?)
                 .map_err(model_error)?,
         }),
-        0x10 => IndexV2WorkValue::TextCorpusStatistics(
+        0x10 => WorkValue::TextCorpusStatistics(
             TextCorpusStatisticsValue::try_new(
                 take_index_id(&mut decoder)?,
                 take_generation(&mut decoder)?,
@@ -257,7 +281,7 @@ pub(crate) fn decode_work_value(value: &[u8]) -> Result<IndexV2WorkValue, Encodi
             )
             .map_err(work_model_error)?,
         ),
-        0x11 => IndexV2WorkValue::TextTermStatistics(
+        0x11 => WorkValue::TextTermStatistics(
             TextTermStatisticsValue::try_new(
                 take_index_id(&mut decoder)?,
                 take_generation(&mut decoder)?,
@@ -304,7 +328,7 @@ pub(crate) fn decode_work_value(value: &[u8]) -> Result<IndexV2WorkValue, Encodi
                     ));
                 }
             };
-            IndexV2WorkValue::TextStatisticsEntity(TextStatisticsEntityValue {
+            WorkValue::TextStatisticsEntity(TextStatisticsEntityValue {
                 index_id,
                 generation,
                 entity_kind,
@@ -369,7 +393,7 @@ mod tests {
     use std::fmt::Write;
 
     use super::*;
-    use crate::encoding::v1::keys::index_v2::{CanonicalSecondaryValue, SecondaryEntryLane};
+    use crate::encoding::v2::keys::{CanonicalSecondaryValue, SecondaryEntryLane};
 
     fn index_id() -> crate::index_v2::IndexId {
         crate::index_v2::IndexId::new(1).unwrap()
@@ -390,8 +414,8 @@ mod tests {
         SplitRef::try_new(BlobRef::new([7; 32], 100), 80, 20, 0, 100, pruning).unwrap()
     }
 
-    fn page(entries: Vec<SplitRef>) -> IndexV2WorkValue {
-        IndexV2WorkValue::TextManifestPage(
+    fn page(entries: Vec<SplitRef>) -> WorkValue {
+        WorkValue::TextManifestPage(
             TextManifestPageValue::try_new(
                 crate::index_v2::IndexId::new(1).unwrap(),
                 crate::index_v2::IndexGenerationId::new(2).unwrap(),
@@ -409,21 +433,20 @@ mod tests {
             split(SplitPruning::Unavailable),
             split(SplitPruning::from_terms([b"alpha".as_slice()])),
         ]);
-        let encoded = encode_work_value(&value);
+        let encoded = encode_value(&value);
 
         assert_eq!(encoded[0], INDEX_V3_SPLIT_VALUE_VERSION);
-        assert_eq!(decode_work_value(&encoded).unwrap(), value);
+        assert_eq!(decode_value(&encoded).unwrap(), value);
     }
 
     #[test]
     fn v2_split_values_decode_without_pruning() {
         let value = page(vec![split(SplitPruning::TermBloom256([42, 43, 44, 45]))]);
-        let mut encoded = encode_work_value(&value).to_vec();
+        let mut encoded = encode_value(&value).to_vec();
         encoded[0] = INDEX_V2_VALUE_VERSION;
         encoded.truncate(encoded.len() - U8_LEN - U64_LEN * SPLIT_PRUNING_BLOOM_WORDS);
 
-        let IndexV2WorkValue::TextManifestPage(decoded) = decode_work_value(&encoded).unwrap()
-        else {
+        let WorkValue::TextManifestPage(decoded) = decode_value(&encoded).unwrap() else {
             panic!("manifest page decodes as its exact kind");
         };
         assert_eq!(decoded.entries()[0].pruning(), SplitPruning::Unavailable);
@@ -431,14 +454,13 @@ mod tests {
 
     #[test]
     fn split_value_versions_and_pruning_tags_are_closed() {
-        let mut malformed =
-            encode_work_value(&page(vec![split(SplitPruning::Unavailable)])).to_vec();
+        let mut malformed = encode_value(&page(vec![split(SplitPruning::Unavailable)])).to_vec();
         *malformed.last_mut().unwrap() = 0xff;
-        assert!(decode_work_value(&malformed).is_err());
+        assert!(decode_value(&malformed).is_err());
 
-        let mut future = encode_work_value(&page(vec![split(SplitPruning::Unavailable)])).to_vec();
+        let mut future = encode_value(&page(vec![split(SplitPruning::Unavailable)])).to_vec();
         future[0] = INDEX_V3_SPLIT_VALUE_VERSION + 1;
-        assert!(decode_work_value(&future).is_err());
+        assert!(decode_value(&future).is_err());
     }
 
     #[test]
@@ -451,7 +473,7 @@ mod tests {
         let values = vec![
             (
                 "lifecycle.build_delta",
-                IndexV2WorkValue::CoalescedBuildDelta(CoalescedBuildDeltaValue {
+                WorkValue::CoalescedBuildDelta(CoalescedBuildDeltaValue {
                     index_id: index_id(),
                     generation: generation(),
                     entity_kind: crate::index_v2::IndexElementKind::Node,
@@ -460,7 +482,7 @@ mod tests {
             ),
             (
                 "lifecycle.applied_secondary",
-                IndexV2WorkValue::AppliedEntityState(AppliedEntityStateValue {
+                WorkValue::AppliedEntityState(AppliedEntityStateValue {
                     index_id: index_id(),
                     generation: generation(),
                     entity_kind: crate::index_v2::IndexElementKind::Node,
@@ -472,7 +494,7 @@ mod tests {
             ),
             (
                 "lifecycle.applied_vector",
-                IndexV2WorkValue::AppliedEntityState(AppliedEntityStateValue {
+                WorkValue::AppliedEntityState(AppliedEntityStateValue {
                     index_id: index_id(),
                     generation: generation(),
                     entity_kind: crate::index_v2::IndexElementKind::Node,
@@ -482,7 +504,7 @@ mod tests {
             ),
             (
                 "lifecycle.applied_text",
-                IndexV2WorkValue::AppliedEntityState(AppliedEntityStateValue {
+                WorkValue::AppliedEntityState(AppliedEntityStateValue {
                     index_id: index_id(),
                     generation: generation(),
                     entity_kind: crate::index_v2::IndexElementKind::Node,
@@ -495,7 +517,7 @@ mod tests {
             ),
             (
                 "equality.secondary_entry",
-                IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+                WorkValue::SecondaryEntry(SecondaryEntryValue {
                     index_id: index_id(),
                     generation: generation(),
                     lane: SecondaryEntryLane::NodeEquality,
@@ -504,7 +526,7 @@ mod tests {
             ),
             (
                 "text.manifest_root",
-                IndexV2WorkValue::TextManifestRoot(
+                WorkValue::TextManifestRoot(
                     TextManifestRootValue::try_new(
                         index_id(),
                         generation(),
@@ -518,7 +540,7 @@ mod tests {
             ),
             (
                 "text.manifest_page",
-                IndexV2WorkValue::TextManifestPage(
+                WorkValue::TextManifestPage(
                     TextManifestPageValue::try_new(
                         index_id(),
                         generation(),
@@ -531,7 +553,7 @@ mod tests {
             ),
             (
                 "text.build_artifact",
-                IndexV2WorkValue::TextBuildArtifact(TextBuildArtifactValue {
+                WorkValue::TextBuildArtifact(TextBuildArtifactValue {
                     index_id: index_id(),
                     generation: generation(),
                     partition: tenant_partition.clone(),
@@ -541,7 +563,7 @@ mod tests {
             ),
             (
                 "text.entity_state",
-                IndexV2WorkValue::TextEntityState(TextEntityStateValue {
+                WorkValue::TextEntityState(TextEntityStateValue {
                     index_id: index_id(),
                     generation: generation(),
                     partition: tenant_partition.clone(),
@@ -553,7 +575,7 @@ mod tests {
             ),
             (
                 "text.corpus_statistics",
-                IndexV2WorkValue::TextCorpusStatistics(
+                WorkValue::TextCorpusStatistics(
                     TextCorpusStatisticsValue::try_new(
                         index_id(),
                         generation(),
@@ -566,7 +588,7 @@ mod tests {
             ),
             (
                 "text.term_statistics",
-                IndexV2WorkValue::TextTermStatistics(
+                WorkValue::TextTermStatistics(
                     TextTermStatisticsValue::try_new(
                         index_id(),
                         generation(),
@@ -579,7 +601,7 @@ mod tests {
             ),
             (
                 "text.statistics_entity_absent",
-                IndexV2WorkValue::TextStatisticsEntity(TextStatisticsEntityValue {
+                WorkValue::TextStatisticsEntity(TextStatisticsEntityValue {
                     index_id: index_id(),
                     generation: generation(),
                     entity_kind: crate::index_v2::IndexElementKind::Edge,
@@ -589,7 +611,7 @@ mod tests {
             ),
             (
                 "text.statistics_entity_present",
-                IndexV2WorkValue::TextStatisticsEntity(TextStatisticsEntityValue {
+                WorkValue::TextStatisticsEntity(TextStatisticsEntityValue {
                     index_id: index_id(),
                     generation: generation(),
                     entity_kind: crate::index_v2::IndexElementKind::Node,
@@ -605,7 +627,7 @@ mod tests {
             ),
             (
                 "vector.partition_mapping",
-                IndexV2WorkValue::VectorPartitionMapping(VectorPartitionMappingValue {
+                WorkValue::VectorPartitionMapping(VectorPartitionMappingValue {
                     index_id: index_id(),
                     generation: generation(),
                     partition: vector_partition,
@@ -616,8 +638,8 @@ mod tests {
 
         let mut rendered = String::new();
         for (name, value) in values {
-            let encoded = encode_work_value(&value);
-            assert_eq!(decode_work_value(&encoded).unwrap(), value);
+            let encoded = encode_value(&value);
+            assert_eq!(decode_value(&encoded).unwrap(), value);
             writeln!(rendered, "{name}={}", hex(&encoded)).expect("writing to String cannot fail");
         }
         insta::assert_snapshot!(rendered, @"

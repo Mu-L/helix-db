@@ -14,11 +14,11 @@ use slatedb::DbTransaction;
 use tokio::sync::Semaphore;
 
 use crate::config::ActiveTextMutationLimits;
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key};
+use crate::encoding::v2::keys::Key;
 use crate::encoding::v1::property::Property;
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::graph_mutation::{CanonicalPropertyRow, GraphEntity};
 use crate::index_v2::{self, work};
@@ -580,7 +580,7 @@ async fn prepare_destination(
     };
     let root_key = scoped_key(
         key.scope,
-        index_keys::IndexV2Key::TextManifestRoot(root_typed),
+        index_keys::ScopedKey::TextManifestRoot(root_typed),
     );
     let root_bytes = transaction.get(&root_key).await?;
     observations.push(RowObservation {
@@ -588,16 +588,7 @@ async fn prepare_destination(
         value: root_bytes.clone(),
     });
     let root = match root_bytes {
-        Some(bytes) => {
-            let index_values::IndexV2WorkValue::TextManifestRoot(root) =
-                index_values::decode_work_value(&bytes)?
-            else {
-                return Err(corruption(
-                    "Active text destination root key contains another value kind",
-                ));
-            };
-            root
-        }
+        Some(bytes) => index_values::decode_manifest_root(&bytes)?,
         None => {
             work::TextManifestRootValue::empty(key.index_id, key.generation, key.partition.clone())
         }
@@ -640,7 +631,7 @@ async fn prepare_destination(
         };
         let page_key = scoped_key(
             key.scope,
-            index_keys::IndexV2Key::TextManifestPage(page_typed),
+            index_keys::ScopedKey::TextManifestPage(page_typed),
         );
         let Some(page_bytes) = transaction.get(&page_key).await? else {
             return Err(corruption(
@@ -651,13 +642,7 @@ async fn prepare_destination(
             key: page_key,
             value: Some(page_bytes.clone()),
         });
-        let index_values::IndexV2WorkValue::TextManifestPage(page) =
-            index_values::decode_work_value(&page_bytes)?
-        else {
-            return Err(corruption(
-                "Active text destination page key contains another value kind",
-            ));
-        };
+        let page = index_values::decode_manifest_page(&page_bytes)?;
         if page.index_id() != key.index_id
             || page.generation() != key.generation
             || page.partition() != &key.partition
@@ -680,7 +665,7 @@ async fn prepare_destination(
     for (entity, document) in &live {
         let state_key = scoped_key(
             key.scope,
-            index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+            index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                 root: root_typed,
                 entity: *entity,
             }),
@@ -705,7 +690,7 @@ async fn prepare_destination(
     for entity in &retirements {
         let state_key = scoped_key(
             key.scope,
-            index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+            index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                 root: root_typed,
                 entity: *entity,
             }),
@@ -822,9 +807,9 @@ async fn prepare_destination(
     };
     writes.push(PreparedRow {
         key: root_key,
-        value: index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+        value: index_values::encode_manifest_root(&
             next_root,
-        )),
+        ),
     });
     if let Some(page_write) = page_write {
         writes.push(page_write);
@@ -839,7 +824,7 @@ async fn prepare_destination(
         pointer_page,
     )?;
     let pointer_key = Key::Global {
-        kind: GlobalKeyKind::IndexV2(index_keys::GlobalIndexV2Key::TextCompactionPointer(target)),
+        kind: index_keys::GlobalKey::TextCompactionPointer(target),
     }
     .to_bytes();
     // Refresh scheduling after the root revision changes. This tail hint does
@@ -879,7 +864,7 @@ async fn prepare_destination(
                 .ok()
                 .and_then(|parsed| match parsed {
                     Key::Data {
-                        kind: DataKeyKind::IndexV2(index_keys::IndexV2Key::TextManifestPage(_)),
+                        kind: index_keys::ScopedKey::TextManifestPage(_),
                         ..
                     } => Some(u64::try_from(write.value.len()).unwrap_or(u64::MAX)),
                     Key::Global { .. } | Key::Data { .. } => None,
@@ -924,13 +909,7 @@ fn validate_existing_state(
         }
         return Ok(());
     };
-    let index_values::IndexV2WorkValue::TextEntityState(state) =
-        index_values::decode_work_value(state_bytes)?
-    else {
-        return Err(corruption(
-            "Active text entity-state key contains another value kind",
-        ));
-    };
+    let state = index_values::decode_text_entity_state(state_bytes)?;
     if state.index_id != key.index_id
         || state.generation != key.generation
         || state.partition != key.partition
@@ -952,7 +931,7 @@ fn encode_state(
     logical_version: index_v2::TextLogicalVersion,
     live: bool,
 ) -> Bytes {
-    index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+    index_values::encode_text_entity_state(&
         work::TextEntityStateValue {
             index_id: key.index_id,
             generation: key.generation,
@@ -962,7 +941,7 @@ fn encode_state(
             logical_version,
             live,
         },
-    ))
+    )
 }
 
 struct AppendSplitRequest<'a> {
@@ -998,7 +977,7 @@ async fn append_split(
             };
             let page_key = scoped_key(
                 key.scope,
-                index_keys::IndexV2Key::TextManifestPage(page_typed),
+                index_keys::ScopedKey::TextManifestPage(page_typed),
             );
             let existing = transaction.get(&page_key).await?;
             observations.push(RowObservation {
@@ -1043,9 +1022,7 @@ async fn append_split(
                 });
             let append_fits = appended.as_ref().is_some_and(|page| {
                 u64::try_from(
-                    index_values::encode_work_value(
-                        &index_values::IndexV2WorkValue::TextManifestPage(page.clone()),
-                    )
+                    index_values::encode_manifest_page(page)
                     .len(),
                 )
                 .unwrap_or(u64::MAX)
@@ -1082,7 +1059,7 @@ async fn append_split(
                 };
                 let page_key = scoped_key(
                     key.scope,
-                    index_keys::IndexV2Key::TextManifestPage(page_typed),
+                    index_keys::ScopedKey::TextManifestPage(page_typed),
                 );
                 let existing = transaction.get(&page_key).await?;
                 observations.push(RowObservation {
@@ -1110,7 +1087,7 @@ async fn append_split(
         }
     };
     let page_value =
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestPage(page));
+        index_values::encode_manifest_page(&page);
     let page_bytes = u64::try_from(page_value.len()).unwrap_or(u64::MAX);
     if page_bytes > limits.max_manifest_page_bytes().get() {
         return Err(HelixDbError::ActiveTextMutationLimitExceeded {
@@ -1124,7 +1101,7 @@ async fn append_split(
         Some(PreparedRow {
             key: scoped_key(
                 key.scope,
-                index_keys::IndexV2Key::TextManifestPage(page_typed),
+                index_keys::ScopedKey::TextManifestPage(page_typed),
             ),
             value: page_value,
         }),
@@ -1156,10 +1133,10 @@ pub(crate) fn stage_active_text_epoch(
     Ok(())
 }
 
-fn scoped_key(scope: DataScope, key: index_keys::IndexV2Key) -> Bytes {
+fn scoped_key(scope: DataScope, key: index_keys::ScopedKey) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }
@@ -1200,14 +1177,14 @@ mod tests {
         };
         let root_key = scoped_key(
             scope,
-            index_keys::IndexV2Key::TextManifestRoot(index_keys::TextManifestRootKey {
+            index_keys::ScopedKey::TextManifestRoot(index_keys::TextManifestRootKey {
                 index_id,
                 generation,
                 partition: partition.fingerprint(),
             }),
         );
         let loser_value =
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::try_new(
                     index_id,
                     generation,
@@ -1217,11 +1194,11 @@ mod tests {
                     0,
                 )
                 .expect("loser manifest root is valid"),
-            ));
+            );
         let winning_value =
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::empty(index_id, generation, partition),
-            ));
+            );
         let limits = SearchIndexBackfillLimits::default().active_text_mutation();
         let measured = ActiveTextMutationMeasurements::try_admit(
             limits,

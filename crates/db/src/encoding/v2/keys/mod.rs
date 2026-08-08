@@ -8,36 +8,96 @@
 use bytes::{BufMut, Bytes};
 
 use crate::encoding::error::EncodingError;
-use crate::encoding::indexes::range::RangeIndexDirection;
 use crate::encoding::v1::property::equality_value::{CanonicalEqualityValue, EQUALITY_DIGEST_LEN};
-use crate::encoding::v1::property::range_value::CanonicalRangeValue;
 use crate::index_v2::{
     IndexComponent, IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexIdentity,
-    IndexIdentityFamily, IndexOperationId, VectorPhysicalIndexId,
+    IndexIdentityFamily, IndexOperationId,
 };
 
-use super::tenant::{DataScope, TenantId};
-use super::{Key, KeyPrefix};
+use crate::encoding::v1::keys::tenant::DataScope;
+
+pub(crate) mod global;
+pub(crate) mod indexes;
+pub(crate) mod lifecycle;
+
+pub(crate) use global::{GlobalKey, GlobalKind, TextCompactionTarget, GLOBAL_SENTINEL};
+pub(crate) use indexes::equality::{
+    CanonicalSecondaryValue, SecondaryEntryKey, SecondaryEntryLane,
+};
+pub(crate) use indexes::text::{
+    BlobHash, PartitionFingerprint, TextBuildArtifactKey, TextCorpusStatisticsKey,
+    TextEntityStateKey, TextManifestPageKey, TextManifestRootKey, TextStatisticsEntityKey,
+    TextTermFingerprint, TextTermStatisticsKey,
+};
+pub(crate) use indexes::vector::VectorPartitionMappingKey;
+pub(crate) use lifecycle::{IndexEntity, IndexEntityStateKey, IndexOperationKey, IndexRecordKey};
 
 const PREFIX_LEN: usize = core::mem::size_of::<u8>();
 const KIND_LEN: usize = core::mem::size_of::<u8>();
 const U32_LEN: usize = core::mem::size_of::<u32>();
 const U64_LEN: usize = core::mem::size_of::<u64>();
-const UUID_LEN: usize = 16;
-const HASH_LEN: usize = 32;
-const TENANT_ID_LEN: usize = core::mem::size_of::<u128>();
-const GLOBAL_SENTINEL_LEN: usize = TENANT_ID_LEN + PREFIX_LEN;
-
-/// Exact V2-only database-global envelope.
-pub(crate) const GLOBAL_INDEX_V2_SENTINEL: [u8; GLOBAL_SENTINEL_LEN] = [0xFE; GLOBAL_SENTINEL_LEN];
-
+pub(super) const UUID_LEN: usize = 16;
+pub(super) const HASH_LEN: usize = 32;
 /// Maximum complete cursor, logical-owner, or global reference key length.
-pub(crate) const INDEX_V2_KEY_MAX_LEN: usize = 1024 * 1024;
+pub(crate) const KEY_MAX_LEN: usize = 1024 * 1024;
+const DATA_PREFIX: u8 = 0x06;
+
+/// Complete physical key for one lifecycle-managed index record.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum Key {
+    Global { kind: GlobalKey },
+    Data { scope: DataScope, kind: ScopedKey },
+}
+
+impl Key {
+    pub(crate) fn data_prefix(scope: DataScope, logical_prefix: Bytes) -> Bytes {
+        match scope {
+            DataScope::LegacyUnscoped => logical_prefix,
+            DataScope::Tenant(tenant_id) => {
+                let mut bytes = Vec::with_capacity(DataScope::PREFIX_LEN + logical_prefix.len());
+                bytes.put_u128(tenant_id.as_u128());
+                bytes.put_slice(&logical_prefix);
+                Bytes::from(bytes)
+            }
+        }
+    }
+
+    pub(crate) fn parse_from_slice(scope: DataScope, slice: &[u8]) -> Result<Self, EncodingError> {
+        let Some(logical) = scope.strip_key(slice) else {
+            return Err(EncodingError::InvalidKey(
+                "physical key does not match index data scope".to_string(),
+            ));
+        };
+        Ok(Self::Data {
+            scope,
+            kind: ScopedKey::parse_from_slice(logical)?,
+        })
+    }
+
+    pub(crate) fn to_bytes(&self) -> Bytes {
+        let mut bytes = match self {
+            Self::Global { kind } => Vec::with_capacity(kind.encoded_len()),
+            Self::Data { scope, kind } => {
+                Vec::with_capacity(scope.encoded_len() + kind.encoded_len())
+            }
+        };
+        match self {
+            Self::Global { kind } => kind.encode_into(&mut bytes),
+            Self::Data { scope, kind } => {
+                if let DataScope::Tenant(tenant_id) = scope {
+                    bytes.put_u128(tenant_id.as_u128());
+                }
+                kind.encode_into(&mut bytes);
+            }
+        }
+        Bytes::from(bytes)
+    }
+}
 
 /// Frozen scoped/value record kinds.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum IndexV2RecordKind {
+pub(crate) enum RecordKind {
     IndexRecord = 0x01,
     Operation = 0x02,
     BuildDelta = 0x03,
@@ -53,7 +113,7 @@ pub(crate) enum IndexV2RecordKind {
     TextStatisticsEntity = 0x12,
 }
 
-impl IndexV2RecordKind {
+impl RecordKind {
     pub(crate) const fn as_u8(self) -> u8 {
         self as u8
     }
@@ -80,343 +140,10 @@ impl IndexV2RecordKind {
     }
 }
 
-/// Entity identity used by build-delta/applied/text-live keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct IndexEntity {
-    pub(crate) kind: IndexElementKind,
-    pub(crate) id: IndexEntityId,
-}
-
-/// Full SHA-256 partition identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct PartitionFingerprint([u8; HASH_LEN]);
-
-impl PartitionFingerprint {
-    pub(crate) const fn new(bytes: [u8; HASH_LEN]) -> Self {
-        Self(bytes)
-    }
-
-    pub(crate) const fn as_bytes(&self) -> &[u8; HASH_LEN] {
-        &self.0
-    }
-}
-
-/// Full content-addressed blob identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct BlobHash([u8; HASH_LEN]);
-
-impl BlobHash {
-    pub(crate) const fn new(bytes: [u8; HASH_LEN]) -> Self {
-        Self(bytes)
-    }
-
-    pub(crate) const fn as_bytes(&self) -> &[u8; HASH_LEN] {
-        &self.0
-    }
-}
-
-/// Full SHA-256 identity of one analyzed text term.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct TextTermFingerprint([u8; HASH_LEN]);
-
-impl TextTermFingerprint {
-    pub(crate) const fn new(bytes: [u8; HASH_LEN]) -> Self {
-        Self(bytes)
-    }
-
-    pub(crate) const fn as_bytes(&self) -> &[u8; HASH_LEN] {
-        &self.0
-    }
-}
-
-/// Frozen generation-qualified secondary lanes.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum SecondaryEntryLane {
-    NodeEquality = 0x01,
-    NodeUniqueEquality = 0x02,
-    NodeRangeAscending = 0x03,
-    NodeRangeDescending = 0x04,
-    EdgeEquality = 0x05,
-    EdgeRangeAscending = 0x06,
-    EdgeRangeDescending = 0x07,
-}
-
-impl SecondaryEntryLane {
-    pub(crate) const fn as_u8(self) -> u8 {
-        self as u8
-    }
-
-    pub(crate) fn try_from_u8(value: u8) -> Result<Self, EncodingError> {
-        match value {
-            0x01 => Ok(Self::NodeEquality),
-            0x02 => Ok(Self::NodeUniqueEquality),
-            0x03 => Ok(Self::NodeRangeAscending),
-            0x04 => Ok(Self::NodeRangeDescending),
-            0x05 => Ok(Self::EdgeEquality),
-            0x06 => Ok(Self::EdgeRangeAscending),
-            0x07 => Ok(Self::EdgeRangeDescending),
-            unknown => Err(EncodingError::InvalidKey(format!(
-                "unknown V2 secondary lane {unknown:#04x}"
-            ))),
-        }
-    }
-
-    pub(crate) const fn is_unique(self) -> bool {
-        matches!(self, Self::NodeUniqueEquality)
-    }
-
-    pub(crate) const fn is_equality(self) -> bool {
-        matches!(
-            self,
-            Self::NodeEquality | Self::NodeUniqueEquality | Self::EdgeEquality
-        )
-    }
-
-    /// Returns the canonical ordered-value codec for a range lane.
-    pub(crate) const fn range_direction(self) -> Option<RangeIndexDirection> {
-        match self {
-            Self::NodeRangeAscending | Self::EdgeRangeAscending => Some(RangeIndexDirection::Asc),
-            Self::NodeRangeDescending | Self::EdgeRangeDescending => {
-                Some(RangeIndexDirection::Desc)
-            }
-            Self::NodeEquality | Self::NodeUniqueEquality | Self::EdgeEquality => None,
-        }
-    }
-}
-
-/// Canonical secondary value bytes whose shape is fixed by the lane.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum CanonicalSecondaryValue {
-    /// Typed canonical identity plus its non-authoritative scan digest.
-    Equality(CanonicalEqualityValue),
-    /// Typed, self-delimiting ordered range representation.
-    Range(CanonicalRangeValue),
-}
-
-impl CanonicalSecondaryValue {
-    pub(crate) const fn equality(value: CanonicalEqualityValue) -> Self {
-        Self::Equality(value)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn equality_string(value: &str) -> Self {
-        let crate::encoding::v1::property::equality_value::EqualityValueProjection::Indexed(value) =
-            crate::encoding::v1::property::equality_value::project_equality_value(
-                &crate::encoding::property::property_value::PropertyValue::String(
-                    value.to_string(),
-                ),
-            )
-        else {
-            panic!("string equality fixtures are always indexable");
-        };
-        Self::Equality(value)
-    }
-
-    pub(crate) const fn range(value: CanonicalRangeValue) -> Self {
-        Self::Range(value)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn range_string(direction: RangeIndexDirection, value: &str) -> Self {
-        let crate::encoding::v1::property::range_value::RangeValueProjection::Indexed(value) =
-            crate::encoding::v1::property::range_value::project_range_value(
-                &crate::encoding::property::property_value::PropertyValue::String(
-                    value.to_string(),
-                ),
-                direction,
-            )
-        else {
-            panic!("string range fixtures are always indexable");
-        };
-        Self::Range(value)
-    }
-
-    /// Validates and retains range bytes decoded from a persisted V2 key.
-    fn try_encoded_range(
-        direction: RangeIndexDirection,
-        value: Bytes,
-    ) -> Result<Self, EncodingError> {
-        Ok(Self::Range(CanonicalRangeValue::try_from_encoded(
-            direction, value,
-        )?))
-    }
-
-    fn encoded_key_len(&self) -> usize {
-        match self {
-            Self::Equality(value) => EQUALITY_DIGEST_LEN + U32_LEN + value.canonical().len(),
-            Self::Range(value) => value.encoded().len(),
-        }
-    }
-
-    fn encode_key_value<B: BufMut>(&self, buffer: &mut B) {
-        match self {
-            Self::Equality(value) => {
-                buffer.put_slice(value.digest());
-                buffer.put_u32(
-                    u32::try_from(value.canonical().len())
-                        .expect("canonical equality values are bounded below u32"),
-                );
-                buffer.put_slice(value.canonical());
-            }
-            Self::Range(value) => buffer.put_slice(value.encoded()),
-        }
-    }
-
-    pub(crate) fn equality_scan_prefix(&self) -> Result<Bytes, EncodingError> {
-        let Self::Equality(_) = self else {
-            return Err(EncodingError::InvalidKey(
-                "range secondary value has no equality scan prefix".to_string(),
-            ));
-        };
-        let mut bytes = Vec::with_capacity(self.encoded_key_len());
-        self.encode_key_value(&mut bytes);
-        Ok(Bytes::from(bytes))
-    }
-}
-
-/// Canonical index-record key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct IndexRecordV2Key {
-    pub(crate) identity: IndexIdentity,
-}
-
-/// Scoped operation record key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct IndexOperationKey {
-    pub(crate) operation_id: IndexOperationId,
-}
-
-/// Coalesced build delta or builder-applied state key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct IndexEntityStateKey {
-    pub(crate) index_id: IndexId,
-    pub(crate) generation: IndexGenerationId,
-    pub(crate) entity: IndexEntity,
-}
-
-/// Generation-qualified secondary entry key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct SecondaryEntryKey {
-    pub(crate) index_id: IndexId,
-    pub(crate) generation: IndexGenerationId,
-    pub(crate) lane: SecondaryEntryLane,
-    pub(crate) value: CanonicalSecondaryValue,
-    pub(crate) entity_id: Option<IndexEntityId>,
-}
-
-impl SecondaryEntryKey {
-    pub(crate) fn try_new(
-        index_id: IndexId,
-        generation: IndexGenerationId,
-        lane: SecondaryEntryLane,
-        value: CanonicalSecondaryValue,
-        entity_id: Option<IndexEntityId>,
-    ) -> Result<Self, EncodingError> {
-        let value_matches_lane = matches!(
-            (lane.is_equality(), &value),
-            (true, CanonicalSecondaryValue::Equality(_))
-                | (false, CanonicalSecondaryValue::Range(_))
-        );
-        if !value_matches_lane || lane.is_unique() != entity_id.is_none() {
-            return Err(EncodingError::InvalidKey(
-                "secondary lane/value/entity shape mismatch".to_string(),
-            ));
-        }
-        if let (Some(direction), CanonicalSecondaryValue::Range(value)) =
-            (lane.range_direction(), &value)
-            && direction != value.direction()
-        {
-            return Err(EncodingError::InvalidKey(
-                "secondary range lane/value direction mismatch".to_string(),
-            ));
-        }
-        let encoded_len = PREFIX_LEN
-            + KIND_LEN
-            + U64_LEN
-            + U64_LEN
-            + KIND_LEN
-            + value.encoded_key_len()
-            + entity_id.map_or(0, |_| U64_LEN);
-        if encoded_len > INDEX_V2_KEY_MAX_LEN {
-            return Err(EncodingError::InvalidKey(
-                "secondary V2 key exceeds 1 MiB".to_string(),
-            ));
-        }
-        Ok(Self {
-            index_id,
-            generation,
-            lane,
-            value,
-            entity_id,
-        })
-    }
-}
-
-/// Text manifest root key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TextManifestRootKey {
-    pub(crate) index_id: IndexId,
-    pub(crate) generation: IndexGenerationId,
-    pub(crate) partition: PartitionFingerprint,
-}
-
-/// Text manifest page key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TextManifestPageKey {
-    pub(crate) root: TextManifestRootKey,
-    pub(crate) page: u32,
-}
-
-/// Text build artifact key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TextBuildArtifactKey {
-    pub(crate) root: TextManifestRootKey,
-    pub(crate) ordinal: u32,
-}
-
-/// Generation-qualified text live-state key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TextEntityStateKey {
-    pub(crate) root: TextManifestRootKey,
-    pub(crate) entity: IndexEntity,
-}
-
-/// Generation-qualified vector tenant-partition mapping key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct VectorPartitionMappingKey {
-    pub(crate) index_id: IndexId,
-    pub(crate) generation: IndexGenerationId,
-    pub(crate) partition: PartitionFingerprint,
-}
-
-/// Generation/partition-qualified live text corpus statistics key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TextCorpusStatisticsKey {
-    pub(crate) index_id: IndexId,
-    pub(crate) generation: IndexGenerationId,
-    pub(crate) partition: PartitionFingerprint,
-}
-
-/// Exact live document-frequency row for one analyzed term.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TextTermStatisticsKey {
-    pub(crate) corpus: TextCorpusStatisticsKey,
-    pub(crate) term: TextTermFingerprint,
-}
-
-/// Per-entity exact-once statistics accounting key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TextStatisticsEntityKey {
-    pub(crate) index_id: IndexId,
-    pub(crate) generation: IndexGenerationId,
-    pub(crate) entity: IndexEntity,
-}
-
 /// Every legal scoped V2 key shape.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum IndexV2Key {
-    IndexRecord(IndexRecordV2Key),
+pub(crate) enum ScopedKey {
+    IndexRecord(IndexRecordKey),
     Operation(IndexOperationKey),
     BuildDelta(IndexEntityStateKey),
     AppliedState(IndexEntityStateKey),
@@ -431,49 +158,49 @@ pub(crate) enum IndexV2Key {
     TextStatisticsEntity(TextStatisticsEntityKey),
 }
 
-impl IndexV2Key {
-    pub(crate) const fn record_kind(&self) -> IndexV2RecordKind {
+impl ScopedKey {
+    pub(crate) const fn record_kind(&self) -> RecordKind {
         match self {
-            Self::IndexRecord(_) => IndexV2RecordKind::IndexRecord,
-            Self::Operation(_) => IndexV2RecordKind::Operation,
-            Self::BuildDelta(_) => IndexV2RecordKind::BuildDelta,
-            Self::AppliedState(_) => IndexV2RecordKind::AppliedState,
-            Self::SecondaryEntry(_) => IndexV2RecordKind::SecondaryEntry,
-            Self::TextManifestRoot(_) => IndexV2RecordKind::TextManifestRoot,
-            Self::TextManifestPage(_) => IndexV2RecordKind::TextManifestPage,
-            Self::TextBuildArtifact(_) => IndexV2RecordKind::TextBuildArtifact,
-            Self::TextEntityState(_) => IndexV2RecordKind::TextEntityState,
-            Self::VectorPartitionMapping(_) => IndexV2RecordKind::VectorPartitionMapping,
-            Self::TextCorpusStatistics(_) => IndexV2RecordKind::TextCorpusStatistics,
-            Self::TextTermStatistics(_) => IndexV2RecordKind::TextTermStatistics,
-            Self::TextStatisticsEntity(_) => IndexV2RecordKind::TextStatisticsEntity,
+            Self::IndexRecord(_) => RecordKind::IndexRecord,
+            Self::Operation(_) => RecordKind::Operation,
+            Self::BuildDelta(_) => RecordKind::BuildDelta,
+            Self::AppliedState(_) => RecordKind::AppliedState,
+            Self::SecondaryEntry(_) => RecordKind::SecondaryEntry,
+            Self::TextManifestRoot(_) => RecordKind::TextManifestRoot,
+            Self::TextManifestPage(_) => RecordKind::TextManifestPage,
+            Self::TextBuildArtifact(_) => RecordKind::TextBuildArtifact,
+            Self::TextEntityState(_) => RecordKind::TextEntityState,
+            Self::VectorPartitionMapping(_) => RecordKind::VectorPartitionMapping,
+            Self::TextCorpusStatistics(_) => RecordKind::TextCorpusStatistics,
+            Self::TextTermStatistics(_) => RecordKind::TextTermStatistics,
+            Self::TextStatisticsEntity(_) => RecordKind::TextStatisticsEntity,
         }
     }
 
-    pub(crate) const fn key_prefix() -> KeyPrefix {
-        KeyPrefix::IndexV2
+    pub(crate) const fn key_prefix() -> u8 {
+        DATA_PREFIX
     }
 
     pub(crate) fn index_record(identity: IndexIdentity) -> Self {
-        Self::IndexRecord(IndexRecordV2Key { identity })
+        Self::IndexRecord(IndexRecordKey { identity })
     }
 
     pub(crate) fn operation(operation_id: IndexOperationId) -> Self {
         Self::Operation(IndexOperationKey { operation_id })
     }
 
-    pub(crate) fn logical_prefix(kind: IndexV2RecordKind) -> Bytes {
-        Bytes::from(vec![Self::key_prefix().as_u8(), kind.as_u8()])
+    pub(crate) fn logical_prefix(kind: RecordKind) -> Bytes {
+        Bytes::from(vec![Self::key_prefix(), kind.as_u8()])
     }
 
     /// Returns one exact index-generation prefix for a physical work kind.
     pub(crate) fn generation_prefix(
-        kind: IndexV2RecordKind,
+        kind: RecordKind,
         index_id: IndexId,
         generation: IndexGenerationId,
     ) -> Bytes {
         let mut bytes = Vec::with_capacity(PREFIX_LEN + KIND_LEN + U64_LEN + U64_LEN);
-        bytes.put_u8(Self::key_prefix().as_u8());
+        bytes.put_u8(Self::key_prefix());
         bytes.put_u8(kind.as_u8());
         bytes.put_u64(index_id.get());
         bytes.put_u64(generation.get());
@@ -487,8 +214,7 @@ impl IndexV2Key {
         lane: SecondaryEntryLane,
     ) -> Bytes {
         let mut bytes =
-            Self::generation_prefix(IndexV2RecordKind::SecondaryEntry, index_id, generation)
-                .to_vec();
+            Self::generation_prefix(RecordKind::SecondaryEntry, index_id, generation).to_vec();
         bytes.put_u8(lane.as_u8());
         Bytes::from(bytes)
     }
@@ -541,7 +267,7 @@ impl IndexV2Key {
     }
 
     pub(crate) fn encode_into<B: BufMut>(&self, buffer: &mut B) {
-        buffer.put_u8(Self::key_prefix().as_u8());
+        buffer.put_u8(Self::key_prefix());
         buffer.put_u8(self.record_kind().as_u8());
         match self {
             Self::IndexRecord(key) => encode_identity(&key.identity, buffer),
@@ -599,65 +325,61 @@ impl IndexV2Key {
                 actual: slice.len(),
             });
         }
-        if slice[PREFIX_OFFSET] != KeyPrefix::IndexV2.as_u8() {
+        if slice[PREFIX_OFFSET] != DATA_PREFIX {
             return Err(EncodingError::InvalidKeyPrefix(slice[PREFIX_OFFSET]));
         }
-        let kind = IndexV2RecordKind::try_from_u8(slice[KIND_OFFSET])?;
+        let kind = RecordKind::try_from_u8(slice[KIND_OFFSET])?;
         let mut decoder =
             KeyDecoder::new(&slice[SUFFIX_OFFSET..SUFFIX_OFFSET + slice.len() - SUFFIX_OFFSET]);
         let key = match kind {
-            IndexV2RecordKind::IndexRecord => Self::IndexRecord(IndexRecordV2Key {
+            RecordKind::IndexRecord => Self::IndexRecord(IndexRecordKey {
                 identity: decode_identity(&mut decoder)?,
             }),
-            IndexV2RecordKind::Operation => Self::Operation(IndexOperationKey {
+            RecordKind::Operation => Self::Operation(IndexOperationKey {
                 operation_id: decode_operation_id(&mut decoder)?,
             }),
-            IndexV2RecordKind::BuildDelta | IndexV2RecordKind::AppliedState => {
+            RecordKind::BuildDelta | RecordKind::AppliedState => {
                 let state = decode_entity_state_key(&mut decoder)?;
-                if kind == IndexV2RecordKind::BuildDelta {
+                if kind == RecordKind::BuildDelta {
                     Self::BuildDelta(state)
                 } else {
                     Self::AppliedState(state)
                 }
             }
-            IndexV2RecordKind::SecondaryEntry => {
+            RecordKind::SecondaryEntry => {
                 Self::SecondaryEntry(decode_secondary_entry(&mut decoder)?)
             }
-            IndexV2RecordKind::TextManifestRoot => {
-                Self::TextManifestRoot(decode_text_root(&mut decoder)?)
-            }
-            IndexV2RecordKind::TextManifestPage => {
+            RecordKind::TextManifestRoot => Self::TextManifestRoot(decode_text_root(&mut decoder)?),
+            RecordKind::TextManifestPage => {
                 let root = decode_text_root(&mut decoder)?;
                 let page = decoder.take_u32()?;
                 Self::TextManifestPage(TextManifestPageKey { root, page })
             }
-            IndexV2RecordKind::TextBuildArtifact => {
+            RecordKind::TextBuildArtifact => {
                 let root = decode_text_root(&mut decoder)?;
                 let ordinal = decoder.take_u32()?;
                 Self::TextBuildArtifact(TextBuildArtifactKey { root, ordinal })
             }
-            IndexV2RecordKind::TextEntityState => {
+            RecordKind::TextEntityState => {
                 let root = decode_text_root(&mut decoder)?;
                 let entity = decode_entity(&mut decoder)?;
                 Self::TextEntityState(TextEntityStateKey { root, entity })
             }
-            IndexV2RecordKind::VectorPartitionMapping => {
+            RecordKind::VectorPartitionMapping => {
                 Self::VectorPartitionMapping(VectorPartitionMappingKey {
                     index_id: decode_index_id(&mut decoder)?,
                     generation: decode_generation(&mut decoder)?,
                     partition: PartitionFingerprint::new(decoder.take_array::<HASH_LEN>()?),
                 })
             }
-            IndexV2RecordKind::TextCorpusStatistics => {
+            RecordKind::TextCorpusStatistics => {
                 Self::TextCorpusStatistics(decode_text_corpus_statistics(&mut decoder)?)
             }
-            IndexV2RecordKind::TextTermStatistics => {
-                Self::TextTermStatistics(TextTermStatisticsKey {
-                    corpus: decode_text_corpus_statistics(&mut decoder)?,
-                    term: TextTermFingerprint::new(decoder.take_array::<HASH_LEN>()?),
-                })
-            }
-            IndexV2RecordKind::TextStatisticsEntity => {
+            RecordKind::TextTermStatistics => Self::TextTermStatistics(TextTermStatisticsKey {
+                corpus: decode_text_corpus_statistics(&mut decoder)?,
+                term: TextTermFingerprint::new(decoder.take_array::<HASH_LEN>()?),
+            }),
+            RecordKind::TextStatisticsEntity => {
                 Self::TextStatisticsEntity(TextStatisticsEntityKey {
                     index_id: decode_index_id(&mut decoder)?,
                     generation: decode_generation(&mut decoder)?,
@@ -830,246 +552,6 @@ fn model_key_error(error: crate::index_v2::IndexV2ModelError) -> EncodingError {
     EncodingError::InvalidKey(error.to_string())
 }
 
-/// Frozen global key kinds after the exact sentinel.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum GlobalIndexV2Kind {
-    StorageVersion = 0x01,
-    LogicalIndexIdWatermark = 0x02,
-    VectorPhysicalIdWatermark = 0x03,
-    OperationPointer = 0x04,
-    LegacyVectorPhysicalReservation = 0x0A,
-    TextCompactionPointer = 0x0B,
-}
-
-impl GlobalIndexV2Kind {
-    const fn as_u8(self) -> u8 {
-        self as u8
-    }
-
-    fn try_from_u8(value: u8) -> Result<Self, EncodingError> {
-        match value {
-            0x01 => Ok(Self::StorageVersion),
-            0x02 => Ok(Self::LogicalIndexIdWatermark),
-            0x03 => Ok(Self::VectorPhysicalIdWatermark),
-            0x04 => Ok(Self::OperationPointer),
-            0x0A => Ok(Self::LegacyVectorPhysicalReservation),
-            0x0B => Ok(Self::TextCompactionPointer),
-            unknown => Err(EncodingError::InvalidKey(format!(
-                "unknown global V2 key kind {unknown:#04x}"
-            ))),
-        }
-    }
-}
-
-/// Exact Active text manifest page targeted by background compaction.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct TextCompactionTarget {
-    scope: DataScope,
-    identity: IndexIdentity,
-    index_id: IndexId,
-    generation: IndexGenerationId,
-    partition: PartitionFingerprint,
-    page: u32,
-}
-
-impl TextCompactionTarget {
-    pub(crate) fn try_new(
-        scope: DataScope,
-        identity: IndexIdentity,
-        index_id: IndexId,
-        generation: IndexGenerationId,
-        partition: PartitionFingerprint,
-        page: u32,
-    ) -> Result<Self, EncodingError> {
-        if identity.family() != IndexIdentityFamily::Text {
-            return Err(EncodingError::InvalidKey(
-                "text compaction target requires a text identity".to_string(),
-            ));
-        }
-        Ok(Self {
-            scope,
-            identity,
-            index_id,
-            generation,
-            partition,
-            page,
-        })
-    }
-
-    pub(crate) const fn scope(&self) -> DataScope {
-        self.scope
-    }
-
-    pub(crate) const fn identity(&self) -> &IndexIdentity {
-        &self.identity
-    }
-
-    pub(crate) const fn index_id(&self) -> IndexId {
-        self.index_id
-    }
-
-    pub(crate) const fn generation(&self) -> IndexGenerationId {
-        self.generation
-    }
-
-    pub(crate) const fn partition(&self) -> PartitionFingerprint {
-        self.partition
-    }
-
-    pub(crate) const fn page(&self) -> u32 {
-        self.page
-    }
-}
-
-/// Every legal database-global V2 key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum GlobalIndexV2Key {
-    StorageVersion,
-    LogicalIndexIdWatermark,
-    VectorPhysicalIdWatermark,
-    OperationPointer(IndexOperationId),
-    /// One imported legacy vector namespace excluded from ordinary allocation.
-    LegacyVectorPhysicalReservation(VectorPhysicalIndexId),
-    /// Restart-safe work pointer for one exact Active text manifest page.
-    TextCompactionPointer(TextCompactionTarget),
-}
-
-impl GlobalIndexV2Key {
-    /// Returns the complete global sentinel plus one frozen lane kind.
-    pub(crate) fn logical_prefix(kind: GlobalIndexV2Kind) -> Bytes {
-        let mut bytes = Vec::with_capacity(GLOBAL_SENTINEL_LEN + KIND_LEN);
-        bytes.put_slice(&GLOBAL_INDEX_V2_SENTINEL);
-        bytes.put_u8(kind.as_u8());
-        Bytes::from(bytes)
-    }
-
-    pub(crate) const fn kind(&self) -> GlobalIndexV2Kind {
-        match self {
-            Self::StorageVersion => GlobalIndexV2Kind::StorageVersion,
-            Self::LogicalIndexIdWatermark => GlobalIndexV2Kind::LogicalIndexIdWatermark,
-            Self::VectorPhysicalIdWatermark => GlobalIndexV2Kind::VectorPhysicalIdWatermark,
-            Self::OperationPointer(_) => GlobalIndexV2Kind::OperationPointer,
-            Self::LegacyVectorPhysicalReservation(_) => {
-                GlobalIndexV2Kind::LegacyVectorPhysicalReservation
-            }
-            Self::TextCompactionPointer(_) => GlobalIndexV2Kind::TextCompactionPointer,
-        }
-    }
-
-    pub(crate) fn encoded_len(&self) -> usize {
-        let suffix = match self {
-            Self::StorageVersion
-            | Self::LogicalIndexIdWatermark
-            | Self::VectorPhysicalIdWatermark => 0,
-            Self::OperationPointer(_) => UUID_LEN,
-            Self::LegacyVectorPhysicalReservation(_) => U64_LEN,
-            Self::TextCompactionPointer(target) => {
-                KIND_LEN
-                    + target.scope.encoded_len()
-                    + identity_encoded_len(&target.identity)
-                    + U64_LEN
-                    + U64_LEN
-                    + HASH_LEN
-                    + U32_LEN
-            }
-        };
-        GLOBAL_SENTINEL_LEN + KIND_LEN + suffix
-    }
-
-    pub(crate) fn encode_into<B: BufMut>(&self, buffer: &mut B) {
-        buffer.put_slice(&GLOBAL_INDEX_V2_SENTINEL);
-        buffer.put_u8(self.kind().as_u8());
-        match self {
-            Self::StorageVersion
-            | Self::LogicalIndexIdWatermark
-            | Self::VectorPhysicalIdWatermark => {}
-            Self::OperationPointer(id) => buffer.put_slice(id.as_bytes()),
-            Self::LegacyVectorPhysicalReservation(physical_index_id) => {
-                buffer.put_u64(physical_index_id.get());
-            }
-            Self::TextCompactionPointer(target) => {
-                match target.scope {
-                    DataScope::LegacyUnscoped => buffer.put_u8(0x00),
-                    DataScope::Tenant(tenant_id) => {
-                        buffer.put_u8(0x01);
-                        buffer.put_slice(&tenant_id.as_u128().to_be_bytes());
-                    }
-                }
-                encode_identity(&target.identity, buffer);
-                buffer.put_u64(target.index_id.get());
-                buffer.put_u64(target.generation.get());
-                buffer.put_slice(target.partition.as_bytes());
-                buffer.put_u32(target.page);
-            }
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn to_bytes(&self) -> Bytes {
-        let mut bytes = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut bytes);
-        Bytes::from(bytes)
-    }
-
-    pub(crate) fn parse_from_slice(slice: &[u8]) -> Result<Self, EncodingError> {
-        const SENTINEL_OFFSET: usize = 0;
-        const KIND_OFFSET: usize = SENTINEL_OFFSET + GLOBAL_SENTINEL_LEN;
-        const SUFFIX_OFFSET: usize = KIND_OFFSET + KIND_LEN;
-        if slice.len() < GLOBAL_SENTINEL_LEN + KIND_LEN {
-            return Err(EncodingError::BufferTooShort {
-                expected: GLOBAL_SENTINEL_LEN + KIND_LEN,
-                actual: slice.len(),
-            });
-        }
-        if slice[SENTINEL_OFFSET..SENTINEL_OFFSET + GLOBAL_SENTINEL_LEN] != GLOBAL_INDEX_V2_SENTINEL
-        {
-            return Err(EncodingError::InvalidKey(
-                "global V2 sentinel mismatch".to_string(),
-            ));
-        }
-        let kind = GlobalIndexV2Kind::try_from_u8(slice[KIND_OFFSET])?;
-        let mut decoder =
-            KeyDecoder::new(&slice[SUFFIX_OFFSET..SUFFIX_OFFSET + slice.len() - SUFFIX_OFFSET]);
-        let key = match kind {
-            GlobalIndexV2Kind::StorageVersion => Self::StorageVersion,
-            GlobalIndexV2Kind::LogicalIndexIdWatermark => Self::LogicalIndexIdWatermark,
-            GlobalIndexV2Kind::VectorPhysicalIdWatermark => Self::VectorPhysicalIdWatermark,
-            GlobalIndexV2Kind::OperationPointer => {
-                Self::OperationPointer(decode_operation_id(&mut decoder)?)
-            }
-            GlobalIndexV2Kind::LegacyVectorPhysicalReservation => {
-                Self::LegacyVectorPhysicalReservation(
-                    VectorPhysicalIndexId::new(decoder.take_u64()?).map_err(model_key_error)?,
-                )
-            }
-            GlobalIndexV2Kind::TextCompactionPointer => {
-                let scope = match decoder.take_u8()? {
-                    0x00 => DataScope::LegacyUnscoped,
-                    0x01 => DataScope::Tenant(TenantId::from_u128(u128::from_be_bytes(
-                        decoder.take_array::<TENANT_ID_LEN>()?,
-                    ))),
-                    unknown => {
-                        return Err(EncodingError::InvalidKey(format!(
-                            "unknown text compaction scope {unknown:#04x}"
-                        )));
-                    }
-                };
-                Self::TextCompactionPointer(TextCompactionTarget::try_new(
-                    scope,
-                    decode_identity(&mut decoder)?,
-                    decode_index_id(&mut decoder)?,
-                    decode_generation(&mut decoder)?,
-                    PartitionFingerprint::new(decoder.take_array::<HASH_LEN>()?),
-                    decoder.take_u32()?,
-                )?)
-            }
-        };
-        decoder.finish()?;
-        Ok(key)
-    }
-}
-
 /// Small bounded decoder shared by the many fixed V2 key suffixes.
 struct KeyDecoder<'a> {
     remaining: &'a [u8],
@@ -1140,7 +622,9 @@ mod wire_fixtures {
     use std::fmt::Write;
 
     use super::*;
-    use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind};
+    use crate::encoding::indexes::range::RangeIndexDirection;
+    use crate::encoding::v1::keys::tenant::TenantId;
+    use crate::index_v2::VectorPhysicalIndexId;
 
     fn index_id() -> IndexId {
         IndexId::new(1).unwrap()
@@ -1181,9 +665,9 @@ mod wire_fixtures {
         })
     }
 
-    fn scoped_fixtures() -> Vec<(&'static str, IndexV2Key)> {
+    fn scoped_fixtures() -> Vec<(&'static str, ScopedKey)> {
         let equality = |lane, entity_id| {
-            IndexV2Key::SecondaryEntry(
+            ScopedKey::SecondaryEntry(
                 SecondaryEntryKey::try_new(
                     index_id(),
                     generation(),
@@ -1195,7 +679,7 @@ mod wire_fixtures {
             )
         };
         let range = |lane, direction| {
-            IndexV2Key::SecondaryEntry(
+            ScopedKey::SecondaryEntry(
                 SecondaryEntryKey::try_new(
                     index_id(),
                     generation(),
@@ -1209,15 +693,15 @@ mod wire_fixtures {
         vec![
             (
                 "lifecycle.index_record",
-                IndexV2Key::index_record(identity(IndexIdentityFamily::SecondaryEquality)),
+                ScopedKey::index_record(identity(IndexIdentityFamily::SecondaryEquality)),
             ),
             (
                 "lifecycle.operation",
-                IndexV2Key::operation(IndexOperationId::from_bytes([0x11; UUID_LEN]).unwrap()),
+                ScopedKey::operation(IndexOperationId::from_bytes([0x11; UUID_LEN]).unwrap()),
             ),
             (
                 "lifecycle.build_delta",
-                IndexV2Key::BuildDelta(IndexEntityStateKey {
+                ScopedKey::BuildDelta(IndexEntityStateKey {
                     index_id: index_id(),
                     generation: generation(),
                     entity: entity(IndexElementKind::Node),
@@ -1225,7 +709,7 @@ mod wire_fixtures {
             ),
             (
                 "lifecycle.applied_state",
-                IndexV2Key::AppliedState(IndexEntityStateKey {
+                ScopedKey::AppliedState(IndexEntityStateKey {
                     index_id: index_id(),
                     generation: generation(),
                     entity: entity(IndexElementKind::Edge),
@@ -1277,31 +761,31 @@ mod wire_fixtures {
                     RangeIndexDirection::Desc,
                 ),
             ),
-            ("text.manifest_root", IndexV2Key::TextManifestRoot(root())),
+            ("text.manifest_root", ScopedKey::TextManifestRoot(root())),
             (
                 "text.manifest_page",
-                IndexV2Key::TextManifestPage(TextManifestPageKey {
+                ScopedKey::TextManifestPage(TextManifestPageKey {
                     root: root(),
                     page: 4,
                 }),
             ),
             (
                 "text.build_artifact",
-                IndexV2Key::TextBuildArtifact(TextBuildArtifactKey {
+                ScopedKey::TextBuildArtifact(TextBuildArtifactKey {
                     root: root(),
                     ordinal: 5,
                 }),
             ),
             (
                 "text.entity_state",
-                IndexV2Key::TextEntityState(TextEntityStateKey {
+                ScopedKey::TextEntityState(TextEntityStateKey {
                     root: root(),
                     entity: entity(IndexElementKind::Node),
                 }),
             ),
             (
                 "text.corpus_statistics",
-                IndexV2Key::TextCorpusStatistics(TextCorpusStatisticsKey {
+                ScopedKey::TextCorpusStatistics(TextCorpusStatisticsKey {
                     index_id: index_id(),
                     generation: generation(),
                     partition: PartitionFingerprint::new([0x22; HASH_LEN]),
@@ -1309,7 +793,7 @@ mod wire_fixtures {
             ),
             (
                 "text.term_statistics",
-                IndexV2Key::TextTermStatistics(TextTermStatisticsKey {
+                ScopedKey::TextTermStatistics(TextTermStatisticsKey {
                     corpus: TextCorpusStatisticsKey {
                         index_id: index_id(),
                         generation: generation(),
@@ -1320,7 +804,7 @@ mod wire_fixtures {
             ),
             (
                 "text.statistics_entity",
-                IndexV2Key::TextStatisticsEntity(TextStatisticsEntityKey {
+                ScopedKey::TextStatisticsEntity(TextStatisticsEntityKey {
                     index_id: index_id(),
                     generation: generation(),
                     entity: entity(IndexElementKind::Edge),
@@ -1328,7 +812,7 @@ mod wire_fixtures {
             ),
             (
                 "vector.partition_mapping",
-                IndexV2Key::VectorPartitionMapping(VectorPartitionMappingKey {
+                ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
                     index_id: index_id(),
                     generation: generation(),
                     partition: PartitionFingerprint::new([0x22; HASH_LEN]),
@@ -1343,7 +827,7 @@ mod wire_fixtures {
         for (name, key) in scoped_fixtures() {
             let mut encoded = Vec::with_capacity(key.encoded_len());
             key.encode_into(&mut encoded);
-            assert_eq!(IndexV2Key::parse_from_slice(&encoded).unwrap(), key);
+            assert_eq!(ScopedKey::parse_from_slice(&encoded).unwrap(), key);
             writeln!(rendered, "{name}={}", hex(&encoded)).expect("writing to String cannot fail");
         }
         insta::assert_snapshot!(rendered, @"
@@ -1380,12 +864,12 @@ vector.partition_mapping=060f000000000000000100000000000000022222222222222222222
         ));
         let unscoped = Key::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: DataKeyKind::IndexV2(equality.clone()),
+            kind: equality.clone(),
         }
         .to_bytes();
         let scoped = Key::Data {
             scope: tenant,
-            kind: DataKeyKind::IndexV2(equality),
+            kind: equality,
         }
         .to_bytes();
         insta::assert_snapshot!(
@@ -1409,39 +893,34 @@ tenant=0102030405060708111213141516171806050000000000000001000000000000000201e9c
         )
         .unwrap();
         let fixtures = [
-            ("storage_version", GlobalIndexV2Key::StorageVersion),
+            ("storage_version", GlobalKey::StorageVersion),
             (
                 "logical_index_watermark",
-                GlobalIndexV2Key::LogicalIndexIdWatermark,
+                GlobalKey::LogicalIndexIdWatermark,
             ),
             (
                 "vector_physical_watermark",
-                GlobalIndexV2Key::VectorPhysicalIdWatermark,
+                GlobalKey::VectorPhysicalIdWatermark,
             ),
             (
                 "operation_pointer",
-                GlobalIndexV2Key::OperationPointer(
+                GlobalKey::OperationPointer(
                     IndexOperationId::from_bytes([0x11; UUID_LEN]).unwrap(),
                 ),
             ),
             (
                 "legacy_vector_reservation",
-                GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-                    VectorPhysicalIndexId::new(9).unwrap(),
-                ),
+                GlobalKey::LegacyVectorPhysicalReservation(VectorPhysicalIndexId::new(9).unwrap()),
             ),
             (
                 "text_compaction_pointer",
-                GlobalIndexV2Key::TextCompactionPointer(target),
+                GlobalKey::TextCompactionPointer(target),
             ),
         ];
         let mut rendered = String::new();
         for (name, key) in fixtures {
-            let encoded = Key::Global {
-                kind: GlobalKeyKind::IndexV2(key.clone()),
-            }
-            .to_bytes();
-            assert_eq!(GlobalIndexV2Key::parse_from_slice(&encoded).unwrap(), key);
+            let encoded = Key::Global { kind: key.clone() }.to_bytes();
+            assert_eq!(GlobalKey::parse_from_slice(&encoded).unwrap(), key);
             writeln!(rendered, "{name}={}", hex(&encoded)).expect("writing to String cannot fail");
         }
         insta::assert_snapshot!(rendered, @"

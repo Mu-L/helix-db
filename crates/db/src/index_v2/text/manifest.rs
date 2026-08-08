@@ -16,10 +16,10 @@ use bytes::Bytes;
 use slatedb::DbTransaction;
 
 use crate::config::{SearchIndexBatchLimits, TextBackfillCompactionLimits};
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::work;
 use crate::index_v2::{
@@ -157,8 +157,8 @@ pub(super) async fn select_page(
 ) -> Result<ManifestSelection> {
     let prefix = Key::data_prefix(
         scope,
-        index_keys::IndexV2Key::generation_prefix(
-            index_keys::IndexV2RecordKind::TextBuildArtifact,
+        index_keys::ScopedKey::generation_prefix(
+            index_keys::RecordKind::TextBuildArtifact,
             operation.index_id(),
             operation.generation(),
         ),
@@ -199,18 +199,12 @@ pub(super) async fn select_page(
     )?;
     let root_key = scoped_key(
         scope,
-        index_keys::IndexV2Key::TextManifestRoot(first_key.root),
+        index_keys::ScopedKey::TextManifestRoot(first_key.root),
     );
     let existing_root_value = transaction.get(&root_key).await?;
     let existing_root = match existing_root_value.as_ref() {
         Some(value) => {
-            let index_values::IndexV2WorkValue::TextManifestRoot(root) =
-                index_values::decode_work_value(value)?
-            else {
-                return Err(corruption(
-                    "text manifest root key contains another typed value kind",
-                ));
-            };
+            let root = index_values::decode_manifest_root(value)?;
             if root.index_id() != operation.index_id()
                 || root.generation() != operation.generation()
                 || root.partition() != &first_artifact.partition
@@ -233,7 +227,7 @@ pub(super) async fn select_page(
     };
     let page_key = scoped_key(
         scope,
-        index_keys::IndexV2Key::TextManifestPage(page_key_typed),
+        index_keys::ScopedKey::TextManifestPage(page_key_typed),
     );
     let existing_page = transaction.get(&page_key).await?;
     if existing_page.is_some() {
@@ -307,11 +301,9 @@ pub(super) async fn select_page(
         )
         .map_err(|error| corruption(format!("initial text manifest root is invalid: {error}")))?,
     };
-    let encoded_root_template = index_values::encode_work_value(
-        &index_values::IndexV2WorkValue::TextManifestRoot(root_template),
-    );
+    let encoded_root_template = index_values::encode_manifest_root(&root_template);
     let one_entry_page =
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestPage(
+        index_values::encode_manifest_page(&
             work::TextManifestPageValue::try_new(
                 operation.index_id(),
                 operation.generation(),
@@ -322,9 +314,9 @@ pub(super) async fn select_page(
             .map_err(|error| {
                 corruption(format!("single-entry manifest page is invalid: {error}"))
             })?,
-        ));
+        );
     let two_entry_page =
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestPage(
+        index_values::encode_manifest_page(&
             work::TextManifestPageValue::try_new(
                 operation.index_id(),
                 operation.generation(),
@@ -333,7 +325,7 @@ pub(super) async fn select_page(
                 vec![first_artifact.split, first_artifact.split],
             )
             .map_err(|error| corruption(format!("two-entry manifest page is invalid: {error}")))?,
-        ));
+        );
     let split_entry_bytes =
         u64::try_from(two_entry_page.len() - one_entry_page.len()).unwrap_or(u64::MAX);
     let page_base_bytes = u64::try_from(one_entry_page.len())
@@ -482,10 +474,8 @@ pub(super) async fn select_page(
     )
     .map_err(|error| corruption(format!("admitted text manifest page is invalid: {error}")))?;
     let encoded_root =
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(root));
-    let encoded_page = index_values::encode_work_value(
-        &index_values::IndexV2WorkValue::TextManifestPage(page_value),
-    );
+        index_values::encode_manifest_root(&root);
+    let encoded_page = index_values::encode_manifest_page(&page_value);
     let manifest_root_bytes =
         u64::try_from(root_key.len().saturating_add(encoded_root.len())).unwrap_or(u64::MAX);
     let manifest_page_bytes =
@@ -534,10 +524,10 @@ fn row_bytes(key: &[u8], value: Option<&Bytes>) -> u64 {
 }
 
 /// Encodes one scoped V2 key through the canonical `encoding/v1` boundary.
-fn scoped_key(scope: DataScope, key: index_keys::IndexV2Key) -> Bytes {
+fn scoped_key(scope: DataScope, key: index_keys::ScopedKey) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }

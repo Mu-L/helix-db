@@ -25,12 +25,12 @@ use crate::encoding::indexes::label::{EdgeLabelKey, EdgeLabelNeighborKey};
 use crate::encoding::indexes::{hash_property_name, hash_property_value, EdgeDirection, IndexKey};
 use crate::encoding::property::property_value::PropertyValue as DbPropertyValue;
 use crate::encoding::property::Property;
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{
     AdjacencyKey, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey, Key, NodePropertyKey,
 };
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::values as index_values;
 use crate::encoding::v1::values::vector_generation::{ActiveScoreSemantic, VectorEntityKind};
 use crate::encoding::v1::values::{edges, secondary};
 use crate::index_v2::{
@@ -213,19 +213,19 @@ pub async fn run_request_mode_and_isolated_mutation_contracts() {
 }
 
 /// Encodes one unscoped V2 logical key through the canonical V1 boundary.
-fn scoped_key(logical: index_keys::IndexV2Key) -> Bytes {
-    Key::Data {
+fn scoped_key(logical: index_keys::ScopedKey) -> Bytes {
+    index_keys::Key::Data {
         scope: DataScope::LegacyUnscoped,
-        kind: DataKeyKind::IndexV2(logical),
+        kind: logical,
     }
     .to_bytes()
 }
 
 /// Captures every scoped V2 key/value so conflicts cannot hide lane-specific writes.
 async fn scoped_v2_snapshot(db: &Db) -> Vec<(Bytes, Bytes)> {
-    let prefix = Key::data_prefix(
+    let prefix = index_keys::Key::data_prefix(
         DataScope::LegacyUnscoped,
-        Bytes::copy_from_slice(index_keys::IndexV2Key::key_prefix().as_slice()),
+        Bytes::from(vec![index_keys::ScopedKey::key_prefix()]),
     );
     let mut rows = db
         .scan_prefix(&prefix, ..)
@@ -636,7 +636,7 @@ async fn seed_active_text_generation_with(
         .expect("Active-text seed transaction opens");
     transaction
         .put(
-            scoped_key(index_keys::IndexV2Key::index_record(
+            scoped_key(index_keys::ScopedKey::index_record(
                 active.identity().clone(),
             )),
             index_values::encode_index_record(&active),
@@ -645,8 +645,8 @@ async fn seed_active_text_generation_with(
     if let Some(root) = root {
         transaction
             .put(
-                scoped_key(index_keys::IndexV2Key::TextManifestRoot(root)),
-                index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+                scoped_key(index_keys::ScopedKey::TextManifestRoot(root)),
+                index_values::encode_manifest_root(&
                     crate::index_v2::work::TextManifestRootValue::try_new(
                         index_id,
                         IndexGenerationId::initial(),
@@ -656,7 +656,7 @@ async fn seed_active_text_generation_with(
                         0,
                     )
                     .expect("an empty manifest accepts any live revision"),
-                )),
+                ),
             )
             .expect("empty Active manifest stages");
     }
@@ -761,15 +761,13 @@ pub(crate) async fn run_active_text_graph_conflict() {
         Some(competing_properties)
     );
     let root_value = writer_db(&db)
-        .get(scoped_key(index_keys::IndexV2Key::TextManifestRoot(root)))
+        .get(scoped_key(index_keys::ScopedKey::TextManifestRoot(root)))
         .await
         .expect("Active manifest root reads")
         .expect("Active manifest root remains present");
-    assert!(matches!(
-        index_values::decode_work_value(&root_value).expect("Active manifest root decodes"),
-        index_values::IndexV2WorkValue::TextManifestRoot(root)
-            if root.page_count() == 0 && root.split_count() == 0
-    ));
+    let root = index_values::decode_manifest_root(&root_value)
+        .expect("Active manifest root decodes");
+    assert!(root.page_count() == 0 && root.split_count() == 0);
     assert_eq!(
         scoped_v2_snapshot(writer_db(&db)).await,
         v2_before,
@@ -1872,20 +1870,14 @@ mod text_transaction_benchmark {
 
     async fn manifest_split_count(db: &Db, root: index_keys::TextManifestRootKey) -> Result<u64> {
         let bytes = db
-            .get(scoped_key(index_keys::IndexV2Key::TextManifestRoot(root)))
+            .get(scoped_key(index_keys::ScopedKey::TextManifestRoot(root)))
             .await?
             .ok_or_else(|| {
                 HelixDbError::InvariantViolation(
                     "text transaction benchmark manifest root disappeared".to_string(),
                 )
             })?;
-        let index_values::IndexV2WorkValue::TextManifestRoot(value) =
-            index_values::decode_work_value(&bytes)?
-        else {
-            return Err(HelixDbError::InvariantViolation(
-                "text transaction benchmark root key contains another value kind".to_string(),
-            ));
-        };
+        let value = index_values::decode_manifest_root(&bytes)?;
         Ok(value.split_count())
     }
 
@@ -1894,20 +1886,14 @@ mod text_transaction_benchmark {
         root: index_keys::TextManifestRootKey,
     ) -> Result<crate::index_v2::work::TextManifestRootValue> {
         let bytes = db
-            .get(scoped_key(index_keys::IndexV2Key::TextManifestRoot(root)))
+            .get(scoped_key(index_keys::ScopedKey::TextManifestRoot(root)))
             .await?
             .ok_or_else(|| {
                 HelixDbError::InvariantViolation(
                     "text transaction contract manifest root disappeared".to_string(),
                 )
             })?;
-        let index_values::IndexV2WorkValue::TextManifestRoot(value) =
-            index_values::decode_work_value(&bytes)?
-        else {
-            return Err(HelixDbError::InvariantViolation(
-                "text transaction contract root key contains another value kind".to_string(),
-            ));
-        };
+        let value = index_values::decode_manifest_root(&bytes)?;
         Ok(value)
     }
 
@@ -1916,7 +1902,7 @@ mod text_transaction_benchmark {
         root: index_keys::TextManifestRootKey,
         entity_id: u64,
     ) -> Result<crate::index_v2::work::TextEntityStateValue> {
-        let key = scoped_key(index_keys::IndexV2Key::TextEntityState(
+        let key = scoped_key(index_keys::ScopedKey::TextEntityState(
             index_keys::TextEntityStateKey {
                 root,
                 entity: index_keys::IndexEntity {
@@ -1930,13 +1916,7 @@ mod text_transaction_benchmark {
                 "text transaction contract entity state disappeared".to_string(),
             )
         })?;
-        let index_values::IndexV2WorkValue::TextEntityState(state) =
-            index_values::decode_work_value(&bytes)?
-        else {
-            return Err(HelixDbError::InvariantViolation(
-                "text transaction contract state key contains another value kind".to_string(),
-            ));
-        };
+        let state = index_values::decode_text_entity_state(&bytes)?;
         Ok(state)
     }
 
@@ -1958,9 +1938,9 @@ mod text_transaction_benchmark {
             page,
         )?;
         let key = Key::Global {
-            kind: GlobalKeyKind::IndexV2(index_keys::GlobalIndexV2Key::TextCompactionPointer(
+            kind: index_keys::GlobalKey::TextCompactionPointer(
                 target,
-            )),
+            ),
         }
         .to_bytes();
         let bytes = db.get(key).await?.ok_or_else(|| {
@@ -2111,7 +2091,7 @@ mod text_transaction_benchmark {
             assert!(state.live);
             assert_eq!(state.logical_version.get(), inserted_root.revision().get());
         }
-        let page_key = scoped_key(index_keys::IndexV2Key::TextManifestPage(
+        let page_key = scoped_key(index_keys::ScopedKey::TextManifestPage(
             index_keys::TextManifestPageKey { root, page: 0 },
         ));
         let page_bytes = writer_db(&db)
@@ -2119,11 +2099,8 @@ mod text_transaction_benchmark {
             .await
             .expect("batched manifest page reads")
             .expect("batched manifest page exists");
-        let index_values::IndexV2WorkValue::TextManifestPage(page) =
-            index_values::decode_work_value(&page_bytes).expect("batched page decodes")
-        else {
-            panic!("batched page key retains its value kind");
-        };
+        let page = index_values::decode_manifest_page(&page_bytes)
+            .expect("batched page decodes");
         assert_eq!(page.entries().len(), 1);
         assert!(page.entries()[0]
             .pruning()
@@ -2459,7 +2436,7 @@ mod text_transaction_benchmark {
             final_value.revision().get()
         );
 
-        let intermediate_key = scoped_key(index_keys::IndexV2Key::TextManifestRoot(tenant_root(
+        let intermediate_key = scoped_key(index_keys::ScopedKey::TextManifestRoot(tenant_root(
             "temporary-partition",
         )));
         assert!(writer_db(&db)

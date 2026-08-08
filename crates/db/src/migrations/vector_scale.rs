@@ -29,13 +29,13 @@ use slatedb::{Db, IsolationLevel};
 
 use crate::config;
 use crate::encoding::property::{self, Property};
-use crate::encoding::v1::keys::index_v2::{GlobalIndexV2Key, IndexV2Key};
+use crate::encoding::v2::keys::{GlobalKey, ScopedKey};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::{
     VectorIndexMetadataKey, VectorItemKey, VectorKey, VectorSimHashKey, VectorStorageLane,
 };
 use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key, NodePropertyKey};
-use crate::encoding::v1::values::index_v2::{
+use crate::encoding::v2::values::{
     encode_index_record, encode_metadata_value, encode_operation_record,
 };
 use crate::encoding::v1::values::vectors::{metadata, simhash};
@@ -371,7 +371,7 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
     metadata_txn.put(
         Key::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::index_record(active.identity().clone())),
+            kind: ScopedKey::index_record(active.identity().clone()),
         }
         .to_bytes(),
         encode_index_record(&active),
@@ -379,7 +379,7 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
     metadata_txn.put(
         Key::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::operation(completed_build_operation_id)),
+            kind: ScopedKey::operation(completed_build_operation_id),
         }
         .to_bytes(),
         encode_operation_record(&completed_build),
@@ -404,9 +404,9 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
     )?;
     metadata_txn.put(
         Key::Global {
-            kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+            kind: GlobalKey::LegacyVectorPhysicalReservation(
                 legacy_physical_id,
-            )),
+            ),
         }
         .to_bytes(),
         encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(
@@ -558,9 +558,9 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
     )?;
     directory_metadata_txn.put(
         Key::Global {
-            kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+            kind: GlobalKey::LegacyVectorPhysicalReservation(
                 current_physical_id,
-            )),
+            ),
         }
         .to_bytes(),
         encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(
@@ -801,9 +801,9 @@ async fn assert_retired(
         }
     }
     let reservation = Key::Global {
-        kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+        kind: GlobalKey::LegacyVectorPhysicalReservation(
             physical_id,
-        )),
+        ),
     }
     .to_bytes();
     if db.get(reservation).await?.is_some() {

@@ -9,7 +9,6 @@ use crate::encoding::error::EncodingError;
 pub(crate) mod edge_endpoints;
 pub mod edges;
 pub(crate) mod id_allocation;
-pub(crate) mod index_v2;
 pub(crate) mod secondary;
 #[cfg(any(test, feature = "fuzzing", feature = "production-coverage"))]
 pub(crate) mod text_index;

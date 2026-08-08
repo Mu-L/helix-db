@@ -12,10 +12,10 @@ use std::collections::BTreeMap;
 use futures::{StreamExt, TryStreamExt};
 use slatedb::DbReadOps;
 
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::work;
 use crate::index_v2::{
@@ -168,7 +168,7 @@ pub(crate) async fn load_active_manifest_root(
     };
     let key = scoped_key(
         authority.scope(),
-        index_keys::IndexV2Key::TextManifestRoot(typed_key),
+        index_keys::ScopedKey::TextManifestRoot(typed_key),
     );
     let Some(value) = reader.get(key).await? else {
         return match partition {
@@ -178,13 +178,7 @@ pub(crate) async fn load_active_manifest_root(
             )),
         };
     };
-    let index_values::IndexV2WorkValue::TextManifestRoot(root) =
-        index_values::decode_work_value(&value)?
-    else {
-        return Err(corruption(
-            "text manifest root key contains another typed value kind",
-        ));
-    };
+    let root = index_values::decode_manifest_root(&value)?;
     if root.index_id() != authority.index_id()
         || root.generation() != authority.generation()
         || root.partition() != partition
@@ -238,8 +232,8 @@ pub(crate) async fn load_active_manifest_roots(
     reader: &(impl DbReadOps + Sync),
     authority: &ActiveTextServingAuthority,
 ) -> Result<Vec<ValidatedActiveTextManifestRoot>> {
-    let logical_prefix = index_keys::IndexV2Key::generation_prefix(
-        index_keys::IndexV2RecordKind::TextManifestRoot,
+    let logical_prefix = index_keys::ScopedKey::generation_prefix(
+        index_keys::RecordKind::TextManifestRoot,
         authority.index_id(),
         authority.generation(),
     );
@@ -248,7 +242,7 @@ pub(crate) async fn load_active_manifest_roots(
     let mut roots = Vec::new();
     while let Some(row) = rows.next().await? {
         let Key::Data {
-            kind: DataKeyKind::IndexV2(index_keys::IndexV2Key::TextManifestRoot(key)),
+            kind: index_keys::ScopedKey::TextManifestRoot(key),
             ..
         } = Key::parse_from_slice(authority.scope(), &row.key)?
         else {
@@ -256,13 +250,7 @@ pub(crate) async fn load_active_manifest_roots(
                 "text manifest-root prefix yielded another typed key",
             ));
         };
-        let index_values::IndexV2WorkValue::TextManifestRoot(root) =
-            index_values::decode_work_value(&row.value)?
-        else {
-            return Err(corruption(
-                "text manifest-root key contains another typed value kind",
-            ));
-        };
+        let root = index_values::decode_manifest_root(&row.value)?;
         if key.index_id != authority.index_id()
             || key.generation != authority.generation()
             || root.index_id() != authority.index_id()
@@ -343,20 +331,14 @@ pub(crate) async fn load_active_manifest_page(
     };
     let key = scoped_key(
         root.scope,
-        index_keys::IndexV2Key::TextManifestPage(typed_key),
+        index_keys::ScopedKey::TextManifestPage(typed_key),
     );
     let Some(value) = reader.get(key).await? else {
         return Err(corruption(
             "Active text manifest root references a missing page",
         ));
     };
-    let index_values::IndexV2WorkValue::TextManifestPage(value) =
-        index_values::decode_work_value(&value)?
-    else {
-        return Err(corruption(
-            "text manifest page key contains another typed value kind",
-        ));
-    };
+    let value = index_values::decode_manifest_page(&value)?;
     if value.index_id() != root.index_id()
         || value.generation() != root.generation()
         || value.partition() != root.partition()
@@ -415,7 +397,7 @@ pub(crate) async fn load_active_entity_states(
         .map(|entity| {
             scoped_key(
                 root.scope,
-                index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+                index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                     root: root.key,
                     entity,
                 }),
@@ -431,13 +413,7 @@ pub(crate) async fn load_active_entity_states(
                 "Active V2 text split candidate has no entity state",
             ));
         };
-        let index_values::IndexV2WorkValue::TextEntityState(state) =
-            index_values::decode_work_value(&value)?
-        else {
-            return Err(corruption(
-                "text entity-state key contains another typed value kind",
-            ));
-        };
+        let state = index_values::decode_text_entity_state(&value)?;
         let typed_key = index_keys::TextEntityStateKey {
             root: root.key,
             entity,
@@ -445,7 +421,7 @@ pub(crate) async fn load_active_entity_states(
         if key
             != scoped_key(
                 root.scope,
-                index_keys::IndexV2Key::TextEntityState(typed_key),
+                index_keys::ScopedKey::TextEntityState(typed_key),
             )
             || state.index_id != root.index_id()
             || state.generation != root.generation()
@@ -503,10 +479,10 @@ pub(crate) async fn load_active_entity_states(
 }
 
 /// Encodes one typed V2 data key in its exact scope.
-fn scoped_key(scope: DataScope, key: index_keys::IndexV2Key) -> bytes::Bytes {
+fn scoped_key(scope: DataScope, key: index_keys::ScopedKey) -> bytes::Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }
@@ -575,7 +551,7 @@ mod tests {
                 authority.generation(),
                 partition,
             ),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextCorpusStatistics(
+            index_values::encode_corpus_statistics(&
                 work::TextCorpusStatisticsValue::try_new(
                     authority.index_id(),
                     authority.generation(),
@@ -584,7 +560,7 @@ mod tests {
                     total_token_count,
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -599,13 +575,13 @@ mod tests {
         db.put(
             scoped_key(
                 authority.scope(),
-                index_keys::IndexV2Key::TextStatisticsEntity(index_keys::TextStatisticsEntityKey {
+                index_keys::ScopedKey::TextStatisticsEntity(index_keys::TextStatisticsEntityKey {
                     index_id: authority.index_id(),
                     generation: authority.generation(),
                     entity,
                 }),
             ),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextStatisticsEntity(
+            index_values::encode_statistics_entity(&
                 work::TextStatisticsEntityValue {
                     index_id: authority.index_id(),
                     generation: authority.generation(),
@@ -619,7 +595,7 @@ mod tests {
                     )
                     .unwrap(),
                 },
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -683,9 +659,9 @@ mod tests {
         db.put(
             scoped_key(
                 authority.scope(),
-                index_keys::IndexV2Key::TextManifestRoot(root_key),
+                index_keys::ScopedKey::TextManifestRoot(root_key),
             ),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::try_new(
                     authority.index_id(),
                     authority.generation(),
@@ -695,7 +671,7 @@ mod tests {
                     1,
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -703,12 +679,12 @@ mod tests {
         db.put(
             scoped_key(
                 authority.scope(),
-                index_keys::IndexV2Key::TextManifestPage(index_keys::TextManifestPageKey {
+                index_keys::ScopedKey::TextManifestPage(index_keys::TextManifestPageKey {
                     root: root_key,
                     page: 0,
                 }),
             ),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestPage(
+            index_values::encode_manifest_page(&
                 work::TextManifestPageValue::try_new(
                     authority.index_id(),
                     authority.generation(),
@@ -717,7 +693,7 @@ mod tests {
                     vec![split],
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -728,12 +704,12 @@ mod tests {
         db.put(
             scoped_key(
                 authority.scope(),
-                index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+                index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                     root: root_key,
                     entity,
                 }),
             ),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+            index_values::encode_text_entity_state(&
                 work::TextEntityStateValue {
                     index_id: authority.index_id(),
                     generation: authority.generation(),
@@ -743,7 +719,7 @@ mod tests {
                     logical_version: TextLogicalVersion::initial(),
                     live: true,
                 },
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -842,19 +818,19 @@ mod tests {
         db.put(
             scoped_key(
                 authority.scope(),
-                index_keys::IndexV2Key::TextManifestRoot(index_keys::TextManifestRootKey {
+                index_keys::ScopedKey::TextManifestRoot(index_keys::TextManifestRootKey {
                     index_id: authority.index_id(),
                     generation: authority.generation(),
                     partition: partition.fingerprint(),
                 }),
             ),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::empty(
                     authority.index_id(),
                     authority.generation(),
                     partition.clone(),
                 ),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -926,9 +902,9 @@ mod tests {
         db.put(
             scoped_key(
                 authority.scope(),
-                index_keys::IndexV2Key::TextManifestRoot(root_key),
+                index_keys::ScopedKey::TextManifestRoot(root_key),
             ),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::try_new(
                     authority.index_id(),
                     authority.generation(),
@@ -938,7 +914,7 @@ mod tests {
                     1,
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -955,12 +931,12 @@ mod tests {
         db.put(
             scoped_key(
                 authority.scope(),
-                index_keys::IndexV2Key::TextManifestPage(index_keys::TextManifestPageKey {
+                index_keys::ScopedKey::TextManifestPage(index_keys::TextManifestPageKey {
                     root: root_key,
                     page: 0,
                 }),
             ),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestPage(
+            index_values::encode_manifest_page(&
                 work::TextManifestPageValue::try_new(
                     authority.index_id(),
                     authority.generation(),
@@ -969,7 +945,7 @@ mod tests {
                     vec![split],
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -980,12 +956,12 @@ mod tests {
         db.put(
             scoped_key(
                 authority.scope(),
-                index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+                index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                     root: root_key,
                     entity,
                 }),
             ),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+            index_values::encode_text_entity_state(&
                 work::TextEntityStateValue {
                     index_id: authority.index_id(),
                     generation: authority.generation(),
@@ -995,7 +971,7 @@ mod tests {
                     logical_version: TextLogicalVersion::new(2).unwrap(),
                     live: true,
                 },
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -1031,7 +1007,7 @@ mod tests {
         };
         let scoped_root_key = scoped_key(
             authority.scope(),
-            index_keys::IndexV2Key::TextManifestRoot(root_key),
+            index_keys::ScopedKey::TextManifestRoot(root_key),
         );
         let split = work::SplitRef::try_new(
             work::BlobRef::new([19; 32], 100),
@@ -1044,7 +1020,7 @@ mod tests {
         .unwrap();
         db.put(
             scoped_root_key.clone(),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestPage(
+            index_values::encode_manifest_page(&
                 work::TextManifestPageValue::try_new(
                     authority.index_id(),
                     authority.generation(),
@@ -1053,7 +1029,7 @@ mod tests {
                     vec![split],
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -1065,7 +1041,7 @@ mod tests {
 
         db.put(
             scoped_root_key.clone(),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::try_new(
                     IndexId::new(2).unwrap(),
                     authority.generation(),
@@ -1075,7 +1051,7 @@ mod tests {
                     1,
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -1094,9 +1070,7 @@ mod tests {
             1,
         )
         .unwrap();
-        let encoded_root = index_values::encode_work_value(
-            &index_values::IndexV2WorkValue::TextManifestRoot(root_value.clone()),
-        );
+        let encoded_root = index_values::encode_manifest_root(&root_value);
         db.put(scoped_root_key, encoded_root.clone()).await.unwrap();
         put_corpus_statistics(&db, &authority, &partition, 1, 1).await;
         let root = load_active_manifest_root(&db, &authority, &partition)
@@ -1112,7 +1086,7 @@ mod tests {
         db.put(
             scoped_key(
                 authority.scope(),
-                index_keys::IndexV2Key::TextManifestPage(index_keys::TextManifestPageKey {
+                index_keys::ScopedKey::TextManifestPage(index_keys::TextManifestPageKey {
                     root: root_key,
                     page: 0,
                 }),
@@ -1130,7 +1104,7 @@ mod tests {
         db.put(
             scoped_key(
                 authority.scope(),
-                index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+                index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                     root: root_key,
                     entity: index_keys::IndexEntity {
                         kind: IndexElementKind::Node,

@@ -7,10 +7,10 @@ use sha2::{Digest, Sha256};
 use slatedb::{DbReadOps, DbTransaction};
 
 use crate::config::TextAnalyzerKind;
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::{self, work};
 
@@ -532,7 +532,7 @@ pub(crate) async fn load_entity_contribution(
 ) -> Result<Option<work::TextStatisticsContribution>> {
     let key = scoped_key(
         scope,
-        index_keys::IndexV2Key::TextStatisticsEntity(index_keys::TextStatisticsEntityKey {
+        index_keys::ScopedKey::TextStatisticsEntity(index_keys::TextStatisticsEntityKey {
             index_id,
             generation,
             entity,
@@ -541,13 +541,7 @@ pub(crate) async fn load_entity_contribution(
     let Some(value) = reader.get(key).await? else {
         return Ok(None);
     };
-    let index_values::IndexV2WorkValue::TextStatisticsEntity(marker) =
-        index_values::decode_work_value(&value)?
-    else {
-        return Err(corruption(
-            "text statistics entity key contains another value kind",
-        ));
-    };
+    let marker = index_values::decode_statistics_entity(&value)?;
     if marker.index_id != index_id
         || marker.generation != generation
         || marker.entity_kind != entity.kind
@@ -666,17 +660,15 @@ async fn prepare_transition(
                 "empty text corpus retains a non-zero token count",
             ));
         }
-        let replacement = Some(index_values::encode_work_value(
-            &index_values::IndexV2WorkValue::TextCorpusStatistics(
-                work::TextCorpusStatisticsValue::try_new(
-                    index_id,
-                    generation,
-                    partition.clone(),
-                    next_document_count,
-                    next_total_token_count,
-                )
-                .map_err(model_error)?,
-            ),
+        let replacement = Some(index_values::encode_corpus_statistics(
+            &work::TextCorpusStatisticsValue::try_new(
+                index_id,
+                generation,
+                partition.clone(),
+                next_document_count,
+                next_total_token_count,
+            )
+            .map_err(model_error)?,
         ));
         resulting_document_counts.insert(partition, next_document_count);
         rows.push(PreparedStatisticsRow {
@@ -713,17 +705,15 @@ async fn prepare_transition(
         let replacement = if next_document_frequency == 0 {
             None
         } else {
-            Some(index_values::encode_work_value(
-                &index_values::IndexV2WorkValue::TextTermStatistics(
-                    work::TextTermStatisticsValue::try_new(
-                        index_id,
-                        generation,
-                        partition,
-                        term,
-                        next_document_frequency,
-                    )
-                    .map_err(model_error)?,
-                ),
+            Some(index_values::encode_term_statistics(
+                &work::TextTermStatisticsValue::try_new(
+                    index_id,
+                    generation,
+                    partition,
+                    term,
+                    next_document_frequency,
+                )
+                .map_err(model_error)?,
             ))
         };
         rows.push(PreparedStatisticsRow {
@@ -735,7 +725,7 @@ async fn prepare_transition(
 
     let marker_key = scoped_key(
         scope,
-        index_keys::IndexV2Key::TextStatisticsEntity(index_keys::TextStatisticsEntityKey {
+        index_keys::ScopedKey::TextStatisticsEntity(index_keys::TextStatisticsEntityKey {
             index_id,
             generation,
             entity,
@@ -748,16 +738,14 @@ async fn prepare_transition(
             MissingAbsentMarkerPolicy::KeepMissing,
         ) => None,
         (_, _, MissingAbsentMarkerPolicy::KeepMissing | MissingAbsentMarkerPolicy::Persist) => {
-            Some(index_values::encode_work_value(
-                &index_values::IndexV2WorkValue::TextStatisticsEntity(
-                    work::TextStatisticsEntityValue {
-                        index_id,
-                        generation,
-                        entity_kind: entity.kind,
-                        entity_id: entity.id,
-                        contribution: desired,
-                    },
-                ),
+            Some(index_values::encode_statistics_entity(
+                &work::TextStatisticsEntityValue {
+                    index_id,
+                    generation,
+                    entity_kind: entity.kind,
+                    entity_id: entity.id,
+                    contribution: desired,
+                },
             ))
         }
     };
@@ -841,7 +829,7 @@ async fn read_marker(
 ) -> Result<Option<(Bytes, work::TextStatisticsEntityValue)>> {
     let key = scoped_key(
         scope,
-        index_keys::IndexV2Key::TextStatisticsEntity(index_keys::TextStatisticsEntityKey {
+        index_keys::ScopedKey::TextStatisticsEntity(index_keys::TextStatisticsEntityKey {
             index_id,
             generation,
             entity,
@@ -850,13 +838,7 @@ async fn read_marker(
     let Some(value) = read_value(transaction, batch, &key).await? else {
         return Ok(None);
     };
-    let index_values::IndexV2WorkValue::TextStatisticsEntity(marker) =
-        index_values::decode_work_value(&value)?
-    else {
-        return Err(corruption(
-            "text statistics entity key contains another value kind",
-        ));
-    };
+    let marker = index_values::decode_statistics_entity(&value)?;
     if marker.index_id != index_id
         || marker.generation != generation
         || marker.entity_kind != entity.kind
@@ -889,7 +871,7 @@ pub(super) fn corpus_key(
 ) -> Bytes {
     scoped_key(
         scope,
-        index_keys::IndexV2Key::TextCorpusStatistics(index_keys::TextCorpusStatisticsKey {
+        index_keys::ScopedKey::TextCorpusStatistics(index_keys::TextCorpusStatisticsKey {
             index_id,
             generation,
             partition: partition.fingerprint(),
@@ -906,7 +888,7 @@ fn term_key(
 ) -> Bytes {
     scoped_key(
         scope,
-        index_keys::IndexV2Key::TextTermStatistics(index_keys::TextTermStatisticsKey {
+        index_keys::ScopedKey::TextTermStatistics(index_keys::TextTermStatisticsKey {
             corpus: index_keys::TextCorpusStatisticsKey {
                 index_id,
                 generation,
@@ -917,34 +899,22 @@ fn term_key(
     )
 }
 
-fn scoped_key(scope: DataScope, key: index_keys::IndexV2Key) -> Bytes {
+fn scoped_key(scope: DataScope, key: index_keys::ScopedKey) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }
 
 /// Decodes one corpus-statistics value without accepting another work kind.
 pub(super) fn decode_corpus(value: &[u8]) -> Result<work::TextCorpusStatisticsValue> {
-    let index_values::IndexV2WorkValue::TextCorpusStatistics(statistics) =
-        index_values::decode_work_value(value)?
-    else {
-        return Err(corruption(
-            "text corpus-statistics key contains another value kind",
-        ));
-    };
+    let statistics = index_values::decode_corpus_statistics(value)?;
     Ok(statistics)
 }
 
 fn decode_term(value: &[u8]) -> Result<work::TextTermStatisticsValue> {
-    let index_values::IndexV2WorkValue::TextTermStatistics(statistics) =
-        index_values::decode_work_value(value)?
-    else {
-        return Err(corruption(
-            "text term-statistics key contains another value kind",
-        ));
-    };
+    let statistics = index_values::decode_term_statistics(value)?;
     Ok(statistics)
 }
 
@@ -1038,7 +1008,7 @@ mod tests {
         document_count: u64,
         total_token_count: u64,
     ) -> Bytes {
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextCorpusStatistics(
+        index_values::encode_corpus_statistics(&
             work::TextCorpusStatisticsValue::try_new(
                 index_id,
                 generation,
@@ -1047,7 +1017,7 @@ mod tests {
                 total_token_count,
             )
             .expect("test corpus totals are valid"),
-        ))
+        )
     }
 
     #[test]

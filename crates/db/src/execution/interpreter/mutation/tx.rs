@@ -446,9 +446,9 @@ mod additional_tests {
     #[tokio::test]
     async fn invalidated_proof_reloads_recreated_vector_and_text_settings_before_write_open() {
         use crate::config::{TextAnalyzerKind, TextIndexDefinition, VectorIndexDefinition};
-        use crate::encoding::v1::keys::index_v2::IndexV2Key;
-        use crate::encoding::v1::keys::{DataKeyKind, Key};
-        use crate::encoding::v1::values::index_v2::encode_index_record;
+        use crate::encoding::v2::keys::ScopedKey;
+        use crate::encoding::v2::keys::Key;
+        use crate::encoding::v2::values::encode_index_record;
         use crate::index_v2::{
             ActiveIndexHandle, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2,
             IndexRevision, IndexStateTransition, PhysicalGeneration,
@@ -545,7 +545,7 @@ mod additional_tests {
             seed.put(
                 Key::Data {
                     scope,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(record.identity().clone())),
+                    kind: ScopedKey::index_record(record.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(record),
@@ -584,9 +584,9 @@ mod additional_tests {
                         .put(
                             Key::Data {
                                 scope,
-                                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(
+                                kind: ScopedKey::index_record(
                                     record.identity().clone(),
-                                )),
+                                ),
                             }
                             .to_bytes(),
                             encode_index_record(record),
@@ -905,9 +905,9 @@ mod additional_tests {
     #[tokio::test]
     async fn mutation_scope_projects_canonical_active_definitions() {
         use crate::config::SecondaryIndexDefinition;
-        use crate::encoding::v1::keys::index_v2::IndexV2Key;
-        use crate::encoding::v1::keys::{DataKeyKind, Key};
-        use crate::encoding::v1::values::index_v2::encode_index_record;
+        use crate::encoding::v2::keys::ScopedKey;
+        use crate::encoding::v2::keys::Key;
+        use crate::encoding::v2::values::encode_index_record;
         use crate::index_v2::{
             IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
             IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
@@ -935,7 +935,7 @@ mod additional_tests {
             .put(
                 Key::Data {
                     scope,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(active.identity().clone())),
+                    kind: ScopedKey::index_record(active.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&active),
@@ -960,9 +960,9 @@ mod additional_tests {
         use slatedb::object_store::ObjectStore;
 
         use crate::config::VectorIndexDefinition;
-        use crate::encoding::v1::keys::index_v2::IndexV2Key;
-        use crate::encoding::v1::keys::{DataKeyKind, Key};
-        use crate::encoding::v1::values::index_v2::encode_index_record;
+        use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey};
+        use crate::encoding::v2::keys::{Key, ScopedKey};
+        use crate::encoding::v2::values::encode_index_record;
         use crate::index_v2::{
             IndexGenerationId, IndexOperationId, IndexRecordV2, IndexRevision,
             IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
@@ -1014,7 +1014,7 @@ mod additional_tests {
         seed.put(
             Key::Data {
                 scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(active.identity().clone())),
+                kind: ScopedKey::index_record(active.identity().clone()),
             }
             .to_bytes(),
             encode_index_record(&active),
@@ -1042,9 +1042,9 @@ mod additional_tests {
             .put(
                 Key::Data {
                     scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(
+                    kind: ScopedKey::index_record(
                         dropping.identity().clone(),
-                    )),
+                    ),
                 }
                 .to_bytes(),
                 encode_index_record(&dropping),
@@ -1060,7 +1060,7 @@ mod additional_tests {
                 record_revision: 2,
             }) if stale_index_id == index_id.get()
         ));
-        let staged_graph_key = Key::Data {
+        let staged_graph_key = GraphKey::Data {
             scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
             kind: DataKeyKind::NodeProperty(crate::encoding::v1::keys::NodePropertyKey::new(99)),
         }

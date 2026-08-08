@@ -32,6 +32,7 @@ use crate::encoding::v1::keys::{
     AdjacencyKey, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey, EdgePropertyByIdKey, Key,
     KeyPrefix, MetadataKey,
 };
+use crate::encoding::v2::keys::Key as IndexKey;
 use crate::encoding::{EdgeId, NodeId};
 use crate::error::{HelixDbError, Result};
 use crate::search;
@@ -865,8 +866,8 @@ impl MigrationStage {
             Self::LegacyEdgePairs => KeyPrefix::EdgePropertyPair.as_slice(),
             Self::EdgeEndpoints => KeyPrefix::EdgeEndpoints.as_slice(),
             Self::FenceLegacyVectorSources | Self::ReleaseLegacyVectorReservations => {
-                return crate::encoding::v1::keys::index_v2::GlobalIndexV2Key::logical_prefix(
-                    crate::encoding::v1::keys::index_v2::GlobalIndexV2Kind::LegacyVectorPhysicalReservation,
+                return crate::encoding::v2::keys::GlobalKey::logical_prefix(
+                    crate::encoding::v2::keys::GlobalKind::LegacyVectorPhysicalReservation,
                 );
             }
             Self::LegacyVectorHotRows => {
@@ -882,8 +883,8 @@ impl MigrationStage {
                 );
             }
             Self::LegacyVectorCoreRows => {
-                return crate::encoding::v1::keys::index_v2::GlobalIndexV2Key::logical_prefix(
-                    crate::encoding::v1::keys::index_v2::GlobalIndexV2Kind::LegacyVectorPhysicalReservation,
+                return crate::encoding::v2::keys::GlobalKey::logical_prefix(
+                    crate::encoding::v2::keys::GlobalKind::LegacyVectorPhysicalReservation,
                 );
             }
             Self::LegacyVectorDefinitions => {
@@ -1812,14 +1813,13 @@ struct V2VectorPhysicalOwner {
 /// The serializable transaction either installs the complete reservation set or
 /// leaves every legacy catalog and physical row unchanged.
 pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> {
-    use crate::encoding::v1::keys::index_v2::{
-        GlobalIndexV2Key, GlobalIndexV2Kind, IndexV2Key, IndexV2RecordKind,
+    use crate::encoding::v2::keys::{
+        GlobalKey, GlobalKind, ScopedKey, RecordKind,
     };
     use crate::encoding::v1::keys::vectors::{VectorMetadataScanPrefix, VectorMetadataScanRow};
-    use crate::encoding::v1::keys::GlobalKeyKind;
-    use crate::encoding::v1::values::index_v2::{
-        decode_index_record, decode_metadata_value, decode_work_value, encode_metadata_value,
-        IndexV2WorkValue,
+    use crate::encoding::v2::values::{
+        decode_index_record, decode_metadata_value, decode_partition_mapping,
+        encode_metadata_value,
     };
     use crate::encoding::v1::values::vectors::metadata::{decode_legacy_metadata, decode_metadata};
     use crate::index_v2::{
@@ -1831,14 +1831,14 @@ pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> 
     let scope = DataScope::LegacyUnscoped;
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
     let reservation_prefix =
-        GlobalIndexV2Key::logical_prefix(GlobalIndexV2Kind::LegacyVectorPhysicalReservation);
+        GlobalKey::logical_prefix(GlobalKind::LegacyVectorPhysicalReservation);
     let mut retiring_owners = BTreeMap::new();
     let mut retiring_rows = transaction
         .scan_prefix(reservation_prefix.clone(), ..)
         .await?;
     while let Some(row) = retiring_rows.next().await? {
-        let GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_id) =
-            GlobalIndexV2Key::parse_from_slice(&row.key)?
+        let GlobalKey::LegacyVectorPhysicalReservation(physical_id) =
+            GlobalKey::parse_from_slice(&row.key)?
         else {
             return Err(HelixDbError::IndexCatalogCorruption(
                 "legacy vector reservation prefix yielded another key".to_string(),
@@ -2007,7 +2007,7 @@ pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> 
     let mut active_generations = BTreeMap::new();
     let index_prefix = Key::data_prefix(
         scope,
-        IndexV2Key::logical_prefix(IndexV2RecordKind::IndexRecord),
+        ScopedKey::logical_prefix(RecordKind::IndexRecord),
     );
     let mut index_rows = transaction.scan_prefix(index_prefix, ..).await?;
     while let Some(row) = index_rows.next().await? {
@@ -2066,25 +2066,20 @@ pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> 
 
     let mapping_prefix = Key::data_prefix(
         scope,
-        IndexV2Key::logical_prefix(IndexV2RecordKind::VectorPartitionMapping),
+        ScopedKey::logical_prefix(RecordKind::VectorPartitionMapping),
     );
     let mut partitioned_ids = BTreeSet::new();
     let mut mapping_rows = transaction.scan_prefix(mapping_prefix, ..).await?;
     while let Some(row) = mapping_rows.next().await? {
-        let IndexV2WorkValue::VectorPartitionMapping(mapping) = decode_work_value(&row.value)?
-        else {
-            return Err(HelixDbError::IndexCatalogCorruption(
-                "vector mapping key contains another work value".to_string(),
-            ));
-        };
+        let mapping = decode_partition_mapping(&row.value)?;
         partitioned_ids.insert(mapping.physical_index_id);
     }
 
     let mut reservations = BTreeMap::new();
     let mut reservation_rows = transaction.scan_prefix(reservation_prefix, ..).await?;
     while let Some(row) = reservation_rows.next().await? {
-        let GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_id) =
-            GlobalIndexV2Key::parse_from_slice(&row.key)?
+        let GlobalKey::LegacyVectorPhysicalReservation(physical_id) =
+            GlobalKey::parse_from_slice(&row.key)?
         else {
             return Err(HelixDbError::IndexCatalogCorruption(
                 "legacy vector reservation prefix yielded another key".to_string(),
@@ -2179,10 +2174,10 @@ pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> 
         #[cfg(any(feature = "migration-parity", feature = "production-coverage"))]
         trip_migration_failpoint(MigrationFailpoint::LegacyVectorReservationBefore)?;
         transaction.put(
-            Key::Global {
-                kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+            IndexKey::Global {
+                kind: GlobalKey::LegacyVectorPhysicalReservation(
                     physical_id,
-                )),
+                ),
             }
             .to_bytes(),
             encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(
@@ -5068,12 +5063,12 @@ pub(crate) mod production_contracts {
         VectorIndexDefinition,
     };
     use crate::encoding::property;
-    use crate::encoding::v1::keys::index_v2::{GlobalIndexV2Key, IndexV2Key};
+    use crate::encoding::v2::keys::{GlobalKey, ScopedKey};
     use crate::encoding::v1::keys::vectors::{
         VectorIndexMetadataKey, VectorItemKey, VectorKey, VectorSimHashKey,
     };
-    use crate::encoding::v1::keys::{GlobalKeyKind, Key};
-    use crate::encoding::v1::values::index_v2::{
+    use crate::encoding::v1::keys::Key;
+    use crate::encoding::v2::values::{
         decode_metadata_value, encode_index_record, encode_metadata_value,
     };
     use crate::index_v2::{
@@ -5138,7 +5133,7 @@ pub(crate) mod production_contracts {
 
         fixture
             .put(
-                global(GlobalIndexV2Key::StorageVersion),
+                global(GlobalKey::StorageVersion),
                 encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
                     IndexStorageVersion::new(0x0002).expect("version two is nonzero"),
                 )),
@@ -5177,16 +5172,16 @@ pub(crate) mod production_contracts {
             .expect("migration contract raw database opens")
     }
 
-    fn global(key: GlobalIndexV2Key) -> Bytes {
-        Key::Global {
-            kind: GlobalKeyKind::IndexV2(key),
+    fn global(key: GlobalKey) -> Bytes {
+        IndexKey::Global {
+            kind: key,
         }
         .to_bytes()
     }
 
     async fn assert_storage_version_three(reader: &(impl DbReadOps + Sync)) {
         let marker = reader
-            .get(global(GlobalIndexV2Key::StorageVersion))
+            .get(global(GlobalKey::StorageVersion))
             .await
             .expect("storage marker reads")
             .expect("storage marker exists");
@@ -6716,7 +6711,7 @@ pub(crate) mod production_contracts {
             .expect("consumed watermark transaction opens");
         transaction
             .put(
-                global(GlobalIndexV2Key::VectorPhysicalIdWatermark),
+                global(GlobalKey::VectorPhysicalIdWatermark),
                 encode_metadata_value(&IndexV2MetadataValue::VectorPhysicalIdWatermark(
                     VectorPhysicalIdWatermark {
                         next_id: consumed_next,
@@ -7006,7 +7001,7 @@ pub(crate) mod production_contracts {
                 Conflict::MalformedReservation => {
                     transaction
                         .put(
-                            global(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+                            global(GlobalKey::LegacyVectorPhysicalReservation(
                                 physical_id,
                             )),
                             Bytes::from_static(b"malformed"),
@@ -7016,7 +7011,7 @@ pub(crate) mod production_contracts {
                 Conflict::ReservationWithoutOwner => {
                     transaction
                         .put(
-                            global(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+                            global(GlobalKey::LegacyVectorPhysicalReservation(
                                 physical_id,
                             )),
                             encode_metadata_value(
@@ -7065,11 +7060,9 @@ pub(crate) mod production_contracts {
                     .expect("existing owner record activates");
                     transaction
                         .put(
-                            Key::Data {
+                            IndexKey::Data {
                                 scope: DataScope::LegacyUnscoped,
-                                kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-                                    IndexV2Key::index_record(record.identity().clone()),
-                                ),
+                                kind: ScopedKey::index_record(record.identity().clone()),
                             }
                             .to_bytes(),
                             encode_index_record(&record),
@@ -7077,7 +7070,7 @@ pub(crate) mod production_contracts {
                         .expect("existing V2 owner stages");
                     transaction
                         .put(
-                            global(GlobalIndexV2Key::LogicalIndexIdWatermark),
+                            global(GlobalKey::LogicalIndexIdWatermark),
                             encode_metadata_value(&IndexV2MetadataValue::LogicalIndexIdWatermark(
                                 LogicalIndexIdWatermark {
                                     next_id: IndexId::new(2).expect("second logical ID is valid"),
@@ -7407,12 +7400,12 @@ pub(crate) mod production_contracts {
             .await
             .expect("bootstrap seed transaction opens");
         transaction
-            .put(global(GlobalIndexV2Key::StorageVersion), marker)
+            .put(global(GlobalKey::StorageVersion), marker)
             .expect("marker stages");
         if include_logical {
             transaction
                 .put(
-                    global(GlobalIndexV2Key::LogicalIndexIdWatermark),
+                    global(GlobalKey::LogicalIndexIdWatermark),
                     encode_metadata_value(&IndexV2MetadataValue::LogicalIndexIdWatermark(
                         LogicalIndexIdWatermark {
                             next_id: IndexId::initial(),
@@ -7424,7 +7417,7 @@ pub(crate) mod production_contracts {
         if include_vector {
             transaction
                 .put(
-                    global(GlobalIndexV2Key::VectorPhysicalIdWatermark),
+                    global(GlobalKey::VectorPhysicalIdWatermark),
                     encode_metadata_value(&IndexV2MetadataValue::VectorPhysicalIdWatermark(
                         VectorPhysicalIdWatermark {
                             next_id: VectorPhysicalIndexId::initial(),
@@ -8003,11 +7996,9 @@ pub(crate) mod production_contracts {
                     .expect("legacy physical id is positive");
                 source
                     .put(
-                        Key::Global {
-                            kind: GlobalKeyKind::IndexV2(
-                                GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-                                    retired_physical_id_typed,
-                                ),
+                        IndexKey::Global {
+                            kind: GlobalKey::LegacyVectorPhysicalReservation(
+                                retired_physical_id_typed,
                             ),
                         }
                         .to_bytes(),

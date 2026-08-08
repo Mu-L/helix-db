@@ -9,10 +9,12 @@ use serde::{Deserialize, Serialize};
 use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
 use crate::config::SearchIndexBatchLimits;
-use crate::encoding::v1::keys::index_v2::{GlobalIndexV2Key, IndexV2Key, IndexV2RecordKind};
+use crate::encoding::v2::keys::{GlobalKey, ScopedKey, RecordKind};
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key};
-use crate::encoding::v1::values::index_v2::{
+#[cfg(test)]
+use crate::encoding::v1::keys::{DataKeyKind, Key};
+use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, decode_operation_record, encode_index_record,
     encode_operation_record,
 };
@@ -384,9 +386,9 @@ async fn select_target(
 ) -> Result<()> {
     let started = std::time::Instant::now();
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
-    let prefix = Key::data_prefix(
+    let prefix = IndexKey::data_prefix(
         scope,
-        IndexV2Key::logical_prefix(IndexV2RecordKind::IndexRecord),
+        ScopedKey::logical_prefix(RecordKind::IndexRecord),
     );
     let mut rows = transaction
         .scan(scan_bounds_for_prefix(&prefix, after_index_key.as_ref()))
@@ -852,9 +854,9 @@ async fn publish(db: &Db, scope: DataScope, mut job: MigrationJob) -> Result<()>
                 "active directory target has invalid completed operation: {error}"
             ))
         })?;
-    let operation_key = Key::Data {
+    let operation_key = IndexKey::Data {
         scope,
-        kind: DataKeyKind::IndexV2(IndexV2Key::operation(operation_id)),
+        kind: ScopedKey::operation(operation_id),
     }
     .to_bytes();
     let Some(operation_value) = transaction.get(&operation_key).await? else {
@@ -1057,10 +1059,10 @@ async fn validate_reservation_record(
     index_id: u64,
     generation: u64,
 ) -> Result<()> {
-    let key = Key::Global {
-        kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+    let key = IndexKey::Global {
+        kind: GlobalKey::LegacyVectorPhysicalReservation(
             physical_index_id,
-        )),
+        ),
     }
     .to_bytes();
     let Some(value) = transaction.get(key).await? else {
@@ -1093,10 +1095,10 @@ async fn validate_reservation_record(
 }
 
 fn decode_canonical_record(scope: DataScope, key: &[u8], value: &[u8]) -> Result<IndexRecordV2> {
-    let Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::IndexRecord(key)),
+    let IndexKey::Data {
+        kind: ScopedKey::IndexRecord(key),
         ..
-    } = Key::parse_from_slice(scope, key)?
+    } = IndexKey::parse_from_slice(scope, key)?
     else {
         return Err(corruption(
             "canonical index prefix returned another key kind",
@@ -1335,7 +1337,7 @@ mod tests {
     use crate::encoding::v1::keys::vectors::{
         VectorKey, VectorSimHashDirectoryKey, VectorStorageLane,
     };
-    use crate::encoding::v1::values::index_v2::encode_metadata_value;
+    use crate::encoding::v2::values::encode_metadata_value;
     use crate::encoding::v1::values::vectors::markers::{
         decode_simhash_directory_marker_v1, encode_simhash_directory_marker_v1,
     };
@@ -1471,9 +1473,9 @@ mod tests {
             .expect("catalog transaction opens");
         transaction
             .put(
-                Key::Data {
+                IndexKey::Data {
                     scope,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(record.identity().clone())),
+                    kind: ScopedKey::index_record(record.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&record),
@@ -1481,9 +1483,9 @@ mod tests {
             .expect("canonical record stages");
         transaction
             .put(
-                Key::Data {
+                IndexKey::Data {
                     scope,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::operation(operation_id)),
+                    kind: ScopedKey::operation(operation_id),
                 }
                 .to_bytes(),
                 encode_operation_record(&operation),
@@ -1491,10 +1493,8 @@ mod tests {
             .expect("completed operation stages");
         transaction
             .put(
-                Key::Global {
-                    kind: GlobalKeyKind::IndexV2(
-                        GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_index_id),
-                    ),
+                IndexKey::Global {
+                    kind: GlobalKey::LegacyVectorPhysicalReservation(physical_index_id),
                 }
                 .to_bytes(),
                 encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(
@@ -1676,9 +1676,9 @@ mod tests {
             *completed_build_operation_id,
             fixture.operation.operation_id()
         );
-        let operation_key = Key::Data {
+        let operation_key = IndexKey::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: DataKeyKind::IndexV2(IndexV2Key::operation(fixture.operation.operation_id())),
+            kind: ScopedKey::operation(fixture.operation.operation_id()),
         }
         .to_bytes();
         let operation = decode_operation_record(
@@ -1825,10 +1825,10 @@ mod tests {
         assert!(matches!(error, HelixDbError::IndexCatalogCorruption(_)));
         assert!(decode_simhash_directory_marker_v1(&encode_simhash_directory_marker_v1(),).is_ok());
 
-        let reservation_key = Key::Global {
-            kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+        let reservation_key = IndexKey::Global {
+            kind: GlobalKey::LegacyVectorPhysicalReservation(
                 fixture.physical_index_id,
-            )),
+            ),
         }
         .to_bytes();
         db.put(

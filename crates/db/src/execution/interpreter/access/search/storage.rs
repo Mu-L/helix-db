@@ -445,11 +445,14 @@ mod tests {
     use super::*;
     use crate::config::TextIndexDefinition;
     use crate::encoding::keys::tenant::DataScope;
-    use crate::encoding::v1::keys::index_v2::{
-        IndexEntity, IndexV2Key, TextEntityStateKey, TextManifestPageKey, TextManifestRootKey,
+    use crate::encoding::v2::keys::{
+        IndexEntity, ScopedKey, TextEntityStateKey, TextManifestPageKey, TextManifestRootKey,
     };
-    use crate::encoding::v1::keys::{DataKeyKind, Key};
-    use crate::encoding::v1::values::index_v2::{encode_index_record, encode_work_value};
+    use crate::encoding::v2::keys::Key;
+    use crate::encoding::v2::values::{
+        encode_index_record, encode_manifest_page, encode_manifest_root,
+        encode_text_entity_state,
+    };
     use crate::index_v2::work::{
         BlobRef, SplitRef, TextEntityStateValue, TextManifestPageValue, TextManifestRootValue,
         TextPartition,
@@ -620,7 +623,7 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(active.identity().clone())),
+                    kind: ScopedKey::index_record(active.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&active),
@@ -636,11 +639,10 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::TextManifestRoot(root)),
+                    kind: ScopedKey::TextManifestRoot(root),
                 }
                 .to_bytes(),
-                encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(
+                encode_manifest_root(&
                         TextManifestRootValue::try_new(
                             index_id,
                             generation,
@@ -651,7 +653,6 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                ),
             )
             .unwrap();
         for (page, split) in splits.iter().cloned().enumerate() {
@@ -660,13 +661,12 @@ mod tests {
                 .put(
                     Key::Data {
                         scope: DataScope::LegacyUnscoped,
-                        kind: DataKeyKind::IndexV2(IndexV2Key::TextManifestPage(
+                        kind: ScopedKey::TextManifestPage(
                             TextManifestPageKey { root, page },
-                        )),
+                        ),
                     }
                     .to_bytes(),
-                    encode_work_value(
-                        &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestPage(
+                    encode_manifest_page(&
                             TextManifestPageValue::try_new(
                                 index_id,
                                 generation,
@@ -676,7 +676,6 @@ mod tests {
                             )
                             .unwrap(),
                         ),
-                    ),
                 )
                 .unwrap();
         }
@@ -710,13 +709,12 @@ mod tests {
                 .put(
                     Key::Data {
                         scope: DataScope::LegacyUnscoped,
-                        kind: DataKeyKind::IndexV2(IndexV2Key::TextEntityState(
+                        kind: ScopedKey::TextEntityState(
                             TextEntityStateKey { root, entity },
-                        )),
+                        ),
                     }
                     .to_bytes(),
-                    encode_work_value(
-                        &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextEntityState(
+                    encode_text_entity_state(&
                             TextEntityStateValue {
                                 index_id,
                                 generation,
@@ -727,7 +725,6 @@ mod tests {
                                 live: true,
                             },
                         ),
-                    ),
                 )
                 .unwrap();
         }
@@ -817,17 +814,16 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::TextEntityState(TextEntityStateKey {
+                    kind: ScopedKey::TextEntityState(TextEntityStateKey {
                         root,
                         entity: IndexEntity {
                             kind: crate::index_v2::IndexElementKind::Node,
                             id: IndexEntityId::new(9),
                         },
-                    })),
+                    }),
                 }
                 .to_bytes(),
-                encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextEntityState(
+                encode_text_entity_state(&
                         TextEntityStateValue {
                             index_id,
                             generation,
@@ -838,7 +834,6 @@ mod tests {
                             live: false,
                         },
                     ),
-                ),
             )
             .await
             .unwrap();
@@ -872,11 +867,10 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::TextManifestRoot(root)),
+                    kind: ScopedKey::TextManifestRoot(root),
                 }
                 .to_bytes(),
-                encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(
+                encode_manifest_root(&
                         TextManifestRootValue::try_new(
                             index_id,
                             generation,
@@ -887,25 +881,22 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                ),
             )
             .unwrap();
         corrupt_manifest
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::TextManifestPage(TextManifestPageKey {
+                    kind: ScopedKey::TextManifestPage(TextManifestPageKey {
                         root,
                         page: 0,
-                    })),
+                    }),
                 }
                 .to_bytes(),
-                encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestPage(
+                encode_manifest_page(&
                         TextManifestPageValue::try_new(index_id, generation, partition, 0, splits)
                             .unwrap(),
                     ),
-                ),
             )
             .unwrap();
         corrupt_manifest.commit().await.unwrap();

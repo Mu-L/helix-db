@@ -9,9 +9,9 @@ use bytes::Bytes;
 use slatedb::DbTransaction;
 
 use crate::config::SearchIndexBatchLimits;
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
+use crate::encoding::v2::keys::Key;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::outbox::IndexOperationStepResult;
 use crate::index_v2::{
@@ -73,17 +73,17 @@ impl CleanupLane {
         }
     }
 
-    const fn record_kind(self) -> index_keys::IndexV2RecordKind {
+    const fn record_kind(self) -> index_keys::RecordKind {
         match self {
-            Self::BuildArtifact => index_keys::IndexV2RecordKind::TextBuildArtifact,
-            Self::ManifestPage => index_keys::IndexV2RecordKind::TextManifestPage,
-            Self::ManifestRoot => index_keys::IndexV2RecordKind::TextManifestRoot,
-            Self::EntityState => index_keys::IndexV2RecordKind::TextEntityState,
-            Self::CorpusStatistics => index_keys::IndexV2RecordKind::TextCorpusStatistics,
-            Self::TermStatistics => index_keys::IndexV2RecordKind::TextTermStatistics,
-            Self::StatisticsEntity => index_keys::IndexV2RecordKind::TextStatisticsEntity,
-            Self::BuildDelta => index_keys::IndexV2RecordKind::BuildDelta,
-            Self::AppliedState => index_keys::IndexV2RecordKind::AppliedState,
+            Self::BuildArtifact => index_keys::RecordKind::TextBuildArtifact,
+            Self::ManifestPage => index_keys::RecordKind::TextManifestPage,
+            Self::ManifestRoot => index_keys::RecordKind::TextManifestRoot,
+            Self::EntityState => index_keys::RecordKind::TextEntityState,
+            Self::CorpusStatistics => index_keys::RecordKind::TextCorpusStatistics,
+            Self::TermStatistics => index_keys::RecordKind::TextTermStatistics,
+            Self::StatisticsEntity => index_keys::RecordKind::TextStatisticsEntity,
+            Self::BuildDelta => index_keys::RecordKind::BuildDelta,
+            Self::AppliedState => index_keys::RecordKind::AppliedState,
         }
     }
 }
@@ -105,7 +105,7 @@ async fn delete_metadata(
     loop {
         let prefix = Key::data_prefix(
             scope,
-            index_keys::IndexV2Key::generation_prefix(
+            index_keys::ScopedKey::generation_prefix(
                 lane.record_kind(),
                 operation.index_id(),
                 operation.generation(),
@@ -220,7 +220,7 @@ fn cleanup_lane_from_cursor(
 ) -> Result<CleanupLane> {
     let Key::Data {
         scope: cursor_scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     } = Key::parse_from_slice(scope, cursor.as_bytes())?
     else {
         return Err(corruption("text cleanup cursor is not a scoped V2 key"));
@@ -245,7 +245,7 @@ fn validate_owned_key(
 ) -> Result<()> {
     let Key::Data {
         scope: key_scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     } = Key::parse_from_slice(scope, bytes)?
     else {
         return Err(corruption("text cleanup scan yielded a non-data key"));
@@ -264,52 +264,52 @@ fn validate_owned_key(
 }
 
 fn key_owner(
-    key: index_keys::IndexV2Key,
+    key: index_keys::ScopedKey,
 ) -> Result<(
     CleanupLane,
     crate::index_v2::IndexId,
     crate::index_v2::IndexGenerationId,
 )> {
     Ok(match key {
-        index_keys::IndexV2Key::TextBuildArtifact(key) => (
+        index_keys::ScopedKey::TextBuildArtifact(key) => (
             CleanupLane::BuildArtifact,
             key.root.index_id,
             key.root.generation,
         ),
-        index_keys::IndexV2Key::TextManifestPage(key) => (
+        index_keys::ScopedKey::TextManifestPage(key) => (
             CleanupLane::ManifestPage,
             key.root.index_id,
             key.root.generation,
         ),
-        index_keys::IndexV2Key::TextManifestRoot(key) => {
+        index_keys::ScopedKey::TextManifestRoot(key) => {
             (CleanupLane::ManifestRoot, key.index_id, key.generation)
         }
-        index_keys::IndexV2Key::TextEntityState(key) => (
+        index_keys::ScopedKey::TextEntityState(key) => (
             CleanupLane::EntityState,
             key.root.index_id,
             key.root.generation,
         ),
-        index_keys::IndexV2Key::TextCorpusStatistics(key) => {
+        index_keys::ScopedKey::TextCorpusStatistics(key) => {
             (CleanupLane::CorpusStatistics, key.index_id, key.generation)
         }
-        index_keys::IndexV2Key::TextTermStatistics(key) => (
+        index_keys::ScopedKey::TextTermStatistics(key) => (
             CleanupLane::TermStatistics,
             key.corpus.index_id,
             key.corpus.generation,
         ),
-        index_keys::IndexV2Key::TextStatisticsEntity(key) => {
+        index_keys::ScopedKey::TextStatisticsEntity(key) => {
             (CleanupLane::StatisticsEntity, key.index_id, key.generation)
         }
-        index_keys::IndexV2Key::BuildDelta(key) => {
+        index_keys::ScopedKey::BuildDelta(key) => {
             (CleanupLane::BuildDelta, key.index_id, key.generation)
         }
-        index_keys::IndexV2Key::AppliedState(key) => {
+        index_keys::ScopedKey::AppliedState(key) => {
             (CleanupLane::AppliedState, key.index_id, key.generation)
         }
-        index_keys::IndexV2Key::IndexRecord(_)
-        | index_keys::IndexV2Key::Operation(_)
-        | index_keys::IndexV2Key::SecondaryEntry(_)
-        | index_keys::IndexV2Key::VectorPartitionMapping(_) => {
+        index_keys::ScopedKey::IndexRecord(_)
+        | index_keys::ScopedKey::Operation(_)
+        | index_keys::ScopedKey::SecondaryEntry(_)
+        | index_keys::ScopedKey::VectorPartitionMapping(_) => {
             return Err(corruption(
                 "text cleanup cursor is outside its metadata lane set",
             ));

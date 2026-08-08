@@ -20,16 +20,19 @@ use slatedb::{Db, DbTransaction, IsolationLevel};
 
 use crate::config::{IndexLifecycleScanTuning, SearchIndexBatchLimits};
 use crate::encoding::property::{decode_properties, Property};
-use crate::encoding::v1::keys::index_v2::{
-    GlobalIndexV2Key, IndexEntity, IndexEntityStateKey, IndexV2Key, IndexV2RecordKind,
+use crate::encoding::v2::keys::{
+    GlobalKey, IndexEntity, IndexEntityStateKey, ScopedKey, RecordKind,
 };
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::VectorStorageLane;
-use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key, KeyPrefix};
-use crate::encoding::v1::values::index_v2::{
-    decode_index_record, decode_work_value, encode_metadata_value, encode_work_value,
-    IndexV2WorkValue,
+use crate::encoding::v1::keys::{DataKeyKind, Key, KeyPrefix};
+use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::values::{
+    decode_applied_state, decode_build_delta, decode_index_record, decode_partition_mapping,
+    encode_applied_state, encode_metadata_value, encode_partition_mapping,
 };
+#[cfg(test)]
+use crate::encoding::v2::values::encode_build_delta;
 use crate::error::{HelixDbError, Result};
 use crate::search::vector::{
     self, Distance, MeasuredVectorTransaction, PlannedVectorMutation,
@@ -445,12 +448,8 @@ async fn step_cleanup<D: Distance>(
                         ));
                     };
                     transaction.put(
-                        Key::Global {
-                            kind: GlobalKeyKind::IndexV2(
-                                GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-                                    physical_index_id,
-                                ),
-                            ),
+                        IndexKey::Global {
+                            kind: GlobalKey::LegacyVectorPhysicalReservation(physical_index_id),
                         }
                         .to_bytes(),
                         encode_metadata_value(
@@ -610,10 +609,8 @@ async fn step_cleanup<D: Distance>(
                     ));
                 }
                 transaction.delete(
-                    Key::Global {
-                        kind: GlobalKeyKind::IndexV2(
-                            GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_index_id),
-                        ),
+                    IndexKey::Global {
+                        kind: GlobalKey::LegacyVectorPhysicalReservation(physical_index_id),
                     }
                     .to_bytes(),
                 )?;
@@ -648,7 +645,7 @@ async fn current_or_next_mapping(
 ) -> Result<Option<MappingCleanupRow>> {
     let prefix = generation_prefix(
         scope,
-        IndexV2RecordKind::VectorPartitionMapping,
+        RecordKind::VectorPartitionMapping,
         operation.index_id(),
         operation.generation(),
     );
@@ -929,8 +926,8 @@ async fn delete_delta_and_applied_rows(
     let mut accounting = VectorBatchAccounting::new(counters, limits);
     let mut exhausted = true;
     for kind in [
-        IndexV2RecordKind::BuildDelta,
-        IndexV2RecordKind::AppliedState,
+        RecordKind::BuildDelta,
+        RecordKind::AppliedState,
     ] {
         let prefix = generation_prefix(scope, kind, operation.index_id(), operation.generation());
         let mut rows = transaction.scan_prefix(&prefix, ..).await?;
@@ -944,7 +941,7 @@ async fn delete_delta_and_applied_rows(
                 || !accounting.can_admit_output(VectorWriteMeasurement::zero(), 1, output_bytes)
             {
                 if accounting.is_empty() {
-                    let entity = if kind == IndexV2RecordKind::BuildDelta {
+                    let entity = if kind == RecordKind::BuildDelta {
                         decode_delta(scope, &row.key, &row.value)?.0
                     } else {
                         decode_applied(scope, &row.key, &row.value)?.0
@@ -1175,7 +1172,7 @@ async fn step_build<D: Distance>(
                 if generation_has_rows(
                     transaction,
                     scope,
-                    IndexV2RecordKind::BuildDelta,
+                    RecordKind::BuildDelta,
                     operation.index_id(),
                     operation.generation(),
                 )
@@ -1183,7 +1180,7 @@ async fn step_build<D: Distance>(
                     || generation_has_rows(
                         transaction,
                         scope,
-                        IndexV2RecordKind::AppliedState,
+                        RecordKind::AppliedState,
                         operation.index_id(),
                         operation.generation(),
                     )
@@ -1239,10 +1236,8 @@ async fn step_build<D: Distance>(
                     crate::migrations::MigrationFailpoint::LegacyVectorReservationTransitionBefore,
                 )?;
                 transaction.put(
-                    Key::Global {
-                        kind: GlobalKeyKind::IndexV2(
-                            GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_index_id),
-                        ),
+                    IndexKey::Global {
+                        kind: GlobalKey::LegacyVectorPhysicalReservation(physical_index_id),
                     }
                     .to_bytes(),
                     encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(
@@ -1278,7 +1273,7 @@ async fn step_build<D: Distance>(
             if generation_has_rows(
                 transaction,
                 scope,
-                IndexV2RecordKind::BuildDelta,
+                RecordKind::BuildDelta,
                 operation.index_id(),
                 operation.generation(),
             )
@@ -1294,7 +1289,7 @@ async fn step_build<D: Distance>(
             if generation_has_rows(
                 transaction,
                 scope,
-                IndexV2RecordKind::AppliedState,
+                RecordKind::AppliedState,
                 operation.index_id(),
                 operation.generation(),
             )
@@ -1926,7 +1921,7 @@ async fn catch_up<D: Distance>(
 ) -> Result<VectorStepResult> {
     let prefix = generation_prefix(
         scope,
-        IndexV2RecordKind::BuildDelta,
+        RecordKind::BuildDelta,
         operation.index_id(),
         operation.generation(),
     );
@@ -2421,7 +2416,7 @@ async fn validate_descriptor<D: Distance>(
     if generation_has_rows(
         transaction,
         scope,
-        IndexV2RecordKind::BuildDelta,
+        RecordKind::BuildDelta,
         operation.index_id(),
         operation.generation(),
     )
@@ -2437,19 +2432,19 @@ async fn validate_descriptor<D: Distance>(
     let cursor_kind = progress
         .cursor
         .as_ref()
-        .map(|cursor| Key::parse_from_slice(scope, cursor.as_bytes()))
+        .map(|cursor| IndexKey::parse_from_slice(scope, cursor.as_bytes()))
         .transpose()?
         .and_then(|key| match key {
-            Key::Data {
-                kind: DataKeyKind::IndexV2(key),
+            IndexKey::Data {
+                kind: key,
                 ..
             } => Some(key.record_kind()),
-            Key::Data { .. } | Key::Global { .. } => None,
+            IndexKey::Global { .. } => None,
         });
-    if !matches!(cursor_kind, Some(IndexV2RecordKind::VectorPartitionMapping)) {
+    if !matches!(cursor_kind, Some(RecordKind::VectorPartitionMapping)) {
         let prefix = generation_prefix(
             scope,
-            IndexV2RecordKind::AppliedState,
+            RecordKind::AppliedState,
             operation.index_id(),
             operation.generation(),
         );
@@ -2634,7 +2629,7 @@ async fn validate_mappings_or_finish<D: Distance>(
     }
     let prefix = generation_prefix(
         scope,
-        IndexV2RecordKind::VectorPartitionMapping,
+        RecordKind::VectorPartitionMapping,
         operation.index_id(),
         operation.generation(),
     );
@@ -2762,7 +2757,7 @@ fn lifecycle_write_measurement(
     );
     let (mut operations, mut bytes) = match applied_transition {
         AppliedStateTransition::Put(partition) => {
-            let value = encode_work_value(&IndexV2WorkValue::AppliedEntityState(
+            let value = encode_applied_state(&
                 AppliedEntityStateValue {
                     index_id: operation.index_id(),
                     generation: operation.generation(),
@@ -2770,7 +2765,7 @@ fn lifecycle_write_measurement(
                     entity_id,
                     state: AppliedFamilyState::Vector(Some(partition.clone())),
                 },
-            ));
+            );
             (1_u64, applied_key.len().saturating_add(value.len()) as u64)
         }
         AppliedStateTransition::Delete => (1, applied_key.len() as u64),
@@ -2779,7 +2774,7 @@ fn lifecycle_write_measurement(
     if delete_delta {
         let delta_key = scoped_index_key(
             scope,
-            IndexV2Key::BuildDelta(IndexEntityStateKey {
+            ScopedKey::BuildDelta(IndexEntityStateKey {
                 index_id: operation.index_id(),
                 generation: operation.generation(),
                 entity: IndexEntity {
@@ -2801,24 +2796,24 @@ fn lifecycle_write_measurement(
             .map_err(|error| corruption(error.to_string()))?;
         let mapping_key = scoped_index_key(
             scope,
-            IndexV2Key::VectorPartitionMapping(
-                crate::encoding::v1::keys::index_v2::VectorPartitionMappingKey {
+            ScopedKey::VectorPartitionMapping(
+                crate::encoding::v2::keys::VectorPartitionMappingKey {
                     index_id: operation.index_id(),
                     generation: operation.generation(),
                     partition: tenant.fingerprint(),
                 },
             ),
         );
-        let mapping_value = encode_work_value(&IndexV2WorkValue::VectorPartitionMapping(
+        let mapping_value = encode_partition_mapping(&
             crate::index_v2::work::VectorPartitionMappingValue {
                 index_id: operation.index_id(),
                 generation: operation.generation(),
                 partition: tenant,
                 physical_index_id: resolution.physical_index_id,
             },
-        ));
-        let watermark_key = Key::Global {
-            kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::VectorPhysicalIdWatermark),
+        );
+        let watermark_key = IndexKey::Global {
+            kind: GlobalKey::VectorPhysicalIdWatermark,
         }
         .to_bytes();
         let watermark_value = encode_metadata_value(
@@ -2852,7 +2847,7 @@ fn stage_applied(
     match next_partition {
         Some(partition) => transaction.put(
             key,
-            encode_work_value(&IndexV2WorkValue::AppliedEntityState(
+            encode_applied_state(&
                 AppliedEntityStateValue {
                     index_id: operation.index_id(),
                     generation: operation.generation(),
@@ -2860,7 +2855,7 @@ fn stage_applied(
                     entity_id,
                     state: AppliedFamilyState::Vector(Some(partition)),
                 },
-            )),
+            ),
         )?,
         None => transaction.delete(key)?,
     }
@@ -2904,7 +2899,7 @@ fn applied_key(
 ) -> Bytes {
     scoped_index_key(
         scope,
-        IndexV2Key::AppliedState(IndexEntityStateKey {
+        ScopedKey::AppliedState(IndexEntityStateKey {
             index_id,
             generation,
             entity: IndexEntity {
@@ -2920,16 +2915,14 @@ fn decode_delta(
     key: &[u8],
     value: &[u8],
 ) -> Result<(IndexEntity, CoalescedBuildDeltaValue)> {
-    let Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::BuildDelta(key)),
+    let IndexKey::Data {
+        kind: ScopedKey::BuildDelta(key),
         ..
-    } = Key::parse_from_slice(scope, key)?
+    } = IndexKey::parse_from_slice(scope, key)?
     else {
         return Err(corruption("build-delta prefix yielded another key kind"));
     };
-    let IndexV2WorkValue::CoalescedBuildDelta(value) = decode_work_value(value)? else {
-        return Err(corruption("build-delta key contains another value kind"));
-    };
+    let value = decode_build_delta(value)?;
     if key.index_id != value.index_id
         || key.generation != value.generation
         || key.entity.kind != value.entity_kind
@@ -2945,16 +2938,14 @@ fn decode_applied(
     key: &[u8],
     value: &[u8],
 ) -> Result<(IndexEntity, AppliedEntityStateValue)> {
-    let Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::AppliedState(key)),
+    let IndexKey::Data {
+        kind: ScopedKey::AppliedState(key),
         ..
-    } = Key::parse_from_slice(scope, key)?
+    } = IndexKey::parse_from_slice(scope, key)?
     else {
         return Err(corruption("applied-state prefix yielded another key kind"));
     };
-    let IndexV2WorkValue::AppliedEntityState(value) = decode_work_value(value)? else {
-        return Err(corruption("applied-state key contains another value kind"));
-    };
+    let value = decode_applied_state(value)?;
     if key.index_id != value.index_id
         || key.generation != value.generation
         || key.entity.kind != value.entity_kind
@@ -2971,16 +2962,14 @@ fn decode_mapping(
     value: &[u8],
     operation: &IndexOperationRecord,
 ) -> Result<crate::index_v2::work::VectorPartitionMappingValue> {
-    let Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::VectorPartitionMapping(key)),
+    let IndexKey::Data {
+        kind: ScopedKey::VectorPartitionMapping(key),
         ..
-    } = Key::parse_from_slice(scope, key)?
+    } = IndexKey::parse_from_slice(scope, key)?
     else {
         return Err(corruption("vector mapping prefix yielded another key kind"));
     };
-    let IndexV2WorkValue::VectorPartitionMapping(value) = decode_work_value(value)? else {
-        return Err(corruption("vector mapping key contains another value kind"));
-    };
+    let value = decode_partition_mapping(value)?;
     if key.index_id != operation.index_id()
         || key.generation != operation.generation()
         || value.index_id != operation.index_id()
@@ -3027,7 +3016,7 @@ async fn load_operation_index(
 ) -> Result<IndexRecordV2> {
     let key = scoped_index_key(
         scope,
-        IndexV2Key::index_record(operation.identity().clone()),
+        ScopedKey::index_record(operation.identity().clone()),
     );
     let Some(value) = transaction.get(key).await? else {
         return Err(corruption("vector operation has no canonical index"));
@@ -3046,7 +3035,7 @@ async fn load_operation_index(
 async fn generation_has_rows(
     transaction: &DbTransaction,
     scope: DataScope,
-    kind: IndexV2RecordKind,
+    kind: RecordKind,
     index_id: IndexId,
     generation: IndexGenerationId,
 ) -> Result<bool> {
@@ -3093,13 +3082,13 @@ fn source_entity(
 
 fn generation_prefix(
     scope: DataScope,
-    kind: IndexV2RecordKind,
+    kind: RecordKind,
     index_id: IndexId,
     generation: IndexGenerationId,
 ) -> Bytes {
-    Key::data_prefix(
+    IndexKey::data_prefix(
         scope,
-        IndexV2Key::generation_prefix(kind, index_id, generation),
+        ScopedKey::generation_prefix(kind, index_id, generation),
     )
 }
 
@@ -3113,10 +3102,10 @@ fn cursor_suffix(prefix: &Bytes, cursor: Option<&IndexCursor>) -> Result<Option<
     Ok(Some(Bytes::copy_from_slice(suffix)))
 }
 
-fn scoped_index_key(scope: DataScope, key: IndexV2Key) -> Bytes {
-    Key::Data {
+fn scoped_index_key(scope: DataScope, key: ScopedKey) -> Bytes {
+    IndexKey::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }
@@ -3592,7 +3581,7 @@ mod tests {
         scope: DataScope,
         definition: &ValidatedDynamicIndexDefinition,
     ) -> IndexRecordV2 {
-        let key = scoped_index_key(scope, IndexV2Key::index_record(definition.identity()));
+        let key = scoped_index_key(scope, ScopedKey::index_record(definition.identity()));
         let value = db
             .get(key)
             .await
@@ -3614,7 +3603,7 @@ mod tests {
             .await
             .expect("vector operation is readable")
             .expect("vector operation exists");
-        crate::encoding::v1::values::index_v2::decode_operation_record(&value)
+        crate::encoding::v2::values::decode_operation_record(&value)
             .expect("vector operation decodes")
     }
 
@@ -3626,7 +3615,7 @@ mod tests {
     ) -> Vec<crate::index_v2::work::VectorPartitionMappingValue> {
         let prefix = generation_prefix(
             scope,
-            IndexV2RecordKind::VectorPartitionMapping,
+            RecordKind::VectorPartitionMapping,
             index_id,
             generation,
         );
@@ -3636,11 +3625,8 @@ mod tests {
             .expect("vector mappings are readable");
         let mut values = Vec::new();
         while let Some(row) = rows.next().await.expect("vector mapping row is readable") {
-            let IndexV2WorkValue::VectorPartitionMapping(value) =
-                decode_work_value(&row.value).expect("vector mapping value decodes")
-            else {
-                panic!("vector mapping prefix contains only mapping values");
-            };
+            let value = decode_partition_mapping(&row.value)
+                .expect("vector mapping value decodes");
             values.push(value);
         }
         values
@@ -4392,7 +4378,7 @@ mod tests {
         };
         let physical_index_id = *physical_index_id;
         let source_before = db.get(source_key(scope, 1)).await.unwrap();
-        let index_key = scoped_index_key(scope, IndexV2Key::index_record(definition.identity()));
+        let index_key = scoped_index_key(scope, ScopedKey::index_record(definition.identity()));
         let index_before = db.get(&index_key).await.unwrap();
         let operation_key = crate::index_v2::outbox::scoped_operation_key(scope, operation_id);
         let operation_before = db.get(&operation_key).await.unwrap();
@@ -4696,7 +4682,7 @@ mod tests {
 
         for cursor in [
             source_cursor(scope, 0),
-            IndexCursor::try_new(GlobalIndexV2Key::StorageVersion.to_bytes())
+            IndexCursor::try_new(GlobalKey::StorageVersion.to_bytes())
                 .expect("storage-version key is a bounded cursor"),
         ] {
             let progress = PrefixScanProgress {
@@ -4721,8 +4707,8 @@ mod tests {
             cursor: Some(
                 IndexCursor::try_new(scoped_index_key(
                     scope,
-                    IndexV2Key::VectorPartitionMapping(
-                        crate::encoding::v1::keys::index_v2::VectorPartitionMappingKey {
+                    ScopedKey::VectorPartitionMapping(
+                        crate::encoding::v2::keys::VectorPartitionMappingKey {
                             index_id,
                             generation,
                             partition: TextPartition::Unpartitioned.fingerprint(),
@@ -4774,7 +4760,7 @@ mod tests {
         };
         let delta_key = scoped_index_key(
             scope,
-            IndexV2Key::BuildDelta(IndexEntityStateKey {
+            ScopedKey::BuildDelta(IndexEntityStateKey {
                 index_id,
                 generation,
                 entity,
@@ -4800,9 +4786,9 @@ mod tests {
             entity_id: entity.id,
             state: AppliedFamilyState::Vector(Some(TextPartition::Unpartitioned)),
         };
-        let encoded_delta = encode_work_value(&IndexV2WorkValue::CoalescedBuildDelta(delta_value));
+        let encoded_delta = encode_build_delta(&delta_value);
         let encoded_applied =
-            encode_work_value(&IndexV2WorkValue::AppliedEntityState(applied_value.clone()));
+            encode_applied_state(&applied_value.clone());
 
         assert!(matches!(
             decode_delta(scope, &applied_key, &encoded_delta),
@@ -4814,12 +4800,12 @@ mod tests {
             Err(HelixDbError::IndexCatalogCorruption(reason))
                 if reason.contains("another value kind")
         ));
-        let mismatched_delta = encode_work_value(&IndexV2WorkValue::CoalescedBuildDelta(
+        let mismatched_delta = encode_build_delta(&
             CoalescedBuildDeltaValue {
                 entity_id: other_entity.id,
                 ..delta_value
             },
-        ));
+        );
         assert!(matches!(
             decode_delta(scope, &delta_key, &mismatched_delta),
             Err(HelixDbError::IndexCatalogCorruption(reason))
@@ -4836,12 +4822,12 @@ mod tests {
             Err(HelixDbError::IndexCatalogCorruption(reason))
                 if reason.contains("another value kind")
         ));
-        let mismatched_applied = encode_work_value(&IndexV2WorkValue::AppliedEntityState(
+        let mismatched_applied = encode_applied_state(&
             AppliedEntityStateValue {
                 entity_id: other_entity.id,
                 ..applied_value.clone()
             },
-        ));
+        );
         assert!(matches!(
             decode_applied(scope, &applied_key, &mismatched_applied),
             Err(HelixDbError::IndexCatalogCorruption(reason))
@@ -4851,8 +4837,8 @@ mod tests {
         let tenant = VectorTenantPartition::try_new(Bytes::from_static(b"tenant")).unwrap();
         let mapping_key = scoped_index_key(
             scope,
-            IndexV2Key::VectorPartitionMapping(
-                crate::encoding::v1::keys::index_v2::VectorPartitionMappingKey {
+            ScopedKey::VectorPartitionMapping(
+                crate::encoding::v2::keys::VectorPartitionMappingKey {
                     index_id,
                     generation,
                     partition: tenant.fingerprint(),
@@ -4865,9 +4851,9 @@ mod tests {
             partition: tenant.clone(),
             physical_index_id: VectorPhysicalIndexId::initial(),
         };
-        let encoded_mapping = encode_work_value(&IndexV2WorkValue::VectorPartitionMapping(
+        let encoded_mapping = encode_partition_mapping(&
             mapping_value.clone(),
-        ));
+        );
         assert!(matches!(
             decode_mapping(scope, &delta_key, &encoded_mapping, &operation),
             Err(HelixDbError::IndexCatalogCorruption(reason))
@@ -4878,12 +4864,12 @@ mod tests {
             Err(HelixDbError::IndexCatalogCorruption(reason))
                 if reason.contains("another value kind")
         ));
-        let mismatched_mapping = encode_work_value(&IndexV2WorkValue::VectorPartitionMapping(
+        let mismatched_mapping = encode_partition_mapping(&
             crate::index_v2::work::VectorPartitionMappingValue {
                 index_id: IndexId::new(index_id.get() + 1).unwrap(),
                 ..mapping_value
             },
-        ));
+        );
         assert!(matches!(
             decode_mapping(scope, &mapping_key, &mismatched_mapping, &operation),
             Err(HelixDbError::IndexCatalogCorruption(reason))
@@ -4910,12 +4896,12 @@ mod tests {
         transaction
             .put(
                 applied_key.clone(),
-                encode_work_value(&IndexV2WorkValue::AppliedEntityState(
+                encode_applied_state(&
                     AppliedEntityStateValue {
                         state: AppliedFamilyState::Secondary(None),
                         ..applied_value
                     },
-                )),
+                ),
             )
             .unwrap();
         assert!(matches!(
@@ -4954,7 +4940,7 @@ mod tests {
         assert!(!generation_has_rows(
             &transaction,
             scope,
-            IndexV2RecordKind::VectorPartitionMapping,
+            RecordKind::VectorPartitionMapping,
             index_id,
             generation,
         )
@@ -4966,7 +4952,7 @@ mod tests {
         assert!(generation_has_rows(
             &transaction,
             scope,
-            IndexV2RecordKind::BuildDelta,
+            RecordKind::BuildDelta,
             index_id,
             generation,
         )
@@ -5005,8 +4991,8 @@ mod tests {
             None
         );
         assert!(source_entity(scope, IndexElementKind::Node, &edge_key).is_err());
-        let global = Key::Global {
-            kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::StorageVersion),
+        let global = IndexKey::Global {
+            kind: GlobalKey::StorageVersion,
         }
         .to_bytes();
         assert!(source_entity(scope, IndexElementKind::Node, &global).is_err());
@@ -5315,9 +5301,9 @@ mod tests {
             IndexStateV2::Dropped { .. }
         ));
         for kind in [
-            IndexV2RecordKind::BuildDelta,
-            IndexV2RecordKind::AppliedState,
-            IndexV2RecordKind::VectorPartitionMapping,
+            RecordKind::BuildDelta,
+            RecordKind::AppliedState,
+            RecordKind::VectorPartitionMapping,
         ] {
             let prefix = generation_prefix(scope, kind, index_id, generation);
             let mut rows = db
@@ -5385,10 +5371,8 @@ mod tests {
         }
         transaction
             .put(
-                Key::Global {
-                    kind: GlobalKeyKind::IndexV2(
-                        GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_index_id),
-                    ),
+                IndexKey::Global {
+                    kind: GlobalKey::LegacyVectorPhysicalReservation(physical_index_id),
                 }
                 .to_bytes(),
                 encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(

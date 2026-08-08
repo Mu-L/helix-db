@@ -8,16 +8,17 @@
 use bytes::Bytes;
 use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
-use crate::encoding::v1::keys::index_v2::{
-    GlobalIndexV2Key, IndexV2Key, IndexV2RecordKind, VectorPartitionMappingKey,
-    GLOBAL_INDEX_V2_SENTINEL,
+use crate::encoding::v2::keys::{
+    GlobalKey, ScopedKey, RecordKind, VectorPartitionMappingKey,
+    GLOBAL_SENTINEL,
 };
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::{VectorKey, VectorStorageLane};
-use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key};
-use crate::encoding::v1::values::index_v2::{
-    decode_index_record, decode_metadata_value, decode_work_value, encode_metadata_value,
-    encode_work_value, IndexV2WorkValue,
+use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey};
+use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::values::{
+    decode_index_record, decode_metadata_value, decode_partition_mapping, encode_metadata_value,
+    encode_partition_mapping,
 };
 use crate::error::{HelixDbError, Result, WriterMigrationRequirement};
 
@@ -31,9 +32,9 @@ use super::{
 
 const UUID_ALLOCATION_ATTEMPTS: usize = 16;
 
-fn global_key(key: GlobalIndexV2Key) -> Bytes {
+fn global_key(key: GlobalKey) -> Bytes {
     Key::Global {
-        kind: GlobalKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }
@@ -50,9 +51,9 @@ fn metadata_or_migration_required(
 /// Initializes missing V2 metadata on legacy storage or validates the tuple.
 pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
-    let marker_key = global_key(GlobalIndexV2Key::StorageVersion);
-    let logical_key = global_key(GlobalIndexV2Key::LogicalIndexIdWatermark);
-    let vector_key = global_key(GlobalIndexV2Key::VectorPhysicalIdWatermark);
+    let marker_key = global_key(GlobalKey::StorageVersion);
+    let logical_key = global_key(GlobalKey::LogicalIndexIdWatermark);
+    let vector_key = global_key(GlobalKey::VectorPhysicalIdWatermark);
     let marker = transaction.get(&marker_key).await?;
     let logical = transaction.get(&logical_key).await?;
     let vector = transaction.get(&vector_key).await?;
@@ -65,9 +66,8 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
         }
         let mut rows = transaction.scan(..).await?;
         while let Some(row) = rows.next().await? {
-            let is_global_v2 = row.key.starts_with(&GLOBAL_INDEX_V2_SENTINEL);
-            let is_unscoped_v2 = row.key.first().copied()
-                == Some(crate::encoding::v1::keys::KeyPrefix::IndexV2.as_u8());
+            let is_global_v2 = row.key.starts_with(&GLOBAL_SENTINEL);
+            let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
             if is_global_v2 || is_unscoped_v2 {
                 return Err(HelixDbError::MigrationRequired {
                     reason: "V2 storage rows exist without the complete bootstrap tuple"
@@ -129,9 +129,9 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
 pub(crate) async fn require_reader_bootstrap_or_legacy(
     reader: &(impl DbReadOps + Send + Sync),
 ) -> Result<()> {
-    let marker_key = global_key(GlobalIndexV2Key::StorageVersion);
-    let logical_key = global_key(GlobalIndexV2Key::LogicalIndexIdWatermark);
-    let vector_key = global_key(GlobalIndexV2Key::VectorPhysicalIdWatermark);
+    let marker_key = global_key(GlobalKey::StorageVersion);
+    let logical_key = global_key(GlobalKey::LogicalIndexIdWatermark);
+    let vector_key = global_key(GlobalKey::VectorPhysicalIdWatermark);
     let marker = reader.get(marker_key).await?;
     let logical = reader.get(logical_key).await?;
     let vector = reader.get(vector_key).await?;
@@ -168,9 +168,8 @@ pub(crate) async fn require_reader_bootstrap_or_legacy(
     }
     let mut rows = reader.scan(..).await?;
     while let Some(row) = rows.next().await? {
-        let is_global_v2 = row.key.starts_with(&GLOBAL_INDEX_V2_SENTINEL);
-        let is_unscoped_v2 =
-            row.key.first().copied() == Some(crate::encoding::v1::keys::KeyPrefix::IndexV2.as_u8());
+        let is_global_v2 = row.key.starts_with(&GLOBAL_SENTINEL);
+        let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
         if is_global_v2 || is_unscoped_v2 {
             return Err(HelixDbError::MigrationRequired {
                 reason: "read-only storage has V2 rows without the complete bootstrap tuple"
@@ -306,14 +305,14 @@ pub(crate) async fn load_scope_catalog(
     reader: &(impl DbReadOps + Sync),
     scope: DataScope,
 ) -> Result<LoadedV2ScopeCatalog> {
-    let logical_prefix = IndexV2Key::logical_prefix(IndexV2RecordKind::IndexRecord);
+    let logical_prefix = ScopedKey::logical_prefix(RecordKind::IndexRecord);
     let physical_prefix = Key::data_prefix(scope, logical_prefix);
     let mut rows = reader.scan_prefix(&physical_prefix, ..).await?;
     let mut loaded = LoadedV2ScopeCatalog::new(scope);
     while let Some(row) = rows.next().await? {
         let parsed = Key::parse_from_slice(scope, &row.key)?;
         let Key::Data {
-            kind: DataKeyKind::IndexV2(IndexV2Key::IndexRecord(key)),
+            kind: ScopedKey::IndexRecord(key),
             ..
         } = parsed
         else {
@@ -344,7 +343,7 @@ pub(crate) async fn load_index_record(
 ) -> Result<Option<IndexRecordV2>> {
     let key = Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(IndexV2Key::index_record(identity.clone())),
+        kind: ScopedKey::index_record(identity.clone()),
     }
     .to_bytes();
     let Some(value) = reader.get(key).await? else {
@@ -394,10 +393,10 @@ pub(crate) async fn revalidate_active_handle_row(
     reader: &(impl DbReadOps + Sync),
     handle: &ActiveIndexHandle,
 ) -> Result<(Bytes, Bytes)> {
-    let logical = IndexV2Key::index_record(handle.identity().clone());
+    let logical = ScopedKey::index_record(handle.identity().clone());
     let key = Key::Data {
         scope: handle.scope(),
-        kind: DataKeyKind::IndexV2(logical),
+        kind: logical,
     }
     .to_bytes();
     let Some(value) = reader.get(&key).await? else {
@@ -412,13 +411,20 @@ pub(crate) async fn revalidate_active_handle_row(
 
 fn complete_cursor_is_valid(scope: DataScope, cursor: &[u8]) -> bool {
     const SENTINEL_OFFSET: usize = 0;
-    let is_global = cursor.len() >= GLOBAL_INDEX_V2_SENTINEL.len()
-        && cursor[SENTINEL_OFFSET..SENTINEL_OFFSET + GLOBAL_INDEX_V2_SENTINEL.len()]
-            == GLOBAL_INDEX_V2_SENTINEL;
+    let is_global = cursor.len() >= GLOBAL_SENTINEL.len()
+        && cursor[SENTINEL_OFFSET..SENTINEL_OFFSET + GLOBAL_SENTINEL.len()]
+            == GLOBAL_SENTINEL;
     if is_global {
-        GlobalIndexV2Key::parse_from_slice(cursor).is_ok()
+        GlobalKey::parse_from_slice(cursor).is_ok()
     } else {
-        Key::parse_from_slice(scope, cursor).is_ok()
+        let Some(logical) = scope.strip_key(cursor) else {
+            return false;
+        };
+        if logical.first().copied() == Some(ScopedKey::key_prefix()) {
+            Key::parse_from_slice(scope, cursor).is_ok()
+        } else {
+            GraphKey::parse_from_slice(scope, cursor).is_ok()
+        }
     }
 }
 
@@ -443,10 +449,10 @@ pub(super) fn operation_record_cursors_are_valid(
         let Some(cursor) = progress.cursor.as_ref() else {
             return true;
         };
-        let Ok(Key::Data {
+        let Ok(GraphKey::Data {
             kind: DataKeyKind::Vector(key),
             ..
-        }) = Key::parse_from_slice(scope, cursor.as_bytes())
+        }) = GraphKey::parse_from_slice(scope, cursor.as_bytes())
         else {
             return false;
         };
@@ -472,10 +478,10 @@ pub(super) fn operation_record_cursors_are_valid(
         let Some(cursor) = progress.cursor.as_ref() else {
             return progress.verified_markers == 0;
         };
-        let Ok(Key::Data {
+        let Ok(GraphKey::Data {
             kind: DataKeyKind::Vector(VectorKey::SimHashDirectory(_)),
             ..
-        }) = Key::parse_from_slice(scope, cursor.as_bytes())
+        }) = GraphKey::parse_from_slice(scope, cursor.as_bytes())
         else {
             return false;
         };
@@ -489,58 +495,58 @@ pub(super) fn operation_record_cursors_are_valid(
     if let super::TextBuildStage::ValidateManifests(progress) = stage {
         let (cursor, lane) = match progress {
             super::TextManifestValidationProgress::Pages(progress) => {
-                (progress.cursor(), IndexV2RecordKind::TextManifestPage)
+                (progress.cursor(), RecordKind::TextManifestPage)
             }
             super::TextManifestValidationProgress::Roots(progress) => (
                 progress.cursor.as_ref(),
-                IndexV2RecordKind::TextManifestRoot,
+                RecordKind::TextManifestRoot,
             ),
             super::TextManifestValidationProgress::EntityStates(progress) => {
-                (progress.cursor.as_ref(), IndexV2RecordKind::TextEntityState)
+                (progress.cursor.as_ref(), RecordKind::TextEntityState)
             }
         };
         let Some(cursor) = cursor else {
             return true;
         };
         let Ok(Key::Data {
-            kind: DataKeyKind::IndexV2(key),
+            kind: key,
             ..
         }) = Key::parse_from_slice(scope, cursor.as_bytes())
         else {
             return false;
         };
         let (kind, index_id, generation, partition, page) = match key {
-            IndexV2Key::TextManifestPage(key) => (
-                IndexV2RecordKind::TextManifestPage,
+            ScopedKey::TextManifestPage(key) => (
+                RecordKind::TextManifestPage,
                 key.root.index_id,
                 key.root.generation,
                 Some(key.root.partition),
                 Some(key.page),
             ),
-            IndexV2Key::TextManifestRoot(key) => (
-                IndexV2RecordKind::TextManifestRoot,
+            ScopedKey::TextManifestRoot(key) => (
+                RecordKind::TextManifestRoot,
                 key.index_id,
                 key.generation,
                 Some(key.partition),
                 None,
             ),
-            IndexV2Key::TextEntityState(key) => (
-                IndexV2RecordKind::TextEntityState,
+            ScopedKey::TextEntityState(key) => (
+                RecordKind::TextEntityState,
                 key.root.index_id,
                 key.root.generation,
                 Some(key.root.partition),
                 None,
             ),
-            IndexV2Key::IndexRecord(_)
-            | IndexV2Key::Operation(_)
-            | IndexV2Key::BuildDelta(_)
-            | IndexV2Key::AppliedState(_)
-            | IndexV2Key::SecondaryEntry(_)
-            | IndexV2Key::TextBuildArtifact(_)
-            | IndexV2Key::VectorPartitionMapping(_)
-            | IndexV2Key::TextCorpusStatistics(_)
-            | IndexV2Key::TextTermStatistics(_)
-            | IndexV2Key::TextStatisticsEntity(_) => return false,
+            ScopedKey::IndexRecord(_)
+            | ScopedKey::Operation(_)
+            | ScopedKey::BuildDelta(_)
+            | ScopedKey::AppliedState(_)
+            | ScopedKey::SecondaryEntry(_)
+            | ScopedKey::TextBuildArtifact(_)
+            | ScopedKey::VectorPartitionMapping(_)
+            | ScopedKey::TextCorpusStatistics(_)
+            | ScopedKey::TextTermStatistics(_)
+            | ScopedKey::TextStatisticsEntity(_) => return false,
         };
         let partition_matches = match progress {
             super::TextManifestValidationProgress::Pages(progress) => {
@@ -578,7 +584,7 @@ pub(super) fn operation_record_cursors_are_valid(
         | super::TextBuildStage::Activate(_) => return true,
     };
     let Ok(Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::TextBuildArtifact(artifact)),
+        kind: ScopedKey::TextBuildArtifact(artifact),
         ..
     }) = Key::parse_from_slice(scope, artifact_cursor.as_bytes())
     else {
@@ -602,7 +608,7 @@ fn stale_generation(handle: &ActiveIndexHandle) -> HelixDbError {
 
 /// Reserves the current logical ID and advances its watermark in `transaction`.
 pub(crate) async fn allocate_index_id(transaction: &DbTransaction) -> Result<IndexId> {
-    let key = global_key(GlobalIndexV2Key::LogicalIndexIdWatermark);
+    let key = global_key(GlobalKey::LogicalIndexIdWatermark);
     let Some(value) = transaction.get(&key).await? else {
         return Err(HelixDbError::MigrationRequired {
             reason: "V2 logical index watermark is missing".to_string(),
@@ -633,7 +639,7 @@ pub(crate) async fn allocate_index_id(transaction: &DbTransaction) -> Result<Ind
 pub(crate) async fn allocate_vector_physical_id(
     transaction: &DbTransaction,
 ) -> Result<VectorPhysicalIndexId> {
-    let key = global_key(GlobalIndexV2Key::VectorPhysicalIdWatermark);
+    let key = global_key(GlobalKey::VectorPhysicalIdWatermark);
     let mut candidate = peek_vector_physical_id(transaction).await?;
     loop {
         let next_id = candidate.checked_next()?;
@@ -658,7 +664,7 @@ pub(crate) async fn load_legacy_vector_physical_reservation(
     read: &(impl DbReadOps + Sync),
     physical_index_id: VectorPhysicalIndexId,
 ) -> Result<Option<LegacyVectorPhysicalReservation>> {
-    let key = global_key(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+    let key = global_key(GlobalKey::LegacyVectorPhysicalReservation(
         physical_index_id,
     ));
     let Some(value) = read.get(key).await? else {
@@ -678,7 +684,7 @@ pub(crate) async fn load_legacy_vector_physical_reservation(
 pub(crate) async fn load_vector_physical_watermark(
     read: &(impl DbReadOps + Sync),
 ) -> Result<VectorPhysicalIdWatermark> {
-    let key = global_key(GlobalIndexV2Key::VectorPhysicalIdWatermark);
+    let key = global_key(GlobalKey::VectorPhysicalIdWatermark);
     let Some(value) = read.get(key).await? else {
         return Err(HelixDbError::MigrationRequired {
             reason: "V2 vector physical watermark is missing".to_string(),
@@ -743,11 +749,7 @@ pub(crate) async fn load_vector_partition_mapping(
     let Some(value) = reader.get(key).await? else {
         return Ok(None);
     };
-    let IndexV2WorkValue::VectorPartitionMapping(mapping) = decode_work_value(&value)? else {
-        return Err(HelixDbError::IndexCatalogCorruption(
-            "vector partition mapping key contains another V2 value kind".to_string(),
-        ));
-    };
+    let mapping = decode_partition_mapping(&value)?;
     if mapping.index_id != index_id
         || mapping.generation != generation
         || &mapping.partition != partition
@@ -782,14 +784,14 @@ pub(crate) async fn stage_vector_partition_mapping(
             let key = vector_partition_mapping_key(scope, index_id, generation, partition);
             transaction.put(
                 key,
-                encode_work_value(&IndexV2WorkValue::VectorPartitionMapping(
+                encode_partition_mapping(&
                     VectorPartitionMappingValue {
                         index_id,
                         generation,
                         partition: partition.clone(),
                         physical_index_id,
                     },
-                )),
+                ),
             )?;
             Ok(physical_index_id)
         }
@@ -838,13 +840,13 @@ fn vector_partition_mapping_key(
 ) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(IndexV2Key::VectorPartitionMapping(
+        kind: ScopedKey::VectorPartitionMapping(
             VectorPartitionMappingKey {
                 index_id,
                 generation,
                 partition: partition.fingerprint(),
             },
-        )),
+        ),
     }
     .to_bytes()
 }
@@ -872,10 +874,10 @@ async fn allocate_operation_id_from(
     for candidate in candidates {
         let scoped = Key::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::operation(candidate)),
+            kind: ScopedKey::operation(candidate),
         }
         .to_bytes();
-        let pointer = global_key(GlobalIndexV2Key::OperationPointer(candidate));
+        let pointer = global_key(GlobalKey::OperationPointer(candidate));
         if transaction.get(scoped).await?.is_none() && transaction.get(pointer).await?.is_none() {
             return Ok(candidate);
         }
@@ -953,13 +955,13 @@ mod tests {
 
     async fn put_bootstrap_tuple(db: &Db, version: IndexStorageVersion) {
         db.put(
-            global_key(GlobalIndexV2Key::StorageVersion),
+            global_key(GlobalKey::StorageVersion),
             encode_metadata_value(&IndexV2MetadataValue::StorageVersion(version)),
         )
         .await
         .unwrap();
         db.put(
-            global_key(GlobalIndexV2Key::LogicalIndexIdWatermark),
+            global_key(GlobalKey::LogicalIndexIdWatermark),
             encode_metadata_value(&IndexV2MetadataValue::LogicalIndexIdWatermark(
                 LogicalIndexIdWatermark {
                     next_id: IndexId::initial(),
@@ -969,7 +971,7 @@ mod tests {
         .await
         .unwrap();
         db.put(
-            global_key(GlobalIndexV2Key::VectorPhysicalIdWatermark),
+            global_key(GlobalKey::VectorPhysicalIdWatermark),
             encode_metadata_value(&IndexV2MetadataValue::VectorPhysicalIdWatermark(
                 VectorPhysicalIdWatermark {
                     next_id: VectorPhysicalIndexId::initial(),
@@ -988,7 +990,7 @@ mod tests {
             .unwrap();
         let version_two = IndexStorageVersion::new(0x0002).unwrap();
         put_bootstrap_tuple(&db, version_two).await;
-        let marker_key = global_key(GlobalIndexV2Key::StorageVersion);
+        let marker_key = global_key(GlobalKey::StorageVersion);
         let marker_before = db.get(&marker_key).await.unwrap().unwrap();
 
         let error = require_reader_bootstrap_or_legacy(&db)
@@ -1045,7 +1047,7 @@ mod tests {
         bootstrap_writer(&db).await.unwrap();
 
         let marker = db
-            .get(global_key(GlobalIndexV2Key::StorageVersion))
+            .get(global_key(GlobalKey::StorageVersion))
             .await
             .unwrap()
             .unwrap();

@@ -1213,16 +1213,16 @@ impl LifecycleTestController {
                 entries.len()
             )));
         }
-        let root_typed = crate::encoding::v1::keys::index_v2::TextManifestRootKey {
+        let root_typed = crate::encoding::v2::keys::TextManifestRootKey {
             index_id: authority.index_id(),
             generation: authority.generation(),
             partition: partition.fingerprint(),
         };
         let root_key = Key::Data {
             scope,
-            kind: DataKeyKind::IndexV2(
-                crate::encoding::v1::keys::index_v2::IndexV2Key::TextManifestRoot(root_typed),
-            ),
+            kind:
+                crate::encoding::v2::keys::ScopedKey::TextManifestRoot(root_typed),
+            ,
         }
         .to_bytes();
         let root_bytes = writer.get(&root_key).await?.ok_or_else(|| {
@@ -1230,13 +1230,7 @@ impl LifecycleTestController {
                 "re-page fixture lost its manifest root".to_string(),
             )
         })?;
-        let crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(root_value) =
-            crate::encoding::v1::values::index_v2::decode_work_value(&root_bytes)?
-        else {
-            return Err(HelixDbError::IndexCatalogCorruption(
-                "re-page root key contains another value kind".to_string(),
-            ));
-        };
+        let root_value = crate::encoding::v2::values::decode_manifest_root(&root_bytes)?;
         let first_page = work::TextManifestPageValue::try_new(
             authority.index_id(),
             authority.generation(),
@@ -1274,30 +1268,26 @@ impl LifecycleTestController {
             transaction.put(
                 Key::Data {
                     scope,
-                    kind: DataKeyKind::IndexV2(
-                        crate::encoding::v1::keys::index_v2::IndexV2Key::TextManifestPage(
-                            crate::encoding::v1::keys::index_v2::TextManifestPageKey {
+                    kind:
+                        crate::encoding::v2::keys::ScopedKey::TextManifestPage(
+                            crate::encoding::v2::keys::TextManifestPageKey {
                                 root: root_typed,
                                 page,
                             },
                         ),
-                    ),
+                    ,
                 }
                 .to_bytes(),
-                crate::encoding::v1::values::index_v2::encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestPage(
+                crate::encoding::v2::values::encode_manifest_page(&
                         value,
                     ),
-                ),
             )?;
         }
         transaction.put(
             root_key,
-            crate::encoding::v1::values::index_v2::encode_work_value(
-                &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(
+            crate::encoding::v2::values::encode_manifest_root(&
                     next_root,
                 ),
-            ),
         )?;
         transaction.commit().await?;
         Ok(())
@@ -1409,16 +1399,16 @@ impl LifecycleTestController {
             .copy(&donor_blob_path, &target_blob_path)
             .await?;
 
-        let root_typed = crate::encoding::v1::keys::index_v2::TextManifestRootKey {
+        let root_typed = crate::encoding::v2::keys::TextManifestRootKey {
             index_id: authority.index_id(),
             generation: authority.generation(),
             partition: partition.fingerprint(),
         };
         let root_key = Key::Data {
             scope,
-            kind: DataKeyKind::IndexV2(
-                crate::encoding::v1::keys::index_v2::IndexV2Key::TextManifestRoot(root_typed),
-            ),
+            kind:
+                crate::encoding::v2::keys::ScopedKey::TextManifestRoot(root_typed),
+            ,
         }
         .to_bytes();
         let root_bytes = writer.get(&root_key).await?.ok_or_else(|| {
@@ -1426,13 +1416,7 @@ impl LifecycleTestController {
                 "search-race fixture lost its manifest root".to_string(),
             )
         })?;
-        let crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(root_value) =
-            crate::encoding::v1::values::index_v2::decode_work_value(&root_bytes)?
-        else {
-            return Err(HelixDbError::IndexCatalogCorruption(
-                "search-race root key contains another value kind".to_string(),
-            ));
-        };
+        let root_value = crate::encoding::v2::values::decode_manifest_root(&root_bytes)?;
         let first_page = work::TextManifestPageValue::try_new(
             authority.index_id(),
             authority.generation(),
@@ -1469,32 +1453,28 @@ impl LifecycleTestController {
         for (page, value) in [(0, first_page), (1, second_page)] {
             let key = Key::Data {
                 scope,
-                kind: DataKeyKind::IndexV2(
-                    crate::encoding::v1::keys::index_v2::IndexV2Key::TextManifestPage(
-                        crate::encoding::v1::keys::index_v2::TextManifestPageKey {
+                kind:
+                    crate::encoding::v2::keys::ScopedKey::TextManifestPage(
+                        crate::encoding::v2::keys::TextManifestPageKey {
                             root: root_typed,
                             page,
                         },
                     ),
-                ),
+                ,
             }
             .to_bytes();
             transaction.put(
                 key,
-                crate::encoding::v1::values::index_v2::encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestPage(
+                crate::encoding::v2::values::encode_manifest_page(&
                         value,
                     ),
-                ),
             )?;
         }
         transaction.put(
             root_key,
-            crate::encoding::v1::values::index_v2::encode_work_value(
-                &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(
+            crate::encoding::v2::values::encode_manifest_root(&
                     next_root,
                 ),
-            ),
         )?;
         transaction.commit().await?;
         Ok(vec![*donor_entry.blob().hash()])

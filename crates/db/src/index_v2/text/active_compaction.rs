@@ -8,9 +8,9 @@ use slatedb::object_store::ObjectStore;
 use slatedb::{Db, IsolationLevel};
 
 use crate::config::TextBackfillCompactionLimits;
-use crate::encoding::v1::keys::index_v2 as index_keys;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::keys as index_keys;
+use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::{self, work};
 
@@ -34,15 +34,15 @@ pub(crate) async fn compact_once(
     db_path: &str,
     limits: TextBackfillCompactionLimits,
 ) -> Result<bool> {
-    let prefix = index_keys::GlobalIndexV2Key::logical_prefix(
-        index_keys::GlobalIndexV2Kind::TextCompactionPointer,
+    let prefix = index_keys::GlobalKey::logical_prefix(
+        index_keys::GlobalKind::TextCompactionPointer,
     );
     let mut pointers = db.scan_prefix(prefix, ..).await?;
     let Some(pointer) = pointers.next().await? else {
         return Ok(false);
     };
-    let index_keys::GlobalIndexV2Key::TextCompactionPointer(target) =
-        index_keys::GlobalIndexV2Key::parse_from_slice(&pointer.key)?
+    let index_keys::GlobalKey::TextCompactionPointer(target) =
+        index_keys::GlobalKey::parse_from_slice(&pointer.key)?
     else {
         return Err(corruption(
             "text compaction prefix yielded another global key kind",
@@ -59,7 +59,7 @@ pub(crate) async fn compact_once(
     let snapshot = db.begin(IsolationLevel::Snapshot).await?;
     let record_key = scoped_key(
         target.scope(),
-        index_keys::IndexV2Key::index_record(target.identity().clone()),
+        index_keys::ScopedKey::index_record(target.identity().clone()),
     );
     let Some(record_bytes) = snapshot.get(&record_key).await? else {
         drop(snapshot);
@@ -100,11 +100,11 @@ pub(crate) async fn compact_once(
     };
     let root_key = scoped_key(
         target.scope(),
-        index_keys::IndexV2Key::TextManifestRoot(root_typed),
+        index_keys::ScopedKey::TextManifestRoot(root_typed),
     );
     let page_key = scoped_key(
         target.scope(),
-        index_keys::IndexV2Key::TextManifestPage(index_keys::TextManifestPageKey {
+        index_keys::ScopedKey::TextManifestPage(index_keys::TextManifestPageKey {
             root: root_typed,
             page: target.page(),
         }),
@@ -116,20 +116,8 @@ pub(crate) async fn compact_once(
         delete_exact_pointer(db, &pointer.key, &pointer.value).await?;
         return Ok(true);
     };
-    let index_values::IndexV2WorkValue::TextManifestRoot(root) =
-        index_values::decode_work_value(&root_bytes)?
-    else {
-        return Err(corruption(
-            "text compaction root key contains another value kind",
-        ));
-    };
-    let index_values::IndexV2WorkValue::TextManifestPage(page) =
-        index_values::decode_work_value(&page_bytes)?
-    else {
-        return Err(corruption(
-            "text compaction page key contains another value kind",
-        ));
-    };
+    let root = index_values::decode_manifest_root(&root_bytes)?;
+    let page = index_values::decode_manifest_page(&page_bytes)?;
     if root.index_id() != target.index_id()
         || root.generation() != target.generation()
         || root.partition().fingerprint() != target.partition()
@@ -216,7 +204,7 @@ pub(crate) async fn compact_once(
             .map(|entity_id| {
                 scoped_key(
                     selected.target.scope(),
-                    index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+                    index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                         root: root_typed,
                         entity: index_keys::IndexEntity {
                             kind: selected.definition.element_kind(),
@@ -233,13 +221,7 @@ pub(crate) async fn compact_once(
                     "Active text compaction document has no entity state",
                 ));
             };
-            let index_values::IndexV2WorkValue::TextEntityState(state) =
-                index_values::decode_work_value(&value)?
-            else {
-                return Err(corruption(
-                    "Active text compaction state key contains another value kind",
-                ));
-            };
+            let state = index_values::decode_text_entity_state(&value)?;
             if state.index_id != selected.target.index_id()
                 || state.generation != selected.target.generation()
                 || state.partition != *selected.root.partition()
@@ -367,7 +349,7 @@ async fn commit_replacement(
     .map_err(|error| corruption(error.to_string()))?;
     let root_key = scoped_key(
         selected.target.scope(),
-        index_keys::IndexV2Key::TextManifestRoot(index_keys::TextManifestRootKey {
+        index_keys::ScopedKey::TextManifestRoot(index_keys::TextManifestRootKey {
             index_id: selected.target.index_id(),
             generation: selected.target.generation(),
             partition: selected.target.partition(),
@@ -375,7 +357,7 @@ async fn commit_replacement(
     );
     let page_key = scoped_key(
         selected.target.scope(),
-        index_keys::IndexV2Key::TextManifestPage(index_keys::TextManifestPageKey {
+        index_keys::ScopedKey::TextManifestPage(index_keys::TextManifestPageKey {
             root: index_keys::TextManifestRootKey {
                 index_id: selected.target.index_id(),
                 generation: selected.target.generation(),
@@ -385,10 +367,8 @@ async fn commit_replacement(
         }),
     );
     let root_value =
-        index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(root));
-    let page_value = index_values::encode_work_value(
-        &index_values::IndexV2WorkValue::TextManifestPage(page.clone()),
-    );
+        index_values::encode_manifest_root(&root);
+    let page_value = index_values::encode_manifest_page(&page);
     if u64::try_from(page_value.len()).unwrap_or(u64::MAX) > limits.max_manifest_bytes().get() {
         return Err(corruption(
             "Active text compaction replacement exceeds the manifest page limit",
@@ -466,11 +446,11 @@ fn runtime_split(split: work::SplitRef) -> crate::search::text::TextSplitRef {
 
 fn scoped_key(
     scope: crate::encoding::v1::keys::tenant::DataScope,
-    key: index_keys::IndexV2Key,
+    key: index_keys::ScopedKey,
 ) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }
@@ -553,7 +533,7 @@ mod tests {
         db.put(
             scoped_key(
                 scope,
-                index_keys::IndexV2Key::index_record(record.identity().clone()),
+                index_keys::ScopedKey::index_record(record.identity().clone()),
             ),
             index_values::encode_index_record(&record),
         )
@@ -593,8 +573,8 @@ mod tests {
         };
         let revision = index_v2::TextManifestRevision::new(3).unwrap();
         db.put(
-            scoped_key(scope, index_keys::IndexV2Key::TextManifestRoot(root_typed)),
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
+            scoped_key(scope, index_keys::ScopedKey::TextManifestRoot(root_typed)),
+            index_values::encode_manifest_root(&
                 work::TextManifestRootValue::try_new(
                     index_id,
                     generation,
@@ -604,20 +584,20 @@ mod tests {
                     2,
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
         let page_key = scoped_key(
             scope,
-            index_keys::IndexV2Key::TextManifestPage(index_keys::TextManifestPageKey {
+            index_keys::ScopedKey::TextManifestPage(index_keys::TextManifestPageKey {
                 root: root_typed,
                 page: 0,
             }),
         );
         db.put(
             &page_key,
-            index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestPage(
+            index_values::encode_manifest_page(&
                 work::TextManifestPageValue::try_new(
                     index_id,
                     generation,
@@ -626,7 +606,7 @@ mod tests {
                     splits,
                 )
                 .unwrap(),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -634,7 +614,7 @@ mod tests {
             db.put(
                 scoped_key(
                     scope,
-                    index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+                    index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                         root: root_typed,
                         entity: index_keys::IndexEntity {
                             kind: index_v2::IndexElementKind::Node,
@@ -642,7 +622,7 @@ mod tests {
                         },
                     }),
                 ),
-                index_values::encode_work_value(&index_values::IndexV2WorkValue::TextEntityState(
+                index_values::encode_text_entity_state(&
                     work::TextEntityStateValue {
                         index_id,
                         generation,
@@ -652,7 +632,7 @@ mod tests {
                         logical_version: index_v2::TextLogicalVersion::new(entity_id).unwrap(),
                         live: true,
                     },
-                )),
+                ),
             )
             .await
             .unwrap();
@@ -667,9 +647,7 @@ mod tests {
         )
         .unwrap();
         let pointer_key = Key::Global {
-            kind: crate::encoding::v1::keys::GlobalKeyKind::IndexV2(
-                index_keys::GlobalIndexV2Key::TextCompactionPointer(target),
-            ),
+            kind: index_keys::GlobalKey::TextCompactionPointer(target),
         }
         .to_bytes();
         db.put(
@@ -685,11 +663,10 @@ mod tests {
 
         assert!(compact_once(&db, &store, "db", limits(2)).await.unwrap());
 
-        let page =
-            index_values::decode_work_value(&db.get(page_key).await.unwrap().unwrap()).unwrap();
-        let index_values::IndexV2WorkValue::TextManifestPage(page) = page else {
-            panic!("compacted page retains its typed value kind");
-        };
+        let page = index_values::decode_manifest_page(
+            &db.get(page_key).await.unwrap().unwrap(),
+        )
+        .unwrap();
         assert_eq!(page.entries().len(), 1);
         assert!(db.get(pointer_key).await.unwrap().is_none());
     }

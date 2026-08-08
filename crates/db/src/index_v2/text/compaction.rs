@@ -16,10 +16,10 @@ use bytes::Bytes;
 use slatedb::DbTransaction;
 
 use crate::config::{SearchIndexBatchLimits, TextBackfillCompactionLimits};
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::work;
 use crate::index_v2::{IndexCursor, IndexEntityId, IndexOperationRecord, PrefixScanProgress};
@@ -84,8 +84,8 @@ pub(super) async fn select_artifacts(
 ) -> Result<ArtifactSelection> {
     let prefix = Key::data_prefix(
         scope,
-        index_keys::IndexV2Key::generation_prefix(
-            index_keys::IndexV2RecordKind::TextBuildArtifact,
+        index_keys::ScopedKey::generation_prefix(
+            index_keys::RecordKind::TextBuildArtifact,
             operation.index_id(),
             operation.generation(),
         ),
@@ -255,7 +255,7 @@ pub(super) async fn resolve_live_versions(
         let entity_id = IndexEntityId::new(entity_id);
         let key = scoped_key(
             scope,
-            index_keys::IndexV2Key::TextEntityState(index_keys::TextEntityStateKey {
+            index_keys::ScopedKey::TextEntityState(index_keys::TextEntityStateKey {
                 root: index_keys::TextManifestRootKey {
                     index_id: operation.index_id(),
                     generation: operation.generation(),
@@ -269,13 +269,7 @@ pub(super) async fn resolve_live_versions(
         );
         let value = transaction.get(&key).await?;
         if let Some(value) = value.as_ref() {
-            let index_values::IndexV2WorkValue::TextEntityState(state) =
-                index_values::decode_work_value(value)?
-            else {
-                return Err(corruption(
-                    "text compaction entity-state key contains another value kind",
-                ));
-            };
+            let state = index_values::decode_text_entity_state(value)?;
             if state.index_id != operation.index_id()
                 || state.generation != operation.generation()
                 || state.partition != *partition
@@ -364,15 +358,15 @@ fn retirement_measurement(
     _artifact: &work::TextBuildArtifactValue,
     _creates_candidate: bool,
 ) -> (u64, u64) {
-    let artifact_key = scoped_key(scope, index_keys::IndexV2Key::TextBuildArtifact(key));
+    let artifact_key = scoped_key(scope, index_keys::ScopedKey::TextBuildArtifact(key));
     (1, u64::try_from(artifact_key.len()).unwrap_or(u64::MAX))
 }
 
 /// Encodes one scoped V2 key through the canonical `encoding/v1` boundary.
-fn scoped_key(scope: DataScope, key: index_keys::IndexV2Key) -> Bytes {
+fn scoped_key(scope: DataScope, key: index_keys::ScopedKey) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }

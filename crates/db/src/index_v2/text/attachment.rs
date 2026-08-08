@@ -3,18 +3,18 @@
 #[cfg(any(test, feature = "production-coverage"))]
 use bytes::Bytes;
 
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2 as index_values;
+use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::work;
 
 #[cfg(any(test, feature = "production-coverage"))]
-pub(super) fn scoped_key(scope: DataScope, logical_key: index_keys::IndexV2Key) -> Bytes {
+pub(super) fn scoped_key(scope: DataScope, logical_key: index_keys::ScopedKey) -> Bytes {
     Key::Data {
         scope,
-        kind: DataKeyKind::IndexV2(logical_key),
+        kind: logical_key,
     }
     .to_bytes()
 }
@@ -30,7 +30,7 @@ pub(super) fn decode_build_artifact(
     work::TextBuildArtifactValue,
 )> {
     let Key::Data {
-        kind: DataKeyKind::IndexV2(index_keys::IndexV2Key::TextBuildArtifact(key)),
+        kind: index_keys::ScopedKey::TextBuildArtifact(key),
         ..
     } = Key::parse_from_slice(scope, key)?
     else {
@@ -38,13 +38,7 @@ pub(super) fn decode_build_artifact(
             "text artifact prefix yielded another typed key kind",
         ));
     };
-    let index_values::IndexV2WorkValue::TextBuildArtifact(artifact) =
-        index_values::decode_work_value(value)?
-    else {
-        return Err(corruption(
-            "text artifact key contains another typed value kind",
-        ));
-    };
+    let artifact = index_values::decode_build_artifact(value)?;
     if key.root.index_id != operation.index_id()
         || key.root.generation != operation.generation()
         || key.root.partition != artifact.partition.fingerprint()

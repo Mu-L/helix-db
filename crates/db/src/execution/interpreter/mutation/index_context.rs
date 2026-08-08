@@ -368,7 +368,7 @@ async fn classify_commit_error(
 mod tests {
     use super::super::super::test_support;
     use super::*;
-    use crate::encoding::v1::{keys, values};
+    use crate::encoding::v1::keys;
     use crate::{config, index_v2};
 
     #[tokio::test]
@@ -413,14 +413,14 @@ mod tests {
             .expect("active record projects an active handle");
         inner
             .put(
-                keys::Key::Data {
+                crate::encoding::v2::keys::Key::Data {
                     scope,
-                    kind: keys::DataKeyKind::IndexV2(keys::index_v2::IndexV2Key::index_record(
+                    kind: crate::encoding::v2::keys::ScopedKey::index_record(
                         record.identity().clone(),
-                    )),
+                    ),
                 }
                 .to_bytes(),
-                values::index_v2::encode_index_record(&record),
+                crate::encoding::v2::values::encode_index_record(&record),
             )
             .await
             .expect("active record persists");

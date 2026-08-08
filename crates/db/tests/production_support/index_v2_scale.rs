@@ -20,7 +20,7 @@ use crate::config::{
 };
 use crate::encoding::property::property_value::PropertyValue as StoredPropertyValue;
 use crate::encoding::property::{encode_properties, Property};
-use crate::encoding::v1::keys::index_v2 as index_keys;
+use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
 use crate::encoding::v1::keys::{AdjacencyKey, DataKeyKind, Key, NodePropertyKey};
 use crate::encoding::v1::values::edges::{encode_edges, Edges};
@@ -916,8 +916,8 @@ async fn assert_no_lifecycle_residue(db: &HelixDB, scopes: &[DataScope]) {
     let crate::HelixStorage::Writer(writer) = db.storage() else {
         panic!("scale residue checks require writer storage");
     };
-    for kind in [index_keys::GlobalIndexV2Kind::OperationPointer] {
-        let prefix = index_keys::GlobalIndexV2Key::logical_prefix(kind);
+    for kind in [index_keys::GlobalKind::OperationPointer] {
+        let prefix = index_keys::GlobalKey::logical_prefix(kind);
         let mut rows = writer
             .db()
             .scan_prefix(
@@ -937,19 +937,19 @@ async fn assert_no_lifecycle_residue(db: &HelixDB, scopes: &[DataScope]) {
 
     for scope in scopes {
         for kind in [
-            index_keys::IndexV2RecordKind::BuildDelta,
-            index_keys::IndexV2RecordKind::AppliedState,
-            index_keys::IndexV2RecordKind::SecondaryEntry,
-            index_keys::IndexV2RecordKind::TextManifestRoot,
-            index_keys::IndexV2RecordKind::TextManifestPage,
-            index_keys::IndexV2RecordKind::TextBuildArtifact,
-            index_keys::IndexV2RecordKind::TextEntityState,
-            index_keys::IndexV2RecordKind::TextCorpusStatistics,
-            index_keys::IndexV2RecordKind::TextTermStatistics,
-            index_keys::IndexV2RecordKind::TextStatisticsEntity,
-            index_keys::IndexV2RecordKind::VectorPartitionMapping,
+            index_keys::RecordKind::BuildDelta,
+            index_keys::RecordKind::AppliedState,
+            index_keys::RecordKind::SecondaryEntry,
+            index_keys::RecordKind::TextManifestRoot,
+            index_keys::RecordKind::TextManifestPage,
+            index_keys::RecordKind::TextBuildArtifact,
+            index_keys::RecordKind::TextEntityState,
+            index_keys::RecordKind::TextCorpusStatistics,
+            index_keys::RecordKind::TextTermStatistics,
+            index_keys::RecordKind::TextStatisticsEntity,
+            index_keys::RecordKind::VectorPartitionMapping,
         ] {
-            let prefix = Key::data_prefix(*scope, index_keys::IndexV2Key::logical_prefix(kind));
+            let prefix = Key::data_prefix(*scope, index_keys::ScopedKey::logical_prefix(kind));
             let mut rows = writer
                 .db()
                 .scan_prefix(

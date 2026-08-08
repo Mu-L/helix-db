@@ -407,10 +407,10 @@ mod tests {
 
     use super::*;
     use crate::config::TextAnalyzerKind;
-    use crate::encoding::v1::keys::index_v2::IndexV2Key;
+    use crate::encoding::v2::keys::ScopedKey;
     use crate::encoding::v1::keys::tenant::DataScope;
-    use crate::encoding::v1::keys::{DataKeyKind, Key};
-    use crate::encoding::v1::values::index_v2::encode_index_record;
+    use crate::encoding::v2::keys::Key;
+    use crate::encoding::v2::values::encode_index_record;
     use crate::index_v2::{
         IndexGenerationId, IndexOperationId, IndexRecordV2, IndexRevision, IndexStateTransition,
         PhysicalGeneration, ValidatedDynamicIndexDefinition, VectorGenerationDescriptor,
@@ -477,7 +477,7 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(record.identity().clone())),
+                    kind: ScopedKey::index_record(record.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&record),
@@ -515,7 +515,7 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(record.identity().clone())),
+                    kind: ScopedKey::index_record(record.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&record),
@@ -765,9 +765,9 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(
+                    kind: ScopedKey::index_record(
                         dropping.identity().clone(),
-                    )),
+                    ),
                 }
                 .to_bytes(),
                 encode_index_record(&dropping),

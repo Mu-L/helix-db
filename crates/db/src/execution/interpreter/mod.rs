@@ -518,18 +518,18 @@ mod cutover_tests {
             .await
             .expect("graph mutation and vector delta commit together");
 
-        let delta_key = keys::Key::Data {
+        let delta_key = crate::encoding::v2::keys::Key::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: keys::DataKeyKind::IndexV2(keys::index_v2::IndexV2Key::BuildDelta(
-                keys::index_v2::IndexEntityStateKey {
+            kind: crate::encoding::v2::keys::ScopedKey::BuildDelta(
+                crate::encoding::v2::keys::IndexEntityStateKey {
                     index_id,
                     generation,
-                    entity: keys::index_v2::IndexEntity {
+                    entity: crate::encoding::v2::keys::IndexEntity {
                         kind: crate::index_v2::IndexElementKind::Node,
                         id: crate::index_v2::IndexEntityId::new(0),
                     },
                 },
-            )),
+            ),
         }
         .to_bytes();
         assert!(db.inner_db().get(delta_key).await.unwrap().is_some());
@@ -598,18 +598,18 @@ mod cutover_tests {
             .await
             .expect("graph mutation and text delta commit together");
 
-        let delta_key = keys::Key::Data {
+        let delta_key = crate::encoding::v2::keys::Key::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: keys::DataKeyKind::IndexV2(keys::index_v2::IndexV2Key::BuildDelta(
-                keys::index_v2::IndexEntityStateKey {
+            kind: crate::encoding::v2::keys::ScopedKey::BuildDelta(
+                crate::encoding::v2::keys::IndexEntityStateKey {
                     index_id,
                     generation,
-                    entity: keys::index_v2::IndexEntity {
+                    entity: crate::encoding::v2::keys::IndexEntity {
                         kind: crate::index_v2::IndexElementKind::Node,
                         id: crate::index_v2::IndexEntityId::new(0),
                     },
                 },
-            )),
+            ),
         }
         .to_bytes();
         let value = db
@@ -618,11 +618,8 @@ mod cutover_tests {
             .await
             .expect("text delta read succeeds")
             .expect("text delta committed with graph row");
-        let values::index_v2::IndexV2WorkValue::CoalescedBuildDelta(delta) =
-            values::index_v2::decode_work_value(&value).expect("text delta decodes")
-        else {
-            panic!("text delta key contains its typed coalesced value");
-        };
+        let delta = crate::encoding::v2::values::decode_build_delta(&value)
+            .expect("text delta decodes");
         assert_eq!(delta.index_id, index_id);
         assert_eq!(delta.generation, generation);
         assert_eq!(delta.entity_kind, crate::index_v2::IndexElementKind::Node);

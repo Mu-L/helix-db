@@ -18,9 +18,11 @@ use super::memory_store::{
     VectorMemoryAdmissionBudget, VectorMemoryStore, VectorMemoryStoreLoadCompletion,
 };
 use super::ValidatedVectorGenerationHandle;
-use crate::encoding::v1::keys::index_v2::{IndexV2Key, IndexV2RecordKind};
+use crate::encoding::v2::keys::{ScopedKey, RecordKind};
+#[cfg(test)]
 use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2::{decode_work_value, IndexV2WorkValue};
+use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::values::decode_partition_mapping;
 use crate::error::{HelixDbError, Result};
 use crate::index_v2::{ActiveIndexHandle, VectorPhysicalLayout};
 
@@ -99,32 +101,26 @@ pub(crate) async fn hydrate_active_generations(
                 );
             }
             VectorPhysicalLayout::Partitioned => {
-                let prefix = Key::data_prefix(
+                let prefix = IndexKey::data_prefix(
                     *scope,
-                    IndexV2Key::generation_prefix(
-                        IndexV2RecordKind::VectorPartitionMapping,
+                    ScopedKey::generation_prefix(
+                        RecordKind::VectorPartitionMapping,
                         *index_id,
                         *generation,
                     ),
                 );
                 let mut mappings = inventory.scan_prefix(prefix, ..).await?;
                 while let Some(row) = mappings.next().await? {
-                    let Key::Data {
-                        kind: DataKeyKind::IndexV2(IndexV2Key::VectorPartitionMapping(mapping_key)),
+                    let IndexKey::Data {
+                        kind: ScopedKey::VectorPartitionMapping(mapping_key),
                         ..
-                    } = Key::parse_from_slice(*scope, &row.key)?
+                    } = IndexKey::parse_from_slice(*scope, &row.key)?
                     else {
                         return Err(HelixDbError::IndexCatalogCorruption(
                             "vector partition prefix yielded another key kind".to_string(),
                         ));
                     };
-                    let IndexV2WorkValue::VectorPartitionMapping(mapping) =
-                        decode_work_value(&row.value)?
-                    else {
-                        return Err(HelixDbError::IndexCatalogCorruption(
-                            "vector partition mapping contains another value kind".to_string(),
-                        ));
-                    };
+                    let mapping = decode_partition_mapping(&row.value)?;
                     if mapping_key.index_id != *index_id
                         || mapping_key.generation != *generation
                         || mapping.index_id != *index_id
@@ -283,10 +279,10 @@ mod tests {
 
     use super::*;
     use crate::config::VectorIndexDefinition;
-    use crate::encoding::v1::keys::index_v2::VectorPartitionMappingKey;
+    use crate::encoding::v2::keys::VectorPartitionMappingKey;
     use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
     use crate::encoding::v1::keys::vectors::{VectorKey, VectorUpperVectorKey};
-    use crate::encoding::v1::values::index_v2::encode_work_value;
+    use crate::encoding::v2::values::encode_partition_mapping;
     use crate::index_v2::work::{VectorPartitionMappingValue, VectorTenantPartition};
     use crate::index_v2::{
         IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
@@ -440,25 +436,25 @@ mod tests {
         let physical_index_id = VectorPhysicalIndexId::new(91).unwrap();
         let (active, handle) = active_vector(scope, index_id.get(), physical_index_id.get(), true);
         let partition = VectorTenantPartition::try_new(Bytes::from_static(b"tenant-a")).unwrap();
-        let mapping_key = Key::Data {
+        let mapping_key = IndexKey::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::VectorPartitionMapping(
+            kind: ScopedKey::VectorPartitionMapping(
                 VectorPartitionMappingKey {
                     index_id,
                     generation: IndexGenerationId::initial(),
                     partition: partition.fingerprint(),
                 },
-            )),
+            ),
         }
         .to_bytes();
-        let mapping = encode_work_value(&IndexV2WorkValue::VectorPartitionMapping(
+        let mapping = encode_partition_mapping(&
             VectorPartitionMappingValue {
                 index_id,
                 generation: IndexGenerationId::initial(),
                 partition,
                 physical_index_id,
             },
-        ));
+        );
         let vector_key = Key::Data {
             scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
@@ -633,25 +629,25 @@ mod tests {
             VectorTenantPartition::try_new(Bytes::from_static(b"tenant-key")).unwrap();
         let value_partition =
             VectorTenantPartition::try_new(Bytes::from_static(b"tenant-value")).unwrap();
-        let mapping_key = Key::Data {
+        let mapping_key = IndexKey::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::VectorPartitionMapping(
+            kind: ScopedKey::VectorPartitionMapping(
                 VectorPartitionMappingKey {
                     index_id,
                     generation: IndexGenerationId::initial(),
                     partition: key_partition.fingerprint(),
                 },
-            )),
+            ),
         }
         .to_bytes();
-        let mapping = encode_work_value(&IndexV2WorkValue::VectorPartitionMapping(
+        let mapping = encode_partition_mapping(&
             VectorPartitionMappingValue {
                 index_id,
                 generation: IndexGenerationId::initial(),
                 partition: value_partition,
                 physical_index_id,
             },
-        ));
+        );
         let transaction = db.begin(IsolationLevel::Snapshot).await.unwrap();
         transaction.put(mapping_key, mapping).unwrap();
         transaction.commit().await.unwrap();

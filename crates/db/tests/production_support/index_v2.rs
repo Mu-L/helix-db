@@ -19,7 +19,7 @@ use crate::config::{
 };
 use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::property::{encode_properties, Property};
-use crate::encoding::v1::keys::index_v2::{IndexV2Key, IndexV2RecordKind};
+use crate::encoding::v2::keys::{ScopedKey, RecordKind};
 use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
 use crate::encoding::v1::keys::{DataKeyKind, Key, NodePropertyKey};
 use crate::error::{HelixDbError, Result};
@@ -913,7 +913,7 @@ async fn drive_one_secondary_step(
 async fn operation_row_count(db: &Db) -> usize {
     let prefix = Key::data_prefix(
         DataScope::LegacyUnscoped,
-        IndexV2Key::logical_prefix(IndexV2RecordKind::Operation),
+        ScopedKey::logical_prefix(RecordKind::Operation),
     );
     let mut rows = db
         .scan_prefix(&prefix, ..)
@@ -948,11 +948,9 @@ async fn assert_operation_queue_empty(db: &Db) {
 async fn assert_failed_create_is_absent(db: &Db, definition: &ValidatedDynamicIndexDefinition) {
     assert!(db
         .get(
-            Key::Data {
+            crate::encoding::v2::keys::Key::Data {
                 scope: DataScope::LegacyUnscoped,
-                kind: DataKeyKind::IndexV2(
-                    IndexV2Key::index_record(definition.identity().clone(),)
-                ),
+                kind: ScopedKey::index_record(definition.identity().clone()),
             }
             .to_bytes(),
         )

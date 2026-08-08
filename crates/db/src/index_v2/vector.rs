@@ -17,16 +17,17 @@ use slatedb::DbTransaction;
 
 use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::property::Property;
-use crate::encoding::v1::keys::index_v2::{IndexEntity, IndexEntityStateKey, IndexV2Key};
+use crate::encoding::v2::keys::{IndexEntity, IndexEntityStateKey, ScopedKey};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::{
     VectorIndexMetadataKey, VectorKey, VectorStorageLane, VectorTxnGuardKey,
 };
 use crate::encoding::v1::keys::{DataKeyKind, Key};
+use crate::encoding::v2::keys::Key as IndexKey;
 use crate::encoding::v1::property::encode_index_partition_value;
 #[cfg(test)]
-use crate::encoding::v1::values::index_v2::decode_index_record;
-use crate::encoding::v1::values::index_v2::{encode_work_value, IndexV2WorkValue};
+use crate::encoding::v2::values::decode_index_record;
+use crate::encoding::v2::values::encode_build_delta;
 use crate::error::{HelixDbError, Result};
 use crate::search;
 use crate::search::vector::{
@@ -174,17 +175,17 @@ pub(crate) async fn load_mutation_set(
     transaction: &DbTransaction,
     scope: DataScope,
 ) -> Result<VectorMutationSet> {
-    let logical_prefix = IndexV2Key::logical_prefix(
-        crate::encoding::v1::keys::index_v2::IndexV2RecordKind::IndexRecord,
+    let logical_prefix = ScopedKey::logical_prefix(
+        crate::encoding::v2::keys::RecordKind::IndexRecord,
     );
-    let physical_prefix = Key::data_prefix(scope, logical_prefix);
+    let physical_prefix = IndexKey::data_prefix(scope, logical_prefix);
     let mut rows = transaction.scan_prefix(&physical_prefix, ..).await?;
     let mut mutations = VectorMutationSet::default();
     while let Some(row) = rows.next().await? {
-        let Key::Data {
-            kind: DataKeyKind::IndexV2(IndexV2Key::IndexRecord(key)),
+        let IndexKey::Data {
+            kind: ScopedKey::IndexRecord(key),
             ..
-        } = Key::parse_from_slice(scope, &row.key)?
+        } = IndexKey::parse_from_slice(scope, &row.key)?
         else {
             return Err(corruption(
                 "vector mutation catalog prefix yielded another key kind",
@@ -288,19 +289,19 @@ async fn maintain_target(
             };
             let key = scoped_index_key(
                 scope,
-                IndexV2Key::BuildDelta(IndexEntityStateKey {
+                ScopedKey::BuildDelta(IndexEntityStateKey {
                     index_id: target.index_id,
                     generation: target.generation,
                     entity: index_entity,
                 }),
             );
-            let value = IndexV2WorkValue::CoalescedBuildDelta(CoalescedBuildDeltaValue {
+            let value = CoalescedBuildDeltaValue {
                 index_id: target.index_id,
                 generation: target.generation,
                 entity_kind: entity.entity_kind,
                 entity_id: entity.entity_id,
-            });
-            transaction.put(key, encode_work_value(&value))?;
+            };
+            transaction.put(key, encode_build_delta(&value))?;
         }
         VectorMutationMode::MaintainActive(handle) => {
             maintain_active(
@@ -858,10 +859,10 @@ fn numeric_value_to_f32(value: &PropertyValue) -> Result<f32> {
     }
 }
 
-fn scoped_index_key(scope: DataScope, logical: IndexV2Key) -> Bytes {
-    Key::Data {
+fn scoped_index_key(scope: DataScope, logical: ScopedKey) -> Bytes {
+    IndexKey::Data {
         scope,
-        kind: DataKeyKind::IndexV2(logical),
+        kind: logical,
     }
     .to_bytes()
 }
@@ -878,11 +879,10 @@ mod tests {
     use slatedb::{Db, IsolationLevel};
 
     use super::*;
-    use crate::encoding::v1::keys::index_v2::{
-        GlobalIndexV2Key, IndexRecordV2Key, VectorPartitionMappingKey,
+    use crate::encoding::v2::keys::{
+        GlobalKey, IndexRecordKey, VectorPartitionMappingKey,
     };
-    use crate::encoding::v1::keys::GlobalKeyKind;
-    use crate::encoding::v1::values::index_v2::{encode_index_record, encode_metadata_value};
+    use crate::encoding::v2::values::{encode_index_record, encode_metadata_value};
     use crate::index_v2::{
         IndexOperationId, IndexRecordV2, IndexRevision, IndexStateTransition, IndexV2MetadataValue,
         PhysicalGeneration, VectorGenerationDescriptor, VectorPhysicalIdWatermark,
@@ -1361,11 +1361,11 @@ mod tests {
         )
         .unwrap();
         let other = ValidatedVectorIndexDefinition::try_from_runtime(&other).unwrap();
-        let key = Key::Data {
+        let key = IndexKey::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: DataKeyKind::IndexV2(IndexV2Key::IndexRecord(IndexRecordV2Key {
+            kind: ScopedKey::IndexRecord(IndexRecordKey {
                 identity: other.identity(),
-            })),
+            }),
         }
         .to_bytes();
         db.put(key, encode_index_record(&record)).await.unwrap();
@@ -1387,8 +1387,8 @@ mod tests {
     async fn active_tenant_upsert_propagates_physical_id_exhaustion() {
         let db = test_db("vector-active-tenant-id-exhaustion").await;
         db.put(
-            Key::Global {
-                kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::VectorPhysicalIdWatermark),
+            IndexKey::Global {
+                kind: GlobalKey::VectorPhysicalIdWatermark,
             }
             .to_bytes(),
             encode_metadata_value(&IndexV2MetadataValue::VectorPhysicalIdWatermark(
@@ -1450,20 +1450,20 @@ mod tests {
         db.put(
             scoped_index_key(
                 DataScope::LegacyUnscoped,
-                IndexV2Key::VectorPartitionMapping(VectorPartitionMappingKey {
+                ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
                     index_id: target.index_id,
                     generation: target.generation,
                     partition: partition.fingerprint(),
                 }),
             ),
-            encode_work_value(&IndexV2WorkValue::CoalescedBuildDelta(
+            encode_build_delta(&
                 CoalescedBuildDeltaValue {
                     index_id: target.index_id,
                     generation: target.generation,
                     entity_kind: IndexElementKind::Node,
                     entity_id: IndexEntityId::new(9),
                 },
-            )),
+            ),
         )
         .await
         .unwrap();

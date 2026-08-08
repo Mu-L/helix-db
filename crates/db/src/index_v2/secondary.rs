@@ -27,8 +27,8 @@ use crate::config::{
 use crate::encoding::indexes::range::RangeIndexDirection as StorageRangeIndexDirection;
 use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::property::{decode_properties, Property};
-use crate::encoding::v1::keys::index_v2::{
-    CanonicalSecondaryValue, IndexEntity, IndexEntityStateKey, IndexV2Key, IndexV2RecordKind,
+use crate::encoding::v2::keys::{
+    CanonicalSecondaryValue, IndexEntity, IndexEntityStateKey, ScopedKey, RecordKind,
     SecondaryEntryKey, SecondaryEntryLane,
 };
 #[cfg(test)]
@@ -39,6 +39,7 @@ use crate::encoding::v1::keys::GlobalKeyKind;
 use crate::encoding::v1::keys::{
     DataKeyKind, EdgePropertyByIdKey, Key, KeyPrefix, NodePropertyKey,
 };
+use crate::encoding::v2::keys::Key as IndexKey;
 use crate::encoding::v1::property::equality_value::{
     project_equality_value, EqualityValueProjection,
 };
@@ -47,8 +48,9 @@ use crate::encoding::v1::property::range_value::{
 };
 #[cfg(test)]
 use crate::encoding::v1::values::id_allocation::IdAllocationWatermarkValue;
-use crate::encoding::v1::values::index_v2::{
-    decode_index_record, decode_work_value, encode_work_value, IndexV2WorkValue,
+use crate::encoding::v2::values::{
+    decode_applied_state, decode_build_delta, decode_index_record, decode_secondary_entry,
+    encode_applied_state, encode_build_delta, encode_secondary_entry,
 };
 use crate::error::{HelixDbError, Result, SecondaryIndexValueError};
 use crate::index_v2::outbox::{
@@ -361,19 +363,19 @@ impl SecondaryMutationRuntime {
                 SecondaryMutationMode::RecordBuildDelta => {
                     let key = scoped_index_key(
                         change.scope,
-                        IndexV2Key::BuildDelta(IndexEntityStateKey {
+                        ScopedKey::BuildDelta(IndexEntityStateKey {
                             index_id: target.index_id,
                             generation: target.generation,
                             entity: change.entity,
                         }),
                     );
-                    let value = IndexV2WorkValue::CoalescedBuildDelta(CoalescedBuildDeltaValue {
+                    let value = CoalescedBuildDeltaValue {
                         index_id: target.index_id,
                         generation: target.generation,
                         entity_kind: change.entity.kind,
                         entity_id: change.entity.id,
-                    });
-                    transaction.put(key, encode_work_value(&value))?;
+                    };
+                    transaction.put(key, encode_build_delta(&value))?;
                 }
                 SecondaryMutationMode::MaintainActive => {
                     apply_active_change_from_overlay(
@@ -477,15 +479,15 @@ pub(crate) async fn load_mutation_set(
     transaction: &DbTransaction,
     scope: DataScope,
 ) -> Result<SecondaryMutationSet> {
-    let logical_prefix = IndexV2Key::logical_prefix(IndexV2RecordKind::IndexRecord);
-    let physical_prefix = Key::data_prefix(scope, logical_prefix);
+    let logical_prefix = ScopedKey::logical_prefix(RecordKind::IndexRecord);
+    let physical_prefix = IndexKey::data_prefix(scope, logical_prefix);
     let mut rows = transaction.scan_prefix(&physical_prefix, ..).await?;
     let mut mutations = SecondaryMutationSet::default();
     while let Some(row) = rows.next().await? {
-        let Key::Data {
-            kind: DataKeyKind::IndexV2(IndexV2Key::IndexRecord(key)),
+        let IndexKey::Data {
+            kind: ScopedKey::IndexRecord(key),
             ..
-        } = Key::parse_from_slice(scope, &row.key)?
+        } = IndexKey::parse_from_slice(scope, &row.key)?
         else {
             return Err(corruption(
                 "secondary mutation catalog prefix yielded another key kind",
@@ -567,19 +569,19 @@ pub(crate) async fn maintain_entity(
                 };
                 let key = scoped_index_key(
                     scope,
-                    IndexV2Key::BuildDelta(IndexEntityStateKey {
+                    ScopedKey::BuildDelta(IndexEntityStateKey {
                         index_id: target.index_id,
                         generation: target.generation,
                         entity,
                     }),
                 );
-                let value = IndexV2WorkValue::CoalescedBuildDelta(CoalescedBuildDeltaValue {
+                let value = CoalescedBuildDeltaValue {
                     index_id: target.index_id,
                     generation: target.generation,
                     entity_kind,
                     entity_id,
-                });
-                transaction.put(key, encode_work_value(&value))?;
+                };
+                transaction.put(key, encode_build_delta(&value))?;
             }
         }
     }
@@ -730,7 +732,7 @@ async fn prepare_secondary_catch_up(
 ) -> Result<PreparedSecondaryOperationStep> {
     let prefix = generation_prefix(
         scope,
-        IndexV2RecordKind::BuildDelta,
+        RecordKind::BuildDelta,
         operation.index_id(),
         operation.generation(),
     );
@@ -818,7 +820,7 @@ async fn step_build(
             if generation_has_rows(
                 transaction,
                 scope,
-                IndexV2RecordKind::BuildDelta,
+                RecordKind::BuildDelta,
                 operation.index_id(),
                 operation.generation(),
             )
@@ -834,7 +836,7 @@ async fn step_build(
             if generation_has_rows(
                 transaction,
                 scope,
-                IndexV2RecordKind::AppliedState,
+                RecordKind::AppliedState,
                 operation.index_id(),
                 operation.generation(),
             )
@@ -985,7 +987,7 @@ async fn scan_source(
         };
         let applied_key = scoped_index_key(
             scope,
-            IndexV2Key::AppliedState(IndexEntityStateKey {
+            ScopedKey::AppliedState(IndexEntityStateKey {
                 index_id: operation.index_id(),
                 generation: operation.generation(),
                 entity,
@@ -1170,7 +1172,7 @@ async fn catch_up(
 ) -> Result<IndexOperationStepResult> {
     let prefix = generation_prefix(
         scope,
-        IndexV2RecordKind::BuildDelta,
+        RecordKind::BuildDelta,
         operation.index_id(),
         operation.generation(),
     );
@@ -1301,7 +1303,7 @@ async fn catch_up_exact(
     );
     let delta_keys = prepared_keys
         .iter()
-        .map(|key| scoped_index_key(scope, IndexV2Key::BuildDelta(*key)))
+        .map(|key| scoped_index_key(scope, ScopedKey::BuildDelta(*key)))
         .collect::<Vec<_>>();
     let delta_values = transaction.multi_get(&delta_keys).await?;
     let mut decoded = Vec::with_capacity(prepared_keys.len());
@@ -1341,7 +1343,7 @@ async fn catch_up_exact(
         .map(|(_, entity, _)| {
             scoped_index_key(
                 scope,
-                IndexV2Key::AppliedState(IndexEntityStateKey {
+                ScopedKey::AppliedState(IndexEntityStateKey {
                     index_id: operation.index_id(),
                     generation: operation.generation(),
                     entity: *entity,
@@ -1532,7 +1534,7 @@ async fn validate_and_release_applied(
     if generation_has_rows(
         transaction,
         scope,
-        IndexV2RecordKind::BuildDelta,
+        RecordKind::BuildDelta,
         operation.index_id(),
         operation.generation(),
     )
@@ -1547,7 +1549,7 @@ async fn validate_and_release_applied(
     }
     let prefix = generation_prefix(
         scope,
-        IndexV2RecordKind::AppliedState,
+        RecordKind::AppliedState,
         operation.index_id(),
         operation.generation(),
     );
@@ -1745,7 +1747,7 @@ async fn delete_generation_rows(
 ) -> Result<CleanupBatch> {
     let prefix = generation_prefix(
         scope,
-        IndexV2RecordKind::SecondaryEntry,
+        RecordKind::SecondaryEntry,
         index_id,
         generation,
     );
@@ -1766,10 +1768,10 @@ async fn delete_generation_rows(
         plan.delete(row.key.clone());
         if !accounting.can_admit_input(input_bytes) || !accounting.can_admit_output(&plan) {
             if accounting.is_empty() {
-                let Key::Data {
-                    kind: DataKeyKind::IndexV2(IndexV2Key::SecondaryEntry(key)),
+                let IndexKey::Data {
+                    kind: ScopedKey::SecondaryEntry(key),
                     ..
-                } = Key::parse_from_slice(scope, &row.key)?
+                } = IndexKey::parse_from_slice(scope, &row.key)?
                 else {
                     return Err(corruption(
                         "secondary cleanup prefix yielded another key kind",
@@ -1817,8 +1819,8 @@ async fn delete_delta_and_applied_rows(
     let mut accounting = BatchAccounting::new(counters, limits);
     let mut exhausted = true;
     for kind in [
-        IndexV2RecordKind::BuildDelta,
-        IndexV2RecordKind::AppliedState,
+        RecordKind::BuildDelta,
+        RecordKind::AppliedState,
     ] {
         let prefix = generation_prefix(scope, kind, index_id, generation);
         let mut rows = transaction.scan_prefix(&prefix, ..).await?;
@@ -1832,23 +1834,23 @@ async fn delete_delta_and_applied_rows(
             if !accounting.can_admit_input(input_bytes) || !accounting.can_admit_output(&plan) {
                 if accounting.is_empty() {
                     let entity = match kind {
-                        IndexV2RecordKind::BuildDelta => {
+                        RecordKind::BuildDelta => {
                             decode_delta(scope, &row.key, &row.value)?.0
                         }
-                        IndexV2RecordKind::AppliedState => {
+                        RecordKind::AppliedState => {
                             decode_applied(scope, &row.key, &row.value)?.0
                         }
-                        IndexV2RecordKind::IndexRecord
-                        | IndexV2RecordKind::Operation
-                        | IndexV2RecordKind::SecondaryEntry
-                        | IndexV2RecordKind::TextManifestRoot
-                        | IndexV2RecordKind::TextManifestPage
-                        | IndexV2RecordKind::TextBuildArtifact
-                        | IndexV2RecordKind::TextEntityState
-                        | IndexV2RecordKind::VectorPartitionMapping
-                        | IndexV2RecordKind::TextCorpusStatistics
-                        | IndexV2RecordKind::TextTermStatistics
-                        | IndexV2RecordKind::TextStatisticsEntity => {
+                        RecordKind::IndexRecord
+                        | RecordKind::Operation
+                        | RecordKind::SecondaryEntry
+                        | RecordKind::TextManifestRoot
+                        | RecordKind::TextManifestPage
+                        | RecordKind::TextBuildArtifact
+                        | RecordKind::TextEntityState
+                        | RecordKind::VectorPartitionMapping
+                        | RecordKind::TextCorpusStatistics
+                        | RecordKind::TextTermStatistics
+                        | RecordKind::TextStatisticsEntity => {
                             unreachable!("cleanup loop admits only delta and applied rows")
                         }
                     };
@@ -1967,13 +1969,13 @@ async fn apply_active_change(
                 }
             }
         }
-        let value = IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+        let value = SecondaryEntryValue {
             index_id: target.index_id,
             generation: target.generation,
             lane,
             entity_id,
-        });
-        transaction.put(new_key, encode_work_value(&value))?;
+        };
+        transaction.put(new_key, encode_secondary_entry(&value))?;
     }
     Ok(())
 }
@@ -2028,12 +2030,12 @@ fn apply_active_change_from_overlay(
             new_value,
             entity_id,
         )?;
-        let value = encode_work_value(&IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+        let value = encode_secondary_entry(&SecondaryEntryValue {
             index_id: target.index_id,
             generation: target.generation,
             lane,
             entity_id,
-        }));
+        });
         if target.definition.unique() {
             let observed = unique_overlay.get_mut(&new_key).ok_or_else(|| {
                 corruption("unique secondary claim was not included in its observation batch")
@@ -2077,7 +2079,7 @@ async fn reconciliation_plan(
     };
     let applied_key = scoped_index_key(
         scope,
-        IndexV2Key::AppliedState(IndexEntityStateKey {
+        ScopedKey::AppliedState(IndexEntityStateKey {
             index_id,
             generation,
             entity,
@@ -2227,25 +2229,25 @@ fn reconciliation_plan_from_observations(
                     }
                 }
             }
-            let value = IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+            let value = SecondaryEntryValue {
                 index_id,
                 generation,
                 lane,
                 entity_id,
-            });
-            plan.put(key, encode_work_value(&value));
+            };
+            plan.put(key, encode_secondary_entry(&value));
         }
     }
     match next_value {
         Some(next) => {
-            let value = IndexV2WorkValue::AppliedEntityState(AppliedEntityStateValue {
+            let value = AppliedEntityStateValue {
                 index_id,
                 generation,
                 entity_kind: entity.kind,
                 entity_id,
                 state: AppliedFamilyState::Secondary(Some(next)),
-            });
-            plan.put(applied_key, encode_work_value(&value));
+            };
+            plan.put(applied_key, encode_applied_state(&value));
         }
         None => plan.delete(applied_key),
     }
@@ -2575,7 +2577,7 @@ pub(crate) async fn lookup_active_equality_generation(
         return Ok(roaring::RoaringTreemap::from_iter([owner.get()]));
     }
 
-    let prefix = IndexV2Key::secondary_equality_scan_prefix(
+    let prefix = ScopedKey::secondary_equality_scan_prefix(
         handle.scope(),
         handle.index_id(),
         handle.generation(),
@@ -2586,10 +2588,10 @@ pub(crate) async fn lookup_active_equality_generation(
     let mut rows = reader.scan_prefix(&prefix, ..).await?;
     let mut owners = roaring::RoaringTreemap::new();
     while let Some(row) = rows.next().await? {
-        let Key::Data {
-            kind: DataKeyKind::IndexV2(IndexV2Key::SecondaryEntry(key)),
+        let IndexKey::Data {
+            kind: ScopedKey::SecondaryEntry(key),
             ..
-        } = Key::parse_from_slice(handle.scope(), &row.key)?
+        } = IndexKey::parse_from_slice(handle.scope(), &row.key)?
         else {
             return Err(corruption(
                 "secondary equality prefix yielded another key kind",
@@ -2739,17 +2741,17 @@ pub(crate) async fn scan_active_range_generation(
         },
         None => (Bound::Unbounded, Bound::Unbounded),
     };
-    let prefix = Key::data_prefix(
+    let prefix = IndexKey::data_prefix(
         handle.scope(),
-        IndexV2Key::secondary_lane_prefix(handle.index_id(), handle.generation(), lane),
+        ScopedKey::secondary_lane_prefix(handle.index_id(), handle.generation(), lane),
     );
     let mut rows = reader.scan_prefix(&prefix, bounds).await?;
     let mut owners = Vec::new();
     while let Some(row) = rows.next().await? {
-        let Key::Data {
-            kind: DataKeyKind::IndexV2(IndexV2Key::SecondaryEntry(key)),
+        let IndexKey::Data {
+            kind: ScopedKey::SecondaryEntry(key),
             ..
-        } = Key::parse_from_slice(handle.scope(), &row.key)?
+        } = IndexKey::parse_from_slice(handle.scope(), &row.key)?
         else {
             return Err(corruption(
                 "secondary range prefix yielded another key kind",
@@ -3030,7 +3032,7 @@ fn secondary_entry_key(
         value,
         (!lane.is_unique()).then_some(entity_id),
     )?;
-    Ok(scoped_index_key(scope, IndexV2Key::SecondaryEntry(key)))
+    Ok(scoped_index_key(scope, ScopedKey::SecondaryEntry(key)))
 }
 
 fn decode_secondary_entry_value(
@@ -3039,11 +3041,7 @@ fn decode_secondary_entry_value(
     lane: SecondaryEntryLane,
     bytes: &[u8],
 ) -> Result<IndexEntityId> {
-    let IndexV2WorkValue::SecondaryEntry(value) = decode_work_value(bytes)? else {
-        return Err(corruption(
-            "secondary entry key contains another value kind",
-        ));
-    };
+    let value = decode_secondary_entry(bytes)?;
     if value.index_id != index_id || value.generation != generation || value.lane != lane {
         return Err(corruption("secondary entry key/value ownership mismatch"));
     }
@@ -3055,16 +3053,14 @@ fn decode_delta(
     key: &[u8],
     value: &[u8],
 ) -> Result<(IndexEntity, CoalescedBuildDeltaValue)> {
-    let Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::BuildDelta(key)),
+    let IndexKey::Data {
+        kind: ScopedKey::BuildDelta(key),
         ..
-    } = Key::parse_from_slice(scope, key)?
+    } = IndexKey::parse_from_slice(scope, key)?
     else {
         return Err(corruption("build-delta prefix yielded another key kind"));
     };
-    let IndexV2WorkValue::CoalescedBuildDelta(value) = decode_work_value(value)? else {
-        return Err(corruption("build-delta key contains another value kind"));
-    };
+    let value = decode_build_delta(value)?;
     if key.index_id != value.index_id
         || key.generation != value.generation
         || key.entity.kind != value.entity_kind
@@ -3080,16 +3076,14 @@ fn decode_applied(
     key: &[u8],
     value: &[u8],
 ) -> Result<(IndexEntity, AppliedEntityStateValue)> {
-    let Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::AppliedState(key)),
+    let IndexKey::Data {
+        kind: ScopedKey::AppliedState(key),
         ..
-    } = Key::parse_from_slice(scope, key)?
+    } = IndexKey::parse_from_slice(scope, key)?
     else {
         return Err(corruption("applied-state prefix yielded another key kind"));
     };
-    let IndexV2WorkValue::AppliedEntityState(value) = decode_work_value(value)? else {
-        return Err(corruption("applied-state key contains another value kind"));
-    };
+    let value = decode_applied_state(value)?;
     if key.index_id != value.index_id
         || key.generation != value.generation
         || key.entity.kind != value.entity_kind
@@ -3134,7 +3128,7 @@ async fn load_operation_index(
 ) -> Result<IndexRecordV2> {
     let key = scoped_index_key(
         scope,
-        IndexV2Key::index_record(operation.identity().clone()),
+        ScopedKey::index_record(operation.identity().clone()),
     );
     let Some(value) = transaction.get(key).await? else {
         return Err(corruption("secondary operation has no canonical index"));
@@ -3153,7 +3147,7 @@ async fn load_operation_index(
 async fn generation_has_rows(
     transaction: &DbTransaction,
     scope: DataScope,
-    kind: IndexV2RecordKind,
+    kind: RecordKind,
     index_id: IndexId,
     generation: IndexGenerationId,
 ) -> Result<bool> {
@@ -3202,13 +3196,13 @@ fn source_entity(
 
 fn generation_prefix(
     scope: DataScope,
-    kind: IndexV2RecordKind,
+    kind: RecordKind,
     index_id: IndexId,
     generation: IndexGenerationId,
 ) -> Bytes {
     Key::data_prefix(
         scope,
-        IndexV2Key::generation_prefix(kind, index_id, generation),
+        ScopedKey::generation_prefix(kind, index_id, generation),
     )
 }
 
@@ -3224,10 +3218,10 @@ fn cursor_suffix(prefix: &Bytes, cursor: Option<&IndexCursor>) -> Result<Option<
     Ok(Some(Bytes::copy_from_slice(suffix)))
 }
 
-fn scoped_index_key(scope: DataScope, key: IndexV2Key) -> Bytes {
-    Key::Data {
+fn scoped_index_key(scope: DataScope, key: ScopedKey) -> Bytes {
+    IndexKey::Data {
         scope,
-        kind: DataKeyKind::IndexV2(key),
+        kind: key,
     }
     .to_bytes()
 }
@@ -3262,7 +3256,7 @@ mod tests {
     use super::*;
     use crate::config::{SearchIndexBackfillLimits, SecondaryIndexDefinition};
     use crate::encoding::v1::property::encode_properties;
-    use crate::encoding::v1::values::index_v2::encode_index_record;
+    use crate::encoding::v2::values::encode_index_record;
     use crate::index_v2::lifecycle::{
         create_index_operation, drop_index_operation, InitialBuildProgress,
     };
@@ -3316,7 +3310,7 @@ mod tests {
         db.put(
             scoped_index_key(
                 DataScope::LegacyUnscoped,
-                IndexV2Key::index_record(definition.identity()),
+                ScopedKey::index_record(definition.identity()),
             ),
             encode_index_record(&active),
         )
@@ -3357,12 +3351,12 @@ mod tests {
                 entity_id,
             )
             .expect("secondary read fixture key validates"),
-            encode_work_value(&IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+            encode_secondary_entry(&SecondaryEntryValue {
                 index_id: handle.index_id(),
                 generation: handle.generation(),
                 lane,
                 entity_id,
-            })),
+            }),
         )
         .await
         .expect("secondary read fixture entry persists");
@@ -3669,12 +3663,12 @@ mod tests {
                 IndexEntityId::new(4),
             )
             .unwrap(),
-            encode_work_value(&IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+            encode_secondary_entry(&SecondaryEntryValue {
                 index_id: handle.index_id(),
                 generation: handle.generation(),
                 lane,
                 entity_id: IndexEntityId::new(5),
-            })),
+            }),
         )
         .await
         .unwrap();
@@ -4218,7 +4212,7 @@ mod tests {
         scope: DataScope,
         definition: &ValidatedDynamicIndexDefinition,
     ) -> IndexRecordV2 {
-        let key = scoped_index_key(scope, IndexV2Key::index_record(definition.identity()));
+        let key = scoped_index_key(scope, ScopedKey::index_record(definition.identity()));
         let value = db
             .get(key)
             .await
@@ -4230,7 +4224,7 @@ mod tests {
     async fn generation_rows(
         db: &Db,
         scope: DataScope,
-        kind: IndexV2RecordKind,
+        kind: RecordKind,
         index_id: IndexId,
         generation: IndexGenerationId,
     ) -> Vec<(Bytes, Bytes)> {
@@ -4302,7 +4296,7 @@ mod tests {
             generation_rows(
                 &db,
                 scope,
-                IndexV2RecordKind::SecondaryEntry,
+                RecordKind::SecondaryEntry,
                 index_id,
                 generation,
             )
@@ -4333,7 +4327,7 @@ mod tests {
         assert!(generation_rows(
             &db,
             scope,
-            IndexV2RecordKind::SecondaryEntry,
+            RecordKind::SecondaryEntry,
             index_id,
             generation,
         )
@@ -4403,16 +4397,16 @@ mod tests {
             let rows = generation_rows(
                 &db,
                 scope,
-                IndexV2RecordKind::SecondaryEntry,
+                RecordKind::SecondaryEntry,
                 index_id,
                 generation,
             )
             .await;
             assert_eq!(rows.len(), 1);
-            let Key::Data {
-                kind: DataKeyKind::IndexV2(IndexV2Key::SecondaryEntry(key)),
+            let IndexKey::Data {
+                kind: ScopedKey::SecondaryEntry(key),
                 ..
-            } = Key::parse_from_slice(scope, &rows[0].0)
+            } = IndexKey::parse_from_slice(scope, &rows[0].0)
                 .expect("generation-qualified secondary entry key decodes")
             else {
                 panic!("secondary entry prefix contains only secondary entries");
@@ -4474,7 +4468,7 @@ mod tests {
             generation_rows(
                 &db,
                 scope,
-                IndexV2RecordKind::SecondaryEntry,
+                RecordKind::SecondaryEntry,
                 index_id,
                 generation,
             )
@@ -4507,7 +4501,7 @@ mod tests {
             generation_rows(
                 &db,
                 scope,
-                IndexV2RecordKind::SecondaryEntry,
+                RecordKind::SecondaryEntry,
                 index_id,
                 generation,
             )
@@ -4541,7 +4535,7 @@ mod tests {
             generation_rows(
                 &db,
                 scope,
-                IndexV2RecordKind::SecondaryEntry,
+                RecordKind::SecondaryEntry,
                 index_id,
                 generation,
             )
@@ -4575,7 +4569,7 @@ mod tests {
                 assert!(generation_rows(
                     &db,
                     scope,
-                    IndexV2RecordKind::SecondaryEntry,
+                    RecordKind::SecondaryEntry,
                     index_id,
                     generation,
                 )
@@ -4640,7 +4634,7 @@ mod tests {
             generation_rows(
                 &db,
                 scope,
-                IndexV2RecordKind::SecondaryEntry,
+                RecordKind::SecondaryEntry,
                 index_id,
                 generation,
             )
@@ -4704,7 +4698,7 @@ mod tests {
             generation_rows(
                 &db,
                 scope,
-                IndexV2RecordKind::BuildDelta,
+                RecordKind::BuildDelta,
                 index_id,
                 generation,
             )
@@ -4798,7 +4792,7 @@ mod tests {
             generation_rows(
                 &db,
                 scope,
-                IndexV2RecordKind::BuildDelta,
+                RecordKind::BuildDelta,
                 index_id,
                 generation,
             )
@@ -4813,7 +4807,7 @@ mod tests {
         assert!(generation_rows(
             &db,
             scope,
-            IndexV2RecordKind::BuildDelta,
+            RecordKind::BuildDelta,
             index_id,
             generation,
         )
@@ -5086,7 +5080,7 @@ mod tests {
             generation_rows(
                 &db,
                 scope,
-                IndexV2RecordKind::BuildDelta,
+                RecordKind::BuildDelta,
                 index_id,
                 generation,
             )
@@ -5102,7 +5096,7 @@ mod tests {
         assert!(generation_rows(
             &db,
             scope,
-            IndexV2RecordKind::BuildDelta,
+            RecordKind::BuildDelta,
             index_id,
             generation,
         )
@@ -5111,7 +5105,7 @@ mod tests {
         assert!(generation_rows(
             &db,
             scope,
-            IndexV2RecordKind::AppliedState,
+            RecordKind::AppliedState,
             index_id,
             generation,
         )
@@ -5299,7 +5293,7 @@ mod tests {
         assert!(!generation_rows(
             &db,
             scope,
-            IndexV2RecordKind::SecondaryEntry,
+            RecordKind::SecondaryEntry,
             index_id,
             generation,
         )
@@ -5316,7 +5310,7 @@ mod tests {
         assert!(generation_rows(
             &db,
             scope,
-            IndexV2RecordKind::SecondaryEntry,
+            RecordKind::SecondaryEntry,
             index_id,
             generation,
         )
@@ -5351,9 +5345,9 @@ mod tests {
             IndexStateV2::Dropped { .. }
         ));
         for kind in [
-            IndexV2RecordKind::SecondaryEntry,
-            IndexV2RecordKind::BuildDelta,
-            IndexV2RecordKind::AppliedState,
+            RecordKind::SecondaryEntry,
+            RecordKind::BuildDelta,
+            RecordKind::AppliedState,
         ] {
             assert!(generation_rows(&db, scope, kind, index_id, next_generation)
                 .await
@@ -5436,7 +5430,7 @@ mod tests {
         assert!(generation_rows(
             &db,
             tenant_a,
-            IndexV2RecordKind::SecondaryEntry,
+            RecordKind::SecondaryEntry,
             index_a,
             generation_a,
         )
@@ -5446,7 +5440,7 @@ mod tests {
             generation_rows(
                 &db,
                 tenant_b,
-                IndexV2RecordKind::SecondaryEntry,
+                RecordKind::SecondaryEntry,
                 index_b,
                 generation_b,
             )
