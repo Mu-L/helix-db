@@ -2604,7 +2604,7 @@ impl BatchAccounting {
     }
 }
 
-fn canonical_value(
+pub(super) fn canonical_value(
     definition: &ValidatedSecondaryIndexDefinition,
     properties: &[Property],
     _entity_id: IndexEntityId,
@@ -2675,7 +2675,7 @@ fn canonical_value(
 }
 
 #[derive(Debug, Clone, Copy)]
-enum SecondaryValueError {
+pub(super) enum SecondaryValueError {
     UnsupportedEquality(&'static str),
     UnsupportedRange(&'static str),
     NaNRange,
@@ -3212,7 +3212,9 @@ fn definition_lane(definition: &ValidatedSecondaryIndexDefinition) -> SecondaryE
     }
 }
 
-fn definition_uses_equality_bitmap(definition: &ValidatedSecondaryIndexDefinition) -> bool {
+pub(super) fn definition_uses_equality_bitmap(
+    definition: &ValidatedSecondaryIndexDefinition,
+) -> bool {
     matches!(
         definition,
         ValidatedSecondaryIndexDefinition::NodeEquality { unique: false, .. }
@@ -3374,7 +3376,7 @@ async fn generation_has_rows(
     Ok(rows.next().await?.is_some())
 }
 
-fn source_prefix(scope: DataScope, kind: IndexElementKind) -> Bytes {
+pub(super) fn source_prefix(scope: DataScope, kind: IndexElementKind) -> Bytes {
     let prefix = match kind {
         IndexElementKind::Node => KeyPrefix::NodeProperty,
         IndexElementKind::Edge => KeyPrefix::EdgePropertyById,
@@ -3382,7 +3384,7 @@ fn source_prefix(scope: DataScope, kind: IndexElementKind) -> Bytes {
     Key::data_prefix(scope, Bytes::copy_from_slice(prefix.as_slice()))
 }
 
-fn source_entity(
+pub(super) fn source_entity(
     scope: DataScope,
     expected: IndexElementKind,
     key: &[u8],

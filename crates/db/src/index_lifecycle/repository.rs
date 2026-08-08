@@ -105,14 +105,11 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
         });
     };
     validate_writer_bootstrap_values(&marker, logical.as_deref(), vector.as_deref())?;
-    if version.get() == 0x0002 {
-        transaction.put(
-            marker_key,
-            encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
-                IndexStorageVersion::CURRENT,
-            )),
-        )?;
-        transaction.commit().await?;
+    transaction.rollback();
+    if version < IndexStorageVersion::CURRENT {
+        super::equality_bitmap_migration::migrate_v3_to_v4(db).await?;
+    } else {
+        super::equality_bitmap_migration::cleanup_v3_nonunique_equality_rows(db).await?;
     }
     Ok(())
 }
@@ -885,8 +882,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn storage_version_three_is_current() {
-        assert_eq!(IndexStorageVersion::CURRENT.get(), 0x0003);
+    fn storage_version_four_is_current() {
+        assert_eq!(IndexStorageVersion::CURRENT.get(), 0x0004);
         let marker = encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
             IndexStorageVersion::CURRENT,
         ));
@@ -902,7 +899,7 @@ mod tests {
         ));
         assert_eq!(
             validate_bootstrap_values(&marker, Some(&logical), Some(&vector))
-                .expect("storage version 3 is accepted"),
+                .expect("storage version 4 is accepted"),
             ValidatedReaderBootstrap::Current
         );
     }
@@ -928,15 +925,15 @@ mod tests {
     }
 
     #[test]
-    fn storage_version_four_is_unsupported() {
-        let version_four =
-            IndexStorageVersion::new(0x0004).expect("storage version four remains representable");
-        let marker = encode_metadata_value(&IndexV2MetadataValue::StorageVersion(version_four));
+    fn storage_version_five_is_unsupported() {
+        let version_five =
+            IndexStorageVersion::new(0x0005).expect("storage version five remains representable");
+        let marker = encode_metadata_value(&IndexV2MetadataValue::StorageVersion(version_five));
         assert!(matches!(
             validate_bootstrap_values(&marker, None, None),
             Err(HelixDbError::UnsupportedIndexStorageVersion {
-                found: 0x0004,
-                supported: 0x0003,
+                found: 0x0005,
+                supported: 0x0004,
             })
         ));
     }
@@ -993,7 +990,7 @@ mod tests {
             HelixDbError::WriterMigrationRequired {
                 requirement: WriterMigrationRequirement::StorageVersion {
                     found: 0x0002,
-                    target: 0x0003,
+                    target: 0x0004,
                 },
             }
         ));

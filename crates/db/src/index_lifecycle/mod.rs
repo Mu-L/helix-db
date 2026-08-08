@@ -32,6 +32,7 @@
 #![deny(missing_docs)]
 
 mod catalog;
+mod equality_bitmap_migration;
 pub(crate) mod failpoints;
 pub(crate) mod graph_mutation;
 pub(crate) mod lifecycle;
