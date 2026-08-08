@@ -7,6 +7,9 @@ pageType: "Concept"
 
 > For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
 
+import { EnterpriseDiagram } from "/snippets/database-diagram.jsx"
+import { architectureDiagram } from "/snippets/diagrams.jsx"
+
 Helix Cloud runs as a single writer node and multiple reader nodes behind a routing gateway. Reads
 scale horizontally. Writes are serialized through a dedicated writer process to maintain a simple
 consistency model.
@@ -15,6 +18,8 @@ Helix Cloud is a fundamentally different architecture and database compared to t
 version of HelixDB. That version used LMDB, which was limited to sequential writes and could only handle
 a relatively small amount of data. Helix Cloud uses a new LSM-based storage engine backed by object
 storage that can handle concurrent writes to the writer node and allows for virtually unlimited data storage.
+
+<EnterpriseDiagram diagram={architectureDiagram} />
 
 ## Gateway
 
