@@ -17,11 +17,24 @@ from helixdb import (
     HybridCache,
     InMemory,
     MemoryCache,
+    QueryBuilder,
+    QueryExecutionRequest,
     QueryRequest,
     g,
     read_batch,
     write_batch,
 )
+
+
+def public_api_members(type_: type) -> set[str]:
+    """Return methods and properties that form a class's named public API."""
+
+    return {
+        name
+        for name, member in vars(type_).items()
+        if not name.startswith("_")
+        and (callable(member) or isinstance(member, (classmethod, staticmethod, property)))
+    }
 
 
 class FakeResponse:
@@ -147,6 +160,71 @@ def fake_native_module() -> types.SimpleNamespace:
 
 
 class ClientTests(unittest.TestCase):
+    def test_public_client_api_is_explicitly_accounted_for(self) -> None:
+        self.assertEqual(
+            public_api_members(Client),
+            {
+                "server",
+                "embedded",
+                "embedded_reader",
+                "with_api_key",
+                "request_builder",
+                "query",
+                "base_url",
+                "execute",
+                "graph",
+                "close",
+            },
+        )
+        self.assertEqual(
+            public_api_members(QueryBuilder),
+            {"writer_only", "warm_only", "should_await_durability", "query"},
+        )
+        self.assertEqual(public_api_members(QueryExecutionRequest), {"send_bytes", "send"})
+
+    def test_server_convenience_methods_and_raw_response(self) -> None:
+        request = QueryRequest.read(read_batch())
+        calls = []
+
+        def fake_urlopen(req):
+            calls.append(req)
+            return FakeResponse()
+
+        client = Client.server("http://127.0.0.1:6969/base", api_key="first")
+        self.assertEqual(client.base_url, "http://127.0.0.1:6969/base")
+        first_request = client.query().query(request)
+        self.assertIs(client.with_api_key("second"), client)
+
+        with patch("helixdb.client.urlopen", fake_urlopen):
+            self.assertEqual(first_request.send_bytes(), b'{"ok":true}')
+            self.assertEqual(
+                client.execute(
+                    request,
+                    writer_only=True,
+                    warm_only=True,
+                    await_durability=True,
+                ),
+                {"ok": True},
+            )
+        client.close()
+
+        self.assertEqual(calls[0].headers["Authorization"], "Bearer first")
+        self.assertEqual(calls[0].full_url, "http://127.0.0.1:6969/v2/query")
+        self.assertEqual(calls[1].headers["Authorization"], "Bearer second")
+        self.assertEqual(calls[1].headers["X-helix-require-writer"], "true")
+        self.assertEqual(calls[1].headers["X-helix-warm"], "true")
+        self.assertEqual(calls[1].headers["X-helix-await-durable"], "true")
+
+    def test_graph_delegates_to_graph_loader(self) -> None:
+        client = Client.server()
+        selection = object()
+        loaded = object()
+
+        with patch("helixdb.graph.load_graph", return_value=loaded) as load_graph:
+            self.assertIs(client.graph(selection), loaded)
+
+        load_graph.assert_called_once_with(client, selection)
+
     def test_query_posts_query_with_headers(self) -> None:
         request = QueryRequest.read(
             read_batch().var_as("count", g().n_with_label("User").count()).returning(["count"])

@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import httpx
-from test_client import FakeNativeDB, fake_native_module
+from test_client import FakeNativeDB, fake_native_module, public_api_members
 
 from helix_db import AsyncQueryBuilder, AsyncQueryExecutionRequest
 from helixdb import (
@@ -71,6 +71,50 @@ class SequencedTransport(httpx.AsyncBaseTransport):
 
 
 class AsyncClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_public_async_client_api_is_explicitly_accounted_for(self) -> None:
+        self.assertEqual(
+            public_api_members(AsyncClient),
+            {
+                "server",
+                "embedded",
+                "embedded_reader",
+                "with_api_key",
+                "request_builder",
+                "query",
+                "execute",
+                "base_url",
+                "close",
+            },
+        )
+        self.assertEqual(
+            public_api_members(AsyncQueryBuilder),
+            {"writer_only", "warm_only", "should_await_durability", "query"},
+        )
+        self.assertEqual(
+            public_api_members(AsyncQueryExecutionRequest),
+            {"send_bytes", "send"},
+        )
+
+    async def test_server_constructor_and_raw_response(self) -> None:
+        calls: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request)
+            return httpx.Response(200, content=b'{"raw":true}')
+
+        client = AsyncClient.server(
+            "http://127.0.0.1:6969/base",
+            api_key="hx_secret",
+            transport=httpx.MockTransport(handler),
+        )
+        self.assertEqual(client.base_url, "http://127.0.0.1:6969/base")
+        response = await client.request_builder().query(read_request()).send_bytes()
+        await client.close()
+
+        self.assertEqual(response, b'{"raw":true}')
+        self.assertEqual(str(calls[0].url), "http://127.0.0.1:6969/v2/query")
+        self.assertEqual(calls[0].headers["authorization"], "Bearer hx_secret")
+
     async def test_query_posts_query_with_headers_and_timeout(self) -> None:
         calls: list[httpx.Request] = []
 
