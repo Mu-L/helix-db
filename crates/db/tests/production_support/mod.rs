@@ -27,9 +27,14 @@ mod index_v2_scale;
 mod index_v2_text_rows;
 mod index_v2_typed_boundaries;
 mod migration_text_rebuild;
+mod secondary_equality_hot_path;
 mod v1_migration;
 
 pub use graph_mutation_representation::graph_mutation_representation_contracts;
+pub use secondary_equality_hot_path::{
+    SecondaryEqualityHotPathFixture, SecondaryEqualityInsertMode, SecondaryEqualityInsertSample,
+    SecondaryEqualityInspection,
+};
 
 pub use migration_text_rebuild::{
     inspect_legacy_text_physical_rows, inspect_legacy_text_source, repair_legacy_text_source,

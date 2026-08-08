@@ -86,6 +86,11 @@ name = "write_path_mutations"
 harness = false
 
 [[bench]]
+name = "secondary_equality_hot_path"
+harness = false
+required-features = ["production-coverage"]
+
+[[bench]]
 name = "vector_batch_insert"
 harness = false
 required-features = ["production-coverage"]
