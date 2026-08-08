@@ -10,6 +10,7 @@ use crate::encoding::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::{KEY_KIND_LAYER0_VEC_KS, VECTOR_HOT_KEYSPACE_PREFIX};
 use crate::encoding::v1::keys::{DataKeyKind, KeyPrefix};
 use crate::encoding::v1::values::{edges, vectors};
+use crate::encoding::v2::keys::ScopedKey as V2ScopedKey;
 use crate::encoding::NodeId;
 
 const EDGE_DELTA_MIN_LEN: usize = core::mem::size_of::<u8>();
@@ -413,6 +414,9 @@ impl HelixMergeOperator {
     }
 
     fn key_type(key: &[u8]) -> MergeKeyType {
+        if is_v4_secondary_equality_bitmap_key(key) {
+            return MergeKeyType::Bitmap;
+        }
         let logical = logical_key(key);
         if Self::is_hnsw_layer0_key(logical) {
             return MergeKeyType::Layer0;
@@ -433,6 +437,21 @@ impl HelixMergeOperator {
             _ => MergeKeyType::Other,
         }
     }
+}
+
+fn is_v4_secondary_equality_bitmap_key(key: &[u8]) -> bool {
+    const V2_PREFIX: u8 = 0x06;
+    let logical = if key.first().copied() == Some(V2_PREFIX) {
+        key
+    } else if key.len() > DataScope::PREFIX_LEN && key[DataScope::PREFIX_LEN] == V2_PREFIX {
+        &key[DataScope::PREFIX_LEN..]
+    } else {
+        return false;
+    };
+    matches!(
+        V2ScopedKey::parse_from_slice(logical),
+        Ok(V2ScopedKey::SecondaryEqualityBitmap(_))
+    )
 }
 
 impl MergeOperator for HelixMergeOperator {
@@ -528,6 +547,13 @@ fn merge_decode_error(error: impl std::fmt::Display) -> MergeOperatorError {
 mod tests {
     use super::*;
     use crate::encoding::v1::keys::{AdjacencyKey, DataKeyKind, EdgePairIndexKey, Key};
+    use crate::encoding::v1::property::equality_value::{
+        project_equality_value, EqualityValueProjection,
+    };
+    use crate::encoding::v2::keys::{
+        Key as V2Key, ScopedKey as V2ScopedKey, SecondaryEqualityBitmapKey,
+    };
+    use crate::index_lifecycle::{IndexElementKind, IndexGenerationId, IndexId};
 
     fn edge_delta(op: u8, node_id: NodeId) -> Bytes {
         let mut bytes = vec![op];
@@ -581,6 +607,44 @@ mod tests {
             RoaringTreemap::deserialize_from(Cursor::new(merged)).expect("merged bitmap decodes");
 
         assert_eq!(bitmap.iter().collect::<Vec<_>>(), vec![41, 42]);
+    }
+
+    #[test]
+    fn v4_secondary_equality_bitmap_uses_typed_bitmap_merge_for_each_scope() {
+        let EqualityValueProjection::Indexed(value) = project_equality_value(
+            &crate::encoding::property::property_value::PropertyValue::String("shared".to_string()),
+        ) else {
+            panic!("string equality value is indexable");
+        };
+        let kind = V2ScopedKey::SecondaryEqualityBitmap(
+            SecondaryEqualityBitmapKey::try_new(
+                IndexId::new(7).unwrap(),
+                IndexGenerationId::new(9).unwrap(),
+                IndexElementKind::Node,
+                value,
+            )
+            .unwrap(),
+        );
+        for scope in [
+            DataScope::LegacyUnscoped,
+            DataScope::Tenant(
+                crate::encoding::v1::keys::tenant::TenantId::from_ulid_str(
+                    "0000000000000000000000000A",
+                )
+                .unwrap(),
+            ),
+        ] {
+            let key = V2Key::Data {
+                scope,
+                kind: kind.clone(),
+            }
+            .to_bytes();
+            let merged = HelixMergeOperator::new()
+                .merge_batch(&key, None, &[encode_bitmap_add(5), encode_bitmap_add(8)])
+                .unwrap();
+            let bitmap = RoaringTreemap::deserialize_from(Cursor::new(merged)).unwrap();
+            assert_eq!(bitmap, RoaringTreemap::from_iter([5, 8]));
+        }
     }
 
     #[test]

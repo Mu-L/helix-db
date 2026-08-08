@@ -7,9 +7,10 @@
 //! re-reads authoritative state, so a delta is a reconciliation marker rather
 //! than an optional copy of a property value.
 //!
-//! Serving scans only canonical kind-`0x05` rows selected by an exact Active
-//! handle. The interpreter owns the surrounding request lease and admits each
-//! call as one bounded physical batch before these functions touch storage.
+//! Serving reads only canonical generation-qualified rows selected by an exact
+//! Active handle. The interpreter owns the surrounding request lease and
+//! admits each call as one bounded physical batch before these functions touch
+//! storage.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
@@ -46,11 +47,11 @@ use crate::encoding::v1::values::id_allocation::IdAllocationWatermarkValue;
 use crate::encoding::v2::keys::Key as IndexKey;
 use crate::encoding::v2::keys::{
     CanonicalSecondaryValue, IndexEntity, IndexEntityStateKey, RecordKind, ScopedKey,
-    SecondaryEntryKey, SecondaryEntryLane,
+    SecondaryEntryKey, SecondaryEntryLane, SecondaryEqualityBitmapKey,
 };
 use crate::encoding::v2::values::{
     decode_applied_state, decode_build_delta, decode_index_record, decode_secondary_entry,
-    encode_applied_state, encode_build_delta, encode_secondary_entry,
+    encode_applied_state, encode_build_delta, encode_secondary_entry, SecondaryEqualityBitmapValue,
 };
 use crate::error::{HelixDbError, Result, SecondaryIndexValueError};
 use crate::index_lifecycle::outbox::{
@@ -299,7 +300,7 @@ impl SecondaryMutationRuntime {
         Ok(())
     }
 
-    /// Observes unique keys once, applies changes in input order, and clears the epoch.
+    /// Observes exclusive keys once, applies changes in input order, and clears the epoch.
     pub(crate) async fn flush(
         &mut self,
         transaction: &DbTransaction,
@@ -353,6 +354,7 @@ impl SecondaryMutationRuntime {
             .into_iter()
             .zip(unique_values)
             .collect::<BTreeMap<_, _>>();
+        let mut bitmap_changes = BTreeMap::<Bytes, BTreeMap<u64, bool>>::new();
 
         for change in pending {
             let target = mutations
@@ -378,18 +380,50 @@ impl SecondaryMutationRuntime {
                     transaction.put(key, encode_build_delta(&value))?;
                 }
                 SecondaryMutationMode::MaintainActive => {
-                    apply_active_change_from_overlay(
-                        transaction,
-                        change.scope,
-                        target,
-                        change.entity.id,
-                        change.old_value,
-                        change.new_value,
-                        &mut unique_overlay,
-                    )?;
+                    if definition_uses_equality_bitmap(&target.definition) {
+                        if let Some(old_value) = change.old_value {
+                            let key = secondary_entry_key(
+                                change.scope,
+                                target.index_id,
+                                target.generation,
+                                &target.definition,
+                                old_value,
+                                change.entity.id,
+                            )?;
+                            bitmap_changes
+                                .entry(key)
+                                .or_default()
+                                .insert(change.entity.id.get(), false);
+                        }
+                        if let Some(new_value) = change.new_value {
+                            let key = secondary_entry_key(
+                                change.scope,
+                                target.index_id,
+                                target.generation,
+                                &target.definition,
+                                new_value,
+                                change.entity.id,
+                            )?;
+                            bitmap_changes
+                                .entry(key)
+                                .or_default()
+                                .insert(change.entity.id.get(), true);
+                        }
+                    } else {
+                        apply_active_change_from_overlay(
+                            transaction,
+                            change.scope,
+                            target,
+                            change.entity.id,
+                            change.old_value,
+                            change.new_value,
+                            &mut unique_overlay,
+                        )?;
+                    }
                 }
             }
         }
+        stage_bitmap_changes(transaction, &bitmap_changes).await?;
         Ok(())
     }
 
@@ -1129,7 +1163,7 @@ async fn scan_source(
                     exhausted = false;
                     break;
                 }
-                plan.stage(transaction)?;
+                plan.stage(transaction).await?;
                 for write in &plan.writes {
                     match write {
                         EntityWrite::Put { key, value } if unique_entries.contains_key(key) => {
@@ -1138,7 +1172,9 @@ async fn scan_source(
                         EntityWrite::Delete(key) if unique_entries.contains_key(key) => {
                             unique_entries.insert(key.clone(), None);
                         }
-                        EntityWrite::Put { .. } | EntityWrite::Delete(_) => {}
+                        EntityWrite::Put { .. }
+                        | EntityWrite::Delete(_)
+                        | EntityWrite::Bitmap { .. } => {}
                     }
                 }
                 accounting.admit_scan(candidate.input_bytes, Some(&plan))?;
@@ -1252,7 +1288,7 @@ async fn catch_up(
             }
             break;
         }
-        plan.stage(transaction)?;
+        plan.stage(transaction).await?;
         accounting.admit_scan(input_bytes, Some(&plan))?;
     }
     let counters = accounting.finish()?;
@@ -1492,7 +1528,7 @@ async fn catch_up_exact(
             }
             break;
         }
-        plan.stage(transaction)?;
+        plan.stage(transaction).await?;
         for write in &plan.writes {
             match write {
                 EntityWrite::Put { key, value } if unique_entries.contains_key(key) => {
@@ -1501,7 +1537,7 @@ async fn catch_up_exact(
                 EntityWrite::Delete(key) if unique_entries.contains_key(key) => {
                     unique_entries.insert(key.clone(), None);
                 }
-                EntityWrite::Put { .. } | EntityWrite::Delete(_) => {}
+                EntityWrite::Put { .. } | EntityWrite::Delete(_) | EntityWrite::Bitmap { .. } => {}
             }
         }
         accounting.admit_scan(input_bytes, Some(&plan))?;
@@ -1634,7 +1670,7 @@ async fn validate_and_release_applied(
             exhausted = false;
             break;
         }
-        plan.stage(transaction)?;
+        plan.stage(transaction).await?;
         accounting.admit_scan(input_bytes, Some(&plan))?;
         cursor = Some(IndexCursor::try_new(row.key).map_err(operation_error)?);
     }
@@ -1745,56 +1781,121 @@ async fn delete_generation_rows(
     entity_kind: IndexElementKind,
     limits: SearchIndexBatchLimits,
 ) -> Result<CleanupBatch> {
-    let prefix = generation_prefix(scope, RecordKind::SecondaryEntry, index_id, generation);
-    let start =
-        cursor_suffix(&prefix, progress.cursor.as_ref())?.map_or(Bound::Unbounded, Bound::Excluded);
-    let mut rows = transaction
-        .scan_prefix(&prefix, (start, Bound::<Bytes>::Unbounded))
-        .await?;
     let mut accounting = BatchAccounting::new(progress.counters, limits);
     let mut cursor = progress.cursor.clone();
     let mut exhausted = true;
-    while accounting.can_read_another() {
-        let Some(row) = rows.next().await? else {
-            break;
-        };
-        let input_bytes = row.key.len().saturating_add(row.value.len()) as u64;
-        let mut plan = EntityWritePlan::default();
-        plan.delete(row.key.clone());
-        if !accounting.can_admit_input(input_bytes) || !accounting.can_admit_output(&plan) {
-            if accounting.is_empty() {
-                let IndexKey::Data {
-                    kind: ScopedKey::SecondaryEntry(key),
-                    ..
-                } = IndexKey::parse_from_slice(scope, &row.key)?
-                else {
+    let cursor_kind = match progress.cursor.as_ref() {
+        None => None,
+        Some(cursor) => {
+            let IndexKey::Data { kind, .. } = IndexKey::parse_from_slice(scope, cursor.as_bytes())?
+            else {
+                return Err(corruption("secondary cleanup cursor is not a data key"));
+            };
+            Some(match kind {
+                ScopedKey::SecondaryEntry(_) => RecordKind::SecondaryEntry,
+                ScopedKey::SecondaryEqualityBitmap(_) => RecordKind::SecondaryEqualityBitmap,
+                ScopedKey::IndexRecord(_)
+                | ScopedKey::Operation(_)
+                | ScopedKey::BuildDelta(_)
+                | ScopedKey::AppliedState(_)
+                | ScopedKey::TextManifestRoot(_)
+                | ScopedKey::TextManifestPage(_)
+                | ScopedKey::TextBuildArtifact(_)
+                | ScopedKey::TextEntityState(_)
+                | ScopedKey::VectorPartitionMapping(_)
+                | ScopedKey::TextCorpusStatistics(_)
+                | ScopedKey::TextTermStatistics(_)
+                | ScopedKey::TextStatisticsEntity(_) => {
                     return Err(corruption(
-                        "secondary cleanup prefix yielded another key kind",
+                        "secondary cleanup cursor is outside its entry lanes",
                     ));
-                };
-                let entity_id =
-                    decode_secondary_entry_value(index_id, generation, key.lane, &row.value)?;
-                return Ok(CleanupBatch::Blocked(
-                    IndexOperationBlocker::OversizedEntity {
-                        entity_kind,
-                        entity_id,
-                        observed: input_bytes.max(plan.output_bytes),
-                        limit: limits
-                            .max_input_bytes()
-                            .get()
-                            .min(limits.max_output_bytes().get()),
-                    },
-                ));
+                }
+            })
+        }
+    };
+    for kind in [
+        RecordKind::SecondaryEntry,
+        RecordKind::SecondaryEqualityBitmap,
+    ] {
+        if cursor_kind.is_some_and(|cursor_kind| cursor_kind != kind)
+            && kind == RecordKind::SecondaryEntry
+        {
+            continue;
+        }
+        let prefix = if kind == RecordKind::SecondaryEqualityBitmap {
+            IndexKey::data_prefix(
+                scope,
+                ScopedKey::secondary_equality_bitmap_prefix(index_id, generation, entity_kind),
+            )
+        } else {
+            generation_prefix(scope, kind, index_id, generation)
+        };
+        let start = if cursor_kind == Some(kind) {
+            cursor_suffix(&prefix, progress.cursor.as_ref())?
+                .map_or(Bound::Unbounded, Bound::Excluded)
+        } else {
+            Bound::Unbounded
+        };
+        let mut rows = transaction
+            .scan_prefix(&prefix, (start, Bound::<Bytes>::Unbounded))
+            .await?;
+        while accounting.can_read_another() {
+            let Some(row) = rows.next().await? else {
+                cursor = None;
+                break;
+            };
+            let input_bytes = row.key.len().saturating_add(row.value.len()) as u64;
+            let mut plan = EntityWritePlan::default();
+            plan.delete(row.key.clone());
+            if !accounting.can_admit_input(input_bytes) || !accounting.can_admit_output(&plan) {
+                if accounting.is_empty() {
+                    let entity_id = match IndexKey::parse_from_slice(scope, &row.key)? {
+                        IndexKey::Data {
+                            kind: ScopedKey::SecondaryEntry(key),
+                            ..
+                        } => decode_secondary_entry_value(
+                            index_id, generation, key.lane, &row.value,
+                        )?,
+                        IndexKey::Data {
+                            kind: ScopedKey::SecondaryEqualityBitmap(_),
+                            ..
+                        } => SecondaryEqualityBitmapValue::decode(&row.value)?
+                            .ids()
+                            .iter()
+                            .next()
+                            .map(IndexEntityId::new)
+                            .unwrap_or_else(IndexEntityId::initial),
+                        IndexKey::Global { .. } | IndexKey::Data { .. } => {
+                            return Err(corruption(
+                                "secondary cleanup prefix yielded another key kind",
+                            ));
+                        }
+                    };
+                    return Ok(CleanupBatch::Blocked(
+                        IndexOperationBlocker::OversizedEntity {
+                            entity_kind,
+                            entity_id,
+                            observed: input_bytes.max(plan.output_bytes),
+                            limit: limits
+                                .max_input_bytes()
+                                .get()
+                                .min(limits.max_output_bytes().get()),
+                        },
+                    ));
+                }
+                exhausted = false;
+                break;
             }
+            plan.stage(transaction).await?;
+            accounting.admit_scan(input_bytes, Some(&plan))?;
+            cursor = Some(IndexCursor::try_new(row.key).map_err(operation_error)?);
+        }
+        if !accounting.can_read_another() {
             exhausted = false;
+        }
+        if !exhausted {
             break;
         }
-        plan.stage(transaction)?;
-        accounting.admit_scan(input_bytes, Some(&plan))?;
-        cursor = Some(IndexCursor::try_new(row.key).map_err(operation_error)?);
-    }
-    if !accounting.can_read_another() {
-        exhausted = false;
     }
     Ok(CleanupBatch::Progress {
         cursor,
@@ -1838,7 +1939,8 @@ async fn delete_delta_and_applied_rows(
                         | RecordKind::VectorPartitionMapping
                         | RecordKind::TextCorpusStatistics
                         | RecordKind::TextTermStatistics
-                        | RecordKind::TextStatisticsEntity => {
+                        | RecordKind::TextStatisticsEntity
+                        | RecordKind::SecondaryEqualityBitmap => {
                             unreachable!("cleanup loop admits only delta and applied rows")
                         }
                     };
@@ -1857,7 +1959,7 @@ async fn delete_delta_and_applied_rows(
                 exhausted = false;
                 break;
             }
-            plan.stage(transaction)?;
+            plan.stage(transaction).await?;
             accounting.admit_scan(input_bytes, Some(&plan))?;
         }
         if !accounting.can_read_another() {
@@ -1894,6 +1996,39 @@ async fn apply_active_change(
     old_value: Option<CanonicalSecondaryValue>,
     new_value: Option<CanonicalSecondaryValue>,
 ) -> Result<()> {
+    if definition_uses_equality_bitmap(&target.definition) {
+        let mut changes = BTreeMap::<Bytes, BTreeMap<u64, bool>>::new();
+        if let Some(old_value) = old_value {
+            let key = secondary_entry_key(
+                scope,
+                target.index_id,
+                target.generation,
+                &target.definition,
+                old_value,
+                entity_id,
+            )?;
+            changes
+                .entry(key)
+                .or_default()
+                .insert(entity_id.get(), false);
+        }
+        if let Some(new_value) = new_value {
+            let key = secondary_entry_key(
+                scope,
+                target.index_id,
+                target.generation,
+                &target.definition,
+                new_value,
+                entity_id,
+            )?;
+            changes
+                .entry(key)
+                .or_default()
+                .insert(entity_id.get(), true);
+        }
+        return stage_bitmap_changes(transaction, &changes).await;
+    }
+
     'delete_old: {
         let Some(old_value) = old_value else {
             break 'delete_old;
@@ -2186,7 +2321,11 @@ fn reconciliation_plan_from_observations(
                     }
                 }
             }
-            plan.delete(key);
+            if definition_uses_equality_bitmap(definition) {
+                plan.bitmap_remove(key, entity_id);
+            } else {
+                plan.delete(key);
+            }
         }
         'put_next: {
             let Some(next) = next_value.as_ref() else {
@@ -2217,13 +2356,17 @@ fn reconciliation_plan_from_observations(
                     }
                 }
             }
-            let value = SecondaryEntryValue {
-                index_id,
-                generation,
-                lane,
-                entity_id,
-            };
-            plan.put(key, encode_secondary_entry(&value));
+            if definition_uses_equality_bitmap(definition) {
+                plan.bitmap_add(key, entity_id);
+            } else {
+                let value = SecondaryEntryValue {
+                    index_id,
+                    generation,
+                    lane,
+                    entity_id,
+                };
+                plan.put(key, encode_secondary_entry(&value));
+            }
         }
     }
     match next_value {
@@ -2266,22 +2409,116 @@ impl EntityWritePlan {
         self.writes.push(EntityWrite::Delete(key));
     }
 
-    fn stage(&self, transaction: &DbTransaction) -> Result<()> {
+    fn bitmap_add(&mut self, key: Bytes, entity_id: IndexEntityId) {
+        self.output_bytes = self
+            .output_bytes
+            .saturating_add(key.len().saturating_add(core::mem::size_of::<u64>()) as u64);
+        self.writes.push(EntityWrite::Bitmap {
+            key,
+            entity_id,
+            present: true,
+        });
+    }
+
+    fn bitmap_remove(&mut self, key: Bytes, entity_id: IndexEntityId) {
+        self.output_bytes = self
+            .output_bytes
+            .saturating_add(key.len().saturating_add(core::mem::size_of::<u64>()) as u64);
+        self.writes.push(EntityWrite::Bitmap {
+            key,
+            entity_id,
+            present: false,
+        });
+    }
+
+    async fn stage(&self, transaction: &DbTransaction) -> Result<()> {
+        let mut bitmap_changes = BTreeMap::<Bytes, BTreeMap<u64, bool>>::new();
         for write in &self.writes {
             match write {
                 EntityWrite::Put { key, value } => {
                     transaction.put(key, value)?;
                 }
                 EntityWrite::Delete(key) => transaction.delete(key)?,
+                EntityWrite::Bitmap {
+                    key,
+                    entity_id,
+                    present,
+                } => {
+                    bitmap_changes
+                        .entry(key.clone())
+                        .or_default()
+                        .insert(entity_id.get(), *present);
+                }
             }
         }
+        stage_bitmap_changes(transaction, &bitmap_changes).await?;
         Ok(())
     }
 }
 
 enum EntityWrite {
-    Put { key: Bytes, value: Bytes },
+    Put {
+        key: Bytes,
+        value: Bytes,
+    },
     Delete(Bytes),
+    Bitmap {
+        key: Bytes,
+        entity_id: IndexEntityId,
+        present: bool,
+    },
+}
+
+async fn stage_bitmap_changes(
+    transaction: &DbTransaction,
+    changes: &BTreeMap<Bytes, BTreeMap<u64, bool>>,
+) -> Result<()> {
+    let exclusive_keys = changes
+        .iter()
+        .filter(|(_, changes)| changes.values().any(|present| !present))
+        .map(|(key, _)| key.clone())
+        .collect::<Vec<_>>();
+    let exclusive_values = if exclusive_keys.is_empty() {
+        Vec::new()
+    } else {
+        transaction.multi_get(&exclusive_keys).await?
+    };
+    let mut exclusive_values = exclusive_keys
+        .into_iter()
+        .zip(exclusive_values)
+        .collect::<BTreeMap<_, _>>();
+
+    for (key, changes) in changes {
+        if changes.values().all(|present| *present) {
+            let additions = roaring::RoaringTreemap::from_iter(changes.keys().copied());
+            transaction.merge(key, SecondaryEqualityBitmapValue::new(additions).encode())?;
+            continue;
+        }
+
+        let existing = exclusive_values
+            .remove(key)
+            .expect("each removal-bearing bitmap key was read exactly once");
+        let mut bitmap = existing
+            .as_deref()
+            .map(SecondaryEqualityBitmapValue::decode)
+            .transpose()?
+            .map(SecondaryEqualityBitmapValue::into_ids)
+            .unwrap_or_default();
+        for (entity_id, present) in changes {
+            if *present {
+                bitmap.insert(*entity_id);
+            } else {
+                bitmap.remove(*entity_id);
+            }
+        }
+        if bitmap.is_empty() {
+            transaction.delete(key)?;
+        } else {
+            transaction.put(key, SecondaryEqualityBitmapValue::new(bitmap).encode())?;
+        }
+    }
+    assert!(exclusive_values.is_empty());
+    Ok(())
 }
 
 struct BatchAccounting {
@@ -2496,11 +2733,12 @@ fn property_value_type_name(value: &PropertyValue) -> &'static str {
     }
 }
 
-/// Reads one exact Active equality generation from canonical kind-`0x05` rows.
+/// Reads one exact Active equality generation from its typed physical row.
 ///
 /// The caller must run this function inside the request lease batch associated
-/// with `handle`. Unique entries use one point read; non-unique entries scan
-/// only the exact generation, lane, and equality-value hash prefix.
+/// with `handle`. Unique entries and V4 non-unique bitmaps each use one point
+/// read. Authoritative-null lookup remains a graph scan because nulls are not
+/// physically indexed.
 pub(crate) async fn lookup_active_equality_generation(
     reader: &(impl DbReadOps + Sync),
     handle: &ActiveIndexHandle,
@@ -2565,54 +2803,24 @@ pub(crate) async fn lookup_active_equality_generation(
         return Ok(roaring::RoaringTreemap::from_iter([owner.get()]));
     }
 
-    let prefix = ScopedKey::secondary_equality_scan_prefix(
+    let key = secondary_entry_key(
         handle.scope(),
         handle.index_id(),
         handle.generation(),
-        lane,
-        &canonical,
-    )
-    .map_err(HelixDbError::from)?;
-    let mut rows = reader.scan_prefix(&prefix, ..).await?;
-    let mut owners = roaring::RoaringTreemap::new();
-    while let Some(row) = rows.next().await? {
-        let IndexKey::Data {
-            kind: ScopedKey::SecondaryEntry(key),
-            ..
-        } = IndexKey::parse_from_slice(handle.scope(), &row.key)?
-        else {
-            return Err(corruption(
-                "secondary equality prefix yielded another key kind",
-            ));
-        };
-        if key.index_id != handle.index_id()
-            || key.generation != handle.generation()
-            || key.lane != lane
-            || key.value != canonical
-        {
-            return Err(corruption(
-                "secondary equality entry escaped its exact serving prefix",
-            ));
-        }
-        let Some(key_owner) = key.entity_id else {
-            return Err(corruption(
-                "non-unique secondary equality entry omitted its key owner",
-            ));
-        };
-        let value_owner =
-            decode_secondary_entry_value(handle.index_id(), handle.generation(), lane, &row.value)?;
-        if key_owner != value_owner {
-            return Err(corruption(
-                "secondary equality entry key/value owners disagree",
-            ));
-        }
-        if authoritative_equality_matches(reader, handle.scope(), definition, value_owner, value)
-            .await?
-        {
-            owners.insert(value_owner.get());
-        }
-    }
-    Ok(owners)
+        definition,
+        canonical,
+        IndexEntityId::initial(),
+    )?;
+    reader
+        .get(key)
+        .await?
+        .map(|bytes| {
+            SecondaryEqualityBitmapValue::decode(&bytes)
+                .map(SecondaryEqualityBitmapValue::into_ids)
+                .map_err(HelixDbError::from)
+        })
+        .transpose()
+        .map(Option::unwrap_or_default)
 }
 
 async fn scan_authoritative_null_equality(
@@ -3004,6 +3212,14 @@ fn definition_lane(definition: &ValidatedSecondaryIndexDefinition) -> SecondaryE
     }
 }
 
+fn definition_uses_equality_bitmap(definition: &ValidatedSecondaryIndexDefinition) -> bool {
+    matches!(
+        definition,
+        ValidatedSecondaryIndexDefinition::NodeEquality { unique: false, .. }
+            | ValidatedSecondaryIndexDefinition::EdgeEquality { .. }
+    )
+}
+
 fn secondary_entry_key(
     scope: DataScope,
     index_id: IndexId,
@@ -3012,6 +3228,23 @@ fn secondary_entry_key(
     value: CanonicalSecondaryValue,
     entity_id: IndexEntityId,
 ) -> Result<Bytes> {
+    if definition_uses_equality_bitmap(definition) {
+        let CanonicalSecondaryValue::Equality(value) = value else {
+            return Err(corruption(
+                "non-unique equality definition received a range value",
+            ));
+        };
+        let key = SecondaryEqualityBitmapKey::try_new(
+            index_id,
+            generation,
+            definition.element_kind(),
+            value,
+        )?;
+        return Ok(scoped_index_key(
+            scope,
+            ScopedKey::SecondaryEqualityBitmap(key),
+        ));
+    }
     let lane = definition_lane(definition);
     let key = SecondaryEntryKey::try_new(
         index_id,
@@ -3255,6 +3488,7 @@ mod tests {
 
     async fn test_db(name: &str) -> Db {
         let db = Db::builder(name, Arc::new(InMemory::new()))
+            .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
             .build()
             .await
             .expect("secondary test database opens");
@@ -3322,25 +3556,39 @@ mod tests {
         };
         let entity_id = IndexEntityId::new(entity_id);
         let lane = definition_lane(definition);
-        db.put(
-            secondary_entry_key(
-                handle.scope(),
-                handle.index_id(),
-                handle.generation(),
-                definition,
-                canonical,
-                entity_id,
-            )
-            .expect("secondary read fixture key validates"),
+        let key = secondary_entry_key(
+            handle.scope(),
+            handle.index_id(),
+            handle.generation(),
+            definition,
+            canonical,
+            entity_id,
+        )
+        .expect("secondary read fixture key validates");
+        let encoded = if definition_uses_equality_bitmap(definition) {
+            let mut ids = db
+                .get(&key)
+                .await
+                .expect("secondary read fixture bitmap is readable")
+                .map(|bytes| {
+                    SecondaryEqualityBitmapValue::decode(&bytes)
+                        .expect("secondary read fixture bitmap decodes")
+                        .into_ids()
+                })
+                .unwrap_or_default();
+            ids.insert(entity_id.get());
+            SecondaryEqualityBitmapValue::new(ids).encode()
+        } else {
             encode_secondary_entry(&SecondaryEntryValue {
                 index_id: handle.index_id(),
                 generation: handle.generation(),
                 lane,
                 entity_id,
-            }),
-        )
-        .await
-        .expect("secondary read fixture entry persists");
+            })
+        };
+        db.put(key, encoded)
+            .await
+            .expect("secondary read fixture entry persists");
         db.put(
             authoritative_property_key(
                 handle.scope(),
@@ -3624,7 +3872,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn active_secondary_serving_rejects_key_value_owner_disagreement() {
+    async fn active_secondary_serving_rejects_malformed_bitmap_values() {
         let db = test_db("secondary-read-owner-mismatch").await;
         let handle = active_read_handle(
             &db,
@@ -3633,7 +3881,6 @@ mod tests {
         .await;
         put_read_entry(&db, &handle, "same", 4).await;
         let definition = handle.secondary_definition().unwrap();
-        let lane = definition_lane(definition);
         db.put(
             secondary_entry_key(
                 handle.scope(),
@@ -3644,12 +3891,7 @@ mod tests {
                 IndexEntityId::new(4),
             )
             .unwrap(),
-            encode_secondary_entry(&SecondaryEntryValue {
-                index_id: handle.index_id(),
-                generation: handle.generation(),
-                lane,
-                entity_id: IndexEntityId::new(5),
-            }),
+            Bytes::from_static(b"not a portable bitmap"),
         )
         .await
         .unwrap();
@@ -3661,8 +3903,9 @@ mod tests {
                 &PropertyValue::String("same".to_string()),
             )
             .await,
-            Err(HelixDbError::IndexCatalogCorruption(message))
-                if message.contains("key/value owners disagree")
+            Err(HelixDbError::Encoding(
+                crate::encoding::error::EncodingError::Io(_)
+            ))
         ));
         db.close().await.expect("owner mismatch fixture closes");
     }
@@ -4274,9 +4517,15 @@ mod tests {
             IndexStateV2::Active { .. }
         ));
         assert_eq!(
-            generation_rows(&db, scope, RecordKind::SecondaryEntry, index_id, generation,)
-                .await
-                .len(),
+            generation_rows(
+                &db,
+                scope,
+                RecordKind::SecondaryEqualityBitmap,
+                index_id,
+                generation,
+            )
+            .await
+            .len(),
             1
         );
 
@@ -4299,11 +4548,15 @@ mod tests {
             .await
             .expect("active delete removes its entry");
 
-        assert!(
-            generation_rows(&db, scope, RecordKind::SecondaryEntry, index_id, generation,)
-                .await
-                .is_empty()
-        );
+        assert!(generation_rows(
+            &db,
+            scope,
+            RecordKind::SecondaryEqualityBitmap,
+            index_id,
+            generation,
+        )
+        .await
+        .is_empty());
         db.close().await.expect("secondary test database closes");
     }
 
@@ -4365,18 +4618,41 @@ mod tests {
                 drive_to_terminal(&db, &driver, operation_id, &mut claim_sequence).await,
                 CommittedOperationStep::Completed
             );
-            let rows =
-                generation_rows(&db, scope, RecordKind::SecondaryEntry, index_id, generation).await;
+            let bitmap = matches!(
+                definition,
+                ValidatedDynamicIndexDefinition::Secondary(
+                    ValidatedSecondaryIndexDefinition::NodeEquality { unique: false, .. }
+                        | ValidatedSecondaryIndexDefinition::EdgeEquality { .. }
+                )
+            );
+            let rows = generation_rows(
+                &db,
+                scope,
+                if bitmap {
+                    RecordKind::SecondaryEqualityBitmap
+                } else {
+                    RecordKind::SecondaryEntry
+                },
+                index_id,
+                generation,
+            )
+            .await;
             assert_eq!(rows.len(), 1);
-            let IndexKey::Data {
-                kind: ScopedKey::SecondaryEntry(key),
-                ..
-            } = IndexKey::parse_from_slice(scope, &rows[0].0)
+            match IndexKey::parse_from_slice(scope, &rows[0].0)
                 .expect("generation-qualified secondary entry key decodes")
-            else {
-                panic!("secondary entry prefix contains only secondary entries");
-            };
-            assert_eq!(key.lane, expected_lane);
+            {
+                IndexKey::Data {
+                    kind: ScopedKey::SecondaryEntry(key),
+                    ..
+                } => assert_eq!(key.lane, expected_lane),
+                IndexKey::Data {
+                    kind: ScopedKey::SecondaryEqualityBitmap(key),
+                    ..
+                } if bitmap => assert_eq!(key.element_kind, identity.element_kind()),
+                IndexKey::Global { .. } | IndexKey::Data { .. } => {
+                    panic!("secondary entry prefix contains its exact typed family")
+                }
+            }
             db.close().await.expect("secondary shape database closes");
         }
     }
@@ -4430,9 +4706,15 @@ mod tests {
             ))
         ));
         assert_eq!(
-            generation_rows(&db, scope, RecordKind::SecondaryEntry, index_id, generation,)
-                .await
-                .len(),
+            generation_rows(
+                &db,
+                scope,
+                RecordKind::SecondaryEqualityBitmap,
+                index_id,
+                generation,
+            )
+            .await
+            .len(),
             1
         );
 
@@ -4457,9 +4739,15 @@ mod tests {
             "bounded build completes within its stage bound"
         );
         assert_eq!(
-            generation_rows(&db, scope, RecordKind::SecondaryEntry, index_id, generation,)
-                .await
-                .len(),
+            generation_rows(
+                &db,
+                scope,
+                RecordKind::SecondaryEqualityBitmap,
+                index_id,
+                generation,
+            )
+            .await
+            .len(),
             3
         );
 
@@ -4485,9 +4773,15 @@ mod tests {
             CommittedOperationStep::Progressed
         );
         assert_eq!(
-            generation_rows(&db, scope, RecordKind::SecondaryEntry, index_id, generation,)
-                .await
-                .len(),
+            generation_rows(
+                &db,
+                scope,
+                RecordKind::SecondaryEqualityBitmap,
+                index_id,
+                generation,
+            )
+            .await
+            .len(),
             2
         );
         let operation = read_operation(&db, scope, drop_id)
@@ -4516,7 +4810,7 @@ mod tests {
                 assert!(generation_rows(
                     &db,
                     scope,
-                    RecordKind::SecondaryEntry,
+                    RecordKind::SecondaryEqualityBitmap,
                     index_id,
                     generation,
                 )
@@ -4578,9 +4872,15 @@ mod tests {
             ))
         ));
         assert_eq!(
-            generation_rows(&db, scope, RecordKind::SecondaryEntry, index_id, generation,)
-                .await
-                .len(),
+            generation_rows(
+                &db,
+                scope,
+                RecordKind::SecondaryEqualityBitmap,
+                index_id,
+                generation,
+            )
+            .await
+            .len(),
             1
         );
         db.close().await.expect("secondary test database closes");
@@ -5201,11 +5501,15 @@ mod tests {
             read_index(&db, scope, &definition).await.state(),
             IndexStateV2::Dropping { .. }
         ));
-        assert!(
-            !generation_rows(&db, scope, RecordKind::SecondaryEntry, index_id, generation,)
-                .await
-                .is_empty()
-        );
+        assert!(!generation_rows(
+            &db,
+            scope,
+            RecordKind::SecondaryEqualityBitmap,
+            index_id,
+            generation,
+        )
+        .await
+        .is_empty());
         assert_eq!(
             drive_to_terminal(&db, &driver, drop_id, &mut claim_sequence).await,
             CommittedOperationStep::Completed
@@ -5214,11 +5518,15 @@ mod tests {
             read_index(&db, scope, &definition).await.state(),
             IndexStateV2::Dropped { .. }
         ));
-        assert!(
-            generation_rows(&db, scope, RecordKind::SecondaryEntry, index_id, generation,)
-                .await
-                .is_empty()
-        );
+        assert!(generation_rows(
+            &db,
+            scope,
+            RecordKind::SecondaryEqualityBitmap,
+            index_id,
+            generation,
+        )
+        .await
+        .is_empty());
 
         let (build_id, _, next_generation) = create_build(&db, scope, &definition, 0).await;
         assert!(next_generation.get() > generation.get());
@@ -5249,6 +5557,7 @@ mod tests {
         ));
         for kind in [
             RecordKind::SecondaryEntry,
+            RecordKind::SecondaryEqualityBitmap,
             RecordKind::BuildDelta,
             RecordKind::AppliedState,
         ] {
@@ -5333,7 +5642,7 @@ mod tests {
         assert!(generation_rows(
             &db,
             tenant_a,
-            RecordKind::SecondaryEntry,
+            RecordKind::SecondaryEqualityBitmap,
             index_a,
             generation_a,
         )
@@ -5343,7 +5652,7 @@ mod tests {
             generation_rows(
                 &db,
                 tenant_b,
-                RecordKind::SecondaryEntry,
+                RecordKind::SecondaryEqualityBitmap,
                 index_b,
                 generation_b,
             )
@@ -5359,6 +5668,7 @@ mod tests {
         let store = Arc::new(InMemory::new());
         let path = "secondary-reopen-every-stage";
         let mut db = Db::builder(path, store.clone())
+            .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
             .build()
             .await
             .expect("reopen test database opens");
@@ -5408,6 +5718,7 @@ mod tests {
             assert_eq!(step, CommittedOperationStep::Progressed);
             db.close().await.expect("checkpoint flushes before reopen");
             db = Db::builder(path, store.clone())
+                .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
                 .build()
                 .await
                 .expect("database reopens after build checkpoint");
@@ -5455,6 +5766,7 @@ mod tests {
                 .await
                 .expect("cleanup checkpoint flushes before reopen");
             db = Db::builder(path, store.clone())
+                .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
                 .build()
                 .await
                 .expect("database reopens after cleanup checkpoint");

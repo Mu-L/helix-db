@@ -13,7 +13,9 @@ pub(crate) use indexes::text::{
     encode_manifest_page, encode_manifest_root, encode_statistics_entity, encode_term_statistics,
 };
 pub(crate) use indexes::vector::{decode_partition_mapping, encode_partition_mapping};
-pub(crate) use indexes::{decode_secondary_entry, encode_secondary_entry};
+pub(crate) use indexes::{
+    decode_secondary_entry, encode_secondary_entry, SecondaryEqualityBitmapValue,
+};
 pub(crate) use lifecycle::{
     decode_applied_state, decode_build_delta, decode_index_record, decode_operation_record,
     decode_operation_record_with_compatibility, encode_applied_state, encode_build_delta,

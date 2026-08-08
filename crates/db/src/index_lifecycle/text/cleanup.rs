@@ -309,6 +309,7 @@ fn key_owner(
         index_keys::ScopedKey::IndexRecord(_)
         | index_keys::ScopedKey::Operation(_)
         | index_keys::ScopedKey::SecondaryEntry(_)
+        | index_keys::ScopedKey::SecondaryEqualityBitmap(_)
         | index_keys::ScopedKey::VectorPartitionMapping(_) => {
             return Err(corruption(
                 "text cleanup cursor is outside its metadata lane set",

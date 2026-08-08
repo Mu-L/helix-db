@@ -6,7 +6,7 @@ use crate::encoding::error::EncodingError;
 use crate::encoding::indexes::range::RangeIndexDirection;
 use crate::encoding::v1::property::equality_value::{CanonicalEqualityValue, EQUALITY_DIGEST_LEN};
 use crate::encoding::v1::property::range_value::CanonicalRangeValue;
-use crate::index_lifecycle::{IndexEntityId, IndexGenerationId, IndexId};
+use crate::index_lifecycle::{IndexElementKind, IndexEntityId, IndexGenerationId, IndexId};
 
 use super::super::{KEY_MAX_LEN, KIND_LEN, PREFIX_LEN, U32_LEN, U64_LEN};
 
@@ -139,17 +139,6 @@ impl CanonicalSecondaryValue {
             Self::Range(value) => buffer.put_slice(value.encoded()),
         }
     }
-
-    pub(crate) fn equality_scan_prefix(&self) -> Result<Bytes, EncodingError> {
-        let Self::Equality(_) = self else {
-            return Err(EncodingError::InvalidKey(
-                "range secondary value has no equality scan prefix".to_string(),
-            ));
-        };
-        let mut bytes = Vec::with_capacity(self.encoded_key_len());
-        self.encode_key_value(&mut bytes);
-        Ok(Bytes::from(bytes))
-    }
 }
 
 /// Deployed V3 generation-qualified secondary entry key.
@@ -207,5 +196,63 @@ impl SecondaryEntryKey {
             value,
             entity_id,
         })
+    }
+}
+
+/// V4 non-unique equality key with all matching entities stored in its value.
+///
+/// The digest accelerates comparisons but is not authoritative. Construction
+/// and parsing both retain the complete typed canonical value, whose codec
+/// validates that the digest matches those bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct SecondaryEqualityBitmapKey {
+    pub(crate) index_id: IndexId,
+    pub(crate) generation: IndexGenerationId,
+    pub(crate) element_kind: IndexElementKind,
+    pub(crate) value: CanonicalEqualityValue,
+}
+
+impl SecondaryEqualityBitmapKey {
+    pub(crate) fn try_new(
+        index_id: IndexId,
+        generation: IndexGenerationId,
+        element_kind: IndexElementKind,
+        value: CanonicalEqualityValue,
+    ) -> Result<Self, EncodingError> {
+        let encoded_len = PREFIX_LEN
+            + KIND_LEN
+            + U64_LEN
+            + U64_LEN
+            + KIND_LEN
+            + EQUALITY_DIGEST_LEN
+            + U32_LEN
+            + value.canonical().len();
+        if encoded_len > KEY_MAX_LEN {
+            return Err(EncodingError::InvalidKey(
+                "secondary equality bitmap key exceeds 1 MiB".to_string(),
+            ));
+        }
+        Ok(Self {
+            index_id,
+            generation,
+            element_kind,
+            value,
+        })
+    }
+
+    pub(crate) fn encoded_suffix_len(&self) -> usize {
+        U64_LEN + U64_LEN + KIND_LEN + EQUALITY_DIGEST_LEN + U32_LEN + self.value.canonical().len()
+    }
+
+    pub(crate) fn encode_suffix<B: BufMut>(&self, buffer: &mut B) {
+        buffer.put_u64(self.index_id.get());
+        buffer.put_u64(self.generation.get());
+        buffer.put_u8(self.element_kind as u8);
+        buffer.put_slice(self.value.digest());
+        buffer.put_u32(
+            u32::try_from(self.value.canonical().len())
+                .expect("canonical equality values are bounded below u32"),
+        );
+        buffer.put_slice(self.value.canonical());
     }
 }

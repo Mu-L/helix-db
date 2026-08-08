@@ -537,7 +537,8 @@ pub(super) fn operation_record_cursors_are_valid(
             | ScopedKey::VectorPartitionMapping(_)
             | ScopedKey::TextCorpusStatistics(_)
             | ScopedKey::TextTermStatistics(_)
-            | ScopedKey::TextStatisticsEntity(_) => return false,
+            | ScopedKey::TextStatisticsEntity(_)
+            | ScopedKey::SecondaryEqualityBitmap(_) => return false,
         };
         let partition_matches = match progress {
             super::TextManifestValidationProgress::Pages(progress) => {

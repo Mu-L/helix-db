@@ -14,6 +14,8 @@ pub(crate) mod range;
 pub(crate) mod text;
 pub(crate) mod vector;
 
+pub(crate) use equality::SecondaryEqualityBitmapValue;
+
 pub(crate) fn encode_secondary_entry(value: &SecondaryEntryValue) -> Bytes {
     if value.lane.is_equality() {
         equality::encode_entry(value).expect("equality lane selects its typed value codec")

@@ -22,7 +22,7 @@ pub(crate) mod lifecycle;
 
 pub(crate) use global::{GlobalKey, GlobalKind, TextCompactionTarget, GLOBAL_SENTINEL};
 pub(crate) use indexes::equality::{
-    CanonicalSecondaryValue, SecondaryEntryKey, SecondaryEntryLane,
+    CanonicalSecondaryValue, SecondaryEntryKey, SecondaryEntryLane, SecondaryEqualityBitmapKey,
 };
 pub(crate) use indexes::text::{
     BlobHash, PartitionFingerprint, TextBuildArtifactKey, TextCorpusStatisticsKey,
@@ -111,6 +111,7 @@ pub(crate) enum RecordKind {
     TextCorpusStatistics = 0x10,
     TextTermStatistics = 0x11,
     TextStatisticsEntity = 0x12,
+    SecondaryEqualityBitmap = 0x13,
 }
 
 impl RecordKind {
@@ -133,6 +134,7 @@ impl RecordKind {
             0x10 => Ok(Self::TextCorpusStatistics),
             0x11 => Ok(Self::TextTermStatistics),
             0x12 => Ok(Self::TextStatisticsEntity),
+            0x13 => Ok(Self::SecondaryEqualityBitmap),
             unknown => Err(EncodingError::InvalidKey(format!(
                 "unknown V2 index record kind {unknown:#04x}"
             ))),
@@ -148,6 +150,7 @@ pub(crate) enum ScopedKey {
     BuildDelta(IndexEntityStateKey),
     AppliedState(IndexEntityStateKey),
     SecondaryEntry(SecondaryEntryKey),
+    SecondaryEqualityBitmap(SecondaryEqualityBitmapKey),
     TextManifestRoot(TextManifestRootKey),
     TextManifestPage(TextManifestPageKey),
     TextBuildArtifact(TextBuildArtifactKey),
@@ -166,6 +169,7 @@ impl ScopedKey {
             Self::BuildDelta(_) => RecordKind::BuildDelta,
             Self::AppliedState(_) => RecordKind::AppliedState,
             Self::SecondaryEntry(_) => RecordKind::SecondaryEntry,
+            Self::SecondaryEqualityBitmap(_) => RecordKind::SecondaryEqualityBitmap,
             Self::TextManifestRoot(_) => RecordKind::TextManifestRoot,
             Self::TextManifestPage(_) => RecordKind::TextManifestPage,
             Self::TextBuildArtifact(_) => RecordKind::TextBuildArtifact,
@@ -219,27 +223,17 @@ impl ScopedKey {
         Bytes::from(bytes)
     }
 
-    /// Returns the complete scoped prefix for one exact canonical equality
-    /// value inside a non-unique secondary lane.
-    pub(crate) fn secondary_equality_scan_prefix(
-        scope: DataScope,
+    /// Returns the exact V4 bitmap-generation prefix for one element kind.
+    pub(crate) fn secondary_equality_bitmap_prefix(
         index_id: IndexId,
         generation: IndexGenerationId,
-        lane: SecondaryEntryLane,
-        value: &CanonicalSecondaryValue,
-    ) -> Result<Bytes, EncodingError> {
-        if !lane.is_equality() || lane.is_unique() {
-            return Err(EncodingError::InvalidKey(
-                "equality scan prefixes require a non-unique equality lane".to_string(),
-            ));
-        }
-        let mut prefix = Key::data_prefix(
-            scope,
-            Self::secondary_lane_prefix(index_id, generation, lane),
-        )
-        .to_vec();
-        prefix.put_slice(&value.equality_scan_prefix()?);
-        Ok(Bytes::from(prefix))
+        element_kind: IndexElementKind,
+    ) -> Bytes {
+        let mut bytes =
+            Self::generation_prefix(RecordKind::SecondaryEqualityBitmap, index_id, generation)
+                .to_vec();
+        bytes.put_u8(element_kind as u8);
+        Bytes::from(bytes)
     }
 
     pub(crate) fn encoded_len(&self) -> usize {
@@ -254,6 +248,7 @@ impl ScopedKey {
                     + key.value.encoded_key_len()
                     + key.entity_id.map_or(0, |_| U64_LEN)
             }
+            Self::SecondaryEqualityBitmap(key) => key.encoded_suffix_len(),
             Self::TextManifestRoot(_) => U64_LEN + U64_LEN + HASH_LEN,
             Self::TextManifestPage(_) => U64_LEN + U64_LEN + HASH_LEN + U32_LEN,
             Self::TextBuildArtifact(_) => U64_LEN + U64_LEN + HASH_LEN + U32_LEN,
@@ -282,6 +277,7 @@ impl ScopedKey {
                     .iter()
                     .for_each(|entity_id| buffer.put_u64(entity_id.get()));
             }
+            Self::SecondaryEqualityBitmap(key) => key.encode_suffix(buffer),
             Self::TextManifestRoot(key) => encode_text_root(key, buffer),
             Self::TextManifestPage(key) => {
                 encode_text_root(&key.root, buffer);
@@ -349,6 +345,9 @@ impl ScopedKey {
             RecordKind::SecondaryEntry => {
                 Self::SecondaryEntry(decode_secondary_entry(&mut decoder)?)
             }
+            RecordKind::SecondaryEqualityBitmap => {
+                Self::SecondaryEqualityBitmap(decode_secondary_equality_bitmap(&mut decoder)?)
+            }
             RecordKind::TextManifestRoot => Self::TextManifestRoot(decode_text_root(&mut decoder)?),
             RecordKind::TextManifestPage => {
                 let root = decode_text_root(&mut decoder)?;
@@ -390,6 +389,19 @@ impl ScopedKey {
         decoder.finish()?;
         Ok(key)
     }
+}
+
+fn decode_secondary_equality_bitmap(
+    decoder: &mut KeyDecoder<'_>,
+) -> Result<SecondaryEqualityBitmapKey, EncodingError> {
+    let index_id = decode_index_id(decoder)?;
+    let generation = decode_generation(decoder)?;
+    let element_kind = decode_element_kind(decoder.take_u8()?)?;
+    let digest = decoder.take_array::<EQUALITY_DIGEST_LEN>()?;
+    let canonical_len = decoder.take_u32()? as usize;
+    let canonical = Bytes::copy_from_slice(decoder.take_bytes(canonical_len)?);
+    let value = CanonicalEqualityValue::try_from_parts(digest, canonical)?;
+    SecondaryEqualityBitmapKey::try_new(index_id, generation, element_kind, value)
 }
 
 fn identity_encoded_len(identity: &IndexIdentity) -> usize {
@@ -734,6 +746,21 @@ mod wire_fixtures {
                 ),
             ),
             (
+                "equality.v4_node_bitmap",
+                ScopedKey::SecondaryEqualityBitmap(
+                    SecondaryEqualityBitmapKey::try_new(
+                        index_id(),
+                        generation(),
+                        IndexElementKind::Node,
+                        match CanonicalSecondaryValue::equality_string("shared") {
+                            CanonicalSecondaryValue::Equality(value) => value,
+                            CanonicalSecondaryValue::Range(_) => unreachable!(),
+                        },
+                    )
+                    .unwrap(),
+                ),
+            ),
+            (
                 "range.node_ascending",
                 range(
                     SecondaryEntryLane::NodeRangeAscending,
@@ -838,6 +865,7 @@ lifecycle.applied_state=060400000000000000010000000000000002020000000000000003
 equality.node_nonunique=06050000000000000001000000000000000201e9cf50951f33fb140000000b04000000067368617265640000000000000003
 equality.node_unique=06050000000000000001000000000000000202e9cf50951f33fb140000000b0400000006736861726564
 equality.edge_nonunique=06050000000000000001000000000000000205e9cf50951f33fb140000000b04000000067368617265640000000000000003
+equality.v4_node_bitmap=06130000000000000001000000000000000201e9cf50951f33fb140000000b0400000006736861726564
 range.node_ascending=060500000000000000010000000000000002030373686172656400000000000000000003
 range.node_descending=06050000000000000001000000000000000204fc8c979e8d9a9bffff0000000000000003
 range.edge_ascending=060500000000000000010000000000000002060373686172656400000000000000000003
@@ -851,6 +879,30 @@ text.term_statistics=06110000000000000001000000000000000222222222222222222222222
 text.statistics_entity=061200000000000000010000000000000002020000000000000003
 vector.partition_mapping=060f000000000000000100000000000000022222222222222222222222222222222222222222222222222222222222222222
 ");
+    }
+
+    #[test]
+    fn v4_equality_bitmap_rejects_digest_mismatch_and_trailing_bytes() {
+        let key = scoped_fixtures()
+            .into_iter()
+            .find_map(|(name, key)| (name == "equality.v4_node_bitmap").then_some(key))
+            .unwrap();
+        let mut encoded = Vec::with_capacity(key.encoded_len());
+        key.encode_into(&mut encoded);
+
+        const PREFIX_LEN: usize = core::mem::size_of::<u8>();
+        const RECORD_KIND_LEN: usize = core::mem::size_of::<u8>();
+        const INDEX_ID_LEN: usize = core::mem::size_of::<u64>();
+        const GENERATION_LEN: usize = core::mem::size_of::<u64>();
+        const ELEMENT_KIND_LEN: usize = core::mem::size_of::<u8>();
+        const DIGEST_OFFSET: usize =
+            PREFIX_LEN + RECORD_KIND_LEN + INDEX_ID_LEN + GENERATION_LEN + ELEMENT_KIND_LEN;
+        encoded[DIGEST_OFFSET] ^= 0x01;
+        assert!(ScopedKey::parse_from_slice(&encoded).is_err());
+
+        encoded[DIGEST_OFFSET] ^= 0x01;
+        encoded.push(0);
+        assert!(ScopedKey::parse_from_slice(&encoded).is_err());
     }
 
     #[test]
