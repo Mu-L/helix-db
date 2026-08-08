@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from io import BytesIO
 import sys
 import types
 import unittest
+from io import BytesIO
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -46,10 +47,23 @@ class FakeNativeHandle:
     def __init__(self) -> None:
         self.requests: list[bytes] = []
         self.closed = False
+        self.gate: asyncio.Event | None = None
+        self.active = 0
+        self.max_active = 0
+        self.error: Exception | None = None
 
     async def query_json(self, body: bytes) -> bytes:
         self.requests.append(bytes(body))
-        return b'{"users":0}'
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            if self.gate is not None:
+                await self.gate.wait()
+            if self.error is not None:
+                raise self.error
+            return b'{"users":0}'
+        finally:
+            self.active -= 1
 
     async def close(self) -> None:
         self.closed = True
@@ -190,7 +204,10 @@ class ClientTests(unittest.TestCase):
 
         self.assertEqual(result, {"users": 0})
         self.assertEqual(FakeNativeDB.opened, [("IN_MEMORY", {"database": "py-sdk-embedded"})])
-        self.assertEqual(json.loads(FakeNativeDB.handle.requests[0].decode("utf-8"))["request_type"], "read")
+        self.assertEqual(
+            json.loads(FakeNativeDB.handle.requests[0].decode("utf-8"))["request_type"],
+            "read",
+        )
         self.assertTrue(FakeNativeDB.handle.closed)
 
     def test_embedded_reader_uses_native_open_reader(self) -> None:
@@ -252,7 +269,9 @@ class ClientTests(unittest.TestCase):
 
     def test_embedded_execute_rejects_server_options(self) -> None:
         request = QueryRequest.write(
-            write_batch().var_as("created", g().add_n("User", {"name": "Ada"})).returning(["created"])
+            write_batch()
+            .var_as("created", g().add_n("User", {"name": "Ada"}))
+            .returning(["created"])
         )
 
         with patch.dict(sys.modules, {"helixdb_uniffi": fake_native_module()}):
@@ -261,7 +280,10 @@ class ClientTests(unittest.TestCase):
                 client.execute(request, writer_only=True)
 
         self.assertEqual(ctx.exception.kind, "InvalidRequest")
-        self.assertIn("embedded mode does not support execute option(s): writer_only", str(ctx.exception))
+        self.assertIn(
+            "embedded mode does not support execute option(s): writer_only",
+            str(ctx.exception),
+        )
 
 
 if __name__ == "__main__":

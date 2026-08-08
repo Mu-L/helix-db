@@ -17,7 +17,7 @@ const generatorManifest = join(workspaceRoot, "bindings", "uniffi-bindgen", "Car
 const cargoTarget = process.env.CARGO_TARGET_DIR ?? join(workspaceRoot, "target");
 const nativeLibrary = join(cargoTarget, "debug", nativeLibraryName());
 const temp = await mkdtemp(join(tmpdir(), "helixdb-embedded-parity-"));
-const sdks = ["rust", "typescript", "go", "python"] as const;
+const sdks = ["rust", "typescript", "go", "python", "python-async"] as const;
 const storageModes = ["memory", "disk"] as const;
 type Sdk = (typeof sdks)[number];
 type StorageMode = (typeof storageModes)[number];
@@ -159,6 +159,17 @@ try {
       }),
     );
     run(
+      pythonCommand(),
+      [join(pythonRoot, "scripts", "run_embedded_parity.py")],
+      pythonRoot,
+      900_000,
+      embeddedEnv(results[storage]["python-async"], `python-async-sdk-${storage}-parity`, pythonBindings, storage, disks["python-async"], {
+        HELIX_PYTHON_PARITY_MODE: "async",
+        PYTHONPATH: appendPath(pythonBindings, process.env.PYTHONPATH),
+        PYTHONDONTWRITEBYTECODE: "1",
+      }),
+    );
+    run(
       process.execPath,
       [join(typescriptRoot, "dist-dev", "scripts", "parity", "run-embedded-client.js")],
       typescriptRoot,
@@ -183,11 +194,13 @@ try {
   for (const storage of storageModes) {
     const baseline = await jsonFiles(results[storage].rust);
     assertFixtureCount(`Rust ${storage}`, baseline);
-    for (const candidate of ["typescript", "go", "python"] as const) {
+    for (const candidate of ["typescript", "go", "python", "python-async"] as const) {
       await compareResults(results[storage].rust, results[storage][candidate], baseline, `${candidate} ${storage}`);
     }
   }
-  console.log(`embedded memory and disk runtime parity passed for ${EXPECTED_RUNTIME} fixtures across Rust, TypeScript, Go, and Python`);
+  console.log(
+    `embedded memory and disk runtime parity passed for ${EXPECTED_RUNTIME} fixtures across Rust, TypeScript, Go, synchronous Python, and asynchronous Python`,
+  );
 } finally {
   await rm(temp, { recursive: true, force: true });
 }
@@ -199,7 +212,7 @@ function nativeLibraryName(): string {
 }
 
 function pythonCommand(): string {
-  return process.platform === "win32" ? "python" : "python3";
+  return process.env.HELIX_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
 }
 
 function embeddedEnv(

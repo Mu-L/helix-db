@@ -14,6 +14,7 @@ from ._client_common import (
     parse_execute_options,
     prepare_request,
     remote_details,
+    serialize_query,
     validate_base_url,
 )
 from .client import (
@@ -263,9 +264,7 @@ class AsyncQueryBuilder:
     """Builder for one asynchronous server or embedded request."""
 
     _backend: _RequestBackend
-    _headers: dict[str, str] = field(
-        default_factory=lambda: {"Content-Type": "application/json"}
-    )
+    _headers: dict[str, str] = field(default_factory=lambda: {"Content-Type": "application/json"})
 
     def writer_only(self) -> "AsyncQueryBuilder":
         self._headers["x-helix-require-writer"] = "true"
@@ -308,18 +307,16 @@ class AsyncQueryExecutionRequest:
                 raise HelixError.invalid_request(
                     "embedded queries do not support client timeouts; use asyncio.timeout"
                 )
-            server_options = [
-                name for name, _ in self._headers if name.lower() != "content-type"
-            ]
+            server_options = [name for name, _ in self._headers if name.lower() != "content-type"]
             if server_options:
                 raise HelixError.invalid_request(
                     "embedded queries do not support server request options: "
                     + ", ".join(server_options)
                 )
             try:
-                return bytes(
-                    await self._backend.native.query_json(self._query.to_json_bytes())
-                )
+                return bytes(await self._backend.native.query_json(serialize_query(self._query)))
+            except HelixError:
+                raise
             except Exception as exc:
                 raise HelixError.embedded(str(exc), cause=exc) from exc
 

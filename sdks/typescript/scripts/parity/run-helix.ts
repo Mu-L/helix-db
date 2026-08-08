@@ -62,6 +62,18 @@ try {
   for (const instance of instances) await runInstance(instance, join(temp, instance.label));
   await compareResults(instances[0]!, instances[1]!);
   await compareResults(instances[0]!, instances[2]!);
+  run(
+    pythonCommand(),
+    [
+      join(workspaceRoot, "sdks", "python", "scripts", "run_server_parity.py"),
+      "--server-binary",
+      serverBinary,
+      "--baseline-results",
+      instances[0]!.results,
+    ],
+    workspaceRoot,
+    900_000,
+  );
   console.log(`server disk runtime parity passed for ${EXPECTED_RUNTIME} fixtures with restart coverage`);
 } finally {
   await rm(temp, { recursive: true, force: true });
@@ -296,4 +308,8 @@ function run(command: string, args: string[], cwd: string, timeout: number) {
       .filter(Boolean)
       .join("\n"),
   );
+}
+
+function pythonCommand(): string {
+  return process.env.HELIX_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
 }

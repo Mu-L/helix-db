@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from time import monotonic, sleep
 
 PYTHON_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PYTHON_ROOT / "src"))
 
+from parity_runtime_fixtures import (  # noqa: E402
+    base_runtime_fixtures,
+    node_permutation_fixtures,
+)
+
 from helixdb import (  # noqa: E402
+    AsyncClient,
     Client,
     Disk,
     EmbeddedCacheConfig,
@@ -22,8 +29,8 @@ from helixdb import (  # noqa: E402
     InMemory,
     LeidenOptions,
     MemoryCache,
-    NoPath,
     NodeRef,
+    NoPath,
     PropertyInput,
     PropertyValue,
     QueryRequest,
@@ -34,10 +41,6 @@ from helixdb import (  # noqa: E402
     g,
     read_batch,
     write_batch,
-)
-from parity_runtime_fixtures import (  # noqa: E402
-    base_runtime_fixtures,
-    node_permutation_fixtures,
 )
 
 TRANSACTION_CONFLICT_ATTEMPTS = 8
@@ -53,18 +56,14 @@ def main() -> None:
     for path in results.glob("*.json"):
         path.unlink()
 
-    database = os.environ.get(
-        "HELIX_EMBEDDED_PARITY_DATABASE", "python-sdk-embedded-parity"
-    )
+    database = os.environ.get("HELIX_EMBEDDED_PARITY_DATABASE", "python-sdk-embedded-parity")
     storage = os.environ.get("HELIX_EMBEDDED_PARITY_STORAGE", "memory")
     if storage == "memory":
         source = InMemory(database)
     elif storage == "disk":
         disk_root = os.environ.get("HELIX_EMBEDDED_PARITY_DISK_ROOT")
         if disk_root is None:
-            raise RuntimeError(
-                "HELIX_EMBEDDED_PARITY_DISK_ROOT is required for disk parity"
-            )
+            raise RuntimeError("HELIX_EMBEDDED_PARITY_DISK_ROOT is required for disk parity")
         source = Disk(disk_root, database)
     else:
         raise RuntimeError(f"unsupported embedded parity storage {storage}")
@@ -90,9 +89,7 @@ def main() -> None:
                         search_request = _required_fixture(fixtures, search_name)
                         actual = reader.query(search_request)
                         expected = json.loads(
-                            (results / f"{search_name}.json").read_text(
-                                encoding="utf-8"
-                            )
+                            (results / f"{search_name}.json").read_text(encoding="utf-8")
                         )
                         if actual != expected:
                             raise RuntimeError(
@@ -111,10 +108,7 @@ def main() -> None:
                         and error.details is not None
                         and TRANSACTION_CONFLICT_MESSAGE in error.details
                     )
-                    if (
-                        not is_transaction_conflict
-                        or attempt + 1 == TRANSACTION_CONFLICT_ATTEMPTS
-                    ):
+                    if not is_transaction_conflict or attempt + 1 == TRANSACTION_CONFLICT_ATTEMPTS:
                         raise
                     # Embedded storage reports retryable transaction conflicts in
                     # the error details; the losing transaction did not commit.
@@ -137,9 +131,7 @@ def main() -> None:
                         f"{search_name} returned the wrong post-DROP error: {error}"
                     ) from error
             else:
-                raise RuntimeError(
-                    f"{search_name} unexpectedly succeeded after index DROP"
-                )
+                raise RuntimeError(f"{search_name} unexpectedly succeeded after index DROP")
 
         graph = client.graph(
             GraphSelection(
@@ -165,9 +157,161 @@ def main() -> None:
         client.close()
 
 
-def _required_fixture(
-    fixtures: list[tuple[str, QueryRequest]], name: str
-) -> QueryRequest:
+async def async_main() -> None:
+    """Run the complete executable corpus through the asynchronous client."""
+
+    results_value = os.environ.get("HELIX_EMBEDDED_PARITY_RESULTS")
+    if results_value is None:
+        raise RuntimeError("HELIX_EMBEDDED_PARITY_RESULTS is required")
+    results = Path(results_value)
+    results.mkdir(parents=True, exist_ok=True)
+    for path in results.glob("*.json"):
+        path.unlink()
+
+    database = os.environ.get("HELIX_EMBEDDED_PARITY_DATABASE", "python-async-sdk-embedded-parity")
+    storage = os.environ.get("HELIX_EMBEDDED_PARITY_STORAGE", "memory")
+    if storage == "memory":
+        source = InMemory(database)
+    elif storage == "disk":
+        disk_root = os.environ.get("HELIX_EMBEDDED_PARITY_DISK_ROOT")
+        if disk_root is None:
+            raise RuntimeError("HELIX_EMBEDDED_PARITY_DISK_ROOT is required for disk parity")
+        source = Disk(disk_root, database)
+    else:
+        raise RuntimeError(f"unsupported embedded parity storage {storage}")
+
+    cache = EmbeddedCacheConfig(256 * 1024 * 1024, MemoryCache())
+    fixtures = sorted(
+        [*base_runtime_fixtures(), *node_permutation_fixtures()],
+        key=lambda fixture: fixture[0],
+    )
+    client = await AsyncClient.embedded(source, cache=cache)
+    try:
+        for name, request in fixtures:
+            if storage == "disk" and name == "900-write-active-text-items":
+                await client.close()
+                reader = await AsyncClient.embedded_reader(source, cache=cache)
+                try:
+                    for search_name in (
+                        "025-read-text-search-nodes",
+                        "027-read-text-search-edges",
+                    ):
+                        search_request = _required_fixture(fixtures, search_name)
+                        actual = await reader.query(search_request)
+                        expected = json.loads(
+                            (results / f"{search_name}.json").read_text(encoding="utf-8")
+                        )
+                        if actual != expected:
+                            raise RuntimeError(
+                                f"{search_name} changed after reopening an async disk reader"
+                            )
+                finally:
+                    await reader.close()
+                client = await AsyncClient.embedded(source, cache=cache)
+
+            response = await _query_with_conflict_retry_async(client, request)
+            await _await_index_operations_async(client, response)
+            (results / f"{name}.json").write_text(
+                json.dumps(_normalize_operation_ids(response), separators=(",", ":")),
+                encoding="utf-8",
+            )
+
+        for search_name in (
+            "025-read-text-search-nodes",
+            "027-read-text-search-edges",
+        ):
+            try:
+                await client.query(_required_fixture(fixtures, search_name))
+            except HelixError as error:
+                if "index_not_found" not in str(error):
+                    raise RuntimeError(
+                        f"{search_name} returned the wrong post-DROP error: {error}"
+                    ) from error
+            else:
+                raise RuntimeError(f"{search_name} unexpectedly succeeded after index DROP")
+
+        overlap_request = _required_fixture(fixtures, "002-read-count-all-users")
+        overlap_results = await asyncio.gather(*(client.query(overlap_request) for _ in range(8)))
+        if any(result != overlap_results[0] for result in overlap_results[1:]):
+            raise RuntimeError("overlapping async embedded reads returned different results")
+    finally:
+        await client.close()
+
+    concurrency_client = await AsyncClient.embedded(InMemory(f"{database}-concurrency"))
+    try:
+        writes = [
+            QueryRequest.write(
+                write_batch()
+                .var_as(
+                    "created",
+                    g().add_n(
+                        "AsyncParityConcurrent",
+                        {"sequence": sequence},
+                    ),
+                )
+                .returning(["created"])
+            )
+            for sequence in range(8)
+        ]
+        await asyncio.gather(
+            *(_query_with_conflict_retry_async(concurrency_client, request) for request in writes)
+        )
+        concurrent_read = QueryRequest.read(
+            read_batch()
+            .var_as(
+                "count",
+                g().n_with_label("AsyncParityConcurrent").count(),
+            )
+            .returning(["count"])
+        )
+        reads = await asyncio.gather(*(concurrency_client.query(concurrent_read) for _ in range(8)))
+        if any(result != reads[0] for result in reads[1:]):
+            raise RuntimeError("overlapping async embedded reads were inconsistent")
+    finally:
+        await concurrency_client.close()
+
+
+async def _query_with_conflict_retry_async(client: AsyncClient, request: QueryRequest) -> object:
+    for attempt in range(TRANSACTION_CONFLICT_ATTEMPTS):
+        try:
+            return await client.query(request)
+        except HelixError as error:
+            is_transaction_conflict = (
+                error.kind == "Embedded"
+                and error.details is not None
+                and TRANSACTION_CONFLICT_MESSAGE in error.details
+            )
+            if not is_transaction_conflict or attempt + 1 == TRANSACTION_CONFLICT_ATTEMPTS:
+                raise
+            await asyncio.sleep(0.01 * 2**attempt)
+    raise AssertionError("async transaction conflict retry loop exhausted")
+
+
+async def _await_index_operations_async(client: AsyncClient, response: object) -> None:
+    for operation_id in sorted(_collect_operation_ids(response)):
+        deadline = monotonic() + 60.0
+        while True:
+            status_response = await client.query(
+                QueryRequest.read(
+                    read_batch()
+                    .var_as("status", g().get_index_operation(operation_id))
+                    .returning(["status"])
+                )
+            )
+            status = status_response.get("status", {}).get("status")
+            if status == "succeeded":
+                break
+            if status not in {"queued", "running"}:
+                raise RuntimeError(
+                    f"operation {operation_id} reached unexpected status {status}: "
+                    f"{status_response}"
+                )
+            if monotonic() >= deadline:
+                raise TimeoutError(f"operation {operation_id} did not finish within 60s")
+            await asyncio.sleep(0.01)
+
+
+def _required_fixture(fixtures: list[tuple[str, QueryRequest]], name: str) -> QueryRequest:
     for fixture_name, request in fixtures:
         if fixture_name == name:
             return request
@@ -196,9 +340,7 @@ def _await_index_operations(client: Client, response: object) -> None:
                     f"{status_response}"
                 )
             if monotonic() >= deadline:
-                raise TimeoutError(
-                    f"operation {operation_id} did not finish within 60s"
-                )
+                raise TimeoutError(f"operation {operation_id} did not finish within 60s")
             sleep(0.01)
 
 
@@ -226,9 +368,7 @@ def _normalize_operation_ids(value: object) -> object:
         return [_normalize_operation_ids(entry) for entry in value]
     if not isinstance(value, dict):
         return value
-    normalized = {
-        key: _normalize_operation_ids(entry) for key, entry in value.items()
-    }
+    normalized = {key: _normalize_operation_ids(entry) for key, entry in value.items()}
     if normalized.get("kind") in {"accepted", "existing_operation"} and (
         "operation_id" in normalized
     ):
@@ -295,10 +435,7 @@ def _native_graph_acceptance(client: Client) -> None:
             variable,
             g().add_n(
                 label,
-                [
-                    (name, PropertyInput.value(value))
-                    for name, value in properties.items()
-                ],
+                [(name, PropertyInput.value(value)) for name, value in properties.items()],
             ),
         )
         returned.append(variable)
@@ -381,10 +518,7 @@ def _native_graph_acceptance(client: Client) -> None:
             .add_e(
                 label,
                 NodeRef.var(target),
-                [
-                    (name, PropertyInput.value(value))
-                    for name, value in properties.items()
-                ],
+                [(name, PropertyInput.value(value)) for name, value in properties.items()],
             ),
         )
         returned.append(variable)
@@ -447,10 +581,7 @@ def _native_graph_acceptance(client: Client) -> None:
     }
     assert typed.attributes == {"owner": "graphify", "version": 7}
     assert typed.copy().attributes == typed.attributes
-    assert (
-        typed.induced_subgraph((("typed", 1), b"\x00\xff")).attributes
-        == typed.attributes
-    )
+    assert typed.induced_subgraph((("typed", 1), b"\x00\xff")).attributes == typed.attributes
     assert typed.degree(("typed", 1)).node_id == ("typed", 1)
     assert {degree.node_id for degree in typed.degrees()} == {
         ("typed", 1),
@@ -467,9 +598,7 @@ def _native_graph_acceptance(client: Client) -> None:
     cycles = typed.simple_cycles(2)
     assert len(cycles.cycles) == 1
     assert set(cycles.cycles[0].node_ids) == {("typed", 1), b"\x00\xff"}
-    assert all(
-        isinstance(edge_id, GraphEdgeId) for edge_id in cycles.cycles[0].edge_ids
-    )
+    assert all(isinstance(edge_id, GraphEdgeId) for edge_id in cycles.cycles[0].edge_ids)
     assert {position.node_id for position in typed.spring_layout()} == {
         ("typed", 1),
         b"\x00\xff",
@@ -560,4 +689,7 @@ def _native_graph_acceptance(client: Client) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if os.environ.get("HELIX_PYTHON_PARITY_MODE", "sync") == "async":
+        asyncio.run(async_main())
+    else:
+        main()

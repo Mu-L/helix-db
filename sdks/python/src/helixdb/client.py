@@ -8,17 +8,20 @@ from typing import Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from . import _client_common
 from ._client_common import (
-    DEFAULT_URL,
-    QUERY_PATH,
     HelixError,
     decode_response,
     parse_execute_options,
     prepare_request,
     remote_details,
+    serialize_query,
     validate_base_url,
 )
 from .dsl import QueryRequest
+
+DEFAULT_URL = _client_common.DEFAULT_URL
+QUERY_PATH = _client_common.QUERY_PATH
 
 
 class Client:
@@ -93,11 +96,9 @@ class Client:
             return self.request_builder()
         if self._mode == "embedded":
             if self._native is None:
-                raise HelixError(
-                    "EmbeddedUnavailable", "embedded HelixDB native handle is missing"
-                )
+                raise HelixError("EmbeddedUnavailable", "embedded HelixDB native handle is missing")
             try:
-                response = _run_native(self._native.query_json(request.to_json_bytes()))
+                response = _run_native(self._native.query_json(serialize_query(request)))
             except HelixError:
                 raise
             except Exception as exc:
@@ -134,13 +135,9 @@ class Client:
     def _graph_response(self, request: QueryRequest, native_spec: Any) -> Any:
         if self._mode == "embedded":
             if self._native is None:
-                raise HelixError(
-                    "EmbeddedUnavailable", "embedded HelixDB native handle is missing"
-                )
+                raise HelixError("EmbeddedUnavailable", "embedded HelixDB native handle is missing")
             try:
-                return _run_native(
-                    self._native.graph(request.to_json_bytes(), native_spec)
-                )
+                return _run_native(self._native.graph(request.to_json_bytes(), native_spec))
             except HelixError:
                 raise
             except Exception as exc:
@@ -250,9 +247,7 @@ class QueryExecutionRequest:
     query: QueryRequest
 
     def send_bytes(self) -> bytes:
-        prepared = prepare_request(
-            self.base_url, self.api_key, self.headers, self.query
-        )
+        prepared = prepare_request(self.base_url, self.api_key, self.headers, self.query)
         request = Request(
             prepared.url,
             data=prepared.body,
@@ -263,14 +258,9 @@ class QueryExecutionRequest:
             with urlopen(request) as response:  # nosec B310: user controls Helix endpoint.
                 status = response.getcode()
                 response_body = response.read()
-                reason = (
-                    getattr(response, "reason", "")
-                    or f"unknown error with code: {status}"
-                )
+                reason = getattr(response, "reason", "") or f"unknown error with code: {status}"
         except HTTPError as exc:
-            details = (
-                exc.read().decode("utf-8", errors="replace") or exc.reason or str(exc)
-            )
+            details = exc.read().decode("utf-8", errors="replace") or exc.reason or str(exc)
             raise HelixError.remote(details, status_code=exc.code) from exc
         except URLError as exc:
             raise HelixError.network(str(exc.reason), cause=exc) from exc
@@ -301,9 +291,7 @@ def _native_helixdb() -> tuple[Any, Any, Any | None, Any | None]:
     )
 
 
-def _to_native_cache(
-    native_cache: Any, native_mode: Any, cache: EmbeddedCacheConfig
-) -> Any:
+def _to_native_cache(native_cache: Any, native_mode: Any, cache: EmbeddedCacheConfig) -> Any:
     if native_cache is None or native_mode is None:
         raise HelixError.embedded_unavailable(
             "native bindings do not expose embedded cache configuration"

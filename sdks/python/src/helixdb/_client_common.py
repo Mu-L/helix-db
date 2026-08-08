@@ -32,9 +32,7 @@ class HelixError(Exception):
         self.__cause__ = cause
 
     @classmethod
-    def network(
-        cls, message: str, *, cause: BaseException | None = None
-    ) -> "HelixError":
+    def network(cls, message: str, *, cause: BaseException | None = None) -> "HelixError":
         return cls(
             "Network",
             f"error communicating with server: {message}",
@@ -52,9 +50,7 @@ class HelixError(Exception):
         )
 
     @classmethod
-    def serialization(
-        cls, message: str, *, cause: BaseException | None = None
-    ) -> "HelixError":
+    def serialization(cls, message: str, *, cause: BaseException | None = None) -> "HelixError":
         return cls(
             "Serialization",
             f"error serializing data: {message}",
@@ -63,12 +59,8 @@ class HelixError(Exception):
         )
 
     @classmethod
-    def invalid_url(
-        cls, message: str, *, cause: BaseException | None = None
-    ) -> "HelixError":
-        return cls(
-            "InvalidUrl", f"invalid url: {message}", details=message, cause=cause
-        )
+    def invalid_url(cls, message: str, *, cause: BaseException | None = None) -> "HelixError":
+        return cls("InvalidUrl", f"invalid url: {message}", details=message, cause=cause)
 
     @classmethod
     def invalid_request(cls, message: str) -> "HelixError":
@@ -86,9 +78,7 @@ class HelixError(Exception):
         )
 
     @classmethod
-    def embedded(
-        cls, message: str, *, cause: BaseException | None = None
-    ) -> "HelixError":
+    def embedded(cls, message: str, *, cause: BaseException | None = None) -> "HelixError":
         return cls(
             "Embedded",
             f"embedded HelixDB error: {message}",
@@ -128,9 +118,7 @@ class ExecuteOptions:
         if self.warm_only:
             prepared["x-helix-warm"] = "true"
         if self.await_durability is not None:
-            prepared["x-helix-await-durable"] = (
-                "true" if self.await_durability else "false"
-            )
+            prepared["x-helix-await-durable"] = "true" if self.await_durability else "false"
         return prepared
 
 
@@ -138,8 +126,17 @@ def validate_base_url(url: str | None) -> str:
     """Validate and return a server base URL using the synchronous contract."""
 
     base_url = url or DEFAULT_URL
-    parsed = urlparse(base_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    try:
+        parsed = urlparse(base_url)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as exc:
+        raise HelixError.invalid_url(str(exc), cause=exc) from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or hostname is None
+        or any(character.isspace() for character in base_url)
+    ):
         raise HelixError.invalid_url("missing scheme or host")
     return base_url
 
@@ -152,16 +149,25 @@ def prepare_request(
 ) -> PreparedRequest:
     """Serialize a query and resolve the common HelixDB HTTP request."""
 
+    body = serialize_query(query)
     try:
         url = urljoin(base_url.rstrip("/") + "/", QUERY_PATH)
-        body = query.to_json_bytes()
     except Exception as exc:
-        raise HelixError.serialization(str(exc), cause=exc) from exc
+        raise HelixError.invalid_url(str(exc), cause=exc) from exc
 
     prepared_headers = dict(headers)
     if api_key is not None:
         prepared_headers["Authorization"] = f"Bearer {api_key}"
     return PreparedRequest(url, tuple(prepared_headers.items()), body)
+
+
+def serialize_query(query: QueryRequest) -> bytes:
+    """Serialize one query with the shared sync and async error contract."""
+
+    try:
+        return query.to_json_bytes()
+    except Exception as exc:
+        raise HelixError.serialization(str(exc), cause=exc) from exc
 
 
 def decode_response(response_body: bytes) -> Any:
@@ -181,9 +187,7 @@ def remote_details(response_body: bytes, fallback: str) -> str:
     return response_body.decode("utf-8", errors="replace") or fallback
 
 
-def parse_execute_options(
-    options: Mapping[str, Any], *, embedded: bool
-) -> ExecuteOptions:
+def parse_execute_options(options: Mapping[str, Any], *, embedded: bool) -> ExecuteOptions:
     """Validate ``execute`` keyword options without changing caller-owned state."""
 
     if embedded and options:
@@ -196,9 +200,7 @@ def parse_execute_options(
     writer_only = bool(remaining.pop("writer_only", False))
     warm_only = bool(remaining.pop("warm_only", False))
     await_durability = (
-        bool(remaining.pop("await_durability"))
-        if "await_durability" in remaining
-        else None
+        bool(remaining.pop("await_durability")) if "await_durability" in remaining else None
     )
     if remaining:
         unknown = ", ".join(sorted(remaining))
