@@ -2,9 +2,10 @@
 //!
 //! Index creation and physical planning finish before the measured phase. The
 //! fixture deliberately maps every indexed field to one shared value so V3
-//! creates 50,000 entity-suffixed rows and bitmap formats can
+//! creates one entity-suffixed row per index and entity, while bitmap formats
 //! collapse the same logical state to 50 rows.
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,8 +25,10 @@ use crate::{HelixDB, HelixDbSource, HelixStorage, Result};
 
 const INDEX_COUNT: usize = 50;
 const ENTITY_COUNT: usize = 1_000;
+const READ_SCALE_ENTITY_COUNT: usize = 10_000;
 const CONCURRENT_WRITERS: usize = 32;
-const READ_OPERATIONS: usize = 1_000;
+const READ_OPERATIONS: NonZeroUsize =
+    NonZeroUsize::new(1_000).expect("read operation count is positive");
 const CONCURRENT_READERS: usize = 32;
 const MILLION_BITMAP_CARDINALITY: u64 = 1_000_000;
 const LABEL: &str = "SecondaryEqualityHotPathNode";
@@ -129,13 +132,29 @@ pub struct SecondaryEqualityHotPathFixture {
     db: Arc<HelixDB>,
     insert_plan: Arc<exec::ExecutablePlan>,
     lookup_plan: Arc<exec::ExecutablePlan>,
+    entity_count: usize,
 }
 
 impl SecondaryEqualityHotPathFixture {
     /// Creates the fixed fixture without including setup in benchmark timings.
     pub async fn open(database: impl Into<String>) -> Result<Self> {
+        Self::open_with_entity_count(database, ENTITY_COUNT).await
+    }
+
+    /// Creates the ten-thousand-node read-scale fixture.
+    pub async fn open_read_scale(database: impl Into<String>) -> Result<Self> {
+        Self::open_with_entity_count(database, READ_SCALE_ENTITY_COUNT).await
+    }
+
+    async fn open_with_entity_count(
+        database: impl Into<String>,
+        entity_count: usize,
+    ) -> Result<Self> {
         assert_eq!(INDEX_COUNT, 50, "hot-path index shape is frozen");
-        assert_eq!(ENTITY_COUNT, 1_000, "hot-path entity shape is frozen");
+        assert!(
+            matches!(entity_count, ENTITY_COUNT | READ_SCALE_ENTITY_COUNT),
+            "hot-path entity shape is frozen"
+        );
         assert_eq!(
             CONCURRENT_WRITERS, 32,
             "hot-path concurrency shape is frozen"
@@ -170,6 +189,7 @@ impl SecondaryEqualityHotPathFixture {
             db,
             insert_plan: Arc::new(insert_plan),
             lookup_plan: Arc::new(equality_search_plan()),
+            entity_count,
         })
     }
 
@@ -240,7 +260,7 @@ impl SecondaryEqualityHotPathFixture {
     pub async fn prepare_read(&self) -> Result<()> {
         let result_count = self.lookup_result_count().await?;
         assert_eq!(
-            result_count, ENTITY_COUNT,
+            result_count, self.entity_count,
             "the benchmark lookup must return every inserted entity"
         );
         Ok(())
@@ -251,16 +271,27 @@ impl SecondaryEqualityHotPathFixture {
         &self,
         mode: SecondaryEqualityReadMode,
     ) -> Result<SecondaryEqualityReadSample> {
+        self.read_operations(mode, READ_OPERATIONS).await
+    }
+
+    /// Measures a positive number of full-cardinality equality lookups after warmup.
+    pub async fn read_operations(
+        &self,
+        mode: SecondaryEqualityReadMode,
+        operations: NonZeroUsize,
+    ) -> Result<SecondaryEqualityReadSample> {
+        let operations = operations.get();
+        let entity_count = self.entity_count;
         crate::index_lifecycle::secondary::reset_equality_read_metrics();
         let started = Instant::now();
         let mut latencies = match mode {
             SecondaryEqualityReadMode::Sequential => {
-                let mut latencies = Vec::with_capacity(READ_OPERATIONS);
-                for _ in 0..READ_OPERATIONS {
+                let mut latencies = Vec::with_capacity(operations);
+                for _ in 0..operations {
                     let operation_started = Instant::now();
                     assert_eq!(
                         self.lookup_result_count().await?,
-                        ENTITY_COUNT,
+                        entity_count,
                         "every benchmark lookup must return the same complete result"
                     );
                     latencies.push(duration_nanos(operation_started.elapsed()));
@@ -274,12 +305,12 @@ impl SecondaryEqualityHotPathFixture {
                     let plan = Arc::clone(&self.lookup_plan);
                     tasks.spawn(async move {
                         let mut latencies =
-                            Vec::with_capacity(READ_OPERATIONS.div_ceil(CONCURRENT_READERS));
-                        for _ in (reader..READ_OPERATIONS).step_by(CONCURRENT_READERS) {
+                            Vec::with_capacity(operations.div_ceil(CONCURRENT_READERS));
+                        for _ in (reader..operations).step_by(CONCURRENT_READERS) {
                             let operation_started = Instant::now();
                             assert_eq!(
                                 lookup_result_count(&db, &plan).await?,
-                                ENTITY_COUNT,
+                                entity_count,
                                 "every benchmark lookup must return the same complete result"
                             );
                             latencies.push(duration_nanos(operation_started.elapsed()));
@@ -287,7 +318,7 @@ impl SecondaryEqualityHotPathFixture {
                         Result::<_>::Ok(latencies)
                     });
                 }
-                let mut latencies = Vec::with_capacity(READ_OPERATIONS);
+                let mut latencies = Vec::with_capacity(operations);
                 while let Some(result) = tasks.join_next().await {
                     latencies.append(&mut result.map_err(|error| {
                         crate::HelixDbError::InvariantViolation(format!(
@@ -299,25 +330,25 @@ impl SecondaryEqualityHotPathFixture {
             }
         };
         let elapsed = started.elapsed();
-        assert_eq!(latencies.len(), READ_OPERATIONS);
+        assert_eq!(latencies.len(), operations);
         latencies.sort_unstable();
         let metrics = crate::index_lifecycle::secondary::equality_read_metrics();
         assert_eq!(
             metrics.point_reads,
-            u64::try_from(READ_OPERATIONS).expect("read operation count fits u64")
+            u64::try_from(operations).expect("read operation count fits u64")
         );
         assert_eq!(metrics.scans, 0);
         assert_eq!(metrics.graph_reads, 0);
         Ok(SecondaryEqualityReadSample {
             mode,
-            operations: READ_OPERATIONS,
+            operations,
             readers: match mode {
                 SecondaryEqualityReadMode::Sequential => 1,
                 SecondaryEqualityReadMode::Concurrent => CONCURRENT_READERS,
             },
-            result_count: ENTITY_COUNT,
+            result_count: entity_count,
             elapsed_nanos: elapsed.as_nanos(),
-            throughput_per_second: f64::from(READ_OPERATIONS as u32) / elapsed.as_secs_f64(),
+            throughput_per_second: f64::from(operations as u32) / elapsed.as_secs_f64(),
             median_latency_nanos: percentile(&latencies, 50),
             p95_latency_nanos: percentile(&latencies, 95),
             point_reads: metrics.point_reads,
@@ -335,10 +366,10 @@ impl SecondaryEqualityHotPathFixture {
 
     async fn insert_sequential(&self) -> Result<SecondaryEqualityInsertSample> {
         let started = Instant::now();
-        let mut latencies = Vec::with_capacity(ENTITY_COUNT);
+        let mut latencies = Vec::with_capacity(self.entity_count);
         let mut conflicts = 0_u64;
         let mut retries = 0_u64;
-        for _ in 0..ENTITY_COUNT {
+        for _ in 0..self.entity_count {
             loop {
                 let operation_started = Instant::now();
                 match self
@@ -363,6 +394,7 @@ impl SecondaryEqualityHotPathFixture {
             1,
             started.elapsed(),
             latencies,
+            self.entity_count,
             conflicts,
             retries,
         ))
@@ -370,15 +402,16 @@ impl SecondaryEqualityHotPathFixture {
 
     async fn insert_concurrent(&self) -> Result<SecondaryEqualityInsertSample> {
         let started = Instant::now();
+        let entity_count = self.entity_count;
         let mut tasks = tokio::task::JoinSet::new();
         for worker in 0..CONCURRENT_WRITERS {
             let db = Arc::clone(&self.db);
             let plan = Arc::clone(&self.insert_plan);
             tasks.spawn(async move {
-                let mut latencies = Vec::with_capacity(ENTITY_COUNT.div_ceil(CONCURRENT_WRITERS));
+                let mut latencies = Vec::with_capacity(entity_count.div_ceil(CONCURRENT_WRITERS));
                 let mut conflicts = 0_u64;
                 let mut retries = 0_u64;
-                for _ in (worker..ENTITY_COUNT).step_by(CONCURRENT_WRITERS) {
+                for _ in (worker..entity_count).step_by(CONCURRENT_WRITERS) {
                     loop {
                         let operation_started = Instant::now();
                         match db.execute(&plan, context::ParamBindings::default()).await {
@@ -398,7 +431,7 @@ impl SecondaryEqualityHotPathFixture {
             });
         }
 
-        let mut latencies = Vec::with_capacity(ENTITY_COUNT);
+        let mut latencies = Vec::with_capacity(entity_count);
         let mut conflicts = 0_u64;
         let mut retries = 0_u64;
         while let Some(result) = tasks.join_next().await {
@@ -414,7 +447,7 @@ impl SecondaryEqualityHotPathFixture {
         }
         assert_eq!(
             latencies.len(),
-            ENTITY_COUNT,
+            entity_count,
             "every concurrent insertion must complete exactly once"
         );
         Ok(insert_sample(
@@ -422,6 +455,7 @@ impl SecondaryEqualityHotPathFixture {
             CONCURRENT_WRITERS,
             started.elapsed(),
             latencies,
+            entity_count,
             conflicts,
             retries,
         ))
@@ -466,6 +500,7 @@ fn insert_sample(
     writers: usize,
     elapsed: Duration,
     mut latencies: Vec<u64>,
+    entities: usize,
     conflicts: u64,
     retries: u64,
 ) -> SecondaryEqualityInsertSample {
@@ -475,10 +510,10 @@ fn insert_sample(
     SecondaryEqualityInsertSample {
         mode,
         indexes: INDEX_COUNT,
-        entities: ENTITY_COUNT,
+        entities,
         writers,
         elapsed_nanos: elapsed.as_nanos(),
-        throughput_per_second: f64::from(ENTITY_COUNT as u32) / elapsed.as_secs_f64(),
+        throughput_per_second: f64::from(entities as u32) / elapsed.as_secs_f64(),
         median_latency_nanos,
         p95_latency_nanos,
         conflicts,

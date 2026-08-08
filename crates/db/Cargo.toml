@@ -91,6 +91,11 @@ harness = false
 required-features = ["production-coverage"]
 
 [[bench]]
+name = "secondary_equality_read_scale"
+harness = false
+required-features = ["production-coverage"]
+
+[[bench]]
 name = "vector_batch_insert"
 harness = false
 required-features = ["production-coverage"]
