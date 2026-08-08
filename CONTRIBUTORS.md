@@ -107,7 +107,7 @@ The TypeScript SDK (`sdks/typescript`) and Go SDK (`sdks/go`) build with their o
 
 ## Project Structure
 
-This repository contains the user-facing tooling for HelixDB: the CLI, the client SDKs, and metrics. The database engine itself runs inside the `enterprise-dev` container image that the CLI pulls and manages — it is not built from this repo. The root holds `helix-cli/`, `sdks/`, `metrics/`, and `assets/`.
+This repository contains the HelixDB engine, CLI, client SDKs, and metrics. For local development, the CLI pulls and manages the published standalone HelixDB container image.
 
 ### Core Components
 
@@ -181,7 +181,7 @@ helix-cli/
 - `helix feedback` - Send feedback to the Helix team
 
 **Deployment Targets:**
-- Local Docker/Podman containers (`helix start`) — image `ghcr.io/helixdb/enterprise-dev`
+- Local Docker/Podman containers (`helix start`) — image `ghcr.io/helixdb/helixdb:latest`
 - Helix Cloud (managed Enterprise hosting) via `helix push`
 
 **Build & Deploy Flow:**
@@ -189,7 +189,7 @@ helix-cli/
 The v3 CLI is a runtime orchestrator — there is no `helix compile`/`helix check` step and no `.hx` query files.
 
 1. Scaffold a project with `helix init` (writes `helix.toml` and a `.helix/` workspace).
-2. Start a local instance with `helix start` — a Docker/Podman container running the `enterprise-dev` image (in-memory by default, on-disk with `--disk`).
+2. Start a local instance with `helix start` — a Docker/Podman container running `ghcr.io/helixdb/helixdb:latest` (in-memory by default, on-disk with `--disk`).
 3. Author queries with the Rust, TypeScript, Go, or Python DSL; they serialize to query JSON.
 4. Send queries to a running instance via `POST /v2/query` (`helix query`); validation happens server-side.
 5. For production, deploy an Enterprise Cloud instance with `helix push`, managing auth/metadata via `helix auth`, `helix sync`, and the `workspace`/`project`/`cluster` commands.

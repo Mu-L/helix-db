@@ -5,8 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_LOCAL_PORT: u16 = 6969;
-pub const DEFAULT_ENTERPRISE_DEV_IMAGE: &str = "ghcr.io/helixdb/enterprise-dev";
-pub const DEFAULT_ENTERPRISE_DEV_TAG: &str = "latest";
+pub const DEFAULT_LOCAL_IMAGE: &str = "ghcr.io/helixdb/helixdb";
+pub const DEFAULT_LOCAL_IMAGE_TAG: &str = "latest";
 pub const DEFAULT_QUERY_AUTH_HEADER: &str = "Authorization";
 pub const DEFAULT_QUERY_AUTH_ENV: &str = "HELIX_API_KEY";
 pub const DEFAULT_S3_REGION: &str = "us-east-1";
@@ -115,9 +115,9 @@ fn default_container_runtime() -> ContainerRuntime {
 pub struct LocalInstanceConfig {
     #[serde(default = "default_local_port")]
     pub port: u16,
-    #[serde(default = "default_enterprise_dev_image")]
+    #[serde(default = "default_local_image")]
     pub image: String,
-    #[serde(default = "default_enterprise_dev_tag")]
+    #[serde(default = "default_local_image_tag")]
     pub tag: String,
     #[serde(default, skip_serializing_if = "is_default_local_storage")]
     pub storage: LocalStorageMode,
@@ -338,12 +338,12 @@ fn default_local_port() -> u16 {
     DEFAULT_LOCAL_PORT
 }
 
-fn default_enterprise_dev_image() -> String {
-    DEFAULT_ENTERPRISE_DEV_IMAGE.to_string()
+fn default_local_image() -> String {
+    DEFAULT_LOCAL_IMAGE.to_string()
 }
 
-fn default_enterprise_dev_tag() -> String {
-    DEFAULT_ENTERPRISE_DEV_TAG.to_string()
+fn default_local_image_tag() -> String {
+    DEFAULT_LOCAL_IMAGE_TAG.to_string()
 }
 
 fn default_s3_region() -> String {
@@ -385,8 +385,8 @@ impl Default for LocalInstanceConfig {
     fn default() -> Self {
         Self {
             port: DEFAULT_LOCAL_PORT,
-            image: DEFAULT_ENTERPRISE_DEV_IMAGE.to_string(),
-            tag: DEFAULT_ENTERPRISE_DEV_TAG.to_string(),
+            image: DEFAULT_LOCAL_IMAGE.to_string(),
+            tag: DEFAULT_LOCAL_IMAGE_TAG.to_string(),
             storage: LocalStorageMode::Memory,
             s3: None,
         }
@@ -682,6 +682,13 @@ tag = "latest"
 
         let local = config.local.get("dev").unwrap();
         assert_eq!(local.storage, LocalStorageMode::Memory);
+    }
+
+    #[test]
+    fn local_config_defaults_to_published_standalone_image() {
+        let config = LocalInstanceConfig::default();
+
+        assert_eq!(config.image_ref(), "ghcr.io/helixdb/helixdb:latest");
     }
 
     #[test]

@@ -93,7 +93,7 @@ fn init_and_add_generate_expected_project_files() {
     );
     assert_eq!(
         config["local"]["dev"]["image"].as_str(),
-        Some("ghcr.io/helixdb/enterprise-dev")
+        Some("ghcr.io/helixdb/helixdb")
     );
     assert_eq!(config["local"]["dev"]["tag"].as_str(), Some("latest"));
 
