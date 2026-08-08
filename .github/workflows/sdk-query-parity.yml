@@ -80,6 +80,11 @@ jobs:
       - run: python -m unittest discover -s sdks/python/tests -v
         env:
           PYTHONPATH: sdks/python/src
+      - name: Run Python doctests
+        working-directory: sdks/python
+        run: >-
+          python -c 'import doctest, helixdb.async_client as module;
+          raise SystemExit(doctest.testmod(module).failed)'
       - run: go test ./...
         working-directory: sdks/go
       - run: cargo test --locked --manifest-path sdks/rust/Cargo.toml --lib

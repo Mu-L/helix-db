@@ -74,7 +74,23 @@ _RequestBackend = _ServerRequestBackend | _EmbeddedRequestBackend
 
 
 class AsyncClient:
-    """Asynchronous client for running queries against HelixDB."""
+    """Asynchronous client for running queries against HelixDB.
+
+    The client owns its reusable HTTP connection pool and any injected
+    transport, so close it with ``async with`` or :meth:`close`.
+
+    >>> import asyncio
+    >>> import httpx
+    >>> from helixdb import AsyncClient, QueryRequest, read_batch
+    >>> async def example():
+    ...     async def handler(request):
+    ...         return httpx.Response(200, json={"count": 0})
+    ...     transport = httpx.MockTransport(handler)
+    ...     async with AsyncClient(transport=transport) as client:
+    ...         return await client.query(QueryRequest.read(read_batch()))
+    >>> asyncio.run(example())
+    {'count': 0}
+    """
 
     def __init__(
         self,
@@ -267,18 +283,26 @@ class AsyncQueryBuilder:
     _headers: dict[str, str] = field(default_factory=lambda: {"Content-Type": "application/json"})
 
     def writer_only(self) -> "AsyncQueryBuilder":
+        """Require the authoritative writer for this server request."""
+
         self._headers["x-helix-require-writer"] = "true"
         return self
 
     def warm_only(self) -> "AsyncQueryBuilder":
+        """Warm eligible backends without returning a query result."""
+
         self._headers["x-helix-warm"] = "true"
         return self
 
     def should_await_durability(self, should: bool) -> "AsyncQueryBuilder":
+        """Control whether the server waits for durable write acknowledgement."""
+
         self._headers["x-helix-await-durable"] = "true" if should else "false"
         return self
 
     def query(self, query: QueryRequest) -> "AsyncQueryExecutionRequest":
+        """Freeze the builder headers and attach a query body."""
+
         return AsyncQueryExecutionRequest(
             self._backend,
             tuple(self._headers.items()),
