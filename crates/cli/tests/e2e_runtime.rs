@@ -8,46 +8,54 @@ use support::{free_port, CliFixture};
 
 const WRITE_E2E_USER: &str = r#"{
   "request_type": "write",
-  "query_name": null,
   "query": {
-    "queries": [{
-      "Query": {
-        "name": "created",
-        "steps": [{
-          "AddN": {
-            "label": "E2EUser",
-            "properties": [
-              ["externalId", {"Value": {"String": "cli-e2e"}}],
-              ["name", {"Value": {"String": "CI User"}}]
-            ]
+    "write": {
+      "entries": [{
+        "query": {
+          "name": "created",
+          "root": {
+            "add_n": {
+              "label": "E2EUser",
+              "properties": [
+                ["externalId", {"value": {"string": "cli-e2e"}}],
+                ["name", {"value": {"string": "CI User"}}]
+              ]
+            }
           }
-        }],
-        "condition": null
-      }
-    }],
-    "returns": ["created"]
-  },
-  "parameters": {}
+        }
+      }],
+      "returns": ["created"]
+    }
+  }
 }
 "#;
 
 const READ_E2E_USERS: &str = r#"{
   "request_type": "read",
-  "query_name": null,
   "query": {
-    "queries": [{
-      "Query": {
-        "name": "e2e_count",
-        "steps": [
-          {"NWhere": {"Eq": ["$label", {"String": "E2EUser"}]}},
-          "Count"
-        ],
-        "condition": null
-      }
-    }],
-    "returns": ["e2e_count"]
-  },
-  "parameters": {}
+    "read": {
+      "entries": [{
+        "query": {
+          "name": "e2e_count",
+          "root": {
+            "count": {
+              "input": {
+                "nodes_where": {
+                  "predicate": {
+                    "eq": {
+                      "left": {"property": "$label"},
+                      "right": {"constant": {"string": "E2EUser"}}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }],
+      "returns": ["e2e_count"]
+    }
+  }
 }
 "#;
 
@@ -91,7 +99,7 @@ fn assert_e2e_count_is_one(output: &str) {
 }
 
 #[test]
-#[ignore = "requires Docker and pulls ghcr.io/helixdb/enterprise-dev"]
+#[ignore = "requires Docker and pulls ghcr.io/helixdb/helixdb:v0.0.3"]
 fn local_runtime_lifecycle_and_query_smoke() {
     let fixture = CliFixture::new();
     let port = free_port();
@@ -213,7 +221,7 @@ fn local_runtime_lifecycle_and_query_smoke() {
 }
 
 #[test]
-#[ignore = "requires Docker and pulls ghcr.io/helixdb/enterprise-dev plus MinIO"]
+#[ignore = "requires Docker and pulls ghcr.io/helixdb/helixdb:v0.0.3 plus MinIO"]
 fn disk_runtime_persists_data_across_stop_and_start() {
     let fixture = CliFixture::new();
     let port = free_port();

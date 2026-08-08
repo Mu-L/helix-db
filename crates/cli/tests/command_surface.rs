@@ -376,9 +376,9 @@ async fn typescript_query_inputs_execute_node_and_send_the_generated_request() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_start_and_restart_use_the_runtime_and_readiness_contract() {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/v2/query"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
         .expect(2)
         .mount(&server)
         .await;

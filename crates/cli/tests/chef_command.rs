@@ -18,10 +18,16 @@ fn stderr(assert: Assert) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn headless_chef_runs_setup_and_surfaces_external_tool_errors() {
     let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
         .and(path("/v2/query"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true})))
-        .expect(2)
+        .expect(1)
         .mount(&server)
         .await;
 

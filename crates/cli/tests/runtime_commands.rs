@@ -1,7 +1,6 @@
 mod support;
 
 use assert_cmd::assert::Assert;
-use serde_json::json;
 use support::CliFixture;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -17,9 +16,9 @@ fn stderr(assert: Assert) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn disk_runtime_commands_cover_resource_reuse_status_cleanup_and_errors() {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/v2/query"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
         .expect(2)
         .mount(&server)
         .await;
