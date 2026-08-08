@@ -95,7 +95,10 @@ pub(super) async fn prepare_active_text_retirement(
         key: root_key.clone(),
         value: Some(root_bytes.clone()),
     });
-    let root = index_values::decode_manifest_root(&root_bytes)?;
+    let root = index_lifecycle::expect_typed_value(
+        index_values::decode_manifest_root(&root_bytes),
+        "Active text retirement root key contains another value kind",
+    )?;
     if root.index_id() != index_id
         || root.generation() != generation
         || root.partition() != &partition
@@ -134,7 +137,10 @@ pub(super) async fn prepare_active_text_retirement(
         key: state_key.clone(),
         value: Some(state_bytes.clone()),
     });
-    let state = index_values::decode_text_entity_state(&state_bytes)?;
+    let state = index_lifecycle::expect_typed_value(
+        index_values::decode_text_entity_state(&state_bytes),
+        "Active text retirement state key contains another value kind",
+    )?;
     if state.index_id != index_id
         || state.generation != generation
         || state.partition != partition

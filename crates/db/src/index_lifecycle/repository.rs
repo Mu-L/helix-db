@@ -738,7 +738,10 @@ pub(crate) async fn load_vector_partition_mapping(
     let Some(value) = reader.get(key).await? else {
         return Ok(None);
     };
-    let mapping = decode_partition_mapping(&value)?;
+    let mapping = super::expect_typed_value(
+        decode_partition_mapping(&value),
+        "vector partition mapping key contains another value kind",
+    )?;
     if mapping.index_id != index_id
         || mapping.generation != generation
         || &mapping.partition != partition
@@ -968,33 +971,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_v2_reader_requires_writer_migration_without_writing() {
-        let db = Db::builder(
-            "index-lifecycle-reader-migration",
-            Arc::new(InMemory::new()),
-        )
-        .build()
-        .await
-        .unwrap();
-        let version_two = IndexStorageVersion::new(0x0002).unwrap();
-        put_bootstrap_tuple(&db, version_two).await;
-        let marker_key = global_key(GlobalKey::StorageVersion);
-        let marker_before = db.get(&marker_key).await.unwrap().unwrap();
-
-        let error = require_reader_bootstrap_or_legacy(&db)
+    async fn older_readers_require_writer_migration_without_writing() {
+        for version_number in [0x0002, 0x0003] {
+            let db = Db::builder(
+                format!("index-lifecycle-reader-migration-{version_number}"),
+                Arc::new(InMemory::new()),
+            )
+            .build()
             .await
-            .expect_err("a complete V2 store requires writer-owned migration");
+            .unwrap();
+            let version = IndexStorageVersion::new(version_number).unwrap();
+            put_bootstrap_tuple(&db, version).await;
+            let marker_key = global_key(GlobalKey::StorageVersion);
+            let marker_before = db.get(&marker_key).await.unwrap().unwrap();
 
-        assert!(matches!(
-            error,
-            HelixDbError::WriterMigrationRequired {
-                requirement: WriterMigrationRequirement::StorageVersion {
-                    found: 0x0002,
-                    target: 0x0004,
-                },
-            }
-        ));
-        assert_eq!(db.get(marker_key).await.unwrap().unwrap(), marker_before);
+            let error = require_reader_bootstrap_or_legacy(&db)
+                .await
+                .expect_err("an older store requires writer-owned migration");
+
+            assert!(matches!(
+                error,
+                HelixDbError::WriterMigrationRequired {
+                    requirement: WriterMigrationRequirement::StorageVersion {
+                        found,
+                        target: 0x0004,
+                    },
+                } if found == version_number
+            ));
+            assert_eq!(db.get(marker_key).await.unwrap().unwrap(), marker_before);
+            db.close().await.unwrap();
+        }
     }
 
     #[tokio::test]

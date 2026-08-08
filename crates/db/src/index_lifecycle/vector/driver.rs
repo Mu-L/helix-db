@@ -2911,7 +2911,10 @@ fn decode_delta(
     else {
         return Err(corruption("build-delta prefix yielded another key kind"));
     };
-    let value = decode_build_delta(value)?;
+    let value = crate::index_lifecycle::expect_typed_value(
+        decode_build_delta(value),
+        "build-delta key contains another value kind",
+    )?;
     if key.index_id != value.index_id
         || key.generation != value.generation
         || key.entity.kind != value.entity_kind
@@ -2934,7 +2937,10 @@ fn decode_applied(
     else {
         return Err(corruption("applied-state prefix yielded another key kind"));
     };
-    let value = decode_applied_state(value)?;
+    let value = crate::index_lifecycle::expect_typed_value(
+        decode_applied_state(value),
+        "applied-state key contains another value kind",
+    )?;
     if key.index_id != value.index_id
         || key.generation != value.generation
         || key.entity.kind != value.entity_kind
@@ -2958,7 +2964,10 @@ fn decode_mapping(
     else {
         return Err(corruption("vector mapping prefix yielded another key kind"));
     };
-    let value = decode_partition_mapping(value)?;
+    let value = crate::index_lifecycle::expect_typed_value(
+        decode_partition_mapping(value),
+        "vector partition mapping key contains another value kind",
+    )?;
     if key.index_id != operation.index_id()
         || key.generation != operation.generation()
         || value.index_id != operation.index_id()

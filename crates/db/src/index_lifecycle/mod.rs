@@ -57,3 +57,22 @@ pub use operation::*;
 pub use public::*;
 pub(crate) use scope_gate::*;
 pub use work::{BlobRef, TextPartition};
+
+/// Preserves lifecycle corruption classification when a typed key contains a
+/// valid value from another V2 family.
+pub(crate) fn expect_typed_value<T>(
+    decoded: std::result::Result<T, crate::encoding::error::EncodingError>,
+    mismatch_reason: &'static str,
+) -> crate::Result<T> {
+    match decoded {
+        Ok(value) => Ok(value),
+        Err(crate::encoding::error::EncodingError::Custom(reason))
+            if reason.ends_with(" key contains another value kind") =>
+        {
+            Err(crate::HelixDbError::IndexCatalogCorruption(
+                mismatch_reason.to_string(),
+            ))
+        }
+        Err(error) => Err(error.into()),
+    }
+}

@@ -802,6 +802,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tenant_catalogs_migrate_without_changing_unrelated_bytes() {
+        let _guard = TEST_LOCK.lock().await;
+        let db = v3_db("v4-equality-tenant-migration").await;
+        let tenant = DataScope::Tenant(TenantId::from_u128(7));
+        let unscoped = put_active_index(&db, DataScope::LegacyUnscoped).await;
+        let tenant_generation = put_active_index(&db, tenant).await;
+        for entity_id in 0..2 {
+            for generation in [&unscoped, &tenant_generation] {
+                put_graph_entity(&db, generation.scope, entity_id, "shared").await;
+                put_v3_entry(
+                    &db,
+                    generation.scope,
+                    generation.index_id,
+                    generation.generation,
+                    entity_id,
+                    "shared",
+                )
+                .await;
+            }
+        }
+        let unrelated_key = Bytes::from_static(b"\xfeunrelated-migration-fixture");
+        let unrelated_value = Bytes::from_static(b"preserve-exactly");
+        db.put(unrelated_key.clone(), unrelated_value.clone())
+            .await
+            .unwrap();
+
+        super::super::repository::bootstrap_writer(&db)
+            .await
+            .unwrap();
+
+        assert_active_migrated(&db, &unscoped).await;
+        assert_active_migrated(&db, &tenant_generation).await;
+        assert_eq!(db.get(unrelated_key).await.unwrap(), Some(unrelated_value));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn every_migration_failpoint_restarts_deterministically() {
         let _guard = TEST_LOCK.lock().await;
         for (ordinal, failpoint) in EqualityBitmapMigrationFailpoint::ALL

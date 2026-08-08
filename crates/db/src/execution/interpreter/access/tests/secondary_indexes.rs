@@ -1,5 +1,7 @@
 //! Secondary-index access and canonical-row integration tests.
 
+use std::collections::HashMap;
+
 use super::support::*;
 use crate::config::SecondaryIndexDefinition;
 use crate::encoding::indexes::equality::{EqualityIndexKey, GlobalEdgeEqualityIndexKey};
@@ -10,14 +12,17 @@ use crate::encoding::v1::keys::{DataKeyKind, Key};
 use crate::encoding::v2::keys::Key as ManagedKey;
 use crate::encoding::v2::keys::{
     CanonicalSecondaryValue, ScopedKey, SecondaryEntryKey, SecondaryEntryLane,
+    SecondaryEqualityBitmapKey,
 };
-use crate::encoding::v2::values::{encode_index_record, encode_secondary_entry};
+use crate::encoding::v2::values::{
+    encode_index_record, encode_secondary_entry, SecondaryEqualityBitmapValue,
+};
 use crate::error::{HelixDbError, IndexFamily, IndexLifecycleUnavailableReason};
 use crate::execution::interpreter::ExecutionContext;
 use crate::index_lifecycle::work::SecondaryEntryValue;
 use crate::index_lifecycle::{
-    IndexEntityId, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
-    IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
+    IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2,
+    IndexRevision, IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
     ValidatedSecondaryIndexDefinition,
 };
 
@@ -62,10 +67,47 @@ async fn seed_active_secondary_generation(
         .expect("managed secondary Active record persists");
 
     let definition = handle.secondary_definition().unwrap();
-    let lane = match definition {
+    let equality_element_kind = match definition {
         ValidatedSecondaryIndexDefinition::NodeEquality { unique: false, .. } => {
-            SecondaryEntryLane::NodeEquality
+            Some(IndexElementKind::Node)
         }
+        ValidatedSecondaryIndexDefinition::EdgeEquality { .. } => Some(IndexElementKind::Edge),
+        ValidatedSecondaryIndexDefinition::NodeEquality { unique: true, .. }
+        | ValidatedSecondaryIndexDefinition::NodeRange { .. }
+        | ValidatedSecondaryIndexDefinition::EdgeRange { .. } => None,
+    };
+    if let Some(element_kind) = equality_element_kind {
+        let mut bitmaps = HashMap::new();
+        for (value, entity_id) in rows {
+            let CanonicalSecondaryValue::Equality(value) =
+                CanonicalSecondaryValue::equality_string(value)
+            else {
+                unreachable!("string equality fixtures always produce equality values")
+            };
+            bitmaps
+                .entry(value)
+                .or_insert_with(roaring::RoaringTreemap::new)
+                .insert(*entity_id);
+        }
+        for (value, ids) in bitmaps {
+            let key =
+                SecondaryEqualityBitmapKey::try_new(index_id, generation, element_kind, value)
+                    .expect("managed equality bitmap key validates");
+            db.inner_db()
+                .put(
+                    ManagedKey::Data {
+                        scope: DataScope::LegacyUnscoped,
+                        kind: ScopedKey::SecondaryEqualityBitmap(key),
+                    }
+                    .to_bytes(),
+                    SecondaryEqualityBitmapValue::new(ids).encode(),
+                )
+                .await
+                .expect("managed equality bitmap persists");
+        }
+        return identity;
+    }
+    let lane = match definition {
         ValidatedSecondaryIndexDefinition::NodeEquality { unique: true, .. } => {
             SecondaryEntryLane::NodeUniqueEquality
         }
@@ -77,7 +119,10 @@ async fn seed_active_secondary_generation(
             direction: crate::config::RangeIndexDirection::Desc,
             ..
         } => SecondaryEntryLane::NodeRangeDescending,
-        ValidatedSecondaryIndexDefinition::EdgeEquality { .. } => SecondaryEntryLane::EdgeEquality,
+        ValidatedSecondaryIndexDefinition::NodeEquality { unique: false, .. }
+        | ValidatedSecondaryIndexDefinition::EdgeEquality { .. } => {
+            unreachable!("nonunique equality fixtures return after writing their bitmap")
+        }
         ValidatedSecondaryIndexDefinition::EdgeRange {
             direction: crate::config::RangeIndexDirection::Asc,
             ..
@@ -473,7 +518,7 @@ async fn edge_equality_access_uses_global_label_scoped_index() {
 }
 
 #[tokio::test]
-async fn regression_equality_lookup_exactly_filters_a_shared_digest_bucket() {
+async fn regression_equality_lookup_uses_the_full_canonical_value_key() {
     let db = test_support::open_db("access-equality-digest-collision").await;
     let matching = test_support::add_node_with_properties(
         &db,
@@ -491,7 +536,10 @@ async fn regression_equality_lookup_exactly_filters_a_shared_digest_bucket() {
         &db,
         SecondaryIndexDefinition::node_equality("User", "status").unwrap(),
         44,
-        &[("needle", matching), ("needle", collision)],
+        &[
+            ("needle", matching),
+            ("different canonical value", collision),
+        ],
     )
     .await;
 
@@ -510,12 +558,12 @@ async fn regression_equality_lookup_exactly_filters_a_shared_digest_bucket() {
     assert_eq!(
         actual,
         ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(matching)]),
-        "managed equality lookup must verify the exact stored property after digest lookup"
+        "managed equality lookup must address the complete canonical value"
     );
 }
 
 #[tokio::test]
-async fn regression_edge_equality_lookup_exactly_filters_a_shared_digest_bucket() {
+async fn regression_edge_equality_lookup_uses_the_full_canonical_value_key() {
     let db = test_support::open_db("access-edge-equality-digest-collision").await;
     let from = test_support::add_user(&db, "from").await;
     let to = test_support::add_user(&db, "to").await;
@@ -539,7 +587,10 @@ async fn regression_edge_equality_lookup_exactly_filters_a_shared_digest_bucket(
         &db,
         SecondaryIndexDefinition::edge_equality("FOLLOWS", "status").unwrap(),
         45,
-        &[("needle", matching), ("needle", collision)],
+        &[
+            ("needle", matching),
+            ("different canonical value", collision),
+        ],
     )
     .await;
 
@@ -560,7 +611,7 @@ async fn regression_edge_equality_lookup_exactly_filters_a_shared_digest_bucket(
     assert_eq!(
         actual,
         ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(matching)]),
-        "managed edge equality lookup must verify exact property bytes"
+        "managed edge equality lookup must address the complete canonical value"
     );
 }
 

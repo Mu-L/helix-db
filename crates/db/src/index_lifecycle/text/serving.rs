@@ -178,7 +178,10 @@ pub(crate) async fn load_active_manifest_root(
             )),
         };
     };
-    let root = index_values::decode_manifest_root(&value)?;
+    let root = crate::index_lifecycle::expect_typed_value(
+        index_values::decode_manifest_root(&value),
+        "text manifest root key contains another typed value kind",
+    )?;
     if root.index_id() != authority.index_id()
         || root.generation() != authority.generation()
         || root.partition() != partition
@@ -250,7 +253,10 @@ pub(crate) async fn load_active_manifest_roots(
                 "text manifest-root prefix yielded another typed key",
             ));
         };
-        let root = index_values::decode_manifest_root(&row.value)?;
+        let root = crate::index_lifecycle::expect_typed_value(
+            index_values::decode_manifest_root(&row.value),
+            "text manifest root key contains another typed value kind",
+        )?;
         if key.index_id != authority.index_id()
             || key.generation != authority.generation()
             || root.index_id() != authority.index_id()
@@ -338,7 +344,10 @@ pub(crate) async fn load_active_manifest_page(
             "Active text manifest root references a missing page",
         ));
     };
-    let value = index_values::decode_manifest_page(&value)?;
+    let value = crate::index_lifecycle::expect_typed_value(
+        index_values::decode_manifest_page(&value),
+        "text manifest page key contains another typed value kind",
+    )?;
     if value.index_id() != root.index_id()
         || value.generation() != root.generation()
         || value.partition() != root.partition()
@@ -413,7 +422,10 @@ pub(crate) async fn load_active_entity_states(
                 "Active V2 text split candidate has no entity state",
             ));
         };
-        let state = index_values::decode_text_entity_state(&value)?;
+        let state = crate::index_lifecycle::expect_typed_value(
+            index_values::decode_text_entity_state(&value),
+            "text entity-state key contains another typed value kind",
+        )?;
         let typed_key = index_keys::TextEntityStateKey {
             root: root.key,
             entity,

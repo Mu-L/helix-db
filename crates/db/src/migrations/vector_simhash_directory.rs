@@ -1347,6 +1347,19 @@ mod tests {
         SimHashDirectoryValidationOutcome, VectorDistanceMetric, VectorIndexConfig,
     };
 
+    #[cfg(not(feature = "production-coverage"))]
+    static VECTOR_MIGRATION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[cfg(feature = "production-coverage")]
+    async fn migration_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+        super::super::production_contracts::failpoint_contract_guard().await
+    }
+
+    #[cfg(not(feature = "production-coverage"))]
+    async fn migration_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+        VECTOR_MIGRATION_TEST_LOCK.lock().await
+    }
+
     struct LegacyFixture<D: Distance> {
         record: IndexRecordV2,
         operation: IndexOperationRecord,
@@ -1589,6 +1602,7 @@ mod tests {
 
     #[tokio::test]
     async fn zero_targets_is_a_durable_no_op() {
+        let _failpoint_guard = migration_test_guard().await;
         let db = test_db().await;
         let job = run_to_completion(&db, one_row_limits()).await;
         assert_eq!(job.completed_targets, 0);
@@ -1599,6 +1613,7 @@ mod tests {
 
     #[tokio::test]
     async fn partial_directory_resumes_and_publishes_exact_correspondence() {
+        let _failpoint_guard = migration_test_guard().await;
         let db = test_db().await;
         let fixture = seed_active_legacy::<vector::distance::Cosine>(
             &db,
@@ -1751,6 +1766,7 @@ mod tests {
 
     #[tokio::test]
     async fn all_supported_metrics_and_multiple_targets_upgrade() {
+        let _failpoint_guard = migration_test_guard().await;
         let db = test_db().await;
         seed_active_legacy::<vector::distance::Cosine>(
             &db,
@@ -1782,6 +1798,7 @@ mod tests {
 
     #[tokio::test]
     async fn extra_marker_and_wrong_reservation_fail_closed() {
+        let _failpoint_guard = migration_test_guard().await;
         let db = test_db().await;
         let fixture = seed_active_legacy::<vector::distance::Cosine>(
             &db,
@@ -1841,6 +1858,7 @@ mod tests {
 
     #[tokio::test]
     async fn reader_fallback_precedes_blocking_writer_startup_upgrade() {
+        let _failpoint_guard = migration_test_guard().await;
         let token = crate::ProcessLocalDatabaseToken::new(format!(
             "vector-directory-startup-{}",
             uuid::Uuid::new_v4()
@@ -1924,6 +1942,7 @@ mod tests {
     #[cfg(any(feature = "migration-parity", feature = "production-coverage"))]
     #[tokio::test]
     async fn every_directory_commit_boundary_recovers_without_duplicate_writes() {
+        let _failpoint_guard = migration_test_guard().await;
         const BOUNDARIES: [super::super::MigrationFailpoint; 8] = [
             super::super::MigrationFailpoint::VectorDirectoryPreflightCommitBefore,
             super::super::MigrationFailpoint::VectorDirectoryPreflightCommitAfter,

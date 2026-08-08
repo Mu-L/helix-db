@@ -15,6 +15,8 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 use std::ops::Bound;
+#[cfg(feature = "production-coverage")]
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -77,6 +79,39 @@ use crate::index_lifecycle::{
 };
 
 use super::IndexScopeGates;
+
+#[cfg(feature = "production-coverage")]
+static BENCHMARK_POINT_READS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "production-coverage")]
+static BENCHMARK_SCANS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "production-coverage")]
+static BENCHMARK_GRAPH_READS: AtomicU64 = AtomicU64::new(0);
+
+/// Exact storage operations issued by managed equality serving while the
+/// production-coverage benchmark is measuring it.
+#[cfg(feature = "production-coverage")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SecondaryEqualityReadMetrics {
+    pub(crate) point_reads: u64,
+    pub(crate) scans: u64,
+    pub(crate) graph_reads: u64,
+}
+
+#[cfg(feature = "production-coverage")]
+pub(crate) fn reset_equality_read_metrics() {
+    BENCHMARK_POINT_READS.store(0, AtomicOrdering::Relaxed);
+    BENCHMARK_SCANS.store(0, AtomicOrdering::Relaxed);
+    BENCHMARK_GRAPH_READS.store(0, AtomicOrdering::Relaxed);
+}
+
+#[cfg(feature = "production-coverage")]
+pub(crate) fn equality_read_metrics() -> SecondaryEqualityReadMetrics {
+    SecondaryEqualityReadMetrics {
+        point_reads: BENCHMARK_POINT_READS.load(AtomicOrdering::Relaxed),
+        scans: BENCHMARK_SCANS.load(AtomicOrdering::Relaxed),
+        graph_reads: BENCHMARK_GRAPH_READS.load(AtomicOrdering::Relaxed),
+    }
+}
 
 /// Family driver sharing the lifecycle scope gate.
 pub(crate) struct SecondaryIndexDriver {
@@ -2789,11 +2824,15 @@ pub(crate) async fn lookup_active_equality_generation(
             canonical,
             IndexEntityId::initial(),
         )?;
+        #[cfg(feature = "production-coverage")]
+        BENCHMARK_POINT_READS.fetch_add(1, AtomicOrdering::Relaxed);
         let Some(bytes) = reader.get(key).await? else {
             return Ok(roaring::RoaringTreemap::new());
         };
         let owner =
             decode_secondary_entry_value(handle.index_id(), handle.generation(), lane, &bytes)?;
+        #[cfg(feature = "production-coverage")]
+        BENCHMARK_GRAPH_READS.fetch_add(1, AtomicOrdering::Relaxed);
         if !authoritative_equality_matches(reader, handle.scope(), definition, owner, value).await?
         {
             return Err(corruption(
@@ -2811,6 +2850,8 @@ pub(crate) async fn lookup_active_equality_generation(
         canonical,
         IndexEntityId::initial(),
     )?;
+    #[cfg(feature = "production-coverage")]
+    BENCHMARK_POINT_READS.fetch_add(1, AtomicOrdering::Relaxed);
     reader
         .get(key)
         .await?
@@ -2828,10 +2869,14 @@ async fn scan_authoritative_null_equality(
     handle: &ActiveIndexHandle,
     definition: &ValidatedSecondaryIndexDefinition,
 ) -> Result<roaring::RoaringTreemap> {
+    #[cfg(feature = "production-coverage")]
+    BENCHMARK_SCANS.fetch_add(1, AtomicOrdering::Relaxed);
     let prefix = source_prefix(handle.scope(), definition.element_kind());
     let mut rows = reader.scan_prefix(&prefix, ..).await?;
     let mut owners = roaring::RoaringTreemap::new();
     while let Some(row) = rows.next().await? {
+        #[cfg(feature = "production-coverage")]
+        BENCHMARK_GRAPH_READS.fetch_add(1, AtomicOrdering::Relaxed);
         let Some(entity_id) = source_entity(handle.scope(), definition.element_kind(), &row.key)?
         else {
             continue;

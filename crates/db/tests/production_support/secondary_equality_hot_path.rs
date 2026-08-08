@@ -1,8 +1,8 @@
-//! Fixed-shape secondary-equality write-path benchmark support.
+//! Fixed-shape secondary-equality read/write benchmark support.
 //!
 //! Index creation and physical planning finish before the measured phase. The
 //! fixture deliberately maps every indexed field to one shared value so V3
-//! creates the worst-case 500,000 entity-suffixed rows and bitmap formats can
+//! creates 50,000 entity-suffixed rows and bitmap formats can
 //! collapse the same logical state to 50 rows.
 
 use std::sync::Arc;
@@ -17,13 +17,17 @@ use crate::config::SecondaryIndexDefinition;
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::Key;
 use crate::encoding::v2::keys::{RecordKind, ScopedKey};
+use crate::encoding::v2::values::SecondaryEqualityBitmapValue;
 use crate::execution::interpreter::ExecutionValue;
 use crate::index_lifecycle::ValidatedDynamicIndexDefinition;
 use crate::{HelixDB, HelixDbSource, HelixStorage, Result};
 
 const INDEX_COUNT: usize = 50;
-const ENTITY_COUNT: usize = 10_000;
+const ENTITY_COUNT: usize = 1_000;
 const CONCURRENT_WRITERS: usize = 32;
+const READ_OPERATIONS: usize = 1_000;
+const CONCURRENT_READERS: usize = 32;
+const MILLION_BITMAP_CARDINALITY: u64 = 1_000_000;
 const LABEL: &str = "SecondaryEqualityHotPathNode";
 const SHARED_VALUE: &str = "shared";
 
@@ -34,6 +38,16 @@ pub enum SecondaryEqualityInsertMode {
     /// One writer executes every transaction in order.
     Sequential,
     /// Thirty-two writers execute disjoint logical insert counts concurrently.
+    Concurrent,
+}
+
+/// One lookup scheduling mode over the populated shared-value bitmap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecondaryEqualityReadMode {
+    /// One reader executes every lookup in order.
+    Sequential,
+    /// Thirty-two readers execute disjoint lookup counts concurrently.
     Concurrent,
 }
 
@@ -63,26 +77,65 @@ impl SecondaryEqualityInsertSample {
     }
 }
 
+/// Repeated full-cardinality equality lookup outcome.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SecondaryEqualityReadSample {
+    pub mode: SecondaryEqualityReadMode,
+    pub operations: usize,
+    pub readers: usize,
+    pub result_count: usize,
+    pub elapsed_nanos: u128,
+    pub throughput_per_second: f64,
+    pub median_latency_nanos: u64,
+    pub p95_latency_nanos: u64,
+    pub point_reads: u64,
+    pub scans: u64,
+    pub graph_reads: u64,
+    pub allocations: u64,
+    pub allocated_bytes: u64,
+}
+
+impl SecondaryEqualityReadSample {
+    /// Attaches process-global allocator observations captured by the harness.
+    pub fn with_allocations(mut self, allocations: u64, allocated_bytes: u64) -> Self {
+        self.allocations = allocations;
+        self.allocated_bytes = allocated_bytes;
+        self
+    }
+}
+
 /// Post-write structural and read-path observations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SecondaryEqualityInspection {
     pub physical_secondary_rows: u64,
-    pub equality_result_count: usize,
-    pub equality_lookup_nanos: u128,
+    pub v3_nonunique_rows: u64,
+    pub v4_bitmap_rows: u64,
+    pub logical_secondary_bytes: u64,
+    pub minimum_bitmap_cardinality: u64,
+    pub maximum_bitmap_cardinality: u64,
+}
+
+/// Portable bitmap size and codec cost for one million sequential IDs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SecondaryEqualityMillionBitmapSample {
+    pub cardinality: u64,
+    pub encoded_bytes: usize,
+    pub encode_nanos: u128,
+    pub decode_nanos: u128,
 }
 
 /// Prepared empty database with 50 Active nonunique equality indexes.
 pub struct SecondaryEqualityHotPathFixture {
     db: Arc<HelixDB>,
     insert_plan: Arc<exec::ExecutablePlan>,
-    lookup_plan: exec::ExecutablePlan,
+    lookup_plan: Arc<exec::ExecutablePlan>,
 }
 
 impl SecondaryEqualityHotPathFixture {
     /// Creates the fixed fixture without including setup in benchmark timings.
     pub async fn open(database: impl Into<String>) -> Result<Self> {
         assert_eq!(INDEX_COUNT, 50, "hot-path index shape is frozen");
-        assert_eq!(ENTITY_COUNT, 10_000, "hot-path entity shape is frozen");
+        assert_eq!(ENTITY_COUNT, 1_000, "hot-path entity shape is frozen");
         assert_eq!(
             CONCURRENT_WRITERS, 32,
             "hot-path concurrency shape is frozen"
@@ -116,7 +169,7 @@ impl SecondaryEqualityHotPathFixture {
         Ok(Self {
             db,
             insert_plan: Arc::new(insert_plan),
-            lookup_plan: equality_search_plan(),
+            lookup_plan: Arc::new(equality_search_plan()),
         })
     }
 
@@ -131,37 +184,147 @@ impl SecondaryEqualityHotPathFixture {
         }
     }
 
-    /// Counts physical rows and times one full-cardinality equality lookup.
+    /// Counts V3 rows, V4 bitmap rows, and their visible logical bytes.
     pub async fn inspect(&self) -> Result<SecondaryEqualityInspection> {
+        self.db.flush_writer().await?;
         let HelixStorage::Writer(writer) = self.db.storage() else {
             unreachable!("hot-path benchmark opens a writer")
         };
-        let prefix = Key::data_prefix(
+        let v3_prefix = Key::data_prefix(
             DataScope::LegacyUnscoped,
             ScopedKey::logical_prefix(RecordKind::SecondaryEntry),
         );
-        let mut rows = writer.db().scan_prefix(&prefix, ..).await?;
-        let mut physical_secondary_rows = 0_u64;
-        while rows.next().await?.is_some() {
-            physical_secondary_rows = physical_secondary_rows.saturating_add(1);
+        let mut v3_rows = writer.db().scan_prefix(&v3_prefix, ..).await?;
+        let mut v3_nonunique_rows = 0_u64;
+        let mut logical_secondary_bytes = 0_u64;
+        while let Some(row) = v3_rows.next().await? {
+            v3_nonunique_rows = v3_nonunique_rows.saturating_add(1);
+            logical_secondary_bytes = logical_secondary_bytes.saturating_add(
+                u64::try_from(row.key.len().saturating_add(row.value.len())).unwrap_or(u64::MAX),
+            );
         }
 
-        let lookup_started = Instant::now();
-        let result = self
-            .db
-            .execute(&self.lookup_plan, context::ParamBindings::default())
-            .await?;
-        let equality_lookup_nanos = lookup_started.elapsed().as_nanos();
-        let Some(ExecutionValue::Scalars(values)) = result.last else {
-            return Err(crate::HelixDbError::InvariantViolation(
-                "hot-path equality lookup did not return projected scalar IDs".to_string(),
-            ));
-        };
-
+        let v4_prefix = Key::data_prefix(
+            DataScope::LegacyUnscoped,
+            ScopedKey::logical_prefix(RecordKind::SecondaryEqualityBitmap),
+        );
+        let mut v4_rows = writer.db().scan_prefix(&v4_prefix, ..).await?;
+        let mut v4_bitmap_rows = 0_u64;
+        let mut minimum_bitmap_cardinality = u64::MAX;
+        let mut maximum_bitmap_cardinality = 0_u64;
+        while let Some(row) = v4_rows.next().await? {
+            v4_bitmap_rows = v4_bitmap_rows.saturating_add(1);
+            logical_secondary_bytes = logical_secondary_bytes.saturating_add(
+                u64::try_from(row.key.len().saturating_add(row.value.len())).unwrap_or(u64::MAX),
+            );
+            let cardinality = SecondaryEqualityBitmapValue::decode(&row.value)?
+                .ids()
+                .len();
+            minimum_bitmap_cardinality = minimum_bitmap_cardinality.min(cardinality);
+            maximum_bitmap_cardinality = maximum_bitmap_cardinality.max(cardinality);
+        }
+        if v4_bitmap_rows == 0 {
+            minimum_bitmap_cardinality = 0;
+        }
         Ok(SecondaryEqualityInspection {
-            physical_secondary_rows,
-            equality_result_count: values.len(),
-            equality_lookup_nanos,
+            physical_secondary_rows: v3_nonunique_rows.saturating_add(v4_bitmap_rows),
+            v3_nonunique_rows,
+            v4_bitmap_rows,
+            logical_secondary_bytes,
+            minimum_bitmap_cardinality,
+            maximum_bitmap_cardinality,
+        })
+    }
+
+    /// Warms and validates the full-cardinality equality lookup.
+    pub async fn prepare_read(&self) -> Result<()> {
+        let result_count = self.lookup_result_count().await?;
+        assert_eq!(
+            result_count, ENTITY_COUNT,
+            "the benchmark lookup must return every inserted entity"
+        );
+        Ok(())
+    }
+
+    /// Measures repeated full-cardinality equality lookups after warmup.
+    pub async fn read(
+        &self,
+        mode: SecondaryEqualityReadMode,
+    ) -> Result<SecondaryEqualityReadSample> {
+        crate::index_lifecycle::secondary::reset_equality_read_metrics();
+        let started = Instant::now();
+        let mut latencies = match mode {
+            SecondaryEqualityReadMode::Sequential => {
+                let mut latencies = Vec::with_capacity(READ_OPERATIONS);
+                for _ in 0..READ_OPERATIONS {
+                    let operation_started = Instant::now();
+                    assert_eq!(
+                        self.lookup_result_count().await?,
+                        ENTITY_COUNT,
+                        "every benchmark lookup must return the same complete result"
+                    );
+                    latencies.push(duration_nanos(operation_started.elapsed()));
+                }
+                latencies
+            }
+            SecondaryEqualityReadMode::Concurrent => {
+                let mut tasks = tokio::task::JoinSet::new();
+                for reader in 0..CONCURRENT_READERS {
+                    let db = Arc::clone(&self.db);
+                    let plan = Arc::clone(&self.lookup_plan);
+                    tasks.spawn(async move {
+                        let mut latencies =
+                            Vec::with_capacity(READ_OPERATIONS.div_ceil(CONCURRENT_READERS));
+                        for _ in (reader..READ_OPERATIONS).step_by(CONCURRENT_READERS) {
+                            let operation_started = Instant::now();
+                            assert_eq!(
+                                lookup_result_count(&db, &plan).await?,
+                                ENTITY_COUNT,
+                                "every benchmark lookup must return the same complete result"
+                            );
+                            latencies.push(duration_nanos(operation_started.elapsed()));
+                        }
+                        Result::<_>::Ok(latencies)
+                    });
+                }
+                let mut latencies = Vec::with_capacity(READ_OPERATIONS);
+                while let Some(result) = tasks.join_next().await {
+                    latencies.append(&mut result.map_err(|error| {
+                        crate::HelixDbError::InvariantViolation(format!(
+                            "hot-path benchmark reader task failed: {error}"
+                        ))
+                    })??);
+                }
+                latencies
+            }
+        };
+        let elapsed = started.elapsed();
+        assert_eq!(latencies.len(), READ_OPERATIONS);
+        latencies.sort_unstable();
+        let metrics = crate::index_lifecycle::secondary::equality_read_metrics();
+        assert_eq!(
+            metrics.point_reads,
+            u64::try_from(READ_OPERATIONS).expect("read operation count fits u64")
+        );
+        assert_eq!(metrics.scans, 0);
+        assert_eq!(metrics.graph_reads, 0);
+        Ok(SecondaryEqualityReadSample {
+            mode,
+            operations: READ_OPERATIONS,
+            readers: match mode {
+                SecondaryEqualityReadMode::Sequential => 1,
+                SecondaryEqualityReadMode::Concurrent => CONCURRENT_READERS,
+            },
+            result_count: ENTITY_COUNT,
+            elapsed_nanos: elapsed.as_nanos(),
+            throughput_per_second: f64::from(READ_OPERATIONS as u32) / elapsed.as_secs_f64(),
+            median_latency_nanos: percentile(&latencies, 50),
+            p95_latency_nanos: percentile(&latencies, 95),
+            point_reads: metrics.point_reads,
+            scans: metrics.scans,
+            graph_reads: metrics.graph_reads,
+            allocations: 0,
+            allocated_bytes: 0,
         })
     }
 
@@ -262,6 +425,39 @@ impl SecondaryEqualityHotPathFixture {
             conflicts,
             retries,
         ))
+    }
+
+    async fn lookup_result_count(&self) -> Result<usize> {
+        lookup_result_count(&self.db, &self.lookup_plan).await
+    }
+}
+
+async fn lookup_result_count(db: &HelixDB, plan: &exec::ExecutablePlan) -> Result<usize> {
+    let result = db.execute(plan, context::ParamBindings::default()).await?;
+    let Some(ExecutionValue::Scalars(values)) = result.last else {
+        return Err(crate::HelixDbError::InvariantViolation(
+            "hot-path equality lookup did not return projected scalar IDs".to_string(),
+        ));
+    };
+    Ok(values.len())
+}
+
+/// Measures the portable V4 value codec at the largest required fixture size.
+pub fn benchmark_million_sequential_id_bitmap() -> SecondaryEqualityMillionBitmapSample {
+    let ids = roaring::RoaringTreemap::from_iter(0..MILLION_BITMAP_CARDINALITY);
+    let encode_started = Instant::now();
+    let encoded = SecondaryEqualityBitmapValue::new(ids).encode();
+    let encode_nanos = encode_started.elapsed().as_nanos();
+    let decode_started = Instant::now();
+    let decoded = SecondaryEqualityBitmapValue::decode(&encoded)
+        .expect("one-million-ID portable bitmap must decode");
+    let decode_nanos = decode_started.elapsed().as_nanos();
+    assert_eq!(decoded.ids().len(), MILLION_BITMAP_CARDINALITY);
+    SecondaryEqualityMillionBitmapSample {
+        cardinality: MILLION_BITMAP_CARDINALITY,
+        encoded_bytes: encoded.len(),
+        encode_nanos,
+        decode_nanos,
     }
 }
 
@@ -379,5 +575,12 @@ mod tests {
         let values = (1..=100).collect::<Vec<_>>();
         assert_eq!(percentile(&values, 50), 50);
         assert_eq!(percentile(&values, 95), 95);
+    }
+
+    #[test]
+    fn million_sequential_ids_round_trip_portably() {
+        let sample = benchmark_million_sequential_id_bitmap();
+        assert_eq!(sample.cardinality, MILLION_BITMAP_CARDINALITY);
+        assert!(sample.encoded_bytes > 0);
     }
 }

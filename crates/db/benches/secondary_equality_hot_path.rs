@@ -3,7 +3,10 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use db::production_coverage::{SecondaryEqualityHotPathFixture, SecondaryEqualityInsertMode};
+use db::production_coverage::{
+    benchmark_million_sequential_id_bitmap, SecondaryEqualityHotPathFixture,
+    SecondaryEqualityInsertMode, SecondaryEqualityReadMode,
+};
 use serde::Serialize;
 
 struct TrackingAllocator {
@@ -82,8 +85,19 @@ static ALLOCATOR: TrackingAllocator = TrackingAllocator::new();
 struct BenchmarkReport {
     sequential: db::production_coverage::SecondaryEqualityInsertSample,
     sequential_inspection: db::production_coverage::SecondaryEqualityInspection,
+    read_sequential: db::production_coverage::SecondaryEqualityReadSample,
+    read_concurrent: db::production_coverage::SecondaryEqualityReadSample,
     concurrent: db::production_coverage::SecondaryEqualityInsertSample,
     concurrent_inspection: db::production_coverage::SecondaryEqualityInspection,
+    million_sequential_id_bitmap: db::production_coverage::SecondaryEqualityMillionBitmapSample,
+}
+
+fn assert_v4_shape(inspection: &db::production_coverage::SecondaryEqualityInspection) {
+    assert_eq!(inspection.physical_secondary_rows, 50);
+    assert_eq!(inspection.v3_nonunique_rows, 0);
+    assert_eq!(inspection.v4_bitmap_rows, 50);
+    assert_eq!(inspection.minimum_bitmap_cardinality, 1_000);
+    assert_eq!(inspection.maximum_bitmap_cardinality, 1_000);
 }
 
 fn main() {
@@ -97,18 +111,27 @@ fn main() {
             SecondaryEqualityHotPathFixture::open("secondary-equality-hot-path-sequential")
                 .await
                 .expect("sequential hot-path fixture opens");
-        ALLOCATOR.start();
         let sequential = sequential_fixture
             .insert(SecondaryEqualityInsertMode::Sequential)
             .await
             .expect("sequential hot-path insertions succeed");
-        let (sequential_allocations, sequential_allocated_bytes) = ALLOCATOR.finish();
-        let sequential =
-            sequential.with_allocations(sequential_allocations, sequential_allocated_bytes);
         let sequential_inspection = sequential_fixture
             .inspect()
             .await
             .expect("sequential hot-path inspection succeeds");
+        assert_v4_shape(&sequential_inspection);
+        sequential_fixture
+            .prepare_read()
+            .await
+            .expect("sequential hot-path lookup warmup succeeds");
+        let read_sequential = sequential_fixture
+            .read(SecondaryEqualityReadMode::Sequential)
+            .await
+            .expect("sequential hot-path lookups succeed");
+        let read_concurrent = sequential_fixture
+            .read(SecondaryEqualityReadMode::Concurrent)
+            .await
+            .expect("concurrent hot-path lookups succeed");
         sequential_fixture
             .close()
             .await
@@ -118,28 +141,84 @@ fn main() {
             SecondaryEqualityHotPathFixture::open("secondary-equality-hot-path-concurrent")
                 .await
                 .expect("concurrent hot-path fixture opens");
-        ALLOCATOR.start();
         let concurrent = concurrent_fixture
             .insert(SecondaryEqualityInsertMode::Concurrent)
             .await
             .expect("concurrent hot-path insertions succeed");
-        let (concurrent_allocations, concurrent_allocated_bytes) = ALLOCATOR.finish();
-        let concurrent =
-            concurrent.with_allocations(concurrent_allocations, concurrent_allocated_bytes);
         let concurrent_inspection = concurrent_fixture
             .inspect()
             .await
             .expect("concurrent hot-path inspection succeeds");
+        assert_v4_shape(&concurrent_inspection);
         concurrent_fixture
             .close()
             .await
             .expect("concurrent hot-path fixture closes");
 
+        let allocation_fixture =
+            SecondaryEqualityHotPathFixture::open("secondary-equality-hot-path-allocations")
+                .await
+                .expect("allocation hot-path fixture opens");
+        ALLOCATOR.start();
+        allocation_fixture
+            .insert(SecondaryEqualityInsertMode::Sequential)
+            .await
+            .expect("allocation sequential insertions succeed");
+        let (sequential_allocations, sequential_allocated_bytes) = ALLOCATOR.finish();
+        allocation_fixture
+            .prepare_read()
+            .await
+            .expect("allocation lookup warmup succeeds");
+        ALLOCATOR.start();
+        allocation_fixture
+            .read(SecondaryEqualityReadMode::Sequential)
+            .await
+            .expect("allocation sequential lookups succeed");
+        let (sequential_read_allocations, sequential_read_allocated_bytes) = ALLOCATOR.finish();
+        ALLOCATOR.start();
+        allocation_fixture
+            .read(SecondaryEqualityReadMode::Concurrent)
+            .await
+            .expect("allocation concurrent lookups succeed");
+        let (concurrent_read_allocations, concurrent_read_allocated_bytes) = ALLOCATOR.finish();
+        allocation_fixture
+            .close()
+            .await
+            .expect("allocation hot-path fixture closes");
+
+        let concurrent_allocation_fixture = SecondaryEqualityHotPathFixture::open(
+            "secondary-equality-hot-path-concurrent-allocations",
+        )
+        .await
+        .expect("concurrent allocation hot-path fixture opens");
+        ALLOCATOR.start();
+        concurrent_allocation_fixture
+            .insert(SecondaryEqualityInsertMode::Concurrent)
+            .await
+            .expect("allocation concurrent insertions succeed");
+        let (concurrent_allocations, concurrent_allocated_bytes) = ALLOCATOR.finish();
+        concurrent_allocation_fixture
+            .close()
+            .await
+            .expect("concurrent allocation hot-path fixture closes");
+
+        let sequential =
+            sequential.with_allocations(sequential_allocations, sequential_allocated_bytes);
+        let read_sequential = read_sequential
+            .with_allocations(sequential_read_allocations, sequential_read_allocated_bytes);
+        let read_concurrent = read_concurrent
+            .with_allocations(concurrent_read_allocations, concurrent_read_allocated_bytes);
+        let concurrent =
+            concurrent.with_allocations(concurrent_allocations, concurrent_allocated_bytes);
+
         BenchmarkReport {
             sequential,
             sequential_inspection,
+            read_sequential,
+            read_concurrent,
             concurrent,
             concurrent_inspection,
+            million_sequential_id_bitmap: benchmark_million_sequential_id_bitmap(),
         }
     });
     println!(
