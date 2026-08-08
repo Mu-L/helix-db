@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_LOCAL_PORT: u16 = 6969;
 pub const DEFAULT_LOCAL_IMAGE: &str = "ghcr.io/helixdb/helixdb";
-pub const DEFAULT_LOCAL_IMAGE_TAG: &str = "latest";
+pub const DEFAULT_LOCAL_IMAGE_TAG: &str = "v0.0.3";
 pub const DEFAULT_QUERY_AUTH_HEADER: &str = "Authorization";
 pub const DEFAULT_QUERY_AUTH_ENV: &str = "HELIX_API_KEY";
 pub const DEFAULT_S3_REGION: &str = "us-east-1";
@@ -688,7 +688,7 @@ tag = "latest"
     fn local_config_defaults_to_published_standalone_image() {
         let config = LocalInstanceConfig::default();
 
-        assert_eq!(config.image_ref(), "ghcr.io/helixdb/helixdb:latest");
+        assert_eq!(config.image_ref(), "ghcr.io/helixdb/helixdb:v0.0.3");
     }
 
     #[test]

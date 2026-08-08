@@ -497,7 +497,7 @@ Page type: Guide
 
 <div className="flex flex-wrap gap-2"><Badge color="blue" size="sm">Guide</Badge></div>
 
-The `ghcr.io/helixdb/helixdb:latest` image runs the standalone HelixDB server.
+The `ghcr.io/helixdb/helixdb:v0.0.3` image runs the standalone HelixDB server.
 It exposes the same operation-tree request contract used by Helix Cloud at
 `POST /v2/query`; gateway-only Cloud features are not included.
 
@@ -573,7 +573,7 @@ Memory mode is selected by leaving `S3_BUCKET` unset:
 ```bash
 docker run --rm --name helixdb \
   -p 6969:8080 \
-  ghcr.io/helixdb/helixdb:latest
+  ghcr.io/helixdb/helixdb:v0.0.3
 ```
 
 The standalone server exposes liveness and readiness checks:
@@ -616,7 +616,7 @@ services:
         mc mb --ignore-existing local/helix-db
 
   helix:
-    image: ghcr.io/helixdb/helixdb:latest
+    image: ghcr.io/helixdb/helixdb:v0.0.3
     restart: unless-stopped
     depends_on:
       minio-init:
@@ -4653,7 +4653,7 @@ In a TTY, `helix init` prompts you to pick `local` or `enterprise`. Pass the sub
 helix start dev
 ```
 
-`helix start` pulls `ghcr.io/helixdb/helixdb:latest`, starts a background container named `helix-<project>-dev`, publishes port `6969`, and waits until the local server accepts `POST /v2/query` before returning.
+`helix start` pulls `ghcr.io/helixdb/helixdb:v0.0.3`, starts a background container named `helix-<project>-dev`, publishes port `6969`, and waits until the local server accepts `POST /v2/query` before returning.
 
 To stream logs in the foreground instead, use `helix start dev --foreground` and stop the container with Ctrl-C.
 
@@ -4753,7 +4753,7 @@ Page type: Guide
 
 <div className="flex flex-wrap gap-2"><Badge color="blue" size="sm">Guide</Badge></div>
 
-Local development runs the prebuilt `ghcr.io/helixdb/helixdb:latest` container and exposes the standalone server at `POST /v2/query`. By default, storage is in-memory. Use `--disk` when you want persistent local data backed by a CLI-managed MinIO volume.
+Local development runs the prebuilt `ghcr.io/helixdb/helixdb:v0.0.3` container and exposes the standalone server at `POST /v2/query`. By default, storage is in-memory. Use `--disk` when you want persistent local data backed by a CLI-managed MinIO volume.
 
 ## Prerequisites
 
@@ -5028,7 +5028,7 @@ name = "my-helix-app"
 [local.dev]
 port = 6969
 image = "ghcr.io/helixdb/helixdb"
-tag = "latest"
+tag = "v0.0.3"
 # Optional; defaults to in-memory when omitted.
 # storage = "disk"
 
@@ -5056,7 +5056,7 @@ One block per local instance. The instance name is the table key (e.g. `[local.d
 |-----|------|---------|-------------|
 | `port` | Number | `6969` | Host port published to container port `8080`. |
 | `image` | String | `ghcr.io/helixdb/helixdb` | Container image used by [`helix start`](/cli/command-reference/start). |
-| `tag` | String | `latest` | Image tag. |
+| `tag` | String | `v0.0.3` | Image tag. |
 | `storage` | `memory` \| `disk` | `memory` | Local storage mode. `disk` uses a CLI-managed MinIO container and persistent volume. |
 
 You can define as many local instances as you want, each on a different port:
@@ -6545,7 +6545,7 @@ helix start [INSTANCE] [OPTIONS]
 
 ## Behavior
 
-- Pulls `ghcr.io/helixdb/helixdb:latest` (or the image/tag set in `[local.<instance>]`).
+- Pulls `ghcr.io/helixdb/helixdb:v0.0.3` (or the image/tag set in `[local.<instance>]`).
 - Names the container `helix-<project>-<instance>` and publishes the configured port to container port `8080`.
 - Uses Docker or Podman based on `[project] container_runtime` in `helix.toml`.
 - Default storage is in-memory. Passing `--disk` starts a MinIO sidecar, creates the `helix-db` bucket, and runs `helixdb` with S3-compatible storage environment variables.

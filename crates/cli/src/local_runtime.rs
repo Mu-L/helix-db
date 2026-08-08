@@ -593,7 +593,7 @@ impl LocalRuntime {
     fn wait_ready(&self, port: u16) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
-            if self.query_endpoint_ready(port) {
+            if self.health_endpoint_ready(port) {
                 return Ok(());
             }
             thread::sleep(Duration::from_millis(250));
@@ -606,7 +606,7 @@ impl LocalRuntime {
             .into())
     }
 
-    fn query_endpoint_ready(&self, port: u16) -> bool {
+    fn health_endpoint_ready(&self, port: u16) -> bool {
         let Ok(mut stream) = TcpStream::connect_timeout(
             &(std::net::Ipv4Addr::LOCALHOST, port).into(),
             Duration::from_millis(500),
@@ -616,11 +616,8 @@ impl LocalRuntime {
         let _ = stream.set_read_timeout(Some(Duration::from_millis(750)));
         let _ = stream.set_write_timeout(Some(Duration::from_millis(750)));
 
-        let body = r#"{"request_type":"read","query":{"queries":[{"Query":{"name":"readiness","steps":[{"NWhere":{"Eq":["$label",{"String":"__HelixReadiness__"}]}},"Count"],"condition":null}}],"returns":["readiness"]},"parameters":{}}"#;
-        let request = format!(
-            "POST /v2/query HTTP/1.1\r\nHost: localhost:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
+        let request =
+            format!("GET /healthz HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n");
 
         if stream.write_all(request.as_bytes()).is_err() {
             return false;
@@ -1073,7 +1070,7 @@ mod tests {
     fn memory_helix_args_match_existing_run_shape() {
         let args = helix_run_args(
             "helix-demo-dev",
-            "ghcr.io/helixdb/helixdb:latest",
+            "ghcr.io/helixdb/helixdb:v0.0.3",
             9090,
             true,
             None,
@@ -1091,7 +1088,7 @@ mod tests {
                 "helix-demo-dev",
                 "-p",
                 "9090:8080",
-                "ghcr.io/helixdb/helixdb:latest",
+                "ghcr.io/helixdb/helixdb:v0.0.3",
             ]
             .into_iter()
             .map(String::from)
@@ -1104,7 +1101,7 @@ mod tests {
         let resources = disk_resources();
         let args = helix_run_args(
             "helix-demo-dev",
-            "ghcr.io/helixdb/helixdb:latest",
+            "ghcr.io/helixdb/helixdb:v0.0.3",
             8080,
             true,
             Some(&resources.network),
@@ -1137,7 +1134,7 @@ mod tests {
         let env = s3_env(&config).unwrap();
         let args = helix_run_args(
             "helix-demo-dev",
-            "ghcr.io/helixdb/helixdb:latest",
+            "ghcr.io/helixdb/helixdb:v0.0.3",
             8080,
             true,
             None,

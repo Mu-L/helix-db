@@ -67,7 +67,7 @@ In a TTY, `helix init` prompts you to pick `local` or `enterprise`. Pass the sub
 helix start dev
 ```
 
-`helix start` pulls `ghcr.io/helixdb/helixdb:latest`, starts a background container named `helix-<project>-dev`, publishes port `6969`, and waits until the local server accepts `POST /v2/query` before returning.
+`helix start` pulls `ghcr.io/helixdb/helixdb:v0.0.3`, starts a background container named `helix-<project>-dev`, publishes port `6969`, and waits until the local server accepts `POST /v2/query` before returning.
 
 To stream logs in the foreground instead, use `helix start dev --foreground` and stop the container with Ctrl-C.
 
