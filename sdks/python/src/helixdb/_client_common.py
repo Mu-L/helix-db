@@ -1,0 +1,206 @@
+"""Shared request and error contracts for HelixDB Python clients."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any, Mapping
+from urllib.parse import urljoin, urlparse
+
+from .dsl import QueryRequest
+
+DEFAULT_URL = "http://localhost:6969"
+QUERY_PATH = "/v2/query"
+
+
+class HelixError(Exception):
+    """Error raised by the HelixDB clients."""
+
+    def __init__(
+        self,
+        kind: str,
+        message: str,
+        *,
+        details: str | None = None,
+        status_code: int | None = None,
+        cause: BaseException | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.details = details
+        self.status_code = status_code
+        self.__cause__ = cause
+
+    @classmethod
+    def network(
+        cls, message: str, *, cause: BaseException | None = None
+    ) -> "HelixError":
+        return cls(
+            "Network",
+            f"error communicating with server: {message}",
+            details=message,
+            cause=cause,
+        )
+
+    @classmethod
+    def remote(cls, details: str, *, status_code: int | None = None) -> "HelixError":
+        return cls(
+            "Remote",
+            f"got error from server: {details}",
+            details=details,
+            status_code=status_code,
+        )
+
+    @classmethod
+    def serialization(
+        cls, message: str, *, cause: BaseException | None = None
+    ) -> "HelixError":
+        return cls(
+            "Serialization",
+            f"error serializing data: {message}",
+            details=message,
+            cause=cause,
+        )
+
+    @classmethod
+    def invalid_url(
+        cls, message: str, *, cause: BaseException | None = None
+    ) -> "HelixError":
+        return cls(
+            "InvalidUrl", f"invalid url: {message}", details=message, cause=cause
+        )
+
+    @classmethod
+    def invalid_request(cls, message: str) -> "HelixError":
+        return cls("InvalidRequest", f"invalid request: {message}", details=message)
+
+    @classmethod
+    def embedded_unavailable(
+        cls, message: str, *, cause: BaseException | None = None
+    ) -> "HelixError":
+        return cls(
+            "EmbeddedUnavailable",
+            f"embedded bindings unavailable: {message}",
+            details=message,
+            cause=cause,
+        )
+
+    @classmethod
+    def embedded(
+        cls, message: str, *, cause: BaseException | None = None
+    ) -> "HelixError":
+        return cls(
+            "Embedded",
+            f"embedded HelixDB error: {message}",
+            details=message,
+            cause=cause,
+        )
+
+
+@dataclass(frozen=True)
+class PreparedRequest:
+    """Immutable wire request shared by synchronous and asynchronous transports."""
+
+    url: str
+    headers: tuple[tuple[str, str], ...]
+    body: bytes
+
+    def header_map(self) -> dict[str, str]:
+        """Return a transport-owned mutable header map."""
+
+        return dict(self.headers)
+
+
+@dataclass(frozen=True)
+class ExecuteOptions:
+    """Validated server routing options for one query."""
+
+    writer_only: bool = False
+    warm_only: bool = False
+    await_durability: bool | None = None
+
+    def apply(self, headers: Mapping[str, str]) -> dict[str, str]:
+        """Add configured routing headers to a copy of ``headers``."""
+
+        prepared = dict(headers)
+        if self.writer_only:
+            prepared["x-helix-require-writer"] = "true"
+        if self.warm_only:
+            prepared["x-helix-warm"] = "true"
+        if self.await_durability is not None:
+            prepared["x-helix-await-durable"] = (
+                "true" if self.await_durability else "false"
+            )
+        return prepared
+
+
+def validate_base_url(url: str | None) -> str:
+    """Validate and return a server base URL using the synchronous contract."""
+
+    base_url = url or DEFAULT_URL
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HelixError.invalid_url("missing scheme or host")
+    return base_url
+
+
+def prepare_request(
+    base_url: str,
+    api_key: str | None,
+    headers: Mapping[str, str],
+    query: QueryRequest,
+) -> PreparedRequest:
+    """Serialize a query and resolve the common HelixDB HTTP request."""
+
+    try:
+        url = urljoin(base_url.rstrip("/") + "/", QUERY_PATH)
+        body = query.to_json_bytes()
+    except Exception as exc:
+        raise HelixError.serialization(str(exc), cause=exc) from exc
+
+    prepared_headers = dict(headers)
+    if api_key is not None:
+        prepared_headers["Authorization"] = f"Bearer {api_key}"
+    return PreparedRequest(url, tuple(prepared_headers.items()), body)
+
+
+def decode_response(response_body: bytes) -> Any:
+    """Decode the shared empty-or-JSON response contract."""
+
+    if not response_body:
+        return None
+    try:
+        return json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HelixError.serialization(str(exc), cause=exc) from exc
+
+
+def remote_details(response_body: bytes, fallback: str) -> str:
+    """Prefer a server response body while tolerating invalid UTF-8."""
+
+    return response_body.decode("utf-8", errors="replace") or fallback
+
+
+def parse_execute_options(
+    options: Mapping[str, Any], *, embedded: bool
+) -> ExecuteOptions:
+    """Validate ``execute`` keyword options without changing caller-owned state."""
+
+    if embedded and options:
+        unknown = ", ".join(sorted(options))
+        raise HelixError.invalid_request(
+            f"embedded mode does not support execute option(s): {unknown}"
+        )
+
+    remaining = dict(options)
+    writer_only = bool(remaining.pop("writer_only", False))
+    warm_only = bool(remaining.pop("warm_only", False))
+    await_durability = (
+        bool(remaining.pop("await_durability"))
+        if "await_durability" in remaining
+        else None
+    )
+    if remaining:
+        unknown = ", ".join(sorted(remaining))
+        raise TypeError(f"unknown execute option(s): {unknown}")
+    return ExecuteOptions(writer_only, warm_only, await_durability)

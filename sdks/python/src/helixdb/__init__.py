@@ -1,5 +1,6 @@
 """HelixDB Python SDK."""
 
+from .async_client import AsyncClient, AsyncQueryBuilder, AsyncQueryExecutionRequest
 from .client import (
     Client,
     Disk,
@@ -7,8 +8,8 @@ from .client import (
     HelixDBClient,
     HelixDbSource,
     HelixError,
-    InMemory,
     HybridCache,
+    InMemory,
     MemoryCache,
     ObjectStorage,
     QueryBuilder,
@@ -23,10 +24,10 @@ from .graph import (
     EdgeScore,
     ExternalId,
     FoundPath,
-    GraphEdge,
-    GraphEdgeId,
     GraphCommunity,
     GraphCycle,
+    GraphEdge,
+    GraphEdgeId,
     GraphKind,
     GraphMetadataSelection,
     GraphNode,
@@ -40,20 +41,23 @@ from .graph import (
     MissingSourcePath,
     MissingTargetPath,
     NativeGraph,
-    NoPath,
     NodeDegree,
     NodePosition,
     NodeScore,
+    NoPath,
     PathEdge,
     PathResult,
-    TraversalResult,
     TraversalOptions,
+    TraversalResult,
     TraversedEdge,
     external_id_from_json,
     external_id_to_json,
 )
 
 __all__ = [
+    "AsyncClient",
+    "AsyncQueryBuilder",
+    "AsyncQueryExecutionRequest",
     "Client",
     "Disk",
     "EmbeddedCacheConfig",
