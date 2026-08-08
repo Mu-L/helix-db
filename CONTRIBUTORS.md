@@ -48,7 +48,7 @@ We welcome contributions from the community! This guide will help you get starte
 ## Prerequisites and Development Setup
 
 ### Required Tools
-- **Rust**: 1.75.0 or later (install via [rustup](https://rustup.rs/))
+- **Rust**: 1.97.1 (installed automatically from `rust-toolchain.toml` by [rustup](https://rustup.rs/))
 - **Cargo**: Comes with Rust
 - **Git**: For version control
 
@@ -76,8 +76,10 @@ We welcome contributions from the community! This guide will help you get starte
 
 ### Building Specific Components
 
-The Cargo workspace members are `helix-cli`, `metrics`, and `sdks/rust`:
+The Cargo workspace contains the server, database engine, planner, AST, graph algorithms, CLI, metrics, Rust SDK, UniFFI bindings, and database testkit. Common package targets include:
 - **CLI**: `cargo build -p helix-cli`
+- **Server**: `cargo build -p server`
+- **Database engine**: `cargo build -p db`
 - **Metrics**: `cargo build -p helix-metrics`
 - **Rust DSL SDK**: `cargo build -p helix-db` (the SDK crate in `sdks/rust`; docs at [docs.rs/helix-db](https://docs.rs/helix-db))
 
@@ -86,7 +88,7 @@ The TypeScript SDK (`sdks/typescript`) and Go SDK (`sdks/go`) build with their o
 ### Running HelixDB Locally
 1. Install the CLI (development version):
    ```bash
-   cargo install --path helix-cli
+   cargo install --path crates/cli
    ```
 
 2. Initialize a test project:
@@ -111,36 +113,36 @@ This repository contains the HelixDB engine, CLI, client SDKs, and metrics. For 
 
 ### Core Components
 
-#### `/helix-cli/` - Command-Line Interface
+#### `/crates/cli/` - Command-Line Interface
 User-facing CLI for managing HelixDB instances and deployments.
 
 **Directory Structure:**
 ```
-helix-cli/
+crates/cli/
 ├── src/
 │   ├── commands/           # CLI command implementations (one module per subcommand)
-│   │   ├── logs/          # Local + Enterprise Cloud log viewing
-│   │   ├── add.rs         # Add a local or Enterprise Cloud instance
-│   │   ├── auth.rs        # Enterprise Cloud auth (login/logout/create-key)
+│   │   ├── logs/          # Local + Helix Cloud log viewing
+│   │   ├── add.rs         # Add a local or Helix Cloud instance
+│   │   ├── auth.rs        # Helix Cloud auth (login/logout/create-key)
 │   │   ├── chef.rs        # Bootstrap a first Helix app for a coding agent
 │   │   ├── config.rs      # workspace/project/cluster config (hidden parent)
-│   │   ├── dashboard.rs   # Launch the Helix Dashboard
 │   │   ├── delete.rs      # Delete an instance and its local state
-│   │   ├── enterprise_deploy.rs # Enterprise Cloud deploy helpers
+│   │   ├── enterprise_deploy.rs # Helix Cloud deploy helpers
 │   │   ├── feedback.rs    # Send feedback to the Helix team
-│   │   ├── init.rs        # Initialize a v2 project
+│   │   ├── init.rs        # Initialize a project
 │   │   ├── metrics.rs     # Metrics configuration
 │   │   ├── prune.rs       # Prune local containers/workspaces
-│   │   ├── push.rs        # Deploy an Enterprise Cloud instance
+│   │   ├── push.rs        # Deploy a Helix Cloud instance
 │   │   ├── query.rs       # Send a query to POST /v2/query
 │   │   ├── restart.rs     # Restart a background local instance
+│   │   ├── skills.rs      # Install and manage Helix agent skills
 │   │   ├── start.rs       # Start a local instance (alias: run)
 │   │   ├── status.rs      # Instance status
 │   │   ├── stop.rs        # Stop a background local instance
-│   │   ├── sync.rs        # Sync Enterprise Cloud metadata into helix.toml
+│   │   ├── sync.rs        # Sync Helix Cloud metadata into helix.toml
 │   │   └── update.rs      # Self-update the CLI
 │   ├── config.rs          # helix.toml + ~/.helix config management
-│   ├── enterprise_cloud.rs # Enterprise Cloud REST types and fetchers
+│   ├── enterprise_cloud.rs # Helix Cloud REST types and fetchers
 │   ├── errors.rs          # Error handling
 │   ├── lib.rs             # Library interface + subcommand enums
 │   ├── local_runtime.rs   # Docker/Podman container lifecycle
@@ -158,41 +160,41 @@ helix-cli/
 ```
 
 **Available Commands:**
-- `helix init` - Initialize a v2 Helix project
+- `helix init` - Initialize a Helix project
 - `helix chef` (alias `cook`) - Bootstrap a first Helix app for a coding agent
-- `helix add` - Add a local or Enterprise Cloud instance to a project
+- `helix add` - Add a local or Helix Cloud instance to a project
 - `helix start` (alias `run`) - Start a local instance in the background
 - `helix stop` - Stop a background local instance
 - `helix restart` - Restart a background local instance
-- `helix status` - Show local and Enterprise Cloud instance status
-- `helix logs` - View logs for a local or Enterprise Cloud instance
+- `helix status` - Show local and Helix Cloud instance status
+- `helix logs` - View logs for a local or Helix Cloud instance
 - `helix query` - Send a query to `POST /v2/query`
-- `helix push` - Deploy an Enterprise Cloud instance
-- `helix auth` - Enterprise Cloud authentication (login/logout/create-key)
-- `helix workspace` - Manage the active Enterprise Cloud workspace
-- `helix project` - Manage the linked Enterprise Cloud project
-- `helix cluster` - List and inspect Enterprise Cloud clusters
-- `helix sync` - Sync Enterprise Cloud metadata into `helix.toml`
+- `helix push` - Deploy a Helix Cloud instance
+- `helix auth` - Helix Cloud authentication (login/logout/create-key)
+- `helix workspace` - Manage the active Helix Cloud workspace
+- `helix project` - Manage the linked Helix Cloud project
+- `helix cluster` - List and inspect Helix Cloud clusters
+- `helix sync` - Sync Helix Cloud metadata into `helix.toml`
 - `helix prune` - Prune local containers/workspaces
 - `helix delete` - Delete an instance from `helix.toml` and local state
+- `helix skills` - Install, update, and list Helix agent skills
 - `helix metrics` - Configure metrics collection (full/basic/off/status)
-- `helix dashboard` - Launch the Helix Dashboard (start/stop/status)
 - `helix update` - Update the CLI to the latest version
 - `helix feedback` - Send feedback to the Helix team
 
 **Deployment Targets:**
 - Local Docker/Podman containers (`helix start`) — image `ghcr.io/helixdb/helixdb:v0.0.3`
-- Helix Cloud (managed Enterprise hosting) via `helix push`
+- Helix Cloud via `helix push`
 
 **Build & Deploy Flow:**
 
 The v3 CLI is a runtime orchestrator — there is no `helix compile`/`helix check` step and no `.hx` query files.
 
 1. Scaffold a project with `helix init` (writes `helix.toml` and a `.helix/` workspace).
-2. Start a local instance with `helix start` — a Docker/Podman container running `ghcr.io/helixdb/helixdb:v0.0.3` (in-memory by default, on-disk with `--disk`).
+2. Start a local instance with `helix start` — a Docker/Podman container running `ghcr.io/helixdb/helixdb:v0.0.3` (in-memory by default, on-disk with `--disk`). The CLI waits for `GET /healthz` before returning.
 3. Author queries with the Rust, TypeScript, Go, or Python DSL; they serialize to query JSON.
 4. Send queries to a running instance via `POST /v2/query` (`helix query`); validation happens server-side.
-5. For production, deploy an Enterprise Cloud instance with `helix push`, managing auth/metadata via `helix auth`, `helix sync`, and the `workspace`/`project`/`cluster` commands.
+5. For production, deploy a Helix Cloud instance with `helix push`, managing auth/metadata via `helix auth`, `helix sync`, and the `workspace`/`project`/`cluster` commands.
 
 ### Supporting Components
 
@@ -204,7 +206,7 @@ Client libraries that build HelixDB queries and send them to a running instance.
 - `python/` - Python client and DSL (`helix-db`, imported as `helixdb`)
 - `tests/` - Cross-SDK parity tests and metadata registration tests
 
-#### `/metrics/` - Metrics
+#### `/crates/metrics/` - Metrics
 The `helix-metrics` crate used by the CLI for telemetry collection.
 
 #### `/assets/` - Brand Assets
@@ -236,13 +238,13 @@ QUERY addUser(name: String, age: I64) =>
 1. **Definition**: Author queries with a Rust, TypeScript, Go, or Python DSL
 2. **Serialization**: The DSL produces a query JSON AST (`POST /v2/query` body)
 3. **Execution**: Send to a running instance with `helix query`; the gateway validates and runs it server-side
-4. **Storage**: LMDB handles persistence with ACID guarantees
+4. **Storage**: The database engine uses memory, local disk, or S3-compatible object storage according to the selected run mode.
 
 ## Development Guidelines
 
 ### Code Style
 - Prefer functional patterns (pattern matching, iterators, closures)
-- Document code inline - no separate docs needed
+- Add doc comments for public contracts and update user-facing docs when behavior changes
 - Minimize dependencies
 - Use asserts liberally in production code
 
@@ -262,7 +264,7 @@ Tests live alongside the code in each crate and SDK:
 #### Test Structure
 
 **CLI Tests** (`helix-cli`)
-- Inline `#[cfg(test)]` modules throughout `helix-cli/src/`
+- Inline `#[cfg(test)]` modules throughout `crates/cli/src/`
 - clap argument-parsing tests in `src/main.rs` (every command/flag combo)
 - Config (de)serialization and backward-compat defaults in `src/config.rs`
 - `chef` prompt rendering, agent-priority, and stream-json parsing in `src/commands/chef.rs`
@@ -298,9 +300,9 @@ Format and lint before opening a PR: `cargo fmt` and `./clippy_check.sh`.
 - Ensure tests pass locally before opening PR
 
 ### Performance
-- Currently 1000x faster than Neo4j for graph operations
-- On par with Qdrant for vector search
-- LMDB provides memory-mapped performance
+- Benchmark performance-sensitive changes against a representative workload.
+- Include the dataset, hardware, command, and before/after results in the pull request.
+- Avoid unsupported comparative performance claims in code or documentation.
 
 ## Communication Channels
 

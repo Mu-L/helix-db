@@ -4653,7 +4653,7 @@ In a TTY, `helix init` prompts you to pick `local` or `enterprise`. Pass the sub
 helix start dev
 ```
 
-`helix start` pulls `ghcr.io/helixdb/helixdb:v0.0.3`, starts a background container named `helix-<project>-dev`, publishes port `6969`, and waits until the local server accepts `POST /v2/query` before returning.
+`helix start` pulls `ghcr.io/helixdb/helixdb:v0.0.3`, starts a background container named `helix-<project>-dev`, publishes port `6969`, and waits for `GET /healthz` to report ready before returning.
 
 To stream logs in the foreground instead, use `helix start dev --foreground` and stop the container with Ctrl-C.
 
@@ -4785,7 +4785,7 @@ Use the manual flow below when you want to scaffold and run each step yourself.
     helix start dev
     ```
 
-    Starts a background container named `helix-my-helix-app-dev` on port `6969`. The CLI waits until the gateway accepts `POST /v2/query` before returning.
+    Starts a background container named `helix-my-helix-app-dev` on port `6969`. The CLI waits for `GET /healthz` to report ready before returning.
 
     For attached log streaming use `helix start dev --foreground` and stop with Ctrl-C.
 
@@ -5144,7 +5144,7 @@ Page type: Troubleshooting
 
 <div className="flex flex-wrap gap-2"><Badge color="orange" size="sm">Troubleshooting</Badge></div>
 
-This guide helps you resolve common issues with the Helix CLI v2.
+This guide helps you resolve common issues with the Helix CLI v3.
 
 ## Installation issues
 
@@ -5184,7 +5184,7 @@ export HELIX_NO_UPDATE_CHECK=1   # also accepts HELIX_DISABLE_UPDATE_CHECK
 
 ### `helix compile` / `helix check`
 
-These commands do **not** exist in HelixDB v2. There is no client-side compile or validation step — queries are validated **server-side** when you send them to a running instance. Author a JSON dynamic query and run it:
+These commands do **not** exist in Helix CLI v3. There is no client-side compile or validation step — queries are validated **server-side** when you send them to a running instance. Author a JSON dynamic query and run it:
 
 ```bash
 helix query dev --file examples/request.json
@@ -5194,7 +5194,7 @@ See [`helix query`](/cli/command-reference/query) for the request shape.
 
 ### `helix deploy`
 
-Use [`helix push <instance>`](/cli/command-reference/push) to deploy an Enterprise Cloud instance.
+Use [`helix push <instance>`](/cli/command-reference/push) to deploy a Helix Cloud instance.
 
 ### `--path` reported as an unexpected argument
 
@@ -5292,7 +5292,7 @@ local Helix did not become ready in time
 hint: check logs with 'helix logs' or verify port 6969 is reachable
 ```
 
-The `helixdb` container started but did not accept `POST /v2/query` within ~30 seconds. Tail the container with `helix logs <instance> --follow` to investigate.
+The `helixdb` container started but `GET /healthz` did not report ready within ~30 seconds. Tail the container with `helix logs <instance> --follow` to investigate.
 
 ## Authentication issues
 
@@ -5409,7 +5409,7 @@ Page type: Reference
 
 <div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
 
-This page lists every command in Helix CLI v2. Click any command for full flag and example details.
+This page lists every command in Helix CLI v3. Click any command for full flag and example details.
 
 ## Global Options
 
@@ -5426,7 +5426,7 @@ helix -v, --verbose     Show detailed output with timing information
 
 | Command | Subcommands | Flags | Scope | Description |
 |:--------|:------------|:------|:------|:------------|
-| [`helix init`](/cli/command-reference/init) | `local`, `enterprise` | `-p`/`--path` | Local, Helix Cloud | Initialize a v2 Helix project |
+| [`helix init`](/cli/command-reference/init) | `local`, `enterprise` | `-p`/`--path` | Local, Helix Cloud | Initialize a Helix project |
 | [`helix chef`](/cli/command-reference/chef) | | | Local | Bootstrap a first Helix app with skills, docs MCP, starter queries, seed data, and a launched coding agent |
 | [`helix add`](/cli/command-reference/add) | `local`, `enterprise` | | Local, Helix Cloud | Add an instance to an existing project |
 | [`helix start`](/cli/command-reference/start) | | `--foreground`, `--port`, `--disk`, `--persist` | Local | Start a local instance (background by default) |
@@ -5487,7 +5487,7 @@ If you omit the subcommand in a TTY, the CLI prompts you to choose between `loca
 
 | Sub-command | Description |
 |-------------|-------------|
-| `local` | Add a local v2 development instance. |
+| `local` | Add a local development instance. |
 | `enterprise` | Add a Helix Cloud instance linked to a cluster. |
 
 ## Top-level flags
@@ -5802,7 +5802,7 @@ Page type: Reference
 
 <div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
 
-Initialize a v2 Helix project. Creates `helix.toml`, a `.helix/` workspace directory, a `.gitignore` entry, and — for local projects — an `AGENTS.md` for coding agents and an `examples/request.json` scaffold.
+Initialize a Helix project. Creates `helix.toml`, a `.helix/` workspace directory, a `.gitignore` entry, and — for local projects — an `AGENTS.md` for coding agents and an `examples/request.json` scaffold.
 
 ## Usage
 
@@ -5816,7 +5816,7 @@ If you omit the subcommand in a TTY, the CLI prompts you to choose between `loca
 
 | Sub-command | Description |
 |-------------|-------------|
-| `local` | Initialize a local v2 development project. |
+| `local` | Initialize a local development project. |
 | `enterprise` | Initialize a Helix Cloud project linked to a cluster. |
 
 ## Top-level flags
@@ -6518,7 +6518,7 @@ Page type: Reference
 
 <div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
 
-Start a local v2 instance. By default the container starts in the background and the CLI waits until the local gateway accepts `POST /v2/query` requests before returning.
+Start a local instance. By default the container starts in the background and the CLI waits for `GET /healthz` to report ready before returning.
 
 `helix run` is a backwards-compatible alias for `helix start`.
 
@@ -6549,7 +6549,7 @@ helix start [INSTANCE] [OPTIONS]
 - Names the container `helix-<project>-<instance>` and publishes the configured port to container port `8080`.
 - Uses Docker or Podman based on `[project] container_runtime` in `helix.toml`.
 - Default storage is in-memory. Passing `--disk` starts a MinIO sidecar, creates the `helix-db` bucket, and runs `helixdb` with S3-compatible storage environment variables.
-- Background mode (`-d`, `--restart unless-stopped`) waits up to ~30 seconds for `POST /v2/query` readiness and prints the URL and container name when ready.
+- Background mode (`-d`, `--restart unless-stopped`) waits up to ~30 seconds for `GET /healthz` readiness and prints the URL and container name when ready.
 - Foreground mode (`--rm`) streams the container's stdout/stderr until Ctrl-C, then removes the container.
 
 The default `helixdb` storage mode is in-memory. Stopping or restarting an in-memory instance wipes all local data.
