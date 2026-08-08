@@ -647,9 +647,9 @@ pub(crate) async fn build_target(
         .scan_prefix_with_options(Bytes::from_static(&[0x06]), .., &options)
         .await?;
     while let Some(kv) = indexes.next().await? {
-        if let Some(membership) =
-            migration_parity::decode_migration_parity_secondary_membership(&kv.key, &kv.value)?
-        {
+        for membership in migration_parity::decode_migration_parity_secondary_memberships(
+            &kv.key, &kv.value,
+        )? {
             actual_indexes.push(secondary_membership_record(&membership)?)?;
         }
     }

@@ -34,7 +34,7 @@ use crate::encoding::v2::keys::{CanonicalSecondaryValue, GlobalKey, ScopedKey, G
 use crate::encoding::v2::values::{
     decode_corpus_statistics, decode_index_record, decode_metadata_value, decode_operation_record,
     decode_secondary_entry, decode_statistics_entity, decode_term_statistics,
-    encode_corpus_statistics, encode_metadata_value,
+    encode_corpus_statistics, encode_metadata_value, SecondaryEqualityBitmapValue,
 };
 use crate::{migrations, search, HelixDB, HelixStorage, Result};
 
@@ -2204,46 +2204,83 @@ async fn scan_v2_state(
     Ok(())
 }
 
-/// Decode one scoped V2 secondary row into a generation-qualified logical membership.
-pub fn decode_migration_parity_secondary_membership(
+/// Decode one scoped V2 secondary row into generation-qualified logical memberships.
+pub fn decode_migration_parity_secondary_memberships(
     key: &[u8],
     value: &[u8],
-) -> Result<Option<MigrationParitySecondaryMembership>> {
-    let IndexKey::Data {
-        kind: ScopedKey::SecondaryEntry(key),
-        ..
-    } = IndexKey::parse_from_slice(DataScope::LegacyUnscoped, key)?
+) -> Result<Vec<MigrationParitySecondaryMembership>> {
+    let IndexKey::Data { kind, .. } = IndexKey::parse_from_slice(DataScope::LegacyUnscoped, key)?
     else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
-    let entry = decode_secondary_entry(value)?;
-    if entry.index_id != key.index_id
-        || entry.generation != key.generation
-        || entry.lane != key.lane
-        || key
-            .entity_id
-            .is_some_and(|entity_id| entity_id != entry.entity_id)
-    {
-        return Err(crate::error::HelixDbError::Query(
-            "V2 secondary key/value ownership mismatch".to_string(),
-        ));
-    }
-    let canonical_value = match &key.value {
-        CanonicalSecondaryValue::Equality(value) => MigrationParitySecondaryValue::Equality {
-            digest: *value.digest(),
-            canonical: value.canonical().to_vec(),
-        },
-        CanonicalSecondaryValue::Range(value) => {
-            MigrationParitySecondaryValue::Range(value.encoded().to_vec())
+
+    match kind {
+        ScopedKey::SecondaryEntry(key) => {
+            let entry = decode_secondary_entry(value)?;
+            if entry.index_id != key.index_id
+                || entry.generation != key.generation
+                || entry.lane != key.lane
+                || key
+                    .entity_id
+                    .is_some_and(|entity_id| entity_id != entry.entity_id)
+            {
+                return Err(crate::error::HelixDbError::Query(
+                    "V2 secondary key/value ownership mismatch".to_string(),
+                ));
+            }
+            let canonical_value = match &key.value {
+                CanonicalSecondaryValue::Equality(value) => {
+                    MigrationParitySecondaryValue::Equality {
+                        digest: *value.digest(),
+                        canonical: value.canonical().to_vec(),
+                    }
+                }
+                CanonicalSecondaryValue::Range(value) => {
+                    MigrationParitySecondaryValue::Range(value.encoded().to_vec())
+                }
+            };
+            Ok(vec![MigrationParitySecondaryMembership {
+                index_id: key.index_id.get(),
+                generation: key.generation.get(),
+                lane: key.lane.as_u8(),
+                value: canonical_value,
+                entity_id: entry.entity_id.get(),
+            }])
         }
-    };
-    Ok(Some(MigrationParitySecondaryMembership {
-        index_id: key.index_id.get(),
-        generation: key.generation.get(),
-        lane: key.lane.as_u8(),
-        value: canonical_value,
-        entity_id: entry.entity_id.get(),
-    }))
+        ScopedKey::SecondaryEqualityBitmap(key) => {
+            let lane = match key.element_kind {
+                crate::index_lifecycle::IndexElementKind::Node => 0x01,
+                crate::index_lifecycle::IndexElementKind::Edge => 0x05,
+            };
+            let canonical_value = MigrationParitySecondaryValue::Equality {
+                digest: *key.value.digest(),
+                canonical: key.value.canonical().to_vec(),
+            };
+            Ok(SecondaryEqualityBitmapValue::decode(value)?
+                .into_ids()
+                .iter()
+                .map(|entity_id| MigrationParitySecondaryMembership {
+                    index_id: key.index_id.get(),
+                    generation: key.generation.get(),
+                    lane,
+                    value: canonical_value.clone(),
+                    entity_id,
+                })
+                .collect())
+        }
+        ScopedKey::IndexRecord(_)
+        | ScopedKey::Operation(_)
+        | ScopedKey::BuildDelta(_)
+        | ScopedKey::AppliedState(_)
+        | ScopedKey::TextManifestRoot(_)
+        | ScopedKey::TextManifestPage(_)
+        | ScopedKey::TextBuildArtifact(_)
+        | ScopedKey::TextEntityState(_)
+        | ScopedKey::VectorPartitionMapping(_)
+        | ScopedKey::TextCorpusStatistics(_)
+        | ScopedKey::TextTermStatistics(_)
+        | ScopedKey::TextStatisticsEntity(_) => Ok(Vec::new()),
+    }
 }
 
 async fn scan_adjacency(
@@ -2525,4 +2562,77 @@ fn increment_count(counts: &mut BTreeMap<String, u64>, name: &str) {
         .entry(name.to_string())
         .and_modify(|count| *count = count.saturating_add(1))
         .or_insert(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encoding::v1::property::equality_value::{
+        project_equality_value, EqualityValueProjection,
+    };
+    use crate::encoding::v2::keys::{
+        SecondaryEntryKey, SecondaryEntryLane, SecondaryEqualityBitmapKey,
+    };
+    use crate::encoding::v2::values::encode_secondary_entry;
+    use crate::index_lifecycle::work::SecondaryEntryValue;
+    use crate::index_lifecycle::{IndexElementKind, IndexEntityId, IndexGenerationId, IndexId};
+
+    #[test]
+    fn v3_rows_and_v4_bitmap_decode_to_identical_memberships() {
+        let index_id = IndexId::new(7).unwrap();
+        let generation = IndexGenerationId::new(11).unwrap();
+        let EqualityValueProjection::Indexed(canonical) =
+            project_equality_value(&PropertyValue::String("shared".to_string()))
+        else {
+            panic!("shared string is indexable");
+        };
+
+        let v3_memberships = [3_u64, 9]
+            .into_iter()
+            .flat_map(|entity_id| {
+                let entity_id = IndexEntityId::new(entity_id);
+                let key = IndexKey::Data {
+                    scope: DataScope::LegacyUnscoped,
+                    kind: ScopedKey::SecondaryEntry(
+                        SecondaryEntryKey::try_new(
+                            index_id,
+                            generation,
+                            SecondaryEntryLane::NodeEquality,
+                            CanonicalSecondaryValue::Equality(canonical.clone()),
+                            Some(entity_id),
+                        )
+                        .unwrap(),
+                    ),
+                }
+                .to_bytes();
+                let value = encode_secondary_entry(&SecondaryEntryValue {
+                    index_id,
+                    generation,
+                    lane: SecondaryEntryLane::NodeEquality,
+                    entity_id,
+                });
+                decode_migration_parity_secondary_memberships(&key, &value).unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let bitmap_key = IndexKey::Data {
+            scope: DataScope::LegacyUnscoped,
+            kind: ScopedKey::SecondaryEqualityBitmap(
+                SecondaryEqualityBitmapKey::try_new(
+                    index_id,
+                    generation,
+                    IndexElementKind::Node,
+                    canonical,
+                )
+                .unwrap(),
+            ),
+        }
+        .to_bytes();
+        let bitmap_value =
+            SecondaryEqualityBitmapValue::new(RoaringTreemap::from_iter([3_u64, 9])).encode();
+        let v4_memberships =
+            decode_migration_parity_secondary_memberships(&bitmap_key, &bitmap_value).unwrap();
+
+        assert_eq!(v3_memberships, v4_memberships);
+    }
 }
