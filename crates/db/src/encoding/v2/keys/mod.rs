@@ -9,7 +9,7 @@ use bytes::{BufMut, Bytes};
 
 use crate::encoding::error::EncodingError;
 use crate::encoding::v1::property::equality_value::{CanonicalEqualityValue, EQUALITY_DIGEST_LEN};
-use crate::index_v2::{
+use crate::index_lifecycle::{
     IndexComponent, IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexIdentity,
     IndexIdentityFamily, IndexOperationId,
 };
@@ -548,7 +548,7 @@ fn decode_operation_id(decoder: &mut KeyDecoder<'_>) -> Result<IndexOperationId,
     IndexOperationId::from_bytes(decoder.take_array::<UUID_LEN>()?).map_err(model_key_error)
 }
 
-fn model_key_error(error: crate::index_v2::IndexV2ModelError) -> EncodingError {
+fn model_key_error(error: crate::index_lifecycle::IndexV2ModelError) -> EncodingError {
     EncodingError::InvalidKey(error.to_string())
 }
 
@@ -624,7 +624,7 @@ mod wire_fixtures {
     use super::*;
     use crate::encoding::indexes::range::RangeIndexDirection;
     use crate::encoding::v1::keys::tenant::TenantId;
-    use crate::index_v2::VectorPhysicalIndexId;
+    use crate::index_lifecycle::VectorPhysicalIndexId;
 
     fn index_id() -> IndexId {
         IndexId::new(1).unwrap()

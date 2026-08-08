@@ -13,11 +13,10 @@ use crate::encoding::v1::{
 use crate::encoding::v2::{
     keys::{GlobalKey, Key},
     values::{
-        decode_applied_state, decode_build_artifact, decode_build_delta,
-        decode_corpus_statistics, decode_index_record, decode_manifest_page,
-        decode_manifest_root, decode_metadata_value, decode_operation_record,
-        decode_partition_mapping, decode_secondary_entry, decode_statistics_entity,
-        decode_term_statistics, decode_text_entity_state,
+        decode_applied_state, decode_build_artifact, decode_build_delta, decode_corpus_statistics,
+        decode_index_record, decode_manifest_page, decode_manifest_root, decode_metadata_value,
+        decode_operation_record, decode_partition_mapping, decode_secondary_entry,
+        decode_statistics_entity, decode_term_statistics, decode_text_entity_state,
     },
 };
 

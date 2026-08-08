@@ -3,7 +3,7 @@
 use bytes::Bytes;
 
 use crate::encoding::error::EncodingError;
-use crate::index_v2::{
+use crate::index_lifecycle::{
     BuildOperationOutcome, IndexOperationExecutionState, IndexOperationFamily, IndexOperationKind,
     IndexOperationOutcome, IndexOperationProgress, IndexOperationQueueSchedule,
     IndexOperationRecord, IndexRecordV2, IndexStateV2, LegacyVectorDirectoryValidationProgress,
@@ -20,13 +20,15 @@ use super::*;
 const INDEX_RECORD_KIND: u8 = 0x01;
 const OPERATION_RECORD_KIND: u8 = 0x02;
 
-pub(crate) fn encode_build_delta(value: &crate::index_v2::work::CoalescedBuildDeltaValue) -> Bytes {
+pub(crate) fn encode_build_delta(
+    value: &crate::index_lifecycle::work::CoalescedBuildDeltaValue,
+) -> Bytes {
     encode_value(&WorkValue::CoalescedBuildDelta(*value))
 }
 
 pub(crate) fn decode_build_delta(
     value: &[u8],
-) -> Result<crate::index_v2::work::CoalescedBuildDeltaValue, EncodingError> {
+) -> Result<crate::index_lifecycle::work::CoalescedBuildDeltaValue, EncodingError> {
     let WorkValue::CoalescedBuildDelta(value) = decode_value(value)? else {
         return Err(EncodingError::Custom(
             "build-delta key contains another value kind".to_string(),
@@ -36,14 +38,14 @@ pub(crate) fn decode_build_delta(
 }
 
 pub(crate) fn encode_applied_state(
-    value: &crate::index_v2::work::AppliedEntityStateValue,
+    value: &crate::index_lifecycle::work::AppliedEntityStateValue,
 ) -> Bytes {
     encode_value(&WorkValue::AppliedEntityState(value.clone()))
 }
 
 pub(crate) fn decode_applied_state(
     value: &[u8],
-) -> Result<crate::index_v2::work::AppliedEntityStateValue, EncodingError> {
+) -> Result<crate::index_lifecycle::work::AppliedEntityStateValue, EncodingError> {
     let WorkValue::AppliedEntityState(value) = decode_value(value)? else {
         return Err(EncodingError::Custom(
             "applied-state key contains another value kind".to_string(),
@@ -539,8 +541,8 @@ fn put_source_scan(encoder: &mut ValueEncoder, progress: &SourceScanProgress) {
 
 fn take_source_scan(decoder: &mut ValueDecoder<'_>) -> Result<SourceScanProgress, EncodingError> {
     Ok(SourceScanProgress {
-        inclusive_upper_bound: crate::index_v2::IndexCursor::try_new(
-            decoder.take_bytes(crate::index_v2::INDEX_CURSOR_MAX_LEN)?,
+        inclusive_upper_bound: crate::index_lifecycle::IndexCursor::try_new(
+            decoder.take_bytes(crate::index_lifecycle::INDEX_CURSOR_MAX_LEN)?,
         )
         .map_err(operation_model_error)?,
         cursor: take_cursor(decoder)?,
@@ -693,7 +695,7 @@ fn take_no_cursor(decoder: &mut ValueDecoder<'_>) -> Result<NoCursorProgress, En
 
 fn take_legacy_drain_counters(
     decoder: &mut ValueDecoder<'_>,
-) -> Result<crate::index_v2::OperationCounters, EncodingError> {
+) -> Result<crate::index_lifecycle::OperationCounters, EncodingError> {
     let _legacy_drain_epoch = decoder.take_option(ValueDecoder::take_u64)?;
     take_counters(decoder)
 }
@@ -789,7 +791,7 @@ fn take_execution_state(
             let (blocker, legacy_reader_coordination_blocker) = match blocker {
                 DecodedIndexOperationBlocker::Current(blocker) => (blocker, false),
                 DecodedIndexOperationBlocker::LegacyReaderCoordinationUnavailable => (
-                    crate::index_v2::IndexOperationBlocker::InvariantViolation,
+                    crate::index_lifecycle::IndexOperationBlocker::InvariantViolation,
                     true,
                 ),
             };
@@ -837,7 +839,7 @@ mod wire_fixtures {
     use crate::config::SecondaryIndexDefinition;
     use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
     use crate::encoding::v2::values::global::{decode_metadata_value, encode_metadata_value};
-    use crate::index_v2::{
+    use crate::index_lifecycle::{
         IndexCursor, IndexGenerationId, IndexId, IndexOperationExecutionState, IndexOperationId,
         IndexOperationRevision, IndexRevision, IndexStorageVersion, IndexV2MetadataValue,
         LegacyVectorPhysicalReservation, LogicalIndexIdWatermark, OperationCounters,

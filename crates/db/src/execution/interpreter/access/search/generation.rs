@@ -9,8 +9,8 @@ use super::*;
 use crate::config::{TextIndexDefinition, VectorIndexDefinition};
 use crate::encoding::v1::property::encode_index_partition_value;
 use crate::error::{IndexFamily, IndexLifecycleUnavailableReason};
-use crate::index_v2::work::{TextPartition, VectorTenantPartition};
-use crate::index_v2::{
+use crate::index_lifecycle::work::{TextPartition, VectorTenantPartition};
+use crate::index_lifecycle::{
     ActiveIndexHandle, ValidatedTextIndexDefinition, ValidatedVectorIndexDefinition,
     VectorPhysicalLayout,
 };
@@ -103,7 +103,7 @@ impl<T> TextSearchAuthority<T> {
 
 /// Active text generation and partition resolved in the stable request view.
 pub(super) struct ResolvedTextGenerationHandle {
-    physical: crate::index_v2::text::serving::ActiveTextServingAuthority,
+    physical: crate::index_lifecycle::text::serving::ActiveTextServingAuthority,
     partition: TextPartition,
 }
 
@@ -111,7 +111,7 @@ impl ResolvedTextGenerationHandle {
     /// Borrows the family-refined authority used for root ownership checks.
     pub(super) const fn physical(
         &self,
-    ) -> &crate::index_v2::text::serving::ActiveTextServingAuthority {
+    ) -> &crate::index_lifecycle::text::serving::ActiveTextServingAuthority {
         &self.physical
     }
 
@@ -297,9 +297,12 @@ async fn resolve_text_generation_in_view(
     requested: &ValidatedTextIndexDefinition,
     partition: RequestedTextPartition,
 ) -> Result<TextSearchAuthority<ResolvedTextGenerationHandle>> {
-    let Some(active) =
-        crate::index_v2::repository::load_active_handle(reader, scope, &requested.identity())
-            .await?
+    let Some(active) = crate::index_lifecycle::repository::load_active_handle(
+        reader,
+        scope,
+        &requested.identity(),
+    )
+    .await?
     else {
         return Err(HelixDbError::IndexLifecycleUnavailable {
             family: IndexFamily::Text,
@@ -320,7 +323,9 @@ async fn resolve_text_generation_in_view(
         return Ok(TextSearchAuthority::AbsentManagedPartition);
     };
     let physical =
-        crate::index_v2::text::serving::ActiveTextServingAuthority::try_from_active(&active)?;
+        crate::index_lifecycle::text::serving::ActiveTextServingAuthority::try_from_active(
+            &active,
+        )?;
     Ok(TextSearchAuthority::Managed(ResolvedTextGenerationHandle {
         physical,
         partition,
@@ -335,9 +340,12 @@ async fn resolve_vector_generation_in_view<D: Distance>(
     requested: &ValidatedVectorIndexDefinition,
     partition: RequestedVectorPartition,
 ) -> Result<VectorSearchAuthority<ResolvedVectorGenerationHandle>> {
-    let Some(active) =
-        crate::index_v2::repository::load_active_handle(reader, scope, &requested.identity())
-            .await?
+    let Some(active) = crate::index_lifecycle::repository::load_active_handle(
+        reader,
+        scope,
+        &requested.identity(),
+    )
+    .await?
     else {
         return Err(HelixDbError::IndexLifecycleUnavailable {
             family: IndexFamily::Vector,
@@ -368,7 +376,7 @@ async fn resolve_vector_generation_in_view<D: Distance>(
             RequestedVectorPartition::Unpartitioned,
         ) => Ok(Some(*physical_index_id)),
         (VectorPhysicalLayout::Partitioned, RequestedVectorPartition::Tenant(partition)) => {
-            crate::index_v2::repository::load_vector_partition_mapping(
+            crate::index_lifecycle::repository::load_vector_partition_mapping(
                 reader,
                 *scope,
                 *index_id,
@@ -407,11 +415,11 @@ mod tests {
 
     use super::*;
     use crate::config::TextAnalyzerKind;
-    use crate::encoding::v2::keys::ScopedKey;
     use crate::encoding::v1::keys::tenant::DataScope;
     use crate::encoding::v2::keys::Key;
+    use crate::encoding::v2::keys::ScopedKey;
     use crate::encoding::v2::values::encode_index_record;
-    use crate::index_v2::{
+    use crate::index_lifecycle::{
         IndexGenerationId, IndexOperationId, IndexRecordV2, IndexRevision, IndexStateTransition,
         PhysicalGeneration, ValidatedDynamicIndexDefinition, VectorGenerationDescriptor,
     };
@@ -422,20 +430,20 @@ mod tests {
         db: &HelixDB,
         definition: &ValidatedVectorIndexDefinition,
         tenant: Option<&VectorTenantPartition>,
-    ) -> (IndexRecordV2, crate::index_v2::VectorPhysicalIndexId) {
+    ) -> (IndexRecordV2, crate::index_lifecycle::VectorPhysicalIndexId) {
         let transaction = db
             .inner_db()
             .begin(IsolationLevel::SerializableSnapshot)
             .await
             .unwrap();
-        let index_id = crate::index_v2::repository::allocate_index_id(&transaction)
+        let index_id = crate::index_lifecycle::repository::allocate_index_id(&transaction)
             .await
             .unwrap();
         let generation = IndexGenerationId::initial();
         let (layout, physical_index_id) = match tenant {
             None => {
                 let physical_index_id =
-                    crate::index_v2::repository::allocate_vector_physical_id(&transaction)
+                    crate::index_lifecycle::repository::allocate_vector_physical_id(&transaction)
                         .await
                         .unwrap();
                 (
@@ -446,7 +454,7 @@ mod tests {
             Some(tenant) => {
                 let layout = VectorPhysicalLayout::Partitioned;
                 let physical_index_id =
-                    crate::index_v2::repository::stage_vector_partition_mapping(
+                    crate::index_lifecycle::repository::stage_vector_partition_mapping(
                         &transaction,
                         DataScope::LegacyUnscoped,
                         index_id,
@@ -497,7 +505,7 @@ mod tests {
             .begin(IsolationLevel::SerializableSnapshot)
             .await
             .unwrap();
-        let index_id = crate::index_v2::repository::allocate_index_id(&transaction)
+        let index_id = crate::index_lifecycle::repository::allocate_index_id(&transaction)
             .await
             .unwrap();
         let generation = IndexGenerationId::initial();
@@ -667,7 +675,7 @@ mod tests {
             .await
             .unwrap();
         let next_physical_id =
-            crate::index_v2::repository::peek_vector_physical_id(db.inner_db().as_ref())
+            crate::index_lifecycle::repository::peek_vector_physical_id(db.inner_db().as_ref())
                 .await
                 .unwrap();
 
@@ -697,7 +705,7 @@ mod tests {
             VectorSearchAuthority::AbsentManagedPartition
         ));
         assert_eq!(
-            crate::index_v2::repository::peek_vector_physical_id(db.inner_db().as_ref())
+            crate::index_lifecycle::repository::peek_vector_physical_id(db.inner_db().as_ref())
                 .await
                 .unwrap(),
             next_physical_id
@@ -765,9 +773,7 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: ScopedKey::index_record(
-                        dropping.identity().clone(),
-                    ),
+                    kind: ScopedKey::index_record(dropping.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&dropping),

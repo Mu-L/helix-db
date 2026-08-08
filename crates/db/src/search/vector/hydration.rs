@@ -18,13 +18,13 @@ use super::memory_store::{
     VectorMemoryAdmissionBudget, VectorMemoryStore, VectorMemoryStoreLoadCompletion,
 };
 use super::ValidatedVectorGenerationHandle;
-use crate::encoding::v2::keys::{ScopedKey, RecordKind};
 #[cfg(test)]
 use crate::encoding::v1::keys::{DataKeyKind, Key};
 use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::{RecordKind, ScopedKey};
 use crate::encoding::v2::values::decode_partition_mapping;
 use crate::error::{HelixDbError, Result};
-use crate::index_v2::{ActiveIndexHandle, VectorPhysicalLayout};
+use crate::index_lifecycle::{ActiveIndexHandle, VectorPhysicalLayout};
 
 /// Runtime share assigned to one scope after the configured global budget is split.
 ///
@@ -279,12 +279,12 @@ mod tests {
 
     use super::*;
     use crate::config::VectorIndexDefinition;
-    use crate::encoding::v2::keys::VectorPartitionMappingKey;
     use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
     use crate::encoding::v1::keys::vectors::{VectorKey, VectorUpperVectorKey};
+    use crate::encoding::v2::keys::VectorPartitionMappingKey;
     use crate::encoding::v2::values::encode_partition_mapping;
-    use crate::index_v2::work::{VectorPartitionMappingValue, VectorTenantPartition};
-    use crate::index_v2::{
+    use crate::index_lifecycle::work::{VectorPartitionMappingValue, VectorTenantPartition};
+    use crate::index_lifecycle::{
         IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
         IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
         VectorGenerationDescriptor, VectorPhysicalIndexId,
@@ -438,23 +438,19 @@ mod tests {
         let partition = VectorTenantPartition::try_new(Bytes::from_static(b"tenant-a")).unwrap();
         let mapping_key = IndexKey::Data {
             scope,
-            kind: ScopedKey::VectorPartitionMapping(
-                VectorPartitionMappingKey {
-                    index_id,
-                    generation: IndexGenerationId::initial(),
-                    partition: partition.fingerprint(),
-                },
-            ),
-        }
-        .to_bytes();
-        let mapping = encode_partition_mapping(&
-            VectorPartitionMappingValue {
+            kind: ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
                 index_id,
                 generation: IndexGenerationId::initial(),
-                partition,
-                physical_index_id,
-            },
-        );
+                partition: partition.fingerprint(),
+            }),
+        }
+        .to_bytes();
+        let mapping = encode_partition_mapping(&VectorPartitionMappingValue {
+            index_id,
+            generation: IndexGenerationId::initial(),
+            partition,
+            physical_index_id,
+        });
         let vector_key = Key::Data {
             scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
@@ -631,23 +627,19 @@ mod tests {
             VectorTenantPartition::try_new(Bytes::from_static(b"tenant-value")).unwrap();
         let mapping_key = IndexKey::Data {
             scope,
-            kind: ScopedKey::VectorPartitionMapping(
-                VectorPartitionMappingKey {
-                    index_id,
-                    generation: IndexGenerationId::initial(),
-                    partition: key_partition.fingerprint(),
-                },
-            ),
-        }
-        .to_bytes();
-        let mapping = encode_partition_mapping(&
-            VectorPartitionMappingValue {
+            kind: ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
                 index_id,
                 generation: IndexGenerationId::initial(),
-                partition: value_partition,
-                physical_index_id,
-            },
-        );
+                partition: key_partition.fingerprint(),
+            }),
+        }
+        .to_bytes();
+        let mapping = encode_partition_mapping(&VectorPartitionMappingValue {
+            index_id,
+            generation: IndexGenerationId::initial(),
+            partition: value_partition,
+            physical_index_id,
+        });
         let transaction = db.begin(IsolationLevel::Snapshot).await.unwrap();
         transaction.put(mapping_key, mapping).unwrap();
         transaction.commit().await.unwrap();

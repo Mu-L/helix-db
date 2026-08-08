@@ -1035,7 +1035,7 @@ mod tests {
     use crate::encoding::v1::keys::tenant::DataScope;
     use crate::encoding::v1::keys::vectors::VectorStorageLane;
     use crate::encoding::v1::keys::Key;
-    use crate::index_v2::IndexElementKind;
+    use crate::index_lifecycle::IndexElementKind;
     use crate::search::vector::{SimHasherRegistry, VectorDimension};
 
     #[derive(Clone)]

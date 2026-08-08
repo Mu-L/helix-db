@@ -1,6 +1,6 @@
 //! Scoped catalog, operation, build-delta, and applied-state keys.
 
-use crate::index_v2::{
+use crate::index_lifecycle::{
     IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexIdentity, IndexOperationId,
 };
 

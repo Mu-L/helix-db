@@ -20,11 +20,11 @@ The final inventory reports exactly:
 |---|---|---|---|
 | `db` | `lib` | `crates/db/src/lib.rs` | Unit-test behavior only. Its coverage report includes inline `#[cfg(test)]` code and is never used for production-only thresholds. |
 | `encoding_only` | `test` | `crates/db/tests/encoding_only.rs` | Unit-style encoding target. It includes `src/encoding` by path under a test crate and bridges production DTO modules rather than copying them, so it is deliberately excluded from production-only coverage. |
-| `index_v2_lifecycle_contracts` | `test` | `crates/db/tests/index_v2_lifecycle_contracts.rs` | Requires `index-v2-lifecycle-testing` and runs deterministic family-shape, backfill-mutation, concurrent-create, and repeated-recoverable-fault acceptance contracts through the installed production drivers. |
+| `index_lifecycle_lifecycle_contracts` | `test` | `crates/db/tests/index_lifecycle_lifecycle_contracts.rs` | Requires `index-lifecycle-testing` and runs deterministic family-shape, backfill-mutation, concurrent-create, and repeated-recoverable-fault acceptance contracts through the installed production drivers. |
 | `production_contracts` | `test` | `crates/db/tests/production_contracts.rs` | Imports the compiled `db` library without `cfg(test)` and covers the public query/interpreter boundary, including graph behavior, source-fed node/edge mutations, all typed KV read modes, explicit comparison/membership shapes, limited and empty access, branch partition and mixed-row invariants, nested branch-context restoration, unbound conditional variables, scalar and operator-specific predicate-error propagation, repeat-predicate and shortest-path missing/ambiguous/revisited/isolated endpoint shapes, nested and edge-endpoint property paths, typed/transport ID parameters and variable ID-source shapes, label mutation/no-op/cascade plus empty/unlabeled deletion invariants, malformed requests, dynamic and typed AST `FOREACH`, complete literal/runtime property-value conversion, stable parallel-stage execution on a public reader, scalar/malformed multi-dependency composition, ordinary/folded/scalar stream-operation shapes, scalar aggregate and aggregate-after-fold shape contracts, typed and rejected dynamic bounds, empty intersection, fail-closed index-lifecycle value consumption, shared-runtime vector/text search and DDL availability, chained injection, sparse/selected/binding projections, vector-distance metadata and search-label projections, typed vector-array conversions through the live planner context, missing-property ordering, mixed/empty aggregates, expression value/error edges, managed secondary/range/search read-your-writes, range-index-delivered order preservation, and same-transaction labeled/unfiltered out/in/both topology reads across parallel differently labeled edges. |
 | `projection_materialization` | `bench` | `crates/db/benches/projection_materialization.rs` | Deterministic 512-node/512-edge Divan projection baseline with allocation profiling; setup and planning are excluded from measurement. |
-| `production_index_v2_contracts` | `test` | `crates/db/tests/production_index_v2_contracts.rs` | Requires `production-coverage` and runs the V2 outbox transition failpoint matrix, real secondary lifecycle state model, multi-scope discovery, compact typed model/resource boundaries, fail-closed Active text serving reads, and state-only Active text retirement against the compiled production library. |
-| `production_index_v2_scale` | `test` | `crates/db/tests/production_index_v2_scale.rs` | Requires `production-scale`; non-ignored fixed 100k production-entry builds for non-unique/unique secondary, 128D f32 vector, paged text, and a 100k workload distributed across 16 tenant scopes, followed by public search oracles and lifecycle cleanup. A fixed 8k vector create/search/drop/residue contract runs independently in bounded nightly CI. Separate maximum-batch contracts cover typed limit blocking/reopen/retry/abort for every family. |
+| `production_index_lifecycle_contracts` | `test` | `crates/db/tests/production_index_lifecycle_contracts.rs` | Requires `production-coverage` and runs the V2 outbox transition failpoint matrix, real secondary lifecycle state model, multi-scope discovery, compact typed model/resource boundaries, fail-closed Active text serving reads, and state-only Active text retirement against the compiled production library. |
+| `production_index_lifecycle_scale` | `test` | `crates/db/tests/production_index_lifecycle_scale.rs` | Requires `production-scale`; non-ignored fixed 100k production-entry builds for non-unique/unique secondary, 128D f32 vector, paged text, and a 100k workload distributed across 16 tenant scopes, followed by public search oracles and lifecycle cleanup. A fixed 8k vector create/search/drop/residue contract runs independently in bounded nightly CI. Separate maximum-batch contracts cover typed limit blocking/reopen/retry/abort for every family. |
 | `production_internal_contracts` | `test` | `crates/db/tests/production_internal_contracts.rs` | Requires `production-coverage` and invokes feature-gated production module contracts without compiling inline unit-test code into the measured library, including vector storage/search/lifecycle boundaries, native and forced-scalar vector magnitude safety, ambiguous Active-text graph-commit recovery, and exact request-read-view fail-closed guards. |
 | `production_migration_contracts` | `test` | `crates/db/tests/production_migration_contracts.rs` | Requires `production-coverage` and covers legacy definition convergence, populated-vector adoption, malformed and ineligible vector lanes, ownership conflicts, invalid V2 bootstrap tuples, failure-preserving resume, and active/conflicting definition handling through production migration boundaries. |
 | `production_row_mode_contract` | `test` | `crates/db/tests/production_row_mode_contract.rs` | Launches process-isolated public queries with valid and invalid `HELIX_ROW_MODE_MAX_ROWS` values, covering production environment parsing, cached cap activation, exact overflow errors, and malformed-setting rejection without mutating a multithreaded test process's environment. |
@@ -44,8 +44,8 @@ medians as a 95% throughput floor.
 
 The standalone `crates/db/fuzz` workspace adds five non-test Cargo Fuzz
 targets: `current_secondary_records`, `current_search_records`,
-`current_index_v2_keys`, `current_index_v2_records`, and
-`current_index_v2_work`. The V2 targets cover scoped/global physical framing,
+`current_index_lifecycle_keys`, `current_index_lifecycle_records`, and
+`current_index_lifecycle_work`. The V2 targets cover scoped/global physical framing,
 canonical catalog/operation/control values and outbox work values. They are
 deliberately outside Cargo's test target inventory and call
 only the feature-gated byte-slice decoder boundary.
@@ -82,7 +82,7 @@ Its production-source LLVM metrics were:
 | Search | 2,154 / 2,345 (91.8550%) | 24,033 / 25,620 (93.8056%) | 34,486 / 36,998 (93.2104%) |
 
 The separate clean `scripts/db-production-coverage.sh` run discovered
-`production_contracts`, `production_index_v2_contracts`,
+`production_contracts`, `production_index_lifecycle_contracts`,
 `production_internal_contracts`, `production_text_lifecycle`, and
 `production_vector_planner`. It produced the following production-linked line
 baselines; zero coverage is recorded rather than hidden where the bounded
@@ -252,7 +252,7 @@ uncovered set was then 12,762 lines. Active tenant moves, removals, and
 reinsertions added 76 whole-DB and 75 Index V2 covered lines, including 27 in
 the vector lifecycle root and 39 in text lifecycle, and removed 52 unique
 source lines. The reviewed non-vector uncovered set was then 12,710 lines. The
-vector-lifecycle scope now includes both `index_v2/vector.rs` and its module
+vector-lifecycle scope now includes both `index_lifecycle/vector.rs` and its module
 directory instead of omitting the root module from its denominator. Public
 source-fed node creation and complete edge-output direction contracts then
 added 70 covered interpreter lines and 76 whole-DB lines. Direct writer
@@ -642,7 +642,7 @@ undiscovered source was removed:
 | `edge_secondary_ddl_enqueues_pending_backfill_and_maintains_new_writes` | `builder_and_active_mutations_cover_insert_update_delete_and_label_move` |
 | `edge_secondary_backfill_processor_batches_and_finalizes_catalog_visibility` | `every_node_and_edge_equality_and_range_shape_builds_its_exact_lane`; `every_build_and_drop_stage_resumes_after_database_reopen` |
 | `edge_secondary_range_backfill_processor_batches_and_finalizes_catalog_visibility` | `every_node_and_edge_equality_and_range_shape_builds_its_exact_lane` |
-| `secondary_backfill_background_worker_drains_pending_jobs` | `index_v2_secondary_state_machine_matches_reference_model` |
+| `secondary_backfill_background_worker_drains_pending_jobs` | `index_lifecycle_secondary_state_machine_matches_reference_model` |
 | `secondary_backfill_ddl_wakes_idle_background_worker` | `every_build_and_drop_stage_resumes_after_database_reopen` |
 | `unique_node_equality_ddl_rejects_existing_duplicate_values_atomically` | `unique_build_and_active_mutation_report_exact_conflicting_entity_ids` |
 

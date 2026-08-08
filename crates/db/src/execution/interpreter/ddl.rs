@@ -20,7 +20,7 @@ impl<'db> ExecutionContext<'db> {
                     "validated planner operation ID did not parse: {error}"
                 ))
             })?;
-            crate::index_v2::IndexOperationId::new(uuid).map_err(HelixDbError::from)
+            crate::index_lifecycle::IndexOperationId::new(uuid).map_err(HelixDbError::from)
         };
         match plan {
             ir::IndexDdlPlan::GetOperation { operation_id: id } => {

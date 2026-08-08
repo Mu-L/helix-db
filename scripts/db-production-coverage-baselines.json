@@ -19,7 +19,7 @@
       "minimum_covered_lines": 38,
       "minimum_percent": 100
     },
-    "index_v2": {
+    "index_lifecycle": {
       "minimum_covered_lines": 14653,
       "minimum_percent": 79.31
     },

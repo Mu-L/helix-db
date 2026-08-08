@@ -19,10 +19,10 @@ use crate::encoding::v1::keys::{
     DataKeyKind, EdgeEndpointsKey, EdgePropertyByIdKey, Key, NodePropertyKey,
 };
 use crate::encoding::v1::values::edge_endpoints::EdgeEndpointsValue;
-use crate::index_v2::secondary::{
+use crate::index_lifecycle::secondary::{
     lookup_active_equality_generation, scan_active_range_generation, SecondaryRangeQuery,
 };
-use crate::index_v2::{
+use crate::index_lifecycle::{
     ActiveIndexHandle, IndexElementKind, ValidatedDynamicIndexDefinition,
     ValidatedSecondaryIndexDefinition,
 };

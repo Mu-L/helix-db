@@ -32,8 +32,8 @@ impl<'db> ExecutionContext<'db> {
         let identity = crate::config::split_scoped_secondary_index_property(property)
             .map(|(label, property)| {
                 secondary_identity(
-                    crate::index_v2::IndexIdentityFamily::SecondaryEquality,
-                    crate::index_v2::IndexElementKind::Node,
+                    crate::index_lifecycle::IndexIdentityFamily::SecondaryEquality,
+                    crate::index_lifecycle::IndexElementKind::Node,
                     label,
                     property,
                 )
@@ -128,8 +128,8 @@ impl<'db> ExecutionContext<'db> {
         let identity = crate::config::split_scoped_secondary_index_property(property)
             .map(|(label, property)| {
                 secondary_identity(
-                    crate::index_v2::IndexIdentityFamily::SecondaryEquality,
-                    crate::index_v2::IndexElementKind::Edge,
+                    crate::index_lifecycle::IndexIdentityFamily::SecondaryEquality,
+                    crate::index_lifecycle::IndexElementKind::Edge,
                     label,
                     property,
                 )
@@ -368,16 +368,16 @@ impl<'db> ExecutionContext<'db> {
 
 /// Constructs the canonical V2 identity corresponding to one planner key.
 fn secondary_identity(
-    family: crate::index_v2::IndexIdentityFamily,
-    element_kind: crate::index_v2::IndexElementKind,
+    family: crate::index_lifecycle::IndexIdentityFamily,
+    element_kind: crate::index_lifecycle::IndexElementKind,
     label: &str,
     property: &str,
-) -> Result<crate::index_v2::IndexIdentity> {
-    Ok(crate::index_v2::IndexIdentity::new(
+) -> Result<crate::index_lifecycle::IndexIdentity> {
+    Ok(crate::index_lifecycle::IndexIdentity::new(
         family,
         element_kind,
-        crate::index_v2::IndexComponent::try_new("label", label)?,
-        crate::index_v2::IndexComponent::try_new("property", property)?,
+        crate::index_lifecycle::IndexComponent::try_new("label", label)?,
+        crate::index_lifecycle::IndexComponent::try_new("property", property)?,
     ))
 }
 
@@ -385,7 +385,7 @@ fn secondary_identity(
 async fn lookup_equality_in_view(
     context: &ExecutionContext<'_>,
     reader: &(impl DbReadOps + Send + Sync),
-    identity: Option<&crate::index_v2::IndexIdentity>,
+    identity: Option<&crate::index_lifecycle::IndexIdentity>,
     property: &str,
     value: &DbPropertyValue,
 ) -> Result<roaring::RoaringTreemap> {
@@ -410,12 +410,15 @@ async fn lookup_equality_in_view(
 async fn lookup_managed_equality_in_view(
     context: &ExecutionContext<'_>,
     reader: &(impl DbReadOps + Send + Sync),
-    identity: &crate::index_v2::IndexIdentity,
+    identity: &crate::index_lifecycle::IndexIdentity,
     value: &DbPropertyValue,
 ) -> Result<roaring::RoaringTreemap> {
-    let Some(record) =
-        crate::index_v2::repository::load_index_record(reader, context.tenant_scope, identity)
-            .await?
+    let Some(record) = crate::index_lifecycle::repository::load_index_record(
+        reader,
+        context.tenant_scope,
+        identity,
+    )
+    .await?
     else {
         return Err(HelixDbError::IndexLifecycleUnavailable {
             family: crate::error::IndexFamily::Secondary,
@@ -423,19 +426,23 @@ async fn lookup_managed_equality_in_view(
         });
     };
     let Some(active) =
-        crate::index_v2::ActiveIndexHandle::try_from_record(context.tenant_scope, &record)
+        crate::index_lifecycle::ActiveIndexHandle::try_from_record(context.tenant_scope, &record)
     else {
         return Err(HelixDbError::IndexLifecycleUnavailable {
             family: crate::error::IndexFamily::Secondary,
             reason: crate::error::IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
         });
     };
-    if !matches!(active, crate::index_v2::ActiveIndexHandle::Secondary { .. }) {
+    if !matches!(
+        active,
+        crate::index_lifecycle::ActiveIndexHandle::Secondary { .. }
+    ) {
         return Err(HelixDbError::IndexCatalogCorruption(
             "secondary equality identity resolved another Active family".to_string(),
         ));
     }
-    crate::index_v2::secondary::lookup_active_equality_generation(reader, &active, value).await
+    crate::index_lifecycle::secondary::lookup_active_equality_generation(reader, &active, value)
+        .await
 }
 
 pub(super) fn limited_index_ids(

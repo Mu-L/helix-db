@@ -3,7 +3,7 @@
 use bytes::Bytes;
 
 use crate::encoding::error::EncodingError;
-use crate::index_v2::work::VectorPartitionMappingValue;
+use crate::index_lifecycle::work::VectorPartitionMappingValue;
 
 use super::{decode_value, encode_value, WorkValue};
 

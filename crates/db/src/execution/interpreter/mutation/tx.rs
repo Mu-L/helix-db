@@ -93,11 +93,12 @@ impl<'db> ExecutionContext<'db> {
             .begin(IsolationLevel::SerializableSnapshot)
             .await?;
         self.check_execution_deadline()?;
-        let mutation_catalog = crate::index_v2::mutation_catalog::MutationIndexCatalog::load(
-            &transaction,
-            self.tenant_scope,
-        )
-        .await?;
+        let mutation_catalog =
+            crate::index_lifecycle::mutation_catalog::MutationIndexCatalog::load(
+                &transaction,
+                self.tenant_scope,
+            )
+            .await?;
         drop(catalog_permit);
         self.check_execution_deadline()?;
         Ok((
@@ -336,7 +337,7 @@ mod additional_tests {
                 60,
                 NonZeroU64::MIN,
                 1,
-                crate::index_v2::IndexElementKind::Node,
+                crate::index_lifecycle::IndexElementKind::Node,
                 crate::search::vector::VectorDimension::try_new(2).unwrap(),
             )
             .unwrap(),
@@ -446,10 +447,10 @@ mod additional_tests {
     #[tokio::test]
     async fn invalidated_proof_reloads_recreated_vector_and_text_settings_before_write_open() {
         use crate::config::{TextAnalyzerKind, TextIndexDefinition, VectorIndexDefinition};
-        use crate::encoding::v2::keys::ScopedKey;
         use crate::encoding::v2::keys::Key;
+        use crate::encoding::v2::keys::ScopedKey;
         use crate::encoding::v2::values::encode_index_record;
-        use crate::index_v2::{
+        use crate::index_lifecycle::{
             ActiveIndexHandle, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2,
             IndexRevision, IndexStateTransition, PhysicalGeneration,
             ValidatedDynamicIndexDefinition, VectorGenerationDescriptor, VectorPhysicalIndexId,
@@ -584,9 +585,7 @@ mod additional_tests {
                         .put(
                             Key::Data {
                                 scope,
-                                kind: ScopedKey::index_record(
-                                    record.identity().clone(),
-                                ),
+                                kind: ScopedKey::index_record(record.identity().clone()),
                             }
                             .to_bytes(),
                             encode_index_record(record),
@@ -905,10 +904,10 @@ mod additional_tests {
     #[tokio::test]
     async fn mutation_scope_projects_canonical_active_definitions() {
         use crate::config::SecondaryIndexDefinition;
-        use crate::encoding::v2::keys::ScopedKey;
         use crate::encoding::v2::keys::Key;
+        use crate::encoding::v2::keys::ScopedKey;
         use crate::encoding::v2::values::encode_index_record;
-        use crate::index_v2::{
+        use crate::index_lifecycle::{
             IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
             IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
         };
@@ -963,7 +962,7 @@ mod additional_tests {
         use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey};
         use crate::encoding::v2::keys::{Key, ScopedKey};
         use crate::encoding::v2::values::encode_index_record;
-        use crate::index_v2::{
+        use crate::index_lifecycle::{
             IndexGenerationId, IndexOperationId, IndexRecordV2, IndexRevision,
             IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
             ValidatedVectorIndexDefinition, VectorGenerationDescriptor, VectorPhysicalLayout,
@@ -984,19 +983,20 @@ mod additional_tests {
             .build()
             .await
             .unwrap();
-        crate::index_v2::repository::bootstrap_writer(&raw)
+        crate::index_lifecycle::repository::bootstrap_writer(&raw)
             .await
             .unwrap();
         let seed = raw
             .begin(slatedb::IsolationLevel::SerializableSnapshot)
             .await
             .unwrap();
-        let index_id = crate::index_v2::repository::allocate_index_id(&seed)
+        let index_id = crate::index_lifecycle::repository::allocate_index_id(&seed)
             .await
             .unwrap();
-        let physical_index_id = crate::index_v2::repository::allocate_vector_physical_id(&seed)
-            .await
-            .unwrap();
+        let physical_index_id =
+            crate::index_lifecycle::repository::allocate_vector_physical_id(&seed)
+                .await
+                .unwrap();
         let active = IndexRecordV2::building(
             index_id,
             dynamic,
@@ -1042,9 +1042,7 @@ mod additional_tests {
             .put(
                 Key::Data {
                     scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-                    kind: ScopedKey::index_record(
-                        dropping.identity().clone(),
-                    ),
+                    kind: ScopedKey::index_record(dropping.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&dropping),

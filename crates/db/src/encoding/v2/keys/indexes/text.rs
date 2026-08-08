@@ -1,6 +1,6 @@
 //! Text lifecycle metadata keys. Tantivy blob formats remain unchanged.
 
-use crate::index_v2::{IndexGenerationId, IndexId};
+use crate::index_lifecycle::{IndexGenerationId, IndexId};
 
 use super::super::lifecycle::IndexEntity;
 use super::super::HASH_LEN;

@@ -133,7 +133,7 @@ impl OpenedTextSplit {
         analyzer: TextAnalyzerKind,
         query: &str,
         limit: usize,
-        statistics: Option<&crate::index_v2::text::statistics::TextBm25Statistics>,
+        statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
     ) -> Result<Vec<TextSearchCandidate>, HelixDbError> {
         register_analyzers(&self.index, analyzer);
         search_reader_candidates_with_statistics(

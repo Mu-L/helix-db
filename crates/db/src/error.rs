@@ -238,7 +238,7 @@ pub enum HelixDbError {
 
     /// A value could not satisfy the canonical V2 index model.
     #[error("Invalid V2 index model: {0}")]
-    InvalidIndexV2Model(#[from] crate::index_v2::IndexV2ModelError),
+    InvalidIndexV2Model(#[from] crate::index_lifecycle::IndexV2ModelError),
 
     /// A graph or query value cannot satisfy the secondary-index contract.
     #[error("Invalid secondary index value: {0}")]
@@ -339,9 +339,9 @@ pub enum HelixDbError {
     #[error("Index definition conflicts in fields: {differing_fields}")]
     IndexDefinitionConflict {
         /// Authoritative definition already owning the logical identity.
-        existing: Box<crate::index_v2::ValidatedDynamicIndexDefinition>,
+        existing: Box<crate::index_lifecycle::ValidatedDynamicIndexDefinition>,
         /// Validated definition requested by the caller.
-        requested: Box<crate::index_v2::ValidatedDynamicIndexDefinition>,
+        requested: Box<crate::index_lifecycle::ValidatedDynamicIndexDefinition>,
         /// Canonical, non-empty set of incompatible fields.
         differing_fields: crate::config::NonEmptyDefinitionDifferences,
     },
@@ -448,7 +448,7 @@ pub enum HelixDbError {
     )]
     LegacyZeroNormCosineVector {
         /// Node or edge namespace containing the entity.
-        element_kind: crate::index_v2::IndexElementKind,
+        element_kind: crate::index_lifecycle::IndexElementKind,
         /// Label component of the exact legacy definition.
         label: String,
         /// Property component of the exact legacy definition.
@@ -492,17 +492,17 @@ impl HelixDbError {
                 Some("vector_physical_id_exhausted")
             }
             Self::InvalidIndexV2Model(
-                crate::index_v2::IndexV2ModelError::IdentifierExhausted {
+                crate::index_lifecycle::IndexV2ModelError::IdentifierExhausted {
                     kind: "index generation ID",
                 },
             ) => Some("index_generation_exhausted"),
             Self::InvalidIndexV2Model(
-                crate::index_v2::IndexV2ModelError::IdentifierExhausted {
+                crate::index_lifecycle::IndexV2ModelError::IdentifierExhausted {
                     kind: "index revision",
                 },
             ) => Some("index_revision_exhausted"),
             Self::InvalidIndexV2Model(
-                crate::index_v2::IndexV2ModelError::IdentifierExhausted {
+                crate::index_lifecycle::IndexV2ModelError::IdentifierExhausted {
                     kind: "index operation revision",
                 },
             ) => Some("index_operation_revision_exhausted"),
@@ -655,7 +655,7 @@ mod tests {
                 .is_invalid_vector_input()
         );
         assert!(!HelixDbError::LegacyZeroNormCosineVector {
-            element_kind: crate::index_v2::IndexElementKind::Node,
+            element_kind: crate::index_lifecycle::IndexElementKind::Node,
             label: "Document".to_string(),
             property: "embedding".to_string(),
             entity_id: 7,
@@ -740,7 +740,7 @@ mod tests {
         );
         assert_eq!(
             HelixDbError::InvalidIndexV2Model(
-                crate::index_v2::IndexV2ModelError::IdentifierExhausted {
+                crate::index_lifecycle::IndexV2ModelError::IdentifierExhausted {
                     kind: "index operation revision",
                 },
             )

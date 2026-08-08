@@ -247,7 +247,7 @@ async fn interpreter_active_text_graph_conflict_resolves_fail_closed() {
 }
 
 /// Proves one split per destination/epoch, delete-only behavior, and shared versions.
-#[cfg(feature = "index-v2-lifecycle-testing")]
+#[cfg(feature = "index-lifecycle-testing")]
 #[tokio::test]
 async fn interpreter_active_text_transactions_batch_by_destination() {
     db::production_coverage::interpreter_active_text_transaction_batching_contracts().await;

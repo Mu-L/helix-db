@@ -14,18 +14,18 @@ use slatedb::{DbReadOps, DbTransaction};
 
 use crate::config;
 use crate::encoding::keys::tenant::DataScope;
-use crate::encoding::v2::keys::{GlobalKey, ScopedKey, RecordKind};
 use crate::encoding::v1::keys::vectors::{
     VectorIndexMetadataKey, VectorKey, VectorStorageLane, VectorTxnGuardKey,
 };
 use crate::encoding::v1::keys::{DataKeyKind, Key};
+use crate::encoding::v1::values::vectors::metadata::decode_legacy_metadata;
 use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::{GlobalKey, RecordKind, ScopedKey};
 use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, encode_metadata_value,
 };
-use crate::encoding::v1::values::vectors::metadata::decode_legacy_metadata;
 use crate::error::{HelixDbError, Result};
-use crate::index_v2::{
+use crate::index_lifecycle::{
     IndexGenerationId, IndexId, IndexStateV2, IndexV2MetadataValue,
     LegacyVectorPhysicalReservation, ValidatedDynamicIndexDefinition,
     ValidatedVectorIndexDefinition, VectorPhysicalIndexId,
@@ -66,10 +66,8 @@ impl LegacyVectorRetirementCatalog {
         read: &(impl DbReadOps + Send + Sync),
         scope: DataScope,
     ) -> Result<Self> {
-        let prefix = IndexKey::data_prefix(
-            scope,
-            ScopedKey::logical_prefix(RecordKind::IndexRecord),
-        );
+        let prefix =
+            IndexKey::data_prefix(scope, ScopedKey::logical_prefix(RecordKind::IndexRecord));
         let mut rows = read.scan_prefix(prefix, ..).await?;
         let mut active = BTreeMap::new();
         while let Some(row) = rows.next().await? {
@@ -216,9 +214,7 @@ impl LegacyVectorRetirementCatalog {
 
 fn reservation_key(physical_id: VectorPhysicalIndexId) -> Bytes {
     IndexKey::Global {
-        kind: GlobalKey::LegacyVectorPhysicalReservation(
-            physical_id,
-        ),
+        kind: GlobalKey::LegacyVectorPhysicalReservation(physical_id),
     }
     .to_bytes()
 }

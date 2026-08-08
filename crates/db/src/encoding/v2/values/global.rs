@@ -3,7 +3,7 @@
 use bytes::Bytes;
 
 use crate::encoding::error::EncodingError;
-use crate::index_v2::{
+use crate::index_lifecycle::{
     IndexStorageVersion, IndexV2MetadataValue, LegacyVectorPhysicalReservation,
     LogicalIndexIdWatermark, OperationQueuePointerValue, TextCompactionPointerValue,
     VectorPhysicalIdWatermark,
@@ -81,7 +81,7 @@ pub(crate) fn decode_metadata_value(value: &[u8]) -> Result<IndexV2MetadataValue
             next_id: take_index_id(&mut decoder)?,
         }),
         0x03 => IndexV2MetadataValue::VectorPhysicalIdWatermark(VectorPhysicalIdWatermark {
-            next_id: crate::index_v2::VectorPhysicalIndexId::new(decoder.take_u64()?)
+            next_id: crate::index_lifecycle::VectorPhysicalIndexId::new(decoder.take_u64()?)
                 .map_err(model_error)?,
         }),
         0x04 => IndexV2MetadataValue::OperationQueuePointer(OperationQueuePointerValue {
@@ -113,7 +113,7 @@ pub(crate) fn decode_metadata_value(value: &[u8]) -> Result<IndexV2MetadataValue
             }
         }),
         0x07 => IndexV2MetadataValue::TextCompactionPointer(TextCompactionPointerValue {
-            revision: crate::index_v2::TextManifestRevision::new(decoder.take_u64()?)
+            revision: crate::index_lifecycle::TextManifestRevision::new(decoder.take_u64()?)
                 .map_err(model_error)?,
         }),
         unknown => return Err(unknown_discriminant("metadata value", unknown)),

@@ -5,10 +5,11 @@ async fn aggregate_rejects_index_lifecycle_values() {
     let db = test_support::open_db("stream-aggregate-index-lifecycle").await;
     let mut ctx =
         super::super::super::ExecutionContext::new(&db, context::ParamBindings::default());
-    let lifecycle =
-        ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-            operation_id: crate::index_v2::IndexOperationId::from_bytes([7; 16]).unwrap(),
-        });
+    let lifecycle = ExecutionValue::IndexDdlReceipt(
+        crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+            operation_id: crate::index_lifecycle::IndexOperationId::from_bytes([7; 16]).unwrap(),
+        },
+    );
 
     let error = ctx
         .aggregate(lifecycle, &ir::AggregatePlan::Group(name("status")))

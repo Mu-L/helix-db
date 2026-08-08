@@ -75,9 +75,12 @@ async fn execution_bounds_reject_index_lifecycle_values() {
     let db = test_support::open_db("stream-bounds-index-lifecycle").await;
     let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
     let lifecycle = || {
-        ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-            operation_id: crate::index_v2::IndexOperationId::from_bytes([7; 16]).unwrap(),
-        })
+        ExecutionValue::IndexDdlReceipt(
+            crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+                operation_id: crate::index_lifecycle::IndexOperationId::from_bytes([7; 16])
+                    .unwrap(),
+            },
+        )
     };
 
     assert!(

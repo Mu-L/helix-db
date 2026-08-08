@@ -3,8 +3,8 @@
 use bytes::Bytes;
 
 use crate::encoding::error::EncodingError;
-use crate::index_v2::work::*;
-use crate::index_v2::IndexEntityId;
+use crate::index_lifecycle::work::*;
+use crate::index_lifecycle::IndexEntityId;
 
 use super::*;
 use super::{INDEX_V2_VALUE_VERSION, INDEX_V3_SPLIT_VALUE_VERSION};
@@ -268,8 +268,10 @@ pub(super) fn decode_value(value: &[u8]) -> Result<WorkValue, EncodingError> {
             generation: take_generation(&mut decoder)?,
             partition: VectorTenantPartition::try_from_partition(take_partition(&mut decoder)?)
                 .map_err(work_model_error)?,
-            physical_index_id: crate::index_v2::VectorPhysicalIndexId::new(decoder.take_u64()?)
-                .map_err(model_error)?,
+            physical_index_id: crate::index_lifecycle::VectorPhysicalIndexId::new(
+                decoder.take_u64()?,
+            )
+            .map_err(model_error)?,
         }),
         0x10 => WorkValue::TextCorpusStatistics(
             TextCorpusStatisticsValue::try_new(
@@ -395,12 +397,12 @@ mod tests {
     use super::*;
     use crate::encoding::v2::keys::{CanonicalSecondaryValue, SecondaryEntryLane};
 
-    fn index_id() -> crate::index_v2::IndexId {
-        crate::index_v2::IndexId::new(1).unwrap()
+    fn index_id() -> crate::index_lifecycle::IndexId {
+        crate::index_lifecycle::IndexId::new(1).unwrap()
     }
 
-    fn generation() -> crate::index_v2::IndexGenerationId {
-        crate::index_v2::IndexGenerationId::new(2).unwrap()
+    fn generation() -> crate::index_lifecycle::IndexGenerationId {
+        crate::index_lifecycle::IndexGenerationId::new(2).unwrap()
     }
 
     fn hex(bytes: &[u8]) -> String {
@@ -417,8 +419,8 @@ mod tests {
     fn page(entries: Vec<SplitRef>) -> WorkValue {
         WorkValue::TextManifestPage(
             TextManifestPageValue::try_new(
-                crate::index_v2::IndexId::new(1).unwrap(),
-                crate::index_v2::IndexGenerationId::new(2).unwrap(),
+                crate::index_lifecycle::IndexId::new(1).unwrap(),
+                crate::index_lifecycle::IndexGenerationId::new(2).unwrap(),
                 TextPartition::Unpartitioned,
                 0,
                 entries,
@@ -476,7 +478,7 @@ mod tests {
                 WorkValue::CoalescedBuildDelta(CoalescedBuildDeltaValue {
                     index_id: index_id(),
                     generation: generation(),
-                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_kind: crate::index_lifecycle::IndexElementKind::Node,
                     entity_id: IndexEntityId::new(3),
                 }),
             ),
@@ -485,7 +487,7 @@ mod tests {
                 WorkValue::AppliedEntityState(AppliedEntityStateValue {
                     index_id: index_id(),
                     generation: generation(),
-                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_kind: crate::index_lifecycle::IndexElementKind::Node,
                     entity_id: IndexEntityId::new(3),
                     state: AppliedFamilyState::Secondary(Some(
                         CanonicalSecondaryValue::equality_string("shared"),
@@ -497,7 +499,7 @@ mod tests {
                 WorkValue::AppliedEntityState(AppliedEntityStateValue {
                     index_id: index_id(),
                     generation: generation(),
-                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_kind: crate::index_lifecycle::IndexElementKind::Node,
                     entity_id: IndexEntityId::new(3),
                     state: AppliedFamilyState::Vector(Some(tenant_partition.clone())),
                 }),
@@ -507,11 +509,11 @@ mod tests {
                 WorkValue::AppliedEntityState(AppliedEntityStateValue {
                     index_id: index_id(),
                     generation: generation(),
-                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_kind: crate::index_lifecycle::IndexElementKind::Node,
                     entity_id: IndexEntityId::new(3),
                     state: AppliedFamilyState::Text(Some((
                         tenant_partition.clone(),
-                        crate::index_v2::TextLogicalVersion::new(4).unwrap(),
+                        crate::index_lifecycle::TextLogicalVersion::new(4).unwrap(),
                     ))),
                 }),
             ),
@@ -531,7 +533,7 @@ mod tests {
                         index_id(),
                         generation(),
                         tenant_partition.clone(),
-                        crate::index_v2::TextManifestRevision::new(4).unwrap(),
+                        crate::index_lifecycle::TextManifestRevision::new(4).unwrap(),
                         1,
                         1,
                     )
@@ -567,9 +569,9 @@ mod tests {
                     index_id: index_id(),
                     generation: generation(),
                     partition: tenant_partition.clone(),
-                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_kind: crate::index_lifecycle::IndexElementKind::Node,
                     entity_id: IndexEntityId::new(3),
-                    logical_version: crate::index_v2::TextLogicalVersion::new(4).unwrap(),
+                    logical_version: crate::index_lifecycle::TextLogicalVersion::new(4).unwrap(),
                     live: true,
                 }),
             ),
@@ -604,7 +606,7 @@ mod tests {
                 WorkValue::TextStatisticsEntity(TextStatisticsEntityValue {
                     index_id: index_id(),
                     generation: generation(),
-                    entity_kind: crate::index_v2::IndexElementKind::Edge,
+                    entity_kind: crate::index_lifecycle::IndexElementKind::Edge,
                     entity_id: IndexEntityId::new(3),
                     contribution: TextStatisticsContribution::Absent,
                 }),
@@ -614,7 +616,7 @@ mod tests {
                 WorkValue::TextStatisticsEntity(TextStatisticsEntityValue {
                     index_id: index_id(),
                     generation: generation(),
-                    entity_kind: crate::index_v2::IndexElementKind::Node,
+                    entity_kind: crate::index_lifecycle::IndexElementKind::Node,
                     entity_id: IndexEntityId::new(3),
                     contribution: TextStatisticsContribution::try_present(
                         tenant_partition,
@@ -631,7 +633,8 @@ mod tests {
                     index_id: index_id(),
                     generation: generation(),
                     partition: vector_partition,
-                    physical_index_id: crate::index_v2::VectorPhysicalIndexId::new(4).unwrap(),
+                    physical_index_id: crate::index_lifecycle::VectorPhysicalIndexId::new(4)
+                        .unwrap(),
                 }),
             ),
         ];

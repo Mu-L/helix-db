@@ -14,11 +14,11 @@ use helix_planner::{catalog, context, cost, exec, ir, properties, trace};
 use serde::Serialize;
 
 use crate::config::SecondaryIndexDefinition;
-use crate::encoding::v2::keys::{ScopedKey, RecordKind};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::Key;
+use crate::encoding::v2::keys::{RecordKind, ScopedKey};
 use crate::execution::interpreter::ExecutionValue;
-use crate::index_v2::ValidatedDynamicIndexDefinition;
+use crate::index_lifecycle::ValidatedDynamicIndexDefinition;
 use crate::{HelixDB, HelixDbSource, HelixStorage, Result};
 
 const INDEX_COUNT: usize = 50;

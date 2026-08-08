@@ -1,0 +1,142 @@
+[
+  {
+    "path": "crates/db/src/index_lifecycle/catalog.rs",
+    "lines": [
+      69,
+      85,
+      100
+    ],
+    "functions": [],
+    "classification": "structurally-unreachable",
+    "reason": "IndexRecordV2 construction binds each physical-generation family to the same validated definition family, so an Active record cannot project through a cross-family arm.",
+    "evidence": "only_active_records_enter_the_loaded_catalog and active_text_handle_carries_its_exact_validated_definition"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/lifecycle.rs",
+    "lines": [],
+    "functions": [
+      311,
+      444
+    ],
+    "classification": "structurally-unreachable",
+    "reason": "CREATE and DROP construct operation records exclusively from one validated definition, canonical record, matching family progress, checked revision, and matching terminal kind, so the model constructor error closures cannot run.",
+    "evidence": "all_families_create_one_atomic_canonical_operation_link and duplicate_create_drop_abort_and_recreate_follow_the_frozen_matrix"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/lifecycle.rs",
+    "lines": [],
+    "functions": [
+      370
+    ],
+    "classification": "structurally-unreachable",
+    "reason": "capture_source_upper_bound builds one fixed-size typed node or edge key, which is always below the IndexCursor maximum.",
+    "evidence": "public_create_captures_the_source_watermark_in_its_enqueue_transaction"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/lifecycle.rs",
+    "lines": [],
+    "functions": [
+      403
+    ],
+    "classification": "structurally-unreachable",
+    "reason": "The Building match and linked-operation validation prove the operation is a nonterminal constructing build at the canonical revision before begin_abort is called.",
+    "evidence": "duplicate_create_drop_abort_and_recreate_follow_the_frozen_matrix"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/lifecycle.rs",
+    "lines": [
+      228,
+      398
+    ],
+    "functions": [],
+    "classification": "structurally-unreachable",
+    "reason": "linked_operation validates that the retained operation ID equals the ID encoded by the canonical Building state before both defensive equality checks execute.",
+    "evidence": "scope_lookup_is_exact_and_invalid_source_cursor_stages_nothing and dropped_operation_links_are_exact_and_corruption_is_typed"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/lifecycle.rs",
+    "lines": [
+      428
+    ],
+    "functions": [],
+    "classification": "structurally-unreachable",
+    "reason": "BeginDrop is invoked only inside the Active state arm with a newly allocated non-zero operation ID, which is exactly the transition's legal domain.",
+    "evidence": "duplicate_create_drop_abort_and_recreate_follow_the_frozen_matrix"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/text/compaction.rs",
+    "lines": [
+      176
+    ],
+    "functions": [],
+    "classification": "structurally-unreachable",
+    "reason": "The typed artifact key and value both bind the canonical partition through its SHA-256 fingerprint; disagreement requires a SHA-256 collision.",
+    "evidence": "selection_rejects_wrong_kind_and_mismatched_artifacts"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/text/compaction.rs",
+    "lines": [],
+    "functions": [
+      191
+    ],
+    "classification": "platform-gated",
+    "reason": "Retirement operations are a small constant per bounded fan-in, and retirement bytes are sums of resident typed key/value lengths; neither can exceed u64 on supported targets.",
+    "evidence": "selection_stops_before_the_next_input_and_rejects_size_overflow"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/vector.rs",
+    "lines": [
+      143
+    ],
+    "functions": [],
+    "classification": "structurally-unreachable",
+    "reason": "The mutation loader scans the exact scoped IndexRecord prefix, so a successfully parsed row cannot contain another data-key kind.",
+    "evidence": "mutation_set_rejects_catalog_key_value_identity_disagreement"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/vector/driver.rs",
+    "lines": [],
+    "functions": [
+      2187
+    ],
+    "classification": "structurally-unreachable",
+    "reason": "Build dispatch selects the distance kernel from the same validated Building vector record and uses either its embedded physical ID or a typed partition mapping, so generation capability reconstruction cannot reject these inputs.",
+    "evidence": "unpartitioned_build_restarts_activates_and_drop_removes_physical_rows and partitioned_build_catches_up_tenant_move_into_exact_physical_mapping"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/lifecycle.rs",
+    "lines": [
+      200,
+      353,
+      410,
+      414,
+      452,
+      528
+    ],
+    "functions": [],
+    "classification": "llvm-artifact",
+    "reason": "LLVM assigns zero-count positions to multiline async and Result continuation edges even though the surrounding successful DDL reads, staged writes, operation enqueue, source watermark read, and retained-pointer read all execute and their committed outcomes are asserted.",
+    "evidence": "all_families_create_one_atomic_canonical_operation_link and duplicate_create_drop_abort_and_recreate_follow_the_frozen_matrix and public_create_captures_the_source_watermark_in_its_enqueue_transaction"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/text/manifest.rs",
+    "lines": [
+      189
+    ],
+    "functions": [],
+    "classification": "llvm-artifact",
+    "reason": "LLVM assigns zero-count continuation positions to successful async scans, typed artifact decoding, and the mapped append-page Result even though the surrounding range, page, and exhausted-revision outcomes are asserted.",
+    "evidence": "pages_are_bounded_resumable_and_root_revisions_remain_contiguous and range_revalidation_rejects_phantoms_and_conflicts_with_late_insertion"
+  },
+  {
+    "path": "crates/db/src/index_lifecycle/text/manifest.rs",
+    "lines": [
+      199,
+      304
+    ],
+    "functions": [],
+    "classification": "structurally-unreachable",
+    "reason": "Exact-prefix scans cannot return outside their prefix; typed contiguous roots and fixed non-empty page constructors eliminate the residual constructor failures; SHA-256 partition ownership cannot disagree without a fingerprint collision; and admission records a cursor and byte bound from the same non-empty serialized page.",
+    "evidence": "pages_are_bounded_resumable_and_root_revisions_remain_contiguous and first_indivisible_page_blocks_at_every_configured_transaction_limit and pages_never_mix_canonical_partitions"
+  }
+]

@@ -670,12 +670,12 @@ async fn text_dispatch_reports_missing_definition_and_manifest_corruption() {
         .put(&page_key, original_page)
         .await
         .expect("valid manifest page restores");
-    let partition = crate::index_v2::work::TextPartition::Unpartitioned;
-    let mismatched_root = crate::index_v2::work::TextManifestRootValue::try_new(
+    let partition = crate::index_lifecycle::work::TextPartition::Unpartitioned;
+    let mismatched_root = crate::index_lifecycle::work::TextManifestRootValue::try_new(
         root.index_id,
         root.generation,
         partition,
-        crate::index_v2::TextManifestRevision::new(2)
+        crate::index_lifecycle::TextManifestRevision::new(2)
             .expect("one prepared page advances the root revision"),
         1,
         2,
@@ -684,9 +684,7 @@ async fn text_dispatch_reports_missing_definition_and_manifest_corruption() {
     db.inner_db()
         .put(
             &root_key,
-            crate::encoding::v2::values::encode_manifest_root(&
-                    mismatched_root,
-                ),
+            crate::encoding::v2::values::encode_manifest_root(&mismatched_root),
         )
         .await
         .expect("mismatched manifest root writes");
@@ -711,27 +709,26 @@ async fn text_dispatch_returns_empty_for_an_absent_managed_tenant_partition() {
     let db = HelixDB::open_with_process_local_token_for_tests(token)
         .await
         .unwrap();
-    let index_id = crate::index_v2::IndexId::initial();
-    let generation = crate::index_v2::IndexGenerationId::initial();
-    let validated = crate::index_v2::ValidatedTextIndexDefinition::try_from_runtime(&definition)
-        .expect("tenant text definition validates");
-    let record = crate::index_v2::IndexRecordV2::building(
+    let index_id = crate::index_lifecycle::IndexId::initial();
+    let generation = crate::index_lifecycle::IndexGenerationId::initial();
+    let validated =
+        crate::index_lifecycle::ValidatedTextIndexDefinition::try_from_runtime(&definition)
+            .expect("tenant text definition validates");
+    let record = crate::index_lifecycle::IndexRecordV2::building(
         index_id,
-        crate::index_v2::ValidatedDynamicIndexDefinition::Text(validated),
-        crate::index_v2::IndexRevision::initial(),
-        crate::index_v2::PhysicalGeneration::Text { generation },
-        crate::index_v2::IndexOperationId::new_v4(),
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Text(validated),
+        crate::index_lifecycle::IndexRevision::initial(),
+        crate::index_lifecycle::PhysicalGeneration::Text { generation },
+        crate::index_lifecycle::IndexOperationId::new_v4(),
     )
     .expect("tenant text record starts building")
-    .transition(crate::index_v2::IndexStateTransition::Activate)
+    .transition(crate::index_lifecycle::IndexStateTransition::Activate)
     .expect("tenant text record activates");
     db.inner_db()
         .put(
             crate::encoding::v2::keys::Key::Data {
                 scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-                kind: crate::encoding::v2::keys::ScopedKey::index_record(
-                    record.identity().clone(),
-                ),
+                kind: crate::encoding::v2::keys::ScopedKey::index_record(record.identity().clone()),
             }
             .to_bytes(),
             crate::encoding::v2::values::encode_index_record(&record),

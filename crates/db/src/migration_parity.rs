@@ -25,14 +25,12 @@ use slatedb::DbReadOps;
 
 use crate::encoding::keys::tenant::DataScope;
 use crate::encoding::property::{property_value::PropertyValue, Property};
-use crate::encoding::v2::keys::{
-    CanonicalSecondaryValue, GlobalKey, ScopedKey, GLOBAL_SENTINEL,
-};
 use crate::encoding::v1::keys::{DataKeyKind, Key, KeyPrefix, MetadataKey};
-use crate::encoding::v2::keys::Key as IndexKey;
 use crate::encoding::v1::read_u64;
 use crate::encoding::v1::values;
 use crate::encoding::v1::values::id_allocation::IdAllocationWatermarkValue;
+use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::{CanonicalSecondaryValue, GlobalKey, ScopedKey, GLOBAL_SENTINEL};
 use crate::encoding::v2::values::{
     decode_corpus_statistics, decode_index_record, decode_metadata_value, decode_operation_record,
     decode_secondary_entry, decode_statistics_entity, decode_term_statistics,
@@ -296,12 +294,12 @@ pub enum MigrationParityTextStatisticsDamage {
 }
 
 fn migration_parity_text_partition(
-    definition: &crate::index_v2::ValidatedTextIndexDefinition,
+    definition: &crate::index_lifecycle::ValidatedTextIndexDefinition,
     tenant: Option<String>,
-) -> Result<crate::index_v2::work::TextPartition> {
+) -> Result<crate::index_lifecycle::work::TextPartition> {
     match (definition.tenant_property(), tenant) {
-        (None, None) => Ok(crate::index_v2::work::TextPartition::Unpartitioned),
-        (Some(_), Some(tenant)) => crate::index_v2::work::TextPartition::try_tenant_value(
+        (None, None) => Ok(crate::index_lifecycle::work::TextPartition::Unpartitioned),
+        (Some(_), Some(tenant)) => crate::index_lifecycle::work::TextPartition::try_tenant_value(
             crate::encoding::v1::property::encode_index_partition_value(&PropertyValue::String(
                 tenant,
             )),
@@ -345,8 +343,8 @@ pub struct MigrationParityIndexState {
 
 /// Stable index-outbox crash boundaries exercised by the cross-version harness.
 pub fn migration_parity_index_outbox_failpoints() -> [&'static str; 16] {
-    crate::index_v2::failpoints::IndexOutboxFailpoint::ALL
-        .map(crate::index_v2::failpoints::IndexOutboxFailpoint::as_str)
+    crate::index_lifecycle::failpoints::IndexOutboxFailpoint::ALL
+        .map(crate::index_lifecycle::failpoints::IndexOutboxFailpoint::as_str)
 }
 
 impl HelixDB {
@@ -367,15 +365,15 @@ impl HelixDB {
     /// runtime code must never move a durable version backwards.
     pub async fn migration_parity_make_storage_v2_fixture(&self) -> Result<()> {
         let db = self.migration_parity_inner_db()?;
-        let version = crate::index_v2::IndexStorageVersion::new(0x0002)?;
+        let version = crate::index_lifecycle::IndexStorageVersion::new(0x0002)?;
         db.put(
             IndexKey::Global {
                 kind: GlobalKey::StorageVersion,
             }
             .to_bytes(),
-            encode_metadata_value(&crate::index_v2::IndexV2MetadataValue::StorageVersion(
-                version,
-            )),
+            encode_metadata_value(
+                &crate::index_lifecycle::IndexV2MetadataValue::StorageVersion(version),
+            ),
         )
         .await?;
         Ok(())
@@ -388,16 +386,16 @@ impl HelixDB {
         damage: MigrationParityTextStatisticsDamage,
     ) -> Result<()> {
         let definition =
-            crate::index_v2::ValidatedTextIndexDefinition::try_from_runtime(definition)
+            crate::index_lifecycle::ValidatedTextIndexDefinition::try_from_runtime(definition)
                 .map_err(|error| crate::error::HelixDbError::Config(error.to_string()))?;
         let handles = self.active_index_handles_loaded(DataScope::LegacyUnscoped);
         let mut authority = None;
         for handle in &handles {
-            let crate::index_v2::ActiveIndexHandle::Text { .. } = handle else {
+            let crate::index_lifecycle::ActiveIndexHandle::Text { .. } = handle else {
                 continue;
             };
             let candidate =
-                crate::index_v2::text::serving::ActiveTextServingAuthority::try_from_active(
+                crate::index_lifecycle::text::serving::ActiveTextServingAuthority::try_from_active(
                     handle,
                 )?;
             if candidate.definition() == &definition {
@@ -437,7 +435,7 @@ impl HelixDB {
                 total_token_count,
             } => {
                 let partition = migration_parity_text_partition(&definition, tenant)?;
-                let statistics = crate::index_v2::work::TextCorpusStatisticsValue::try_new(
+                let statistics = crate::index_lifecycle::work::TextCorpusStatisticsValue::try_new(
                     authority.index_id(),
                     authority.generation(),
                     partition.clone(),
@@ -457,9 +455,7 @@ impl HelixDB {
                         ),
                     }
                     .to_bytes(),
-                    Some(encode_corpus_statistics(&
-                        statistics,
-                    )),
+                    Some(encode_corpus_statistics(&statistics)),
                 )
             }
             MigrationParityTextStatisticsDamage::MissingEntityMarker { entity_id } => (
@@ -471,7 +467,7 @@ impl HelixDB {
                             generation: authority.generation(),
                             entity: crate::encoding::v2::keys::IndexEntity {
                                 kind: definition.element_kind(),
-                                id: crate::index_v2::IndexEntityId::new(entity_id),
+                                id: crate::index_lifecycle::IndexEntityId::new(entity_id),
                             },
                         },
                     ),
@@ -838,7 +834,8 @@ impl HelixDB {
         let active = handles
             .iter()
             .find(|handle| {
-                let crate::index_v2::ActiveIndexHandle::Vector { definition, .. } = handle else {
+                let crate::index_lifecycle::ActiveIndexHandle::Vector { definition, .. } = handle
+                else {
                     return false;
                 };
                 let definition = definition.to_runtime();
@@ -849,7 +846,7 @@ impl HelixDB {
                 ) == index_name
             })
             .ok_or_else(|| crate::error::HelixDbError::IndexNotFound(index_name.to_string()))?;
-        let crate::index_v2::ActiveIndexHandle::Vector { layout, .. } = active else {
+        let crate::index_lifecycle::ActiveIndexHandle::Vector { layout, .. } = active else {
             unreachable!("filtered active vector handle changed family")
         };
         let physical_index_id = layout.physical_index_id().ok_or_else(|| {
@@ -915,7 +912,7 @@ impl HelixDB {
         query: &str,
         k: usize,
     ) -> Result<Vec<MigrationParityTextSearch>> {
-        let partition = crate::index_v2::work::TextPartition::try_tenant_value(
+        let partition = crate::index_lifecycle::work::TextPartition::try_tenant_value(
             crate::encoding::v1::property::encode_index_partition_value(&PropertyValue::String(
                 tenant.to_string(),
             )),
@@ -964,11 +961,12 @@ impl HelixDB {
         query: &str,
         k: usize,
     ) -> Result<MigrationParityTextSearch> {
-        let validated = crate::index_v2::ValidatedTextIndexDefinition::try_from_runtime(definition)
-            .map_err(|error| crate::error::HelixDbError::Config(error.to_string()))?;
+        let validated =
+            crate::index_lifecycle::ValidatedTextIndexDefinition::try_from_runtime(definition)
+                .map_err(|error| crate::error::HelixDbError::Config(error.to_string()))?;
         let partition = tenant
             .map(|tenant| {
-                crate::index_v2::work::TextPartition::try_tenant_value(
+                crate::index_lifecycle::work::TextPartition::try_tenant_value(
                     crate::encoding::v1::property::encode_index_partition_value(
                         &PropertyValue::String(tenant.to_string()),
                     ),
@@ -1166,8 +1164,9 @@ pub fn migration_parity_empty_vector_metadata(
         search::vector::VectorDistanceMetric::Euclidean,
     )
     .expect("parity vector metadata definition is valid");
-    let definition = crate::index_v2::ValidatedVectorIndexDefinition::try_from_runtime(&runtime)
-        .expect("parity vector metadata validates for V2");
+    let definition =
+        crate::index_lifecycle::ValidatedVectorIndexDefinition::try_from_runtime(&runtime)
+            .expect("parity vector metadata validates for V2");
     let metadata = search::vector::VectorIndexMetadata::new(
         search::vector::VectorIndexConfig::from_v2_definition(&definition, index_name),
     );
@@ -1286,7 +1285,7 @@ fn validate_crud_rehearsal(
 
 /// Return an exact persisted legacy catalog row consumed by automatic V2 migration.
 pub fn migration_parity_secondary_catalog_row() -> Result<(Bytes, Bytes)> {
-    let definition = crate::index_v2::ValidatedDynamicIndexDefinition::try_from(
+    let definition = crate::index_lifecycle::ValidatedDynamicIndexDefinition::try_from(
         crate::config::SecondaryIndexDefinition::node_equality("User", "rank")?,
     )?;
     migrations::migration_parity_legacy_catalog_row(&definition, false)
@@ -1315,8 +1314,8 @@ pub fn migration_parity_scan_options(
 }
 
 struct MigrationParityTextQuery<'a> {
-    definition: Option<&'a crate::index_v2::ValidatedTextIndexDefinition>,
-    partition: Option<&'a crate::index_v2::work::TextPartition>,
+    definition: Option<&'a crate::index_lifecycle::ValidatedTextIndexDefinition>,
+    partition: Option<&'a crate::index_lifecycle::work::TextPartition>,
     query: &'a str,
     k: usize,
 }
@@ -1325,16 +1324,18 @@ async fn text_search_from_read(
     read: &(impl DbReadOps + Send + Sync),
     object_store: &Arc<dyn ObjectStore>,
     database: &str,
-    handles: &[crate::index_v2::ActiveIndexHandle],
+    handles: &[crate::index_lifecycle::ActiveIndexHandle],
     request: MigrationParityTextQuery<'_>,
 ) -> Result<Vec<MigrationParityTextSearch>> {
     let mut searches = Vec::new();
     for handle in handles {
-        let crate::index_v2::ActiveIndexHandle::Text { .. } = handle else {
+        let crate::index_lifecycle::ActiveIndexHandle::Text { .. } = handle else {
             continue;
         };
         let authority =
-            crate::index_v2::text::serving::ActiveTextServingAuthority::try_from_active(handle)?;
+            crate::index_lifecycle::text::serving::ActiveTextServingAuthority::try_from_active(
+                handle,
+            )?;
         if request
             .definition
             .is_some_and(|definition| definition != authority.definition())
@@ -1342,7 +1343,7 @@ async fn text_search_from_read(
             continue;
         }
         let partition = match (authority.definition().tenant_property(), request.partition) {
-            (None, None) => crate::index_v2::work::TextPartition::Unpartitioned,
+            (None, None) => crate::index_lifecycle::work::TextPartition::Unpartitioned,
             (Some(_), Some(partition)) => partition.clone(),
             (Some(_), None) => {
                 return Err(crate::error::HelixDbError::Config(
@@ -1351,9 +1352,10 @@ async fn text_search_from_read(
             }
             (None, Some(_)) => continue,
         };
-        let Some(root) =
-            crate::index_v2::text::serving::load_active_manifest_root(read, &authority, &partition)
-                .await?
+        let Some(root) = crate::index_lifecycle::text::serving::load_active_manifest_root(
+            read, &authority, &partition,
+        )
+        .await?
         else {
             if authority.definition().tenant_property().is_none() {
                 return Err(crate::error::HelixDbError::IndexCatalogCorruption(
@@ -1362,7 +1364,7 @@ async fn text_search_from_read(
             }
             continue;
         };
-        let statistics = match crate::index_v2::text::statistics::load_query_statistics(
+        let statistics = match crate::index_lifecycle::text::statistics::load_query_statistics(
             read,
             authority.scope(),
             root.index_id(),
@@ -1373,8 +1375,8 @@ async fn text_search_from_read(
         )
         .await?
         {
-            crate::index_v2::text::statistics::LoadedTextQueryStatistics::EmptyQuery => None,
-            crate::index_v2::text::statistics::LoadedTextQueryStatistics::EmptyCorpus => {
+            crate::index_lifecycle::text::statistics::LoadedTextQueryStatistics::EmptyQuery => None,
+            crate::index_lifecycle::text::statistics::LoadedTextQueryStatistics::EmptyCorpus => {
                 if root.split_count() != 0 {
                     return Err(crate::error::HelixDbError::IndexCatalogCorruption(
                         "migration parity text manifest has no corpus statistics".to_string(),
@@ -1382,15 +1384,15 @@ async fn text_search_from_read(
                 }
                 None
             }
-            crate::index_v2::text::statistics::LoadedTextQueryStatistics::Ready(statistics) => {
-                Some(statistics)
-            }
+            crate::index_lifecycle::text::statistics::LoadedTextQueryStatistics::Ready(
+                statistics,
+            ) => Some(statistics),
         };
         let mut splits = Vec::new();
         let mut hits_by_entity = BTreeMap::<u64, f32>::new();
         for page in 0..root.page_count() {
             let entries =
-                crate::index_v2::text::serving::load_active_manifest_page(read, &root, page)
+                crate::index_lifecycle::text::serving::load_active_manifest_page(read, &root, page)
                     .await?;
             let page_splits = entries
                 .into_iter()
@@ -1755,7 +1757,7 @@ async fn scan_vector_non_metadata_digests(
         .collect())
 }
 
-fn parity_identity(identity: &crate::index_v2::IndexIdentity) -> String {
+fn parity_identity(identity: &crate::index_lifecycle::IndexIdentity) -> String {
     format!(
         "{:?}:{:?}:{}:{}",
         identity.family(),
@@ -1766,11 +1768,11 @@ fn parity_identity(identity: &crate::index_v2::IndexIdentity) -> String {
 }
 
 fn parity_definition(
-    definition: &crate::index_v2::ValidatedDynamicIndexDefinition,
+    definition: &crate::index_lifecycle::ValidatedDynamicIndexDefinition,
 ) -> BTreeMap<String, String> {
     let mut fields = BTreeMap::new();
     match definition {
-        crate::index_v2::ValidatedDynamicIndexDefinition::Secondary(definition) => {
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Secondary(definition) => {
             fields.insert("family".to_string(), "secondary".to_string());
             fields.insert(
                 "element_kind".to_string(),
@@ -1787,7 +1789,7 @@ fn parity_definition(
                 format!("{:?}", definition.direction()),
             );
         }
-        crate::index_v2::ValidatedDynamicIndexDefinition::Vector(definition) => {
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Vector(definition) => {
             fields.insert("family".to_string(), "vector".to_string());
             fields.insert(
                 "element_kind".to_string(),
@@ -1836,7 +1838,7 @@ fn parity_definition(
                     .to_string(),
             );
         }
-        crate::index_v2::ValidatedDynamicIndexDefinition::Text(definition) => {
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Text(definition) => {
             fields.insert("family".to_string(), "text".to_string());
             fields.insert(
                 "element_kind".to_string(),
@@ -1902,18 +1904,11 @@ async fn scan_v2_state(
     state: &mut MigrationParityV2State,
 ) -> Result<()> {
     let mut completed_vector_builds =
-        BTreeMap::<(u64, u64), crate::index_v2::OperationCounters>::new();
-    let scoped_prefix = IndexKey::data_prefix(
-        scope,
-        Bytes::from(vec![ScopedKey::key_prefix()]),
-    );
+        BTreeMap::<(u64, u64), crate::index_lifecycle::OperationCounters>::new();
+    let scoped_prefix = IndexKey::data_prefix(scope, Bytes::from(vec![ScopedKey::key_prefix()]));
     let mut scoped = read.scan_prefix(scoped_prefix, ..).await?;
     while let Some(row) = scoped.next().await? {
-        let IndexKey::Data {
-            kind: key,
-            ..
-        } = IndexKey::parse_from_slice(scope, &row.key)?
-        else {
+        let IndexKey::Data { kind: key, .. } = IndexKey::parse_from_slice(scope, &row.key)? else {
             continue;
         };
         let kind = format!("{:?}", key.record_kind());
@@ -1942,14 +1937,14 @@ async fn scan_v2_state(
                 let operation = decode_operation_record(&row.value)?;
                 if matches!(
                     operation.execution_state(),
-                    crate::index_v2::IndexOperationExecutionState::Completed(
-                        crate::index_v2::IndexOperationOutcome::Build(
-                            crate::index_v2::BuildOperationOutcome::Succeeded,
+                    crate::index_lifecycle::IndexOperationExecutionState::Completed(
+                        crate::index_lifecycle::IndexOperationOutcome::Build(
+                            crate::index_lifecycle::BuildOperationOutcome::Succeeded,
                         ),
                     )
-                ) && let crate::index_v2::IndexOperationProgress::VectorBuild(
-                    crate::index_v2::VectorBuildProgress::Constructing(
-                        crate::index_v2::VectorBuildStage::Activate(progress),
+                ) && let crate::index_lifecycle::IndexOperationProgress::VectorBuild(
+                    crate::index_lifecycle::VectorBuildProgress::Constructing(
+                        crate::index_lifecycle::VectorBuildStage::Activate(progress),
                     ),
                 ) = operation.progress()
                 {
@@ -1959,9 +1954,9 @@ async fn scan_v2_state(
                     );
                 }
                 state.operation_statuses.push(
-                    serde_json::to_string(&crate::index_v2::IndexOperationStatus::from_record(
-                        &operation,
-                    ))
+                    serde_json::to_string(
+                        &crate::index_lifecycle::IndexOperationStatus::from_record(&operation),
+                    )
                     .map_err(|error| {
                         crate::error::HelixDbError::Config(format!(
                             "failed to serialize V2 operation status: {error}"
@@ -2024,10 +2019,10 @@ async fn scan_v2_state(
                     ));
                 }
                 let contribution = match statistics.contribution {
-                    crate::index_v2::work::TextStatisticsContribution::Absent => {
+                    crate::index_lifecycle::work::TextStatisticsContribution::Absent => {
                         MigrationParityTextEntityContribution::Absent
                     }
-                    crate::index_v2::work::TextStatisticsContribution::Present {
+                    crate::index_lifecycle::work::TextStatisticsContribution::Present {
                         partition,
                         fingerprint,
                         token_count,
@@ -2077,7 +2072,7 @@ async fn scan_v2_state(
         increment_count(&mut state.global_row_counts, &kind);
         match key {
             GlobalKey::StorageVersion => {
-                let crate::index_v2::IndexV2MetadataValue::StorageVersion(version) =
+                let crate::index_lifecycle::IndexV2MetadataValue::StorageVersion(version) =
                     decode_metadata_value(&row.value)?
                 else {
                     return Err(crate::error::HelixDbError::InvariantViolation(
@@ -2090,7 +2085,7 @@ async fn scan_v2_state(
                 state.pending_operation_pointers += 1;
             }
             GlobalKey::LegacyVectorPhysicalReservation(physical_id) => {
-                let crate::index_v2::IndexV2MetadataValue::LegacyVectorPhysicalReservation(
+                let crate::index_lifecycle::IndexV2MetadataValue::LegacyVectorPhysicalReservation(
                     reservation,
                 ) = decode_metadata_value(&row.value)?
                 else {
@@ -2098,7 +2093,7 @@ async fn scan_v2_state(
                         "vector reservation key contains another metadata value".to_string(),
                     ));
                 };
-                if let crate::index_v2::LegacyVectorPhysicalReservation::AdoptedActive {
+                if let crate::index_lifecycle::LegacyVectorPhysicalReservation::AdoptedActive {
                     index_id,
                     generation,
                 } = reservation

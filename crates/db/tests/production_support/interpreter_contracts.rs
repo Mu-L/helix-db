@@ -25,15 +25,15 @@ use crate::encoding::indexes::label::{EdgeLabelKey, EdgeLabelNeighborKey};
 use crate::encoding::indexes::{hash_property_name, hash_property_value, EdgeDirection, IndexKey};
 use crate::encoding::property::property_value::PropertyValue as DbPropertyValue;
 use crate::encoding::property::Property;
-use crate::encoding::v2::keys as index_keys;
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{
     AdjacencyKey, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey, Key, NodePropertyKey,
 };
-use crate::encoding::v2::values as index_values;
 use crate::encoding::v1::values::vector_generation::{ActiveScoreSemantic, VectorEntityKind};
 use crate::encoding::v1::values::{edges, secondary};
-use crate::index_v2::{
+use crate::encoding::v2::keys as index_keys;
+use crate::encoding::v2::values as index_values;
+use crate::index_lifecycle::{
     IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
     IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
 };
@@ -432,9 +432,11 @@ async fn run_value_dependency_and_row_contracts() {
         .contains("folded stream"));
     context.step_outputs.insert(
         step(8),
-        ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-            operation_id: IndexOperationId::from_bytes([8; 16]).unwrap(),
-        }),
+        ExecutionValue::IndexDdlReceipt(
+            crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+                operation_id: IndexOperationId::from_bytes([8; 16]).unwrap(),
+            },
+        ),
     );
     assert!(context
         .dependency_input(&[step(8), step(8)])
@@ -451,9 +453,11 @@ async fn run_value_dependency_and_row_contracts() {
         2
     );
     assert_eq!(
-        ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-            operation_id: IndexOperationId::from_bytes([9; 16]).unwrap(),
-        })
+        ExecutionValue::IndexDdlReceipt(
+            crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+                operation_id: IndexOperationId::from_bytes([9; 16]).unwrap(),
+            }
+        )
         .len(),
         1
     );
@@ -590,7 +594,7 @@ async fn seed_active_text_generation(
         object_store,
         definition,
         IndexId::initial(),
-        crate::index_v2::TextManifestRevision::initial(),
+        crate::index_lifecycle::TextManifestRevision::initial(),
         true,
     )
     .await
@@ -602,14 +606,14 @@ async fn seed_active_text_generation_with(
     object_store: Arc<dyn ObjectStore>,
     definition: &TextIndexDefinition,
     index_id: IndexId,
-    revision: crate::index_v2::TextManifestRevision,
+    revision: crate::index_lifecycle::TextManifestRevision,
     seed_unpartitioned_root: bool,
 ) -> Option<index_keys::TextManifestRootKey> {
     let raw = Db::builder(database, object_store)
         .build()
         .await
         .expect("raw Active-text fixture opens");
-    crate::index_v2::repository::bootstrap_writer(&raw)
+    crate::index_lifecycle::repository::bootstrap_writer(&raw)
         .await
         .expect("raw Active-text fixture bootstraps");
     let active = IndexRecordV2::building(
@@ -628,7 +632,7 @@ async fn seed_active_text_generation_with(
     let root = seed_unpartitioned_root.then_some(index_keys::TextManifestRootKey {
         index_id,
         generation: IndexGenerationId::initial(),
-        partition: crate::index_v2::work::TextPartition::Unpartitioned.fingerprint(),
+        partition: crate::index_lifecycle::work::TextPartition::Unpartitioned.fingerprint(),
     });
     let transaction = raw
         .begin(IsolationLevel::SerializableSnapshot)
@@ -646,11 +650,11 @@ async fn seed_active_text_generation_with(
         transaction
             .put(
                 scoped_key(index_keys::ScopedKey::TextManifestRoot(root)),
-                index_values::encode_manifest_root(&
-                    crate::index_v2::work::TextManifestRootValue::try_new(
+                index_values::encode_manifest_root(
+                    &crate::index_lifecycle::work::TextManifestRootValue::try_new(
                         index_id,
                         IndexGenerationId::initial(),
-                        crate::index_v2::work::TextPartition::Unpartitioned,
+                        crate::index_lifecycle::work::TextPartition::Unpartitioned,
                         revision,
                         0,
                         0,
@@ -765,8 +769,8 @@ pub(crate) async fn run_active_text_graph_conflict() {
         .await
         .expect("Active manifest root reads")
         .expect("Active manifest root remains present");
-    let root = index_values::decode_manifest_root(&root_value)
-        .expect("Active manifest root decodes");
+    let root =
+        index_values::decode_manifest_root(&root_value).expect("Active manifest root decodes");
     assert!(root.page_count() == 0 && root.split_count() == 0);
     assert_eq!(
         scoped_v2_snapshot(writer_db(&db)).await,
@@ -1349,7 +1353,7 @@ pub(crate) async fn run_topology_mutation_contracts() {
     db.close().await.unwrap();
 }
 
-#[cfg(feature = "index-v2-lifecycle-testing")]
+#[cfg(feature = "index-lifecycle-testing")]
 mod text_transaction_benchmark {
     use std::fmt;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1366,8 +1370,7 @@ mod text_transaction_benchmark {
 
     use super::*;
     use crate::config::{CacheConfig, CacheMode, TextElementType, VectorMemorySettings};
-    use crate::encoding::v1::keys::GlobalKeyKind;
-    use crate::index_v2_lifecycle_testing::LifecycleTestScheduling;
+    use crate::index_lifecycle_testing::LifecycleTestScheduling;
     use crate::search::text_index_name;
 
     const LABEL: &str = "TextTransactionBenchmarkDocument";
@@ -1884,7 +1887,7 @@ mod text_transaction_benchmark {
     async fn manifest_root(
         db: &Db,
         root: index_keys::TextManifestRootKey,
-    ) -> Result<crate::index_v2::work::TextManifestRootValue> {
+    ) -> Result<crate::index_lifecycle::work::TextManifestRootValue> {
         let bytes = db
             .get(scoped_key(index_keys::ScopedKey::TextManifestRoot(root)))
             .await?
@@ -1901,13 +1904,13 @@ mod text_transaction_benchmark {
         db: &Db,
         root: index_keys::TextManifestRootKey,
         entity_id: u64,
-    ) -> Result<crate::index_v2::work::TextEntityStateValue> {
+    ) -> Result<crate::index_lifecycle::work::TextEntityStateValue> {
         let key = scoped_key(index_keys::ScopedKey::TextEntityState(
             index_keys::TextEntityStateKey {
                 root,
                 entity: index_keys::IndexEntity {
-                    kind: crate::index_v2::IndexElementKind::Node,
-                    id: crate::index_v2::IndexEntityId::new(entity_id),
+                    kind: crate::index_lifecycle::IndexElementKind::Node,
+                    id: crate::index_lifecycle::IndexEntityId::new(entity_id),
                 },
             },
         ));
@@ -1937,10 +1940,8 @@ mod text_transaction_benchmark {
             root.partition,
             page,
         )?;
-        let key = Key::Global {
-            kind: index_keys::GlobalKey::TextCompactionPointer(
-                target,
-            ),
+        let key = index_keys::Key::Global {
+            kind: index_keys::GlobalKey::TextCompactionPointer(target),
         }
         .to_bytes();
         let bytes = db.get(key).await?.ok_or_else(|| {
@@ -1948,7 +1949,7 @@ mod text_transaction_benchmark {
                 "text transaction contract compaction pointer disappeared".to_string(),
             )
         })?;
-        let crate::index_v2::IndexV2MetadataValue::TextCompactionPointer(pointer) =
+        let crate::index_lifecycle::IndexV2MetadataValue::TextCompactionPointer(pointer) =
             index_values::decode_metadata_value(&bytes)?
         else {
             return Err(HelixDbError::InvariantViolation(
@@ -1960,7 +1961,7 @@ mod text_transaction_benchmark {
 
     fn tenant_root(tenant: &str) -> index_keys::TextManifestRootKey {
         let tenant_value = Property::string("tenant", tenant).value;
-        let partition = crate::index_v2::work::TextPartition::try_tenant_value(
+        let partition = crate::index_lifecycle::work::TextPartition::try_tenant_value(
             crate::encoding::v1::property::encode_index_partition_value(&tenant_value),
         )
         .expect("tenant partition validates");
@@ -2066,7 +2067,7 @@ mod text_transaction_benchmark {
             .expect("batching text definition validates");
         let root =
             seed_active_text_generation(database, Arc::clone(&object_store), &definition).await;
-        let db = crate::HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+        let db = crate::HelixDB::open_with_object_store_for_index_lifecycle_testing(
             database,
             Arc::clone(&object_store),
             benchmark_config(),
@@ -2099,8 +2100,7 @@ mod text_transaction_benchmark {
             .await
             .expect("batched manifest page reads")
             .expect("batched manifest page exists");
-        let page = index_values::decode_manifest_page(&page_bytes)
-            .expect("batched page decodes");
+        let page = index_values::decode_manifest_page(&page_bytes).expect("batched page decodes");
         assert_eq!(page.entries().len(), 1);
         assert!(page.entries()[0]
             .pruning()
@@ -2267,7 +2267,8 @@ mod text_transaction_benchmark {
             Arc::clone(&object_store),
             &body,
             IndexId::new(1).expect("body index ID is non-zero"),
-            crate::index_v2::TextManifestRevision::new(3).expect("body revision is non-zero"),
+            crate::index_lifecycle::TextManifestRevision::new(3)
+                .expect("body revision is non-zero"),
             true,
         )
         .await
@@ -2277,12 +2278,13 @@ mod text_transaction_benchmark {
             Arc::clone(&object_store),
             &title,
             IndexId::new(2).expect("title index ID is non-zero"),
-            crate::index_v2::TextManifestRevision::new(9).expect("title revision is non-zero"),
+            crate::index_lifecycle::TextManifestRevision::new(9)
+                .expect("title revision is non-zero"),
             true,
         )
         .await
         .expect("title root seeds");
-        let db = crate::HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+        let db = crate::HelixDB::open_with_object_store_for_index_lifecycle_testing(
             database,
             Arc::clone(&object_store),
             benchmark_config(),
@@ -2356,12 +2358,12 @@ mod text_transaction_benchmark {
             Arc::clone(&object_store),
             &definition,
             IndexId::initial(),
-            crate::index_v2::TextManifestRevision::initial(),
+            crate::index_lifecycle::TextManifestRevision::initial(),
             false,
         )
         .await
         .is_none());
-        let db = crate::HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+        let db = crate::HelixDB::open_with_object_store_for_index_lifecycle_testing(
             database,
             Arc::clone(&object_store),
             benchmark_config(),
@@ -2472,7 +2474,7 @@ mod text_transaction_benchmark {
         let root =
             seed_active_text_generation(database, Arc::clone(&object_store), &definition).await;
         let config = benchmark_config();
-        let db = crate::HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+        let db = crate::HelixDB::open_with_object_store_for_index_lifecycle_testing(
             database,
             Arc::clone(&object_store),
             config.clone(),
@@ -2537,7 +2539,7 @@ mod text_transaction_benchmark {
     }
 }
 
-#[cfg(feature = "index-v2-lifecycle-testing")]
+#[cfg(feature = "index-lifecycle-testing")]
 pub use text_transaction_benchmark::{
     run_text_transaction_batch_benchmark_sample, run_text_transaction_batching_contracts,
     TextTransactionBatchBenchmarkCase, TextTransactionBatchBenchmarkSample,

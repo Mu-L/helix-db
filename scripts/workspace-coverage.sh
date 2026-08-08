@@ -25,8 +25,8 @@ case "$SHARD" in
                 "needle": "/crates/db/src/execution/interpreter/",
                 "minimum_percent": 98
             },
-            "index_v2": {
-                "needle": "/crates/db/src/index_v2/",
+            "index_lifecycle": {
+                "needle": "/crates/db/src/index_lifecycle/",
                 "minimum_percent": 93
             },
             "search": {

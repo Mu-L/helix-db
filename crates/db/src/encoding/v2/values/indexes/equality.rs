@@ -3,7 +3,7 @@
 use bytes::Bytes;
 
 use crate::encoding::error::EncodingError;
-use crate::index_v2::work::SecondaryEntryValue;
+use crate::index_lifecycle::work::SecondaryEntryValue;
 
 use super::{encode_value, WorkValue};
 

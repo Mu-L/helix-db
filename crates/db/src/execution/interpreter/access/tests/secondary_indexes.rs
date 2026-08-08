@@ -5,17 +5,17 @@ use crate::config::SecondaryIndexDefinition;
 use crate::encoding::indexes::equality::{EqualityIndexKey, GlobalEdgeEqualityIndexKey};
 use crate::encoding::indexes::range::RangeIndexDirection as StorageRangeIndexDirection;
 use crate::encoding::indexes::{hash_property_name, hash_property_value, IndexKey};
-use crate::encoding::v2::keys::{
-    CanonicalSecondaryValue, ScopedKey, SecondaryEntryKey, SecondaryEntryLane,
-};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{DataKeyKind, Key};
 use crate::encoding::v2::keys::Key as ManagedKey;
+use crate::encoding::v2::keys::{
+    CanonicalSecondaryValue, ScopedKey, SecondaryEntryKey, SecondaryEntryLane,
+};
 use crate::encoding::v2::values::{encode_index_record, encode_secondary_entry};
 use crate::error::{HelixDbError, IndexFamily, IndexLifecycleUnavailableReason};
 use crate::execution::interpreter::ExecutionContext;
-use crate::index_v2::work::SecondaryEntryValue;
-use crate::index_v2::{
+use crate::index_lifecycle::work::SecondaryEntryValue;
+use crate::index_lifecycle::{
     IndexEntityId, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
     IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
     ValidatedSecondaryIndexDefinition,
@@ -27,7 +27,7 @@ async fn seed_active_secondary_generation(
     definition: SecondaryIndexDefinition,
     index_id: u64,
     rows: &[(&str, u64)],
-) -> crate::index_v2::IndexIdentity {
+) -> crate::index_lifecycle::IndexIdentity {
     let definition = ValidatedDynamicIndexDefinition::try_from(definition)
         .expect("managed secondary fixture definition validates");
     let identity = definition.identity();
@@ -44,9 +44,11 @@ async fn seed_active_secondary_generation(
     let active = building
         .transition(IndexStateTransition::Activate)
         .expect("managed secondary fixture activates");
-    let handle =
-        crate::index_v2::ActiveIndexHandle::try_from_record(DataScope::LegacyUnscoped, &active)
-            .expect("managed secondary fixture projects an Active handle");
+    let handle = crate::index_lifecycle::ActiveIndexHandle::try_from_record(
+        DataScope::LegacyUnscoped,
+        &active,
+    )
+    .expect("managed secondary fixture projects an Active handle");
     db.inner_db()
         .put(
             ManagedKey::Data {
@@ -332,7 +334,7 @@ async fn managed_secondary_access_uses_active_v2_rows() {
         ])
     );
 
-    let node_range_record = crate::index_v2::repository::load_index_record(
+    let node_range_record = crate::index_lifecycle::repository::load_index_record(
         db.inner_db().as_ref(),
         DataScope::LegacyUnscoped,
         &node_range_identity,
@@ -368,7 +370,7 @@ async fn managed_secondary_access_uses_active_v2_rows() {
         })
     ));
 
-    let record = crate::index_v2::repository::load_index_record(
+    let record = crate::index_lifecycle::repository::load_index_record(
         db.inner_db().as_ref(),
         DataScope::LegacyUnscoped,
         &equality_identity,
@@ -1306,7 +1308,7 @@ async fn managed_secondary_access_propagates_corrupt_canonical_records() {
 #[tokio::test]
 async fn range_access_rejects_oversized_identity_components() {
     let db = test_support::open_db("access-oversized-range-identity").await;
-    let oversized = "x".repeat(crate::index_v2::INDEX_COMPONENT_MAX_LEN + 1);
+    let oversized = "x".repeat(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN + 1);
     let node = exec::ExecNodeAccessPlan::RangeIndex {
         index: catalog::NodeRangeIndexMeta::new(test_support::name("oversized-node-range")),
         key: catalog::ScopedPropertyDirectionKey::try_new(

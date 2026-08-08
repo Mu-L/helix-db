@@ -9,17 +9,17 @@ use serde::{Deserialize, Serialize};
 use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
 use crate::config::SearchIndexBatchLimits;
-use crate::encoding::v2::keys::{GlobalKey, ScopedKey, RecordKind};
 use crate::encoding::v1::keys::tenant::DataScope;
 #[cfg(test)]
 use crate::encoding::v1::keys::{DataKeyKind, Key};
 use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::{GlobalKey, RecordKind, ScopedKey};
 use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, decode_operation_record, encode_index_record,
     encode_operation_record,
 };
 use crate::error::{HelixDbError, Result};
-use crate::index_v2::{
+use crate::index_lifecycle::{
     ActiveIndexHandle, IndexOperationId, IndexRecordV2, IndexStateTransition, IndexStateV2,
     IndexV2MetadataValue, LegacyVectorPhysicalReservation, PhysicalGeneration,
     ValidatedDynamicIndexDefinition, ValidatedVectorIndexDefinition, VectorPhysicalIndexId,
@@ -386,10 +386,7 @@ async fn select_target(
 ) -> Result<()> {
     let started = std::time::Instant::now();
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
-    let prefix = IndexKey::data_prefix(
-        scope,
-        ScopedKey::logical_prefix(RecordKind::IndexRecord),
-    );
+    let prefix = IndexKey::data_prefix(scope, ScopedKey::logical_prefix(RecordKind::IndexRecord));
     let mut rows = transaction
         .scan(scan_bounds_for_prefix(&prefix, after_index_key.as_ref()))
         .await?;
@@ -1060,9 +1057,7 @@ async fn validate_reservation_record(
     generation: u64,
 ) -> Result<()> {
     let key = IndexKey::Global {
-        kind: GlobalKey::LegacyVectorPhysicalReservation(
-            physical_index_id,
-        ),
+        kind: GlobalKey::LegacyVectorPhysicalReservation(physical_index_id),
     }
     .to_bytes();
     let Some(value) = transaction.get(key).await? else {
@@ -1337,11 +1332,11 @@ mod tests {
     use crate::encoding::v1::keys::vectors::{
         VectorKey, VectorSimHashDirectoryKey, VectorStorageLane,
     };
-    use crate::encoding::v2::values::encode_metadata_value;
     use crate::encoding::v1::values::vectors::markers::{
         decode_simhash_directory_marker_v1, encode_simhash_directory_marker_v1,
     };
-    use crate::index_v2::{
+    use crate::encoding::v2::values::encode_metadata_value;
+    use crate::index_lifecycle::{
         BuildOperationOutcome, IndexGenerationId, IndexId, IndexOperationExecutionState,
         IndexOperationFamily, IndexOperationKind, IndexOperationOutcome, IndexOperationProgress,
         IndexOperationRecord, IndexOperationRevision, IndexRevision, NoCursorProgress,
@@ -1373,7 +1368,7 @@ mod tests {
 
     fn definition(metric: VectorDistanceMetric, ordinal: u64) -> ValidatedVectorIndexDefinition {
         ValidatedVectorIndexDefinition::try_new(
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             format!("Document{ordinal}"),
             "embedding",
             None::<String>,
@@ -1642,7 +1637,7 @@ mod tests {
             before,
             "migration preserves every non-directory physical row"
         );
-        let record = crate::index_v2::repository::load_index_record(
+        let record = crate::index_lifecycle::repository::load_index_record(
             &db,
             DataScope::LegacyUnscoped,
             fixture.record.identity(),
@@ -1698,7 +1693,7 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(
-            crate::index_v2::repository::load_legacy_vector_physical_reservation(
+            crate::index_lifecycle::repository::load_legacy_vector_physical_reservation(
                 &db,
                 fixture.physical_index_id,
             )
@@ -1710,7 +1705,7 @@ mod tests {
             })
         );
         assert!(
-            crate::index_v2::repository::revalidate_active_handle(&db, &fixture.active)
+            crate::index_lifecycle::repository::revalidate_active_handle(&db, &fixture.active)
                 .await
                 .is_err(),
             "publication invalidates the stale legacy authorization"
@@ -1826,9 +1821,7 @@ mod tests {
         assert!(decode_simhash_directory_marker_v1(&encode_simhash_directory_marker_v1(),).is_ok());
 
         let reservation_key = IndexKey::Global {
-            kind: GlobalKey::LegacyVectorPhysicalReservation(
-                fixture.physical_index_id,
-            ),
+            kind: GlobalKey::LegacyVectorPhysicalReservation(fixture.physical_index_id),
         }
         .to_bytes();
         db.put(
@@ -1858,7 +1851,7 @@ mod tests {
             .build()
             .await
             .expect("raw startup fixture opens");
-        crate::index_v2::repository::bootstrap_writer(&raw)
+        crate::index_lifecycle::repository::bootstrap_writer(&raw)
             .await
             .expect("V2 repository bootstraps");
         let fixture = seed_active_legacy::<vector::distance::Cosine>(
@@ -1987,7 +1980,7 @@ mod tests {
                 "{} must not duplicate its marker write",
                 failpoint.as_str()
             );
-            let record = crate::index_v2::repository::load_index_record(
+            let record = crate::index_lifecycle::repository::load_index_record(
                 &db,
                 DataScope::LegacyUnscoped,
                 fixture.record.identity(),

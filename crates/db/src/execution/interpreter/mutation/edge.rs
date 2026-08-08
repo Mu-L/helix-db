@@ -13,7 +13,7 @@ use slatedb::DbTransaction;
 use super::contracts::{label_of, EdgeMutationTarget};
 use super::MutationIndexContext;
 use super::*;
-use crate::index_v2::graph_mutation::{
+use crate::index_lifecycle::graph_mutation::{
     CanonicalPropertyRow, GraphEntity, GraphMutationTransition, PropertyEdit, PropertyEditOutcome,
 };
 

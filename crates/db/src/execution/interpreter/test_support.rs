@@ -5,7 +5,9 @@ use helix_planner::{context, cost, exec, ir, properties, trace};
 use slatedb::object_store::{memory::InMemory, ObjectStore};
 
 use super::{ElementRef, ExecutionRow, ExecutionValue};
-use crate::{config, index_v2::ValidatedDynamicIndexDefinition, search, HelixDB, HelixDbSource};
+use crate::{
+    config, index_lifecycle::ValidatedDynamicIndexDefinition, search, HelixDB, HelixDbSource,
+};
 
 use std::sync::Arc;
 

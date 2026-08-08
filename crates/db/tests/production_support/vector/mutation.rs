@@ -1072,7 +1072,7 @@ fn session_identity(
         physical_index_id,
         NonZeroU64::new(3).unwrap(),
         11,
-        crate::index_v2::IndexElementKind::Node,
+        crate::index_lifecycle::IndexElementKind::Node,
         crate::search::vector::VectorDimension::try_new(2).unwrap(),
     )
     .unwrap()

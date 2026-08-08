@@ -3,7 +3,7 @@
 use bytes::Bytes;
 
 use crate::encoding::error::EncodingError;
-use crate::index_v2::work::{
+use crate::index_lifecycle::work::{
     TextBuildArtifactValue, TextCorpusStatisticsValue, TextEntityStateValue, TextManifestPageValue,
     TextManifestRootValue, TextStatisticsEntityValue, TextTermStatisticsValue,
 };

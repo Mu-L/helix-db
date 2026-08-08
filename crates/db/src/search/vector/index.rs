@@ -247,7 +247,7 @@ impl<D: Distance> VectorIndex<D> {
         reader: &(impl DbReadOps + Send + Sync),
         pass: LegacyVectorValidationPass,
         cursor: Option<&[u8]>,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         max_entities: usize,
         max_input_bytes: u64,
     ) -> Result<LegacyVectorValidationOutcome, HelixDbError> {
@@ -268,7 +268,7 @@ impl<D: Distance> VectorIndex<D> {
         &self,
         reader: &(impl DbReadOps + Send + Sync),
         cursor: Option<&[u8]>,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         mode: SimHashDirectoryValidationMode,
         max_entities: usize,
         max_input_bytes: u64,
@@ -289,7 +289,7 @@ impl<D: Distance> VectorIndex<D> {
         &self,
         reader: &(impl DbReadOps + Send + Sync),
         cursor: Option<&[u8]>,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         limits: crate::config::SearchIndexBatchLimits,
     ) -> Result<CanonicalVectorDirectoryBackfillOutcome, HelixDbError> {
         VectorRows::new(reader, &self.rows)
@@ -317,7 +317,7 @@ impl<D: Distance> VectorIndex<D> {
     pub(crate) async fn transcode_legacy_metadata(
         &self,
         transaction: &DbTransaction,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         canonical_physical_name: &str,
     ) -> Result<VectorWriteMeasurement, HelixDbError> {
         let Some(mut metadata) = VectorRows::new(transaction, &self.rows)
@@ -361,7 +361,7 @@ impl<D: Distance> VectorIndex<D> {
     pub(crate) async fn validate_legacy_metadata_contract(
         &self,
         reader: &(impl DbReadOps + Send + Sync),
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
     ) -> Result<(), HelixDbError> {
         let Some(metadata) = VectorRows::new(reader, &self.rows)
             .legacy_metadata()
@@ -752,7 +752,7 @@ impl<D: Distance> VectorIndex<D> {
         &self,
         transaction: &(impl DbReadOps + Send + Sync),
         entity_id: NodeId,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
     ) -> Result<LegacyVectorMigrationRead, HelixDbError> {
         let read = VectorRows::new(transaction, &self.rows)
             .legacy_vector_for_migration::<D>(entity_id, definition)

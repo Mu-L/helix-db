@@ -1,6 +1,6 @@
 //! Vector lifecycle partition-mapping keys. HNSW keys remain V1.
 
-use crate::index_v2::{IndexGenerationId, IndexId};
+use crate::index_lifecycle::{IndexGenerationId, IndexId};
 
 use super::text::PartitionFingerprint;
 

@@ -33,8 +33,8 @@ use crate::encoding::error::EncodingError;
 use crate::encoding::indexes::range::RangeIndexDirection as StorageRangeIndexDirection;
 use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
 use crate::encoding::v2::keys::{CanonicalSecondaryValue, SecondaryEntryLane};
-use crate::index_v2::work::{BlobRef, SplitPruning, SplitRef, SPLIT_PRUNING_BLOOM_WORDS};
-use crate::index_v2::{
+use crate::index_lifecycle::work::{BlobRef, SplitPruning, SplitRef, SPLIT_PRUNING_BLOOM_WORDS};
+use crate::index_lifecycle::{
     ActiveVectorCodecV2, ClaimSequence, CosineNormPolicyV2, IndexComponent, IndexCursor,
     IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexIdentity,
     IndexIdentityFamily, IndexOperationBlocker, IndexOperationId, IndexOperationRevision,
@@ -336,12 +336,12 @@ pub(super) fn take_identity(
     let element_kind = take_element_kind(decoder)?;
     let label = IndexComponent::try_new(
         "label",
-        decoder.take_string(crate::index_v2::INDEX_COMPONENT_MAX_LEN)?,
+        decoder.take_string(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN)?,
     )
     .map_err(model_error)?;
     let property = IndexComponent::try_new(
         "property",
-        decoder.take_string(crate::index_v2::INDEX_COMPONENT_MAX_LEN)?,
+        decoder.take_string(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN)?,
     )
     .map_err(model_error)?;
     Ok(IndexIdentity::new(family, element_kind, label, property))
@@ -465,10 +465,10 @@ pub(super) fn take_definition(
         }
         0x02 => {
             let element_kind = take_element_kind(decoder)?;
-            let label = decoder.take_string(crate::index_v2::INDEX_COMPONENT_MAX_LEN)?;
-            let property = decoder.take_string(crate::index_v2::INDEX_COMPONENT_MAX_LEN)?;
+            let label = decoder.take_string(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN)?;
+            let property = decoder.take_string(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN)?;
             let tenant_property = decoder.take_option(|decoder| {
-                decoder.take_string(crate::index_v2::INDEX_COMPONENT_MAX_LEN)
+                decoder.take_string(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN)
             })?;
             let dimension = decoder.take_u32()?;
             let metric = take_metric(decoder)?;
@@ -498,10 +498,10 @@ pub(super) fn take_definition(
         }
         0x03 => {
             let element_kind = take_element_kind(decoder)?;
-            let label = decoder.take_string(crate::index_v2::INDEX_COMPONENT_MAX_LEN)?;
-            let property = decoder.take_string(crate::index_v2::INDEX_COMPONENT_MAX_LEN)?;
+            let label = decoder.take_string(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN)?;
+            let property = decoder.take_string(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN)?;
             let tenant_property = decoder.take_option(|decoder| {
-                decoder.take_string(crate::index_v2::INDEX_COMPONENT_MAX_LEN)
+                decoder.take_string(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN)
             })?;
             let analyzer = match decoder.take_u8()? {
                 0x01 => TextAnalyzerKind::Standard,
@@ -748,7 +748,7 @@ pub(super) fn take_cursor(
     decoder: &mut ValueDecoder<'_>,
 ) -> Result<Option<IndexCursor>, EncodingError> {
     decoder.take_option(|decoder| {
-        IndexCursor::try_new(decoder.take_bytes(crate::index_v2::INDEX_CURSOR_MAX_LEN)?)
+        IndexCursor::try_new(decoder.take_bytes(crate::index_lifecycle::INDEX_CURSOR_MAX_LEN)?)
             .map_err(operation_model_error)
     })
 }
@@ -1008,7 +1008,7 @@ fn take_component(
 ) -> Result<IndexComponent, EncodingError> {
     IndexComponent::try_new(
         kind,
-        decoder.take_string(crate::index_v2::INDEX_COMPONENT_MAX_LEN)?,
+        decoder.take_string(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN)?,
     )
     .map_err(model_error)
 }
@@ -1017,17 +1017,19 @@ pub(super) fn unknown_discriminant(kind: &str, value: u8) -> EncodingError {
     EncodingError::Custom(format!("unknown V2 {kind} discriminant {value:#04x}"))
 }
 
-pub(super) fn model_error(error: crate::index_v2::IndexV2ModelError) -> EncodingError {
+pub(super) fn model_error(error: crate::index_lifecycle::IndexV2ModelError) -> EncodingError {
     EncodingError::Custom(error.to_string())
 }
 
 pub(super) fn operation_model_error(
-    error: crate::index_v2::IndexOperationModelError,
+    error: crate::index_lifecycle::IndexOperationModelError,
 ) -> EncodingError {
     EncodingError::Custom(error.to_string())
 }
 
-pub(super) fn work_model_error(error: crate::index_v2::work::IndexWorkModelError) -> EncodingError {
+pub(super) fn work_model_error(
+    error: crate::index_lifecycle::work::IndexWorkModelError,
+) -> EncodingError {
     EncodingError::Custom(error.to_string())
 }
 
@@ -1182,8 +1184,9 @@ mod tests {
 
     #[test]
     fn operation_model_errors_are_projected_into_encoding_errors() {
-        let error =
-            operation_model_error(crate::index_v2::IndexOperationModelError::ZeroClaimSequence);
+        let error = operation_model_error(
+            crate::index_lifecycle::IndexOperationModelError::ZeroClaimSequence,
+        );
         assert!(error.to_string().contains("claim sequence"));
     }
 }

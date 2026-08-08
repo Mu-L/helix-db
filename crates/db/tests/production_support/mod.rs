@@ -21,11 +21,11 @@ pub use crate::search::vector::{
 };
 
 mod graph_mutation_representation;
-mod index_v2;
+mod index_lifecycle;
 #[cfg(feature = "production-scale")]
-mod index_v2_scale;
-mod index_v2_text_rows;
-mod index_v2_typed_boundaries;
+mod index_lifecycle_scale;
+mod index_lifecycle_text_rows;
+mod index_lifecycle_typed_boundaries;
 mod migration_text_rebuild;
 mod secondary_equality_hot_path;
 mod v1_migration;
@@ -356,13 +356,13 @@ pub async fn vector_index_contracts() {
 /// Each boundary is injected twice from a clean database. The contract then
 /// proves that the durable state is either unchanged, recoverably claimed, or
 /// already terminal; no test-only persistence representation is involved.
-pub async fn index_v2_outbox_failpoint_contracts() {
-    index_v2::run_outbox_failpoint_contracts().await;
+pub async fn index_lifecycle_outbox_failpoint_contracts() {
+    index_lifecycle::run_outbox_failpoint_contracts().await;
 }
 
 /// Enters the configured process-abort failpoint for a subprocess contract.
-pub fn index_v2_failpoint_abort_probe() -> ! {
-    crate::index_v2::failpoints::production_contracts::abort_probe()
+pub fn index_lifecycle_failpoint_abort_probe() -> ! {
+    crate::index_lifecycle::failpoints::production_contracts::abort_probe()
 }
 
 /// Runs the V2 secondary lifecycle against a deterministic reference model.
@@ -370,13 +370,13 @@ pub fn index_v2_failpoint_abort_probe() -> ! {
 /// The state machine covers public lifecycle semantics, graph-source mutation,
 /// physical lookup, reopen, typed blocking/retry, abort cleanup, drop, and
 /// generation recreation through production repositories and drivers.
-pub async fn index_v2_secondary_state_machine_contracts() {
-    index_v2::run_secondary_state_machine_contracts().await;
+pub async fn index_lifecycle_secondary_state_machine_contracts() {
+    index_lifecycle::run_secondary_state_machine_contracts().await;
 }
 
 /// Exercises tenant isolation and global outbox discovery across 16 scopes.
-pub async fn index_v2_multi_scope_discovery_contracts() {
-    index_v2::run_multi_scope_discovery_contracts().await;
+pub async fn index_lifecycle_multi_scope_discovery_contracts() {
+    index_lifecycle::run_multi_scope_discovery_contracts().await;
 }
 
 /// Exercises compact typed model, catalog, and resource-admission boundaries.
@@ -384,9 +384,9 @@ pub async fn index_v2_multi_scope_discovery_contracts() {
 /// These synchronous contracts cover storage-version rejection, all three
 /// Active catalog-handle projections, duplicate protection, and every stable
 /// Active text mutation resource ceiling through production constructors.
-pub fn index_v2_typed_boundary_contracts() {
-    index_v2_typed_boundaries::run();
-    crate::index_v2::text::run_active_preflight_contracts();
+pub fn index_lifecycle_typed_boundary_contracts() {
+    index_lifecycle_typed_boundaries::run();
+    crate::index_lifecycle::text::run_active_preflight_contracts();
 }
 
 /// Exercises every Active text serving read and corruption boundary.
@@ -394,8 +394,8 @@ pub fn index_v2_typed_boundary_contracts() {
 /// The owning-module child harness uses current typed roots, pages, and entity
 /// states to prove family refinement, partition shape, presence, value kind,
 /// ownership, and revision checks before Tantivy or object-store access.
-pub async fn index_v2_text_serving_contracts() {
-    crate::index_v2::text::run_serving_contracts().await;
+pub async fn index_lifecycle_text_serving_contracts() {
+    crate::index_lifecycle::text::run_serving_contracts().await;
 }
 
 /// Exercises Active text state-only retirement and serialized preflight.
@@ -403,8 +403,8 @@ pub async fn index_v2_text_serving_contracts() {
 /// The owning-module child harness proves family/entity authority, root/state
 /// integrity, exact resource admission, input revalidation, and atomic dead
 /// state staging through current typed rows.
-pub async fn index_v2_active_text_retirement_contracts() {
-    crate::index_v2::text::run_active_retirement_contracts().await;
+pub async fn index_lifecycle_active_text_retirement_contracts() {
+    crate::index_lifecycle::text::run_active_retirement_contracts().await;
 }
 
 /// Proves a real graph conflict leaves one unattached blob and no V2 row changes.
@@ -413,7 +413,7 @@ pub async fn interpreter_active_text_graph_conflict_contracts() {
 }
 
 /// Proves Active text epochs publish once per destination and skip delete-only uploads.
-#[cfg(feature = "index-v2-lifecycle-testing")]
+#[cfg(feature = "index-lifecycle-testing")]
 pub async fn interpreter_active_text_transaction_batching_contracts() {
     crate::execution::interpreter::production_contracts::run_text_transaction_batching_contracts()
         .await;
@@ -441,7 +441,7 @@ pub async fn interpreter_topology_mutation_contracts() {
     crate::execution::interpreter::production_contracts::run_topology_mutation_contracts().await;
 }
 
-#[cfg(feature = "index-v2-lifecycle-testing")]
+#[cfg(feature = "index-lifecycle-testing")]
 pub use crate::execution::interpreter::production_contracts::{
     run_text_transaction_batch_benchmark_sample, TextTransactionBatchBenchmarkCase,
     TextTransactionBatchBenchmarkSample,
@@ -451,11 +451,11 @@ pub use crate::execution::interpreter::production_contracts::{
 ///
 /// The observer waits for request-independent finalization work to drain, then
 /// cross-checks manifest roots, pages, entity live state, and every split slot.
-pub async fn index_v2_text_steady_state_contracts(
+pub async fn index_lifecycle_text_steady_state_contracts(
     db: &crate::HelixDB,
     expected_live_entities: usize,
 ) {
-    index_v2_text_rows::verify_steady_state(db, expected_live_entities).await;
+    index_lifecycle_text_rows::verify_steady_state(db, expected_live_entities).await;
 }
 
 /// Verifies terminal text cleanup removed every physical and transient row.
@@ -463,8 +463,8 @@ pub async fn index_v2_text_steady_state_contracts(
 /// Canonical index and terminal operation history rows are intentionally
 /// retained by the lifecycle contract; generation-owned text rows must
 /// converge to absence.
-pub async fn index_v2_text_dropped_row_contracts(db: &crate::HelixDB) {
-    index_v2_text_rows::verify_dropped(db).await;
+pub async fn index_lifecycle_text_dropped_row_contracts(db: &crate::HelixDB) {
+    index_lifecycle_text_rows::verify_dropped(db).await;
 }
 
 /// Runs the non-ignored 100k production-entry lifecycle scale contract.
@@ -475,44 +475,44 @@ pub async fn index_v2_text_dropped_row_contracts(db: &crate::HelixDB) {
 /// explicit `production-scale` feature because it is a release gate rather
 /// than a unit-test workload.
 #[cfg(feature = "production-scale")]
-pub async fn index_v2_secondary_text_scale_contracts() {
-    index_v2_scale::run_secondary_text_tenant().await;
+pub async fn index_lifecycle_secondary_text_scale_contracts() {
+    index_lifecycle_scale::run_secondary_text_tenant().await;
 }
 
 /// Reproduces text CREATE/search/DROP without the full release-scale fixture.
 #[cfg(feature = "production-scale")]
-pub async fn index_v2_text_drop_smoke() {
-    index_v2_scale::run_text_drop_smoke().await;
+pub async fn index_lifecycle_text_drop_smoke() {
+    index_lifecycle_scale::run_text_drop_smoke().await;
 }
 
 /// Reproduces text CREATE/search/DROP after multi-split compaction.
 #[cfg(feature = "production-scale")]
-pub async fn index_v2_text_drop_multi_split_smoke() {
-    index_v2_scale::run_text_drop_multi_split_smoke().await;
+pub async fn index_lifecycle_text_drop_multi_split_smoke() {
+    index_lifecycle_scale::run_text_drop_multi_split_smoke().await;
 }
 
 /// Runs the non-ignored 100k 128D f32 vector lifecycle scale contract.
 #[cfg(feature = "production-scale")]
-pub async fn index_v2_vector_scale_contracts() {
-    index_v2_scale::run_vector().await;
+pub async fn index_lifecycle_vector_scale_contracts() {
+    index_lifecycle_scale::run_vector().await;
 }
 
 /// Runs the fixed 8k public vector lifecycle contract used by bounded CI.
 #[cfg(feature = "production-scale")]
-pub async fn index_v2_vector_ci_contracts() {
-    index_v2_scale::run_vector_ci().await;
+pub async fn index_lifecycle_vector_ci_contracts() {
+    index_lifecycle_scale::run_vector_ci().await;
 }
 
 /// Runs the 50k 1536D indexed-prefilter, one-hop, restricted-vector benchmark.
 #[cfg(feature = "production-scale")]
 pub async fn traversal_vector_prefilter_scale_contract() {
-    index_v2_scale::run_traversal_vector_prefilter().await;
+    index_lifecycle_scale::run_traversal_vector_prefilter().await;
 }
 
 /// Runs the disk-backed 1M 1536D traversal benchmark at four selectivities.
 #[cfg(feature = "production-scale")]
 pub async fn traversal_vector_prefilter_1m_scale_contract() {
-    index_v2_scale::run_traversal_vector_prefilter_1m().await;
+    index_lifecycle_scale::run_traversal_vector_prefilter_1m().await;
 }
 
 /// Runs one full configured-batch resource blocker for every V2 index family.
@@ -521,8 +521,8 @@ pub async fn traversal_vector_prefilter_1m_scale_contract() {
 /// successful activation and drop, then a second blocked build's abort and
 /// complete cleanup.
 #[cfg(feature = "production-scale")]
-pub async fn index_v2_blocked_limit_scale_contracts() {
-    index_v2_scale::run_blocked_limits().await;
+pub async fn index_lifecycle_blocked_limit_scale_contracts() {
+    index_lifecycle_scale::run_blocked_limits().await;
 }
 
 /// Runs vector property materialization and physical retirement for 100k rows.

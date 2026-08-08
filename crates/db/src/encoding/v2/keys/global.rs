@@ -4,7 +4,7 @@ use bytes::{BufMut, Bytes};
 
 use crate::encoding::error::EncodingError;
 use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
-use crate::index_v2::{
+use crate::index_lifecycle::{
     IndexGenerationId, IndexId, IndexIdentity, IndexIdentityFamily, IndexOperationId,
     VectorPhysicalIndexId,
 };

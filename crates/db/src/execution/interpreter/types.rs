@@ -335,9 +335,9 @@ pub enum ExecutionValue {
     /// Scalar terminal rows.
     Scalars(Vec<ExecutionScalar>),
     /// One bindable CREATE/DROP receipt.
-    IndexDdlReceipt(crate::index_v2::IndexDdlReceipt),
+    IndexDdlReceipt(crate::index_lifecycle::IndexDdlReceipt),
     /// One bindable lifecycle operation status.
-    IndexOperationStatus(crate::index_v2::IndexOperationStatus),
+    IndexOperationStatus(crate::index_lifecycle::IndexOperationStatus),
 }
 
 /// Runtime ownership for a value retained by interpreter state.
@@ -571,9 +571,12 @@ mod tests {
             2
         );
         assert_eq!(
-            ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-                operation_id: crate::index_v2::IndexOperationId::from_bytes([7; 16]).unwrap(),
-            })
+            ExecutionValue::IndexDdlReceipt(
+                crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+                    operation_id: crate::index_lifecycle::IndexOperationId::from_bytes([7; 16])
+                        .unwrap(),
+                }
+            )
             .len(),
             1
         );
