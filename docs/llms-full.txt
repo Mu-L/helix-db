@@ -1276,6 +1276,16 @@ Page type: Reference
 
 <div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
 
+HelixDB V3 is a full-stack implementation of one graph database with native vector and
+full-text search, shared query semantics, and multiple deployment modes.
+
+- **[Unified query model](/database/helix-db/query-guides/advanced)** — Rust, TypeScript, Go, and Python build the same typed operation-tree request. Networked clients send it to `POST /v2/query`; embedded clients execute it in process.
+- **[New transactional engine](/database/helix-cloud/operate/guarantees)** — the SlateDB-based engine uses serializable snapshot isolation, MVCC conflict detection, atomic write batches, and memory, disk, or S3-compatible object storage.
+- **Integrated indexes** — graph traversals, equality and range filters, vector search, and BM25 full-text search participate in the same request and transactional state.
+- **[Cloud, local, and embedded modes](/database/helix-db/start-here/run-modes)** — applications can keep the same query model while moving between managed Helix Cloud, the standalone Docker server, and in-process execution.
+- **[CLI v3](/cli/getting-started)** — the CLI is now a runtime orchestrator for project setup, local containers, queries, and Cloud deployment. The old `compile`, `check`, and `.hx` workflow is no longer part of the current CLI.
+- **Reliability foundation** — cross-SDK parity suites, deterministic lifecycle and transaction models, fuzz targets, production-scale index coverage, Docker packaging checks, and Cloud launch gates now exercise the implementation end to end.
+
 - **[Row bindings](/database/helix-db/query-guides/advanced)** — `bind` + `projectBindings` / `projectDistinctBindings` correlate values captured at different hops of a single traversal.
 - **Python SDK** — new zero-dependency synchronous SDK (`helix-db`, imported as `helixdb`).
 - **CLI 3.0.6** — `--path` flag on `helix add`.
