@@ -25,9 +25,6 @@
 
 <hr>
 
-Cloud-launch correctness, coverage, cadence, and runtime contracts are
-documented in [the cloud-launch test guide](docs/CLOUD_LAUNCH_TESTING.md).
-
 HelixDB is a database that makes it easy to build all the components needed for AI applications in a single platform.
 
 You don't need a separate application DB, relational DB, vector DB, graph DB, or application layers to manage the multiple storage locations. HelixDB gives your agents federated access to company data, for memory, company brains, and applications.
@@ -65,7 +62,7 @@ If you'd rather wire things up yourself:
    mkdir my-helix-app && cd my-helix-app
    helix init
   ```
-2. **Start a local instance.** Runs a background container on port `6969` and waits until it accepts queries.
+2. **Start a local instance.** Runs `ghcr.io/helixdb/helixdb:v0.0.3` in a background container on port `6969` and waits for `GET /healthz` to report ready.
   ```bash
    helix start dev
   ```
@@ -253,6 +250,7 @@ helix auth login                                  # authenticate
 helix workspace switch <workspace>                # select workspace + project
 helix project switch <project>
 helix init cloud --cluster-id <cluster-id>        # or: helix add cloud --name production --cluster-id <id>
+helix push production                             # deploy the query project
 helix sync production                             # pull gateway URL + auth contract into helix.toml
 helix query production --file examples/request.json
 ```

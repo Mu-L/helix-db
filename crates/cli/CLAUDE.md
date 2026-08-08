@@ -146,4 +146,4 @@ Snapshot safety excludes `.git`, `.helix`, `node_modules`, `.next`, `target`, bu
 
 Chef tests cover: prompt rendering (intent substitution, CRM fallback, Next.js stack keywords, summary sections, browser-open commands, dev-server persistence), agent-priority order, `build_agent_argv` per (agent, permission) combo, install-arg construction, tool-use formatting, and stream-json event parsing. The actual agent spawn / browser open are not unit-tested (require external processes) — verify those manually with `cargo run -p helix-cli -- chef`.
 
-Doc-tests in `output.rs` are `ignore`d (illustrative only). The `helix-cli/CHEF_COMMAND_PLAN.md` file is the original design doc and is now largely superseded by the implementation described above.
+Doc-tests in `output.rs` run as part of `cargo test -p helix-cli --doc`.

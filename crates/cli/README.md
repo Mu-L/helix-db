@@ -1,24 +1,25 @@
 # Helix CLI
 
-Command-line interface for managing v2 Helix projects, local development instances, and Enterprise Cloud deployments.
+Command-line interface for managing Helix projects, local development instances, and Helix Cloud deployments. The v3 CLI is a runtime orchestrator: queries are validated by a running instance, with no local compile/check step.
 
 ## Commands
 
-- `init`: initialize a v2 project with `helix.toml` and a query example.
+- `init`: initialize a project with `helix.toml` and a query example.
 - `chef`: bootstrap a first Helix app with skills, docs MCP, local runtime, starter queries, seed data, and a launched coding agent.
-- `add`: add a local v2 or Enterprise Cloud instance to an existing project.
-- `run`: run a local v2 instance in the background by default, attached with `--foreground`, with persistent local storage using `--disk`, or against a user-managed S3/S3-compatible prefix using `--storage-uri`.
-- `stop` / `restart` / `status`: manage local v2 instances and inspect Enterprise Cloud config.
-- `logs`: view local container logs or query Enterprise Cloud historical logs.
+- `add`: add a local or Helix Cloud instance to an existing project.
+- `start` (alias `run`): run `ghcr.io/helixdb/helixdb:v0.0.3` in the background by default, attached with `--foreground`, with persistent local storage using `--disk`, or against a user-managed S3/S3-compatible prefix using `--storage-uri`.
+- `stop` / `restart` / `status`: manage local instances and inspect Helix Cloud config.
+- `logs`: view local container logs or query Helix Cloud historical logs.
 - `query`: send a query request JSON file to `POST /v2/query`.
-- `push`: compile and deploy an Enterprise query project to an Enterprise Cloud cluster.
-- `auth`: login, logout, or create an Enterprise Cloud API key.
-- `workspace`: manage active Enterprise Cloud workspace selection.
-- `project`: manage linked Enterprise Cloud project selection.
-- `cluster`: list and inspect Enterprise Cloud clusters.
-- `sync`: reconcile Enterprise query project source and sync Enterprise Cloud metadata into `helix.toml`.
+- `push`: deploy a query project to a Helix Cloud cluster.
+- `auth`: login, logout, or create a Helix Cloud API key.
+- `workspace`: manage active Helix Cloud workspace selection.
+- `project`: manage linked Helix Cloud project selection.
+- `cluster`: list and inspect Helix Cloud clusters.
+- `sync`: reconcile query project source and sync Helix Cloud metadata into `helix.toml`.
 - `prune`: clean Helix-owned local containers, disk-mode volumes, and workspaces.
 - `delete`: remove an instance from `helix.toml` and clean local runtime state.
+- `skills`: install, update, and list Helix agent skills.
 - `metrics`: manage telemetry level.
 - `update`: update the CLI.
 - `feedback`: send feedback to the Helix team.
