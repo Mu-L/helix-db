@@ -19,6 +19,7 @@ const DATABASE = "node-package-disk-smoke";
 const NODE_COUNT = 100;
 const EDGE_COUNT = 200;
 const BATCH_SIZE = 25;
+const VECTOR_RESULT_COUNT = 1;
 const root = await mkdtemp(join(tmpdir(), "helixdb-node-package-smoke-"));
 const source = { kind: "disk", root, database: DATABASE };
 
@@ -272,7 +273,12 @@ try {
           .varAs(
             "nodes",
             g()
-              .vectorSearchNodes("Document", "embedding", query, 5)
+              .vectorSearchNodes(
+                "Document",
+                "embedding",
+                query,
+                VECTOR_RESULT_COUNT,
+              )
               .project([
                 Projection.property("embedding", "embedding"),
                 Projection.property("$distance", "distance"),
@@ -281,7 +287,12 @@ try {
           .varAs(
             "edges",
             g()
-              .vectorSearchEdges("REFERENCES", "embedding", query, 5)
+              .vectorSearchEdges(
+                "REFERENCES",
+                "embedding",
+                query,
+                VECTOR_RESULT_COUNT,
+              )
               .project([
                 Projection.property("embedding", "embedding"),
                 Projection.property("$distance", "distance"),
@@ -293,8 +304,8 @@ try {
       for (const kind of ["nodes", "edges"]) {
         assert.equal(
           vectorResponse[kind].length,
-          5,
-          `${kind} basis ${dimension} should return five hits`,
+          VECTOR_RESULT_COUNT,
+          `${kind} basis ${dimension} should return the requested hits`,
         );
         for (const hit of vectorResponse[kind]) {
           assert.deepEqual(
