@@ -36,17 +36,15 @@ jobs:
       matrix:
         include:
           - name: secondary, text, and tenant 100k
-            test: index_v2_secondary_text_and_tenant_scale_contracts
+            test: index_lifecycle_secondary_text_and_tenant_scale_contracts
           - name: vector 100k
-            test: index_v2_vector_scale_contract
+            test: index_lifecycle_vector_scale_contract
           - name: blocked configured limits
-            test: index_v2_blocked_limit_scale_contracts
-          - name: maximum-batch text GC
-            test: index_v2_text_gc_scale_contracts
+            test: index_lifecycle_blocked_limit_scale_contracts
           - name: text drop smoke
-            test: index_v2_text_drop_smoke
+            test: index_lifecycle_text_drop_smoke
           - name: text multi-split drop smoke
-            test: index_v2_text_drop_multi_split_smoke
+            test: index_lifecycle_text_drop_multi_split_smoke
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.97.1

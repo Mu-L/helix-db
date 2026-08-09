@@ -102,7 +102,7 @@ jobs:
       - name: Public vector create, search, drop, and residue contract
         run: >-
           cargo test --release -p db --features production-scale
-          --test production_index_lifecycle_scale index_v2_vector_ci_contract
+          --test production_index_lifecycle_scale index_lifecycle_vector_ci_contract
           -- --exact --nocapture --test-threads=1
 
   coverage:

@@ -67,5 +67,5 @@ jobs:
         run: |
           chmod +x vector-100k-test/production_index_lifecycle_scale
           vector-100k-test/production_index_lifecycle_scale \
-            index_v2_vector_scale_contract \
+            index_lifecycle_vector_scale_contract \
             --exact --nocapture --test-threads=1

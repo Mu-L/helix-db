@@ -28,9 +28,17 @@ The final inventory reports exactly:
 | `production_internal_contracts` | `test` | `crates/db/tests/production_internal_contracts.rs` | Requires `production-coverage` and invokes feature-gated production module contracts without compiling inline unit-test code into the measured library, including vector storage/search/lifecycle boundaries, native and forced-scalar vector magnitude safety, ambiguous Active-text graph-commit recovery, and exact request-read-view fail-closed guards. |
 | `production_migration_contracts` | `test` | `crates/db/tests/production_migration_contracts.rs` | Requires `production-coverage` and covers legacy definition convergence, populated-vector adoption, malformed and ineligible vector lanes, ownership conflicts, invalid V2 bootstrap tuples, failure-preserving resume, and active/conflicting definition handling through production migration boundaries. |
 | `production_row_mode_contract` | `test` | `crates/db/tests/production_row_mode_contract.rs` | Launches process-isolated public queries with valid and invalid `HELIX_ROW_MODE_MAX_ROWS` values, covering production environment parsing, cached cap activation, exact overflow errors, and malformed-setting rejection without mutating a multithreaded test process's environment. |
+| `production_text_correctness_regressions` | `test` | `crates/db/tests/production_text_correctness_regressions.rs` | Runs bounded text correctness regressions through the compiled production library. |
 | `production_text_lifecycle` | `test` | `crates/db/tests/production_text_lifecycle.rs` | Requires `production-coverage` and runs public text create/backfill, insert/update/delete, search, reopen, drop/recreate, typed blocked retry, abort, and tenant-partition isolation against an independent model. Its internal observer cross-checks manifest roots/pages, builder evidence, entity state, and metadata-only terminal cleanup; public tenant contracts cover literal/expression selection, fail-closed tenant-shape errors, and atomic partition moves/removals/reinsertions. |
 | `production_vector_planner` | `test` | `crates/db/tests/production_vector_planner.rs` | Exercises managed DDL, planner publication, node/edge mutation maintenance, reopen, every active f32 metric, tenant-partition isolation, and exact magnitude rejection/rollback through public executable plans. Its closed lifecycle state machine adds brute-force search comparison, drop/recreate, query-planned status/retry/abort control over a typed blocked build and cleanup, runtime literal/expression tenant selection, fail-closed tenant-shape errors, and atomic partition moves/removals/reinsertions. |
+| `secondary_lifecycle_public_step_contract` | `test` | `crates/db/tests/secondary_lifecycle_public_step_contract.rs` | Checks the public bounded-step lifecycle boundary. |
+| `text_correctness_support` | `test` | `crates/db/tests/text_correctness_support.rs` | Checks shared text correctness support independently. |
 | `writer_fence_contract` | `test` | `crates/db/tests/writer_fence_contract.rs` | Proves a newer SlateDB writer claims its epoch before open returns and an already-open transaction from the old writer is rejected as fenced. |
+| `secondary_equality_hot_path` | `bench` | `crates/db/benches/secondary_equality_hot_path.rs` | Measures 50-index V4 equality write and read throughput, latency, and allocations. |
+| `secondary_equality_read_scale` | `bench` | `crates/db/benches/secondary_equality_read_scale.rs` | Measures equality lookup cost over the 10,000-node shared-value fixture. |
+| `text_transaction_batching` | `bench` | `crates/db/benches/text_transaction_batching.rs` | Measures text transaction batching. |
+| `vector_batch_insert` | `bench` | `crates/db/benches/vector_batch_insert.rs` | Measures vector batch insertion. |
+| `write_path_mutations` | `bench` | `crates/db/benches/write_path_mutations.rs` | Measures graph mutation write paths. |
 
 The vector library also owns the ignored, release-only diagnostic
 `vector_search_scale_gate_reports_recall_and_median_throughput` contract in
@@ -44,8 +52,8 @@ medians as a 95% throughput floor.
 
 The standalone `crates/db/fuzz` workspace adds five non-test Cargo Fuzz
 targets: `current_secondary_records`, `current_search_records`,
-`current_index_lifecycle_keys`, `current_index_lifecycle_records`, and
-`current_index_lifecycle_work`. The V2 targets cover scoped/global physical framing,
+`current_index_v2_keys`, `current_index_v2_records`, and
+`current_index_v2_work`. The V2 targets cover scoped/global physical framing,
 canonical catalog/operation/control values and outbox work values. They are
 deliberately outside Cargo's test target inventory and call
 only the feature-gated byte-slice decoder boundary.
