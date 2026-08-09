@@ -2,10 +2,10 @@
 
 Native embedded runtime for the `helix-db` Python SDK.
 
-Install matching package versions:
+Install both packages:
 
 ```sh
-python -m pip install "helix-db==0.3.2" "helix-db-embedded==0.3.2"
+python -m pip install helix-db helix-db-embedded
 ```
 
 Applications continue to use the public SDK:

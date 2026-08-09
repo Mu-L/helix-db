@@ -105,7 +105,7 @@ query = (
 Install the SDK and matching native runtime:
 
 ```sh
-python -m pip install "helix-db==0.3.2" "helix-db-embedded==0.3.2"
+python -m pip install helix-db helix-db-embedded
 ```
 
 ```python
