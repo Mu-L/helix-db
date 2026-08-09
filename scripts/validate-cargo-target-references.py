@@ -43,6 +43,12 @@ CODEC_OWNERS = {
     "values/indexes/text.rs": "fn encode_manifest_root",
     "values/indexes/vector.rs": "fn encode_partition_mapping",
 }
+RAW_RUNTIME_CODEC_EXEMPTIONS = {
+    # Canonical hash preimages are model data, not stored database values.
+    "crates/db/src/index_lifecycle/work.rs",
+    # V3 tenant framing remains private to the blocking V3-to-V4 migration.
+    "crates/db/src/index_lifecycle/tenant_envelope_migration.rs",
+}
 
 
 @dataclass(frozen=True)
@@ -364,6 +370,16 @@ def forbidden_codec_source(path: str, text: str) -> list[str]:
         errors.append(f"{path}: forbidden V1 index_v2 codec import")
     if re.search(r"\bmod\s+index_v2\s*;", text):
         errors.append(f"{path}: forbidden index_v2 runtime module")
+    if (
+        path.startswith("crates/db/src/index_lifecycle/")
+        and path not in RAW_RUNTIME_CODEC_EXEMPTIONS
+        and re.search(
+            r"\b(?:BufMut|BytesMut|ValueEncoder|ValueDecoder)\b"
+            r"|\.put_(?:u8|u16|u32|u64|f32|slice)\s*\(",
+            text,
+        )
+    ):
+        errors.append(f"{path}: raw managed-index serialization must use encoding::v2")
     if path.endswith("encoding/v2/values/lifecycle.rs"):
         for dependency in (
             "decode_secondary_entry",

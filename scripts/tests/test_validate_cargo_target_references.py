@@ -85,6 +85,22 @@ class CargoTargetReferenceTests(unittest.TestCase):
                 "crates/db/src/index_lifecycle/secondary.rs: forbidden obsolete identifier 'decode_work_value'",
             ],
         )
+        self.assertEqual(
+            MODULE.forbidden_codec_source(
+                "crates/db/src/index_lifecycle/secondary.rs",
+                "use bytes::BufMut; bytes.put_u64(entity_id);",
+            ),
+            [
+                "crates/db/src/index_lifecycle/secondary.rs: raw managed-index serialization must use encoding::v2"
+            ],
+        )
+        self.assertEqual(
+            MODULE.forbidden_codec_source(
+                "crates/db/src/index_lifecycle/tenant_envelope_migration.rs",
+                "use bytes::BufMut; bytes.put_u64(entity_id);",
+            ),
+            [],
+        )
 
 
 if __name__ == "__main__":
