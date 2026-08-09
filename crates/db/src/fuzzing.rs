@@ -11,7 +11,7 @@ use crate::encoding::v1::{
     values::{secondary, text_index, vectors},
 };
 use crate::encoding::v2::{
-    keys::{GlobalKey, Key},
+    keys::{GlobalKey, Key, SecondaryEntryLane},
     values::{
         decode_applied_state, decode_build_artifact, decode_build_delta, decode_corpus_statistics,
         decode_index_record, decode_manifest_page, decode_manifest_root, decode_metadata_value,
@@ -68,7 +68,17 @@ pub fn decode_current_index_v2_work(data: &[u8]) {
 fn typed_work_value_is_valid(data: &[u8]) -> bool {
     decode_build_delta(data).is_ok()
         || decode_applied_state(data).is_ok()
-        || decode_secondary_entry(data).is_ok()
+        || [
+            SecondaryEntryLane::NodeEquality,
+            SecondaryEntryLane::NodeUniqueEquality,
+            SecondaryEntryLane::NodeRangeAscending,
+            SecondaryEntryLane::NodeRangeDescending,
+            SecondaryEntryLane::EdgeEquality,
+            SecondaryEntryLane::EdgeRangeAscending,
+            SecondaryEntryLane::EdgeRangeDescending,
+        ]
+        .into_iter()
+        .any(|lane| decode_secondary_entry(lane, data).is_ok())
         || decode_manifest_root(data).is_ok()
         || decode_manifest_page(data).is_ok()
         || decode_build_artifact(data).is_ok()

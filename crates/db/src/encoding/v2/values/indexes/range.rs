@@ -3,9 +3,16 @@
 use bytes::Bytes;
 
 use crate::encoding::error::EncodingError;
+use crate::encoding::v2::keys::SecondaryEntryLane;
 use crate::index_lifecycle::work::SecondaryEntryValue;
+use crate::index_lifecycle::IndexEntityId;
 
-use super::{encode_value, WorkValue};
+use super::super::{
+    put_generation, put_index_id, put_secondary_lane, take_generation, take_index_id,
+    take_secondary_lane, unknown_discriminant, ValueDecoder, ValueEncoder,
+};
+
+const SECONDARY_ENTRY_KIND: u8 = 0x05;
 
 pub(crate) fn encode_entry(value: &SecondaryEntryValue) -> Result<Bytes, EncodingError> {
     if value.lane.is_equality() {
@@ -13,16 +20,77 @@ pub(crate) fn encode_entry(value: &SecondaryEntryValue) -> Result<Bytes, Encodin
             "equality lane cannot use the range value codec".to_string(),
         ));
     }
-    Ok(encode_value(&WorkValue::SecondaryEntry(*value)))
+    let mut encoder = ValueEncoder::with_header(SECONDARY_ENTRY_KIND);
+    put_index_id(&mut encoder, value.index_id);
+    put_generation(&mut encoder, value.generation);
+    put_secondary_lane(&mut encoder, value.lane);
+    encoder.put_u64(value.entity_id.get());
+    Ok(encoder.finish())
 }
 
-pub(super) fn validate_entry(
-    value: SecondaryEntryValue,
+pub(crate) fn decode_entry(
+    expected_lane: SecondaryEntryLane,
+    value: &[u8],
 ) -> Result<SecondaryEntryValue, EncodingError> {
-    if value.lane.is_equality() {
+    if expected_lane.is_equality() {
         return Err(EncodingError::Custom(
             "equality lane cannot use the range value codec".to_string(),
         ));
     }
-    Ok(value)
+    let mut decoder = ValueDecoder::new(value)?;
+    if decoder.kind() != SECONDARY_ENTRY_KIND {
+        return Err(unknown_discriminant(
+            "secondary range value kind",
+            decoder.kind(),
+        ));
+    }
+    let decoded = SecondaryEntryValue {
+        index_id: take_index_id(&mut decoder)?,
+        generation: take_generation(&mut decoder)?,
+        lane: take_secondary_lane(&mut decoder)?,
+        entity_id: IndexEntityId::new(decoder.take_u64()?),
+    };
+    decoder.finish()?;
+    if decoded.lane != expected_lane {
+        return Err(EncodingError::Custom(
+            "secondary range key/value lane mismatch".to_string(),
+        ));
+    }
+    Ok(decoded)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fmt::Write;
+
+    use super::*;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::new(), |mut output, byte| {
+            write!(output, "{byte:02x}").expect("writing to String cannot fail");
+            output
+        })
+    }
+
+    #[test]
+    fn range_entry_value_is_lane_bound_and_byte_frozen() {
+        let value = SecondaryEntryValue {
+            index_id: crate::index_lifecycle::IndexId::new(1).unwrap(),
+            generation: crate::index_lifecycle::IndexGenerationId::new(2).unwrap(),
+            lane: SecondaryEntryLane::NodeRangeAscending,
+            entity_id: IndexEntityId::new(3),
+        };
+        let encoded = encode_entry(&value).unwrap();
+
+        assert_eq!(
+            decode_entry(SecondaryEntryLane::NodeRangeAscending, &encoded).unwrap(),
+            value
+        );
+        assert!(decode_entry(SecondaryEntryLane::NodeRangeDescending, &encoded).is_err());
+        assert!(decode_entry(SecondaryEntryLane::NodeEquality, &encoded).is_err());
+        insta::assert_snapshot!(
+            hex(&encoded),
+            @"010500000000000000010000000000000002030000000000000003"
+        );
+    }
 }

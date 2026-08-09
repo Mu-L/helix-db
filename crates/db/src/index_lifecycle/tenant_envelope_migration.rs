@@ -294,8 +294,8 @@ fn validate_legacy_value(kind: &ScopedKey, value: &[u8]) -> Result<()> {
         ScopedKey::AppliedState(_) => {
             let _ = decode_applied_state(value)?;
         }
-        ScopedKey::SecondaryEntry(_) => {
-            let _ = decode_secondary_entry(value)?;
+        ScopedKey::SecondaryEntry(key) => {
+            let _ = decode_secondary_entry(key.lane(), value)?;
         }
         ScopedKey::SecondaryEqualityBitmap(_) => {
             let _ = SecondaryEqualityBitmapValue::decode(value)?;

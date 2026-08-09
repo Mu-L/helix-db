@@ -2216,7 +2216,7 @@ pub fn decode_migration_parity_secondary_memberships(
 
     match kind {
         ScopedKey::SecondaryEntry(key) => {
-            let entry = decode_secondary_entry(value)?;
+            let entry = decode_secondary_entry(key.lane(), value)?;
             if entry.index_id != key.index_id()
                 || entry.generation != key.generation()
                 || entry.lane != key.lane()

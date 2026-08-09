@@ -3332,7 +3332,7 @@ fn decode_secondary_entry_value(
     lane: SecondaryEntryLane,
     bytes: &[u8],
 ) -> Result<IndexEntityId> {
-    let value = decode_secondary_entry(bytes)?;
+    let value = decode_secondary_entry(lane, bytes)?;
     if value.index_id != index_id || value.generation != generation || value.lane != lane {
         return Err(corruption("secondary entry key/value ownership mismatch"));
     }

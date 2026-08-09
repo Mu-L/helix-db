@@ -3,6 +3,9 @@
 use bytes::Bytes;
 
 use crate::encoding::error::EncodingError;
+use crate::index_lifecycle::work::{
+    AppliedEntityStateValue, AppliedFamilyState, CoalescedBuildDeltaValue,
+};
 use crate::index_lifecycle::{
     BuildOperationOutcome, IndexOperationExecutionState, IndexOperationFamily, IndexOperationKind,
     IndexOperationOutcome, IndexOperationProgress, IndexOperationQueueSchedule,
@@ -14,44 +17,94 @@ use crate::index_lifecycle::{
     TextManifestValidationProgress, VectorBuildProgress, VectorBuildStage, VectorCleanupProgress,
 };
 
-use super::indexes::{decode_value, encode_value, WorkValue};
 use super::*;
 
 const INDEX_RECORD_KIND: u8 = 0x01;
 const OPERATION_RECORD_KIND: u8 = 0x02;
+const BUILD_DELTA_KIND: u8 = 0x03;
+const APPLIED_STATE_KIND: u8 = 0x04;
 
-pub(crate) fn encode_build_delta(
-    value: &crate::index_lifecycle::work::CoalescedBuildDeltaValue,
-) -> Bytes {
-    encode_value(&WorkValue::CoalescedBuildDelta(*value))
+pub(crate) fn encode_build_delta(value: &CoalescedBuildDeltaValue) -> Bytes {
+    let mut encoder = ValueEncoder::with_header(BUILD_DELTA_KIND);
+    put_index_id(&mut encoder, value.index_id);
+    put_generation(&mut encoder, value.generation);
+    put_element_kind(&mut encoder, value.entity_kind);
+    encoder.put_u64(value.entity_id.get());
+    encoder.finish()
 }
 
-pub(crate) fn decode_build_delta(
-    value: &[u8],
-) -> Result<crate::index_lifecycle::work::CoalescedBuildDeltaValue, EncodingError> {
-    let WorkValue::CoalescedBuildDelta(value) = decode_value(value)? else {
-        return Err(EncodingError::Custom(
-            "build-delta key contains another value kind".to_string(),
+pub(crate) fn decode_build_delta(value: &[u8]) -> Result<CoalescedBuildDeltaValue, EncodingError> {
+    let mut decoder = ValueDecoder::new(value)?;
+    if decoder.kind() != BUILD_DELTA_KIND {
+        return Err(unknown_discriminant(
+            "build-delta value kind",
+            decoder.kind(),
         ));
+    }
+    let decoded = CoalescedBuildDeltaValue {
+        index_id: take_index_id(&mut decoder)?,
+        generation: take_generation(&mut decoder)?,
+        entity_kind: take_element_kind(&mut decoder)?,
+        entity_id: crate::index_lifecycle::IndexEntityId::new(decoder.take_u64()?),
     };
-    Ok(value)
+    decoder.finish()?;
+    Ok(decoded)
 }
 
-pub(crate) fn encode_applied_state(
-    value: &crate::index_lifecycle::work::AppliedEntityStateValue,
-) -> Bytes {
-    encode_value(&WorkValue::AppliedEntityState(value.clone()))
+pub(crate) fn encode_applied_state(value: &AppliedEntityStateValue) -> Bytes {
+    let mut encoder = ValueEncoder::with_header(APPLIED_STATE_KIND);
+    put_index_id(&mut encoder, value.index_id);
+    put_generation(&mut encoder, value.generation);
+    put_element_kind(&mut encoder, value.entity_kind);
+    encoder.put_u64(value.entity_id.get());
+    match &value.state {
+        AppliedFamilyState::Secondary(state) => {
+            encoder.put_u8(0x01);
+            put_option(&mut encoder, state.as_ref(), put_secondary_value);
+        }
+        AppliedFamilyState::Vector(state) => {
+            encoder.put_u8(0x02);
+            put_option(&mut encoder, state.as_ref(), put_partition);
+        }
+        AppliedFamilyState::Text(state) => {
+            encoder.put_u8(0x03);
+            put_option(&mut encoder, state.as_ref(), |encoder, state| {
+                put_partition(encoder, &state.0);
+                encoder.put_u64(state.1.get());
+            });
+        }
+    }
+    encoder.finish()
 }
 
-pub(crate) fn decode_applied_state(
-    value: &[u8],
-) -> Result<crate::index_lifecycle::work::AppliedEntityStateValue, EncodingError> {
-    let WorkValue::AppliedEntityState(value) = decode_value(value)? else {
-        return Err(EncodingError::Custom(
-            "applied-state key contains another value kind".to_string(),
+pub(crate) fn decode_applied_state(value: &[u8]) -> Result<AppliedEntityStateValue, EncodingError> {
+    let mut decoder = ValueDecoder::new(value)?;
+    if decoder.kind() != APPLIED_STATE_KIND {
+        return Err(unknown_discriminant(
+            "applied-state value kind",
+            decoder.kind(),
         ));
+    }
+    let index_id = take_index_id(&mut decoder)?;
+    let generation = take_generation(&mut decoder)?;
+    let entity_kind = take_element_kind(&mut decoder)?;
+    let entity_id = crate::index_lifecycle::IndexEntityId::new(decoder.take_u64()?);
+    let state = match decoder.take_u8()? {
+        0x01 => AppliedFamilyState::Secondary(decoder.take_option(take_secondary_value)?),
+        0x02 => AppliedFamilyState::Vector(decoder.take_option(take_partition)?),
+        0x03 => AppliedFamilyState::Text(decoder.take_option(|decoder| {
+            Ok((take_partition(decoder)?, take_logical_version(decoder)?))
+        })?),
+        unknown => return Err(unknown_discriminant("applied-state family", unknown)),
     };
-    Ok(value)
+    decoder.finish()?;
+    Ok(AppliedEntityStateValue {
+        index_id,
+        generation,
+        entity_kind,
+        entity_id,
+        state,
+    })
 }
 
 /// Encodes the only persisted logical index record.
@@ -872,6 +925,73 @@ mod wire_fixtures {
             write!(output, "{byte:02x}").expect("writing to String cannot fail");
             output
         })
+    }
+
+    #[test]
+    fn lifecycle_work_value_bytes_are_frozen() {
+        let delta = CoalescedBuildDeltaValue {
+            index_id: index_id(),
+            generation: generation(),
+            entity_kind: IndexElementKind::Node,
+            entity_id: crate::index_lifecycle::IndexEntityId::new(3),
+        };
+        let applied = AppliedEntityStateValue {
+            index_id: index_id(),
+            generation: generation(),
+            entity_kind: IndexElementKind::Node,
+            entity_id: crate::index_lifecycle::IndexEntityId::new(3),
+            state: AppliedFamilyState::Secondary(Some(CanonicalSecondaryValue::equality_string(
+                "shared",
+            ))),
+        };
+        let tenant_partition = crate::index_lifecycle::work::TextPartition::try_tenant_value(
+            Bytes::from_static(b"tenant"),
+        )
+        .unwrap();
+        let applied_vector = AppliedEntityStateValue {
+            index_id: index_id(),
+            generation: generation(),
+            entity_kind: IndexElementKind::Node,
+            entity_id: crate::index_lifecycle::IndexEntityId::new(3),
+            state: AppliedFamilyState::Vector(Some(tenant_partition.clone())),
+        };
+        let applied_text = AppliedEntityStateValue {
+            index_id: index_id(),
+            generation: generation(),
+            entity_kind: IndexElementKind::Node,
+            entity_id: crate::index_lifecycle::IndexEntityId::new(3),
+            state: AppliedFamilyState::Text(Some((
+                tenant_partition,
+                crate::index_lifecycle::TextLogicalVersion::new(4).unwrap(),
+            ))),
+        };
+        let encoded_delta = encode_build_delta(&delta);
+        let encoded_applied = encode_applied_state(&applied);
+        let encoded_vector = encode_applied_state(&applied_vector);
+        let encoded_text = encode_applied_state(&applied_text);
+
+        assert_eq!(decode_build_delta(&encoded_delta).unwrap(), delta);
+        assert_eq!(decode_applied_state(&encoded_applied).unwrap(), applied);
+        assert_eq!(
+            decode_applied_state(&encoded_vector).unwrap(),
+            applied_vector
+        );
+        assert_eq!(decode_applied_state(&encoded_text).unwrap(), applied_text);
+        insta::assert_snapshot!(
+            format!(
+                "build_delta={}\napplied_secondary={}\napplied_vector={}\napplied_text={}\n",
+                hex(&encoded_delta),
+                hex(&encoded_applied),
+                hex(&encoded_vector),
+                hex(&encoded_text),
+            ),
+            @"
+build_delta=010300000000000000010000000000000002010000000000000003
+applied_secondary=010400000000000000010000000000000002010000000000000003010101e9cf50951f33fb140000000b0400000006736861726564
+applied_vector=0104000000000000000100000000000000020100000000000000030201020000000674656e616e74
+applied_text=0104000000000000000100000000000000020100000000000000030301020000000674656e616e740000000000000004
+"
+        );
     }
 
     #[test]
