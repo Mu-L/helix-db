@@ -46,4 +46,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "current_index_v2_bitmap"
+path = "fuzz_targets/current_index_v2_bitmap.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

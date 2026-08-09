@@ -50,10 +50,10 @@ primary scale contract. It measures deterministic 10k and 100k current-f32
 fixtures, computes exact recall@10, and can enforce supplied same-host baseline
 medians as a 95% throughput floor.
 
-The standalone `crates/db/fuzz` workspace adds five non-test Cargo Fuzz
+The standalone `crates/db/fuzz` workspace adds six non-test Cargo Fuzz
 targets: `current_secondary_records`, `current_search_records`,
 `current_index_v2_keys`, `current_index_v2_records`, and
-`current_index_v2_work`. The V2 targets cover scoped/global physical framing,
+`current_index_v2_work`, and `current_index_v2_bitmap`. The V2 targets cover scoped/global physical framing,
 canonical catalog/operation/control values and outbox work values. They are
 deliberately outside Cargo's test target inventory and call
 only the feature-gated byte-slice decoder boundary.

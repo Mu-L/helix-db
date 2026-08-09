@@ -1178,7 +1178,9 @@ mod tests {
     use slatedb::object_store::memory::InMemory;
 
     use super::*;
+    use crate::encoding::v1::keys::metadata::MetadataKey;
     use crate::encoding::v1::keys::tenant::TenantId;
+    use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey};
 
     #[test]
     fn storage_version_four_is_current() {
@@ -1306,6 +1308,136 @@ mod tests {
                 if reason == "read-only storage has V2 rows without the complete bootstrap tuple"
         ));
         db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn markerless_v2_envelopes_fail_closed_for_readers_and_writers() {
+        let adversarial_tenant = TenantId::from_u128(u128::from_be_bytes([0xFD; 16]));
+        let operation_id = IndexOperationId::from_bytes([0x11; 16]).unwrap();
+        let cases = [
+            (
+                "global",
+                Key::Global {
+                    kind: GlobalKey::OperationPointer(operation_id),
+                }
+                .to_bytes(),
+            ),
+            (
+                "unscoped",
+                Key::Data {
+                    scope: DataScope::LegacyUnscoped,
+                    kind: ScopedKey::operation(operation_id),
+                }
+                .to_bytes(),
+            ),
+            (
+                "tenant",
+                Key::Data {
+                    scope: DataScope::Tenant(adversarial_tenant),
+                    kind: ScopedKey::operation(operation_id),
+                }
+                .to_bytes(),
+            ),
+        ];
+
+        for (name, key) in cases {
+            let db = Db::builder(format!("markerless-v2-{name}"), Arc::new(InMemory::new()))
+                .build()
+                .await
+                .unwrap();
+            db.put(&key, Bytes::from_static(b"markerless"))
+                .await
+                .unwrap();
+
+            assert!(matches!(
+                require_reader_bootstrap_or_legacy(&db).await,
+                Err(HelixDbError::MigrationRequired { reason })
+                    if reason == "read-only storage has V2 rows without the complete bootstrap tuple"
+            ));
+            assert!(matches!(
+                bootstrap_writer(&db).await,
+                Err(HelixDbError::MigrationRequired { reason })
+                    if reason == "V2 storage rows exist without the complete bootstrap tuple"
+            ));
+            assert_eq!(
+                db.get(&key).await.unwrap(),
+                Some(Bytes::from_static(b"markerless"))
+            );
+            assert_eq!(
+                db.get(global_key(GlobalKey::StorageVersion)).await.unwrap(),
+                None
+            );
+            db.close().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn adversarial_v1_tenant_prefix_remains_a_legacy_negative_control() {
+        let scope = DataScope::Tenant(TenantId::from_u128(u128::from_be_bytes([0xFD; 16])));
+        let key = GraphKey::Data {
+            scope,
+            kind: DataKeyKind::IndexMetadata(MetadataKey::next_node_id_key()),
+        }
+        .to_bytes();
+        assert!(!key.starts_with(&TENANT_SENTINEL));
+        let db = Db::builder("adversarial-v1-tenant-prefix", Arc::new(InMemory::new()))
+            .build()
+            .await
+            .unwrap();
+        db.put(&key, Bytes::from_static(b"v1-value")).await.unwrap();
+
+        require_reader_bootstrap_or_legacy(&db)
+            .await
+            .expect("a valid V1 tenant row remains readable as legacy storage");
+        bootstrap_writer(&db)
+            .await
+            .expect("a valid V1 tenant row permits writer bootstrap");
+        assert_eq!(
+            db.get(&key).await.unwrap(),
+            Some(Bytes::from_static(b"v1-value"))
+        );
+        let marker = db
+            .get(global_key(GlobalKey::StorageVersion))
+            .await
+            .unwrap()
+            .expect("writer publishes the bootstrap marker");
+        assert_eq!(
+            decode_metadata_value(&marker).unwrap(),
+            IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
+        );
+        db.close().await.unwrap();
+    }
+
+    #[test]
+    fn bootstrap_tuple_matrix_rejects_every_incomplete_or_cross_typed_shape() {
+        let marker = encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
+            IndexStorageVersion::CURRENT,
+        ));
+        let logical = encode_metadata_value(&IndexV2MetadataValue::LogicalIndexIdWatermark(
+            LogicalIndexIdWatermark {
+                next_id: IndexId::initial(),
+            },
+        ));
+        let vector = encode_metadata_value(&IndexV2MetadataValue::VectorPhysicalIdWatermark(
+            VectorPhysicalIdWatermark {
+                next_id: VectorPhysicalIndexId::initial(),
+            },
+        ));
+        for (candidate_logical, candidate_vector) in [
+            (None, None),
+            (Some(logical.as_ref()), None),
+            (None, Some(vector.as_ref())),
+            (Some(vector.as_ref()), Some(logical.as_ref())),
+        ] {
+            assert!(matches!(
+                validate_bootstrap_values(&marker, candidate_logical, candidate_vector),
+                Err(HelixDbError::MigrationRequired { .. })
+            ));
+            assert!(matches!(
+                validate_writer_bootstrap_values(&marker, candidate_logical, candidate_vector),
+                Err(HelixDbError::MigrationRequired { .. })
+            ));
+        }
     }
 
     #[tokio::test]

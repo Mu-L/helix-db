@@ -5452,6 +5452,125 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "nightly sparse bitmap larger than the default 8 MiB lifecycle input limit"]
+    async fn oversized_v4_bitmap_cleanup_survives_reopen_at_default_limit() {
+        let default_limits = SearchIndexBackfillLimits::default().batch();
+        let input_limit = usize::try_from(default_limits.max_input_bytes().get())
+            .expect("default input limit fits usize");
+        let mut ids = roaring::RoaringTreemap::new();
+        let mut ordinal = 0_u64;
+        while ids.serialized_size() <= input_limit {
+            for _ in 0..100_000 {
+                ids.insert(ordinal << 16);
+                ordinal += 1;
+            }
+            assert!(
+                ordinal <= 2_000_000,
+                "sparse bitmap exceeds its generation bound"
+            );
+        }
+        let oversized = SecondaryEqualityBitmapValue::new(ids).encode();
+        assert!(oversized.len() > input_limit);
+
+        let scopes = [
+            DataScope::LegacyUnscoped,
+            DataScope::Tenant(crate::encoding::v1::keys::tenant::TenantId::from_u128(
+                u128::from_be_bytes([0xFD; 16]),
+            )),
+        ];
+        for (case, scope) in scopes.into_iter().enumerate() {
+            let store = Arc::new(InMemory::new());
+            let database = format!("secondary-default-oversized-cleanup-{case}");
+            let db = Db::builder(database.as_str(), store.clone())
+                .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
+                .build()
+                .await
+                .expect("oversized cleanup database opens");
+            bootstrap_writer(&db)
+                .await
+                .expect("oversized cleanup database bootstraps");
+            let definition = validated(
+                SecondaryIndexDefinition::node_equality("User", "email")
+                    .expect("node equality definition"),
+            );
+            put_source(
+                &db,
+                scope,
+                IndexElementKind::Node,
+                0,
+                &user_properties("oversized@example.com"),
+            )
+            .await;
+            let (build_id, index_id, generation) = create_build(&db, scope, &definition, 0).await;
+            let driver = SecondaryIndexDriver::new(Arc::new(IndexScopeGates::default()));
+            let mut claim_sequence = 1;
+            assert_eq!(
+                drive_to_terminal(&db, &driver, build_id, &mut claim_sequence).await,
+                CommittedOperationStep::Completed
+            );
+            let rows = generation_rows(
+                &db,
+                scope,
+                RecordKind::SecondaryEqualityBitmap,
+                index_id,
+                generation,
+            )
+            .await;
+            assert_eq!(rows.len(), 1);
+            db.put(&rows[0].0, oversized.clone())
+                .await
+                .expect("oversized bitmap replaces the built row");
+            let IndexDdlReceipt::Accepted {
+                operation_id: drop_id,
+                ..
+            } = drop_index_operation(&db, scope, &definition)
+                .await
+                .expect("oversized cleanup is enqueued")
+            else {
+                panic!("active secondary drop enqueues cleanup")
+            };
+            assert_eq!(
+                drive_one_with_limits(&db, &driver, drop_id, &mut claim_sequence, default_limits,)
+                    .await,
+                CommittedOperationStep::Progressed
+            );
+            db.close()
+                .await
+                .expect("oversized cleanup closes after its first checkpoint");
+
+            let db = Db::builder(database.as_str(), store)
+                .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
+                .build()
+                .await
+                .expect("oversized cleanup database reopens");
+            bootstrap_writer(&db)
+                .await
+                .expect("reopened oversized cleanup database bootstraps");
+            assert_eq!(
+                drive_to_terminal(&db, &driver, drop_id, &mut claim_sequence).await,
+                CommittedOperationStep::Completed
+            );
+            for kind in [
+                RecordKind::SecondaryEqualityBitmap,
+                RecordKind::BuildDelta,
+                RecordKind::AppliedState,
+            ] {
+                assert!(
+                    generation_rows(&db, scope, kind, index_id, generation)
+                        .await
+                        .is_empty(),
+                    "terminal cleanup removes {kind:?} rows"
+                );
+            }
+            assert!(matches!(
+                read_index(&db, scope, &definition).await.state(),
+                IndexStateV2::Dropped { .. }
+            ));
+            db.close().await.expect("oversized cleanup database closes");
+        }
+    }
+
+    #[tokio::test]
     async fn cleanup_still_blocks_an_oversized_non_bitmap_row() {
         let db = test_db("secondary-oversized-non-bitmap-cleanup-row").await;
         let scope = DataScope::LegacyUnscoped;

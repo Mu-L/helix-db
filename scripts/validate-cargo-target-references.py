@@ -29,6 +29,20 @@ MATRIX_FUZZ = re.compile(
 MATRIX_TEST = re.compile(r"^\s+test:\s*(?P<test>[A-Za-z0-9_:.-]+)\s*$", re.MULTILINE)
 FLAG_KIND = {"--test": "test", "--bench": "bench", "--bin": "bin"}
 TARGET_KIND_ORDER = ("lib", "test", "bench", "bin")
+CODEC_OWNERS = {
+    "keys/global.rs": "enum GlobalKey",
+    "keys/lifecycle.rs": "struct IndexRecordKey",
+    "keys/indexes/equality.rs": "struct SecondaryEquality",
+    "keys/indexes/range.rs": "struct SecondaryRange",
+    "keys/indexes/text.rs": "struct TextManifestRootKey",
+    "keys/indexes/vector.rs": "struct VectorPartitionMappingKey",
+    "values/global.rs": "fn encode_metadata_value",
+    "values/lifecycle.rs": "fn encode_index_record",
+    "values/indexes/equality.rs": "struct SecondaryEqualityBitmapValue",
+    "values/indexes/range.rs": "fn encode_entry",
+    "values/indexes/text.rs": "fn encode_manifest_root",
+    "values/indexes/vector.rs": "fn encode_partition_mapping",
+}
 
 
 @dataclass(frozen=True)
@@ -341,6 +355,65 @@ def validate_test_filters(root: Path, catalog: Catalog) -> list[str]:
     return errors
 
 
+def forbidden_codec_source(path: str, text: str) -> list[str]:
+    errors = []
+    for identifier in ("WorkValue", "decode_work_value"):
+        if re.search(rf"\b{identifier}\b", text):
+            errors.append(f"{path}: forbidden obsolete identifier {identifier!r}")
+    if re.search(r"encoding::v1::(?:keys|values)::index_v2\b", text):
+        errors.append(f"{path}: forbidden V1 index_v2 codec import")
+    if re.search(r"\bmod\s+index_v2\s*;", text):
+        errors.append(f"{path}: forbidden index_v2 runtime module")
+    if path.endswith("encoding/v2/values/lifecycle.rs"):
+        for dependency in (
+            "decode_secondary_entry",
+            "encode_secondary_entry",
+            "values::indexes",
+        ):
+            if dependency in text:
+                errors.append(
+                    f"{path}: lifecycle values depend on index dispatch {dependency!r}"
+                )
+    return errors
+
+
+def validate_codec_architecture(root: Path) -> list[str]:
+    errors = []
+    source_root = root / "crates" / "db" / "src"
+    for path in source_root.rglob("*.rs"):
+        errors.extend(
+            forbidden_codec_source(path.relative_to(root).as_posix(), path.read_text())
+        )
+    v2 = source_root / "encoding" / "v2"
+    for relative_path, owner in CODEC_OWNERS.items():
+        path = v2 / relative_path
+        if not path.is_file():
+            errors.append(f"{path.relative_to(root)}: required codec module is missing")
+            continue
+        if owner not in path.read_text():
+            errors.append(
+                f"{path.relative_to(root)}: codec module does not own {owner!r}"
+            )
+    for old_path in (
+        source_root / "encoding" / "v1" / "keys" / "index_v2.rs",
+        source_root / "encoding" / "v1" / "values" / "index_v2",
+        source_root / "index_v2",
+    ):
+        if old_path.exists():
+            errors.append(f"{old_path.relative_to(root)}: obsolete codec/runtime path remains")
+    for module in (
+        v2 / "keys" / "indexes" / "mod.rs",
+        v2 / "values" / "indexes" / "mod.rs",
+    ):
+        text = module.read_text()
+        for family in ("equality", "range", "text", "vector"):
+            if re.search(rf"\bmod\s+{family}\s*;", text) is None:
+                errors.append(
+                    f"{module.relative_to(root)}: missing {family!r} codec module declaration"
+                )
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-test-filters", action="store_true")
@@ -351,6 +424,7 @@ def main() -> int:
     errors.extend(validate_references(root, catalog, automation_files(root)))
     errors.extend(validate_fuzz_matrices(root, catalog))
     errors.extend(validate_inventory(root, catalog))
+    errors.extend(validate_codec_architecture(root))
     if not args.skip_test_filters:
         errors.extend(validate_test_filters(root, catalog))
     if errors:
@@ -358,7 +432,7 @@ def main() -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("Cargo package, target, inventory, and named-filter references are valid.")
+    print("Cargo references and managed-index codec boundaries are valid.")
     return 0
 
 

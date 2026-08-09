@@ -67,6 +67,25 @@ class CargoTargetReferenceTests(unittest.TestCase):
             ["cargo test -p db --test valid_contracts"],
         )
 
+    def test_codec_boundary_rules_accept_typed_v2_and_reject_obsolete_dispatch(self):
+        self.assertEqual(
+            MODULE.forbidden_codec_source(
+                "crates/db/src/index_lifecycle/secondary.rs",
+                "use crate::encoding::v2::values::SecondaryEqualityBitmapValue;",
+            ),
+            [],
+        )
+        self.assertEqual(
+            MODULE.forbidden_codec_source(
+                "crates/db/src/index_lifecycle/secondary.rs",
+                "let value: WorkValue = decode_work_value(bytes)?;",
+            ),
+            [
+                "crates/db/src/index_lifecycle/secondary.rs: forbidden obsolete identifier 'WorkValue'",
+                "crates/db/src/index_lifecycle/secondary.rs: forbidden obsolete identifier 'decode_work_value'",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
