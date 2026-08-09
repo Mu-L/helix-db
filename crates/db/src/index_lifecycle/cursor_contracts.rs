@@ -9,7 +9,7 @@ use crate::encoding::v1::keys::vectors::{
     VectorUpperVectorKey,
 };
 use crate::encoding::v1::keys::{
-    DataKeyKind, EdgePropertyByIdKey, Key as GraphKey, NodePropertyKey,
+    DataKeyKind, EdgePropertyByIdKey, EdgePropertyPairKey, Key as GraphKey, NodePropertyKey,
 };
 use crate::encoding::v2::keys::{
     CanonicalSecondaryValue, IndexEntity, IndexEntityStateKey, Key, PartitionFingerprint,
@@ -87,6 +87,16 @@ fn graph_cursor(scope: DataScope, element_kind: IndexElementKind, id: u64) -> In
         IndexElementKind::Edge => DataKeyKind::EdgePropertyById(EdgePropertyByIdKey::new(id)),
     };
     cursor(GraphKey::Data { scope, kind }.to_bytes())
+}
+
+fn legacy_edge_pair_cursor(scope: DataScope, from: u64, to: u64) -> IndexCursor {
+    cursor(
+        GraphKey::Data {
+            scope,
+            kind: DataKeyKind::EdgePropertyPair(EdgePropertyPairKey::new(from, to)),
+        }
+        .to_bytes(),
+    )
 }
 
 fn source_progress(scope: DataScope, element_kind: IndexElementKind) -> SourceScanProgress {
@@ -752,6 +762,53 @@ fn every_cursor_bearing_stage_rejects_scope_owner_kind_and_truncation() {
                 "{} accepts a truncated cursor",
                 case.name
             );
+        }
+    }
+}
+
+#[test]
+fn edge_source_scans_accept_non_entity_rows_inside_the_shared_physical_prefix() {
+    for scope in [
+        DataScope::LegacyUnscoped,
+        DataScope::Tenant(TenantId::from_u128(
+            0xFD00_0000_0000_0000_0000_0000_0000_0001,
+        )),
+    ] {
+        let progress = SourceScanProgress {
+            inclusive_upper_bound: graph_cursor(scope, IndexElementKind::Edge, 20),
+            cursor: Some(legacy_edge_pair_cursor(scope, 1, 2)),
+            counters: OperationCounters::default(),
+        };
+        let cases = [
+            operation(
+                30,
+                IndexIdentityFamily::SecondaryEquality,
+                IndexElementKind::Edge,
+                IndexOperationProgress::SecondaryBuild(SecondaryBuildProgress::Constructing(
+                    SecondaryBuildStage::Scan(progress.clone()),
+                )),
+            ),
+            operation(
+                31,
+                IndexIdentityFamily::Vector,
+                IndexElementKind::Edge,
+                IndexOperationProgress::VectorBuild(VectorBuildProgress::Constructing(
+                    VectorBuildStage::Scan(progress.clone()),
+                )),
+            ),
+            operation(
+                32,
+                IndexIdentityFamily::Text,
+                IndexElementKind::Edge,
+                IndexOperationProgress::TextBuild(TextBuildProgress::Constructing(
+                    TextBuildStage::ScanSource(progress.clone()),
+                )),
+            ),
+        ];
+        for operation in cases {
+            assert!(repository::operation_record_cursors_are_valid(
+                scope, &operation
+            ));
         }
     }
 }

@@ -10,7 +10,7 @@ use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::{VectorKey, VectorStorageLane};
-use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey};
+use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey, KeyPrefix};
 use crate::encoding::v2::keys::Key;
 use crate::encoding::v2::keys::{
     GlobalKey, RecordKind, ScopedKey, VectorPartitionMappingKey, GLOBAL_SENTINEL, TENANT_SENTINEL,
@@ -438,7 +438,7 @@ enum ScopedCursorExpectation {
     TextCleanupMetadata,
 }
 
-fn graph_source_cursor_is_valid(
+fn graph_source_upper_bound_is_valid(
     scope: DataScope,
     element_kind: IndexElementKind,
     cursor: &[u8],
@@ -462,6 +462,26 @@ fn graph_source_cursor_is_valid(
             })
         ) if cursor_scope == scope
     )
+}
+
+fn graph_source_cursor_is_valid(
+    scope: DataScope,
+    element_kind: IndexElementKind,
+    cursor: &[u8],
+) -> bool {
+    let prefix = match element_kind {
+        IndexElementKind::Node => KeyPrefix::NodeProperty,
+        IndexElementKind::Edge => KeyPrefix::EdgePropertyById,
+    };
+    let source_prefix = GraphKey::data_prefix(scope, Bytes::copy_from_slice(prefix.as_slice()));
+    cursor.starts_with(&source_prefix)
+        && matches!(
+            GraphKey::parse_from_slice(scope, cursor),
+            Ok(GraphKey::Data {
+                scope: cursor_scope,
+                ..
+            }) if cursor_scope == scope
+        )
 }
 
 fn secondary_lane_matches_identity(
@@ -602,7 +622,7 @@ fn source_progress_is_valid(
     progress: &super::SourceScanProgress,
 ) -> bool {
     let element_kind = operation.identity().element_kind();
-    graph_source_cursor_is_valid(
+    graph_source_upper_bound_is_valid(
         scope,
         element_kind,
         progress.inclusive_upper_bound.as_bytes(),
