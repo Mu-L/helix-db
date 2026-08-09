@@ -692,16 +692,14 @@ writer or read-only handle against memory, disk, or S3-compatible object storage
 
 ## Install
 
-Install the forthcoming v3 SDK and its embedded runtime package. These package
-commands describe the upcoming release and are not expected to resolve before the
-v3 SDKs are published.
+Install the SDK and its embedded runtime package.
 
 ```bash Rust
-cargo add helix-db@3.0.0 --features embedded
+cargo add helix-db --features embedded
 ```
 
 ```bash TypeScript
-npm install @helix-db/helix-db@3.0.0 @helix-db/uniffi
+npm install @helix-db/helix-db @helix-db/helix-db-embedded
 ```
 
 ```bash Go
@@ -960,7 +958,7 @@ let request = QueryRequest::read(
 Enable the `embedded` feature:
 
 ```bash
-cargo add helix-db@3.0.0 --features embedded
+cargo add helix-db --features embedded
 ```
 
 See [Embedded database](/database/helix-db/start-here/local-development/embedded-database)
@@ -998,7 +996,7 @@ commands on this page describe the upcoming v3 release.
 ## Install
 
 ```bash
-npm install @helix-db/helix-db@3.0.0
+npm install @helix-db/helix-db
 ```
 
 The package is ESM. Set `"type": "module"` or compile to ESM.
@@ -1059,7 +1057,7 @@ serialization methods instead of `JSON.stringify` when a value can contain `bigi
 ## Embedded runtime
 
 Install the SDK and embedded runtime with
-`npm install @helix-db/helix-db@3.0.0 @helix-db/uniffi`. See
+`npm install @helix-db/helix-db @helix-db/helix-db-embedded`. See
 [Embedded database](/database/helix-db/start-here/local-development/embedded-database)
 for storage, cache, and handle configuration.
 
