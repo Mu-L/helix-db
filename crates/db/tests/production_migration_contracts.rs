@@ -399,7 +399,10 @@ fn populated_legacy_text_rebuild_matches_live_corpus_oracle() {
             assert_populated_text_fixture(&migrated, &fixture).await;
         migrated.close().await.expect("migrated fixture closes");
         // Legacy rebuilds publish the current direct-publication format.
-        assert_eq!(storage_version, Some(3));
+        assert_eq!(
+            storage_version,
+            Some(db::production_coverage::CURRENT_INDEX_STORAGE_VERSION)
+        );
     });
 }
 
@@ -467,7 +470,10 @@ fn legacy_text_rebuild_retires_only_after_active_and_cold_reopens() {
         assert!(reachable
             .iter()
             .all(|hash| retained.blob_hashes.contains(hash)));
-        assert_eq!(storage_version, Some(3));
+        assert_eq!(
+            storage_version,
+            Some(db::production_coverage::CURRENT_INDEX_STORAGE_VERSION)
+        );
     });
 }
 
@@ -543,7 +549,10 @@ fn legacy_text_rebuild_recovers_at_every_durable_boundary() {
             assert!(!retired.txn_guard_present);
             assert!(!retired.version_counter_present);
         }
-        assert_eq!(observed_versions, vec![Some(3); 7]);
+        assert_eq!(
+            observed_versions,
+            vec![Some(db::production_coverage::CURRENT_INDEX_STORAGE_VERSION); 7]
+        );
     });
 }
 
@@ -670,7 +679,10 @@ fn invalid_legacy_text_sources_fail_closed_and_retry_after_correction() {
             observed_versions.push(storage_version);
             recovered.close().await.expect("corrected migration closes");
         }
-        assert_eq!(observed_versions, vec![Some(3); 9]);
+        assert_eq!(
+            observed_versions,
+            vec![Some(db::production_coverage::CURRENT_INDEX_STORAGE_VERSION); 9]
+        );
     });
 }
 

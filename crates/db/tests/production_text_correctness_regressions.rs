@@ -629,8 +629,8 @@ async fn open_current_v2_text_fixture(
             .await
             .expect("current V2 state reads")
             .storage_version,
-        Some(3),
-        "the fixture must use the current marker-3 format"
+        Some(db::production_coverage::CURRENT_INDEX_STORAGE_VERSION),
+        "the fixture must use the current storage format"
     );
     (db, entity_id, definition)
 }
@@ -684,8 +684,8 @@ async fn open_current_v2_edge_fixture(
             .await
             .expect("current V2 edge state reads")
             .storage_version,
-        Some(3),
-        "the edge fixture must use the current marker-3 format"
+        Some(db::production_coverage::CURRENT_INDEX_STORAGE_VERSION),
+        "the edge fixture must use the current storage format"
     );
     (db, from, to, entity_id, definition)
 }
@@ -1158,7 +1158,10 @@ async fn obsolete_v2_nonempty_text_state_without_statistics_fails_closed() {
         .migration_parity_v2_state()
         .await
         .expect("complete populated V2 evidence reads");
-    assert_eq!(complete_state.storage_version, Some(3));
+    assert_eq!(
+        complete_state.storage_version,
+        Some(db::production_coverage::CURRENT_INDEX_STORAGE_VERSION)
+    );
     assert_eq!(complete_state.text_corpus_statistics.len(), 1);
     assert!(!complete_state.text_term_statistics.is_empty());
     assert!(complete_state

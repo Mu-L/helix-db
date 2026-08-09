@@ -20,6 +20,10 @@ pub use crate::search::vector::{
     VectorBatchBenchmarkMetric, VectorBatchBenchmarkSample, VectorBatchBenchmarkWorkload,
 };
 
+/// Current managed-index storage version exposed to production fixtures.
+pub const CURRENT_INDEX_STORAGE_VERSION: u16 =
+    crate::index_lifecycle::CURRENT_INDEX_STORAGE_VERSION;
+
 mod graph_mutation_representation;
 mod index_lifecycle;
 #[cfg(feature = "production-scale")]
