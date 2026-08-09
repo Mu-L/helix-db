@@ -1905,7 +1905,10 @@ async fn delete_generation_rows(
                             kind: ScopedKey::SecondaryEntry(key),
                             ..
                         } => decode_secondary_entry_value(
-                            index_id, generation, key.lane, &row.value,
+                            index_id,
+                            generation,
+                            key.lane(),
+                            &row.value,
                         )?,
                         IndexKey::Data {
                             kind: ScopedKey::SecondaryEqualityBitmap(_),
@@ -3018,15 +3021,15 @@ pub(crate) async fn scan_active_range_generation(
                 "secondary range prefix yielded another key kind",
             ));
         };
-        if key.index_id != handle.index_id()
-            || key.generation != handle.generation()
-            || key.lane != lane
+        if key.index_id() != handle.index_id()
+            || key.generation() != handle.generation()
+            || key.lane() != lane
         {
             return Err(corruption(
                 "secondary range entry escaped its exact serving prefix",
             ));
         }
-        let Some(key_owner) = key.entity_id else {
+        let Some(key_owner) = key.entity_id() else {
             return Err(corruption("secondary range entry omitted its key owner"));
         };
         let value_owner =
@@ -3036,7 +3039,7 @@ pub(crate) async fn scan_active_range_generation(
                 "secondary range entry key/value owners disagree",
             ));
         }
-        let CanonicalSecondaryValue::Range(key_value) = &key.value else {
+        let Some(key_value) = key.range_value() else {
             return Err(corruption(
                 "secondary range lane contains an equality value",
             ));
@@ -4711,7 +4714,7 @@ mod tests {
                 IndexKey::Data {
                     kind: ScopedKey::SecondaryEntry(key),
                     ..
-                } => assert_eq!(key.lane, expected_lane),
+                } => assert_eq!(key.lane(), expected_lane),
                 IndexKey::Data {
                     kind: ScopedKey::SecondaryEqualityBitmap(key),
                     ..

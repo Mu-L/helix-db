@@ -22,15 +22,15 @@ pub(crate) mod indexes;
 pub(crate) mod lifecycle;
 
 pub(crate) use global::{GlobalKey, GlobalKind, TextCompactionTarget, GLOBAL_SENTINEL};
-pub(crate) use indexes::equality::{
-    CanonicalSecondaryValue, SecondaryEntryKey, SecondaryEntryLane, SecondaryEqualityBitmapKey,
-};
 pub(crate) use indexes::text::{
     BlobHash, PartitionFingerprint, TextBuildArtifactKey, TextCorpusStatisticsKey,
     TextEntityStateKey, TextManifestPageKey, TextManifestRootKey, TextStatisticsEntityKey,
     TextTermFingerprint, TextTermStatisticsKey,
 };
 pub(crate) use indexes::vector::VectorPartitionMappingKey;
+pub(crate) use indexes::{
+    CanonicalSecondaryValue, SecondaryEntryKey, SecondaryEntryLane, SecondaryEqualityBitmapKey,
+};
 pub(crate) use lifecycle::{IndexEntity, IndexEntityStateKey, IndexOperationKey, IndexRecordKey};
 
 const PREFIX_LEN: usize = core::mem::size_of::<u8>();
@@ -309,13 +309,7 @@ impl ScopedKey {
             Self::IndexRecord(key) => identity_encoded_len(&key.identity),
             Self::Operation(_) => UUID_LEN,
             Self::BuildDelta(_) | Self::AppliedState(_) => U64_LEN + U64_LEN + KIND_LEN + U64_LEN,
-            Self::SecondaryEntry(key) => {
-                U64_LEN
-                    + U64_LEN
-                    + KIND_LEN
-                    + key.value.encoded_key_len()
-                    + key.entity_id.map_or(0, |_| U64_LEN)
-            }
+            Self::SecondaryEntry(key) => key.encoded_suffix_len(),
             Self::SecondaryEqualityBitmap(key) => key.encoded_suffix_len(),
             Self::TextManifestRoot(_) => U64_LEN + U64_LEN + HASH_LEN,
             Self::TextManifestPage(_) => U64_LEN + U64_LEN + HASH_LEN + U32_LEN,
@@ -336,15 +330,7 @@ impl ScopedKey {
             Self::IndexRecord(key) => encode_identity(&key.identity, buffer),
             Self::Operation(key) => buffer.put_slice(key.operation_id.as_bytes()),
             Self::BuildDelta(key) | Self::AppliedState(key) => encode_entity_state_key(key, buffer),
-            Self::SecondaryEntry(key) => {
-                buffer.put_u64(key.index_id.get());
-                buffer.put_u64(key.generation.get());
-                buffer.put_u8(key.lane.as_u8());
-                key.value.encode_key_value(buffer);
-                key.entity_id
-                    .iter()
-                    .for_each(|entity_id| buffer.put_u64(entity_id.get()));
-            }
+            Self::SecondaryEntry(key) => key.encode_suffix(buffer),
             Self::SecondaryEqualityBitmap(key) => key.encode_suffix(buffer),
             Self::TextManifestRoot(key) => encode_text_root(key, buffer),
             Self::TextManifestPage(key) => {

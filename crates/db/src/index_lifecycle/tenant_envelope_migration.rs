@@ -47,9 +47,9 @@ impl TenantMigrationExclusions {
         match kind {
             ScopedKey::SecondaryEntry(entry) => {
                 matches!(
-                    entry.lane,
+                    entry.lane(),
                     SecondaryEntryLane::NodeEquality | SecondaryEntryLane::EdgeEquality
-                ) && entry.entity_id.is_some()
+                ) && entry.entity_id().is_some()
             }
             ScopedKey::SecondaryEqualityBitmap(_) => true,
             ScopedKey::BuildDelta(key) | ScopedKey::AppliedState(key) => self

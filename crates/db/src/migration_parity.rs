@@ -30,7 +30,7 @@ use crate::encoding::v1::read_u64;
 use crate::encoding::v1::values;
 use crate::encoding::v1::values::id_allocation::IdAllocationWatermarkValue;
 use crate::encoding::v2::keys::Key as IndexKey;
-use crate::encoding::v2::keys::{CanonicalSecondaryValue, GlobalKey, ScopedKey, GLOBAL_SENTINEL};
+use crate::encoding::v2::keys::{GlobalKey, ScopedKey, SecondaryEntryKey, GLOBAL_SENTINEL};
 use crate::encoding::v2::values::{
     decode_corpus_statistics, decode_index_record, decode_metadata_value, decode_operation_record,
     decode_secondary_entry, decode_statistics_entity, decode_term_statistics,
@@ -2217,32 +2217,30 @@ pub fn decode_migration_parity_secondary_memberships(
     match kind {
         ScopedKey::SecondaryEntry(key) => {
             let entry = decode_secondary_entry(value)?;
-            if entry.index_id != key.index_id
-                || entry.generation != key.generation
-                || entry.lane != key.lane
+            if entry.index_id != key.index_id()
+                || entry.generation != key.generation()
+                || entry.lane != key.lane()
                 || key
-                    .entity_id
+                    .entity_id()
                     .is_some_and(|entity_id| entity_id != entry.entity_id)
             {
                 return Err(crate::error::HelixDbError::Query(
                     "V2 secondary key/value ownership mismatch".to_string(),
                 ));
             }
-            let canonical_value = match &key.value {
-                CanonicalSecondaryValue::Equality(value) => {
-                    MigrationParitySecondaryValue::Equality {
-                        digest: *value.digest(),
-                        canonical: value.canonical().to_vec(),
-                    }
-                }
-                CanonicalSecondaryValue::Range(value) => {
-                    MigrationParitySecondaryValue::Range(value.encoded().to_vec())
+            let canonical_value = match &key {
+                SecondaryEntryKey::Equality(key) => MigrationParitySecondaryValue::Equality {
+                    digest: *key.value.digest(),
+                    canonical: key.value.canonical().to_vec(),
+                },
+                SecondaryEntryKey::Range(key) => {
+                    MigrationParitySecondaryValue::Range(key.value.encoded().to_vec())
                 }
             };
             Ok(vec![MigrationParitySecondaryMembership {
-                index_id: key.index_id.get(),
-                generation: key.generation.get(),
-                lane: key.lane.as_u8(),
+                index_id: key.index_id().get(),
+                generation: key.generation().get(),
+                lane: key.lane().as_u8(),
                 value: canonical_value,
                 entity_id: entry.entity_id.get(),
             }])
@@ -2571,7 +2569,7 @@ mod tests {
         project_equality_value, EqualityValueProjection,
     };
     use crate::encoding::v2::keys::{
-        SecondaryEntryKey, SecondaryEntryLane, SecondaryEqualityBitmapKey,
+        CanonicalSecondaryValue, SecondaryEntryKey, SecondaryEntryLane, SecondaryEqualityBitmapKey,
     };
     use crate::encoding::v2::values::encode_secondary_entry;
     use crate::index_lifecycle::work::SecondaryEntryValue;

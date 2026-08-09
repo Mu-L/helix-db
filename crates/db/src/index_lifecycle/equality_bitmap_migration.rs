@@ -711,7 +711,7 @@ async fn clear_v3_equality_prefix(
                     crate::encoding::v2::keys::SecondaryEntryLane::EdgeEquality
                 }
             };
-            if entry.lane != expected_lane || entry.entity_id.is_none() {
+            if entry.lane() != expected_lane || entry.entity_id().is_none() {
                 return Err(corruption(
                     "V3 non-unique equality generation contains another row shape",
                 ));
