@@ -1,10 +1,11 @@
-//! Blocking V3-to-V4 non-unique equality migration.
+//! Blocking V3-to-V4 managed-index migration.
 //!
-//! The V3 marker remains authoritative while Active generations are rebuilt
-//! and verified. Publication is one final marker write; V3 rows are deleted
-//! only afterward, so every committed prefix is restart-safe.
+//! The V3 marker remains authoritative while tenant envelopes and Active
+//! equality generations are rebuilt and verified. Publication is one final
+//! marker write; V3 rows are deleted only afterward, so every committed prefix
+//! is restart-safe.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -27,6 +28,7 @@ use super::operation::{
     IndexOperationExecutionState, IndexOperationProgress, SecondaryBuildProgress,
     SecondaryBuildStage, SourceScanProgress,
 };
+use super::tenant_envelope_migration::{self, TenantMigrationExclusions};
 use super::{
     IndexOperationRecord, IndexStateV2, IndexStorageVersion, IndexV2MetadataValue,
     OperationCounters, OperationQueuePointerValue, PhysicalGeneration,
@@ -51,6 +53,7 @@ struct BuildingEqualityGeneration {
 
 #[derive(Debug, Default)]
 struct MigrationCatalog {
+    tenant_scopes: BTreeSet<TenantId>,
     all: Vec<EqualityGeneration>,
     active: Vec<EqualityGeneration>,
     building: Vec<BuildingEqualityGeneration>,
@@ -146,6 +149,14 @@ fn trip(failpoint: EqualityBitmapMigrationFailpoint) -> Result<()> {
     Err(injected_error(failpoint))
 }
 
+pub(super) fn trip_batch_before() -> Result<()> {
+    trip(EqualityBitmapMigrationFailpoint::BatchBefore)
+}
+
+pub(super) fn trip_batch_after() -> Result<()> {
+    trip(EqualityBitmapMigrationFailpoint::BatchAfter)
+}
+
 fn injected_error(failpoint: EqualityBitmapMigrationFailpoint) -> HelixDbError {
     HelixDbError::InvariantViolation(format!(
         "injected equality bitmap migration failpoint {}",
@@ -158,12 +169,28 @@ pub(super) async fn migrate_v3_to_v4(db: &Db) -> Result<()> {
     let catalog = discover_catalog(db).await?;
     trip(EqualityBitmapMigrationFailpoint::InitializationAfter)?;
 
+    let mut exclusions = TenantMigrationExclusions::default();
+    for building in &catalog.building {
+        exclusions.exclude_building_equality(
+            building.generation.scope,
+            building.generation.index_id,
+            building.generation.generation,
+            building.operation_id,
+        );
+    }
+    tenant_envelope_migration::copy_v3_tenant_keys(db, &catalog.tenant_scopes, &exclusions).await?;
+
     for generation in &catalog.active {
         rebuild_active_generation(db, generation).await?;
     }
     for generation in &catalog.building {
         restart_building_generation(db, generation).await?;
     }
+
+    trip(EqualityBitmapMigrationFailpoint::VerificationBefore)?;
+    tenant_envelope_migration::verify_v3_tenant_keys(db, &catalog.tenant_scopes, &exclusions)
+        .await?;
+    trip(EqualityBitmapMigrationFailpoint::VerificationAfter)?;
 
     trip(EqualityBitmapMigrationFailpoint::PublicationBefore)?;
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
@@ -188,6 +215,7 @@ pub(super) async fn cleanup_v3_nonunique_equality_rows(db: &Db) -> Result<()> {
     for generation in &catalog.all {
         clear_v3_equality_generation(db, generation).await?;
     }
+    tenant_envelope_migration::cleanup_v3_tenant_keys(db, &catalog.tenant_scopes).await?;
     trip(EqualityBitmapMigrationFailpoint::CleanupAfter)
 }
 
@@ -195,23 +223,29 @@ async fn discover_catalog(db: &Db) -> Result<MigrationCatalog> {
     let mut catalog = MigrationCatalog::default();
     let mut rows = db.scan(..).await?;
     while let Some(row) = rows.next().await? {
-        let Some(scope) = index_record_scope(&row.key) else {
+        let candidates = index_record_candidates(&row.key)?;
+        if candidates.is_empty() {
             continue;
-        };
-        let Key::Data {
-            kind: ScopedKey::IndexRecord(key),
-            ..
-        } = Key::parse_from_slice(scope, &row.key)?
-        else {
-            return Err(corruption(
-                "index-record migration prefix yielded another key",
-            ));
-        };
+        }
         let record = decode_index_record(&row.value)?;
-        if key.identity != *record.identity() {
+        let mut matching = candidates.into_iter().filter_map(|(scope, kind)| {
+            let ScopedKey::IndexRecord(key) = kind else {
+                return None;
+            };
+            (key.identity == *record.identity()).then_some((scope, key))
+        });
+        let Some((scope, _)) = matching.next() else {
             return Err(corruption(
                 "index-record migration key/value identities disagree",
             ));
+        };
+        if matching.next().is_some() {
+            return Err(corruption(
+                "index-record migration key has ambiguous physical scope",
+            ));
+        }
+        if let DataScope::Tenant(tenant) = scope {
+            catalog.tenant_scopes.insert(tenant);
         }
         let ValidatedDynamicIndexDefinition::Secondary(definition) = record.definition() else {
             continue;
@@ -249,6 +283,38 @@ async fn discover_catalog(db: &Db) -> Result<MigrationCatalog> {
         }
     }
     Ok(catalog)
+}
+
+fn index_record_candidates(key: &[u8]) -> Result<Vec<(DataScope, ScopedKey)>> {
+    const PREFIX_LEN: usize = core::mem::size_of::<u8>();
+    const KIND_LEN: usize = core::mem::size_of::<u8>();
+    let mut candidates = Vec::with_capacity(2);
+    if key.len() >= PREFIX_LEN + KIND_LEN
+        && key[0] == ScopedKey::key_prefix()
+        && key[PREFIX_LEN] == RecordKind::IndexRecord.as_u8()
+    {
+        if let Ok(kind) = ScopedKey::parse_from_slice(key) {
+            candidates.push((DataScope::LegacyUnscoped, kind));
+        }
+    }
+    if key.len() >= DataScope::PREFIX_LEN + PREFIX_LEN + KIND_LEN
+        && key[DataScope::PREFIX_LEN] == ScopedKey::key_prefix()
+        && key[DataScope::PREFIX_LEN + PREFIX_LEN] == RecordKind::IndexRecord.as_u8()
+    {
+        let tenant = u128::from_be_bytes(
+            key[0..DataScope::PREFIX_LEN]
+                .try_into()
+                .expect("validated tenant prefix is sixteen bytes"),
+        );
+        let scope = DataScope::Tenant(TenantId::from_u128(tenant));
+        const LOGICAL_OFFSET: usize = DataScope::PREFIX_LEN;
+        if let Ok(kind) = ScopedKey::parse_from_slice(
+            &key[LOGICAL_OFFSET..LOGICAL_OFFSET + key.len() - LOGICAL_OFFSET],
+        ) {
+            candidates.push((scope, kind));
+        }
+    }
+    Ok(candidates)
 }
 
 async fn rebuild_active_generation(db: &Db, generation: &EqualityGeneration) -> Result<()> {
@@ -391,8 +457,20 @@ async fn restart_building_generation(db: &Db, building: &BuildingEqualityGenerat
         kind: ScopedKey::operation(building.operation_id),
     }
     .to_bytes();
+    let legacy_operation_key = tenant_envelope_migration::legacy_data_key(
+        building.generation.scope,
+        ScopedKey::operation(building.operation_id),
+    );
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
-    let Some(operation_bytes) = transaction.get(&operation_key).await? else {
+    let operation_bytes = transaction.get(&operation_key).await?;
+    let operation_bytes = match operation_bytes {
+        Some(operation_bytes) => Some(operation_bytes),
+        None if legacy_operation_key != operation_key => {
+            transaction.get(&legacy_operation_key).await?
+        }
+        None => None,
+    };
+    let Some(operation_bytes) = operation_bytes else {
         return Err(corruption(
             "Building equality generation has no lifecycle operation",
         ));
@@ -472,14 +550,49 @@ async fn clear_prefix(db: &Db, prefix: &Bytes) -> Result<()> {
 }
 
 async fn clear_v3_equality_generation(db: &Db, generation: &EqualityGeneration) -> Result<()> {
-    let prefix = Key::data_prefix(
-        generation.scope,
-        ScopedKey::generation_prefix(
-            RecordKind::SecondaryEntry,
-            generation.index_id,
-            generation.generation,
-        ),
+    let logical_prefix = ScopedKey::generation_prefix(
+        RecordKind::SecondaryEntry,
+        generation.index_id,
+        generation.generation,
     );
+    match generation.scope {
+        DataScope::LegacyUnscoped => {
+            clear_v3_equality_prefix(
+                db,
+                generation,
+                Key::data_prefix(generation.scope, logical_prefix),
+                false,
+            )
+            .await
+        }
+        DataScope::Tenant(_) => {
+            clear_v3_equality_prefix(
+                db,
+                generation,
+                tenant_envelope_migration::legacy_data_prefix(
+                    generation.scope,
+                    logical_prefix.clone(),
+                ),
+                true,
+            )
+            .await?;
+            clear_v3_equality_prefix(
+                db,
+                generation,
+                Key::data_prefix(generation.scope, logical_prefix),
+                false,
+            )
+            .await
+        }
+    }
+}
+
+async fn clear_v3_equality_prefix(
+    db: &Db,
+    generation: &EqualityGeneration,
+    prefix: Bytes,
+    legacy_tenant_envelope: bool,
+) -> Result<()> {
     loop {
         let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
         let mut rows = transaction.scan_prefix(&prefix, ..).await?;
@@ -488,10 +601,15 @@ async fn clear_v3_equality_generation(db: &Db, generation: &EqualityGeneration) 
             let Some(row) = rows.next().await? else {
                 break;
             };
+            let parsed = if legacy_tenant_envelope {
+                tenant_envelope_migration::parse_legacy_data_key(generation.scope, &row.key)?
+            } else {
+                Key::parse_from_slice(generation.scope, &row.key)?
+            };
             let Key::Data {
                 kind: ScopedKey::SecondaryEntry(entry),
                 ..
-            } = Key::parse_from_slice(generation.scope, &row.key)?
+            } = parsed
             else {
                 return Err(corruption("V3 equality prefix yielded another key kind"));
             };
@@ -532,29 +650,6 @@ fn bitmap_prefix(generation: &EqualityGeneration) -> Bytes {
             generation.definition.element_kind(),
         ),
     )
-}
-
-fn index_record_scope(key: &[u8]) -> Option<DataScope> {
-    const PREFIX_LEN: usize = core::mem::size_of::<u8>();
-    const KIND_LEN: usize = core::mem::size_of::<u8>();
-    if key.len() >= PREFIX_LEN + KIND_LEN
-        && key[0] == ScopedKey::key_prefix()
-        && key[PREFIX_LEN] == RecordKind::IndexRecord.as_u8()
-    {
-        return Some(DataScope::LegacyUnscoped);
-    }
-    if key.len() < DataScope::PREFIX_LEN + PREFIX_LEN + KIND_LEN
-        || key[DataScope::PREFIX_LEN] != ScopedKey::key_prefix()
-        || key[DataScope::PREFIX_LEN + PREFIX_LEN] != RecordKind::IndexRecord.as_u8()
-    {
-        return None;
-    }
-    let tenant = u128::from_be_bytes(
-        key[0..DataScope::PREFIX_LEN]
-            .try_into()
-            .expect("validated tenant prefix is sixteen bytes"),
-    );
-    Some(DataScope::Tenant(TenantId::from_u128(tenant)))
 }
 
 fn corruption(message: &str) -> HelixDbError {
@@ -664,9 +759,9 @@ mod tests {
         email: &str,
     ) {
         let entity_id = super::super::IndexEntityId::new(entity_id);
-        let key = Key::Data {
+        let key = tenant_envelope_migration::legacy_data_key(
             scope,
-            kind: ScopedKey::SecondaryEntry(
+            ScopedKey::SecondaryEntry(
                 SecondaryEntryKey::try_new(
                     index_id,
                     generation,
@@ -676,8 +771,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-        }
-        .to_bytes();
+        );
         db.put(
             key,
             encode_secondary_entry(&SecondaryEntryValue {
@@ -707,11 +801,10 @@ mod tests {
             .transition(super::super::IndexStateTransition::Activate)
             .unwrap();
         db.put(
-            Key::Data {
+            tenant_envelope_migration::legacy_data_key(
                 scope,
-                kind: ScopedKey::index_record(definition.identity()),
-            }
-            .to_bytes(),
+                ScopedKey::index_record(definition.identity()),
+            ),
             encode_index_record(&active),
         )
         .await
@@ -805,9 +898,38 @@ mod tests {
     async fn tenant_catalogs_migrate_without_changing_unrelated_bytes() {
         let _guard = TEST_LOCK.lock().await;
         let db = v3_db("v4-equality-tenant-migration").await;
-        let tenant = DataScope::Tenant(TenantId::from_u128(7));
+        let tenant = DataScope::Tenant(TenantId::from_u128(
+            0x0601_0000_0000_0000_0000_0000_0000_0000,
+        ));
         let unscoped = put_active_index(&db, DataScope::LegacyUnscoped).await;
         let tenant_generation = put_active_index(&db, tenant).await;
+        let unique_entity = super::super::IndexEntityId::new(99);
+        let unique_kind = ScopedKey::SecondaryEntry(
+            SecondaryEntryKey::try_new(
+                IndexId::new(2).unwrap(),
+                IndexGenerationId::initial(),
+                SecondaryEntryLane::NodeUniqueEquality,
+                CanonicalSecondaryValue::equality_string("unique"),
+                None,
+            )
+            .unwrap(),
+        );
+        let old_unique_key =
+            tenant_envelope_migration::legacy_data_key(tenant, unique_kind.clone());
+        let new_unique_key = Key::Data {
+            scope: tenant,
+            kind: unique_kind,
+        }
+        .to_bytes();
+        let unique_value = encode_secondary_entry(&SecondaryEntryValue {
+            index_id: IndexId::new(2).unwrap(),
+            generation: IndexGenerationId::initial(),
+            lane: SecondaryEntryLane::NodeUniqueEquality,
+            entity_id: unique_entity,
+        });
+        db.put(old_unique_key.clone(), unique_value.clone())
+            .await
+            .unwrap();
         for entity_id in 0..2 {
             for generation in [&unscoped, &tenant_generation] {
                 put_graph_entity(&db, generation.scope, entity_id, "shared").await;
@@ -834,7 +956,61 @@ mod tests {
 
         assert_active_migrated(&db, &unscoped).await;
         assert_active_migrated(&db, &tenant_generation).await;
+        assert_eq!(db.get(&new_unique_key).await.unwrap(), Some(unique_value));
+        assert_eq!(db.get(&old_unique_key).await.unwrap(), None);
+        let old_catalog_key = tenant_envelope_migration::legacy_data_key(
+            tenant,
+            ScopedKey::index_record(tenant_generation.definition.identity()),
+        );
+        let new_catalog_key = Key::Data {
+            scope: tenant,
+            kind: ScopedKey::index_record(tenant_generation.definition.identity()),
+        }
+        .to_bytes();
+        assert_eq!(db.get(old_catalog_key).await.unwrap(), None);
+        assert!(db.get(new_catalog_key).await.unwrap().is_some());
         assert_eq!(db.get(unrelated_key).await.unwrap(), Some(unrelated_value));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tenant_migration_rejects_conflicting_destination_values() {
+        let _guard = TEST_LOCK.lock().await;
+        let db = v3_db("v4-tenant-envelope-conflict").await;
+        let tenant = DataScope::Tenant(TenantId::from_u128(7));
+        let _ = put_active_index(&db, tenant).await;
+        let kind = ScopedKey::SecondaryEntry(
+            SecondaryEntryKey::try_new(
+                IndexId::new(2).unwrap(),
+                IndexGenerationId::initial(),
+                SecondaryEntryLane::NodeUniqueEquality,
+                CanonicalSecondaryValue::equality_string("unique"),
+                None,
+            )
+            .unwrap(),
+        );
+        let old_key = tenant_envelope_migration::legacy_data_key(tenant, kind.clone());
+        let new_key = Key::Data {
+            scope: tenant,
+            kind,
+        }
+        .to_bytes();
+        let value = |entity_id| {
+            encode_secondary_entry(&SecondaryEntryValue {
+                index_id: IndexId::new(2).unwrap(),
+                generation: IndexGenerationId::initial(),
+                lane: SecondaryEntryLane::NodeUniqueEquality,
+                entity_id: super::super::IndexEntityId::new(entity_id),
+            })
+        };
+        db.put(old_key, value(1)).await.unwrap();
+        db.put(new_key, value(2)).await.unwrap();
+
+        assert!(matches!(
+            super::super::repository::bootstrap_writer(&db).await,
+            Err(HelixDbError::IndexCatalogCorruption(message))
+                if message.contains("conflicts with its V3 source value")
+        ));
         db.close().await.unwrap();
     }
 

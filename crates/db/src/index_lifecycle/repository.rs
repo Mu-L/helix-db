@@ -13,7 +13,7 @@ use crate::encoding::v1::keys::vectors::{VectorKey, VectorStorageLane};
 use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey};
 use crate::encoding::v2::keys::Key;
 use crate::encoding::v2::keys::{
-    GlobalKey, RecordKind, ScopedKey, VectorPartitionMappingKey, GLOBAL_SENTINEL,
+    GlobalKey, RecordKind, ScopedKey, VectorPartitionMappingKey, GLOBAL_SENTINEL, TENANT_SENTINEL,
 };
 use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, decode_partition_mapping, encode_metadata_value,
@@ -64,7 +64,8 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
         while let Some(row) = rows.next().await? {
             let is_global_v2 = row.key.starts_with(&GLOBAL_SENTINEL);
             let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
-            if is_global_v2 || is_unscoped_v2 {
+            let is_tenant_v2 = row.key.first().copied() == Some(TENANT_SENTINEL);
+            if is_global_v2 || is_unscoped_v2 || is_tenant_v2 {
                 return Err(HelixDbError::MigrationRequired {
                     reason: "V2 storage rows exist without the complete bootstrap tuple"
                         .to_string(),

@@ -45,6 +45,7 @@ mod public;
 pub(crate) mod repository;
 mod scope_gate;
 pub(crate) mod secondary;
+mod tenant_envelope_migration;
 pub(crate) mod text;
 pub(crate) mod vector;
 pub(crate) mod work;
