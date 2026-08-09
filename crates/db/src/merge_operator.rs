@@ -10,7 +10,7 @@ use crate::encoding::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::{KEY_KIND_LAYER0_VEC_KS, VECTOR_HOT_KEYSPACE_PREFIX};
 use crate::encoding::v1::keys::{DataKeyKind, KeyPrefix};
 use crate::encoding::v1::values::{edges, vectors};
-use crate::encoding::v2::keys::ScopedKey as V2ScopedKey;
+use crate::encoding::v2::keys::{Key as V2Key, ScopedKey as V2ScopedKey};
 use crate::encoding::NodeId;
 
 const EDGE_DELTA_MIN_LEN: usize = core::mem::size_of::<u8>();
@@ -440,17 +440,12 @@ impl HelixMergeOperator {
 }
 
 fn is_v4_secondary_equality_bitmap_key(key: &[u8]) -> bool {
-    const V2_PREFIX: u8 = 0x06;
-    let logical = if key.first().copied() == Some(V2_PREFIX) {
-        key
-    } else if key.len() > DataScope::PREFIX_LEN && key[DataScope::PREFIX_LEN] == V2_PREFIX {
-        &key[DataScope::PREFIX_LEN..]
-    } else {
-        return false;
-    };
     matches!(
-        V2ScopedKey::parse_from_slice(logical),
-        Ok(V2ScopedKey::SecondaryEqualityBitmap(_))
+        V2Key::parse_data_from_slice(key),
+        Ok(V2Key::Data {
+            kind: V2ScopedKey::SecondaryEqualityBitmap(_),
+            ..
+        })
     )
 }
 
@@ -546,13 +541,12 @@ fn merge_decode_error(error: impl std::fmt::Display) -> MergeOperatorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
     use crate::encoding::v1::keys::{AdjacencyKey, DataKeyKind, EdgePairIndexKey, Key};
     use crate::encoding::v1::property::equality_value::{
         project_equality_value, EqualityValueProjection,
     };
-    use crate::encoding::v2::keys::{
-        Key as V2Key, ScopedKey as V2ScopedKey, SecondaryEqualityBitmapKey,
-    };
+    use crate::encoding::v2::keys::SecondaryEqualityBitmapKey;
     use crate::index_lifecycle::{IndexElementKind, IndexGenerationId, IndexId};
 
     fn edge_delta(op: u8, node_id: NodeId) -> Bytes {
@@ -627,18 +621,24 @@ mod tests {
         );
         for scope in [
             DataScope::LegacyUnscoped,
-            DataScope::Tenant(
-                crate::encoding::v1::keys::tenant::TenantId::from_ulid_str(
-                    "0000000000000000000000000A",
-                )
-                .unwrap(),
-            ),
+            DataScope::Tenant(TenantId::from_u128(
+                0x0600_0000_0000_0000_0000_0000_0000_0000,
+            )),
+            DataScope::Tenant(TenantId::from_u128(
+                0x0601_0000_0000_0000_0000_0000_0000_0000,
+            )),
+            DataScope::Tenant(TenantId::from_u128(
+                0xFD00_0000_0000_0000_0000_0000_0000_0000,
+            )),
         ] {
             let key = V2Key::Data {
                 scope,
                 kind: kind.clone(),
             }
             .to_bytes();
+            if matches!(scope, DataScope::Tenant(_)) {
+                assert_eq!(key.first().copied(), Some(0xFD));
+            }
             let merged = HelixMergeOperator::new()
                 .merge_batch(&key, None, &[encode_bitmap_add(5), encode_bitmap_add(8)])
                 .unwrap();
