@@ -324,7 +324,18 @@ function oneHot(index) {
 }
 
 async function execute(client, batch, queryName) {
-  return client.query(batch.toQueryRequest({ queryName })).send();
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    try {
+      return await client.query(batch.toQueryRequest({ queryName })).send();
+    } catch (error) {
+      const retryableConflict =
+        error?.kind === "Embedded" &&
+        error?.details?.includes("Transaction error: transaction conflict");
+      if (!retryableConflict || attempt === 8) throw error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 25));
+    }
+  }
+  throw new Error("embedded conflict retry loop exhausted");
 }
 
 async function awaitIndexOperation(client, receipt) {
