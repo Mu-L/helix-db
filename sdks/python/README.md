@@ -1,8 +1,9 @@
 # HelixDB Python SDK
 
-The Python SDK pairs an idiomatic query-builder DSL with a dependency-free
-client for sending HelixDB queries to `POST /v2/query` or executing them against
-an embedded database.
+The Python SDK pairs an idiomatic query-builder DSL with synchronous and
+asynchronous clients for sending HelixDB queries to `POST /v2/query` or
+executing them against an embedded database. The async client uses HTTPX; the
+sync API remains unchanged.
 
 ```python
 from helixdb import Client, Predicate, g, read_batch
@@ -24,12 +25,47 @@ request = query.to_query_request()
 result = Client("http://localhost:6969").query(request)
 ```
 
+## Async Client
+
+Reuse one `AsyncClient` so its HTTPX connection pool can serve many requests.
+There is no timeout unless you configure one on the client or request.
+
+```python
+import asyncio
+
+import httpx
+
+from helixdb import AsyncClient
+
+async def main():
+    limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+    async with AsyncClient(timeout=10.0, limits=limits) as client:
+        first, second = await asyncio.gather(
+            client.query(request),
+            client.execute(request, writer_only=True, timeout=2.0),
+        )
+        return first, second
+
+results = asyncio.run(main())
+```
+
+`AsyncClient`, `AsyncQueryBuilder`, and `AsyncQueryExecutionRequest` are also
+exported from the compatibility import path `helix_db`. Builder methods preserve
+the synchronous writer, warm, durability, authorization, and response contracts.
+
+HTTP cancellation propagates as `asyncio.CancelledError`; the response stream is
+closed and the client remains reusable. For embedded operations, use
+`asyncio.timeout(...)` when a cancellation boundary is required. HTTPX
+`AsyncBaseTransport` instances can be injected for custom networking or tests;
+the client owns and closes an injected transport. Calling `await client.close()`
+more than once is safe.
+
 Warm a read with `client.execute(request, warm_only=True)`. Helix Cloud fans the
 ordinary read out to every eligible backend, discards the results, and returns
-`204 No Content` with no query payload after at least one target succeeds. Pass
+an empty successful response after at least one target succeeds. Pass
 `writer_only=True` as well to warm only the authoritative writer. Warm writes
-return `400 Bad Request` before backend execution. A standalone local warm read
-can return its normal query payload instead.
+return an error before backend execution. A standalone local warm read can
+return its normal query payload instead.
 
 The DSL emits the same query JSON AST as the Rust, TypeScript, and Go
 SDKs. Python methods use `snake_case`; compatibility aliases such as
@@ -133,6 +169,26 @@ client = Client.embedded(
 `Client.embedded_reader(...)` opens an existing disk or object-storage database
 read-only. Stored routes and query bundles are not supported.
 
+The async client awaits native UniFFI operations directly and supports the same
+writer, reader, memory, disk, object-storage, and cache configurations.
+
+```python
+from helixdb import AsyncClient, Disk, InMemory
+
+async def embedded_query(request):
+    writer = await AsyncClient.embedded(InMemory("app"))
+    async with writer:
+        return await writer.query(request)
+
+async def read_checkpoint(request):
+    reader = await AsyncClient.embedded_reader(Disk("./data", "app"))
+    async with reader:
+        return await reader.query(request)
+```
+
+Concurrent `asyncio.gather(...)` calls are passed to the native runtime without
+a synchronous wrapper. Native graph loading remains available only on `Client`.
+
 ## Native graph algorithms
 
 ```python
@@ -152,10 +208,13 @@ scores = graph.betweenness_centrality(BetweennessOptions.graphify_default())
 
 The returned object retains the immutable Rust topology. Every accessor and
 algorithm runs locally without another Helix read. Native wheels are required
-for this graph API and embedded mode; query-only imports remain dependency free.
+for this graph API and embedded mode; server clients do not require the native
+runtime.
 
 Run the SDK tests from the repository root:
 
 ```sh
-PYTHONPATH=sdks/python/src python -m unittest discover sdks/python/tests
+python -m pip install -e './sdks/python[dev]'
+python -c 'import doctest, helixdb.async_client as module; raise SystemExit(doctest.testmod(module).failed)'
+python -m unittest discover -s sdks/python/tests
 ```

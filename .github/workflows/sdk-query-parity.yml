@@ -53,6 +53,22 @@ jobs:
           components: clippy, rustfmt
       - run: npm ci
         working-directory: sdks/typescript
+      - run: python -m pip install -e './sdks/python[dev]'
+      - name: Check changed Python SDK sources
+        working-directory: sdks/python
+        run: |
+          files=(
+            src/helixdb/_client_common.py
+            src/helixdb/async_client.py
+            src/helixdb/client.py
+            src/helixdb/__init__.py
+            tests/test_client.py
+            tests/test_async_client.py
+            scripts/run_embedded_parity.py
+            scripts/run_server_parity.py
+          )
+          ruff format --check "${files[@]}"
+          ruff check "${files[@]}"
       - run: npm test
         working-directory: sdks/typescript
       - run: npm run parity:generate
@@ -64,6 +80,11 @@ jobs:
       - run: python -m unittest discover -s sdks/python/tests -v
         env:
           PYTHONPATH: sdks/python/src
+      - name: Run Python doctests
+        working-directory: sdks/python
+        run: >-
+          python -c 'import doctest, helixdb.async_client as module;
+          raise SystemExit(doctest.testmod(module).failed)'
       - run: go test ./...
         working-directory: sdks/go
       - run: cargo test --locked --manifest-path sdks/rust/Cargo.toml --lib
@@ -168,6 +189,7 @@ jobs:
           cargo build --locked --manifest-path bindings/uniffi-bindgen/Cargo.toml --no-default-features --features node --bin helixdb-uniffi-bindgen-node
       - run: npm ci
         working-directory: sdks/typescript
+      - run: python -m pip install -e './sdks/python[dev]'
       - run: npm run parity:embedded
         working-directory: sdks/typescript
         env:
@@ -197,7 +219,8 @@ jobs:
         working-directory: sdks/typescript
       - run: npm run test:coverage
         working-directory: sdks/typescript
-      - run: python -m pip install coverage
+      - run: python -m pip install -e '.[dev]'
+        working-directory: sdks/python
       - run: python -m coverage run --branch --source=helixdb -m unittest discover -s tests
         working-directory: sdks/python
         env:

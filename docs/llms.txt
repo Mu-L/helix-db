@@ -23,7 +23,7 @@ Full walkthrough: https://docs.helix-db.com/cli/getting-started
 - [Rust SDK](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/rust-project-setup): Build typed HelixDB queries and execute them over HTTP or an embedded engine — Page type: Guide
 - [TypeScript SDK](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/typescript-project-setup): Build typed HelixDB requests for Node.js applications — Page type: Guide
 - [Go SDK](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/go-project-setup): Build and execute HelixDB requests with ordinary Go functions — Page type: Guide
-- [Python SDK](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/python-project-setup): Build HelixDB requests with an idiomatic synchronous Python client — Page type: Guide
+- [Python SDK](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/python-project-setup): Build HelixDB requests with idiomatic synchronous and asynchronous Python clients — Page type: Guide
 - [Roadmap](https://docs.helix-db.com/database/helix-db/start-here/roadmap): What we're building and what's coming next — Page type: Reference
 - [Release Notes](https://docs.helix-db.com/database/helix-db/start-here/release-notes): HelixDB Cloud Release Notes — Page type: Reference
 
