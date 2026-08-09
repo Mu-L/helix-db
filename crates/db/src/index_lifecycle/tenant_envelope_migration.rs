@@ -6,7 +6,9 @@ use bytes::{BufMut, Bytes};
 use slatedb::{Db, IsolationLevel};
 
 use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
-use crate::encoding::v2::keys::{Key, ScopedKey, SecondaryEntryLane};
+use crate::encoding::v2::keys::{
+    Key, ScopedKey, SecondaryEntryLane, GLOBAL_SENTINEL, TENANT_SENTINEL,
+};
 use crate::encoding::v2::values::{
     decode_applied_state, decode_build_artifact, decode_build_delta, decode_corpus_statistics,
     decode_index_record, decode_manifest_page, decode_manifest_root, decode_operation_record,
@@ -67,6 +69,47 @@ impl TenantMigrationExclusions {
             | ScopedKey::TextStatisticsEntity(_) => false,
         }
     }
+}
+
+pub(super) async fn reject_unowned_v3_tenant_keys(
+    db: &Db,
+    tenants: &BTreeSet<TenantId>,
+) -> Result<()> {
+    let mut rows = db.scan(..).await?;
+    while let Some(row) = rows.next().await? {
+        if row.key.starts_with(&GLOBAL_SENTINEL)
+            || row.key.first().copied() == Some(TENANT_SENTINEL)
+            || row.key.len() < DataScope::PREFIX_LEN + core::mem::size_of::<u8>()
+            || row.key[DataScope::PREFIX_LEN] != ScopedKey::key_prefix()
+        {
+            continue;
+        }
+        let logical = &row.key
+            [DataScope::PREFIX_LEN..DataScope::PREFIX_LEN + row.key.len() - DataScope::PREFIX_LEN];
+        let Ok(kind) = ScopedKey::parse_from_slice(logical) else {
+            continue;
+        };
+        if validate_legacy_value(&kind, &row.value).is_err() {
+            continue;
+        }
+        let tenant = TenantId::from_u128(u128::from_be_bytes(
+            row.key[0..DataScope::PREFIX_LEN]
+                .try_into()
+                .expect("validated tenant prefix is sixteen bytes"),
+        ));
+        if tenants.contains(&tenant) {
+            continue;
+        }
+        let unscoped_is_valid = ScopedKey::parse_from_slice(&row.key)
+            .is_ok_and(|kind| validate_legacy_value(&kind, &row.value).is_ok());
+        let message = if unscoped_is_valid {
+            "V3 V2 row has ambiguous unscoped and tenant interpretations"
+        } else {
+            "V3 tenant V2 row has no catalog root"
+        };
+        return Err(corruption(message));
+    }
+    Ok(())
 }
 
 pub(super) async fn copy_v3_tenant_keys(

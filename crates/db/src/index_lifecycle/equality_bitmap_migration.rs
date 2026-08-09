@@ -169,6 +169,7 @@ pub(super) async fn migrate_v3_to_v4(db: &Db) -> Result<()> {
     trip(EqualityBitmapMigrationFailpoint::InitializationBefore)?;
     let catalog = discover_catalog(db).await?;
     trip(EqualityBitmapMigrationFailpoint::InitializationAfter)?;
+    tenant_envelope_migration::reject_unowned_v3_tenant_keys(db, &catalog.tenant_scopes).await?;
 
     let mut exclusions = TenantMigrationExclusions::default();
     for building in &catalog.building {
@@ -293,14 +294,16 @@ fn index_record_candidates(key: &[u8]) -> Result<Vec<(DataScope, ScopedKey)>> {
     if key.len() >= PREFIX_LEN + KIND_LEN
         && key[0] == ScopedKey::key_prefix()
         && key[PREFIX_LEN] == RecordKind::IndexRecord.as_u8()
+        && let Ok(kind) = ScopedKey::parse_from_slice(key)
     {
-        if let Ok(kind) = ScopedKey::parse_from_slice(key) {
-            candidates.push((DataScope::LegacyUnscoped, kind));
-        }
+        candidates.push((DataScope::LegacyUnscoped, kind));
     }
     if key.len() >= DataScope::PREFIX_LEN + PREFIX_LEN + KIND_LEN
         && key[DataScope::PREFIX_LEN] == ScopedKey::key_prefix()
         && key[DataScope::PREFIX_LEN + PREFIX_LEN] == RecordKind::IndexRecord.as_u8()
+        && let Ok(kind) = ScopedKey::parse_from_slice(
+            &key[DataScope::PREFIX_LEN..DataScope::PREFIX_LEN + key.len() - DataScope::PREFIX_LEN],
+        )
     {
         let tenant = u128::from_be_bytes(
             key[0..DataScope::PREFIX_LEN]
@@ -308,12 +311,7 @@ fn index_record_candidates(key: &[u8]) -> Result<Vec<(DataScope, ScopedKey)>> {
                 .expect("validated tenant prefix is sixteen bytes"),
         );
         let scope = DataScope::Tenant(TenantId::from_u128(tenant));
-        const LOGICAL_OFFSET: usize = DataScope::PREFIX_LEN;
-        if let Ok(kind) = ScopedKey::parse_from_slice(
-            &key[LOGICAL_OFFSET..LOGICAL_OFFSET + key.len() - LOGICAL_OFFSET],
-        ) {
-            candidates.push((scope, kind));
-        }
+        candidates.push((scope, kind));
     }
     Ok(candidates)
 }
@@ -1215,6 +1213,41 @@ mod tests {
             super::super::repository::bootstrap_writer(&db).await,
             Err(HelixDbError::IndexCatalogCorruption(message))
                 if message.contains("conflicts with its V3 source value")
+        ));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tenant_migration_rejects_v2_rows_without_a_catalog_root() {
+        let _guard = TEST_LOCK.lock().await;
+        let db = v3_db("v4-tenant-envelope-orphan").await;
+        let tenant = DataScope::Tenant(TenantId::from_u128(7));
+        let kind = ScopedKey::SecondaryEntry(
+            SecondaryEntryKey::try_new(
+                IndexId::new(2).unwrap(),
+                IndexGenerationId::initial(),
+                SecondaryEntryLane::NodeUniqueEquality,
+                CanonicalSecondaryValue::equality_string("orphan"),
+                None,
+            )
+            .unwrap(),
+        );
+        db.put(
+            tenant_envelope_migration::legacy_data_key(tenant, kind),
+            encode_secondary_entry(&SecondaryEntryValue {
+                index_id: IndexId::new(2).unwrap(),
+                generation: IndexGenerationId::initial(),
+                lane: SecondaryEntryLane::NodeUniqueEquality,
+                entity_id: super::super::IndexEntityId::new(1),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            super::super::repository::bootstrap_writer(&db).await,
+            Err(HelixDbError::IndexCatalogCorruption(message))
+                if message.contains("has no catalog root")
         ));
         db.close().await.unwrap();
     }
