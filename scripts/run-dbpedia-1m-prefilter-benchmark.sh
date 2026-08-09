@@ -33,7 +33,7 @@ cargo test \
     --release \
     --package db \
     --features production-scale \
-    --test production_index_v2_scale \
+    --test production_index_lifecycle_scale \
     traversal_vector_prefilter_1m_scale_contract \
     -- \
     --ignored \

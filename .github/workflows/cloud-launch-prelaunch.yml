@@ -54,7 +54,7 @@ jobs:
       - name: Run one independently bounded release-scale contract
         run: >-
           cargo test --release -p db --features production-scale
-          --test production_index_v2_scale ${{ matrix.test }}
+          --test production_index_lifecycle_scale ${{ matrix.test }}
           -- --exact --nocapture --test-threads=1
 
   release-contracts:
@@ -68,7 +68,7 @@ jobs:
       - name: Complete stable failpoint and coordinator contracts
         run: >-
           cargo test --release -p db --features production-coverage
-          --test production_index_v2_contracts -- --nocapture --test-threads=1
+          --test production_index_lifecycle_contracts -- --nocapture --test-threads=1
 
   vector-diagnostic:
     name: Vector recall and throughput diagnostic

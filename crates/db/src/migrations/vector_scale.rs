@@ -33,9 +33,9 @@ use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::{
     VectorIndexMetadataKey, VectorItemKey, VectorKey, VectorSimHashKey, VectorStorageLane,
 };
-use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key, NodePropertyKey};
+use crate::encoding::v1::keys::{DataKeyKind, Key, NodePropertyKey};
 use crate::encoding::v1::values::vectors::{metadata, simhash};
-use crate::encoding::v2::keys::{GlobalKey, ScopedKey};
+use crate::encoding::v2::keys::{GlobalKey, Key as IndexKey, ScopedKey};
 use crate::encoding::v2::values::{
     encode_index_record, encode_metadata_value, encode_operation_record,
 };
@@ -369,7 +369,7 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
         migration_parity_legacy_catalog_row(&definition, false)?;
     metadata_txn.put(legacy_definition_key, legacy_definition_value)?;
     metadata_txn.put(
-        Key::Data {
+        IndexKey::Data {
             scope,
             kind: ScopedKey::index_record(active.identity().clone()),
         }
@@ -377,7 +377,7 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
         encode_index_record(&active),
     )?;
     metadata_txn.put(
-        Key::Data {
+        IndexKey::Data {
             scope,
             kind: ScopedKey::operation(completed_build_operation_id),
         }
@@ -403,7 +403,7 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
         )),
     )?;
     metadata_txn.put(
-        Key::Global {
+        IndexKey::Global {
             kind: GlobalKey::LegacyVectorPhysicalReservation(legacy_physical_id),
         }
         .to_bytes(),
@@ -555,7 +555,7 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
         Bytes::copy_from_slice(&metadata::encode_metadata(&current_metadata)),
     )?;
     directory_metadata_txn.put(
-        Key::Global {
+        IndexKey::Global {
             kind: GlobalKey::LegacyVectorPhysicalReservation(current_physical_id),
         }
         .to_bytes(),
@@ -797,7 +797,7 @@ async fn assert_retired(
             )));
         }
     }
-    let reservation = Key::Global {
+    let reservation = IndexKey::Global {
         kind: GlobalKey::LegacyVectorPhysicalReservation(physical_id),
     }
     .to_bytes();

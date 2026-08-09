@@ -34,7 +34,7 @@ esac
 
 contracts() {
     cargo test --locked -p db --features production-coverage --test production_migration_contracts
-    cargo test --locked -p db --features production-coverage --test production_index_v2_contracts
+    cargo test --locked -p db --features production-coverage --test production_index_lifecycle_contracts
 }
 
 if [[ "$PROFILE" == contracts ]]; then
