@@ -19,7 +19,7 @@ env:
 jobs:
   build-vector-100k:
     name: Build vector 100k contract
-    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -52,7 +52,7 @@ jobs:
   vector-100k:
     name: Vector 100k create, search, drop, and residue
     needs: build-vector-100k
-    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     timeout-minutes: 360
     steps:
       - uses: actions/download-artifact@v5

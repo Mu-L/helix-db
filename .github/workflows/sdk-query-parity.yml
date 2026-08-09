@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - blacksmith-8vcpu-ubuntu-2404-arm
+          - blacksmith-2vcpu-ubuntu-2404-arm
           - blacksmith-6vcpu-macos-latest
     steps:
       - uses: actions/checkout@v6
@@ -79,7 +79,7 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - blacksmith-8vcpu-ubuntu-2404-arm
+          - blacksmith-2vcpu-ubuntu-2404-arm
           - blacksmith-6vcpu-macos-latest
     steps:
       - uses: actions/checkout@v6
@@ -132,7 +132,7 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - blacksmith-8vcpu-ubuntu-2404-arm
+          - blacksmith-2vcpu-ubuntu-2404-arm
           - blacksmith-6vcpu-macos-latest
     steps:
       - uses: actions/checkout@v6
@@ -175,7 +175,7 @@ jobs:
 
   coverage:
     name: SDK coverage
-    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
