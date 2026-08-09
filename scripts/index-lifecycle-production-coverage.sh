@@ -78,11 +78,14 @@ case "$#" in
             cd "$ROOT"
             CARGO_TARGET_DIR="$TEMP_ROOT/target" cargo llvm-cov \
                 -p db \
-                --features production-coverage \
+                --features 'production-coverage migration-parity index-lifecycle-testing' \
                 --lib \
+                --test index_lifecycle_contracts \
                 --test production_contracts \
                 --test production_index_lifecycle_contracts \
                 --test production_internal_contracts \
+                --test production_migration_contracts \
+                --test production_text_correctness_regressions \
                 --test production_text_lifecycle \
                 --test production_vector_planner \
                 --locked \
