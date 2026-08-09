@@ -1886,9 +1886,21 @@ async fn delete_generation_rows(
             let input_bytes = row.key.len().saturating_add(row.value.len()) as u64;
             let mut plan = EntityWritePlan::default();
             plan.delete(row.key.clone());
-            if !accounting.can_admit_input(input_bytes) || !accounting.can_admit_output(&plan) {
+            let parsed_key = IndexKey::parse_from_slice(scope, &row.key)?;
+            let is_bitmap = matches!(
+                &parsed_key,
+                IndexKey::Data {
+                    kind: ScopedKey::SecondaryEqualityBitmap(_),
+                    ..
+                }
+            );
+            let force_indivisible_bitmap_delete =
+                is_bitmap && accounting.is_empty() && accounting.can_admit_output(&plan);
+            if (!accounting.can_admit_input(input_bytes) && !force_indivisible_bitmap_delete)
+                || !accounting.can_admit_output(&plan)
+            {
                 if accounting.is_empty() {
-                    let entity_id = match IndexKey::parse_from_slice(scope, &row.key)? {
+                    let entity_id = match parsed_key {
                         IndexKey::Data {
                             kind: ScopedKey::SecondaryEntry(key),
                             ..
@@ -5215,7 +5227,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cleanup_blocks_instead_of_skipping_a_row_larger_than_one_transaction() {
+    async fn cleanup_deletes_an_indivisible_bitmap_larger_than_the_input_limit() {
         let db = test_db("secondary-oversized-cleanup-row").await;
         let scope = DataScope::LegacyUnscoped;
         let definition = validated(
@@ -5230,7 +5242,7 @@ mod tests {
             &user_properties("oversized@example.com"),
         )
         .await;
-        let (build_id, _, _) = create_build(&db, scope, &definition, 0).await;
+        let (build_id, index_id, generation) = create_build(&db, scope, &definition, 0).await;
         let driver = SecondaryIndexDriver::new(Arc::new(IndexScopeGates::default()));
         let mut claim_sequence = 1;
         assert_eq!(
@@ -5251,12 +5263,82 @@ mod tests {
             std::num::NonZeroUsize::new(1).expect("one is positive"),
             std::num::NonZeroU64::new(1).expect("one is positive"),
             std::num::NonZeroU64::new(1).expect("one is positive"),
-            std::num::NonZeroU64::new(1).expect("one is positive"),
+            std::num::NonZeroU64::new(1024).expect("one kibibyte is positive"),
             std::num::NonZeroU64::new(1).expect("one is positive"),
         )
         .expect("tiny limits are internally consistent");
         assert_eq!(
             drive_one_with_limits(&db, &driver, drop_id, &mut claim_sequence, tiny_limits,).await,
+            CommittedOperationStep::Progressed
+        );
+        assert!(generation_rows(
+            &db,
+            scope,
+            RecordKind::SecondaryEqualityBitmap,
+            index_id,
+            generation,
+        )
+        .await
+        .is_empty());
+        let operation = read_operation(&db, scope, drop_id)
+            .await
+            .expect("progressed cleanup is readable")
+            .expect("progressed cleanup exists");
+        assert!(matches!(
+            operation.progress(),
+            IndexOperationProgress::SecondaryCleanup(SecondaryCleanupProgress::DeleteEntries(
+                PrefixScanProgress {
+                    cursor: Some(_),
+                    ..
+                }
+            ))
+        ));
+        db.close().await.expect("secondary test database closes");
+    }
+
+    #[tokio::test]
+    async fn cleanup_still_blocks_an_oversized_non_bitmap_row() {
+        let db = test_db("secondary-oversized-non-bitmap-cleanup-row").await;
+        let scope = DataScope::LegacyUnscoped;
+        let definition = validated(
+            SecondaryIndexDefinition::node_unique_equality("User", "email")
+                .expect("unique node equality definition"),
+        );
+        put_source(
+            &db,
+            scope,
+            IndexElementKind::Node,
+            0,
+            &user_properties("oversized@example.com"),
+        )
+        .await;
+        let (build_id, _, _) = create_build(&db, scope, &definition, 0).await;
+        let driver = SecondaryIndexDriver::new(Arc::new(IndexScopeGates::default()));
+        let mut claim_sequence = 1;
+        assert_eq!(
+            drive_to_terminal(&db, &driver, build_id, &mut claim_sequence).await,
+            CommittedOperationStep::Completed
+        );
+        let IndexDdlReceipt::Accepted {
+            operation_id: drop_id,
+            ..
+        } = drop_index_operation(&db, scope, &definition)
+            .await
+            .expect("oversized cleanup is enqueued")
+        else {
+            panic!("active secondary drop enqueues cleanup");
+        };
+        let tiny_limits = SearchIndexBatchLimits::try_new(
+            std::num::NonZeroUsize::new(1).expect("one is positive"),
+            std::num::NonZeroU64::new(1).expect("one is positive"),
+            std::num::NonZeroU64::new(1).expect("one is positive"),
+            std::num::NonZeroU64::new(1024).expect("one kibibyte is positive"),
+            std::num::NonZeroU64::new(1).expect("one is positive"),
+        )
+        .expect("tiny limits are internally consistent");
+
+        assert_eq!(
+            drive_one_with_limits(&db, &driver, drop_id, &mut claim_sequence, tiny_limits).await,
             CommittedOperationStep::Blocked
         );
         let operation = read_operation(&db, scope, drop_id)
