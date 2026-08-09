@@ -13,37 +13,43 @@
   },
   {
     "path": "crates/db/src/search/vector/hydration.rs",
-    "line": 117,
-    "reason": "The exact typed generation prefix fixes the IndexV2 kind byte to VectorPartitionMapping; malformed suffixes fail parsing and a successfully parsed row cannot have another kind.",
+    "line": 119,
+    "reason": "The exact typed generation prefix fixes the V2 kind byte to VectorPartitionMapping; malformed suffixes fail parsing and a successfully parsed row cannot have another kind.",
     "evidence": "vector_hydration_exercises_active_generation_boundaries"
   },
   {
     "path": "crates/db/src/search/vector/hydration.rs",
-    "line": 167,
+    "line": 163,
     "reason": "This error value belongs to the platform-gated usize-to-u64 failure that cannot occur on supported 64-bit production targets.",
     "evidence": "vector_hydration_exercises_active_generation_boundaries and db-vector-production-coverage architecture matrix"
   },
   {
     "path": "crates/db/src/search/vector/hydration.rs",
-    "line": 181,
+    "line": 177,
     "reason": "This error value belongs to the platform-gated usize-to-u64 failure that cannot occur on supported 64-bit production targets.",
     "evidence": "vector_hydration_exercises_active_generation_boundaries and db-vector-production-coverage architecture matrix"
   },
   {
     "path": "crates/db/src/search/vector/hydration.rs",
-    "line": 244,
+    "line": 194,
+    "reason": "The Unavailable branch is exercised, but LLVM does not attribute the tracing macro field expression to the enclosing covered branch.",
+    "evidence": "vector_hydration_exercises_active_generation_boundaries"
+  },
+  {
+    "path": "crates/db/src/search/vector/hydration.rs",
+    "line": 240,
     "reason": "This error value belongs to the platform-gated resident-byte overflow that cannot occur in a supported 64-bit address space.",
     "evidence": "vector_hydration_exercises_active_generation_boundaries and db-vector-production-coverage architecture matrix"
   },
   {
     "path": "crates/db/src/search/vector/hydration.rs",
-    "line": 253,
+    "line": 249,
     "reason": "Each bounded loader admits at most its deterministic quotient-plus-remainder share, and those shares sum to no more than the configured budget.",
     "evidence": "vector_hydration_exercises_active_generation_boundaries"
   },
   {
     "path": "crates/db/src/search/vector/hydration.rs",
-    "line": 265,
+    "line": 261,
     "reason": "The immutable Unavailable hydration variant is handled by an earlier match and continues before any storage load, so it cannot reach completion dispatch.",
     "evidence": "vector_hydration_exercises_active_generation_boundaries"
   },
