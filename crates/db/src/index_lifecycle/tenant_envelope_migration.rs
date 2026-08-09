@@ -136,7 +136,7 @@ pub(super) async fn copy_v3_tenant_keys(
                     validate_legacy_value(&kind, &row.value)?;
                     continue;
                 }
-                let destination_value = migrate_legacy_value(scope, &kind, &row.value)?;
+                let destination_value = migrate_legacy_value(scope, &kind, row.value)?;
                 let destination = Key::Data { scope, kind }.to_bytes();
                 batch.push((destination, destination_value));
             }
@@ -196,7 +196,7 @@ pub(super) async fn verify_v3_tenant_keys(
                     validate_legacy_value(&kind, &row.value)?;
                     continue;
                 }
-                let destination_value = migrate_legacy_value(scope, &kind, &row.value)?;
+                let destination_value = migrate_legacy_value(scope, &kind, row.value)?;
                 batch.push((Key::Data { scope, kind }.to_bytes(), destination_value));
             }
             if batch.is_empty() {
@@ -332,12 +332,12 @@ fn validate_legacy_value(kind: &ScopedKey, value: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn migrate_legacy_value(scope: DataScope, kind: &ScopedKey, value: &[u8]) -> Result<Bytes> {
+fn migrate_legacy_value(scope: DataScope, kind: &ScopedKey, value: Bytes) -> Result<Bytes> {
     let ScopedKey::Operation(_) = kind else {
-        validate_legacy_value(kind, value)?;
-        return Ok(Bytes::copy_from_slice(value));
+        validate_legacy_value(kind, &value)?;
+        return Ok(value);
     };
-    let operation = decode_operation_record(value)?;
+    let operation = decode_operation_record(&value)?;
     let mut changed = false;
     let migrated = operation.try_map_cursors(|cursor| {
         let migrated = migrate_legacy_cursor(scope, cursor)?;
@@ -347,7 +347,7 @@ fn migrate_legacy_value(scope: DataScope, kind: &ScopedKey, value: &[u8]) -> Res
     if changed {
         Ok(encode_operation_record(&migrated))
     } else {
-        Ok(Bytes::copy_from_slice(value))
+        Ok(value)
     }
 }
 
@@ -385,6 +385,8 @@ mod tests {
         SecondaryEntryKey, SecondaryEntryLane, TextBuildArtifactKey, TextEntityStateKey,
         TextManifestRootKey,
     };
+    use crate::encoding::v2::values::encode_build_delta;
+    use crate::index_lifecycle::work::CoalescedBuildDeltaValue;
     use crate::index_lifecycle::{
         IndexComponent, IndexElementKind, IndexEntityId, IndexIdentity, IndexIdentityFamily,
         IndexOperationExecutionState, IndexOperationFamily, IndexOperationProgress,
@@ -561,7 +563,7 @@ mod tests {
             let migrated = migrate_legacy_value(
                 scope,
                 &ScopedKey::operation(operation.operation_id()),
-                &encoded,
+                encoded,
             )
             .unwrap();
             let migrated = decode_operation_record(&migrated).unwrap();
@@ -600,16 +602,43 @@ mod tests {
             )),
         );
         let encoded = encode_operation_record(&operation);
+        let expected = encoded.clone();
+        let encoded_pointer = encoded.as_ptr();
 
-        assert_eq!(
-            migrate_legacy_value(
-                scope,
-                &ScopedKey::operation(operation.operation_id()),
-                &encoded,
-            )
-            .unwrap(),
-            encoded
-        );
+        let migrated = migrate_legacy_value(
+            scope,
+            &ScopedKey::operation(operation.operation_id()),
+            encoded,
+        )
+        .unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(migrated.as_ptr(), encoded_pointer);
+    }
+
+    #[test]
+    fn non_operation_values_remain_zero_copy() {
+        let scope = DataScope::Tenant(TenantId::from_u128(0xABCD));
+        let entity = IndexEntity {
+            kind: IndexElementKind::Node,
+            id: IndexEntityId::new(11),
+        };
+        let kind = ScopedKey::BuildDelta(IndexEntityStateKey {
+            index_id: index_id(),
+            generation: generation(),
+            entity,
+        });
+        let encoded = encode_build_delta(&CoalescedBuildDeltaValue {
+            index_id: index_id(),
+            generation: generation(),
+            entity_kind: entity.kind,
+            entity_id: entity.id,
+        });
+        let expected = encoded.clone();
+        let encoded_pointer = encoded.as_ptr();
+
+        let migrated = migrate_legacy_value(scope, &kind, encoded).unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(migrated.as_ptr(), encoded_pointer);
     }
 
     #[tokio::test]
@@ -673,7 +702,7 @@ mod tests {
             migrate_legacy_value(
                 scope,
                 &ScopedKey::operation(operation.operation_id()),
-                &encode_operation_record(&operation),
+                encode_operation_record(&operation),
             ),
             Err(HelixDbError::IndexCatalogCorruption(_))
         ));
