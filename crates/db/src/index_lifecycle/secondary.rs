@@ -5719,7 +5719,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_build_and_drop_stage_resumes_after_database_reopen() {
+    async fn every_tenant_build_and_drop_stage_resumes_after_database_reopen() {
         let store = Arc::new(InMemory::new());
         let path = "secondary-reopen-every-stage";
         let mut db = Db::builder(path, store.clone())
@@ -5730,7 +5730,9 @@ mod tests {
         bootstrap_writer(&db)
             .await
             .expect("reopen test database bootstraps");
-        let scope = DataScope::LegacyUnscoped;
+        let scope = DataScope::Tenant(crate::encoding::v1::keys::tenant::TenantId::from_u128(
+            0xABCD,
+        ));
         let definition = validated(
             SecondaryIndexDefinition::node_equality("User", "email")
                 .expect("node equality definition"),

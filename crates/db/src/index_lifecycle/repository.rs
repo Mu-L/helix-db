@@ -64,7 +64,7 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
         while let Some(row) = rows.next().await? {
             let is_global_v2 = row.key.starts_with(&GLOBAL_SENTINEL);
             let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
-            let is_tenant_v2 = row.key.first().copied() == Some(TENANT_SENTINEL);
+            let is_tenant_v2 = row.key.starts_with(&TENANT_SENTINEL);
             if is_global_v2 || is_unscoped_v2 || is_tenant_v2 {
                 return Err(HelixDbError::MigrationRequired {
                     reason: "V2 storage rows exist without the complete bootstrap tuple"
@@ -164,7 +164,8 @@ pub(crate) async fn require_reader_bootstrap_or_legacy(
     while let Some(row) = rows.next().await? {
         let is_global_v2 = row.key.starts_with(&GLOBAL_SENTINEL);
         let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
-        if is_global_v2 || is_unscoped_v2 {
+        let is_tenant_v2 = row.key.starts_with(&TENANT_SENTINEL);
+        if is_global_v2 || is_unscoped_v2 || is_tenant_v2 {
             return Err(HelixDbError::MigrationRequired {
                 reason: "read-only storage has V2 rows without the complete bootstrap tuple"
                     .to_string(),
@@ -410,18 +411,12 @@ fn complete_cursor_is_valid(scope: DataScope, cursor: &[u8]) -> bool {
     if is_global {
         GlobalKey::parse_from_slice(cursor).is_ok()
     } else {
-        let Some(logical) = scope.strip_key(cursor) else {
-            return false;
-        };
-        if logical.first().copied() == Some(ScopedKey::key_prefix()) {
-            Key::parse_from_slice(scope, cursor).is_ok()
-        } else {
-            GraphKey::parse_from_slice(scope, cursor).is_ok()
-        }
+        Key::parse_from_slice(scope, cursor).is_ok()
+            || GraphKey::parse_from_slice(scope, cursor).is_ok()
     }
 }
 
-/// Validates every persisted operation cursor against an exact V1 scoped or
+/// Validates every persisted operation cursor against an exact V1, V2, or
 /// global key parser before a lifecycle transaction accepts it.
 pub(super) fn operation_cursors_are_valid(
     scope: DataScope,
@@ -884,6 +879,7 @@ mod tests {
     use slatedb::object_store::memory::InMemory;
 
     use super::*;
+    use crate::encoding::v1::keys::tenant::TenantId;
 
     #[test]
     fn storage_version_four_is_current() {
@@ -969,6 +965,48 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    #[test]
+    fn tenant_v2_cursor_uses_the_v2_envelope_parser() {
+        let scope = DataScope::Tenant(TenantId::from_u128(7));
+        let cursor = Key::Data {
+            scope,
+            kind: ScopedKey::operation(IndexOperationId::from_bytes([0x11; 16]).unwrap()),
+        }
+        .to_bytes();
+
+        assert!(complete_cursor_is_valid(scope, &cursor));
+        assert!(!complete_cursor_is_valid(
+            DataScope::Tenant(TenantId::from_u128(8)),
+            &cursor
+        ));
+    }
+
+    #[tokio::test]
+    async fn markerless_tenant_v2_storage_requires_writer_bootstrap() {
+        let db = Db::builder("markerless-tenant-v2-reader", Arc::new(InMemory::new()))
+            .build()
+            .await
+            .unwrap();
+        let scope = DataScope::Tenant(TenantId::from_u128(7));
+        db.put(
+            Key::Data {
+                scope,
+                kind: ScopedKey::operation(IndexOperationId::from_bytes([0x11; 16]).unwrap()),
+            }
+            .to_bytes(),
+            Bytes::from_static(b"markerless"),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            require_reader_bootstrap_or_legacy(&db).await,
+            Err(HelixDbError::MigrationRequired { reason })
+                if reason == "read-only storage has V2 rows without the complete bootstrap tuple"
+        ));
+        db.close().await.unwrap();
     }
 
     #[tokio::test]

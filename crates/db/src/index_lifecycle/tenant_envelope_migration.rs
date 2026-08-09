@@ -78,7 +78,7 @@ pub(super) async fn reject_unowned_v3_tenant_keys(
     let mut rows = db.scan(..).await?;
     while let Some(row) = rows.next().await? {
         if row.key.starts_with(&GLOBAL_SENTINEL)
-            || row.key.first().copied() == Some(TENANT_SENTINEL)
+            || row.key.starts_with(&TENANT_SENTINEL)
             || row.key.len() < DataScope::PREFIX_LEN + core::mem::size_of::<u8>()
             || row.key[DataScope::PREFIX_LEN] != ScopedKey::key_prefix()
         {
