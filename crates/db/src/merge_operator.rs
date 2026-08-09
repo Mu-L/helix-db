@@ -540,19 +540,62 @@ fn merge_decode_error(error: impl std::fmt::Display) -> MergeOperatorError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use slatedb::object_store::memory::InMemory;
+
     use super::*;
+    use crate::encoding::indexes::range::RangeIndexDirection;
     use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
-    use crate::encoding::v1::keys::{AdjacencyKey, DataKeyKind, EdgePairIndexKey, Key};
+    use crate::encoding::v1::keys::{
+        AdjacencyKey, DataKeyKind, EdgePairIndexKey, Key, NodePropertyKey,
+    };
     use crate::encoding::v1::property::equality_value::{
         project_equality_value, EqualityValueProjection,
     };
-    use crate::encoding::v2::keys::SecondaryEqualityBitmapKey;
-    use crate::index_lifecycle::{IndexElementKind, IndexGenerationId, IndexId};
+    use crate::encoding::v2::keys::{
+        CanonicalSecondaryValue, PartitionFingerprint, SecondaryEntryKey, SecondaryEntryLane,
+        SecondaryEqualityBitmapKey, TextManifestRootKey, VectorPartitionMappingKey,
+    };
+    use crate::index_lifecycle::{IndexElementKind, IndexEntityId, IndexGenerationId, IndexId};
 
     fn edge_delta(op: u8, node_id: NodeId) -> Bytes {
         let mut bytes = vec![op];
         bytes.extend_from_slice(&node_id.to_be_bytes());
         Bytes::from(bytes)
+    }
+
+    fn v4_bitmap_key(scope: DataScope) -> Bytes {
+        let EqualityValueProjection::Indexed(value) = project_equality_value(
+            &crate::encoding::property::property_value::PropertyValue::String("shared".to_string()),
+        ) else {
+            panic!("string equality value is indexable");
+        };
+        V2Key::Data {
+            scope,
+            kind: V2ScopedKey::SecondaryEqualityBitmap(
+                SecondaryEqualityBitmapKey::try_new(
+                    IndexId::new(7).unwrap(),
+                    IndexGenerationId::new(9).unwrap(),
+                    IndexElementKind::Node,
+                    value,
+                )
+                .unwrap(),
+            ),
+        }
+        .to_bytes()
+    }
+
+    fn portable_bitmap(ids: impl IntoIterator<Item = u64>) -> Bytes {
+        BitmapMergeOperator::encode(&RoaringTreemap::from_iter(ids))
+            .expect("bitmap fixture encodes")
+    }
+
+    fn decode_bitmap(bytes: Bytes) -> Vec<u64> {
+        RoaringTreemap::deserialize_from(Cursor::new(bytes))
+            .expect("merged bitmap decodes")
+            .iter()
+            .collect()
     }
 
     #[test]
@@ -604,6 +647,64 @@ mod tests {
     }
 
     #[test]
+    fn v4_bitmap_merge_covers_absent_existing_single_multiple_and_ordering() {
+        let key = v4_bitmap_key(DataScope::LegacyUnscoped);
+        let operator = HelixMergeOperator::new();
+
+        let absent = operator
+            .merge(&key, None, encode_bitmap_add(8))
+            .expect("absent-base bitmap merge succeeds");
+        assert_eq!(decode_bitmap(absent), vec![8]);
+
+        let existing = operator
+            .merge(&key, Some(portable_bitmap([1, 8])), encode_bitmap_add(13))
+            .expect("existing-base bitmap merge succeeds");
+        assert_eq!(decode_bitmap(existing), vec![1, 8, 13]);
+
+        let operands = [
+            encode_bitmap_add(21),
+            portable_bitmap([3, 5]),
+            encode_bitmap_add(3),
+            encode_bitmap_add(21),
+        ];
+        let forward = operator
+            .merge_batch(&key, Some(portable_bitmap([1, 3])), &operands)
+            .expect("multi-operand bitmap merge succeeds");
+        let mut reversed = operands;
+        reversed.reverse();
+        let reverse = operator
+            .merge_batch(&key, Some(portable_bitmap([1, 3])), &reversed)
+            .expect("reordered bitmap merge succeeds");
+        assert_eq!(decode_bitmap(forward), vec![1, 3, 5, 21]);
+        assert_eq!(decode_bitmap(reverse), vec![1, 3, 5, 21]);
+    }
+
+    #[test]
+    fn v4_bitmap_merge_rejects_malformed_bases_and_operands() {
+        let key = v4_bitmap_key(DataScope::LegacyUnscoped);
+        let operator = HelixMergeOperator::new();
+        assert!(operator
+            .merge(
+                &key,
+                Some(Bytes::from_static(b"not-roaring")),
+                encode_bitmap_add(1)
+            )
+            .is_err());
+        assert!(operator
+            .merge(&key, Some(portable_bitmap([1])), Bytes::from_static(b"bad"))
+            .is_err());
+        let mut malformed_delta = encode_bitmap_add(1).to_vec();
+        malformed_delta[BITMAP_DELTA_MAGIC.len()] = 0xFF;
+        assert!(operator
+            .merge_batch(
+                &key,
+                Some(portable_bitmap([1])),
+                &[Bytes::from(malformed_delta)],
+            )
+            .is_err());
+    }
+
+    #[test]
     fn v4_secondary_equality_bitmap_uses_typed_bitmap_merge_for_each_scope() {
         let EqualityValueProjection::Indexed(value) = project_equality_value(
             &crate::encoding::property::property_value::PropertyValue::String("shared".to_string()),
@@ -645,6 +746,134 @@ mod tests {
             let bitmap = RoaringTreemap::deserialize_from(Cursor::new(merged)).unwrap();
             assert_eq!(bitmap, RoaringTreemap::from_iter([5, 8]));
         }
+    }
+
+    #[test]
+    fn only_typed_v4_equality_bitmap_keys_use_the_new_bitmap_dispatch() {
+        let index_id = IndexId::new(7).unwrap();
+        let generation = IndexGenerationId::new(9).unwrap();
+        let v3_equality = SecondaryEntryKey::try_new(
+            index_id,
+            generation,
+            SecondaryEntryLane::NodeEquality,
+            CanonicalSecondaryValue::equality_string("shared"),
+            Some(IndexEntityId::new(11)),
+        )
+        .unwrap();
+        let v3_range = SecondaryEntryKey::try_new(
+            index_id,
+            generation,
+            SecondaryEntryLane::NodeRangeAscending,
+            CanonicalSecondaryValue::range_string(RangeIndexDirection::Asc, "shared"),
+            Some(IndexEntityId::new(11)),
+        )
+        .unwrap();
+        let negative_keys = [
+            V2Key::Data {
+                scope: DataScope::LegacyUnscoped,
+                kind: V2ScopedKey::SecondaryEntry(v3_equality),
+            }
+            .to_bytes(),
+            V2Key::Data {
+                scope: DataScope::LegacyUnscoped,
+                kind: V2ScopedKey::SecondaryEntry(v3_range),
+            }
+            .to_bytes(),
+            V2Key::Data {
+                scope: DataScope::LegacyUnscoped,
+                kind: V2ScopedKey::TextManifestRoot(TextManifestRootKey {
+                    index_id,
+                    generation,
+                    partition: PartitionFingerprint::new([0x22; 32]),
+                }),
+            }
+            .to_bytes(),
+            V2Key::Data {
+                scope: DataScope::LegacyUnscoped,
+                kind: V2ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
+                    index_id,
+                    generation,
+                    partition: PartitionFingerprint::new([0x33; 32]),
+                }),
+            }
+            .to_bytes(),
+            Key::Data {
+                scope: DataScope::LegacyUnscoped,
+                kind: DataKeyKind::NodeProperty(NodePropertyKey::new(11)),
+            }
+            .to_bytes(),
+        ];
+        for key in negative_keys {
+            assert_ne!(HelixMergeOperator::key_type(&key), MergeKeyType::Bitmap);
+        }
+
+        let valid = v4_bitmap_key(DataScope::LegacyUnscoped);
+        assert_eq!(HelixMergeOperator::key_type(&valid), MergeKeyType::Bitmap);
+        for truncated_len in 0..valid.len() {
+            assert_ne!(
+                HelixMergeOperator::key_type(&valid[0..truncated_len]),
+                MergeKeyType::Bitmap
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_v4_additions_survive_cold_reopen() {
+        let store = Arc::new(InMemory::new());
+        let path = "merge-operator-concurrent-v4-additions";
+        let db = Arc::new(
+            slatedb::Db::builder(path, store.clone())
+                .with_merge_operator(Arc::new(HelixMergeOperator::new()))
+                .build()
+                .await
+                .expect("concurrent bitmap database opens"),
+        );
+        let key = v4_bitmap_key(DataScope::Tenant(TenantId::from_u128(
+            0xFD00_0000_0000_0000_0000_0000_0000_0042,
+        )));
+        let mut tasks = tokio::task::JoinSet::new();
+        for id in 0..128 {
+            let db = Arc::clone(&db);
+            let key = key.clone();
+            tasks.spawn(async move { db.merge(&key, encode_bitmap_add(id)).await });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result
+                .expect("concurrent bitmap task joins")
+                .expect("concurrent bitmap merge succeeds");
+        }
+        let expected = (0..128).collect::<Vec<_>>();
+        assert_eq!(
+            decode_bitmap(
+                db.get(&key)
+                    .await
+                    .expect("concurrent bitmap reads")
+                    .expect("concurrent bitmap exists")
+            ),
+            expected
+        );
+        db.close().await.expect("concurrent bitmap database closes");
+        drop(db);
+
+        let reopened = slatedb::Db::builder(path, store)
+            .with_merge_operator(Arc::new(HelixMergeOperator::new()))
+            .build()
+            .await
+            .expect("concurrent bitmap database reopens");
+        assert_eq!(
+            decode_bitmap(
+                reopened
+                    .get(&key)
+                    .await
+                    .expect("reopened bitmap reads")
+                    .expect("reopened bitmap exists")
+            ),
+            expected
+        );
+        reopened
+            .close()
+            .await
+            .expect("reopened bitmap database closes");
     }
 
     #[test]

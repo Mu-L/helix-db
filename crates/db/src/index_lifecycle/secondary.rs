@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 use std::ops::Bound;
-#[cfg(feature = "production-coverage")]
+#[cfg(any(test, feature = "production-coverage"))]
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
@@ -80,16 +80,16 @@ use crate::index_lifecycle::{
 
 use super::IndexScopeGates;
 
-#[cfg(feature = "production-coverage")]
+#[cfg(any(test, feature = "production-coverage"))]
 static BENCHMARK_POINT_READS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "production-coverage")]
+#[cfg(any(test, feature = "production-coverage"))]
 static BENCHMARK_SCANS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "production-coverage")]
+#[cfg(any(test, feature = "production-coverage"))]
 static BENCHMARK_GRAPH_READS: AtomicU64 = AtomicU64::new(0);
 
 /// Exact storage operations issued by managed equality serving while the
 /// production-coverage benchmark is measuring it.
-#[cfg(feature = "production-coverage")]
+#[cfg(any(test, feature = "production-coverage"))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct SecondaryEqualityReadMetrics {
     pub(crate) point_reads: u64,
@@ -97,14 +97,14 @@ pub(crate) struct SecondaryEqualityReadMetrics {
     pub(crate) graph_reads: u64,
 }
 
-#[cfg(feature = "production-coverage")]
+#[cfg(any(test, feature = "production-coverage"))]
 pub(crate) fn reset_equality_read_metrics() {
     BENCHMARK_POINT_READS.store(0, AtomicOrdering::Relaxed);
     BENCHMARK_SCANS.store(0, AtomicOrdering::Relaxed);
     BENCHMARK_GRAPH_READS.store(0, AtomicOrdering::Relaxed);
 }
 
-#[cfg(feature = "production-coverage")]
+#[cfg(any(test, feature = "production-coverage"))]
 pub(crate) fn equality_read_metrics() -> SecondaryEqualityReadMetrics {
     SecondaryEqualityReadMetrics {
         point_reads: BENCHMARK_POINT_READS.load(AtomicOrdering::Relaxed),
@@ -2847,14 +2847,14 @@ pub(crate) async fn lookup_active_equality_generation(
             canonical,
             IndexEntityId::initial(),
         )?;
-        #[cfg(feature = "production-coverage")]
+        #[cfg(any(test, feature = "production-coverage"))]
         BENCHMARK_POINT_READS.fetch_add(1, AtomicOrdering::Relaxed);
         let Some(bytes) = reader.get(key).await? else {
             return Ok(roaring::RoaringTreemap::new());
         };
         let owner =
             decode_secondary_entry_value(handle.index_id(), handle.generation(), lane, &bytes)?;
-        #[cfg(feature = "production-coverage")]
+        #[cfg(any(test, feature = "production-coverage"))]
         BENCHMARK_GRAPH_READS.fetch_add(1, AtomicOrdering::Relaxed);
         if !authoritative_equality_matches(reader, handle.scope(), definition, owner, value).await?
         {
@@ -2873,7 +2873,7 @@ pub(crate) async fn lookup_active_equality_generation(
         canonical,
         IndexEntityId::initial(),
     )?;
-    #[cfg(feature = "production-coverage")]
+    #[cfg(any(test, feature = "production-coverage"))]
     BENCHMARK_POINT_READS.fetch_add(1, AtomicOrdering::Relaxed);
     reader
         .get(key)
@@ -2892,13 +2892,13 @@ async fn scan_authoritative_null_equality(
     handle: &ActiveIndexHandle,
     definition: &ValidatedSecondaryIndexDefinition,
 ) -> Result<roaring::RoaringTreemap> {
-    #[cfg(feature = "production-coverage")]
+    #[cfg(any(test, feature = "production-coverage"))]
     BENCHMARK_SCANS.fetch_add(1, AtomicOrdering::Relaxed);
     let prefix = source_prefix(handle.scope(), definition.element_kind());
     let mut rows = reader.scan_prefix(&prefix, ..).await?;
     let mut owners = roaring::RoaringTreemap::new();
     while let Some(row) = rows.next().await? {
-        #[cfg(feature = "production-coverage")]
+        #[cfg(any(test, feature = "production-coverage"))]
         BENCHMARK_GRAPH_READS.fetch_add(1, AtomicOrdering::Relaxed);
         let Some(entity_id) = source_entity(handle.scope(), definition.element_kind(), &row.key)?
         else {
@@ -4725,6 +4725,158 @@ mod tests {
             }
             db.close().await.expect("secondary shape database closes");
         }
+    }
+
+    #[tokio::test]
+    async fn shared_edge_equality_builds_one_bitmap_and_serves_one_point_read() {
+        let db = test_db("secondary-shared-edge-bitmap-read").await;
+        let scope = DataScope::Tenant(crate::encoding::v1::keys::tenant::TenantId::from_u128(
+            0xFD00_0000_0000_0000_0000_0000_0000_0007,
+        ));
+        let definition = validated(
+            SecondaryIndexDefinition::edge_equality("FOLLOWS", "kind")
+                .expect("edge equality definition validates"),
+        );
+        for edge_id in 0..8 {
+            put_source(
+                &db,
+                scope,
+                IndexElementKind::Edge,
+                edge_id,
+                &[
+                    Property::string("$label", "FOLLOWS"),
+                    Property::string("kind", "shared"),
+                ],
+            )
+            .await;
+        }
+        let (operation_id, index_id, generation) = create_build(&db, scope, &definition, 7).await;
+        let driver = SecondaryIndexDriver::new(Arc::new(IndexScopeGates::default()));
+        let mut claim_sequence = 1;
+        assert_eq!(
+            drive_to_terminal(&db, &driver, operation_id, &mut claim_sequence).await,
+            CommittedOperationStep::Completed
+        );
+        let rows = generation_rows(
+            &db,
+            scope,
+            RecordKind::SecondaryEqualityBitmap,
+            index_id,
+            generation,
+        )
+        .await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            SecondaryEqualityBitmapValue::decode(&rows[0].1)
+                .expect("edge equality bitmap decodes")
+                .ids()
+                .iter()
+                .collect::<Vec<_>>(),
+            (0..8).collect::<Vec<_>>()
+        );
+        let active = read_index(&db, scope, &definition).await;
+        let handle = ActiveIndexHandle::try_from_record(scope, &active)
+            .expect("active edge equality handle projects");
+        reset_equality_read_metrics();
+        assert_eq!(
+            lookup_active_equality_generation(
+                &db,
+                &handle,
+                &PropertyValue::String("shared".to_string()),
+            )
+            .await
+            .expect("edge equality bitmap lookup succeeds")
+            .iter()
+            .collect::<Vec<_>>(),
+            (0..8).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            equality_read_metrics(),
+            SecondaryEqualityReadMetrics {
+                point_reads: 1,
+                scans: 0,
+                graph_reads: 0,
+            }
+        );
+        db.close().await.expect("edge bitmap database closes");
+    }
+
+    #[tokio::test]
+    async fn removal_bearing_bitmap_changes_replace_or_delete_exclusively() {
+        let db = test_db("secondary-mixed-bitmap-changes").await;
+        let handle = active_read_handle(
+            &db,
+            SecondaryIndexDefinition::node_equality("User", "status")
+                .expect("node equality definition validates"),
+        )
+        .await;
+        let definition = handle
+            .secondary_definition()
+            .expect("secondary handle retains its definition");
+        let key = secondary_entry_key(
+            handle.scope(),
+            handle.index_id(),
+            handle.generation(),
+            definition,
+            CanonicalSecondaryValue::equality_string("shared"),
+            IndexEntityId::initial(),
+        )
+        .expect("bitmap key validates");
+        db.put(
+            &key,
+            SecondaryEqualityBitmapValue::new(roaring::RoaringTreemap::from_iter([1, 2])).encode(),
+        )
+        .await
+        .expect("initial bitmap persists");
+
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .expect("mixed bitmap transaction begins");
+        stage_bitmap_changes(
+            &transaction,
+            &BTreeMap::from([(key.clone(), BTreeMap::from([(1, false), (3, true)]))]),
+        )
+        .await
+        .expect("mixed removal and addition stages");
+        transaction
+            .commit()
+            .await
+            .expect("mixed bitmap transaction commits");
+        assert_eq!(
+            SecondaryEqualityBitmapValue::decode(
+                &db.get(&key)
+                    .await
+                    .expect("replacement bitmap is readable")
+                    .expect("replacement bitmap remains present"),
+            )
+            .expect("replacement bitmap decodes")
+            .ids()
+            .iter()
+            .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .expect("bitmap deletion transaction begins");
+        stage_bitmap_changes(
+            &transaction,
+            &BTreeMap::from([(key.clone(), BTreeMap::from([(2, false), (3, false)]))]),
+        )
+        .await
+        .expect("complete removal stages");
+        transaction
+            .commit()
+            .await
+            .expect("bitmap deletion transaction commits");
+        assert_eq!(
+            db.get(&key).await.expect("deleted bitmap key is readable"),
+            None
+        );
+
+        db.close().await.expect("mixed bitmap database closes");
     }
 
     #[tokio::test]

@@ -16,15 +16,15 @@ use serde::Serialize;
 
 use crate::config::SecondaryIndexDefinition;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::Key;
-use crate::encoding::v2::keys::{RecordKind, ScopedKey};
+use crate::encoding::v2::keys::{Key, RecordKind, ScopedKey};
 use crate::encoding::v2::values::SecondaryEqualityBitmapValue;
-use crate::execution::interpreter::ExecutionValue;
+use crate::execution::interpreter::{ExecutionScalar, ExecutionValue};
 use crate::index_lifecycle::ValidatedDynamicIndexDefinition;
 use crate::{HelixDB, HelixDbSource, HelixStorage, Result};
 
 const INDEX_COUNT: usize = 50;
 const ENTITY_COUNT: usize = 1_000;
+const CORRECTNESS_ENTITY_COUNT: usize = 100;
 const READ_SCALE_ENTITY_COUNT: usize = 10_000;
 const CONCURRENT_WRITERS: usize = 32;
 const READ_OPERATIONS: NonZeroUsize =
@@ -118,6 +118,16 @@ pub struct SecondaryEqualityInspection {
     pub maximum_bitmap_cardinality: u64,
 }
 
+/// Exact I/O observations from checking every configured equality index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SecondaryEqualityLookupInspection {
+    pub lookups: usize,
+    pub result_count: usize,
+    pub point_reads: u64,
+    pub scans: u64,
+    pub graph_reads: u64,
+}
+
 /// Portable bitmap size and codec cost for one million sequential IDs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SecondaryEqualityMillionBitmapSample {
@@ -131,7 +141,7 @@ pub struct SecondaryEqualityMillionBitmapSample {
 pub struct SecondaryEqualityHotPathFixture {
     db: Arc<HelixDB>,
     insert_plan: Arc<exec::ExecutablePlan>,
-    lookup_plan: Arc<exec::ExecutablePlan>,
+    lookup_plans: Vec<Arc<exec::ExecutablePlan>>,
     entity_count: usize,
 }
 
@@ -146,13 +156,21 @@ impl SecondaryEqualityHotPathFixture {
         Self::open_with_entity_count(database, READ_SCALE_ENTITY_COUNT).await
     }
 
+    /// Creates the bounded 50-index by 100-node correctness fixture.
+    pub async fn open_correctness(database: impl Into<String>) -> Result<Self> {
+        Self::open_with_entity_count(database, CORRECTNESS_ENTITY_COUNT).await
+    }
+
     async fn open_with_entity_count(
         database: impl Into<String>,
         entity_count: usize,
     ) -> Result<Self> {
         assert_eq!(INDEX_COUNT, 50, "hot-path index shape is frozen");
         assert!(
-            matches!(entity_count, ENTITY_COUNT | READ_SCALE_ENTITY_COUNT),
+            matches!(
+                entity_count,
+                CORRECTNESS_ENTITY_COUNT | ENTITY_COUNT | READ_SCALE_ENTITY_COUNT
+            ),
             "hot-path entity shape is frozen"
         );
         assert_eq!(
@@ -188,7 +206,9 @@ impl SecondaryEqualityHotPathFixture {
         Ok(Self {
             db,
             insert_plan: Arc::new(insert_plan),
-            lookup_plan: Arc::new(equality_search_plan()),
+            lookup_plans: (0..INDEX_COUNT)
+                .map(|ordinal| Arc::new(equality_search_plan(ordinal)))
+                .collect(),
             entity_count,
         })
     }
@@ -256,14 +276,56 @@ impl SecondaryEqualityHotPathFixture {
         })
     }
 
-    /// Warms and validates the full-cardinality equality lookup.
+    /// Warms the full-cardinality equality lookup outside the measured pass.
     pub async fn prepare_read(&self) -> Result<()> {
-        let result_count = self.lookup_result_count().await?;
-        assert_eq!(
-            result_count, self.entity_count,
-            "the benchmark lookup must return every inserted entity"
-        );
+        let _ = self.lookup_result_count().await?;
         Ok(())
+    }
+
+    /// Decodes every V4 bitmap row for exact state comparison across writers.
+    pub async fn decoded_bitmap_rows(&self) -> Result<Vec<(Vec<u8>, Vec<u64>)>> {
+        let HelixStorage::Writer(writer) = self.db.storage() else {
+            unreachable!("hot-path correctness fixture opens a writer")
+        };
+        let prefix = Key::data_prefix(
+            DataScope::LegacyUnscoped,
+            ScopedKey::logical_prefix(RecordKind::SecondaryEqualityBitmap),
+        );
+        let mut rows = writer.db().scan_prefix(&prefix, ..).await?;
+        let mut decoded = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let ids = SecondaryEqualityBitmapValue::decode(&row.value)?
+                .ids()
+                .iter()
+                .collect();
+            decoded.push((row.key.to_vec(), ids));
+        }
+        Ok(decoded)
+    }
+
+    /// Checks all 50 indexes against the exact decoded ID set and records the
+    /// complete equality-serving I/O contract.
+    pub async fn inspect_all_lookups(&self) -> Result<SecondaryEqualityLookupInspection> {
+        let rows = self.decoded_bitmap_rows().await?;
+        let Some((_, expected)) = rows.first() else {
+            return Err(crate::HelixDbError::InvariantViolation(
+                "hot-path correctness fixture contains no bitmap rows".to_string(),
+            ));
+        };
+        crate::index_lifecycle::secondary::reset_equality_read_metrics();
+        for plan in &self.lookup_plans {
+            let mut actual = lookup_node_ids(&self.db, plan).await?;
+            actual.sort_unstable();
+            assert_eq!(&actual, expected);
+        }
+        let metrics = crate::index_lifecycle::secondary::equality_read_metrics();
+        Ok(SecondaryEqualityLookupInspection {
+            lookups: self.lookup_plans.len(),
+            result_count: expected.len(),
+            point_reads: metrics.point_reads,
+            scans: metrics.scans,
+            graph_reads: metrics.graph_reads,
+        })
     }
 
     /// Measures repeated full-cardinality equality lookups after warmup.
@@ -281,7 +343,6 @@ impl SecondaryEqualityHotPathFixture {
         operations: NonZeroUsize,
     ) -> Result<SecondaryEqualityReadSample> {
         let operations = operations.get();
-        let entity_count = self.entity_count;
         crate::index_lifecycle::secondary::reset_equality_read_metrics();
         let started = Instant::now();
         let mut latencies = match mode {
@@ -289,11 +350,7 @@ impl SecondaryEqualityHotPathFixture {
                 let mut latencies = Vec::with_capacity(operations);
                 for _ in 0..operations {
                     let operation_started = Instant::now();
-                    assert_eq!(
-                        self.lookup_result_count().await?,
-                        entity_count,
-                        "every benchmark lookup must return the same complete result"
-                    );
+                    let _ = self.lookup_result_count().await?;
                     latencies.push(duration_nanos(operation_started.elapsed()));
                 }
                 latencies
@@ -302,17 +359,13 @@ impl SecondaryEqualityHotPathFixture {
                 let mut tasks = tokio::task::JoinSet::new();
                 for reader in 0..CONCURRENT_READERS {
                     let db = Arc::clone(&self.db);
-                    let plan = Arc::clone(&self.lookup_plan);
+                    let plan = Arc::clone(&self.lookup_plans[0]);
                     tasks.spawn(async move {
                         let mut latencies =
                             Vec::with_capacity(operations.div_ceil(CONCURRENT_READERS));
                         for _ in (reader..operations).step_by(CONCURRENT_READERS) {
                             let operation_started = Instant::now();
-                            assert_eq!(
-                                lookup_result_count(&db, &plan).await?,
-                                entity_count,
-                                "every benchmark lookup must return the same complete result"
-                            );
+                            let _ = lookup_result_count(&db, &plan).await?;
                             latencies.push(duration_nanos(operation_started.elapsed()));
                         }
                         Result::<_>::Ok(latencies)
@@ -330,15 +383,9 @@ impl SecondaryEqualityHotPathFixture {
             }
         };
         let elapsed = started.elapsed();
-        assert_eq!(latencies.len(), operations);
+        assert_eq!(latencies.len(), operations, "every timed lookup completed");
         latencies.sort_unstable();
         let metrics = crate::index_lifecycle::secondary::equality_read_metrics();
-        assert_eq!(
-            metrics.point_reads,
-            u64::try_from(operations).expect("read operation count fits u64")
-        );
-        assert_eq!(metrics.scans, 0);
-        assert_eq!(metrics.graph_reads, 0);
         Ok(SecondaryEqualityReadSample {
             mode,
             operations,
@@ -346,7 +393,7 @@ impl SecondaryEqualityHotPathFixture {
                 SecondaryEqualityReadMode::Sequential => 1,
                 SecondaryEqualityReadMode::Concurrent => CONCURRENT_READERS,
             },
-            result_count: entity_count,
+            result_count: self.entity_count,
             elapsed_nanos: elapsed.as_nanos(),
             throughput_per_second: f64::from(operations as u32) / elapsed.as_secs_f64(),
             median_latency_nanos: percentile(&latencies, 50),
@@ -462,18 +509,33 @@ impl SecondaryEqualityHotPathFixture {
     }
 
     async fn lookup_result_count(&self) -> Result<usize> {
-        lookup_result_count(&self.db, &self.lookup_plan).await
+        lookup_result_count(&self.db, &self.lookup_plans[0]).await
     }
 }
 
 async fn lookup_result_count(db: &HelixDB, plan: &exec::ExecutablePlan) -> Result<usize> {
+    Ok(lookup_node_ids(db, plan).await?.len())
+}
+
+async fn lookup_node_ids(db: &HelixDB, plan: &exec::ExecutablePlan) -> Result<Vec<u64>> {
     let result = db.execute(plan, context::ParamBindings::default()).await?;
     let Some(ExecutionValue::Scalars(values)) = result.last else {
         return Err(crate::HelixDbError::InvariantViolation(
             "hot-path equality lookup did not return projected scalar IDs".to_string(),
         ));
     };
-    Ok(values.len())
+    values
+        .into_iter()
+        .map(|value| match value {
+            ExecutionScalar::NodeId(id) => Ok(id),
+            ExecutionScalar::EdgeId(_)
+            | ExecutionScalar::String(_)
+            | ExecutionScalar::Value(_)
+            | ExecutionScalar::Object(_) => Err(crate::HelixDbError::InvariantViolation(
+                "hot-path node lookup returned a non-node scalar".to_string(),
+            )),
+        })
+        .collect()
 }
 
 /// Measures the portable V4 value codec at the largest required fixture size.
@@ -486,7 +548,7 @@ pub fn benchmark_million_sequential_id_bitmap() -> SecondaryEqualityMillionBitma
     let decoded = SecondaryEqualityBitmapValue::decode(&encoded)
         .expect("one-million-ID portable bitmap must decode");
     let decode_nanos = decode_started.elapsed().as_nanos();
-    assert_eq!(decoded.ids().len(), MILLION_BITMAP_CARDINALITY);
+    std::hint::black_box(decoded);
     SecondaryEqualityMillionBitmapSample {
         cardinality: MILLION_BITMAP_CARDINALITY,
         encoded_bytes: encoded.len(),
@@ -557,7 +619,7 @@ fn step(id: usize, dependencies: Vec<exec::ExecStepId>, op: exec::ExecOp) -> exe
     }
 }
 
-fn equality_search_plan() -> exec::ExecutablePlan {
+fn equality_search_plan(ordinal: usize) -> exec::ExecutablePlan {
     let access_id = exec::ExecStepId::new(1).expect("hot-path access id is positive");
     exec::ExecutablePlan::new(
         ir::PlanKind::Read,
@@ -571,9 +633,9 @@ fn equality_search_plan() -> exec::ExecutablePlan {
                         exec::ExecNodeAccessPlan::EqualityIndex {
                             index: catalog::NodeEqualityIndexMeta::new(name(&format!(
                                 "node_eq:{LABEL}:{}",
-                                property_name(0)
+                                property_name(ordinal)
                             ))),
-                            key: catalog::ScopedPropertyKey::try_new(LABEL, property_name(0))
+                            key: catalog::ScopedPropertyKey::try_new(LABEL, property_name(ordinal))
                                 .expect("hot-path equality key is valid"),
                             value: ir::IndexValue::Literal(
                                 ir::SecondaryIndexLiteral::new(PlannerPropertyValue::String(

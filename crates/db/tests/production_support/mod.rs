@@ -38,7 +38,8 @@ pub use graph_mutation_representation::graph_mutation_representation_contracts;
 pub use secondary_equality_hot_path::{
     benchmark_million_sequential_id_bitmap, SecondaryEqualityHotPathFixture,
     SecondaryEqualityInsertMode, SecondaryEqualityInsertSample, SecondaryEqualityInspection,
-    SecondaryEqualityMillionBitmapSample, SecondaryEqualityReadMode, SecondaryEqualityReadSample,
+    SecondaryEqualityLookupInspection, SecondaryEqualityMillionBitmapSample,
+    SecondaryEqualityReadMode, SecondaryEqualityReadSample,
 };
 
 pub use migration_text_rebuild::{
