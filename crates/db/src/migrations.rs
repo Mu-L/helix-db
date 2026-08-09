@@ -1242,7 +1242,10 @@ pub(crate) async fn index_v2_migration_ready(
 /// transaction. Writer restart will then exercise the ordinary migration and
 /// lifecycle recovery path instead of observing a completed schema beside
 /// newly injected legacy state.
-#[cfg(feature = "index-lifecycle-testing")]
+#[cfg(all(
+    feature = "index-lifecycle-testing",
+    any(test, feature = "production-coverage")
+))]
 pub(crate) fn stage_index_v2_migration_reopen_for_fixture(
     transaction: &DbTransaction,
     scope: DataScope,

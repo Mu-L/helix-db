@@ -603,7 +603,11 @@ pub(crate) async fn load_mutation_set(
 /// `before` and `after` are complete authoritative property sets. Passing both
 /// makes label moves, property deletion, and entity deletion the same closed
 /// operation instead of separate optional flags.
-#[cfg(any(test, feature = "production-coverage"))]
+#[cfg(any(
+    test,
+    feature = "production-coverage",
+    feature = "index-lifecycle-testing"
+))]
 pub(crate) async fn maintain_entity(
     transaction: &DbTransaction,
     scope: DataScope,
@@ -2022,7 +2026,11 @@ enum CleanupBatch {
     Blocked(IndexOperationBlocker),
 }
 
-#[cfg(any(test, feature = "production-coverage"))]
+#[cfg(any(
+    test,
+    feature = "production-coverage",
+    feature = "index-lifecycle-testing"
+))]
 async fn apply_active_change(
     transaction: &DbTransaction,
     scope: DataScope,
@@ -3465,7 +3473,7 @@ fn generation_prefix(
     index_id: IndexId,
     generation: IndexGenerationId,
 ) -> Bytes {
-    Key::data_prefix(
+    IndexKey::data_prefix(
         scope,
         ScopedKey::generation_prefix(kind, index_id, generation),
     )
