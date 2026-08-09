@@ -47,3 +47,9 @@ async fn index_lifecycle_concurrent_create_converges_for_every_family() {
 async fn index_lifecycle_repeated_recoverable_errors_resume_exactly_once() {
     db::index_lifecycle_testing::run_deterministic_lifecycle_fault_contracts().await;
 }
+
+/// Proves tenant builds, drops, and aborts resume from every durable checkpoint.
+#[tokio::test(flavor = "multi_thread")]
+async fn index_lifecycle_tenant_reopens_resume_every_family_exactly_once() {
+    db::index_lifecycle_testing::run_deterministic_lifecycle_reopen_contracts().await;
+}

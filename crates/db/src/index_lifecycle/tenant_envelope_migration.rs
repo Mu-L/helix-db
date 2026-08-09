@@ -383,7 +383,7 @@ mod tests {
     use crate::encoding::v2::keys::{
         CanonicalSecondaryValue, IndexEntity, IndexEntityStateKey, PartitionFingerprint,
         SecondaryEntryKey, SecondaryEntryLane, TextBuildArtifactKey, TextEntityStateKey,
-        TextManifestRootKey,
+        TextManifestRootKey, VectorPartitionMappingKey,
     };
     use crate::encoding::v2::values::encode_build_delta;
     use crate::index_lifecycle::work::CoalescedBuildDeltaValue;
@@ -457,16 +457,23 @@ mod tests {
             kind: IndexElementKind::Node,
             id: IndexEntityId::new(11),
         };
-        let delta = || {
-            ScopedKey::BuildDelta(IndexEntityStateKey {
+        let applied = || {
+            ScopedKey::AppliedState(IndexEntityStateKey {
                 index_id: index_id(),
                 generation: generation(),
                 entity,
             })
         };
-        let (secondary_build, secondary_build_current) = migrated_cursor(scope, delta());
-        let (vector_build, vector_build_current) = migrated_cursor(scope, delta());
-        let (vector_cleanup, vector_cleanup_current) = migrated_cursor(scope, delta());
+        let (secondary_build, secondary_build_current) = migrated_cursor(scope, applied());
+        let (vector_build, vector_build_current) = migrated_cursor(scope, applied());
+        let mapping = || {
+            ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
+                index_id: index_id(),
+                generation: generation(),
+                partition: PartitionFingerprint::new([0x21; 32]),
+            })
+        };
+        let (vector_cleanup, vector_cleanup_current) = migrated_cursor(scope, mapping());
 
         let range = ScopedKey::SecondaryEntry(
             SecondaryEntryKey::try_new(
@@ -499,7 +506,7 @@ mod tests {
                 operation(
                     1,
                     IndexOperationProgress::SecondaryBuild(SecondaryBuildProgress::Constructing(
-                        SecondaryBuildStage::CatchUp(prefix(secondary_build)),
+                        SecondaryBuildStage::Validate(prefix(secondary_build)),
                     )),
                 ),
                 secondary_build_current,
@@ -517,7 +524,7 @@ mod tests {
                 operation(
                     3,
                     IndexOperationProgress::VectorBuild(VectorBuildProgress::Constructing(
-                        VectorBuildStage::CatchUp(prefix(vector_build)),
+                        VectorBuildStage::ValidateDescriptor(prefix(vector_build)),
                     )),
                 ),
                 vector_build_current,
@@ -525,7 +532,7 @@ mod tests {
             (
                 operation(
                     4,
-                    IndexOperationProgress::VectorCleanup(VectorCleanupProgress::DeleteDeltas(
+                    IndexOperationProgress::VectorCleanup(VectorCleanupProgress::DeletePhysical(
                         prefix(vector_cleanup),
                     )),
                 ),

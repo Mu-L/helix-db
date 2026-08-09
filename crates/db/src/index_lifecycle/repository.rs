@@ -23,10 +23,11 @@ use crate::error::{HelixDbError, Result, WriterMigrationRequirement};
 
 use super::work::{VectorPartitionMappingValue, VectorTenantPartition};
 use super::{
-    ActiveIndexHandle, IndexGenerationId, IndexId, IndexIdentity, IndexOperationId,
-    IndexOperationRecord, IndexRecordV2, IndexStorageVersion, IndexV2MetadataValue,
-    LegacyVectorPhysicalReservation, LoadedV2ScopeCatalog, LogicalIndexIdWatermark,
-    VectorPhysicalIdWatermark, VectorPhysicalIndexId, VectorPhysicalLayout,
+    ActiveIndexHandle, IndexElementKind, IndexGenerationId, IndexId, IndexIdentity,
+    IndexIdentityFamily, IndexOperationId, IndexOperationRecord, IndexRecordV2,
+    IndexStorageVersion, IndexV2MetadataValue, LegacyVectorPhysicalReservation,
+    LoadedV2ScopeCatalog, LogicalIndexIdWatermark, VectorPhysicalIdWatermark,
+    VectorPhysicalIndexId, VectorPhysicalLayout,
 };
 
 const UUID_ALLOCATION_ATTEMPTS: usize = 16;
@@ -425,162 +426,460 @@ pub(super) fn operation_cursors_are_valid(
     progress.cursors_are_valid(|cursor| complete_cursor_is_valid(scope, cursor.as_bytes()))
 }
 
-/// Validates generic resume keys plus the exact owner-bound text artifact key.
+#[derive(Debug, Clone, Copy)]
+enum ScopedCursorExpectation {
+    AppliedState,
+    SecondaryEntry,
+    TextEntityState,
+    TextBuildArtifact,
+    TextManifestPage,
+    TextManifestRoot,
+    VectorPartitionMapping,
+    TextCleanupMetadata,
+}
+
+fn graph_source_cursor_is_valid(
+    scope: DataScope,
+    element_kind: IndexElementKind,
+    cursor: &[u8],
+) -> bool {
+    matches!(
+        (element_kind, GraphKey::parse_from_slice(scope, cursor)),
+        (
+            IndexElementKind::Node,
+            Ok(GraphKey::Data {
+                scope: cursor_scope,
+                kind: DataKeyKind::NodeProperty(_),
+            })
+        ) if cursor_scope == scope
+    ) || matches!(
+        (element_kind, GraphKey::parse_from_slice(scope, cursor)),
+        (
+            IndexElementKind::Edge,
+            Ok(GraphKey::Data {
+                scope: cursor_scope,
+                kind: DataKeyKind::EdgePropertyById(_),
+            })
+        ) if cursor_scope == scope
+    )
+}
+
+fn secondary_lane_matches_identity(
+    identity: &IndexIdentity,
+    lane: crate::encoding::v2::keys::SecondaryEntryLane,
+) -> bool {
+    use crate::encoding::v2::keys::SecondaryEntryLane;
+
+    matches!(
+        (identity.family(), identity.element_kind(), lane),
+        (
+            IndexIdentityFamily::SecondaryEquality,
+            IndexElementKind::Node,
+            SecondaryEntryLane::NodeEquality | SecondaryEntryLane::NodeUniqueEquality,
+        ) | (
+            IndexIdentityFamily::SecondaryEquality,
+            IndexElementKind::Edge,
+            SecondaryEntryLane::EdgeEquality,
+        ) | (
+            IndexIdentityFamily::SecondaryRange,
+            IndexElementKind::Node,
+            SecondaryEntryLane::NodeRangeAscending | SecondaryEntryLane::NodeRangeDescending,
+        ) | (
+            IndexIdentityFamily::SecondaryRange,
+            IndexElementKind::Edge,
+            SecondaryEntryLane::EdgeRangeAscending | SecondaryEntryLane::EdgeRangeDescending,
+        )
+    )
+}
+
+fn scoped_cursor_is_valid(
+    scope: DataScope,
+    operation: &IndexOperationRecord,
+    expectation: ScopedCursorExpectation,
+    cursor: &[u8],
+) -> bool {
+    let Ok(Key::Data {
+        scope: cursor_scope,
+        kind,
+    }) = Key::parse_from_slice(scope, cursor)
+    else {
+        return false;
+    };
+    if cursor_scope != scope {
+        return false;
+    }
+    let index_id = operation.index_id();
+    let generation = operation.generation();
+    let element_kind = operation.identity().element_kind();
+    match (expectation, kind) {
+        (ScopedCursorExpectation::AppliedState, ScopedKey::AppliedState(key)) => {
+            key.index_id == index_id
+                && key.generation == generation
+                && key.entity.kind == element_kind
+        }
+        (ScopedCursorExpectation::SecondaryEntry, ScopedKey::SecondaryEntry(key)) => {
+            key.index_id() == index_id
+                && key.generation() == generation
+                && secondary_lane_matches_identity(operation.identity(), key.lane())
+        }
+        (ScopedCursorExpectation::SecondaryEntry, ScopedKey::SecondaryEqualityBitmap(key)) => {
+            key.index_id == index_id
+                && key.generation == generation
+                && key.element_kind == element_kind
+                && operation.identity().family() == IndexIdentityFamily::SecondaryEquality
+        }
+        (ScopedCursorExpectation::TextEntityState, ScopedKey::TextEntityState(key)) => {
+            key.root.index_id == index_id
+                && key.root.generation == generation
+                && key.entity.kind == element_kind
+        }
+        (ScopedCursorExpectation::TextBuildArtifact, ScopedKey::TextBuildArtifact(key)) => {
+            key.root.index_id == index_id && key.root.generation == generation
+        }
+        (ScopedCursorExpectation::TextManifestPage, ScopedKey::TextManifestPage(key)) => {
+            key.root.index_id == index_id && key.root.generation == generation
+        }
+        (ScopedCursorExpectation::TextManifestRoot, ScopedKey::TextManifestRoot(key)) => {
+            key.index_id == index_id && key.generation == generation
+        }
+        (
+            ScopedCursorExpectation::VectorPartitionMapping,
+            ScopedKey::VectorPartitionMapping(key),
+        ) => key.index_id == index_id && key.generation == generation,
+        (ScopedCursorExpectation::TextCleanupMetadata, key) => match key {
+            ScopedKey::TextBuildArtifact(key) => {
+                key.root.index_id == index_id && key.root.generation == generation
+            }
+            ScopedKey::TextManifestPage(key) => {
+                key.root.index_id == index_id && key.root.generation == generation
+            }
+            ScopedKey::TextManifestRoot(key) => {
+                key.index_id == index_id && key.generation == generation
+            }
+            ScopedKey::TextEntityState(key) => {
+                key.root.index_id == index_id
+                    && key.root.generation == generation
+                    && key.entity.kind == element_kind
+            }
+            ScopedKey::TextCorpusStatistics(key) => {
+                key.index_id == index_id && key.generation == generation
+            }
+            ScopedKey::TextTermStatistics(key) => {
+                key.corpus.index_id == index_id && key.corpus.generation == generation
+            }
+            ScopedKey::TextStatisticsEntity(key) => {
+                key.index_id == index_id
+                    && key.generation == generation
+                    && key.entity.kind == element_kind
+            }
+            ScopedKey::BuildDelta(key) | ScopedKey::AppliedState(key) => {
+                key.index_id == index_id
+                    && key.generation == generation
+                    && key.entity.kind == element_kind
+            }
+            ScopedKey::IndexRecord(_)
+            | ScopedKey::Operation(_)
+            | ScopedKey::SecondaryEntry(_)
+            | ScopedKey::VectorPartitionMapping(_)
+            | ScopedKey::SecondaryEqualityBitmap(_) => false,
+        },
+        (
+            ScopedCursorExpectation::AppliedState
+            | ScopedCursorExpectation::SecondaryEntry
+            | ScopedCursorExpectation::TextEntityState
+            | ScopedCursorExpectation::TextBuildArtifact
+            | ScopedCursorExpectation::TextManifestPage
+            | ScopedCursorExpectation::TextManifestRoot
+            | ScopedCursorExpectation::VectorPartitionMapping,
+            _,
+        ) => false,
+    }
+}
+
+fn source_progress_is_valid(
+    scope: DataScope,
+    operation: &IndexOperationRecord,
+    progress: &super::SourceScanProgress,
+) -> bool {
+    let element_kind = operation.identity().element_kind();
+    graph_source_cursor_is_valid(
+        scope,
+        element_kind,
+        progress.inclusive_upper_bound.as_bytes(),
+    ) && progress.cursor.as_ref().is_none_or(|cursor| {
+        graph_source_cursor_is_valid(scope, element_kind, cursor.as_bytes())
+            && cursor.as_bytes() <= progress.inclusive_upper_bound.as_bytes()
+    })
+}
+
+fn prefix_progress_is_valid(
+    scope: DataScope,
+    operation: &IndexOperationRecord,
+    progress: &super::PrefixScanProgress,
+    expectation: ScopedCursorExpectation,
+) -> bool {
+    progress.cursor.as_ref().is_none_or(|cursor| {
+        scoped_cursor_is_valid(scope, operation, expectation, cursor.as_bytes())
+    })
+}
+
+fn text_partition_upper_bound_is_valid(
+    scope: DataScope,
+    operation: &IndexOperationRecord,
+    cursor: &[u8],
+) -> bool {
+    matches!(
+        Key::parse_from_slice(scope, cursor),
+        Ok(Key::Data {
+            scope: cursor_scope,
+            kind: ScopedKey::TextEntityState(key),
+        }) if cursor_scope == scope
+            && key.root.index_id == operation.index_id()
+            && key.root.generation == operation.generation()
+            && key.root.partition == crate::encoding::v2::keys::PartitionFingerprint::new([u8::MAX; 32])
+            && key.entity.kind == IndexElementKind::Edge
+            && key.entity.id == super::IndexEntityId::new(u64::MAX)
+    )
+}
+
+fn legacy_vector_physical_id(operation: &IndexOperationRecord) -> u64 {
+    let element_type = match operation.identity().element_kind() {
+        IndexElementKind::Node => crate::config::VectorElementType::Node,
+        IndexElementKind::Edge => crate::config::VectorElementType::Edge,
+    };
+    let physical_name = crate::search::vector_index_name(
+        element_type,
+        operation.identity().label().as_str(),
+        operation.identity().property().as_str(),
+    );
+    crate::search::vector::index_id_from_name(&physical_name)
+}
+
+fn legacy_vector_cursor_is_valid(
+    scope: DataScope,
+    operation: &IndexOperationRecord,
+    lane: super::LegacyVectorValidationLane,
+    cursor: &[u8],
+) -> bool {
+    let Ok(GraphKey::Data {
+        scope: cursor_scope,
+        kind: DataKeyKind::Vector(key),
+    }) = GraphKey::parse_from_slice(scope, cursor)
+    else {
+        return false;
+    };
+    let expected_lane = match lane {
+        super::LegacyVectorValidationLane::Core => VectorStorageLane::Core,
+        super::LegacyVectorValidationLane::Hot => VectorStorageLane::Hot,
+        super::LegacyVectorValidationLane::Layer0 => VectorStorageLane::Layer0,
+    };
+    cursor_scope == scope
+        && key.index_id() == legacy_vector_physical_id(operation)
+        && key.storage_lane() == expected_lane
+        && !matches!(
+            key,
+            VectorKey::IndexPrefix(_)
+                | VectorKey::MemoryPrefix(_)
+                | VectorKey::L0Prefix(_)
+                | VectorKey::EntryCandidatePrefix(_)
+                | VectorKey::ReverseEdgePrefix(_)
+        )
+}
+
+fn legacy_directory_cursor_is_valid(
+    scope: DataScope,
+    operation: &IndexOperationRecord,
+    cursor: &[u8],
+) -> bool {
+    matches!(
+        GraphKey::parse_from_slice(scope, cursor),
+        Ok(GraphKey::Data {
+            scope: cursor_scope,
+            kind: DataKeyKind::Vector(VectorKey::SimHashDirectory(key)),
+        }) if cursor_scope == scope && key.index_id() == legacy_vector_physical_id(operation)
+    )
+}
+
+/// Validates every cursor against the exact stage, scope, and generation that
+/// will consume it. A syntactically valid key from another lane is rejected.
 pub(super) fn operation_record_cursors_are_valid(
     scope: DataScope,
     operation: &IndexOperationRecord,
 ) -> bool {
-    if let super::IndexOperationProgress::VectorBuild(super::VectorBuildProgress::Constructing(
-        super::VectorBuildStage::AdoptLegacy(progress),
-    )) = operation.progress()
-    {
-        let Some(cursor) = progress.cursor.as_ref() else {
-            return true;
-        };
-        let Ok(GraphKey::Data {
-            kind: DataKeyKind::Vector(key),
-            ..
-        }) = GraphKey::parse_from_slice(scope, cursor.as_bytes())
-        else {
-            return false;
-        };
-        let expected_lane = match progress.lane {
-            super::LegacyVectorValidationLane::Core => VectorStorageLane::Core,
-            super::LegacyVectorValidationLane::Hot => VectorStorageLane::Hot,
-            super::LegacyVectorValidationLane::Layer0 => VectorStorageLane::Layer0,
-        };
-        return key.storage_lane() == expected_lane
-            && !matches!(
-                key,
-                VectorKey::IndexPrefix(_)
-                    | VectorKey::MemoryPrefix(_)
-                    | VectorKey::L0Prefix(_)
-                    | VectorKey::EntryCandidatePrefix(_)
-                    | VectorKey::ReverseEdgePrefix(_)
-            );
-    }
-    if let super::IndexOperationProgress::VectorBuild(super::VectorBuildProgress::Constructing(
-        super::VectorBuildStage::ValidateAdoptedDirectory(progress),
-    )) = operation.progress()
-    {
-        let Some(cursor) = progress.cursor.as_ref() else {
-            return progress.verified_markers == 0;
-        };
-        let Ok(GraphKey::Data {
-            kind: DataKeyKind::Vector(VectorKey::SimHashDirectory(_)),
-            ..
-        }) = GraphKey::parse_from_slice(scope, cursor.as_bytes())
-        else {
-            return false;
-        };
-        return progress.verified_markers <= progress.expected_markers;
-    }
-    let super::IndexOperationProgress::TextBuild(super::TextBuildProgress::Constructing(stage)) =
-        operation.progress()
-    else {
-        return operation_cursors_are_valid(scope, operation.progress());
+    use super::{
+        IndexOperationProgress, SecondaryBuildProgress, SecondaryBuildStage,
+        SecondaryCleanupProgress, TextBuildProgress, TextBuildStage, TextCleanupProgress,
+        TextManifestValidationProgress, VectorBuildProgress, VectorBuildStage,
+        VectorCleanupProgress,
     };
-    if let super::TextBuildStage::ValidateManifests(progress) = stage {
-        let (cursor, lane) = match progress {
-            super::TextManifestValidationProgress::Pages(progress) => {
-                (progress.cursor(), RecordKind::TextManifestPage)
+
+    match operation.progress() {
+        IndexOperationProgress::SecondaryBuild(SecondaryBuildProgress::Constructing(stage)) => {
+            match stage {
+                SecondaryBuildStage::Scan(progress) => {
+                    source_progress_is_valid(scope, operation, progress)
+                }
+                SecondaryBuildStage::CatchUp(progress) => progress.cursor.is_none(),
+                SecondaryBuildStage::Validate(progress) => prefix_progress_is_valid(
+                    scope,
+                    operation,
+                    progress,
+                    ScopedCursorExpectation::AppliedState,
+                ),
+                SecondaryBuildStage::Activate(_) => true,
             }
-            super::TextManifestValidationProgress::Roots(progress) => {
-                (progress.cursor.as_ref(), RecordKind::TextManifestRoot)
+        }
+        IndexOperationProgress::SecondaryBuild(SecondaryBuildProgress::Aborting(progress))
+        | IndexOperationProgress::SecondaryCleanup(progress) => match progress {
+            SecondaryCleanupProgress::DeleteEntries(progress) => prefix_progress_is_valid(
+                scope,
+                operation,
+                progress,
+                ScopedCursorExpectation::SecondaryEntry,
+            ),
+            SecondaryCleanupProgress::DeleteDeltas(progress) => progress.cursor.is_none(),
+            SecondaryCleanupProgress::Finalize(_) => true,
+        },
+        IndexOperationProgress::VectorBuild(VectorBuildProgress::Constructing(stage)) => {
+            match stage {
+                VectorBuildStage::AdoptLegacy(progress) => {
+                    progress.cursor.as_ref().is_none_or(|cursor| {
+                        legacy_vector_cursor_is_valid(
+                            scope,
+                            operation,
+                            progress.lane,
+                            cursor.as_bytes(),
+                        )
+                    })
+                }
+                VectorBuildStage::ValidateAdoptedDirectory(progress) => {
+                    progress.expected_markers == progress.counters.output_operations
+                        && progress.verified_markers <= progress.expected_markers
+                        && match progress.cursor.as_ref() {
+                            None => progress.verified_markers == 0,
+                            Some(cursor) => {
+                                progress.verified_markers != 0
+                                    && legacy_directory_cursor_is_valid(
+                                        scope,
+                                        operation,
+                                        cursor.as_bytes(),
+                                    )
+                            }
+                        }
+                }
+                VectorBuildStage::Scan(progress) => {
+                    source_progress_is_valid(scope, operation, progress)
+                }
+                VectorBuildStage::CatchUp(progress) => progress.cursor.is_none(),
+                VectorBuildStage::ValidateDescriptor(progress) => {
+                    progress.cursor.as_ref().is_none_or(|cursor| {
+                        scoped_cursor_is_valid(
+                            scope,
+                            operation,
+                            ScopedCursorExpectation::AppliedState,
+                            cursor.as_bytes(),
+                        ) || scoped_cursor_is_valid(
+                            scope,
+                            operation,
+                            ScopedCursorExpectation::VectorPartitionMapping,
+                            cursor.as_bytes(),
+                        )
+                    })
+                }
+                VectorBuildStage::Activate(_) => true,
             }
-            super::TextManifestValidationProgress::EntityStates(progress) => {
-                (progress.cursor.as_ref(), RecordKind::TextEntityState)
+        }
+        IndexOperationProgress::VectorBuild(VectorBuildProgress::Aborting(progress))
+        | IndexOperationProgress::VectorCleanup(progress) => match progress {
+            VectorCleanupProgress::RetireCache(_) | VectorCleanupProgress::Finalize(_) => true,
+            VectorCleanupProgress::DeletePhysical(progress) => prefix_progress_is_valid(
+                scope,
+                operation,
+                progress,
+                ScopedCursorExpectation::VectorPartitionMapping,
+            ),
+            VectorCleanupProgress::DeleteDeltas(progress) => progress.cursor.is_none(),
+        },
+        IndexOperationProgress::TextBuild(TextBuildProgress::Constructing(stage)) => match stage {
+            TextBuildStage::ScanSource(progress) => {
+                source_progress_is_valid(scope, operation, progress)
             }
-        };
-        let Some(cursor) = cursor else {
-            return true;
-        };
-        let Ok(Key::Data { kind: key, .. }) = Key::parse_from_slice(scope, cursor.as_bytes())
-        else {
-            return false;
-        };
-        let (kind, index_id, generation, partition, page) = match key {
-            ScopedKey::TextManifestPage(key) => (
-                RecordKind::TextManifestPage,
-                key.root.index_id,
-                key.root.generation,
-                Some(key.root.partition),
-                Some(key.page),
-            ),
-            ScopedKey::TextManifestRoot(key) => (
-                RecordKind::TextManifestRoot,
-                key.index_id,
-                key.generation,
-                Some(key.partition),
-                None,
-            ),
-            ScopedKey::TextEntityState(key) => (
-                RecordKind::TextEntityState,
-                key.root.index_id,
-                key.root.generation,
-                Some(key.root.partition),
-                None,
-            ),
-            ScopedKey::IndexRecord(_)
-            | ScopedKey::Operation(_)
-            | ScopedKey::BuildDelta(_)
-            | ScopedKey::AppliedState(_)
-            | ScopedKey::SecondaryEntry(_)
-            | ScopedKey::TextBuildArtifact(_)
-            | ScopedKey::VectorPartitionMapping(_)
-            | ScopedKey::TextCorpusStatistics(_)
-            | ScopedKey::TextTermStatistics(_)
-            | ScopedKey::TextStatisticsEntity(_)
-            | ScopedKey::SecondaryEqualityBitmap(_) => return false,
-        };
-        let partition_matches = match progress {
-            super::TextManifestValidationProgress::Pages(progress) => {
-                progress.partition().is_none_or(|expected| {
-                    partition
-                        .is_some_and(|actual| actual.as_bytes() == expected.partition_fingerprint())
-                        && page.is_some_and(|actual| {
-                            actual.checked_add(1) == Some(expected.next_page())
-                        })
+            TextBuildStage::ScanPartitions(progress) => {
+                text_partition_upper_bound_is_valid(
+                    scope,
+                    operation,
+                    progress.inclusive_upper_bound.as_bytes(),
+                ) && progress.cursor.as_ref().is_none_or(|cursor| {
+                    scoped_cursor_is_valid(
+                        scope,
+                        operation,
+                        ScopedCursorExpectation::TextEntityState,
+                        cursor.as_bytes(),
+                    ) && cursor.as_bytes() <= progress.inclusive_upper_bound.as_bytes()
                 })
             }
-            super::TextManifestValidationProgress::Roots(_)
-            | super::TextManifestValidationProgress::EntityStates(_) => true,
-        };
-        return kind == lane
-            && index_id == operation.index_id()
-            && generation == operation.generation()
-            && partition_matches;
+            TextBuildStage::CatchUp(progress) => progress.cursor.is_none(),
+            TextBuildStage::Compact(progress) | TextBuildStage::PrepareManifests(progress) => {
+                prefix_progress_is_valid(
+                    scope,
+                    operation,
+                    progress,
+                    ScopedCursorExpectation::TextBuildArtifact,
+                )
+            }
+            TextBuildStage::ValidateManifests(progress) => match progress {
+                TextManifestValidationProgress::Pages(progress) => {
+                    progress.cursor().is_none_or(|cursor| {
+                        let Some(expected) = progress.partition() else {
+                            return scoped_cursor_is_valid(
+                                scope,
+                                operation,
+                                ScopedCursorExpectation::TextManifestPage,
+                                cursor.as_bytes(),
+                            );
+                        };
+                        let Ok(Key::Data {
+                            kind: ScopedKey::TextManifestPage(key),
+                            ..
+                        }) = Key::parse_from_slice(scope, cursor.as_bytes())
+                        else {
+                            return false;
+                        };
+                        scoped_cursor_is_valid(
+                            scope,
+                            operation,
+                            ScopedCursorExpectation::TextManifestPage,
+                            cursor.as_bytes(),
+                        ) && key.root.partition.as_bytes() == expected.partition_fingerprint()
+                            && key.page.checked_add(1) == Some(expected.next_page())
+                    })
+                }
+                TextManifestValidationProgress::Roots(progress) => prefix_progress_is_valid(
+                    scope,
+                    operation,
+                    progress,
+                    ScopedCursorExpectation::TextManifestRoot,
+                ),
+                TextManifestValidationProgress::EntityStates(progress) => prefix_progress_is_valid(
+                    scope,
+                    operation,
+                    progress,
+                    ScopedCursorExpectation::TextEntityState,
+                ),
+            },
+            TextBuildStage::Activate(_) => true,
+        },
+        IndexOperationProgress::TextBuild(TextBuildProgress::Aborting(progress))
+        | IndexOperationProgress::TextCleanup(progress) => match progress {
+            TextCleanupProgress::DeleteMetadata(progress) => prefix_progress_is_valid(
+                scope,
+                operation,
+                progress,
+                ScopedCursorExpectation::TextCleanupMetadata,
+            ),
+            TextCleanupProgress::Finalize(_) => true,
+        },
     }
-    if !operation_cursors_are_valid(scope, operation.progress()) {
-        return false;
-    }
-    let artifact_cursor = match stage {
-        super::TextBuildStage::PrepareManifests(progress) => {
-            let Some(cursor) = progress.cursor.as_ref() else {
-                return true;
-            };
-            cursor
-        }
-        super::TextBuildStage::ScanSource(_)
-        | super::TextBuildStage::ScanPartitions(_)
-        | super::TextBuildStage::CatchUp(_)
-        | super::TextBuildStage::Compact(_)
-        | super::TextBuildStage::ValidateManifests(_)
-        | super::TextBuildStage::Activate(_) => return true,
-    };
-    let Ok(Key::Data {
-        kind: ScopedKey::TextBuildArtifact(artifact),
-        ..
-    }) = Key::parse_from_slice(scope, artifact_cursor.as_bytes())
-    else {
-        return false;
-    };
-    if artifact.root.index_id != operation.index_id()
-        || artifact.root.generation != operation.generation()
-    {
-        return false;
-    }
-    true
 }
 
 fn stale_generation(handle: &ActiveIndexHandle) -> HelixDbError {

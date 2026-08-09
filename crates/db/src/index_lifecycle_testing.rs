@@ -167,6 +167,13 @@ pub async fn run_deterministic_lifecycle_fault_contracts() {
     contracts::run_repeated_faults().await;
 }
 
+/// Runs tenant build, drop, and abort recovery through a cold reopen after
+/// every persisted checkpoint.
+pub async fn run_deterministic_lifecycle_reopen_contracts() {
+    let _guard = LIFECYCLE_CONTRACT_LOCK.lock().await;
+    contracts::run_tenant_reopen_recovery().await;
+}
+
 /// Returns every stable process-abort boundary from the production failpoint ADT.
 pub fn index_outbox_failpoint_names() -> [&'static str; 16] {
     crate::index_lifecycle::failpoints::IndexOutboxFailpoint::ALL

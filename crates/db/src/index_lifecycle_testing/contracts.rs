@@ -8,20 +8,24 @@
 
 use std::collections::BTreeSet;
 use std::num::{NonZeroU64, NonZeroUsize};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use helix_ast::value::PropertyValue as AstPropertyValue;
 use helix_planner::{catalog, context, cost, exec, ir, properties, trace};
+use slatedb::object_store::memory::InMemory;
+use slatedb::object_store::ObjectStore;
 use slatedb::IsolationLevel;
 
 use crate::config::{
-    SecondaryIndexDefinition, SecondaryIndexLifecycleBatchRows, SecondaryIndexLifecycleTuning,
-    TextAnalyzerKind, TextElementType, TextIndexDefinition, VectorElementType,
-    VectorIndexDefinition,
+    SearchIndexBackfillLimits, SearchIndexBatchLimits, SecondaryIndexDefinition,
+    SecondaryIndexLifecycleBatchRows, SecondaryIndexLifecycleTuning, TextAnalyzerKind,
+    TextElementType, TextIndexDefinition, VectorElementType, VectorIndexDefinition,
 };
 use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::property::{encode_properties, Property};
 use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
+use crate::encoding::v1::keys::vectors::VectorStorageLane;
 use crate::encoding::v1::keys::{DataKeyKind, EdgePropertyByIdKey, Key, NodePropertyKey};
 use crate::encoding::v2::keys::{RecordKind, ScopedKey};
 use crate::error::HelixDbError;
@@ -30,8 +34,8 @@ use crate::execution::interpreter::{
 };
 use crate::index_lifecycle::{
     ActiveIndexHandle, IndexDdlReceipt, IndexDefinitionFamily, IndexElementKind,
-    IndexOperationStage, IndexOperationStatus, IndexStateV2, ValidatedDynamicIndexDefinition,
-    VectorPhysicalLayout,
+    IndexOperationStage, IndexOperationStatus, IndexStateV2, PhysicalGeneration,
+    ValidatedDynamicIndexDefinition, VectorPhysicalLayout,
 };
 use crate::search::vector::distance::Cosine;
 use crate::search::vector::{ValidatedVectorGenerationHandle, VectorDistanceMetric, VectorIndex};
@@ -158,6 +162,485 @@ pub(super) async fn run_repeated_faults() {
         ));
         db.close().await.expect("repeated-fault writer closes");
     }
+}
+
+/// Proves every tenant lifecycle family can cold-reopen after each committed
+/// checkpoint without losing ownership, repeating progress, or leaving one
+/// generation behind after ordinary and abort cleanup.
+pub(super) async fn run_tenant_reopen_recovery() {
+    for (ordinal, family) in [
+        IndexDefinitionFamily::Secondary,
+        IndexDefinitionFamily::Vector,
+        IndexDefinitionFamily::Text,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run_family_tenant_reopen_recovery(ordinal, family).await;
+    }
+}
+
+fn one_row_lifecycle_config() -> DbConfig {
+    let defaults = SearchIndexBackfillLimits::default();
+    let batch = defaults.batch();
+    let one_row_batch = SearchIndexBatchLimits::try_new(
+        NonZeroUsize::MIN,
+        batch.max_input_bytes(),
+        batch.max_output_operations(),
+        batch.max_output_bytes(),
+        batch.max_single_vector_output_bytes(),
+    )
+    .expect("one-row lifecycle batch retains valid byte ceilings");
+    let backfill = SearchIndexBackfillLimits::try_new(
+        one_row_batch,
+        defaults.edge_property_read_batch(),
+        defaults.text_artifacts(),
+        defaults.text_compaction(),
+    )
+    .expect("one-row lifecycle backfill limits remain internally consistent");
+    DbConfig::new()
+        .with_secondary_index_lifecycle_tuning(
+            SecondaryIndexLifecycleTuning::default().with_batch_rows(
+                SecondaryIndexLifecycleBatchRows::new(1)
+                    .expect("one-row secondary lifecycle batch is positive"),
+            ),
+        )
+        .with_search_index_backfill_limits(backfill)
+}
+
+fn recovery_definition(
+    family: IndexDefinitionFamily,
+    label: &str,
+) -> ValidatedDynamicIndexDefinition {
+    match family {
+        IndexDefinitionFamily::Secondary => SecondaryIndexDefinition::node_equality(label, "value")
+            .expect("recovery secondary definition validates")
+            .try_into()
+            .expect("recovery secondary definition converts"),
+        IndexDefinitionFamily::Vector => {
+            VectorIndexDefinition::new_node(label, "value", 3, VectorDistanceMetric::Cosine)
+                .expect("recovery vector definition validates")
+                .try_into()
+                .expect("recovery vector definition converts")
+        }
+        IndexDefinitionFamily::Text => TextIndexDefinition::new_node(label, "value")
+            .expect("recovery text definition validates")
+            .try_into()
+            .expect("recovery text definition converts"),
+    }
+}
+
+async fn seed_recovery_rows(
+    db: &HelixDB,
+    controller: &LifecycleTestController,
+    scope: DataScope,
+    definition: &ValidatedDynamicIndexDefinition,
+) -> std::ops::Range<u64> {
+    let label = definition.identity().label().as_str().to_string();
+    let family = definition.family();
+    controller
+        .seed_node_property_rows(
+            db,
+            scope,
+            NonZeroU64::new(3).expect("recovery source count is positive"),
+            NonZeroUsize::MIN,
+            move |entity_id| {
+                let value = match family {
+                    IndexDefinitionFamily::Secondary => {
+                        Property::string("value", format!("shared-{label}"))
+                    }
+                    IndexDefinitionFamily::Vector => {
+                        Property::f32_array("value", vec![entity_id as f32 + 1.0, 1.0, 0.5])
+                    }
+                    IndexDefinitionFamily::Text => Property::string(
+                        "value",
+                        format!("recovery document {entity_id} for {label}"),
+                    ),
+                };
+                vec![Property::string("$label", label.clone()), value]
+            },
+        )
+        .await
+        .expect("recovery source rows seed")
+}
+
+async fn reopen_recovery_writer(
+    db: &mut HelixDB,
+    database: &str,
+    object_store: &Arc<dyn ObjectStore>,
+    config: &DbConfig,
+) {
+    db.close()
+        .await
+        .expect("recovery writer closes at its durable checkpoint");
+    *db = HelixDB::open_with_object_store_for_index_lifecycle_testing(
+        database,
+        Arc::clone(object_store),
+        config.clone(),
+        LifecycleTestScheduling::Explicit,
+    )
+    .await
+    .expect("recovery writer cold-reopens");
+}
+
+fn assert_checkpoint_did_not_regress(before: LifecycleCheckpoint, after: LifecycleCheckpoint) {
+    let (
+        LifecycleCheckpoint::Present {
+            durable_revision: before_revision,
+            progress: before_progress,
+            ..
+        },
+        LifecycleCheckpoint::Present {
+            durable_revision: after_revision,
+            progress: after_progress,
+            ..
+        },
+    ) = (before, after)
+    else {
+        return;
+    };
+    assert!(after_revision >= before_revision);
+    assert!(after_progress.entities >= before_progress.entities);
+    assert!(after_progress.input_bytes >= before_progress.input_bytes);
+    assert!(after_progress.output_operations >= before_progress.output_operations);
+    assert!(after_progress.output_bytes >= before_progress.output_bytes);
+}
+
+async fn drive_to_terminal_with_reopen(
+    db: &mut HelixDB,
+    database: &str,
+    object_store: &Arc<dyn ObjectStore>,
+    config: &DbConfig,
+    controller: &LifecycleTestController,
+    scope: DataScope,
+    operation_id: crate::index_lifecycle::IndexOperationId,
+) -> IndexOperationStatus {
+    let target = LifecycleWorkTarget::Operation {
+        scope,
+        operation_id,
+    };
+    let logical_start = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("recovery contract clock is after the Unix epoch")
+            .as_millis(),
+    )
+    .expect("recovery contract time fits u64 milliseconds");
+    let mut expected_checkpoint = controller
+        .inspect(db, target)
+        .await
+        .expect("initial recovery checkpoint is readable");
+    for turn in 0..MAXIMUM_CONTROLLER_TURNS {
+        let status = db
+            .get_index_operation(scope, operation_id)
+            .await
+            .expect("recovery operation remains readable");
+        let terminal = matches!(
+            status,
+            IndexOperationStatus::Succeeded { .. } | IndexOperationStatus::Aborted { .. }
+        );
+        if terminal {
+            let page = controller
+                .discover(
+                    db,
+                    NonZeroUsize::new(1_024).expect("recovery discovery bound is positive"),
+                )
+                .await
+                .expect("terminal recovery discovery succeeds");
+            assert!(page.targets.is_empty());
+            let evidence = controller
+                .advance_at_unix_millis(db, target, logical_start)
+                .await
+                .expect("completed recovery operation remains idempotent");
+            assert_eq!(evidence.outcome, LifecycleStepOutcome::AlreadyTerminal);
+            assert_eq!(evidence.before, evidence.after);
+            reopen_recovery_writer(db, database, object_store, config).await;
+            assert_eq!(
+                controller
+                    .inspect(db, target)
+                    .await
+                    .expect("terminal checkpoint survives its final reopen"),
+                evidence.after
+            );
+            return status;
+        }
+        assert!(!matches!(status, IndexOperationStatus::Blocked { .. }));
+        let logical_now = logical_start.saturating_add(
+            u64::try_from(turn)
+                .expect("recovery controller turn fits u64")
+                .saturating_mul(60_000),
+        );
+        let evidence = controller
+            .advance_at_unix_millis(db, target, logical_now)
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "recovery production step in {database} for {:?} failed: {error}",
+                    status.common().stage,
+                )
+            });
+        assert_eq!(evidence.before, expected_checkpoint);
+        assert_monotonic_step(&evidence);
+        assert_checkpoint_did_not_regress(evidence.before, evidence.after);
+        expected_checkpoint = evidence.after;
+        reopen_recovery_writer(db, database, object_store, config).await;
+        let reopened = controller
+            .inspect(db, target)
+            .await
+            .expect("persisted recovery checkpoint is readable after reopen");
+        assert_eq!(reopened, expected_checkpoint);
+    }
+    panic!("recovery operation exceeded its controller-turn bound");
+}
+
+async fn advance_once_with_reopen(
+    db: &mut HelixDB,
+    database: &str,
+    object_store: &Arc<dyn ObjectStore>,
+    config: &DbConfig,
+    controller: &LifecycleTestController,
+    target: LifecycleWorkTarget,
+) {
+    let evidence = controller
+        .advance(db, target)
+        .await
+        .expect("pre-abort recovery step succeeds");
+    assert_monotonic_step(&evidence);
+    reopen_recovery_writer(db, database, object_store, config).await;
+    assert_eq!(
+        controller
+            .inspect(db, target)
+            .await
+            .expect("pre-abort checkpoint survives reopen"),
+        evidence.after
+    );
+}
+
+async fn assert_generation_rows_absent(
+    db: &HelixDB,
+    scope: DataScope,
+    index_id: crate::index_lifecycle::IndexId,
+    generation: crate::index_lifecycle::IndexGenerationId,
+) {
+    let writer = db
+        .lifecycle_test_writer_db()
+        .expect("generation cleanup assertion has writer storage");
+    for kind in [
+        RecordKind::BuildDelta,
+        RecordKind::AppliedState,
+        RecordKind::SecondaryEntry,
+        RecordKind::TextManifestRoot,
+        RecordKind::TextManifestPage,
+        RecordKind::TextBuildArtifact,
+        RecordKind::TextEntityState,
+        RecordKind::VectorPartitionMapping,
+        RecordKind::TextCorpusStatistics,
+        RecordKind::TextTermStatistics,
+        RecordKind::TextStatisticsEntity,
+        RecordKind::SecondaryEqualityBitmap,
+    ] {
+        let prefix = crate::encoding::v2::keys::Key::data_prefix(
+            scope,
+            ScopedKey::generation_prefix(kind, index_id, generation),
+        );
+        let mut rows = writer
+            .scan_prefix(&prefix, ..)
+            .await
+            .expect("generation cleanup lane remains readable");
+        assert!(
+            rows.next()
+                .await
+                .expect("generation cleanup lane scan succeeds")
+                .is_none(),
+            "cleanup retained a {kind:?} row"
+        );
+    }
+}
+
+async fn assert_vector_namespace_absent(
+    db: &HelixDB,
+    scope: DataScope,
+    physical_index_id: crate::index_lifecycle::VectorPhysicalIndexId,
+) {
+    let writer = db
+        .lifecycle_test_writer_db()
+        .expect("vector cleanup assertion has writer storage");
+    for lane in VectorStorageLane::ALL {
+        let prefix = Key::Data {
+            scope,
+            kind: DataKeyKind::Vector(lane.prefix_key(physical_index_id.get())),
+        }
+        .to_bytes();
+        let mut rows = writer
+            .scan_prefix(&prefix, ..)
+            .await
+            .expect("vector physical lane remains readable");
+        assert!(
+            rows.next()
+                .await
+                .expect("vector physical lane scan succeeds")
+                .is_none(),
+            "cleanup retained a {lane:?} physical vector row"
+        );
+    }
+}
+
+async fn run_family_tenant_reopen_recovery(ordinal: usize, family: IndexDefinitionFamily) {
+    let database = format!("index-lifecycle-tenant-reopen-{ordinal}");
+    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let config = one_row_lifecycle_config();
+    let scope = DataScope::Tenant(TenantId::from_u128(
+        0xFD00_0000_0000_0000_0000_0000_0000_0100 + ordinal as u128,
+    ));
+    let mut db = HelixDB::open_with_object_store_for_index_lifecycle_testing(
+        &database,
+        Arc::clone(&object_store),
+        config.clone(),
+        LifecycleTestScheduling::Explicit,
+    )
+    .await
+    .expect("tenant recovery writer opens");
+    let controller = LifecycleTestController::new();
+
+    let definition = recovery_definition(family, &format!("ReopenActive{ordinal}"));
+    let _entity_ids = seed_recovery_rows(&db, &controller, scope, &definition).await;
+    let IndexDdlReceipt::Accepted { operation_id, .. } = controller
+        .create_index(
+            &db,
+            scope,
+            definition.clone(),
+            ir::IndexCreateMode::ErrorIfExists,
+        )
+        .await
+        .expect("tenant recovery build is accepted")
+    else {
+        panic!("fresh tenant recovery build must enqueue");
+    };
+    assert!(matches!(
+        drive_to_terminal_with_reopen(
+            &mut db,
+            &database,
+            &object_store,
+            &config,
+            &controller,
+            scope,
+            operation_id,
+        )
+        .await,
+        IndexOperationStatus::Succeeded { .. }
+    ));
+    let active = crate::index_lifecycle::repository::load_index_record(
+        db.lifecycle_test_writer_db()
+            .expect("tenant recovery writer storage is available"),
+        scope,
+        &definition.identity(),
+    )
+    .await
+    .expect("tenant recovery canonical row decodes")
+    .expect("tenant recovery canonical row exists");
+    assert!(matches!(active.state(), IndexStateV2::Active { .. }));
+    let index_id = active.index_id();
+    let generation = active.state().generation();
+    let vector_physical_id = match active.state().physical() {
+        Some(PhysicalGeneration::Vector {
+            layout: VectorPhysicalLayout::Unpartitioned { physical_index_id },
+            ..
+        }) => Some(*physical_index_id),
+        Some(PhysicalGeneration::Vector {
+            layout: VectorPhysicalLayout::Partitioned,
+            ..
+        }) => panic!("recovery vector fixture is unpartitioned"),
+        Some(PhysicalGeneration::Secondary { .. } | PhysicalGeneration::Text { .. }) | None => None,
+    };
+    let IndexDdlReceipt::Accepted {
+        operation_id: drop_operation_id,
+        ..
+    } = controller
+        .drop_index(&db, scope, &definition)
+        .await
+        .expect("active tenant recovery index accepts DROP")
+    else {
+        panic!("active tenant recovery DROP must enqueue cleanup");
+    };
+    assert!(matches!(
+        drive_to_terminal_with_reopen(
+            &mut db,
+            &database,
+            &object_store,
+            &config,
+            &controller,
+            scope,
+            drop_operation_id,
+        )
+        .await,
+        IndexOperationStatus::Succeeded { .. }
+    ));
+    assert_generation_rows_absent(&db, scope, index_id, generation).await;
+    if let Some(physical_index_id) = vector_physical_id {
+        assert_vector_namespace_absent(&db, scope, physical_index_id).await;
+    }
+
+    let abort_definition = recovery_definition(family, &format!("ReopenAbort{ordinal}"));
+    let _abort_entity_ids = seed_recovery_rows(&db, &controller, scope, &abort_definition).await;
+    let IndexDdlReceipt::Accepted {
+        operation_id: abort_operation_id,
+        index_id: abort_index_id,
+        generation: abort_generation,
+    } = controller
+        .create_index(
+            &db,
+            scope,
+            abort_definition.clone(),
+            ir::IndexCreateMode::ErrorIfExists,
+        )
+        .await
+        .expect("tenant recovery abort build is accepted")
+    else {
+        panic!("fresh tenant recovery abort build must enqueue");
+    };
+    let abort_target = LifecycleWorkTarget::Operation {
+        scope,
+        operation_id: abort_operation_id,
+    };
+    advance_once_with_reopen(
+        &mut db,
+        &database,
+        &object_store,
+        &config,
+        &controller,
+        abort_target,
+    )
+    .await;
+    assert!(!matches!(
+        db.get_index_operation(scope, abort_operation_id)
+            .await
+            .expect("pre-abort recovery operation remains readable"),
+        IndexOperationStatus::Succeeded { .. } | IndexOperationStatus::Aborted { .. }
+    ));
+    assert_eq!(
+        controller
+            .drop_index(&db, scope, &abort_definition)
+            .await
+            .expect("tenant recovery build converts to abort cleanup"),
+        IndexDdlReceipt::ExistingOperation {
+            operation_id: abort_operation_id,
+        }
+    );
+    assert!(matches!(
+        drive_to_terminal_with_reopen(
+            &mut db,
+            &database,
+            &object_store,
+            &config,
+            &controller,
+            scope,
+            abort_operation_id,
+        )
+        .await,
+        IndexOperationStatus::Aborted { .. }
+    ));
+    assert_generation_rows_absent(&db, scope, abort_index_id, abort_generation).await;
+    db.close().await.expect("tenant recovery writer closes");
 }
 
 /// Proves simultaneous idempotent CREATE calls converge on one operation.
