@@ -63,7 +63,11 @@ succeeds. Chain `writerOnly()` before `warmOnly()` to warm only the
 authoritative writer. Warm writes return `400 Bad Request` before execution.
 A standalone local warm read can return its normal query payload instead.
 
-Embedded mode uses the generated `@helix-db/uniffi` package:
+Embedded mode uses `@helix-db/helix-db-embedded`:
+
+```sh
+npm install @helix-db/helix-db @helix-db/helix-db-embedded
+```
 
 ```ts
 const client = await Client.embedded({ kind: "inMemory", database: "app" });
@@ -87,6 +91,10 @@ const client = await Client.embedded(
 
 `Client.embeddedReader(...)` opens an existing disk or object-storage database
 read-only. Server request options are rejected in embedded mode.
+
+Set `HELIXDB_EMBEDDED_NODE_PACKAGE` to load a compatible native package from a
+different module specifier. The former `HELIXDB_UNIFFI_NODE_PACKAGE` name
+remains supported as a deprecated compatibility alias.
 
 `HelixError.kind` distinguishes `Network`, `Remote`, `Serialization`,
 `InvalidUrl`, `InvalidRequest`, `EmbeddedUnavailable`, and `Embedded` failures.

@@ -102,6 +102,12 @@ query = (
 
 ## Embedded Client
 
+Install the SDK and matching native runtime:
+
+```sh
+python -m pip install helix-db helix-db-embedded
+```
+
 ```python
 from helixdb import Client, InMemory
 

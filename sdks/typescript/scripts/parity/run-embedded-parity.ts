@@ -89,7 +89,7 @@ try {
       "--out-dir",
       nodeBindings,
       "--package-name",
-      "@helix-db/uniffi-test",
+      "@helix-db/helix-db-embedded-test",
     ],
     workspaceRoot,
     900_000,
@@ -164,7 +164,7 @@ try {
       typescriptRoot,
       900_000,
       embeddedEnv(results[storage].typescript, `typescript-sdk-${storage}-parity`, nodeBindings, storage, disks.typescript, {
-        HELIXDB_UNIFFI_NODE_PACKAGE: pathToFileURL(join(nodeBindings, "index.js")).href,
+        HELIXDB_EMBEDDED_NODE_PACKAGE: pathToFileURL(join(nodeBindings, "index.js")).href,
       }),
     );
     run(
@@ -187,9 +187,7 @@ try {
       await compareResults(results[storage].rust, results[storage][candidate], baseline, `${candidate} ${storage}`);
     }
   }
-  console.log(
-    `embedded memory and disk runtime parity passed for ${EXPECTED_RUNTIME} fixtures across Rust, TypeScript, Go, and Python`,
-  );
+  console.log(`embedded memory and disk runtime parity passed for ${EXPECTED_RUNTIME} fixtures across Rust, TypeScript, Go, and Python`);
 } finally {
   await rm(temp, { recursive: true, force: true });
 }
