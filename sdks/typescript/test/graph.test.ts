@@ -237,7 +237,9 @@ assert.equal(
 
 const temp = await mkdtemp(join(tmpdir(), "helixdb-graph-test-"));
 const originalPackage = process.env.HELIXDB_UNIFFI_NODE_PACKAGE;
+const originalPreferredPackage = process.env.HELIXDB_EMBEDDED_NODE_PACKAGE;
 try {
+  delete process.env.HELIXDB_EMBEDDED_NODE_PACKAGE;
   process.env.HELIXDB_UNIFFI_NODE_PACKAGE = pathToFileURL(join(temp, "missing.mjs")).href;
   await assert.rejects(loadGraph({ _graphResponse: async () => nativeHandle }, selection), NativeGraphUnavailable);
 
@@ -274,5 +276,7 @@ try {
 } finally {
   if (originalPackage === undefined) delete process.env.HELIXDB_UNIFFI_NODE_PACKAGE;
   else process.env.HELIXDB_UNIFFI_NODE_PACKAGE = originalPackage;
+  if (originalPreferredPackage === undefined) delete process.env.HELIXDB_EMBEDDED_NODE_PACKAGE;
+  else process.env.HELIXDB_EMBEDDED_NODE_PACKAGE = originalPreferredPackage;
   await rm(temp, { recursive: true, force: true });
 }

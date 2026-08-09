@@ -135,13 +135,17 @@ export const HelixDB = {
 };
 `,
   );
-  const previous = process.env.HELIXDB_UNIFFI_NODE_PACKAGE;
-  process.env.HELIXDB_UNIFFI_NODE_PACKAGE = pathToFileURL(modulePath).href;
+  const previous = process.env.HELIXDB_EMBEDDED_NODE_PACKAGE;
+  const previousLegacy = process.env.HELIXDB_UNIFFI_NODE_PACKAGE;
+  process.env.HELIXDB_EMBEDDED_NODE_PACKAGE = pathToFileURL(modulePath).href;
+  process.env.HELIXDB_UNIFFI_NODE_PACKAGE = pathToFileURL(join(dir, "missing-legacy.mjs")).href;
   try {
-    return await run(process.env.HELIXDB_UNIFFI_NODE_PACKAGE);
+    return await run(process.env.HELIXDB_EMBEDDED_NODE_PACKAGE);
   } finally {
-    if (previous === undefined) delete process.env.HELIXDB_UNIFFI_NODE_PACKAGE;
-    else process.env.HELIXDB_UNIFFI_NODE_PACKAGE = previous;
+    if (previous === undefined) delete process.env.HELIXDB_EMBEDDED_NODE_PACKAGE;
+    else process.env.HELIXDB_EMBEDDED_NODE_PACKAGE = previous;
+    if (previousLegacy === undefined) delete process.env.HELIXDB_UNIFFI_NODE_PACKAGE;
+    else process.env.HELIXDB_UNIFFI_NODE_PACKAGE = previousLegacy;
     await rm(dir, { recursive: true, force: true });
   }
 }

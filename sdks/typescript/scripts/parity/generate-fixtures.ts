@@ -586,7 +586,9 @@ export function runtimeFixtures(): Fixture[] {
           .varAs("target", g().addN("ParityUser", [["externalId", PropertyInput.value("active-text-target")]]))
           .varAs(
             "edge",
-            g().n(NodeRef.var("source")).addE("FOLLOWS", NodeRef.var("target"), [["note", PropertyInput.value("activeinsertedge")]]),
+            g()
+              .n(NodeRef.var("source"))
+              .addE("FOLLOWS", NodeRef.var("target"), [["note", PropertyInput.value("activeinsertedge")]]),
           )
           .returning(["source", "target", "edge"]),
       ),
@@ -608,10 +610,7 @@ export function runtimeFixtures(): Fixture[] {
             "nodes",
             g().nWithLabel("ParityUser").where(Predicate.eq("externalId", "active-text-source")).removeProperty("bio").count(),
           )
-          .varAs(
-            "edges",
-            g().eWithLabel("FOLLOWS").where(Predicate.eq("note", "activeinsertedge")).removeProperty("note").count(),
-          )
+          .varAs("edges", g().eWithLabel("FOLLOWS").where(Predicate.eq("note", "activeinsertedge")).removeProperty("note").count())
           .returning(["nodes", "edges"]),
       ),
     ),
@@ -638,7 +637,9 @@ export function runtimeFixtures(): Fixture[] {
           .varAs("target", g().addN("ParityUser", [["externalId", PropertyInput.value("drop-text-target")]]))
           .varAs(
             "edge",
-            g().n(NodeRef.var("source")).addE("FOLLOWS", NodeRef.var("target"), [["note", PropertyInput.value("dropitemedge")]]),
+            g()
+              .n(NodeRef.var("source"))
+              .addE("FOLLOWS", NodeRef.var("target"), [["note", PropertyInput.value("dropitemedge")]]),
           )
           .returning(["source", "target", "edge"]),
       ),

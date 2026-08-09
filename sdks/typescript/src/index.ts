@@ -134,7 +134,7 @@ type NativeModule = {
   EmbeddedCacheMode?: NativeEmbeddedCacheModeConstructor;
 };
 
-const DEFAULT_NATIVE_PACKAGE = "@helix-db/uniffi";
+const DEFAULT_NATIVE_PACKAGE = "@helix-db/helix-db-embedded";
 const dynamicImport = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<NativeModule>;
 
 /**
@@ -350,7 +350,7 @@ async function loadNativeHelixDB(): Promise<{
   HelixDbSource: NativeHelixDbSourceConstructor;
   EmbeddedCacheMode?: NativeEmbeddedCacheModeConstructor;
 }> {
-  const packageName = process.env.HELIXDB_UNIFFI_NODE_PACKAGE ?? DEFAULT_NATIVE_PACKAGE;
+  const packageName = process.env.HELIXDB_EMBEDDED_NODE_PACKAGE ?? process.env.HELIXDB_UNIFFI_NODE_PACKAGE ?? DEFAULT_NATIVE_PACKAGE;
   let module: NativeModule;
   try {
     module = await dynamicImport(packageName);
