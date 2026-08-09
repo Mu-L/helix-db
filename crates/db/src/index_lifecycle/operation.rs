@@ -663,6 +663,94 @@ impl IndexOperationProgress {
             },
         }
     }
+
+    fn try_map_cursors<E>(
+        &mut self,
+        map: &mut impl FnMut(&IndexCursor) -> Result<IndexCursor, E>,
+    ) -> Result<(), E> {
+        fn map_optional<E>(
+            cursor: &mut Option<IndexCursor>,
+            map: &mut impl FnMut(&IndexCursor) -> Result<IndexCursor, E>,
+        ) -> Result<(), E> {
+            let Some(current) = cursor.as_ref() else {
+                return Ok(());
+            };
+            *cursor = Some(map(current)?);
+            Ok(())
+        }
+
+        fn map_source<E>(
+            progress: &mut SourceScanProgress,
+            map: &mut impl FnMut(&IndexCursor) -> Result<IndexCursor, E>,
+        ) -> Result<(), E> {
+            progress.inclusive_upper_bound = map(&progress.inclusive_upper_bound)?;
+            map_optional(&mut progress.cursor, map)
+        }
+
+        fn map_prefix<E>(
+            progress: &mut PrefixScanProgress,
+            map: &mut impl FnMut(&IndexCursor) -> Result<IndexCursor, E>,
+        ) -> Result<(), E> {
+            map_optional(&mut progress.cursor, map)
+        }
+
+        match self {
+            Self::SecondaryBuild(SecondaryBuildProgress::Constructing(stage)) => match stage {
+                SecondaryBuildStage::Scan(progress) => map_source(progress, map)?,
+                SecondaryBuildStage::CatchUp(progress)
+                | SecondaryBuildStage::Validate(progress) => map_prefix(progress, map)?,
+                SecondaryBuildStage::Activate(_) => {}
+            },
+            Self::SecondaryBuild(SecondaryBuildProgress::Aborting(progress))
+            | Self::SecondaryCleanup(progress) => match progress {
+                SecondaryCleanupProgress::DeleteEntries(progress)
+                | SecondaryCleanupProgress::DeleteDeltas(progress) => map_prefix(progress, map)?,
+                SecondaryCleanupProgress::Finalize(_) => {}
+            },
+            Self::VectorBuild(VectorBuildProgress::Constructing(stage)) => match stage {
+                VectorBuildStage::AdoptLegacy(progress) => {
+                    map_optional(&mut progress.cursor, map)?;
+                }
+                VectorBuildStage::ValidateAdoptedDirectory(progress) => {
+                    map_optional(&mut progress.cursor, map)?;
+                }
+                VectorBuildStage::Scan(progress) => map_source(progress, map)?,
+                VectorBuildStage::CatchUp(progress)
+                | VectorBuildStage::ValidateDescriptor(progress) => map_prefix(progress, map)?,
+                VectorBuildStage::Activate(_) => {}
+            },
+            Self::VectorBuild(VectorBuildProgress::Aborting(progress))
+            | Self::VectorCleanup(progress) => match progress {
+                VectorCleanupProgress::DeletePhysical(progress)
+                | VectorCleanupProgress::DeleteDeltas(progress) => map_prefix(progress, map)?,
+                VectorCleanupProgress::RetireCache(_) | VectorCleanupProgress::Finalize(_) => {}
+            },
+            Self::TextBuild(TextBuildProgress::Constructing(stage)) => match stage {
+                TextBuildStage::ScanSource(progress) | TextBuildStage::ScanPartitions(progress) => {
+                    map_source(progress, map)?
+                }
+                TextBuildStage::CatchUp(progress)
+                | TextBuildStage::Compact(progress)
+                | TextBuildStage::PrepareManifests(progress) => map_prefix(progress, map)?,
+                TextBuildStage::ValidateManifests(progress) => match progress {
+                    TextManifestValidationProgress::Pages(progress) => {
+                        map_optional(&mut progress.cursor, map)?;
+                    }
+                    TextManifestValidationProgress::Roots(progress)
+                    | TextManifestValidationProgress::EntityStates(progress) => {
+                        map_prefix(progress, map)?;
+                    }
+                },
+                TextBuildStage::Activate(_) => {}
+            },
+            Self::TextBuild(TextBuildProgress::Aborting(progress))
+            | Self::TextCleanup(progress) => match progress {
+                TextCleanupProgress::DeleteMetadata(progress) => map_prefix(progress, map)?,
+                TextCleanupProgress::Finalize(_) => {}
+            },
+        }
+        Ok(())
+    }
 }
 
 /// Public operation kind.
@@ -1128,6 +1216,17 @@ impl IndexOperationRecord {
 
     pub(crate) const fn queue_schedule(&self) -> Option<IndexOperationQueueSchedule> {
         self.queue_schedule
+    }
+
+    /// Rewrites every complete cursor without changing operation revisions or
+    /// execution state. This is reserved for blocking physical-key migrations.
+    pub(crate) fn try_map_cursors<E>(
+        &self,
+        mut map: impl FnMut(&IndexCursor) -> Result<IndexCursor, E>,
+    ) -> Result<Self, E> {
+        let mut mapped = self.clone();
+        mapped.progress.try_map_cursors(&mut map)?;
+        Ok(mapped)
     }
 
     /// Acquires or replaces a repository-authorized durable claim.

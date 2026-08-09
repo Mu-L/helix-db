@@ -6,18 +6,20 @@ use bytes::{BufMut, Bytes};
 use slatedb::{Db, IsolationLevel};
 
 use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
+use crate::encoding::v1::keys::Key as GraphKey;
 use crate::encoding::v2::keys::{
-    Key, ScopedKey, SecondaryEntryLane, GLOBAL_SENTINEL, TENANT_SENTINEL,
+    GlobalKey, Key, ScopedKey, SecondaryEntryLane, GLOBAL_SENTINEL, TENANT_SENTINEL,
 };
 use crate::encoding::v2::values::{
     decode_applied_state, decode_build_artifact, decode_build_delta, decode_corpus_statistics,
     decode_index_record, decode_manifest_page, decode_manifest_root, decode_operation_record,
     decode_partition_mapping, decode_secondary_entry, decode_statistics_entity,
-    decode_term_statistics, decode_text_entity_state, SecondaryEqualityBitmapValue,
+    decode_term_statistics, decode_text_entity_state, encode_operation_record,
+    SecondaryEqualityBitmapValue,
 };
 use crate::error::{HelixDbError, Result};
 
-use super::{IndexGenerationId, IndexId, IndexOperationId};
+use super::{IndexCursor, IndexGenerationId, IndexId, IndexOperationId};
 
 const MIGRATION_BATCH_SIZE: usize = 256;
 
@@ -130,12 +132,13 @@ pub(super) async fn copy_v3_tenant_keys(
                 let Key::Data { kind, .. } = parse_legacy_data_key(scope, &row.key)? else {
                     return Err(corruption("legacy tenant prefix yielded a global V2 key"));
                 };
-                validate_legacy_value(&kind, &row.value)?;
                 if exclusions.excludes(*tenant, &kind) {
+                    validate_legacy_value(&kind, &row.value)?;
                     continue;
                 }
+                let destination_value = migrate_legacy_value(scope, &kind, &row.value)?;
                 let destination = Key::Data { scope, kind }.to_bytes();
-                batch.push((destination, row.value));
+                batch.push((destination, destination_value));
             }
             if batch.is_empty() {
                 break;
@@ -189,11 +192,12 @@ pub(super) async fn verify_v3_tenant_keys(
                 let Key::Data { kind, .. } = parse_legacy_data_key(scope, &row.key)? else {
                     return Err(corruption("legacy tenant prefix yielded a global V2 key"));
                 };
-                validate_legacy_value(&kind, &row.value)?;
                 if exclusions.excludes(*tenant, &kind) {
+                    validate_legacy_value(&kind, &row.value)?;
                     continue;
                 }
-                batch.push((Key::Data { scope, kind }.to_bytes(), row.value));
+                let destination_value = migrate_legacy_value(scope, &kind, &row.value)?;
+                batch.push((Key::Data { scope, kind }.to_bytes(), destination_value));
             }
             if batch.is_empty() {
                 break;
@@ -328,6 +332,350 @@ fn validate_legacy_value(kind: &ScopedKey, value: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn migrate_legacy_value(scope: DataScope, kind: &ScopedKey, value: &[u8]) -> Result<Bytes> {
+    let ScopedKey::Operation(_) = kind else {
+        validate_legacy_value(kind, value)?;
+        return Ok(Bytes::copy_from_slice(value));
+    };
+    let operation = decode_operation_record(value)?;
+    let mut changed = false;
+    let migrated = operation.try_map_cursors(|cursor| {
+        let migrated = migrate_legacy_cursor(scope, cursor)?;
+        changed |= &migrated != cursor;
+        Ok::<IndexCursor, HelixDbError>(migrated)
+    })?;
+    if changed {
+        Ok(encode_operation_record(&migrated))
+    } else {
+        Ok(Bytes::copy_from_slice(value))
+    }
+}
+
+fn migrate_legacy_cursor(scope: DataScope, cursor: &IndexCursor) -> Result<IndexCursor> {
+    if GlobalKey::parse_from_slice(cursor.as_bytes()).is_ok()
+        || Key::parse_from_slice(scope, cursor.as_bytes()).is_ok()
+        || GraphKey::parse_from_slice(scope, cursor.as_bytes()).is_ok()
+    {
+        return Ok(cursor.clone());
+    }
+    let Key::Data { kind, .. } = parse_legacy_data_key(scope, cursor.as_bytes())? else {
+        return Err(corruption(
+            "legacy tenant cursor decoded as a global V2 key",
+        ));
+    };
+    IndexCursor::try_new(Key::Data { scope, kind }.to_bytes())
+        .map_err(|error| corruption(&error.to_string()))
+}
+
 fn corruption(message: &str) -> HelixDbError {
     HelixDbError::IndexCatalogCorruption(message.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use slatedb::object_store::memory::InMemory;
+
+    use super::*;
+    use crate::encoding::indexes::range::RangeIndexDirection;
+    use crate::encoding::v1::keys::{DataKeyKind, NodePropertyKey};
+    use crate::encoding::v2::keys::{
+        CanonicalSecondaryValue, IndexEntity, IndexEntityStateKey, PartitionFingerprint,
+        SecondaryEntryKey, SecondaryEntryLane, TextBuildArtifactKey, TextEntityStateKey,
+        TextManifestRootKey,
+    };
+    use crate::index_lifecycle::{
+        IndexComponent, IndexElementKind, IndexEntityId, IndexIdentity, IndexIdentityFamily,
+        IndexOperationExecutionState, IndexOperationFamily, IndexOperationProgress,
+        IndexOperationRecord, IndexOperationRevision, IndexRevision, OperationCounters,
+        PrefixScanProgress, SecondaryBuildProgress, SecondaryBuildStage, SecondaryCleanupProgress,
+        TextBuildProgress, TextBuildStage, TextCleanupProgress, VectorBuildProgress,
+        VectorBuildStage, VectorCleanupProgress,
+    };
+
+    fn index_id() -> IndexId {
+        IndexId::new(7).unwrap()
+    }
+
+    fn generation() -> IndexGenerationId {
+        IndexGenerationId::new(9).unwrap()
+    }
+
+    fn identity(family: IndexOperationFamily) -> IndexIdentity {
+        let family = match family {
+            IndexOperationFamily::Secondary => IndexIdentityFamily::SecondaryRange,
+            IndexOperationFamily::Vector => IndexIdentityFamily::Vector,
+            IndexOperationFamily::Text => IndexIdentityFamily::Text,
+        };
+        IndexIdentity::new(
+            family,
+            IndexElementKind::Node,
+            IndexComponent::try_new("label", "Document").unwrap(),
+            IndexComponent::try_new("property", "value").unwrap(),
+        )
+    }
+
+    fn operation(ordinal: u8, progress: IndexOperationProgress) -> IndexOperationRecord {
+        let family = progress.family();
+        let kind = progress.kind();
+        IndexOperationRecord::try_new(
+            IndexOperationId::from_bytes([ordinal; 16]).unwrap(),
+            index_id(),
+            identity(family),
+            generation(),
+            IndexRevision::initial(),
+            IndexOperationRevision::initial(),
+            kind,
+            family,
+            progress,
+            1,
+            IndexOperationExecutionState::Queued {
+                not_before_unix_millis: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn migrated_cursor(scope: DataScope, kind: ScopedKey) -> (IndexCursor, Bytes) {
+        let legacy = IndexCursor::try_new(legacy_data_key(scope, kind.clone())).unwrap();
+        let current = Key::Data { scope, kind }.to_bytes();
+        (legacy, current)
+    }
+
+    fn prefix(cursor: IndexCursor) -> PrefixScanProgress {
+        PrefixScanProgress {
+            cursor: Some(cursor),
+            counters: OperationCounters::default(),
+        }
+    }
+
+    fn operation_cases(scope: DataScope) -> Vec<(IndexOperationRecord, Bytes)> {
+        let entity = IndexEntity {
+            kind: IndexElementKind::Node,
+            id: IndexEntityId::new(11),
+        };
+        let delta = || {
+            ScopedKey::BuildDelta(IndexEntityStateKey {
+                index_id: index_id(),
+                generation: generation(),
+                entity,
+            })
+        };
+        let (secondary_build, secondary_build_current) = migrated_cursor(scope, delta());
+        let (vector_build, vector_build_current) = migrated_cursor(scope, delta());
+        let (vector_cleanup, vector_cleanup_current) = migrated_cursor(scope, delta());
+
+        let range = ScopedKey::SecondaryEntry(
+            SecondaryEntryKey::try_new(
+                index_id(),
+                generation(),
+                SecondaryEntryLane::NodeRangeAscending,
+                CanonicalSecondaryValue::range_string(RangeIndexDirection::Asc, "shared"),
+                Some(entity.id),
+            )
+            .unwrap(),
+        );
+        let (secondary_cleanup, secondary_cleanup_current) = migrated_cursor(scope, range);
+
+        let root = TextManifestRootKey {
+            index_id: index_id(),
+            generation: generation(),
+            partition: PartitionFingerprint::new([0x22; 32]),
+        };
+        let (text_build, text_build_current) = migrated_cursor(
+            scope,
+            ScopedKey::TextBuildArtifact(TextBuildArtifactKey { root, ordinal: 3 }),
+        );
+        let (text_cleanup, text_cleanup_current) = migrated_cursor(
+            scope,
+            ScopedKey::TextEntityState(TextEntityStateKey { root, entity }),
+        );
+
+        vec![
+            (
+                operation(
+                    1,
+                    IndexOperationProgress::SecondaryBuild(SecondaryBuildProgress::Constructing(
+                        SecondaryBuildStage::CatchUp(prefix(secondary_build)),
+                    )),
+                ),
+                secondary_build_current,
+            ),
+            (
+                operation(
+                    2,
+                    IndexOperationProgress::SecondaryCleanup(
+                        SecondaryCleanupProgress::DeleteEntries(prefix(secondary_cleanup)),
+                    ),
+                ),
+                secondary_cleanup_current,
+            ),
+            (
+                operation(
+                    3,
+                    IndexOperationProgress::VectorBuild(VectorBuildProgress::Constructing(
+                        VectorBuildStage::CatchUp(prefix(vector_build)),
+                    )),
+                ),
+                vector_build_current,
+            ),
+            (
+                operation(
+                    4,
+                    IndexOperationProgress::VectorCleanup(VectorCleanupProgress::DeleteDeltas(
+                        prefix(vector_cleanup),
+                    )),
+                ),
+                vector_cleanup_current,
+            ),
+            (
+                operation(
+                    5,
+                    IndexOperationProgress::TextBuild(TextBuildProgress::Constructing(
+                        TextBuildStage::PrepareManifests(prefix(text_build)),
+                    )),
+                ),
+                text_build_current,
+            ),
+            (
+                operation(
+                    6,
+                    IndexOperationProgress::TextCleanup(TextCleanupProgress::DeleteMetadata(
+                        prefix(text_cleanup),
+                    )),
+                ),
+                text_cleanup_current,
+            ),
+        ]
+    }
+
+    #[test]
+    fn managed_cursors_are_reframed_for_every_lifecycle_family() {
+        let scope = DataScope::Tenant(TenantId::from_u128(0xABCD));
+        for (operation, expected_cursor) in operation_cases(scope) {
+            assert!(
+                !super::super::repository::operation_record_cursors_are_valid(scope, &operation)
+            );
+            let encoded = encode_operation_record(&operation);
+            let migrated = migrate_legacy_value(
+                scope,
+                &ScopedKey::operation(operation.operation_id()),
+                &encoded,
+            )
+            .unwrap();
+            let migrated = decode_operation_record(&migrated).unwrap();
+
+            assert_eq!(
+                migrated.operation_revision(),
+                operation.operation_revision()
+            );
+            assert_eq!(migrated.execution_state(), operation.execution_state());
+            assert!(super::super::repository::operation_record_cursors_are_valid(scope, &migrated));
+            assert!(migrated
+                .progress()
+                .cursors_are_valid(|cursor| { cursor.as_bytes() == &expected_cursor }));
+        }
+    }
+
+    #[test]
+    fn graph_cursors_remain_byte_identical() {
+        let scope = DataScope::Tenant(TenantId::from_u128(0xABCD));
+        let graph_cursor = IndexCursor::try_new(
+            GraphKey::Data {
+                scope,
+                kind: DataKeyKind::NodeProperty(NodePropertyKey::new(11)),
+            }
+            .to_bytes(),
+        )
+        .unwrap();
+        let operation = operation(
+            7,
+            IndexOperationProgress::SecondaryBuild(SecondaryBuildProgress::Constructing(
+                SecondaryBuildStage::Scan(super::super::SourceScanProgress {
+                    inclusive_upper_bound: graph_cursor.clone(),
+                    cursor: Some(graph_cursor),
+                    counters: OperationCounters::default(),
+                }),
+            )),
+        );
+        let encoded = encode_operation_record(&operation);
+
+        assert_eq!(
+            migrate_legacy_value(
+                scope,
+                &ScopedKey::operation(operation.operation_id()),
+                &encoded,
+            )
+            .unwrap(),
+            encoded
+        );
+    }
+
+    #[tokio::test]
+    async fn copy_and_verification_use_the_reframed_operation_value() {
+        let db = Db::builder("v4-tenant-operation-cursor-copy", Arc::new(InMemory::new()))
+            .build()
+            .await
+            .unwrap();
+        let scope = DataScope::Tenant(TenantId::from_u128(0xABCD));
+        let (operation, expected_cursor) = operation_cases(scope).remove(1);
+        let kind = ScopedKey::operation(operation.operation_id());
+        db.put(
+            legacy_data_key(scope, kind.clone()),
+            encode_operation_record(&operation),
+        )
+        .await
+        .unwrap();
+        let DataScope::Tenant(tenant) = scope else {
+            unreachable!()
+        };
+        let tenants = BTreeSet::from([tenant]);
+        let exclusions = TenantMigrationExclusions::default();
+
+        copy_v3_tenant_keys(&db, &tenants, &exclusions)
+            .await
+            .unwrap();
+        // Replaying the copy after a committed batch is safe and compares the
+        // same transformed value during verification.
+        copy_v3_tenant_keys(&db, &tenants, &exclusions)
+            .await
+            .unwrap();
+        verify_v3_tenant_keys(&db, &tenants, &exclusions)
+            .await
+            .unwrap();
+
+        let migrated = db
+            .get(Key::Data { scope, kind }.to_bytes())
+            .await
+            .unwrap()
+            .map(|value| decode_operation_record(&value).unwrap())
+            .unwrap();
+        assert!(migrated
+            .progress()
+            .cursors_are_valid(|cursor| { cursor.as_bytes() == &expected_cursor }));
+        assert!(super::super::repository::operation_record_cursors_are_valid(scope, &migrated));
+        db.close().await.unwrap();
+    }
+
+    #[test]
+    fn malformed_operation_cursor_fails_closed() {
+        let scope = DataScope::Tenant(TenantId::from_u128(0xABCD));
+        let invalid = IndexCursor::try_new(Bytes::from_static(b"not-an-index-key")).unwrap();
+        let operation = operation(
+            8,
+            IndexOperationProgress::SecondaryCleanup(SecondaryCleanupProgress::DeleteEntries(
+                prefix(invalid),
+            )),
+        );
+
+        assert!(matches!(
+            migrate_legacy_value(
+                scope,
+                &ScopedKey::operation(operation.operation_id()),
+                &encode_operation_record(&operation),
+            ),
+            Err(HelixDbError::IndexCatalogCorruption(_))
+        ));
+    }
 }
