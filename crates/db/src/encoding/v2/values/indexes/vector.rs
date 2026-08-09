@@ -7,7 +7,7 @@ use crate::index_lifecycle::work::{VectorPartitionMappingValue, VectorTenantPart
 
 use super::super::{
     model_error, put_generation, put_index_id, put_partition, take_generation, take_index_id,
-    take_partition, unknown_discriminant, work_model_error, ValueDecoder, ValueEncoder,
+    take_partition, work_model_error, ValueDecoder, ValueEncoder,
 };
 
 const PARTITION_MAPPING_KIND: u8 = 0x0F;
@@ -26,10 +26,10 @@ pub(crate) fn decode_partition_mapping(
 ) -> Result<VectorPartitionMappingValue, EncodingError> {
     let mut decoder = ValueDecoder::new(value)?;
     if decoder.kind() != PARTITION_MAPPING_KIND {
-        return Err(unknown_discriminant(
-            "vector partition mapping value kind",
-            decoder.kind(),
-        ));
+        return Err(EncodingError::UnexpectedValueKind {
+            expected: PARTITION_MAPPING_KIND,
+            actual: decoder.kind(),
+        });
     }
     let decoded = VectorPartitionMappingValue {
         index_id: take_index_id(&mut decoder)?,

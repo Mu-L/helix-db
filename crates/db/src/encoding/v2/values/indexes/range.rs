@@ -9,7 +9,7 @@ use crate::index_lifecycle::IndexEntityId;
 
 use super::super::{
     put_generation, put_index_id, put_secondary_lane, take_generation, take_index_id,
-    take_secondary_lane, unknown_discriminant, ValueDecoder, ValueEncoder,
+    take_secondary_lane, ValueDecoder, ValueEncoder,
 };
 
 const SECONDARY_ENTRY_KIND: u8 = 0x05;
@@ -39,10 +39,10 @@ pub(crate) fn decode_entry(
     }
     let mut decoder = ValueDecoder::new(value)?;
     if decoder.kind() != SECONDARY_ENTRY_KIND {
-        return Err(unknown_discriminant(
-            "secondary range value kind",
-            decoder.kind(),
-        ));
+        return Err(EncodingError::UnexpectedValueKind {
+            expected: SECONDARY_ENTRY_KIND,
+            actual: decoder.kind(),
+        });
     }
     let decoded = SecondaryEntryValue {
         index_id: take_index_id(&mut decoder)?,

@@ -37,6 +37,10 @@ pub enum EncodingError {
     #[error("Invalid index key: {0}")]
     InvalidIndexKey(String),
 
+    /// A typed key referenced a value from another persisted value family.
+    #[error("Unexpected V2 value kind: expected {expected:#04x}, got {actual:#04x}")]
+    UnexpectedValueKind { expected: u8, actual: u8 },
+
     /// Persisted equality digest does not match its canonical value.
     #[error("Canonical equality digest does not match canonical bytes")]
     CanonicalEqualityDigestMismatch,

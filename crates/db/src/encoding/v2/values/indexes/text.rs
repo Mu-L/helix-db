@@ -32,18 +32,23 @@ fn decoder(
     expected_kind: u8,
     supports_legacy_split_version: bool,
 ) -> Result<(ValueDecoder<'_>, bool), EncodingError> {
-    let decoder = if supports_legacy_split_version {
-        ValueDecoder::with_supported_versions(
-            value,
-            &[INDEX_V2_VALUE_VERSION, INDEX_V3_SPLIT_VALUE_VERSION],
-        )?
-    } else {
-        ValueDecoder::new(value)?
-    };
+    let decoder = ValueDecoder::with_supported_versions(
+        value,
+        &[INDEX_V2_VALUE_VERSION, INDEX_V3_SPLIT_VALUE_VERSION],
+    )?;
     if decoder.kind() != expected_kind {
-        return Err(unknown_discriminant("text value kind", decoder.kind()));
+        return Err(EncodingError::UnexpectedValueKind {
+            expected: expected_kind,
+            actual: decoder.kind(),
+        });
     }
     let pruning_version = decoder.version() == INDEX_V3_SPLIT_VALUE_VERSION;
+    if pruning_version && !supports_legacy_split_version {
+        return Err(EncodingError::Custom(format!(
+            "value version {:#04x} is unsupported for text value kind {expected_kind:#04x}",
+            decoder.version(),
+        )));
+    }
     Ok((decoder, pruning_version))
 }
 
@@ -371,6 +376,36 @@ mod tests {
         assert!(decode_manifest_page(&malformed).is_err());
         malformed[0] = INDEX_V3_SPLIT_VALUE_VERSION + 1;
         assert!(decode_manifest_page(&malformed).is_err());
+    }
+
+    #[test]
+    fn typed_decoder_distinguishes_cross_kind_from_unsupported_version() {
+        let artifact = encode_build_artifact(&TextBuildArtifactValue {
+            index_id: index_id(),
+            generation: generation(),
+            partition: TextPartition::Unpartitioned,
+            artifact_ordinal: 0,
+            split: split(SplitPruning::Unavailable),
+        });
+        assert!(matches!(
+            decode_manifest_root(&artifact),
+            Err(EncodingError::UnexpectedValueKind {
+                expected: MANIFEST_ROOT_KIND,
+                actual: BUILD_ARTIFACT_KIND,
+            })
+        ));
+
+        let mut unsupported = encode_manifest_root(&TextManifestRootValue::empty(
+            index_id(),
+            generation(),
+            TextPartition::Unpartitioned,
+        ))
+        .to_vec();
+        unsupported[0] = INDEX_V3_SPLIT_VALUE_VERSION;
+        assert!(matches!(
+            decode_manifest_root(&unsupported),
+            Err(EncodingError::Custom(reason)) if reason.contains("unsupported")
+        ));
     }
 
     #[test]

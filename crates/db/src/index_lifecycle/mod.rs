@@ -67,13 +67,9 @@ pub(crate) fn expect_typed_value<T>(
 ) -> crate::Result<T> {
     match decoded {
         Ok(value) => Ok(value),
-        Err(crate::encoding::error::EncodingError::Custom(reason))
-            if reason.ends_with(" key contains another value kind") =>
-        {
-            Err(crate::HelixDbError::IndexCatalogCorruption(
-                mismatch_reason.to_string(),
-            ))
-        }
+        Err(crate::encoding::error::EncodingError::UnexpectedValueKind { .. }) => Err(
+            crate::HelixDbError::IndexCatalogCorruption(mismatch_reason.to_string()),
+        ),
         Err(error) => Err(error.into()),
     }
 }

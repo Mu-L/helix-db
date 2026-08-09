@@ -36,10 +36,10 @@ pub(crate) fn encode_build_delta(value: &CoalescedBuildDeltaValue) -> Bytes {
 pub(crate) fn decode_build_delta(value: &[u8]) -> Result<CoalescedBuildDeltaValue, EncodingError> {
     let mut decoder = ValueDecoder::new(value)?;
     if decoder.kind() != BUILD_DELTA_KIND {
-        return Err(unknown_discriminant(
-            "build-delta value kind",
-            decoder.kind(),
-        ));
+        return Err(EncodingError::UnexpectedValueKind {
+            expected: BUILD_DELTA_KIND,
+            actual: decoder.kind(),
+        });
     }
     let decoded = CoalescedBuildDeltaValue {
         index_id: take_index_id(&mut decoder)?,
@@ -80,10 +80,10 @@ pub(crate) fn encode_applied_state(value: &AppliedEntityStateValue) -> Bytes {
 pub(crate) fn decode_applied_state(value: &[u8]) -> Result<AppliedEntityStateValue, EncodingError> {
     let mut decoder = ValueDecoder::new(value)?;
     if decoder.kind() != APPLIED_STATE_KIND {
-        return Err(unknown_discriminant(
-            "applied-state value kind",
-            decoder.kind(),
-        ));
+        return Err(EncodingError::UnexpectedValueKind {
+            expected: APPLIED_STATE_KIND,
+            actual: decoder.kind(),
+        });
     }
     let index_id = take_index_id(&mut decoder)?;
     let generation = take_generation(&mut decoder)?;
@@ -122,7 +122,10 @@ pub(crate) fn encode_index_record(record: &IndexRecordV2) -> Bytes {
 pub(crate) fn decode_index_record(value: &[u8]) -> Result<IndexRecordV2, EncodingError> {
     let mut decoder = ValueDecoder::new(value)?;
     if decoder.kind() != INDEX_RECORD_KIND {
-        return Err(unknown_discriminant("index record kind", decoder.kind()));
+        return Err(EncodingError::UnexpectedValueKind {
+            expected: INDEX_RECORD_KIND,
+            actual: decoder.kind(),
+        });
     }
     let index_id = take_index_id(&mut decoder)?;
     let identity = take_identity(&mut decoder)?;
@@ -243,10 +246,10 @@ pub(crate) fn decode_operation_record_with_compatibility(
 ) -> Result<(IndexOperationRecord, bool), EncodingError> {
     let mut decoder = ValueDecoder::new(value)?;
     if decoder.kind() != OPERATION_RECORD_KIND {
-        return Err(unknown_discriminant(
-            "operation record kind",
-            decoder.kind(),
-        ));
+        return Err(EncodingError::UnexpectedValueKind {
+            expected: OPERATION_RECORD_KIND,
+            actual: decoder.kind(),
+        });
     }
     let operation_id = take_operation_id(&mut decoder)?;
     let index_id = take_index_id(&mut decoder)?;
