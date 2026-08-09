@@ -3374,7 +3374,7 @@ async fn read_authoritative_properties(
         .transpose()
 }
 
-fn authoritative_property_key(scope: DataScope, entity: IndexEntity) -> Bytes {
+pub(super) fn authoritative_property_key(scope: DataScope, entity: IndexEntity) -> Bytes {
     match entity.kind {
         IndexElementKind::Node => Key::Data {
             scope,

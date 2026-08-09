@@ -16,7 +16,8 @@ use slatedb::{Db, IsolationLevel};
 use crate::encoding::property::decode_properties;
 use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
 use crate::encoding::v2::keys::{
-    CanonicalSecondaryValue, GlobalKey, Key, RecordKind, ScopedKey, SecondaryEqualityBitmapKey,
+    CanonicalSecondaryValue, GlobalKey, IndexEntity, Key, RecordKind, ScopedKey,
+    SecondaryEqualityBitmapKey,
 };
 use crate::encoding::v2::values::{
     decode_index_record, decode_operation_record, encode_metadata_value, encode_operation_record,
@@ -319,27 +320,103 @@ fn index_record_candidates(key: &[u8]) -> Result<Vec<(DataScope, ScopedKey)>> {
 
 async fn rebuild_active_generation(db: &Db, generation: &EqualityGeneration) -> Result<()> {
     clear_prefix(db, &bitmap_prefix(generation)).await?;
-    let expected = authoritative_bitmaps(db, generation).await?;
-    for chunk in expected
-        .iter()
-        .collect::<Vec<_>>()
-        .chunks(MIGRATION_BATCH_SIZE)
-    {
+    let source_prefix =
+        super::secondary::source_prefix(generation.scope, generation.definition.element_kind());
+    let mut rows = db.scan_prefix(source_prefix, ..).await?;
+    loop {
+        let mut additions = BTreeMap::<Bytes, RoaringTreemap>::new();
+        let mut source_rows = 0;
+        while source_rows < MIGRATION_BATCH_SIZE {
+            let Some(row) = rows.next().await? else {
+                break;
+            };
+            source_rows += 1;
+            let Some(entity_id) = super::secondary::source_entity(
+                generation.scope,
+                generation.definition.element_kind(),
+                &row.key,
+            )?
+            else {
+                continue;
+            };
+            let Some(key) = authoritative_bitmap_key(generation, entity_id, &row.value)? else {
+                continue;
+            };
+            additions.entry(key).or_default().insert(entity_id.get());
+        }
+        if source_rows == 0 {
+            break;
+        }
+        if additions.is_empty() {
+            continue;
+        }
+
         trip(EqualityBitmapMigrationFailpoint::BatchBefore)?;
         let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
-        for (key, ids) in chunk {
-            transaction.put(
-                (*key).clone(),
-                SecondaryEqualityBitmapValue::new((*ids).clone()).encode(),
-            )?;
+        for (key, ids) in additions {
+            transaction.merge(key, SecondaryEqualityBitmapValue::new(ids).encode())?;
         }
         transaction.commit().await?;
         trip(EqualityBitmapMigrationFailpoint::BatchAfter)?;
     }
 
     trip(EqualityBitmapMigrationFailpoint::VerificationBefore)?;
-    let authoritative = authoritative_bitmaps(db, generation).await?;
-    let mut remaining = authoritative;
+    verify_graph_to_bitmaps(db, generation).await?;
+    verify_bitmaps_to_graph(db, generation).await?;
+    trip(EqualityBitmapMigrationFailpoint::VerificationAfter)
+}
+
+async fn verify_graph_to_bitmaps(db: &Db, generation: &EqualityGeneration) -> Result<()> {
+    let source_prefix =
+        super::secondary::source_prefix(generation.scope, generation.definition.element_kind());
+    let mut rows = db.scan_prefix(source_prefix, ..).await?;
+    loop {
+        let mut expected = BTreeMap::<Bytes, RoaringTreemap>::new();
+        let mut source_rows = 0;
+        while source_rows < MIGRATION_BATCH_SIZE {
+            let Some(row) = rows.next().await? else {
+                break;
+            };
+            source_rows += 1;
+            let Some(entity_id) = super::secondary::source_entity(
+                generation.scope,
+                generation.definition.element_kind(),
+                &row.key,
+            )?
+            else {
+                continue;
+            };
+            let Some(key) = authoritative_bitmap_key(generation, entity_id, &row.value)? else {
+                continue;
+            };
+            expected.entry(key).or_default().insert(entity_id.get());
+        }
+        if source_rows == 0 {
+            return Ok(());
+        }
+        if expected.is_empty() {
+            continue;
+        }
+
+        let keys = expected.keys().cloned().collect::<Vec<_>>();
+        let values = db.multi_get(&keys).await?;
+        for ((_, expected_ids), value) in expected.into_iter().zip(values) {
+            let Some(value) = value else {
+                return Err(corruption(
+                    "authoritative graph value is absent from V4 equality bitmaps",
+                ));
+            };
+            let actual = SecondaryEqualityBitmapValue::decode(&value)?.into_ids();
+            if !expected_ids.is_subset(&actual) {
+                return Err(corruption(
+                    "authoritative graph membership is absent from a V4 equality bitmap",
+                ));
+            }
+        }
+    }
+}
+
+async fn verify_bitmaps_to_graph(db: &Db, generation: &EqualityGeneration) -> Result<()> {
     let prefix = bitmap_prefix(generation);
     let mut rows = db.scan_prefix(prefix, ..).await?;
     while let Some(row) = rows.next().await? {
@@ -356,63 +433,78 @@ async fn rebuild_active_generation(db: &Db, generation: &EqualityGeneration) -> 
         {
             return Err(corruption("V4 equality row escaped its generation prefix"));
         }
-        let Some(expected) = remaining.remove(&row.key) else {
-            return Err(corruption(
-                "V4 equality bitmap has no authoritative graph value",
-            ));
-        };
         let actual = SecondaryEqualityBitmapValue::decode(&row.value)?.into_ids();
-        if actual != expected {
-            return Err(corruption(
-                "V4 equality bitmap membership differs from authoritative graph state",
-            ));
+        if actual.is_empty() {
+            return Err(corruption("V4 equality bitmap must not be empty"));
+        }
+        let mut entity_ids = actual.iter();
+        loop {
+            let batch = entity_ids
+                .by_ref()
+                .take(MIGRATION_BATCH_SIZE)
+                .map(super::IndexEntityId::new)
+                .collect::<Vec<_>>();
+            if batch.is_empty() {
+                break;
+            }
+            let property_keys = batch
+                .iter()
+                .map(|entity_id| {
+                    super::secondary::authoritative_property_key(
+                        generation.scope,
+                        IndexEntity {
+                            kind: generation.definition.element_kind(),
+                            id: *entity_id,
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            let properties = db.multi_get(&property_keys).await?;
+            for (entity_id, properties) in batch.into_iter().zip(properties) {
+                let Some(properties) = properties else {
+                    return Err(corruption(
+                        "V4 equality bitmap contains an absent graph entity",
+                    ));
+                };
+                let expected = authoritative_bitmap_key(generation, entity_id, &properties)?;
+                if expected.as_ref() != Some(&row.key) {
+                    return Err(corruption(
+                        "V4 equality bitmap member differs from authoritative graph state",
+                    ));
+                }
+            }
         }
     }
-    if !remaining.is_empty() {
-        return Err(corruption(
-            "authoritative graph values are absent from V4 equality bitmaps",
-        ));
-    }
-    trip(EqualityBitmapMigrationFailpoint::VerificationAfter)
+    Ok(())
 }
 
-async fn authoritative_bitmaps(
-    db: &Db,
+fn authoritative_bitmap_key(
     generation: &EqualityGeneration,
-) -> Result<BTreeMap<Bytes, RoaringTreemap>> {
-    let prefix =
-        super::secondary::source_prefix(generation.scope, generation.definition.element_kind());
-    let mut rows = db.scan_prefix(prefix, ..).await?;
-    let mut bitmaps = BTreeMap::<Bytes, RoaringTreemap>::new();
-    while let Some(row) = rows.next().await? {
-        let Some(entity_id) = super::secondary::source_entity(
-            generation.scope,
-            generation.definition.element_kind(),
-            &row.key,
-        )?
-        else {
-            continue;
-        };
-        let properties = decode_properties(&row.value)?;
-        let canonical =
-            super::secondary::canonical_value(&generation.definition, &properties, entity_id)
-                .map_err(|_| corruption("authoritative equality value cannot be indexed"))?;
-        let Some(CanonicalSecondaryValue::Equality(value)) = canonical else {
-            continue;
-        };
-        let key = Key::Data {
-            scope: generation.scope,
-            kind: ScopedKey::SecondaryEqualityBitmap(SecondaryEqualityBitmapKey::try_new(
-                generation.index_id,
-                generation.generation,
-                generation.definition.element_kind(),
-                value,
-            )?),
-        }
-        .to_bytes();
-        bitmaps.entry(key).or_default().insert(entity_id.get());
+    entity_id: super::IndexEntityId,
+    properties: &[u8],
+) -> Result<Option<Bytes>> {
+    let properties = decode_properties(properties)?;
+    let canonical =
+        super::secondary::canonical_value(&generation.definition, &properties, entity_id)
+            .map_err(|_| corruption("authoritative equality value cannot be indexed"))?;
+    match canonical {
+        Some(CanonicalSecondaryValue::Equality(value)) => Ok(Some(
+            Key::Data {
+                scope: generation.scope,
+                kind: ScopedKey::SecondaryEqualityBitmap(SecondaryEqualityBitmapKey::try_new(
+                    generation.index_id,
+                    generation.generation,
+                    generation.definition.element_kind(),
+                    value,
+                )?),
+            }
+            .to_bytes(),
+        )),
+        Some(CanonicalSecondaryValue::Range(_)) => Err(corruption(
+            "authoritative equality generation produced a range value",
+        )),
+        None => Ok(None),
     }
-    Ok(bitmaps)
 }
 
 async fn restart_building_generation(db: &Db, building: &BuildingEqualityGeneration) -> Result<()> {
@@ -891,6 +983,119 @@ mod tests {
             .unwrap();
 
         assert_active_migrated(&db, &generation).await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn active_v3_rows_stream_across_multiple_source_batches() {
+        let _guard = TEST_LOCK.lock().await;
+        const ENTITY_COUNT: u64 = (MIGRATION_BATCH_SIZE as u64 * 2) + 1;
+        let db = v3_db("v4-equality-bounded-source-batches").await;
+        let generation = put_active_index(&db, DataScope::LegacyUnscoped).await;
+        let properties = encode_properties(&[
+            Property::string("$label", "User"),
+            Property::string("email", "shared"),
+        ]);
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        for entity_id in 0..ENTITY_COUNT {
+            transaction
+                .put(
+                    GraphKey::Data {
+                        scope: generation.scope,
+                        kind: DataKeyKind::NodeProperty(NodePropertyKey::new(entity_id)),
+                    }
+                    .to_bytes(),
+                    properties.clone(),
+                )
+                .unwrap();
+            let entity_id = super::super::IndexEntityId::new(entity_id);
+            transaction
+                .put(
+                    tenant_envelope_migration::legacy_data_key(
+                        generation.scope,
+                        ScopedKey::SecondaryEntry(
+                            SecondaryEntryKey::try_new(
+                                generation.index_id,
+                                generation.generation,
+                                SecondaryEntryLane::NodeEquality,
+                                CanonicalSecondaryValue::equality_string("shared"),
+                                Some(entity_id),
+                            )
+                            .unwrap(),
+                        ),
+                    ),
+                    encode_secondary_entry(&SecondaryEntryValue {
+                        index_id: generation.index_id,
+                        generation: generation.generation,
+                        lane: SecondaryEntryLane::NodeEquality,
+                        entity_id,
+                    }),
+                )
+                .unwrap();
+        }
+        transaction.commit().await.unwrap();
+
+        super::super::repository::bootstrap_writer(&db)
+            .await
+            .unwrap();
+
+        let mut rows = db
+            .scan_prefix(bitmap_prefix(&generation), ..)
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        assert!(rows.next().await.unwrap().is_none());
+        let bitmap = SecondaryEqualityBitmapValue::decode(&row.value)
+            .unwrap()
+            .into_ids();
+        assert_eq!(bitmap.len(), ENTITY_COUNT);
+        assert_eq!(bitmap.min(), Some(0));
+        assert_eq!(bitmap.max(), Some(ENTITY_COUNT - 1));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bounded_verification_rejects_missing_and_extra_membership() {
+        let _guard = TEST_LOCK.lock().await;
+        let (db, generation) = setup_active_fixture("v4-equality-bounded-verification").await;
+        super::super::repository::bootstrap_writer(&db)
+            .await
+            .unwrap();
+
+        let mut rows = db
+            .scan_prefix(bitmap_prefix(&generation), ..)
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        let mut bitmap = SecondaryEqualityBitmapValue::decode(&row.value)
+            .unwrap()
+            .into_ids();
+        bitmap.remove(1);
+        db.put(
+            row.key.clone(),
+            SecondaryEqualityBitmapValue::new(bitmap.clone()).encode(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            verify_graph_to_bitmaps(&db, &generation).await,
+            Err(HelixDbError::IndexCatalogCorruption(message))
+                if message.contains("membership is absent")
+        ));
+
+        bitmap.insert(1);
+        bitmap.insert(99);
+        db.put(row.key, SecondaryEqualityBitmapValue::new(bitmap).encode())
+            .await
+            .unwrap();
+        assert!(matches!(
+            verify_bitmaps_to_graph(&db, &generation).await,
+            Err(HelixDbError::IndexCatalogCorruption(message))
+                if message.contains("absent graph entity")
+        ));
         db.close().await.unwrap();
     }
 
