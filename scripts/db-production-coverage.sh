@@ -82,7 +82,7 @@ TARGETS_JSON="$({
     | select(.kind | index("test"))
     | select(
         (.name | startswith("production_"))
-        or .name == "index_lifecycle_lifecycle_contracts"
+        or .name == "index_lifecycle_contracts"
     )
     | select(((."required-features" // []) | index("production-scale")) | not)
     | .name
@@ -94,6 +94,10 @@ while IFS= read -r target; do
 done < <(jq -r '.[]' <<<"$TARGETS_JSON")
 if [[ "${#TARGETS[@]}" -eq 0 ]]; then
     echo "db has no Cargo-discovered integration-test targets" >&2
+    exit 1
+fi
+if ! jq -e 'index("index_lifecycle_contracts") != null' <<<"$TARGETS_JSON" >/dev/null; then
+    echo "db production coverage omitted index_lifecycle_contracts" >&2
     exit 1
 fi
 

@@ -91,10 +91,10 @@ pub(crate) fn run() {
     );
     assert!(IndexStorageVersion::new(0).is_err());
     assert_eq!(
-        IndexStorageVersion::new(3)
+        IndexStorageVersion::new(IndexStorageVersion::CURRENT.get() + 1)
             .expect("non-zero future version remains representable")
             .get(),
-        3
+        IndexStorageVersion::CURRENT.get() + 1
     );
 
     let scope = DataScope::Tenant(TenantId::from_u128(u128::from_be_bytes([0xFE; 16])));

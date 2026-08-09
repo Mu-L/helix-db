@@ -5159,12 +5159,12 @@ pub(crate) mod production_contracts {
             requirement,
             crate::error::WriterMigrationRequirement::StorageVersion {
                 found: 2,
-                target: 3,
+                target: 4,
             }
         );
         assert_eq!(
             requirement.to_string(),
-            "storage version 2 must be upgraded to 3"
+            "storage version 2 must be upgraded to 4"
         );
         fixture.close().await.expect("fixture closes");
     }
@@ -5185,7 +5185,7 @@ pub(crate) mod production_contracts {
         IndexKey::Global { kind: key }.to_bytes()
     }
 
-    async fn assert_storage_version_three(reader: &(impl DbReadOps + Sync)) {
+    async fn assert_current_storage_version(reader: &(impl DbReadOps + Sync)) {
         let marker = reader
             .get(global(GlobalKey::StorageVersion))
             .await
@@ -5193,9 +5193,7 @@ pub(crate) mod production_contracts {
             .expect("storage marker exists");
         assert_eq!(
             decode_metadata_value(&marker).expect("storage marker decodes"),
-            IndexV2MetadataValue::StorageVersion(
-                IndexStorageVersion::new(0x0003).expect("storage version 3 is nonzero")
-            )
+            IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
         );
     }
 
@@ -7149,7 +7147,7 @@ pub(crate) mod production_contracts {
         crate::index_lifecycle::repository::bootstrap_writer(&tuple)
             .await
             .expect("tuple-only writer bootstrap commits");
-        assert_storage_version_three(&tuple).await;
+        assert_current_storage_version(&tuple).await;
         tuple.close().await.expect("tuple-only database closes");
         assert_reader_migration_gate(&tuple_database, Arc::clone(&tuple_store), false).await;
         let tuple_recovered = HelixDB::open_with_object_store_for_migration_parity(
@@ -7274,7 +7272,7 @@ pub(crate) mod production_contracts {
         )
         .await
         .expect("all persisted legacy definitions migrate");
-        assert_storage_version_three(migrated.inner_db().as_ref()).await;
+        assert_current_storage_version(migrated.inner_db().as_ref()).await;
         assert_legacy_catalog_empty(&migrated).await;
         crate::index_lifecycle::repository::require_reader_bootstrap_or_legacy(
             migrated.inner_db().as_ref(),

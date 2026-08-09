@@ -287,7 +287,9 @@ impl SecondaryMachine {
     async fn open() -> Self {
         let database = "phase11-secondary-state-machine";
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let db = Db::open(database, Arc::clone(&store))
+        let db = Db::builder(database, Arc::clone(&store))
+            .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
+            .build()
             .await
             .expect("state-machine database opens");
         crate::index_lifecycle::repository::bootstrap_writer(&db)
@@ -371,7 +373,9 @@ impl SecondaryMachine {
                     .close()
                     .await
                     .expect("state-machine writer closes before reopen");
-                self.db = Db::open(self.database, Arc::clone(&self.store))
+                self.db = Db::builder(self.database, Arc::clone(&self.store))
+                    .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
+                    .build()
                     .await
                     .expect("state-machine writer reopens");
                 self.driver = secondary_driver();
