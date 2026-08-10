@@ -54,9 +54,10 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
     let marker = transaction.get(&marker_key).await?;
     let logical = transaction.get(&logical_key).await?;
     let vector = transaction.get(&vector_key).await?;
+    let cleanup_ready = crate::migrations::index_storage_v4_cleanup_ready(&transaction).await?;
 
     let Some(marker) = marker else {
-        if logical.is_some() || vector.is_some() {
+        if logical.is_some() || vector.is_some() || cleanup_ready {
             return Err(HelixDbError::MigrationRequired {
                 reason: "V2 storage bootstrap is partial".to_string(),
             });
@@ -95,6 +96,7 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
                 },
             )),
         )?;
+        crate::migrations::stage_index_storage_v4_cleanup_ready(&transaction)?;
         transaction.commit().await?;
         return Ok(());
     };
@@ -107,10 +109,18 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
         });
     };
     validate_writer_bootstrap_values(&marker, logical.as_deref(), vector.as_deref())?;
+    if version < IndexStorageVersion::CURRENT && cleanup_ready {
+        return Err(HelixDbError::MigrationRequired {
+            reason: format!(
+                "index storage V4 cleanup is marked complete beside storage version {}",
+                version.get()
+            ),
+        });
+    }
     transaction.rollback();
     if version < IndexStorageVersion::CURRENT {
         super::equality_bitmap_migration::migrate_v3_to_v4(db).await?;
-    } else {
+    } else if !cleanup_ready {
         super::equality_bitmap_migration::cleanup_v3_nonunique_equality_rows(db).await?;
     }
     Ok(())
@@ -1425,7 +1435,101 @@ mod tests {
             decode_metadata_value(&marker).unwrap(),
             IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
         );
+        assert!(crate::migrations::index_storage_v4_cleanup_ready(&db)
+            .await
+            .unwrap());
         db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn markerless_v4_cleanup_runs_once_and_publishes_readiness() {
+        let db = Db::builder("markerless-v4-cleanup", Arc::new(InMemory::new()))
+            .build()
+            .await
+            .unwrap();
+        put_bootstrap_tuple(&db, IndexStorageVersion::CURRENT).await;
+        assert!(!crate::migrations::index_storage_v4_cleanup_ready(&db)
+            .await
+            .unwrap());
+
+        bootstrap_writer(&db).await.unwrap();
+
+        assert!(crate::migrations::index_storage_v4_cleanup_ready(&db)
+            .await
+            .unwrap());
+        bootstrap_writer(&db).await.unwrap();
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn malformed_or_premature_v4_cleanup_readiness_fails_closed() {
+        let orphan = Db::builder("orphan-v4-cleanup", Arc::new(InMemory::new()))
+            .build()
+            .await
+            .unwrap();
+        let transaction = orphan
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        crate::migrations::stage_index_storage_v4_cleanup_ready(&transaction).unwrap();
+        transaction.commit().await.unwrap();
+        assert!(matches!(
+            bootstrap_writer(&orphan).await,
+            Err(HelixDbError::MigrationRequired { reason })
+                if reason == "V2 storage bootstrap is partial"
+        ));
+        assert_eq!(
+            orphan
+                .get(global_key(GlobalKey::StorageVersion))
+                .await
+                .unwrap(),
+            None
+        );
+        orphan.close().await.unwrap();
+
+        let malformed = Db::builder("malformed-v4-cleanup", Arc::new(InMemory::new()))
+            .build()
+            .await
+            .unwrap();
+        put_bootstrap_tuple(&malformed, IndexStorageVersion::CURRENT).await;
+        malformed
+            .put(
+                GraphKey::Data {
+                    scope: DataScope::LegacyUnscoped,
+                    kind: DataKeyKind::IndexMetadata(MetadataKey::new(
+                        b"kv_migration_ready:index_storage_v4_cleanup",
+                    )),
+                }
+                .to_bytes(),
+                Bytes::from_static(b"invalid"),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            bootstrap_writer(&malformed).await,
+            Err(HelixDbError::MigrationRequired { reason })
+                if reason == "index storage V4 cleanup readiness marker is malformed"
+        ));
+        malformed.close().await.unwrap();
+
+        let premature = Db::builder("premature-v4-cleanup", Arc::new(InMemory::new()))
+            .build()
+            .await
+            .unwrap();
+        put_bootstrap_tuple(&premature, IndexStorageVersion::new(0x0003).unwrap()).await;
+        let transaction = premature
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        crate::migrations::stage_index_storage_v4_cleanup_ready(&transaction).unwrap();
+        transaction.commit().await.unwrap();
+        assert!(matches!(
+            bootstrap_writer(&premature).await,
+            Err(HelixDbError::MigrationRequired { reason })
+                if reason
+                    == "index storage V4 cleanup is marked complete beside storage version 3"
+        ));
+        premature.close().await.unwrap();
     }
 
     #[test]

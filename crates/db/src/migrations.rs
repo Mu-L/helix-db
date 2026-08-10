@@ -41,6 +41,7 @@ use crate::HelixWriter;
 const MIGRATION_JOB_PREFIX: &[u8] = b"kv_migration_job:";
 const GRAPH_FORMAT_V1_READY: &[u8] = b"kv_migration_ready:graph_format_v1";
 const INDEX_V2_MIGRATION_READY: &[u8] = b"kv_migration_ready:index_v2_catalog_v1";
+const INDEX_STORAGE_V4_CLEANUP_READY: &[u8] = b"kv_migration_ready:index_storage_v4_cleanup";
 const STORAGE_SCHEMA_VERSION: u64 = 1;
 const STORAGE_SCHEMA_COMPLETE: &[u8] = b"storage_schema_complete:v1";
 const LEGACY_DYNAMIC_INDEX_CATALOG_METADATA: [&[u8]; 3] = [
@@ -1234,6 +1235,43 @@ pub(crate) async fn index_v2_migration_ready(
         .await?
         .as_deref()
         == Some(b"1"))
+}
+
+/// Returns whether obsolete V3 managed-index rows were durably removed.
+pub(crate) async fn index_storage_v4_cleanup_ready(
+    read: &(impl DbReadOps + Send + Sync),
+) -> Result<bool> {
+    match read
+        .get(scoped_metadata_key(
+            DataScope::LegacyUnscoped,
+            INDEX_STORAGE_V4_CLEANUP_READY,
+        ))
+        .await?
+        .as_deref()
+    {
+        None => Ok(false),
+        Some(b"1") => Ok(true),
+        Some(_) => Err(HelixDbError::MigrationRequired {
+            reason: "index storage V4 cleanup readiness marker is malformed".to_string(),
+        }),
+    }
+}
+
+/// Stages V4 cleanup completion in the caller's existing transaction.
+pub(crate) fn stage_index_storage_v4_cleanup_ready(transaction: &DbTransaction) -> Result<()> {
+    transaction.put(
+        scoped_metadata_key(DataScope::LegacyUnscoped, INDEX_STORAGE_V4_CLEANUP_READY),
+        Bytes::from_static(b"1"),
+    )?;
+    Ok(())
+}
+
+/// Durably publishes V4 cleanup completion after cleanup succeeds.
+pub(crate) async fn publish_index_storage_v4_cleanup_ready(db: &Db) -> Result<()> {
+    let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
+    stage_index_storage_v4_cleanup_ready(&transaction)?;
+    transaction.commit().await?;
+    Ok(())
 }
 
 /// Reopens legacy-definition migration for a production-coverage fixture.
@@ -4199,6 +4237,44 @@ mod tests {
         let mut bytes = vec![op];
         bytes.extend_from_slice(&node_id.to_be_bytes());
         Bytes::from(bytes)
+    }
+
+    #[tokio::test]
+    async fn index_storage_v4_cleanup_readiness_is_byte_frozen_and_strict() {
+        let key = scoped_metadata_key(DataScope::LegacyUnscoped, INDEX_STORAGE_V4_CLEANUP_READY);
+        assert_eq!(
+            key.as_ref(),
+            b"\xFFkv_migration_ready:index_storage_v4_cleanup"
+        );
+
+        let db = Db::builder(
+            "index-storage-v4-cleanup-readiness",
+            Arc::new(InMemory::new()),
+        )
+        .build()
+        .await
+        .unwrap();
+        assert!(!index_storage_v4_cleanup_ready(&db).await.unwrap());
+
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        stage_index_storage_v4_cleanup_ready(&transaction).unwrap();
+        transaction.commit().await.unwrap();
+        assert_eq!(
+            db.get(&key).await.unwrap().as_deref(),
+            Some(b"1".as_slice())
+        );
+        assert!(index_storage_v4_cleanup_ready(&db).await.unwrap());
+
+        db.put(key, Bytes::from_static(b"invalid")).await.unwrap();
+        assert!(matches!(
+            index_storage_v4_cleanup_ready(&db).await,
+            Err(HelixDbError::MigrationRequired { reason })
+                if reason == "index storage V4 cleanup readiness marker is malformed"
+        ));
+        db.close().await.unwrap();
     }
 
     #[tokio::test]

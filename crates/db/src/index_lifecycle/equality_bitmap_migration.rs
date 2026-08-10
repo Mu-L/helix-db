@@ -218,7 +218,8 @@ pub(super) async fn cleanup_v3_nonunique_equality_rows(db: &Db) -> Result<()> {
         clear_v3_equality_generation(db, generation).await?;
     }
     tenant_envelope_migration::cleanup_v3_tenant_keys(db, &catalog.tenant_scopes).await?;
-    trip(EqualityBitmapMigrationFailpoint::CleanupAfter)
+    trip(EqualityBitmapMigrationFailpoint::CleanupAfter)?;
+    crate::migrations::publish_index_storage_v4_cleanup_ready(db).await
 }
 
 async fn discover_catalog(db: &Db) -> Result<MigrationCatalog> {
@@ -943,6 +944,9 @@ mod tests {
             decode_metadata_value(&marker).unwrap(),
             IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
         );
+        assert!(crate::migrations::index_storage_v4_cleanup_ready(db)
+            .await
+            .unwrap());
 
         let mut rows = db.scan_prefix(bitmap_prefix(generation), ..).await.unwrap();
         let row = rows.next().await.unwrap().unwrap();
@@ -981,6 +985,37 @@ mod tests {
             .unwrap();
 
         assert_active_migrated(&db, &generation).await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_v4_startup_does_not_enter_cleanup() {
+        let _guard = TEST_LOCK.lock().await;
+        let db = v3_db("completed-v4-startup-skips-cleanup").await;
+        db.put(
+            Key::Global {
+                kind: GlobalKey::StorageVersion,
+            }
+            .to_bytes(),
+            encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
+                IndexStorageVersion::CURRENT,
+            )),
+        )
+        .await
+        .unwrap();
+
+        super::super::repository::bootstrap_writer(&db)
+            .await
+            .unwrap();
+        inject_once(EqualityBitmapMigrationFailpoint::CleanupBefore).unwrap();
+
+        super::super::repository::bootstrap_writer(&db)
+            .await
+            .expect("completed V4 startup skips cleanup discovery");
+        assert!(!was_triggered());
+
+        assert!(cleanup_v3_nonunique_equality_rows(&db).await.is_err());
+        assert!(was_triggered());
         db.close().await.unwrap();
     }
 
