@@ -744,6 +744,187 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prepared_equality_lookup_uses_one_complete_point_read() {
+        const EMAIL: &str = "shared@example.com";
+
+        let db = Arc::new(
+            HelixDB::open(HelixDbSource::InMemory {
+                database: "query-service-one-read-equality".to_string(),
+            })
+            .await
+            .expect("writer should open"),
+        );
+        db.wait_for_startup_cache_warm().await;
+        db.install_index_for_tests(
+            crate::config::SecondaryIndexDefinition::node_equality("User", "email")
+                .expect("secondary index definition validates")
+                .try_into()
+                .expect("secondary index definition enters V2"),
+        )
+        .await
+        .expect("secondary index becomes active");
+        let service = HelixQueryService::new(Arc::clone(&db));
+        service
+            .execute_query(QueryRequest::write(write_batch().var_as(
+                "created",
+                g().add_n("User", vec![("email", PropertyInput::from(EMAIL))]),
+            )))
+            .await
+            .expect("indexed node insert succeeds");
+        let batch = read_batch()
+            .var_as(
+                "users",
+                g().n_with_label_where("User", Predicate::eq("email", EMAIL)),
+            )
+            .returning(["users"]);
+
+        crate::index_lifecycle::secondary::reset_equality_read_metrics();
+        service
+            .execute_query(QueryRequest::read(batch.clone()))
+            .await
+            .expect("prepared equality lookup succeeds");
+        assert_eq!(
+            crate::index_lifecycle::secondary::equality_read_metrics(),
+            crate::index_lifecycle::secondary::SecondaryEqualityReadMetrics {
+                point_reads: 1,
+                scans: 0,
+                graph_reads: 0,
+            }
+        );
+
+        let parallel_batch = read_batch()
+            .var_as(
+                "first",
+                g().n_with_label_where("User", Predicate::eq("email", EMAIL)),
+            )
+            .var_as(
+                "second",
+                g().n_with_label_where("User", Predicate::eq("email", EMAIL)),
+            )
+            .returning(["first", "second"]);
+        crate::index_lifecycle::secondary::reset_equality_read_metrics();
+        service
+            .execute_query(QueryRequest::read(parallel_batch))
+            .await
+            .expect("parallel prepared equality lookups succeed");
+        assert_eq!(
+            crate::index_lifecycle::secondary::equality_read_metrics().point_reads,
+            2,
+            "parallel contexts must retain the prepared catalog"
+        );
+
+        let prepared = db
+            .planner_context_scoped_prepared(ParamBindings::default(), DataScope::LegacyUnscoped)
+            .await
+            .expect("read request captures one exact catalog view");
+        let prepared_plan = helix_planner::planning::plan_read_batch(&batch, prepared.context())
+            .expect("prepared equality lookup plans");
+        db.refresh_runtime_catalog(DataScope::LegacyUnscoped)
+            .await
+            .expect("a concurrent catalog publication succeeds");
+        crate::index_lifecycle::secondary::reset_equality_read_metrics();
+        db.execute_prepared_scoped_controlled(
+            &prepared_plan,
+            ParamBindings::default(),
+            DataScope::LegacyUnscoped,
+            ExecutionControl::unlimited(),
+            prepared.into_catalog_proof(),
+        )
+        .await
+        .expect("the exact prepared read view survives a newer catalog publication");
+        assert_eq!(
+            crate::index_lifecycle::secondary::equality_read_metrics().point_reads,
+            1
+        );
+
+        let plan = helix_planner::planning::plan_read_batch(
+            &batch,
+            &db.planner_context(ParamBindings::default()),
+        )
+        .expect("public equality lookup plans");
+        crate::index_lifecycle::secondary::reset_equality_read_metrics();
+        db.execute(&plan, ParamBindings::default())
+            .await
+            .expect("unprepared equality lookup retains its safe fallback");
+        assert_eq!(
+            crate::index_lifecycle::secondary::equality_read_metrics(),
+            crate::index_lifecycle::secondary::SecondaryEqualityReadMetrics {
+                point_reads: 2,
+                scans: 0,
+                graph_reads: 0,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn prepared_reader_equality_lookup_reuses_its_exact_catalog_view() {
+        const EMAIL: &str = "reader@example.com";
+
+        let object_store: Arc<dyn slatedb::object_store::ObjectStore> = Arc::new(InMemory::new());
+        let writer = Arc::new(
+            HelixDB::open_with_object_store_for_tests(
+                "query-service-reader-one-read-equality",
+                Arc::clone(&object_store),
+            )
+            .await
+            .expect("writer should initialize storage"),
+        );
+        writer
+            .install_index_for_tests(
+                crate::config::SecondaryIndexDefinition::node_equality("User", "email")
+                    .expect("secondary index definition validates")
+                    .try_into()
+                    .expect("secondary index definition enters V2"),
+            )
+            .await
+            .expect("secondary index becomes active");
+        HelixQueryService::new(Arc::clone(&writer))
+            .execute_query(QueryRequest::write(write_batch().var_as(
+                "created",
+                g().add_n("User", vec![("email", PropertyInput::from(EMAIL))]),
+            )))
+            .await
+            .expect("indexed node insert succeeds");
+        writer
+            .flush_writer()
+            .await
+            .expect("writer state becomes reader-visible");
+
+        let reader = Arc::new(
+            HelixDB::open_reader_with_object_store_for_tests(
+                "query-service-reader-one-read-equality",
+                object_store,
+            )
+            .await
+            .expect("reader should open"),
+        );
+        let service = HelixQueryService::new(Arc::clone(&reader));
+        crate::index_lifecycle::secondary::reset_equality_read_metrics();
+        service
+            .execute_query(QueryRequest::read(
+                read_batch()
+                    .var_as(
+                        "users",
+                        g().n_with_label_where("User", Predicate::eq("email", EMAIL)),
+                    )
+                    .returning(["users"]),
+            ))
+            .await
+            .expect("reader equality lookup succeeds");
+        assert_eq!(
+            crate::index_lifecycle::secondary::equality_read_metrics(),
+            crate::index_lifecycle::secondary::SecondaryEqualityReadMetrics {
+                point_reads: 1,
+                scans: 0,
+                graph_reads: 0,
+            }
+        );
+
+        reader.close().await.expect("reader closes");
+        writer.close().await.expect("writer closes");
+    }
+
+    #[tokio::test]
     async fn stale_prepared_catalog_proof_falls_back_to_refresh() {
         let db = HelixDB::open(HelixDbSource::InMemory {
             database: "query-service-stale-prepared-catalog".to_string(),
@@ -822,6 +1003,65 @@ mod tests {
         assert_eq!(
             target.runtime_catalog_generation_for_tests(DataScope::LegacyUnscoped),
             before + 1
+        );
+    }
+
+    #[tokio::test]
+    async fn foreign_prepared_read_proof_cannot_authorize_an_index() {
+        let source = HelixDB::open(HelixDbSource::InMemory {
+            database: "query-service-foreign-read-proof-source".to_string(),
+        })
+        .await
+        .expect("source writer should open");
+        source
+            .install_index_for_tests(
+                crate::config::SecondaryIndexDefinition::node_equality("User", "email")
+                    .expect("secondary index definition validates")
+                    .try_into()
+                    .expect("secondary index definition enters V2"),
+            )
+            .await
+            .expect("source index becomes active");
+        let batch = read_batch()
+            .var_as(
+                "users",
+                g().n_with_label_where("User", Predicate::eq("email", "source@example.com")),
+            )
+            .returning(["users"]);
+        let prepared = source
+            .planner_context_scoped_prepared(ParamBindings::default(), DataScope::LegacyUnscoped)
+            .await
+            .expect("source read captures its exact catalog view");
+        let plan = helix_planner::planning::plan_read_batch(&batch, prepared.context())
+            .expect("source equality lookup plans");
+
+        let target = HelixDB::open(HelixDbSource::InMemory {
+            database: "query-service-foreign-read-proof-target".to_string(),
+        })
+        .await
+        .expect("target writer should open");
+        crate::index_lifecycle::secondary::reset_equality_read_metrics();
+        let error = target
+            .execute_prepared_scoped_controlled(
+                &plan,
+                ParamBindings::default(),
+                DataScope::LegacyUnscoped,
+                ExecutionControl::unlimited(),
+                prepared.into_catalog_proof(),
+            )
+            .await
+            .expect_err("foreign catalog authority must be discarded");
+        assert!(matches!(
+            error,
+            HelixDbError::IndexLifecycleUnavailable {
+                family: crate::error::IndexFamily::Secondary,
+                reason: crate::error::IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+            }
+        ));
+        assert_eq!(
+            crate::index_lifecycle::secondary::equality_read_metrics().point_reads,
+            1,
+            "foreign proof must fall back to the target catalog point read"
         );
     }
 

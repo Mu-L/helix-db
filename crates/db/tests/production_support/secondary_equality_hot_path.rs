@@ -1,9 +1,10 @@
 //! Fixed-shape secondary-equality read/write benchmark support.
 //!
-//! Index creation and physical planning finish before the measured phase. The
-//! fixture deliberately maps every indexed field to one shared value so V3
-//! creates one entity-suffixed row per index and entity, while bitmap formats
-//! collapse the same logical state to 50 rows.
+//! Index creation and physical plan construction finish before the measured
+//! phase. Each measured read still acquires its production request catalog and
+//! stable storage view. The fixture deliberately maps every indexed field to
+//! one shared value so V3 creates one entity-suffixed row per index and entity,
+//! while bitmap formats collapse the same logical state to 50 rows.
 
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -518,7 +519,21 @@ async fn lookup_result_count(db: &HelixDB, plan: &exec::ExecutablePlan) -> Resul
 }
 
 async fn lookup_node_ids(db: &HelixDB, plan: &exec::ExecutablePlan) -> Result<Vec<u64>> {
-    let result = db.execute(plan, context::ParamBindings::default()).await?;
+    let prepared = db
+        .planner_context_scoped_prepared(
+            context::ParamBindings::default(),
+            DataScope::LegacyUnscoped,
+        )
+        .await?;
+    let result = db
+        .execute_prepared_scoped_controlled(
+            plan,
+            context::ParamBindings::default(),
+            DataScope::LegacyUnscoped,
+            crate::execution_control::ExecutionControl::unlimited(),
+            prepared.into_catalog_proof(),
+        )
+        .await?;
     let Some(ExecutionValue::Scalars(values)) = result.last else {
         return Err(crate::HelixDbError::InvariantViolation(
             "hot-path equality lookup did not return projected scalar IDs".to_string(),
