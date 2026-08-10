@@ -5,6 +5,8 @@
 //! strategy. Set `HELIX_FTS_PREFILTER_MILLION_SMOKE=1` for the separate cap run.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::Instant;
@@ -17,7 +19,7 @@ use serde::Serialize;
 
 const RELEASE_DOCUMENTS: usize = 100_000;
 const RELEASE_SPLITS: usize = 10;
-const RELEASE_CANDIDATES: &[usize] = &[100, 1_000, 10_000, 50_000, 100_000];
+const RELEASE_CANDIDATES: &[usize] = &[1, 10, 25, 50, 100, 1_000, 10_000, 50_000, 100_000];
 const QUERIES: &[&str] = &["rareterm", "mediumterm", "commonterm"];
 const K_VALUES: &[usize] = &[10, 100];
 const LAYOUTS: &[FtsPrefilterBenchmarkLayout] = &[
@@ -215,6 +217,22 @@ struct StrategyDecisionRecord {
     dense_allocation_gate_passed: bool,
 }
 
+#[derive(Serialize)]
+struct TinyBucketDecisionRecord {
+    record: &'static str,
+    candidate_count: usize,
+    comparison_count: usize,
+    collector_wins_every_comparison: bool,
+    minimum_collector_advantage_percent: Option<f64>,
+}
+
+#[derive(Serialize)]
+struct EvidenceReport<'report> {
+    environment: serde_json::Value,
+    tiny_bucket_decisions: &'report [TinyBucketDecisionRecord],
+    summaries: Vec<serde_json::Value>,
+}
+
 fn main() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -325,24 +343,27 @@ async fn run() {
         })
         .unwrap_or_else(|| STRATEGIES.to_vec());
 
+    let environment = EnvironmentRecord {
+        record: "environment",
+        commit: &commit,
+        rustc: command_output("rustc", &["-Vv"]),
+        machine: command_output("uname", &["-a"]),
+        document_count,
+        initial_split_count,
+        independent_runs,
+        warmups_per_run: warmups,
+        samples_per_run: samples,
+        million_document_smoke: million_smoke,
+    };
+    let environment_json =
+        serde_json::to_value(&environment).expect("environment evidence serializes");
     println!(
         "{}",
-        serde_json::to_string(&EnvironmentRecord {
-            record: "environment",
-            commit: &commit,
-            rustc: command_output("rustc", &["-Vv"]),
-            machine: command_output("uname", &["-a"]),
-            document_count,
-            initial_split_count,
-            independent_runs,
-            warmups_per_run: warmups,
-            samples_per_run: samples,
-            million_document_smoke: million_smoke,
-        })
-        .expect("environment serializes")
+        serde_json::to_string(&environment).expect("environment serializes")
     );
 
     let mut summaries = Vec::new();
+    let mut evidence_summaries = Vec::new();
     for independent_run in 0..independent_runs {
         let fixture = FtsPrefilterBenchmarkFixture::try_new(document_count, initial_split_count)
             .await
@@ -398,34 +419,38 @@ async fn run() {
                                 measured.push(measurement);
                             }
                             let summary = summarize(independent_run, case, &measured);
+                            let summary_record = SummaryRecord {
+                                record: "summary",
+                                commit: &commit,
+                                independent_run,
+                                layout: layout.as_str(),
+                                candidate_count,
+                                query,
+                                k,
+                                strategy: strategy.as_str(),
+                                samples,
+                                latency_p50_ns: summary.latency_p50_ns,
+                                latency_p95_ns: summary.latency_p95_ns,
+                                allocation_calls_p50: summary.allocation_calls_p50,
+                                allocation_calls_p95: summary.allocation_calls_p95,
+                                allocated_bytes_p50: summary.allocated_bytes_p50,
+                                allocated_bytes_p95: summary.allocated_bytes_p95,
+                                peak_allocated_bytes_p50: summary.peak_allocated_bytes_p50,
+                                peak_allocated_bytes_p95: summary.peak_allocated_bytes_p95,
+                                object_store_reads_p50: summary.object_store_reads_p50,
+                                object_store_reads_p95: summary.object_store_reads_p95,
+                                object_store_bytes_p50: summary.object_store_bytes_p50,
+                                object_store_bytes_p95: summary.object_store_bytes_p95,
+                                split_count: summary.split_count,
+                                result_digest: &summary.result_digest,
+                            };
                             println!(
                                 "{}",
-                                serde_json::to_string(&SummaryRecord {
-                                    record: "summary",
-                                    commit: &commit,
-                                    independent_run,
-                                    layout: layout.as_str(),
-                                    candidate_count,
-                                    query,
-                                    k,
-                                    strategy: strategy.as_str(),
-                                    samples,
-                                    latency_p50_ns: summary.latency_p50_ns,
-                                    latency_p95_ns: summary.latency_p95_ns,
-                                    allocation_calls_p50: summary.allocation_calls_p50,
-                                    allocation_calls_p95: summary.allocation_calls_p95,
-                                    allocated_bytes_p50: summary.allocated_bytes_p50,
-                                    allocated_bytes_p95: summary.allocated_bytes_p95,
-                                    peak_allocated_bytes_p50: summary.peak_allocated_bytes_p50,
-                                    peak_allocated_bytes_p95: summary.peak_allocated_bytes_p95,
-                                    object_store_reads_p50: summary.object_store_reads_p50,
-                                    object_store_reads_p95: summary.object_store_reads_p95,
-                                    object_store_bytes_p50: summary.object_store_bytes_p50,
-                                    object_store_bytes_p95: summary.object_store_bytes_p95,
-                                    split_count: summary.split_count,
-                                    result_digest: &summary.result_digest,
-                                })
-                                .expect("summary serializes")
+                                serde_json::to_string(&summary_record).expect("summary serializes")
+                            );
+                            evidence_summaries.push(
+                                serde_json::to_value(&summary_record)
+                                    .expect("summary evidence serializes"),
                             );
                             summaries.push(summary);
                         }
@@ -433,6 +458,34 @@ async fn run() {
                 }
             }
         }
+    }
+
+    let tiny_bucket_decisions = tiny_bucket_decisions(&summaries, &candidate_counts);
+    for decision in &tiny_bucket_decisions {
+        println!(
+            "{}",
+            serde_json::to_string(decision).expect("tiny-bucket decision serializes")
+        );
+    }
+    if let Ok(path) = std::env::var("HELIX_FTS_PREFILTER_REPORT_PATH") {
+        let path = PathBuf::from(path);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(path)
+        };
+        let report = EvidenceReport {
+            environment: environment_json,
+            tiny_bucket_decisions: &tiny_bucket_decisions,
+            summaries: evidence_summaries,
+        };
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(&report).expect("benchmark evidence serializes"),
+        )
+        .expect("benchmark evidence report writes");
     }
 
     if allow_short || million_smoke {
@@ -455,6 +508,48 @@ async fn run() {
         decision.dense_allocation_gate_passed,
         "the selected dense strategy must allocate no more than 2x unrestricted FTS"
     );
+}
+
+fn tiny_bucket_decisions(
+    summaries: &[RunSummary],
+    candidate_counts: &[usize],
+) -> Vec<TinyBucketDecisionRecord> {
+    candidate_counts
+        .iter()
+        .copied()
+        .filter(|candidate_count| *candidate_count <= 100)
+        .map(|candidate_count| {
+            let comparisons = summaries
+                .iter()
+                .filter(|summary| {
+                    summary.case.candidate_count == candidate_count
+                        && summary.case.strategy == FtsPrefilterBenchmarkStrategy::Collector
+                })
+                .filter_map(|collector| {
+                    matching_summary(summaries, collector, FtsPrefilterBenchmarkStrategy::TermSet)
+                        .map(|term_set| (collector, term_set))
+                })
+                .collect::<Vec<_>>();
+            let minimum_collector_advantage_percent = comparisons
+                .iter()
+                .map(|(collector, term_set)| {
+                    (term_set.latency_p95_ns as f64 - collector.latency_p95_ns as f64) * 100.0
+                        / term_set.latency_p95_ns as f64
+                })
+                .reduce(f64::min);
+            TinyBucketDecisionRecord {
+                record: "tiny_bucket_decision",
+                candidate_count,
+                comparison_count: comparisons.len(),
+                collector_wins_every_comparison: !comparisons.is_empty()
+                    && comparisons.iter().all(|(collector, term_set)| {
+                        collector.latency_p95_ns < term_set.latency_p95_ns
+                            && collector.result_digest == term_set.result_digest
+                    }),
+                minimum_collector_advantage_percent,
+            }
+        })
+        .collect()
 }
 
 async fn measure(
