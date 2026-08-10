@@ -40,8 +40,19 @@ oracle assertion. Result digests matched across term-set and collector strategie
   cost can therefore grow with corpus size; a production-format 1M-document benchmark should
   be used to set an absolute latency SLO before revisiting specialization.
 
+## One-million-candidate smoke
+
+The separate release-mode smoke used one million documents, ten initial splits, the common
+term, `k = 100`, and a full-density candidate bitmap. Collector results exactly matched the
+unrestricted digest before and after compaction. Peak measured allocation was 1.90 MB across
+ten splits and 0.40 MB after compaction, both below the smoke's 64 MiB absolute bound. The
+collector took 47.58 ms across ten splits and 42.47 ms after compaction. This confirms bounded
+execution at the candidate cap, while also recording the expected dense common-term latency
+tradeoff; it does not replace the 100k relative-allocation gate.
+
 Raw evidence:
 
 - `fts_prefilter_tiny_baseline.json`
 - `fts_prefilter_sparse_baseline.json`
 - `fts_prefilter_dense_baseline.json`
+- `fts_prefilter_million_smoke.json`

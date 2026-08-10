@@ -31,6 +31,7 @@ const STRATEGIES: &[FtsPrefilterBenchmarkStrategy] = &[
     FtsPrefilterBenchmarkStrategy::Collector,
     FtsPrefilterBenchmarkStrategy::Unrestricted,
 ];
+const MILLION_SMOKE_PEAK_ALLOCATION_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 
 struct CountingAllocator;
 
@@ -459,7 +460,11 @@ async fn run() {
         .expect("benchmark evidence report writes");
     }
 
-    assert_dense_allocations_bounded(&summaries, document_count);
+    if million_smoke {
+        assert_million_smoke_bounded(&summaries, document_count);
+    } else {
+        assert_dense_allocations_bounded(&summaries, document_count);
+    }
 }
 
 async fn measure(
@@ -572,6 +577,35 @@ fn assert_dense_allocations_bounded(summaries: &[RunSummary], document_count: us
                     <= unrestricted.peak_allocated_bytes_p95.saturating_mul(2)
         }),
         "collector results must match unrestricted FTS at full density and allocate no more than 2x"
+    );
+}
+
+fn assert_million_smoke_bounded(summaries: &[RunSummary], document_count: usize) {
+    let collector_summaries = summaries
+        .iter()
+        .filter(|summary| {
+            summary.case.candidate_count == document_count
+                && summary.case.strategy == FtsPrefilterBenchmarkStrategy::Collector
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !collector_summaries.is_empty(),
+        "million-candidate smoke must measure the collector"
+    );
+    assert!(
+        collector_summaries.iter().all(|collector| {
+            let Some(unrestricted) = matching_summary(
+                summaries,
+                collector,
+                FtsPrefilterBenchmarkStrategy::Unrestricted,
+            ) else {
+                return false;
+            };
+            collector.result_digest == unrestricted.result_digest
+                && collector.peak_allocated_bytes_p95
+                    <= MILLION_SMOKE_PEAK_ALLOCATION_LIMIT_BYTES
+        }),
+        "million-candidate collector results must match unrestricted FTS and remain below the absolute peak-allocation limit"
     );
 }
 
