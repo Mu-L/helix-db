@@ -23,7 +23,7 @@ use slatedb::object_store::{
 use tantivy::collector::TopDocs;
 use tantivy::directory::RamDirectory;
 use tantivy::merge_policy::NoMergePolicy;
-use tantivy::query::{BooleanQuery, Occur, TermQuery};
+use tantivy::query::{BooleanQuery, ConstScoreQuery, Occur, TermQuery, TermSetQuery};
 use tantivy::schema::{IndexRecordOption, NumericOptions, Schema, TextFieldIndexing, TextOptions};
 use tantivy::tokenizer::{
     Language, LowerCaser, PreTokenizedString, SimpleTokenizer, Stemmer, TextAnalyzer, Token,
@@ -66,6 +66,7 @@ pub(crate) mod compaction;
 mod debug_proxy_directory;
 mod hot_directory;
 mod overlay_directory;
+mod restricted;
 mod split;
 mod storage_directory;
 mod warmup;
@@ -75,6 +76,7 @@ pub(crate) use cache::{FtsCache, FtsCacheConfig, OpenedTextSplit};
 pub use cache::{FtsCacheStateSnapshot, FtsWarmSummary};
 use caching_directory::CachingDirectory;
 use hot_directory::HotDirectory;
+pub(crate) use restricted::{RestrictedTextCandidates, TextSearchScope};
 pub(crate) use split::{
     build_split_bundle, build_split_bundle_from_directory, decode_footer_cache_entry_bytes,
     open_split_directory_from_file, read_footer_cache_entry_from_file,
@@ -451,6 +453,7 @@ pub async fn search_manifest_with_live_state_scoped(
         query,
         k,
         None,
+        TextSearchScope::Unrestricted,
     )
     .await
 }
@@ -459,7 +462,7 @@ pub async fn search_manifest_with_live_state_scoped(
 ///
 /// The caller holds the matching blob reference guards across this future,
 /// including split footer/cache/blob I/O and every candidate state point read.
-pub(crate) async fn search_manifest_with_v2_live_state_scoped(
+pub(crate) async fn search_manifest_with_v2_live_state_scoped_and_scope(
     reader: &(impl DbReadOps + Send + Sync),
     runtime: TextSearchRuntime<'_>,
     root: &crate::index_lifecycle::text::serving::ValidatedActiveTextManifestRoot,
@@ -467,6 +470,7 @@ pub(crate) async fn search_manifest_with_v2_live_state_scoped(
     query: &str,
     k: usize,
     statistics: &crate::index_lifecycle::text::statistics::TextBm25Statistics,
+    scope: TextSearchScope,
 ) -> Result<Vec<TextSearchHit>, HelixDbError> {
     search_manifest_with_state_source(
         reader,
@@ -476,6 +480,7 @@ pub(crate) async fn search_manifest_with_v2_live_state_scoped(
         query,
         k,
         Some(statistics),
+        scope,
     )
     .await
 }
@@ -501,10 +506,11 @@ async fn search_manifest_with_state_source(
     query: &str,
     k: usize,
     statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
+    scope: TextSearchScope,
 ) -> Result<Vec<TextSearchHit>, HelixDbError> {
     const SPLIT_READ_CONCURRENCY: usize = 8;
     const STATE_BATCH_SIZE: usize = 512;
-    if k == 0 {
+    if k == 0 || scope.is_empty_restricted() {
         return Ok(Vec::new());
     }
 
@@ -518,11 +524,17 @@ async fn search_manifest_with_state_source(
         frontier_score: Option<f32>,
     }
 
+    let candidate_upper_bound = scope
+        .candidates()
+        .map(|candidates| usize::try_from(candidates.len()).unwrap_or(usize::MAX));
     let opened = futures::stream::iter(manifest.split_refs().iter().cloned())
         .map(|split_ref| async {
             let index_reader = SplitSearchReader::open(&runtime, &split_ref).await?;
             index_reader.warm(manifest.analyzer, query).await?;
-            let total_docs = index_reader.total_docs();
+            let total_docs = candidate_upper_bound.map_or_else(
+                || index_reader.total_docs(),
+                |bound| index_reader.total_docs().min(bound),
+            );
             Ok::<_, HelixDbError>(SplitSearchState {
                 split_ref,
                 reader: Arc::new(index_reader),
@@ -572,14 +584,16 @@ async fn search_manifest_with_state_source(
         }
 
         let analyzer = manifest.analyzer;
+        let scope = scope.clone();
         let searched = futures::stream::iter(selected)
             .map(|(index, split_reader, limit)| {
                 let query = query.to_owned();
                 let statistics = statistics.cloned();
+                let scope = scope.clone();
                 async move {
                     tokio::task::spawn_blocking(move || {
                         split_reader
-                            .search_candidates(analyzer, &query, limit, statistics.as_ref())
+                            .search_candidates(analyzer, &query, limit, statistics.as_ref(), &scope)
                             .map(|candidates| (index, limit, candidates))
                     })
                     .await
@@ -718,10 +732,11 @@ impl SplitSearchReader {
         query: &str,
         limit: usize,
         statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
+        scope: &TextSearchScope,
     ) -> Result<Vec<TextSearchCandidate>, HelixDbError> {
         match self {
             Self::Cached(split) => {
-                split.search_candidates_with_statistics(analyzer, query, limit, statistics)
+                split.search_candidates_with_statistics(analyzer, query, limit, statistics, scope)
             }
             Self::Direct {
                 index,
@@ -730,7 +745,7 @@ impl SplitSearchReader {
             } => {
                 register_analyzers(index, analyzer);
                 search_reader_candidates_with_statistics(
-                    reader, *fields, analyzer, query, limit, statistics,
+                    reader, *fields, analyzer, query, limit, statistics, scope,
                 )
             }
         }
@@ -1717,7 +1732,15 @@ pub(crate) fn search_reader_candidates(
     query: &str,
     k: usize,
 ) -> Result<Vec<TextSearchCandidate>, HelixDbError> {
-    search_reader_candidates_with_statistics(reader, fields, analyzer, query, k, None)
+    search_reader_candidates_with_statistics(
+        reader,
+        fields,
+        analyzer,
+        query,
+        k,
+        None,
+        &TextSearchScope::Unrestricted,
+    )
 }
 
 pub(crate) fn search_reader_candidates_with_statistics(
@@ -1727,6 +1750,7 @@ pub(crate) fn search_reader_candidates_with_statistics(
     query: &str,
     k: usize,
     statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
+    scope: &TextSearchScope,
 ) -> Result<Vec<TextSearchCandidate>, HelixDbError> {
     let terms = analyze_query_terms(analyzer, query);
     if terms.is_empty() || k == 0 {
@@ -1774,7 +1798,25 @@ pub(crate) fn search_reader_candidates_with_statistics(
             )
         })
         .collect::<Vec<_>>();
-    let query = BooleanQuery::new(clauses);
+    let bm25_query = BooleanQuery::new(clauses);
+    let query: Box<dyn tantivy::query::Query> = match scope {
+        TextSearchScope::Unrestricted => Box::new(bm25_query),
+        TextSearchScope::Restricted(candidates) => {
+            let candidate_query = TermSetQuery::new(
+                candidates
+                    .iter()
+                    .map(|entity_id| Term::from_field_u64(fields.entity_id, entity_id)),
+            );
+            let clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = vec![
+                (Occur::Must, Box::new(bm25_query)),
+                (
+                    Occur::Must,
+                    Box::new(ConstScoreQuery::new(Box::new(candidate_query), 0.0)),
+                ),
+            ];
+            Box::new(BooleanQuery::new(clauses))
+        }
+    };
     let collector = TopDocs::with_limit(k).tweak_score(|segment_reader| {
         let entity_ids = segment_reader
             .fast_fields()
@@ -1788,9 +1830,9 @@ pub(crate) fn search_reader_candidates_with_statistics(
     });
     let docs = match statistics {
         Some(statistics) => {
-            searcher.search_with_statistics_provider(&query, &collector, statistics)
+            searcher.search_with_statistics_provider(query.as_ref(), &collector, statistics)
         }
-        None => searcher.search(&query, &collector),
+        None => searcher.search(query.as_ref(), &collector),
     }
     .map_err(|err| HelixDbError::Config(format!("failed to execute Tantivy search: {err}")))?;
 
@@ -1813,6 +1855,13 @@ pub(crate) fn search_reader_candidates_with_statistics(
         if entity_id != sort_entity_id {
             return Err(HelixDbError::InvariantViolation(
                 "text deterministic collector observed inconsistent entity IDs".to_string(),
+            ));
+        }
+        if let Some(candidates) = scope.candidates()
+            && !candidates.contains(entity_id)
+        {
+            return Err(HelixDbError::InvariantViolation(
+                "restricted text search returned an ID outside its exact bitmap".to_string(),
             ));
         }
         let logical_version = logical_version_columns
@@ -2156,6 +2205,7 @@ mod tests {
     use crate::config::{TextAnalyzerKind, TextIndexDefinition};
     use crate::encoding::keys::tenant::TenantId;
     use crate::encoding::property::encode_properties;
+    use proptest::prelude::*;
     use slatedb::object_store::memory::InMemory;
     use std::sync::Arc;
 
@@ -2302,6 +2352,111 @@ mod tests {
         let hits = search_documents(&definition, &documents, "run", 10).expect("search");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].entity_id, 1);
+    }
+
+    #[test]
+    fn restricted_term_set_matches_exhaustive_filtered_bm25_and_refills_to_k() {
+        let definition = TextIndexDefinition::new_node("Doc", "body").unwrap();
+        let documents = [
+            TextDocumentInput::new(1, "needle needle needle"),
+            TextDocumentInput::new(2, "needle needle"),
+            TextDocumentInput::new(3, "needle"),
+            TextDocumentInput::new(4, "needle filler filler"),
+            TextDocumentInput::new(5, "unrelated"),
+        ];
+        let (index, fields) = create_ram_index(&definition).unwrap();
+        populate_index(&index, fields, &documents).unwrap();
+        let reader = build_reader(&index).unwrap();
+        let candidates = Arc::new(RestrictedTextCandidates::from_ids([2, 3, 4, 4]).unwrap());
+        let scope = TextSearchScope::restricted(Arc::clone(&candidates));
+
+        let exhaustive = search_reader_candidates(
+            &reader,
+            fields,
+            definition.analyzer(),
+            "needle",
+            documents.len(),
+        )
+        .unwrap();
+        let oracle = exhaustive
+            .into_iter()
+            .filter(|hit| candidates.contains(hit.entity_id))
+            .take(3)
+            .collect::<Vec<_>>();
+        let restricted = search_reader_candidates_with_statistics(
+            &reader,
+            fields,
+            definition.analyzer(),
+            "needle",
+            3,
+            None,
+            &scope,
+        )
+        .unwrap();
+
+        assert_eq!(restricted, oracle);
+        assert_eq!(
+            restricted
+                .iter()
+                .map(|hit| hit.entity_id)
+                .collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn restricted_term_set_property_matches_exhaustive_intersection_top_k(
+            term_counts in prop::collection::vec(1_usize..8, 1..24),
+            candidate_ids in prop::collection::vec(0_u64..32, 0..40),
+            requested_k in 1_usize..16,
+        ) {
+            let definition = TextIndexDefinition::new_node("Doc", "body").unwrap();
+            let documents = term_counts
+                .iter()
+                .enumerate()
+                .map(|(entity_id, count)| {
+                    TextDocumentInput::new(
+                        u64::try_from(entity_id).unwrap(),
+                        std::iter::repeat_n("needle", *count).collect::<Vec<_>>().join(" "),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let (index, fields) = create_ram_index(&definition).unwrap();
+            populate_index(&index, fields, &documents).unwrap();
+            let reader = build_reader(&index).unwrap();
+            let candidates = Arc::new(
+                RestrictedTextCandidates::from_ids(candidate_ids).unwrap(),
+            );
+            let scope = TextSearchScope::restricted(Arc::clone(&candidates));
+
+            let oracle = search_reader_candidates(
+                &reader,
+                fields,
+                definition.analyzer(),
+                "needle",
+                documents.len(),
+            )
+            .unwrap()
+            .into_iter()
+            .filter(|hit| candidates.contains(hit.entity_id))
+            .take(requested_k)
+            .collect::<Vec<_>>();
+            let restricted = search_reader_candidates_with_statistics(
+                &reader,
+                fields,
+                definition.analyzer(),
+                "needle",
+                requested_k,
+                None,
+                &scope,
+            )
+            .unwrap();
+
+            prop_assert_eq!(restricted, oracle);
+        }
     }
 
     #[test]

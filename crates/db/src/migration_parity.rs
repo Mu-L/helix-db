@@ -1456,7 +1456,7 @@ async fn text_search_from_read(
             );
             manifest.splits = page_splits;
             if let Some(statistics) = &statistics {
-                for hit in search::text::search_manifest_with_v2_live_state_scoped(
+                for hit in search::text::search_manifest_with_v2_live_state_scoped_and_scope(
                     read,
                     search::text::TextSearchRuntime::new(object_store, database, None),
                     &root,
@@ -1464,6 +1464,7 @@ async fn text_search_from_read(
                     request.query,
                     request.k,
                     statistics,
+                    search::text::TextSearchScope::Unrestricted,
                 )
                 .await?
                 {
