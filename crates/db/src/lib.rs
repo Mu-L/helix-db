@@ -485,7 +485,7 @@ impl CatalogGeneration {
 }
 
 struct LoadedRuntimeCatalog {
-    catalog: Box<index_lifecycle::LoadedV2ScopeCatalog>,
+    catalog: Arc<index_lifecycle::LoadedV2ScopeCatalog>,
     generation: CatalogGeneration,
 }
 
@@ -504,7 +504,7 @@ impl HelixRuntimeState {
         catalogs.insert(
             scope,
             LoadedRuntimeCatalog {
-                catalog: Box::new(catalog),
+                catalog: Arc::new(catalog),
                 generation: CatalogGeneration::INITIAL,
             },
         );
@@ -531,7 +531,7 @@ impl HelixRuntimeState {
         self.catalogs.insert(
             scope,
             LoadedRuntimeCatalog {
-                catalog: Box::new(catalog),
+                catalog: Arc::new(catalog),
                 generation,
             },
         );
@@ -552,7 +552,11 @@ impl HelixRuntimeState {
     fn planner_snapshot_with_generation(
         &self,
         scope: DataScope,
-    ) -> (IndexCatalogSnapshot, CatalogGeneration) {
+    ) -> (
+        IndexCatalogSnapshot,
+        CatalogGeneration,
+        Arc<index_lifecycle::LoadedV2ScopeCatalog>,
+    ) {
         let loaded = self
             .catalogs
             .get(&scope)
@@ -560,6 +564,7 @@ impl HelixRuntimeState {
         (
             loaded.catalog.runtime().planner_snapshot(),
             loaded.generation,
+            Arc::clone(&loaded.catalog),
         )
     }
 
@@ -667,6 +672,20 @@ pub(crate) struct CatalogRefreshProof {
     scope: DataScope,
     generation: CatalogGeneration,
     catalog_permit: index_lifecycle::IndexScopeCatalogPermit,
+    catalog: Arc<index_lifecycle::LoadedV2ScopeCatalog>,
+    read_view: Option<Box<execution::interpreter::read_view::StableRequestReadView>>,
+}
+
+impl CatalogRefreshProof {
+    fn execution_catalog(&self) -> Arc<index_lifecycle::LoadedV2ScopeCatalog> {
+        Arc::clone(&self.catalog)
+    }
+
+    fn take_read_view(
+        &mut self,
+    ) -> Option<Box<execution::interpreter::read_view::StableRequestReadView>> {
+        self.read_view.take()
+    }
 }
 
 /// Planner context coupled to the catalog observation that produced it.
@@ -1484,9 +1503,35 @@ impl HelixDB {
         tenant_scope: DataScope,
     ) -> Result<PreparedPlannerContext> {
         let catalog_permit = self.index_catalog_scope_permit(tenant_scope).await;
-        let (indexes, generation) = self
-            .runtime_catalog_snapshot_scoped_with_generation(tenant_scope)
-            .await?;
+        let _refresh_permit = self
+            .inner
+            .index_scope_gates
+            .catalog_refresh_permit(tenant_scope)
+            .await;
+        if let HelixStorage::Writer(writer) = self.storage() {
+            let repaired =
+                index_lifecycle::outbox::reconcile_legacy_reader_coordination_operations(
+                    writer.db(),
+                    tenant_scope,
+                )
+                .await?;
+            if repaired > 0 {
+                self.notify_index_worker();
+            }
+        }
+        let read_view =
+            execution::interpreter::read_view::StableRequestReadView::open(self).await?;
+        let loaded =
+            index_lifecycle::repository::load_scope_catalog(&read_view, tenant_scope).await?;
+        let (indexes, generation, catalog) = {
+            let mut state = self
+                .inner
+                .runtime_state
+                .write()
+                .expect("runtime state lock is not poisoned");
+            state.replace_catalog(tenant_scope, loaded);
+            state.planner_snapshot_with_generation(tenant_scope)
+        };
         Ok(PreparedPlannerContext {
             context: PlannerContext {
                 params,
@@ -1502,6 +1547,8 @@ impl HelixDB {
                 scope: tenant_scope,
                 generation,
                 catalog_permit,
+                catalog,
+                read_view: Some(Box::new(read_view)),
             },
         })
     }
@@ -2358,17 +2405,33 @@ impl HelixDB {
             .planner_snapshot(scope))
     }
 
-    async fn runtime_catalog_snapshot_scoped_with_generation(
+    /// Returns whether a proof and its exact read view belong to this scope.
+    pub(crate) fn catalog_refresh_proof_belongs_to(
         &self,
+        proof: &CatalogRefreshProof,
         scope: DataScope,
-    ) -> Result<(IndexCatalogSnapshot, CatalogGeneration)> {
-        self.refresh_runtime_catalog(scope).await?;
-        Ok(self
-            .inner
+    ) -> bool {
+        proof
+            .runtime
+            .upgrade()
+            .is_some_and(|runtime| Arc::ptr_eq(&runtime, &self.inner) && proof.scope == scope)
+    }
+
+    /// Returns whether a write can reuse this exact runtime catalog publication.
+    pub(crate) fn catalog_refresh_proof_is_current(
+        &self,
+        proof: &CatalogRefreshProof,
+        scope: DataScope,
+    ) -> bool {
+        if !self.catalog_refresh_proof_belongs_to(proof, scope) {
+            return false;
+        }
+        self.inner
             .runtime_state
             .read()
             .expect("runtime state lock is not poisoned")
-            .planner_snapshot_with_generation(scope))
+            .generation(scope)
+            == proof.generation
     }
 
     /// Transfers catalog authority when a planning proof still names this view.
@@ -2377,23 +2440,11 @@ impl HelixDB {
         proof: CatalogRefreshProof,
         scope: DataScope,
     ) -> Option<index_lifecycle::IndexScopeCatalogPermit> {
-        let CatalogRefreshProof {
-            runtime,
-            scope: proof_scope,
-            generation,
-            catalog_permit,
-        } = proof;
-        let runtime = runtime.upgrade()?;
-        (Arc::ptr_eq(&runtime, &self.inner)
-            && proof_scope == scope
-            && self
-                .inner
-                .runtime_state
-                .read()
-                .expect("runtime state lock is not poisoned")
-                .generation(scope)
-                == generation)
-            .then_some(catalog_permit)
+        if !self.catalog_refresh_proof_is_current(&proof, scope) {
+            return None;
+        }
+        let CatalogRefreshProof { catalog_permit, .. } = proof;
+        Some(catalog_permit)
     }
 
     #[cfg(test)]

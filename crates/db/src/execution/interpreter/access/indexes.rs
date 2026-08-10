@@ -405,14 +405,24 @@ async fn lookup_equality_in_view(
         .await
 }
 
-/// Point-loads and scans a present canonical equality identity.
-///
+/// Resolves one request-authorized equality generation and reads its physical row.
 async fn lookup_managed_equality_in_view(
     context: &ExecutionContext<'_>,
     reader: &(impl DbReadOps + Send + Sync),
     identity: &crate::index_lifecycle::IndexIdentity,
     value: &DbPropertyValue,
 ) -> Result<roaring::RoaringTreemap> {
+    if let Some(catalog) = context.prepared_index_catalog.as_deref() {
+        let Some(active) = catalog.handle(identity) else {
+            return Err(HelixDbError::IndexLifecycleUnavailable {
+                family: crate::error::IndexFamily::Secondary,
+                reason: crate::error::IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+            });
+        };
+        return lookup_managed_active_equality_in_view(reader, active, value).await;
+    }
+
+    crate::index_lifecycle::secondary::record_equality_point_read();
     let Some(record) = crate::index_lifecycle::repository::load_index_record(
         reader,
         context.tenant_scope,
@@ -433,6 +443,14 @@ async fn lookup_managed_equality_in_view(
             reason: crate::error::IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
         });
     };
+    lookup_managed_active_equality_in_view(reader, &active, value).await
+}
+
+async fn lookup_managed_active_equality_in_view(
+    reader: &(impl DbReadOps + Send + Sync),
+    active: &crate::index_lifecycle::ActiveIndexHandle,
+    value: &DbPropertyValue,
+) -> Result<roaring::RoaringTreemap> {
     if !matches!(
         active,
         crate::index_lifecycle::ActiveIndexHandle::Secondary { .. }
@@ -441,7 +459,7 @@ async fn lookup_managed_equality_in_view(
             "secondary equality identity resolved another Active family".to_string(),
         ));
     }
-    crate::index_lifecycle::secondary::lookup_active_equality_generation(reader, &active, value)
+    crate::index_lifecycle::secondary::lookup_active_equality_generation(reader, active, value)
         .await
 }
 

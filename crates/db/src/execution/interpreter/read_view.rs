@@ -13,7 +13,7 @@ use super::*;
 use crate::HelixStorage;
 
 /// One read-only request view whose storage source cannot change between steps.
-pub(in crate::execution::interpreter) enum StableRequestReadView {
+pub(crate) enum StableRequestReadView {
     /// A reader-node view pinned to one checkpoint generation and sequence.
     ReaderSnapshot(Arc<DbSnapshot>),
     /// A writer-node read transaction pinned at snapshot isolation.
@@ -21,6 +21,16 @@ pub(in crate::execution::interpreter) enum StableRequestReadView {
 }
 
 impl StableRequestReadView {
+    /// Opens the storage view that planning and execution must share.
+    pub(crate) async fn open(db: &HelixDB) -> Result<Self> {
+        Ok(match db.storage() {
+            HelixStorage::Reader(reader) => Self::ReaderSnapshot(reader.snapshot().await?),
+            HelixStorage::Writer(writer) => {
+                Self::WriterTransaction(writer.db().begin(IsolationLevel::Snapshot).await?)
+            }
+        })
+    }
+
     /// Returns the sequence visible to this request-scoped storage view.
     pub(in crate::execution::interpreter) fn comparable_sequence(&self) -> Option<u64> {
         Some(match self {
@@ -47,7 +57,7 @@ impl StableRequestReadView {
     }
 
     /// Ends the request view and explicitly unregisters writer read transactions.
-    fn close(self) {
+    pub(crate) fn close(self) {
         match self {
             Self::ReaderSnapshot(snapshot) => drop(snapshot),
             Self::WriterTransaction(transaction) => transaction.rollback(),
@@ -151,14 +161,10 @@ impl<'db> ExecutionContext<'db> {
             self.request_read_view.is_none(),
             "request read view must be acquired exactly once"
         );
-        self.request_read_view = Some(Box::new(match self.db.storage() {
-            HelixStorage::Reader(reader) => {
-                StableRequestReadView::ReaderSnapshot(reader.snapshot().await?)
-            }
-            HelixStorage::Writer(writer) => StableRequestReadView::WriterTransaction(
-                writer.db().begin(IsolationLevel::Snapshot).await?,
-            ),
-        }));
+        self.request_read_view = Some(match self.prepared_request_read_view.take() {
+            Some(view) => view,
+            None => Box::new(StableRequestReadView::open(self.db).await?),
+        });
         Ok(())
     }
 

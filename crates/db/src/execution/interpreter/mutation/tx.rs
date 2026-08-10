@@ -36,6 +36,9 @@ impl<'db> ExecutionContext<'db> {
             matches!(self.request_write_scope, RequestWriteScopeState::Disabled),
             "a request write scope can only be enabled once"
         );
+        if let Some(view) = self.prepared_request_read_view.take() {
+            (*view).close();
+        }
         let (txn, index_context) = self.begin_write_tx().await?;
         self.request_write_scope =
             RequestWriteScopeState::Active(Box::new(ActiveWriteTx { txn, index_context }));

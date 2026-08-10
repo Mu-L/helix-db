@@ -250,7 +250,6 @@ impl LoadedV2ScopeCatalog {
     }
 
     /// Returns the exact active-generation authorization for one logical identity.
-    #[cfg(test)]
     pub(crate) fn handle(&self, identity: &IndexIdentity) -> Option<&ActiveIndexHandle> {
         self.active.get(identity)
     }

@@ -113,6 +113,13 @@ pub(crate) fn equality_read_metrics() -> SecondaryEqualityReadMetrics {
     }
 }
 
+/// Records one logical point read issued by the complete equality-serving path.
+#[inline]
+pub(crate) fn record_equality_point_read() {
+    #[cfg(any(test, feature = "production-coverage"))]
+    BENCHMARK_POINT_READS.fetch_add(1, AtomicOrdering::Relaxed);
+}
+
 /// Family driver sharing the lifecycle scope gate.
 pub(crate) struct SecondaryIndexDriver {
     scope_gates: Arc<IndexScopeGates>,
@@ -2847,8 +2854,7 @@ pub(crate) async fn lookup_active_equality_generation(
             canonical,
             IndexEntityId::initial(),
         )?;
-        #[cfg(any(test, feature = "production-coverage"))]
-        BENCHMARK_POINT_READS.fetch_add(1, AtomicOrdering::Relaxed);
+        record_equality_point_read();
         let Some(bytes) = reader.get(key).await? else {
             return Ok(roaring::RoaringTreemap::new());
         };
@@ -2873,8 +2879,7 @@ pub(crate) async fn lookup_active_equality_generation(
         canonical,
         IndexEntityId::initial(),
     )?;
-    #[cfg(any(test, feature = "production-coverage"))]
-    BENCHMARK_POINT_READS.fetch_add(1, AtomicOrdering::Relaxed);
+    record_equality_point_read();
     reader
         .get(key)
         .await?

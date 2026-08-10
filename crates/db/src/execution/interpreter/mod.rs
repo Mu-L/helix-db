@@ -10,7 +10,7 @@ mod ddl;
 mod dependencies;
 mod dispatch;
 mod mutation;
-mod read_view;
+pub(crate) mod read_view;
 mod reserved;
 mod row_mode;
 mod runtime_context;
@@ -99,6 +99,11 @@ impl<'db> Interpreter<'db> {
         execution_control: crate::execution_control::ExecutionControl,
         proof: crate::CatalogRefreshProof,
     ) -> Self {
+        let catalog_freshness = if db.catalog_refresh_proof_belongs_to(&proof, tenant_scope) {
+            runtime_context::PendingCatalogFreshness::Prepared(proof)
+        } else {
+            runtime_context::PendingCatalogFreshness::Unverified
+        };
         Self {
             db,
             ctx: ExecutionContext::new_scoped_controlled_with_catalog_freshness(
@@ -106,7 +111,7 @@ impl<'db> Interpreter<'db> {
                 params,
                 tenant_scope,
                 execution_control,
-                runtime_context::PendingCatalogFreshness::Prepared(proof),
+                catalog_freshness,
             ),
         }
     }
