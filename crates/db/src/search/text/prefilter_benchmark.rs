@@ -463,13 +463,13 @@ fn benchmark_candidate_ids(
 
 fn benchmark_document(entity_id: usize) -> String {
     let mut terms = Vec::with_capacity(12);
-    if entity_id % 1_000 == 0 {
+    if entity_id.is_multiple_of(1_000) {
         terms.extend(std::iter::repeat_n("rareterm", 1 + entity_id % 3));
     }
-    if entity_id % 10 == 0 {
+    if entity_id.is_multiple_of(10) {
         terms.extend(std::iter::repeat_n("mediumterm", 1 + entity_id % 4));
     }
-    if entity_id % 5 != 0 {
+    if !entity_id.is_multiple_of(5) {
         terms.extend(std::iter::repeat_n("commonterm", 1 + entity_id % 5));
     }
     if terms.is_empty() {
