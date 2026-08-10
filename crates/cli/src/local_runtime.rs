@@ -476,6 +476,10 @@ impl LocalRuntime {
     }
 
     fn ensure_volume(&self, volume: &str) -> Result<()> {
+        if self.resource_exists(&["volume", "inspect", volume]) {
+            return Ok(());
+        }
+
         let output = self
             .runtime_command()
             .args(["volume", "create", volume])
@@ -484,7 +488,9 @@ impl LocalRuntime {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(eyre!("Failed to create volume {volume}:\n{stderr}"));
+            if !stderr.to_ascii_lowercase().contains("already exists") {
+                return Err(eyre!("Failed to create volume {volume}:\n{stderr}"));
+            }
         }
 
         Ok(())

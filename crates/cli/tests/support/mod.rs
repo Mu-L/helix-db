@@ -304,6 +304,23 @@ if "%1"=="network" (
   exit /b 1
 )
 if "%1"=="volume" (
+  if "%HELIX_TEST_RUNTIME_VOLUME_MODE%"=="existing" exit /b 0
+  if "%HELIX_TEST_RUNTIME_VOLUME_MODE%"=="raced" (
+    if "%2"=="create" (
+      echo volume already exists 1>&2
+      exit /b 1
+    )
+    echo not found 1>&2
+    exit /b 1
+  )
+  if "%HELIX_TEST_RUNTIME_VOLUME_MODE%"=="denied" (
+    if "%2"=="create" (
+      echo permission denied 1>&2
+      exit /b 1
+    )
+    echo not found 1>&2
+    exit /b 1
+  )
   if "%2"=="create" exit /b 0
   if "%HELIX_TEST_RUNTIME_RESOURCES_EXIST%"=="1" exit /b 0
   echo not found 1>&2
@@ -345,12 +362,46 @@ case "$1" in
     echo "No such container" >&2
     exit 1
     ;;
-  network|volume)
+  network)
     if [ "$2" = "create" ] || [ "$HELIX_TEST_RUNTIME_RESOURCES_EXIST" = "1" ]; then
       exit 0
     fi
     echo "not found" >&2
     exit 1
+    ;;
+  volume)
+    case "${HELIX_TEST_RUNTIME_VOLUME_MODE:-fresh}" in
+      existing)
+        # inspect succeeds, so ensure_volume returns before ever creating
+        exit 0
+        ;;
+      raced)
+        # inspect misses, create loses the race to another process
+        if [ "$2" = "create" ]; then
+          echo "volume already exists" >&2
+          exit 1
+        fi
+        echo "not found" >&2
+        exit 1
+        ;;
+      denied)
+        # inspect misses, create fails for an unrelated reason
+        if [ "$2" = "create" ]; then
+          echo "permission denied" >&2
+          exit 1
+        fi
+        echo "not found" >&2
+        exit 1
+        ;;
+      *)
+        # fresh: inspect misses, create succeeds
+        if [ "$2" = "create" ] || [ "$HELIX_TEST_RUNTIME_RESOURCES_EXIST" = "1" ]; then
+          exit 0
+        fi
+        echo "not found" >&2
+        exit 1
+        ;;
+    esac
     ;;
   *) exit 0 ;;
 esac
