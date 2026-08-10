@@ -33,12 +33,6 @@ pub(crate) struct TextBm25Statistics {
     document_frequencies: BTreeMap<Bytes, u64>,
 }
 
-impl TextBm25Statistics {
-    pub(crate) const fn document_count(&self) -> u64 {
-        self.total_document_count
-    }
-}
-
 #[cfg(feature = "production-coverage")]
 impl TextBm25Statistics {
     /// Constructs exact corpus statistics for the production FTS benchmark fixture.

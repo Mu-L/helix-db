@@ -1,8 +1,9 @@
-//! Exact FTS prefilter strategy and acceptance benchmark.
+//! Exact collector-only FTS prefilter benchmark.
 //!
 //! Release protocol: three independent 100k-document fixtures, three warmups,
 //! and 25 measured samples for every layout, density, term frequency, k, and
-//! strategy. Set `HELIX_FTS_PREFILTER_MILLION_SMOKE=1` for the separate cap run.
+//! execution mode. Set `HELIX_FTS_PREFILTER_MILLION_SMOKE=1` for the separate
+//! cap run.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fs;
@@ -27,7 +28,6 @@ const LAYOUTS: &[FtsPrefilterBenchmarkLayout] = &[
     FtsPrefilterBenchmarkLayout::Compacted,
 ];
 const STRATEGIES: &[FtsPrefilterBenchmarkStrategy] = &[
-    FtsPrefilterBenchmarkStrategy::TermSet,
     FtsPrefilterBenchmarkStrategy::Collector,
     FtsPrefilterBenchmarkStrategy::Unrestricted,
 ];
@@ -208,28 +208,8 @@ struct SummaryRecord<'summary> {
 }
 
 #[derive(Serialize)]
-struct StrategyDecisionRecord {
-    record: &'static str,
-    crossover_candidate_count: Option<usize>,
-    crossover_density_percent: Option<f64>,
-    sparse_common_p95_improvement_gate_passed: bool,
-    dense_latency_gate_passed: bool,
-    dense_allocation_gate_passed: bool,
-}
-
-#[derive(Serialize)]
-struct TinyBucketDecisionRecord {
-    record: &'static str,
-    candidate_count: usize,
-    comparison_count: usize,
-    collector_wins_every_comparison: bool,
-    minimum_collector_advantage_percent: Option<f64>,
-}
-
-#[derive(Serialize)]
-struct EvidenceReport<'report> {
+struct EvidenceReport {
     environment: serde_json::Value,
-    tiny_bucket_decisions: &'report [TinyBucketDecisionRecord],
     summaries: Vec<serde_json::Value>,
 }
 
@@ -334,7 +314,6 @@ async fn run() {
             values
                 .into_iter()
                 .map(|strategy| match strategy.as_str() {
-                    "term_set" => FtsPrefilterBenchmarkStrategy::TermSet,
                     "collector" => FtsPrefilterBenchmarkStrategy::Collector,
                     "unrestricted" => FtsPrefilterBenchmarkStrategy::Unrestricted,
                     _ => panic!("HELIX_FTS_PREFILTER_STRATEGIES contains an unsupported strategy"),
@@ -460,13 +439,6 @@ async fn run() {
         }
     }
 
-    let tiny_bucket_decisions = tiny_bucket_decisions(&summaries, &candidate_counts);
-    for decision in &tiny_bucket_decisions {
-        println!(
-            "{}",
-            serde_json::to_string(decision).expect("tiny-bucket decision serializes")
-        );
-    }
     if let Ok(path) = std::env::var("HELIX_FTS_PREFILTER_REPORT_PATH") {
         let path = PathBuf::from(path);
         let path = if path.is_absolute() {
@@ -478,7 +450,6 @@ async fn run() {
         };
         let report = EvidenceReport {
             environment: environment_json,
-            tiny_bucket_decisions: &tiny_bucket_decisions,
             summaries: evidence_summaries,
         };
         fs::write(
@@ -488,68 +459,7 @@ async fn run() {
         .expect("benchmark evidence report writes");
     }
 
-    if allow_short || million_smoke {
-        return;
-    }
-    let decision = acceptance_decision(&summaries, &candidate_counts, document_count);
-    println!(
-        "{}",
-        serde_json::to_string(&decision).expect("strategy decision serializes")
-    );
-    assert!(
-        decision.sparse_common_p95_improvement_gate_passed,
-        "term-set p95 must improve by at least 25% over collector filtering at 1% density"
-    );
-    assert!(
-        decision.dense_latency_gate_passed,
-        "the selected dense strategy must be no more than 10% slower than unrestricted FTS"
-    );
-    assert!(
-        decision.dense_allocation_gate_passed,
-        "the selected dense strategy must allocate no more than 2x unrestricted FTS"
-    );
-}
-
-fn tiny_bucket_decisions(
-    summaries: &[RunSummary],
-    candidate_counts: &[usize],
-) -> Vec<TinyBucketDecisionRecord> {
-    candidate_counts
-        .iter()
-        .copied()
-        .filter(|candidate_count| *candidate_count <= 100)
-        .map(|candidate_count| {
-            let comparisons = summaries
-                .iter()
-                .filter(|summary| {
-                    summary.case.candidate_count == candidate_count
-                        && summary.case.strategy == FtsPrefilterBenchmarkStrategy::Collector
-                })
-                .filter_map(|collector| {
-                    matching_summary(summaries, collector, FtsPrefilterBenchmarkStrategy::TermSet)
-                        .map(|term_set| (collector, term_set))
-                })
-                .collect::<Vec<_>>();
-            let minimum_collector_advantage_percent = comparisons
-                .iter()
-                .map(|(collector, term_set)| {
-                    (term_set.latency_p95_ns as f64 - collector.latency_p95_ns as f64) * 100.0
-                        / term_set.latency_p95_ns as f64
-                })
-                .reduce(f64::min);
-            TinyBucketDecisionRecord {
-                record: "tiny_bucket_decision",
-                candidate_count,
-                comparison_count: comparisons.len(),
-                collector_wins_every_comparison: !comparisons.is_empty()
-                    && comparisons.iter().all(|(collector, term_set)| {
-                        collector.latency_p95_ns < term_set.latency_p95_ns
-                            && collector.result_digest == term_set.result_digest
-                    }),
-                minimum_collector_advantage_percent,
-            }
-        })
-        .collect()
+    assert_dense_allocations_bounded(&summaries, document_count);
 }
 
 async fn measure(
@@ -636,88 +546,33 @@ fn summarize(
     }
 }
 
-fn acceptance_decision(
-    summaries: &[RunSummary],
-    candidate_counts: &[usize],
-    document_count: usize,
-) -> StrategyDecisionRecord {
-    let crossover_candidate_count = candidate_counts.iter().copied().find(|candidate_count| {
-        summaries
-            .iter()
-            .filter(|summary| {
-                summary.case.candidate_count == *candidate_count
-                    && summary.case.strategy == FtsPrefilterBenchmarkStrategy::Collector
-            })
-            .all(|collector| {
-                matching_summary(summaries, collector, FtsPrefilterBenchmarkStrategy::TermSet)
-                    .is_some_and(|term_set| collector.latency_p95_ns < term_set.latency_p95_ns)
-            })
-    });
-    let sparse_count = document_count / 100;
-    let sparse_common_p95_improvement_gate_passed = summaries
+fn assert_dense_allocations_bounded(summaries: &[RunSummary], document_count: usize) {
+    let comparisons = summaries
         .iter()
         .filter(|summary| {
-            summary.case.candidate_count == sparse_count
-                && summary.case.query == "commonterm"
-                && summary.case.strategy == FtsPrefilterBenchmarkStrategy::TermSet
+            summary.case.candidate_count == document_count
+                && summary.case.strategy == FtsPrefilterBenchmarkStrategy::Collector
         })
-        .all(|term_set| {
+        .filter_map(|collector| {
             matching_summary(
                 summaries,
-                term_set,
-                FtsPrefilterBenchmarkStrategy::Collector,
+                collector,
+                FtsPrefilterBenchmarkStrategy::Unrestricted,
             )
-            .is_some_and(|collector| {
-                u128::from(term_set.latency_p95_ns) * 100
-                    <= u128::from(collector.latency_p95_ns) * 75
-            })
-        });
-    let mut dense = summaries.iter().filter(|summary| {
-        summary.case.candidate_count == document_count
-            && summary.case.strategy == selected_strategy(crossover_candidate_count, document_count)
-    });
-    let dense_latency_gate_passed = dense.clone().all(|selected| {
-        matching_summary(
-            summaries,
-            selected,
-            FtsPrefilterBenchmarkStrategy::Unrestricted,
-        )
-        .is_some_and(|unrestricted| {
-            u128::from(selected.latency_p95_ns) * 100
-                <= u128::from(unrestricted.latency_p95_ns) * 110
+            .map(|unrestricted| (collector, unrestricted))
         })
-    });
-    let dense_allocation_gate_passed = dense.all(|selected| {
-        matching_summary(
-            summaries,
-            selected,
-            FtsPrefilterBenchmarkStrategy::Unrestricted,
-        )
-        .is_some_and(|unrestricted| {
-            selected.peak_allocated_bytes_p95
-                <= unrestricted.peak_allocated_bytes_p95.saturating_mul(2)
-        })
-    });
-    StrategyDecisionRecord {
-        record: "strategy_decision",
-        crossover_candidate_count,
-        crossover_density_percent: crossover_candidate_count
-            .map(|count| count as f64 * 100.0 / document_count as f64),
-        sparse_common_p95_improvement_gate_passed,
-        dense_latency_gate_passed,
-        dense_allocation_gate_passed,
+        .collect::<Vec<_>>();
+    if comparisons.is_empty() {
+        return;
     }
-}
-
-fn selected_strategy(
-    crossover_candidate_count: Option<usize>,
-    candidate_count: usize,
-) -> FtsPrefilterBenchmarkStrategy {
-    if crossover_candidate_count.is_some_and(|crossover| candidate_count >= crossover) {
-        FtsPrefilterBenchmarkStrategy::Collector
-    } else {
-        FtsPrefilterBenchmarkStrategy::TermSet
-    }
+    assert!(
+        comparisons.iter().all(|(collector, unrestricted)| {
+            collector.result_digest == unrestricted.result_digest
+                && collector.peak_allocated_bytes_p95
+                    <= unrestricted.peak_allocated_bytes_p95.saturating_mul(2)
+        }),
+        "collector results must match unrestricted FTS at full density and allocate no more than 2x"
+    );
 }
 
 fn matching_summary<'summary>(

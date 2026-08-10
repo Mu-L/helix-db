@@ -23,7 +23,7 @@ use slatedb::object_store::{
 use tantivy::collector::{FilterCollector, TopDocs};
 use tantivy::directory::RamDirectory;
 use tantivy::merge_policy::NoMergePolicy;
-use tantivy::query::{BooleanQuery, ConstScoreQuery, Occur, TermQuery, TermSetQuery};
+use tantivy::query::{BooleanQuery, Occur, TermQuery};
 use tantivy::schema::{IndexRecordOption, NumericOptions, Schema, TextFieldIndexing, TextOptions};
 use tantivy::tokenizer::{
     Language, LowerCaser, PreTokenizedString, SimpleTokenizer, Stemmer, TextAnalyzer, Token,
@@ -83,7 +83,7 @@ pub use prefilter_benchmark::{
     FtsPrefilterBenchmarkCase, FtsPrefilterBenchmarkFixture, FtsPrefilterBenchmarkLayout,
     FtsPrefilterBenchmarkSample, FtsPrefilterBenchmarkStrategy,
 };
-pub(crate) use restricted::{RestrictedTextCandidates, RestrictedTextStrategy, TextSearchScope};
+pub(crate) use restricted::{RestrictedTextCandidates, TextSearchScope};
 pub(crate) use split::{
     build_split_bundle, build_split_bundle_from_directory, decode_footer_cache_entry_bytes,
     open_split_directory_from_file, read_footer_cache_entry_from_file,
@@ -422,14 +422,7 @@ pub async fn search_manifest(
     }
 
     let (_index, fields, reader) = open_manifest_index(store, db_path, manifest).await?;
-    warm_searcher(
-        &reader,
-        fields,
-        manifest.analyzer,
-        query,
-        &TextSearchScope::Unrestricted,
-    )
-    .await?;
+    warm_searcher(&reader, fields, manifest.analyzer, query).await?;
     search_split_index_bytes(
         &reader,
         fields,
@@ -530,7 +523,6 @@ async fn search_manifest_with_state_source(
     const SPLIT_READ_CONCURRENCY: usize = 8;
     const STATE_BATCH_SIZE: usize = 512;
     let TextSearchRequest { query, k, scope } = request;
-    let scope = scope.resolve_strategy(statistics.map(|statistics| statistics.document_count()));
     if k == 0 || scope.is_empty_restricted() {
         return Ok(Vec::new());
     }
@@ -551,7 +543,7 @@ async fn search_manifest_with_state_source(
     let opened = futures::stream::iter(manifest.split_refs().iter().cloned())
         .map(|split_ref| async {
             let index_reader = SplitSearchReader::open(&runtime, &split_ref).await?;
-            index_reader.warm(manifest.analyzer, query, &scope).await?;
+            index_reader.warm(manifest.analyzer, query).await?;
             let total_docs = candidate_upper_bound.map_or_else(
                 || index_reader.total_docs(),
                 |bound| index_reader.total_docs().min(bound),
@@ -726,21 +718,16 @@ impl SplitSearchReader {
         }
     }
 
-    async fn warm(
-        &self,
-        analyzer: TextAnalyzerKind,
-        query: &str,
-        scope: &TextSearchScope,
-    ) -> Result<(), HelixDbError> {
+    async fn warm(&self, analyzer: TextAnalyzerKind, query: &str) -> Result<(), HelixDbError> {
         match self {
-            Self::Cached(split) => split.warm(analyzer, query, scope).await,
+            Self::Cached(split) => split.warm(analyzer, query).await,
             Self::Direct {
                 index,
                 reader,
                 fields,
             } => {
                 register_analyzers(index, analyzer);
-                warm_searcher(reader, *fields, analyzer, query, scope).await
+                warm_searcher(reader, *fields, analyzer, query).await
             }
         }
     }
@@ -1488,19 +1475,8 @@ pub(crate) async fn warm_searcher(
     fields: TextSchemaFields,
     analyzer: TextAnalyzerKind,
     query: &str,
-    scope: &TextSearchScope,
 ) -> Result<(), HelixDbError> {
     let mut warmup_info = query_warmup_info(fields, analyzer, query);
-    if matches!(
-        scope.restricted_strategy(),
-        Some(RestrictedTextStrategy::Adaptive | RestrictedTextStrategy::TermSet)
-    ) && scope
-        .candidates()
-        .is_some_and(|candidates| !candidates.is_empty())
-    {
-        warmup_info.term_dict_fields.insert(fields.entity_id);
-        warmup_info.postings_full_fields.insert(fields.entity_id);
-    }
     if warmup_info.terms_grouped_by_field.is_empty()
         && warmup_info.fast_fields.is_empty()
         && !warmup_info.field_norms
@@ -1836,28 +1812,7 @@ pub(crate) fn search_reader_candidates_with_statistics(
             )
         })
         .collect::<Vec<_>>();
-    let bm25_query = BooleanQuery::new(clauses);
-    let query: Box<dyn tantivy::query::Query> = match scope.restricted_strategy() {
-        None | Some(RestrictedTextStrategy::Collector) => Box::new(bm25_query),
-        Some(RestrictedTextStrategy::Adaptive | RestrictedTextStrategy::TermSet) => {
-            let candidates = scope
-                .candidates()
-                .expect("restricted strategy always carries candidates");
-            let candidate_query = TermSetQuery::new(
-                candidates
-                    .iter()
-                    .map(|entity_id| Term::from_field_u64(fields.entity_id, entity_id)),
-            );
-            let clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = vec![
-                (Occur::Must, Box::new(bm25_query)),
-                (
-                    Occur::Must,
-                    Box::new(ConstScoreQuery::new(Box::new(candidate_query), 0.0)),
-                ),
-            ];
-            Box::new(BooleanQuery::new(clauses))
-        }
-    };
+    let query = BooleanQuery::new(clauses);
     let collector = TopDocs::with_limit(k).tweak_score(|segment_reader| {
         let entity_ids = segment_reader
             .fast_fields()
@@ -1869,11 +1824,9 @@ pub(crate) fn search_reader_candidates_with_statistics(
             (score.to_bits(), Reverse(entity_ids.get_val(doc)))
         }
     });
-    let docs = match scope.restricted_strategy() {
-        Some(RestrictedTextStrategy::Collector) => {
-            let candidates = scope
-                .candidate_arc()
-                .expect("restricted strategy always carries candidates");
+    let docs = match scope {
+        TextSearchScope::Restricted(candidates) => {
+            let candidates = Arc::clone(candidates);
             let collector = FilterCollector::new(
                 ENTITY_ID_FIELD_NAME.to_owned(),
                 move |entity_id: u64| candidates.contains(entity_id),
@@ -1881,19 +1834,17 @@ pub(crate) fn search_reader_candidates_with_statistics(
             );
             match statistics {
                 Some(statistics) => {
-                    searcher.search_with_statistics_provider(query.as_ref(), &collector, statistics)
+                    searcher.search_with_statistics_provider(&query, &collector, statistics)
                 }
-                None => searcher.search(query.as_ref(), &collector),
+                None => searcher.search(&query, &collector),
             }
         }
-        None | Some(RestrictedTextStrategy::Adaptive | RestrictedTextStrategy::TermSet) => {
-            match statistics {
-                Some(statistics) => {
-                    searcher.search_with_statistics_provider(query.as_ref(), &collector, statistics)
-                }
-                None => searcher.search(query.as_ref(), &collector),
+        TextSearchScope::Unrestricted => match statistics {
+            Some(statistics) => {
+                searcher.search_with_statistics_provider(&query, &collector, statistics)
             }
-        }
+            None => searcher.search(&query, &collector),
+        },
     }
     .map_err(|err| HelixDbError::Config(format!("failed to execute Tantivy search: {err}")))?;
 
@@ -2416,7 +2367,7 @@ mod tests {
     }
 
     #[test]
-    fn restricted_term_set_matches_exhaustive_filtered_bm25_and_refills_to_k() {
+    fn restricted_collector_matches_exhaustive_filtered_bm25_and_refills_to_k() {
         let definition = TextIndexDefinition::new_node("Doc", "body").unwrap();
         let documents = [
             TextDocumentInput::new(1, "needle needle needle"),
@@ -2469,7 +2420,7 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(32))]
 
         #[test]
-        fn restricted_term_set_property_matches_exhaustive_intersection_top_k(
+        fn restricted_collector_property_matches_exhaustive_intersection_top_k(
             term_counts in prop::collection::vec(1_usize..8, 1..24),
             candidate_ids in prop::collection::vec(0_u64..32, 0..40),
             requested_k in 1_usize..16,

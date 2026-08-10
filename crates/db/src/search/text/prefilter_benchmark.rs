@@ -18,9 +18,8 @@ use slatedb::object_store::{
 };
 
 use super::{
-    analyze_text, persist_documents_as_split, RestrictedTextCandidates, RestrictedTextStrategy,
-    SplitSearchReader, TextDocumentInput, TextSearchCandidate, TextSearchRuntime, TextSearchScope,
-    TextSplitRef,
+    analyze_text, persist_documents_as_split, RestrictedTextCandidates, SplitSearchReader,
+    TextDocumentInput, TextSearchCandidate, TextSearchRuntime, TextSearchScope, TextSplitRef,
 };
 use crate::config::TextIndexDefinition;
 use crate::error::{HelixDbError, Result};
@@ -48,10 +47,9 @@ impl FtsPrefilterBenchmarkLayout {
     }
 }
 
-/// Exact filtering strategy selected for one sample.
+/// Restricted collector or unrestricted baseline selected for one sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FtsPrefilterBenchmarkStrategy {
-    TermSet,
     Collector,
     Unrestricted,
 }
@@ -59,7 +57,6 @@ pub enum FtsPrefilterBenchmarkStrategy {
 impl FtsPrefilterBenchmarkStrategy {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::TermSet => "term_set",
             Self::Collector => "collector",
             Self::Unrestricted => "unrestricted",
         }
@@ -343,19 +340,17 @@ impl FtsPrefilterBenchmarkFixture {
         &self,
         case: FtsPrefilterBenchmarkCase,
     ) -> Result<FtsPrefilterBenchmarkSample> {
-        let candidates = Arc::new(RestrictedTextCandidates::from_ids(
-            benchmark_candidate_ids(self.document_count, case.candidate_count),
-        )?);
-        let scope = match case.strategy {
-            FtsPrefilterBenchmarkStrategy::TermSet => TextSearchScope::restricted_with_strategy(
-                Arc::clone(&candidates),
-                RestrictedTextStrategy::TermSet,
-            ),
-            FtsPrefilterBenchmarkStrategy::Collector => TextSearchScope::restricted_with_strategy(
-                Arc::clone(&candidates),
-                RestrictedTextStrategy::Collector,
-            ),
-            FtsPrefilterBenchmarkStrategy::Unrestricted => TextSearchScope::Unrestricted,
+        let candidates = match case.strategy {
+            FtsPrefilterBenchmarkStrategy::Collector => {
+                Some(Arc::new(RestrictedTextCandidates::from_ids(
+                    benchmark_candidate_ids(self.document_count, case.candidate_count),
+                )?))
+            }
+            FtsPrefilterBenchmarkStrategy::Unrestricted => None,
+        };
+        let scope = match &candidates {
+            Some(candidates) => TextSearchScope::restricted(Arc::clone(candidates)),
+            None => TextSearchScope::Unrestricted,
         };
 
         self.store.reset();
@@ -363,7 +358,7 @@ impl FtsPrefilterBenchmarkFixture {
             .search_layout(case.layout, &scope, case.query, case.k)
             .await?;
         let (object_store_reads, object_store_bytes) = self.store.snapshot();
-        self.assert_exact(case, &candidates, &hits)?;
+        self.assert_exact(case, candidates.as_deref(), &hits)?;
         Ok(FtsPrefilterBenchmarkSample {
             split_count: self.splits(case.layout).len(),
             candidate_count: case.candidate_count,
@@ -377,7 +372,7 @@ impl FtsPrefilterBenchmarkFixture {
     fn assert_exact(
         &self,
         case: FtsPrefilterBenchmarkCase,
-        candidates: &RestrictedTextCandidates,
+        candidates: Option<&RestrictedTextCandidates>,
         actual: &[TextSearchCandidate],
     ) -> Result<()> {
         let exhaustive = self
@@ -386,10 +381,7 @@ impl FtsPrefilterBenchmarkFixture {
             .expect("validated benchmark query has an exhaustive result");
         let expected = exhaustive
             .iter()
-            .filter(|hit| {
-                case.strategy == FtsPrefilterBenchmarkStrategy::Unrestricted
-                    || candidates.contains(hit.entity_id)
-            })
+            .filter(|hit| candidates.is_none_or(|candidates| candidates.contains(hit.entity_id)))
             .take(case.k)
             .map(|hit| (hit.entity_id, hit.score.to_bits()))
             .collect::<Vec<_>>();
@@ -418,9 +410,7 @@ impl FtsPrefilterBenchmarkFixture {
             .expect("validated benchmark query has exact statistics");
         let split_hits = futures::stream::iter(self.readers(layout).iter())
             .map(|reader| async {
-                reader
-                    .warm(self.definition.analyzer(), query, scope)
-                    .await?;
+                reader.warm(self.definition.analyzer(), query).await?;
                 reader.search_candidates(
                     self.definition.analyzer(),
                     query,

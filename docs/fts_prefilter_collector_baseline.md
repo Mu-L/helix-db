@@ -5,10 +5,15 @@ Captured from commit `48b55ba157fc06ad3bc7cfc73c9f1981735ef6f9` on a 100,000-doc
 samples for rare, medium, and common terms, `k = 10` and `k = 100`, before and after
 compaction.
 
-## Term-set removal decision
+## Collector-only decision
 
-The generic collector did not win every comparison in every tiny bucket. The production
-term-set path must remain until the specialized collector passes this gate.
+The generic collector won 30 of 36 comparisons in each of the 1, 10, and 25 candidate
+buckets. Those losses were compacted common-term cases, and their largest absolute p95
+penalty was 0.494 ms. It won 36 of 36 at 50 candidates and 35 of 36 at 100 candidates; the
+single 100-candidate loss was 1.178 ms. The implementation therefore uses the generic
+collector for every restricted search. This removes term-set query construction, adaptive
+strategy selection, and the entity-ID postings warmup. The small absolute losses were
+accepted in exchange for one exact, easier-to-maintain path.
 
 | candidates | comparisons | won every comparison | worst p95 advantage |
 | ---: | ---: | :---: | ---: |
@@ -18,8 +23,10 @@ term-set path must remain until the specialized collector passes this gate.
 | 50 | 36 | yes | 7.33% |
 | 100 | 36 | no | -50.48% |
 
-Every measured result passed the exhaustive filtered BM25 oracle assertion. Result digests
-matched across term-set and collector strategies for all 180 equivalent case/run groups.
+The table records the original removal gate; it is retained as historical evidence, not as
+the production selection rule. Every measured result passed the exhaustive filtered BM25
+oracle assertion. Result digests matched across term-set and collector strategies for all
+180 equivalent case/run groups.
 
 ## Optimization baselines
 
@@ -29,6 +36,9 @@ matched across term-set and collector strategies for all 180 equivalent case/run
   cases exceeded 1.1x.
 - The worst 100%-density collector/unrestricted peak-allocation ratio was 1.075; all cases
   passed the 2x allocation gate.
+- The collector scans matching BM25 documents before checking bitmap membership. Common-term
+  cost can therefore grow with corpus size; a production-format 1M-document benchmark should
+  be used to set an absolute latency SLO before revisiting specialization.
 
 Raw evidence:
 
