@@ -52,6 +52,10 @@ fn selected_stream_pipeline_op_matches(
             physical::PhysicalPipelineOp::Stream(physical::PhysicalStreamOp::VectorSearch),
         )
         | (
+            logical::StreamPipelineOp::TextSearch { .. },
+            physical::PhysicalPipelineOp::Stream(physical::PhysicalStreamOp::TextSearch),
+        )
+        | (
             logical::StreamPipelineOp::Variable { .. },
             physical::PhysicalPipelineOp::Stream(physical::PhysicalStreamOp::Variable),
         )

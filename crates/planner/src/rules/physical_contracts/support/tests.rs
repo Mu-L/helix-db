@@ -207,6 +207,47 @@ fn restricted_vector_contract_is_pure_order_sensitive_materialized_and_distance_
 }
 
 #[test]
+fn restricted_text_contract_is_order_sensitive_materialized_and_score_ordered() {
+    let storage = cost::StorageCostProfile::default();
+    let (_, text, _) = stream_pipeline_op_contract(
+        &logical::StreamPipelineOp::TextSearch {
+            plan: Box::new(ir::RestrictedTextSearchPlan::Nodes {
+                key: crate::catalog::NodeSearchIndexKey::try_new("Doc", "body").unwrap(),
+                index: ir::SearchIndexPlan {
+                    index_id: ir::NonEmptyString::new("idx").unwrap(),
+                    tenant: ir::SearchTenantPlan::Unscoped,
+                },
+                query_text: ir::TextQueryInputPlan::new(helix_ast::value::PropertyInput::from(
+                    "needle",
+                ))
+                .unwrap(),
+                k: ir::SearchLimitPlan::Literal(std::num::NonZeroUsize::new(10).unwrap()),
+            }),
+        },
+        properties::DeliveredProperties {
+            cardinality: properties::CardinalityBounds::zero_to(Some(100)),
+            ..access_delivered(properties::ElementKind::Node)
+        },
+        cost::EstimatedRows::rows(100),
+        &storage,
+    );
+
+    assert_eq!(text.cardinality.upper(), Some(10));
+    assert_eq!(text.effect, properties::EffectKind::OrderSensitive);
+    assert_eq!(
+        text.materialization,
+        properties::Materialization::Materialized
+    );
+    let properties::DeliveredOrdering::ByKeys(keys) = text.ordering else {
+        panic!("restricted text search must establish score ordering");
+    };
+    assert_eq!(keys.as_ref()[0].property.as_ref(), "$score");
+    assert_eq!(keys.as_ref()[0].order, helix_ast::traversal::Order::Desc);
+    assert_eq!(keys.as_ref()[1].property.as_ref(), "$id");
+    assert_eq!(keys.as_ref()[1].order, helix_ast::traversal::Order::Asc);
+}
+
+#[test]
 fn stream_pipeline_contract_preserves_literal_window_lower_bounds() {
     let storage = cost::StorageCostProfile::default();
     let delivered = properties::DeliveredProperties {

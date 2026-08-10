@@ -17,6 +17,8 @@ pub enum PhysicalStreamOp {
     Expand,
     /// Traversal-scoped vector ranking.
     VectorSearch,
+    /// Traversal-scoped BM25 ranking.
+    TextSearch,
     /// Projection.
     Project,
     /// Aggregation.

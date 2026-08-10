@@ -22,6 +22,11 @@ pub enum ExecOp {
         /// Node- or edge-bound vector search plan.
         plan: Box<ir::RestrictedVectorSearchPlan>,
     },
+    /// BM25 ranking restricted to the input rows.
+    TextSearch {
+        /// Node- or edge-bound text search plan.
+        plan: Box<ir::RestrictedTextSearchPlan>,
+    },
     /// Residual predicate filter.
     Filter { predicate: ir::PredicatePlan },
     /// Row limit.
