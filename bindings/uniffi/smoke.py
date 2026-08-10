@@ -18,7 +18,7 @@ from helixdb import (
 )
 
 
-assert importlib.metadata.version("helix-db") == "0.3.2"
+assert importlib.metadata.version("helix-db") == "0.3.3"
 assert importlib.metadata.version("helix-db-embedded") == "0.3.2"
 for name in (
     "HelixDb",
