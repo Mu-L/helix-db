@@ -192,6 +192,12 @@
             ]
           },
           {
+            "group": "Connect and automate",
+            "pages": [
+              "database/helix-cloud/connect/mcp"
+            ]
+          },
+          {
             "group": "Operate",
             "pages": [
               "database/helix-cloud/operate/multi-tenancy",

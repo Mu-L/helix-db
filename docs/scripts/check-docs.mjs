@@ -38,6 +38,7 @@ const DATABASE_GROUP_PREFIXES = new Map([
   ['HelixDB/Core Concepts', 'database/helix-db/core-concepts/'],
   ['HelixDB/Query Guides', 'database/helix-db/query-guides/'],
   ['Helix Cloud/Start Here', 'database/helix-cloud/start-here/'],
+  ['Helix Cloud/Connect and automate', 'database/helix-cloud/connect/'],
   ['Helix Cloud/Operate', 'database/helix-cloud/operate/'],
 ]);
 const CLIENT_SETUP_MARKER =
