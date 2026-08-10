@@ -47,6 +47,14 @@ impl<'a> RestrictedTextSearchRead<'a> {
     }
 }
 
+struct TextSearchAccess<'a> {
+    element_type: TextElementType,
+    label: &'a ir::NonEmptyString,
+    property: &'a ir::NonEmptyString,
+    index: &'a ir::SearchIndexPlan,
+    query_text: &'a ir::TextQueryInputPlan,
+}
+
 impl<'db> ExecutionContext<'db> {
     pub(in crate::execution::interpreter::access) async fn vector_search_results(
         &self,
@@ -204,16 +212,15 @@ impl<'db> ExecutionContext<'db> {
         query_text: &ir::TextQueryInputPlan,
         limit: SearchReadLimit<'_>,
     ) -> Result<Vec<crate::search::text::TextSearchHit>> {
-        self.text_search_hits_with_scope(
+        let access = TextSearchAccess {
             element_type,
             label,
             property,
             index,
             query_text,
-            limit,
-            TextSearchScope::Unrestricted,
-        )
-        .await
+        };
+        self.text_search_hits_with_scope(&access, limit, TextSearchScope::Unrestricted)
+            .await
     }
 
     pub(in crate::execution::interpreter::access) async fn restricted_text_search_hits(
@@ -225,12 +232,15 @@ impl<'db> ExecutionContext<'db> {
         query_text: &ir::TextQueryInputPlan,
         read: RestrictedTextSearchRead<'_>,
     ) -> Result<Vec<crate::search::text::TextSearchHit>> {
-        self.text_search_hits_with_scope(
+        let access = TextSearchAccess {
             element_type,
             label,
             property,
             index,
             query_text,
+        };
+        self.text_search_hits_with_scope(
+            &access,
             read.limit,
             TextSearchScope::restricted(read.candidates),
         )
@@ -239,21 +249,18 @@ impl<'db> ExecutionContext<'db> {
 
     async fn text_search_hits_with_scope(
         &self,
-        element_type: TextElementType,
-        label: &ir::NonEmptyString,
-        property: &ir::NonEmptyString,
-        index: &ir::SearchIndexPlan,
-        query_text: &ir::TextQueryInputPlan,
+        access: &TextSearchAccess<'_>,
         limit: SearchReadLimit<'_>,
         scope: TextSearchScope,
     ) -> Result<Vec<crate::search::text::TextSearchHit>> {
         if scope.is_empty_restricted() {
             return Ok(Vec::new());
         }
-        let definition = self.text_definition(element_type, label, property)?;
-        let tenant_value = self.search_tenant_value(&index.tenant).await?;
-        validate_text_search_tenant(&definition, &index.tenant, tenant_value.as_ref())?;
-        let query = self.search_query_text(query_text).await?;
+        let definition =
+            self.text_definition(access.element_type, access.label, access.property)?;
+        let tenant_value = self.search_tenant_value(&access.index.tenant).await?;
+        validate_text_search_tenant(&definition, &access.index.tenant, tenant_value.as_ref())?;
+        let query = self.search_query_text(access.query_text).await?;
         let k = self.effective_search_limit(limit).await?;
 
         let generation = self

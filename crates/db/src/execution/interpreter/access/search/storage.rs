@@ -401,10 +401,8 @@ async fn search_text_manifest_in_view(
         ),
         root,
         &generation_manifest,
-        query,
-        k,
         &statistics,
-        scope,
+        search::text::TextSearchRequest::new(query, k, scope),
     )
     .await
 }

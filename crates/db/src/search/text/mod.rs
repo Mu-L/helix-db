@@ -148,6 +148,19 @@ impl<'a> TextSearchRuntime<'a> {
     }
 }
 
+/// Immutable query inputs for one restricted or unrestricted manifest search.
+pub(crate) struct TextSearchRequest<'a> {
+    query: &'a str,
+    k: usize,
+    scope: TextSearchScope,
+}
+
+impl<'a> TextSearchRequest<'a> {
+    pub(crate) const fn new(query: &'a str, k: usize, scope: TextSearchScope) -> Self {
+        Self { query, k, scope }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextIndexGenerationManifest {
     pub format_version: u32,
@@ -464,10 +477,8 @@ pub async fn search_manifest_with_live_state_scoped(
             scope,
             index_name: &manifest.physical_index_name,
         },
-        query,
-        k,
         None,
-        TextSearchScope::Unrestricted,
+        TextSearchRequest::new(query, k, TextSearchScope::Unrestricted),
     )
     .await
 }
@@ -481,20 +492,16 @@ pub(crate) async fn search_manifest_with_v2_live_state_scoped_and_scope(
     runtime: TextSearchRuntime<'_>,
     root: &crate::index_lifecycle::text::serving::ValidatedActiveTextManifestRoot,
     manifest: &TextIndexGenerationManifest,
-    query: &str,
-    k: usize,
     statistics: &crate::index_lifecycle::text::statistics::TextBm25Statistics,
-    scope: TextSearchScope,
+    request: TextSearchRequest<'_>,
 ) -> Result<Vec<TextSearchHit>, HelixDbError> {
     search_manifest_with_state_source(
         reader,
         runtime,
         manifest,
         TextLiveStateSource::V2(root),
-        query,
-        k,
         Some(statistics),
-        scope,
+        request,
     )
     .await
 }
@@ -517,13 +524,12 @@ async fn search_manifest_with_state_source(
     runtime: TextSearchRuntime<'_>,
     manifest: &TextIndexGenerationManifest,
     state_source: TextLiveStateSource<'_>,
-    query: &str,
-    k: usize,
     statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
-    scope: TextSearchScope,
+    request: TextSearchRequest<'_>,
 ) -> Result<Vec<TextSearchHit>, HelixDbError> {
     const SPLIT_READ_CONCURRENCY: usize = 8;
     const STATE_BATCH_SIZE: usize = 512;
+    let TextSearchRequest { query, k, scope } = request;
     let scope = scope.resolve_strategy(statistics.map(|statistics| statistics.document_count()));
     if k == 0 || scope.is_empty_restricted() {
         return Ok(Vec::new());

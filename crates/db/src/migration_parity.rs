@@ -1461,10 +1461,12 @@ async fn text_search_from_read(
                     search::text::TextSearchRuntime::new(object_store, database, None),
                     &root,
                     &manifest,
-                    request.query,
-                    request.k,
                     statistics,
-                    search::text::TextSearchScope::Unrestricted,
+                    search::text::TextSearchRequest::new(
+                        request.query,
+                        request.k,
+                        search::text::TextSearchScope::Unrestricted,
+                    ),
                 )
                 .await?
                 {

@@ -334,9 +334,11 @@ fn assert_complete_fixture_coverage(coverage: &FixtureCoverage) {
             "VectorSearchNodes",
             "VectorSearchNodesWithin",
             "TextSearchNodes",
+            "TextSearchNodesWithin",
             "VectorSearchEdges",
             "VectorSearchEdgesWithin",
             "TextSearchEdges",
+            "TextSearchEdgesWithin",
             "Out",
             "In",
             "Both",
@@ -681,6 +683,21 @@ fn visit_ast_node(node: &AstNode, coverage: &mut FixtureCoverage) {
             visit_property_input(query_text, coverage);
             visit_stream_bound(k, coverage);
         }
+        AstNode::TextSearchNodesWithin {
+            input,
+            tenant_value,
+            query_text,
+            k,
+            ..
+        } => {
+            coverage.ast_nodes.insert("TextSearchNodesWithin");
+            visit_ast_node(input, coverage);
+            if let Some(value) = tenant_value {
+                visit_property_input(value, coverage);
+            }
+            visit_property_input(query_text, coverage);
+            visit_stream_bound(k, coverage);
+        }
         AstNode::VectorSearchEdges {
             tenant_value,
             query_vector,
@@ -716,6 +733,21 @@ fn visit_ast_node(node: &AstNode, coverage: &mut FixtureCoverage) {
             ..
         } => {
             coverage.ast_nodes.insert("TextSearchEdges");
+            if let Some(value) = tenant_value {
+                visit_property_input(value, coverage);
+            }
+            visit_property_input(query_text, coverage);
+            visit_stream_bound(k, coverage);
+        }
+        AstNode::TextSearchEdgesWithin {
+            input,
+            tenant_value,
+            query_text,
+            k,
+            ..
+        } => {
+            coverage.ast_nodes.insert("TextSearchEdgesWithin");
+            visit_ast_node(input, coverage);
             if let Some(value) = tenant_value {
                 visit_property_input(value, coverage);
             }
@@ -3251,6 +3283,17 @@ fn remaining_read_contract_fixture() -> Fixture {
                 g().text_search_edges("FOLLOWS", "note", "graph", 5usize, None)
                     .edge_properties(),
             )
+            .var_as(
+                "text_nodes_within",
+                g().n_with_label("ParityUser")
+                    .text_search("ParityUser", "bio", "graph", 5, None),
+            )
+            .var_as(
+                "text_edges_within",
+                g().e(EdgeRef::all())
+                    .has_label("FOLLOWS")
+                    .text_search("FOLLOWS", "note", "graph", 5, None),
+            )
             .var_as_if(
                 "previous",
                 BatchCondition::PrevNotEmpty,
@@ -3306,6 +3349,8 @@ fn remaining_read_contract_fixture() -> Fixture {
                 "vector_nodes_within",
                 "vector_edges_within",
                 "text_edges",
+                "text_nodes_within",
+                "text_edges_within",
                 "previous",
                 "not_empty",
                 "empty",
