@@ -42,6 +42,10 @@ pub use secondary_equality_hot_path::{
     SecondaryEqualityReadMode, SecondaryEqualityReadSample,
 };
 
+pub use crate::search::text::{
+    FtsPrefilterBenchmarkCase, FtsPrefilterBenchmarkFixture, FtsPrefilterBenchmarkLayout,
+    FtsPrefilterBenchmarkSample, FtsPrefilterBenchmarkStrategy,
+};
 pub use migration_text_rebuild::{
     inspect_legacy_text_physical_rows, inspect_legacy_text_source, repair_legacy_text_source,
     seed_legacy_text_source_fixture, seed_populated_legacy_text_fixture,

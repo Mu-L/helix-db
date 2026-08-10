@@ -66,24 +66,86 @@ impl RestrictedTextCandidates {
 #[derive(Debug, Clone)]
 pub(crate) enum TextSearchScope {
     Unrestricted,
-    Restricted(Arc<RestrictedTextCandidates>),
+    Restricted {
+        candidates: Arc<RestrictedTextCandidates>,
+        strategy: RestrictedTextStrategy,
+    },
+}
+
+/// Exact physical filter implementations compared by the production benchmark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RestrictedTextStrategy {
+    Adaptive,
+    TermSet,
+    Collector,
 }
 
 impl TextSearchScope {
     pub(crate) fn restricted(candidates: Arc<RestrictedTextCandidates>) -> Self {
-        Self::Restricted(candidates)
+        Self::Restricted {
+            candidates,
+            strategy: RestrictedTextStrategy::Adaptive,
+        }
+    }
+
+    #[cfg(feature = "production-coverage")]
+    pub(crate) fn restricted_with_strategy(
+        candidates: Arc<RestrictedTextCandidates>,
+        strategy: RestrictedTextStrategy,
+    ) -> Self {
+        Self::Restricted {
+            candidates,
+            strategy,
+        }
     }
 
     pub(crate) fn candidates(&self) -> Option<&RestrictedTextCandidates> {
         match self {
             Self::Unrestricted => None,
-            Self::Restricted(candidates) => Some(candidates),
+            Self::Restricted { candidates, .. } => Some(candidates),
+        }
+    }
+
+    pub(crate) fn candidate_arc(&self) -> Option<Arc<RestrictedTextCandidates>> {
+        match self {
+            Self::Unrestricted => None,
+            Self::Restricted { candidates, .. } => Some(Arc::clone(candidates)),
+        }
+    }
+
+    pub(crate) fn restricted_strategy(&self) -> Option<RestrictedTextStrategy> {
+        match self {
+            Self::Unrestricted => None,
+            Self::Restricted { strategy, .. } => Some(*strategy),
         }
     }
 
     pub(crate) fn is_empty_restricted(&self) -> bool {
         self.candidates()
             .is_some_and(RestrictedTextCandidates::is_empty)
+    }
+
+    /// Applies the measured 0.1% collector crossover when corpus size is known.
+    pub(crate) fn resolve_strategy(self, total_document_count: Option<u64>) -> Self {
+        let Self::Restricted {
+            candidates,
+            strategy: RestrictedTextStrategy::Adaptive,
+        } = self
+        else {
+            return self;
+        };
+        let strategy = match total_document_count {
+            Some(total_document_count)
+                if u128::from(candidates.len()) * 1_000 >= u128::from(total_document_count) =>
+            {
+                RestrictedTextStrategy::Collector
+            }
+            _ => RestrictedTextStrategy::TermSet,
+        };
+        Self::Restricted {
+            candidates,
+            strategy,
+        }
     }
 }
 
@@ -109,5 +171,26 @@ mod tests {
         let error = RestrictedTextCandidates::from_ids(0..=MAX_RESTRICTED_CANDIDATES)
             .expect_err("the unique candidate cap must fail closed");
         assert!(error.to_string().contains("at most 1000000"));
+    }
+
+    #[test]
+    fn adaptive_strategy_uses_the_measured_point_one_percent_crossover() {
+        let sparse = TextSearchScope::restricted(Arc::new(
+            RestrictedTextCandidates::from_ids(0..99).unwrap(),
+        ))
+        .resolve_strategy(Some(100_000));
+        assert_eq!(
+            sparse.restricted_strategy(),
+            Some(RestrictedTextStrategy::TermSet)
+        );
+
+        let crossover = TextSearchScope::restricted(Arc::new(
+            RestrictedTextCandidates::from_ids(0..100).unwrap(),
+        ))
+        .resolve_strategy(Some(100_000));
+        assert_eq!(
+            crossover.restricted_strategy(),
+            Some(RestrictedTextStrategy::Collector)
+        );
     }
 }

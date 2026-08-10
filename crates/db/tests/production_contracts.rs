@@ -2773,6 +2773,390 @@ async fn public_query_boundary_covers_active_text_index_mutations() {
 }
 
 #[tokio::test]
+async fn public_query_boundary_restricts_node_and_edge_text_search_to_the_current_stream() {
+    let db = HelixDB::open(HelixDbSource::InMemory {
+        database: "production-interpreter-restricted-text-search".to_owned(),
+    })
+    .await
+    .expect("restricted text-search fixture opens");
+
+    db.query(QueryRequest::write(
+        batch::write_batch()
+            .var_as(
+                "first",
+                traversal::g().add_n(
+                    "Document",
+                    vec![("body", PropertyInput::from("needle needle needle"))],
+                ),
+            )
+            .var_as(
+                "second",
+                traversal::g().add_n(
+                    "Document",
+                    vec![("body", PropertyInput::from("needle needle"))],
+                ),
+            )
+            .var_as(
+                "third",
+                traversal::g().add_n("Document", vec![("body", PropertyInput::from("needle"))]),
+            )
+            .var_as(
+                "fourth",
+                traversal::g().add_n(
+                    "Document",
+                    vec![("body", PropertyInput::from("needle filler filler"))],
+                ),
+            )
+            .var_as(
+                "edge_zero",
+                traversal::g().n(NodeRef::id(0)).add_e(
+                    "LINK",
+                    NodeRef::id(1),
+                    vec![("body", PropertyInput::from("needle needle needle"))],
+                ),
+            )
+            .var_as(
+                "edge_one",
+                traversal::g().n(NodeRef::id(0)).add_e(
+                    "LINK",
+                    NodeRef::id(2),
+                    vec![("body", PropertyInput::from("needle needle"))],
+                ),
+            )
+            .var_as(
+                "edge_two",
+                traversal::g().n(NodeRef::id(0)).add_e(
+                    "LINK",
+                    NodeRef::id(3),
+                    vec![("body", PropertyInput::from("needle"))],
+                ),
+            )
+            .returning(Vec::<String>::new()),
+    ))
+    .await
+    .unwrap();
+
+    for (operation, description) in [
+        (
+            traversal::g().create_text_index_nodes("Document", "body", None::<String>),
+            "restricted node text index",
+        ),
+        (
+            traversal::g().create_text_index_edges("LINK", "body", None::<String>),
+            "restricted edge text index",
+        ),
+    ] {
+        let receipt = db
+            .query(QueryRequest::write(
+                batch::write_batch()
+                    .var_as("operation", operation)
+                    .returning(["operation"]),
+            ))
+            .await
+            .unwrap();
+        let operation_id = receipt["operation"]["operation_id"]
+            .as_str()
+            .expect("accepted text-index operation has an ID");
+        await_index_operation_success(&db, operation_id, description).await;
+    }
+
+    let response = db
+        .query(QueryRequest::read(
+            batch::read_batch()
+                .var_as(
+                    "all_nodes",
+                    traversal::g()
+                        .text_search_nodes("Document", "body", "needle", 10, None)
+                        .id(),
+                )
+                .var_as(
+                    "restricted_nodes",
+                    traversal::g()
+                        .n(NodeRef::ids([1, 2, 3]))
+                        .text_search("Document", "body", "needle", 2, None)
+                        .id(),
+                )
+                .var_as(
+                    "single_node",
+                    traversal::g()
+                        .n(NodeRef::ids([2]))
+                        .text_search("Document", "body", "needle", 10, None)
+                        .id(),
+                )
+                .var_as(
+                    "empty_nodes",
+                    traversal::g()
+                        .n(NodeRef::ids([]))
+                        .text_search("Document", "body", "needle", 10, None)
+                        .id(),
+                )
+                .var_as(
+                    "node_state",
+                    traversal::g()
+                        .n(NodeRef::ids([1, 2]))
+                        .bind("upstream")
+                        .text_search("Document", "body", "needle", 2, None)
+                        .project_bindings(vec![
+                            BindingProjection::current("$id", "id"),
+                            BindingProjection::current("$score", "score"),
+                            BindingProjection::binding("upstream", "$id", "upstream_id"),
+                        ]),
+                )
+                .var_as(
+                    "node_sacks",
+                    traversal::g()
+                        .n(NodeRef::ids([1, 2]))
+                        .with_sack(PropertyValue::from(12_i64))
+                        .text_search("Document", "body", "needle", 2, None)
+                        .sack_get(),
+                )
+                .var_as(
+                    "all_edges",
+                    traversal::g()
+                        .text_search_edges("LINK", "body", "needle", 10, None)
+                        .id(),
+                )
+                .var_as(
+                    "restricted_edges",
+                    traversal::g()
+                        .e(EdgeRef::ids([1, 2]))
+                        .text_search("LINK", "body", "needle", 2, None)
+                        .id(),
+                )
+                .returning([
+                    "all_nodes",
+                    "restricted_nodes",
+                    "single_node",
+                    "empty_nodes",
+                    "node_state",
+                    "node_sacks",
+                    "all_edges",
+                    "restricted_edges",
+                ]),
+        ))
+        .await
+        .unwrap();
+
+    let expected_nodes = response["all_nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|id| matches!(id.as_u64(), Some(1 | 2 | 3)))
+        .take(2)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        response["restricted_nodes"],
+        serde_json::Value::Array(expected_nodes)
+    );
+    assert_eq!(response["single_node"], serde_json::json!([2]));
+    assert_eq!(response["empty_nodes"], serde_json::json!([]));
+    assert!(response["node_sacks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["sack"] == 12));
+    assert!(response["node_state"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| {
+            row["id"] == row["upstream_id"] && row["score"].as_f64().is_some_and(f64::is_finite)
+        }));
+
+    let expected_edges = response["all_edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|id| matches!(id.as_u64(), Some(1 | 2)))
+        .take(2)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        response["restricted_edges"],
+        serde_json::Value::Array(expected_edges)
+    );
+
+    let mutation_visible = db
+        .query(QueryRequest::write(
+            batch::write_batch()
+                .var_as(
+                    "retired_node",
+                    traversal::g()
+                        .n(NodeRef::id(1))
+                        .set_property("body", "retired"),
+                )
+                .var_as("deleted_node", traversal::g().n(NodeRef::id(2)).drop())
+                .var_as(
+                    "retired_edge",
+                    traversal::g()
+                        .e(EdgeRef::id(1))
+                        .set_property("body", "retired"),
+                )
+                .var_as(
+                    "deleted_edge",
+                    traversal::g().n(NodeRef::id(0)).drop_edge(NodeRef::id(3)),
+                )
+                .var_as(
+                    "nodes",
+                    traversal::g()
+                        .n(NodeRef::ids([1, 2, 3]))
+                        .text_search("Document", "body", "needle", 10, None)
+                        .id(),
+                )
+                .var_as(
+                    "edges",
+                    traversal::g()
+                        .e(EdgeRef::ids([1, 2]))
+                        .text_search("LINK", "body", "needle", 10, None)
+                        .id(),
+                )
+                .returning(["nodes", "edges"]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        mutation_visible,
+        serde_json::json!({ "nodes": [3], "edges": [] })
+    );
+    let committed = db
+        .query(QueryRequest::read(
+            batch::read_batch()
+                .var_as(
+                    "nodes",
+                    traversal::g()
+                        .n(NodeRef::ids([1, 2, 3]))
+                        .text_search("Document", "body", "needle", 10, None)
+                        .id(),
+                )
+                .var_as(
+                    "edges",
+                    traversal::g()
+                        .e(EdgeRef::ids([1, 2]))
+                        .text_search("LINK", "body", "needle", 10, None)
+                        .id(),
+                )
+                .returning(["nodes", "edges"]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(committed, serde_json::json!({ "nodes": [3], "edges": [] }));
+
+    db.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn public_query_boundary_restricted_text_search_respects_tenant_partitions() {
+    let db = HelixDB::open(HelixDbSource::InMemory {
+        database: "production-interpreter-restricted-text-tenant".to_owned(),
+    })
+    .await
+    .expect("restricted tenant text-search fixture opens");
+    db.query(QueryRequest::write(
+        batch::write_batch()
+            .var_as(
+                "acme_first",
+                traversal::g().add_n(
+                    "Document",
+                    vec![
+                        ("body", PropertyInput::from("needle needle needle")),
+                        ("tenant", PropertyInput::from("acme")),
+                    ],
+                ),
+            )
+            .var_as(
+                "acme_second",
+                traversal::g().add_n(
+                    "Document",
+                    vec![
+                        ("body", PropertyInput::from("needle padding padding")),
+                        ("tenant", PropertyInput::from("acme")),
+                    ],
+                ),
+            )
+            .var_as(
+                "globex_first",
+                traversal::g().add_n(
+                    "Document",
+                    vec![
+                        ("body", PropertyInput::from("needle needle needle needle")),
+                        ("tenant", PropertyInput::from("globex")),
+                    ],
+                ),
+            )
+            .var_as(
+                "globex_second",
+                traversal::g().add_n(
+                    "Document",
+                    vec![
+                        (
+                            "body",
+                            PropertyInput::from("needle padding padding padding"),
+                        ),
+                        ("tenant", PropertyInput::from("globex")),
+                    ],
+                ),
+            )
+            .returning(Vec::<String>::new()),
+    ))
+    .await
+    .unwrap();
+
+    let receipt = db
+        .query(QueryRequest::write(
+            batch::write_batch()
+                .var_as(
+                    "operation",
+                    traversal::g().create_text_index_nodes("Document", "body", Some("tenant")),
+                )
+                .returning(["operation"]),
+        ))
+        .await
+        .unwrap();
+    let operation_id = receipt["operation"]["operation_id"]
+        .as_str()
+        .expect("accepted tenant text-index operation has an ID");
+    await_index_operation_success(&db, operation_id, "tenant restricted text index").await;
+
+    let response = db
+        .query(QueryRequest::read(
+            batch::read_batch()
+                .var_as(
+                    "acme",
+                    traversal::g()
+                        .n(NodeRef::ids([0, 1, 2]))
+                        .text_search(
+                            "Document",
+                            "body",
+                            "needle",
+                            10,
+                            Some(PropertyValue::from("acme")),
+                        )
+                        .id(),
+                )
+                .var_as(
+                    "globex",
+                    traversal::g()
+                        .n(NodeRef::ids([0, 2, 3]))
+                        .text_search(
+                            "Document",
+                            "body",
+                            "needle",
+                            10,
+                            Some(PropertyValue::from("globex")),
+                        )
+                        .id(),
+                )
+                .returning(["acme", "globex"]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response["acme"], serde_json::json!([0, 1]));
+    assert_eq!(response["globex"], serde_json::json!([2, 3]));
+    db.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn public_query_boundary_covers_dynamic_text_search_inputs() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-dynamic-text-search".to_owned(),

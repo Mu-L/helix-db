@@ -28,6 +28,7 @@ impl FastFieldWarmupInfo {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct WarmupInfo {
     pub(crate) term_dict_fields: HashSet<Field>,
+    pub(crate) postings_full_fields: HashSet<Field>,
     pub(crate) fast_fields: HashSet<FastFieldWarmupInfo>,
     pub(crate) field_norms: bool,
     pub(crate) terms_grouped_by_field: HashMap<Field, HashMap<Term, bool>>,
@@ -36,6 +37,7 @@ pub(crate) struct WarmupInfo {
 impl WarmupInfo {
     pub(crate) fn merge(&mut self, other: Self) {
         self.term_dict_fields.extend(other.term_dict_fields);
+        self.postings_full_fields.extend(other.postings_full_fields);
         self.field_norms |= other.field_norms;
 
         for (field, terms) in other.terms_grouped_by_field {
@@ -61,7 +63,7 @@ impl WarmupInfo {
     }
 
     pub(crate) fn simplify(&mut self) {
-        for field in &self.term_dict_fields {
+        for field in &self.postings_full_fields {
             if let Some(terms) = self.terms_grouped_by_field.get_mut(field) {
                 terms.retain(|_, include_position| *include_position);
             }
@@ -133,11 +135,11 @@ mod tests {
     }
 
     #[test]
-    fn simplify_drops_only_non_position_terms_covered_by_term_dictionary() {
+    fn simplify_drops_only_non_position_terms_covered_by_full_postings() {
         let covered_field = Field::from_field_id(2);
         let retained_field = Field::from_field_id(3);
         let mut info = WarmupInfo {
-            term_dict_fields: HashSet::from([covered_field]),
+            postings_full_fields: HashSet::from([covered_field]),
             terms_grouped_by_field: HashMap::from([
                 (
                     covered_field,

@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use slatedb::object_store::{
     path::Path as ObjectStorePath, ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload,
 };
-use tantivy::collector::TopDocs;
+use tantivy::collector::{FilterCollector, TopDocs};
 use tantivy::directory::RamDirectory;
 use tantivy::merge_policy::NoMergePolicy;
 use tantivy::query::{BooleanQuery, ConstScoreQuery, Occur, TermQuery, TermSetQuery};
@@ -66,6 +66,8 @@ pub(crate) mod compaction;
 mod debug_proxy_directory;
 mod hot_directory;
 mod overlay_directory;
+#[cfg(feature = "production-coverage")]
+mod prefilter_benchmark;
 mod restricted;
 mod split;
 mod storage_directory;
@@ -76,7 +78,12 @@ pub(crate) use cache::{FtsCache, FtsCacheConfig, OpenedTextSplit};
 pub use cache::{FtsCacheStateSnapshot, FtsWarmSummary};
 use caching_directory::CachingDirectory;
 use hot_directory::HotDirectory;
-pub(crate) use restricted::{RestrictedTextCandidates, TextSearchScope};
+#[cfg(feature = "production-coverage")]
+pub use prefilter_benchmark::{
+    FtsPrefilterBenchmarkCase, FtsPrefilterBenchmarkFixture, FtsPrefilterBenchmarkLayout,
+    FtsPrefilterBenchmarkSample, FtsPrefilterBenchmarkStrategy,
+};
+pub(crate) use restricted::{RestrictedTextCandidates, RestrictedTextStrategy, TextSearchScope};
 pub(crate) use split::{
     build_split_bundle, build_split_bundle_from_directory, decode_footer_cache_entry_bytes,
     open_split_directory_from_file, read_footer_cache_entry_from_file,
@@ -402,7 +409,14 @@ pub async fn search_manifest(
     }
 
     let (_index, fields, reader) = open_manifest_index(store, db_path, manifest).await?;
-    warm_searcher(&reader, fields, manifest.analyzer, query).await?;
+    warm_searcher(
+        &reader,
+        fields,
+        manifest.analyzer,
+        query,
+        &TextSearchScope::Unrestricted,
+    )
+    .await?;
     search_split_index_bytes(
         &reader,
         fields,
@@ -510,6 +524,7 @@ async fn search_manifest_with_state_source(
 ) -> Result<Vec<TextSearchHit>, HelixDbError> {
     const SPLIT_READ_CONCURRENCY: usize = 8;
     const STATE_BATCH_SIZE: usize = 512;
+    let scope = scope.resolve_strategy(statistics.map(|statistics| statistics.document_count()));
     if k == 0 || scope.is_empty_restricted() {
         return Ok(Vec::new());
     }
@@ -530,7 +545,7 @@ async fn search_manifest_with_state_source(
     let opened = futures::stream::iter(manifest.split_refs().iter().cloned())
         .map(|split_ref| async {
             let index_reader = SplitSearchReader::open(&runtime, &split_ref).await?;
-            index_reader.warm(manifest.analyzer, query).await?;
+            index_reader.warm(manifest.analyzer, query, &scope).await?;
             let total_docs = candidate_upper_bound.map_or_else(
                 || index_reader.total_docs(),
                 |bound| index_reader.total_docs().min(bound),
@@ -705,16 +720,21 @@ impl SplitSearchReader {
         }
     }
 
-    async fn warm(&self, analyzer: TextAnalyzerKind, query: &str) -> Result<(), HelixDbError> {
+    async fn warm(
+        &self,
+        analyzer: TextAnalyzerKind,
+        query: &str,
+        scope: &TextSearchScope,
+    ) -> Result<(), HelixDbError> {
         match self {
-            Self::Cached(split) => split.warm(analyzer, query).await,
+            Self::Cached(split) => split.warm(analyzer, query, scope).await,
             Self::Direct {
                 index,
                 reader,
                 fields,
             } => {
                 register_analyzers(index, analyzer);
-                warm_searcher(reader, *fields, analyzer, query).await
+                warm_searcher(reader, *fields, analyzer, query, scope).await
             }
         }
     }
@@ -1462,12 +1482,24 @@ pub(crate) async fn warm_searcher(
     fields: TextSchemaFields,
     analyzer: TextAnalyzerKind,
     query: &str,
+    scope: &TextSearchScope,
 ) -> Result<(), HelixDbError> {
     let mut warmup_info = query_warmup_info(fields, analyzer, query);
+    if matches!(
+        scope.restricted_strategy(),
+        Some(RestrictedTextStrategy::Adaptive | RestrictedTextStrategy::TermSet)
+    ) && scope
+        .candidates()
+        .is_some_and(|candidates| !candidates.is_empty())
+    {
+        warmup_info.term_dict_fields.insert(fields.entity_id);
+        warmup_info.postings_full_fields.insert(fields.entity_id);
+    }
     if warmup_info.terms_grouped_by_field.is_empty()
         && warmup_info.fast_fields.is_empty()
         && !warmup_info.field_norms
         && warmup_info.term_dict_fields.is_empty()
+        && warmup_info.postings_full_fields.is_empty()
     {
         return Ok(());
     }
@@ -1554,7 +1586,7 @@ async fn warm_up_postings_full(
 ) -> Result<(), HelixDbError> {
     let mut warmup_futures: Vec<TextWarmupFuture> = Vec::new();
     for segment_reader in searcher.segment_readers() {
-        for field in &warmup_info.term_dict_fields {
+        for field in &warmup_info.postings_full_fields {
             let inverted_index = segment_reader.inverted_index(*field).map_err(|err| {
                 HelixDbError::Config(format!(
                     "failed to open inverted index for postings-full warmup: {err}"
@@ -1799,9 +1831,12 @@ pub(crate) fn search_reader_candidates_with_statistics(
         })
         .collect::<Vec<_>>();
     let bm25_query = BooleanQuery::new(clauses);
-    let query: Box<dyn tantivy::query::Query> = match scope {
-        TextSearchScope::Unrestricted => Box::new(bm25_query),
-        TextSearchScope::Restricted(candidates) => {
+    let query: Box<dyn tantivy::query::Query> = match scope.restricted_strategy() {
+        None | Some(RestrictedTextStrategy::Collector) => Box::new(bm25_query),
+        Some(RestrictedTextStrategy::Adaptive | RestrictedTextStrategy::TermSet) => {
+            let candidates = scope
+                .candidates()
+                .expect("restricted strategy always carries candidates");
             let candidate_query = TermSetQuery::new(
                 candidates
                     .iter()
@@ -1828,11 +1863,31 @@ pub(crate) fn search_reader_candidates_with_statistics(
             (score.to_bits(), Reverse(entity_ids.get_val(doc)))
         }
     });
-    let docs = match statistics {
-        Some(statistics) => {
-            searcher.search_with_statistics_provider(query.as_ref(), &collector, statistics)
+    let docs = match scope.restricted_strategy() {
+        Some(RestrictedTextStrategy::Collector) => {
+            let candidates = scope
+                .candidate_arc()
+                .expect("restricted strategy always carries candidates");
+            let collector = FilterCollector::new(
+                ENTITY_ID_FIELD_NAME.to_owned(),
+                move |entity_id: u64| candidates.contains(entity_id),
+                collector,
+            );
+            match statistics {
+                Some(statistics) => {
+                    searcher.search_with_statistics_provider(query.as_ref(), &collector, statistics)
+                }
+                None => searcher.search(query.as_ref(), &collector),
+            }
         }
-        None => searcher.search(query.as_ref(), &collector),
+        None | Some(RestrictedTextStrategy::Adaptive | RestrictedTextStrategy::TermSet) => {
+            match statistics {
+                Some(statistics) => {
+                    searcher.search_with_statistics_provider(query.as_ref(), &collector, statistics)
+                }
+                None => searcher.search(query.as_ref(), &collector),
+            }
+        }
     }
     .map_err(|err| HelixDbError::Config(format!("failed to execute Tantivy search: {err}")))?;
 

@@ -108,6 +108,11 @@ required-features = [
     "index-lifecycle-testing",
 ]
 
+[[bench]]
+name = "fts_prefilter"
+harness = false
+required-features = ["production-coverage"]
+
 [[test]]
 name = "production_internal_contracts"
 required-features = ["production-coverage"]
