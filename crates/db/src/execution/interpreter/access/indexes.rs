@@ -412,7 +412,17 @@ async fn lookup_managed_equality_in_view(
     identity: &crate::index_lifecycle::IndexIdentity,
     value: &DbPropertyValue,
 ) -> Result<roaring::RoaringTreemap> {
-    if let Some(catalog) = context.prepared_index_catalog.as_deref() {
+    if let Some(active_write) = context.active_write_tx() {
+        let Some(active) = active_write.index_context.active_handle(identity) else {
+            return Err(HelixDbError::IndexLifecycleUnavailable {
+                family: crate::error::IndexFamily::Secondary,
+                reason: crate::error::IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+            });
+        };
+        return lookup_managed_active_equality_in_view(reader, active, value).await;
+    }
+
+    if let Some(catalog) = context.request_read_index_catalog() {
         let Some(active) = catalog.handle(identity) else {
             return Err(HelixDbError::IndexLifecycleUnavailable {
                 family: crate::error::IndexFamily::Secondary,
@@ -479,14 +489,11 @@ pub(super) fn scoped_property_key(key: &catalog::ScopedPropertyKey) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::test_support;
+    use super::*;
     use helix_ast::query::QueryValue;
     use helix_ast::value::PropertyValue;
     use helix_planner::context;
-    use slatedb::IsolationLevel;
-
-    use super::super::super::runtime_context::ActiveWriteTx;
-    use super::super::super::test_support;
-    use super::*;
 
     fn name(value: &str) -> ir::NonEmptyString {
         test_support::name(value)
@@ -689,21 +696,11 @@ mod tests {
             vec![("status", PropertyValue::from("active"))],
         )
         .await;
-        let txn = db
-            .inner_db()
-            .begin(IsolationLevel::Snapshot)
-            .await
-            .expect("snapshot transaction begins");
         let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
-        context.request_write_scope =
-            super::super::super::runtime_context::RequestWriteScopeState::Active(Box::new(
-                ActiveWriteTx {
-                    txn,
-                    index_context: super::super::super::mutation::MutationIndexContext::for_configured_index_test(
-                        std::sync::Arc::clone(db.simhasher_registry()),
-                    ),
-                },
-            ));
+        context
+            .enable_request_write_scope()
+            .await
+            .expect("transaction and its exact mutation catalog open together");
 
         assert_eq!(
             context
@@ -745,6 +742,7 @@ mod tests {
                 .expect("transaction endpoint lookup succeeds"),
             Some((alice, bob))
         );
+        context.abort_request_write_scope();
     }
 
     #[tokio::test]

@@ -7,7 +7,7 @@
 //! canonical `IndexRecord` rows exactly once inside the caller's serializable
 //! transaction and derives every family view from those same decoded records.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use slatedb::DbReadOps;
 
@@ -41,11 +41,60 @@ pub(super) enum MutationCatalogEntry<'a> {
 
 /// Closed family projections derived from one serializable catalog range read.
 pub(crate) struct MutationIndexCatalog {
-    active_generations: Vec<ActiveIndexHandle>,
+    active: ActiveMutationCatalog,
     secondary: secondary::SecondaryMutationSet,
     vector: vector::VectorMutationSet,
     text: text::mutation::TextMutationSet,
     routes: MutationRouteCatalog,
+}
+
+/// Exact Active capabilities from one transaction snapshot.
+///
+/// The private fields keep identity lookup and commit classification backed by
+/// the same handles, so callers cannot pair an ordinal map with another scan.
+#[derive(Debug, Default)]
+pub(crate) struct ActiveMutationCatalog {
+    generations: Vec<ActiveIndexHandle>,
+    ordinals: HashMap<super::IndexIdentity, usize>,
+}
+
+impl ActiveMutationCatalog {
+    fn insert(&mut self, handle: ActiveIndexHandle) -> Result<()> {
+        let ordinal = self.generations.len();
+        if self
+            .ordinals
+            .insert(handle.identity().clone(), ordinal)
+            .is_some()
+        {
+            return Err(corruption(
+                "mutation catalog contained a duplicate active identity",
+            ));
+        }
+        self.generations.push(handle);
+        Ok(())
+    }
+
+    /// Resolves a capability read from this exact transaction snapshot.
+    pub(crate) fn handle(&self, identity: &super::IndexIdentity) -> Option<&ActiveIndexHandle> {
+        self.ordinals
+            .get(identity)
+            .and_then(|ordinal| self.generations.get(*ordinal))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn generations(&self) -> &[ActiveIndexHandle] {
+        &self.generations
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_for_test(&mut self, handle: ActiveIndexHandle) {
+        self.insert(handle)
+            .expect("focused test active handles have unique identities");
+    }
+
+    pub(crate) fn into_generations(self) -> Vec<ActiveIndexHandle> {
+        self.generations
+    }
 }
 
 /// One family-owned target selected without rescanning unrelated definitions.
@@ -264,7 +313,7 @@ impl MutationIndexCatalog {
     ) -> Result<Self> {
         let prefix = Key::data_prefix(scope, ScopedKey::logical_prefix(RecordKind::IndexRecord));
         let mut rows = transaction.scan_prefix(prefix, ..).await?;
-        let mut active_generations = Vec::new();
+        let mut active = ActiveMutationCatalog::default();
         let mut secondary = secondary::SecondaryMutationSet::default();
         let mut vector = vector::VectorMutationSet::default();
         let mut text = text::mutation::TextMutationSet::default();
@@ -348,11 +397,13 @@ impl MutationIndexCatalog {
                     );
                 }
             }
-            active_generations.extend(active_handle);
+            if let Some(active_handle) = active_handle {
+                active.insert(active_handle)?;
+            }
         }
 
         Ok(Self {
-            active_generations,
+            active,
             secondary,
             vector,
             text,
@@ -364,14 +415,14 @@ impl MutationIndexCatalog {
     pub(crate) fn into_components(
         self,
     ) -> (
-        Vec<ActiveIndexHandle>,
+        ActiveMutationCatalog,
         secondary::SecondaryMutationSet,
         vector::VectorMutationSet,
         text::mutation::TextMutationSet,
         MutationRouteCatalog,
     ) {
         (
-            self.active_generations,
+            self.active,
             self.secondary,
             self.vector,
             self.text,
@@ -554,7 +605,7 @@ mod tests {
             .expect("one canonical catalog loads");
         assert_eq!(counted.scans.load(Ordering::Relaxed), 1);
         let (active, secondary, vector, text, routes) = catalog.into_components();
-        assert_eq!(active.len(), 3);
+        assert_eq!(active.generations().len(), 3);
         assert_eq!(secondary.catalog_entry_count(), 2);
         assert_eq!(vector.catalog_entry_count(), 2);
         assert_eq!(text.catalog_entry_count(), 2);
@@ -608,9 +659,12 @@ mod tests {
             RoutedMutationTargets::One(targets)
                 if matches!(targets, [MutationRouteTarget::Vector(_)])
         ));
-        assert!(active.iter().all(|handle| records
+        assert!(active.generations().iter().all(|handle| records
             .iter()
             .any(|record| handle.matches_record(scope, record))));
+        for handle in active.generations() {
+            assert_eq!(active.handle(handle.identity()), Some(handle));
+        }
         transaction.rollback();
         db.close().await.expect("fixture database closes");
     }

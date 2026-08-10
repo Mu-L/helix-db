@@ -274,12 +274,8 @@ pub(in crate::execution::interpreter) struct ExecutionContext<'db> {
     pub(in crate::execution::interpreter) variables: ExecutionValueStore<ir::NonEmptyString>,
     pub(in crate::execution::interpreter) step_outputs: ExecutionValueStore<exec::ExecStepId>,
     pub(in crate::execution::interpreter) step_output_uses: StepOutputUsePlan,
-    pub(in crate::execution::interpreter) request_read_view:
-        Option<Box<super::read_view::StableRequestReadView>>,
-    pub(in crate::execution::interpreter) prepared_request_read_view:
-        Option<Box<super::read_view::StableRequestReadView>>,
-    pub(in crate::execution::interpreter) prepared_index_catalog:
-        Option<Arc<crate::index_lifecycle::LoadedV2ScopeCatalog>>,
+    pub(in crate::execution::interpreter) request_read_scope:
+        super::read_view::RequestReadScopeState,
     pub(in crate::execution::interpreter) request_write_scope: RequestWriteScopeState,
     pub(in crate::execution::interpreter) pending_catalog_freshness: PendingCatalogFreshness,
     pub(in crate::execution::interpreter) row_mode_max_rows: row_mode::RowModeMaxRowsSetting,
@@ -336,20 +332,8 @@ impl<'db> ExecutionContext<'db> {
         params: context::ParamBindings,
         tenant_scope: crate::encoding::keys::tenant::DataScope,
         execution_control: crate::execution_control::ExecutionControl,
-        mut catalog_freshness: PendingCatalogFreshness,
+        catalog_freshness: PendingCatalogFreshness,
     ) -> Self {
-        let (prepared_request_read_view, prepared_index_catalog) = match &mut catalog_freshness {
-            PendingCatalogFreshness::Prepared(proof) => {
-                let catalog = proof.execution_catalog();
-                assert_eq!(
-                    tenant_scope,
-                    catalog.scope(),
-                    "prepared catalog scope must match its execution context"
-                );
-                (proof.take_read_view(), Some(catalog))
-            }
-            PendingCatalogFreshness::Unverified | PendingCatalogFreshness::Consumed => (None, None),
-        };
         Self {
             db,
             tenant_scope,
@@ -357,9 +341,7 @@ impl<'db> ExecutionContext<'db> {
             variables: ExecutionValueStore::default(),
             step_outputs: ExecutionValueStore::default(),
             step_output_uses: StepOutputUsePlan::default(),
-            request_read_view: None,
-            prepared_request_read_view,
-            prepared_index_catalog,
+            request_read_scope: super::read_view::RequestReadScopeState::Disabled,
             request_write_scope: RequestWriteScopeState::Disabled,
             pending_catalog_freshness: catalog_freshness,
             row_mode_max_rows: row_mode::RowModeMaxRowsSetting::default(),

@@ -12,6 +12,99 @@ use slatedb::{DbReadOps, DbSnapshot, DbTransaction, IsolationLevel};
 use super::*;
 use crate::HelixStorage;
 
+/// Closed read-request authority for one exact storage view.
+pub(in crate::execution::interpreter) enum RequestReadScopeState {
+    /// No read request is active.
+    Disabled,
+    /// The request owns one complete storage/catalog authority.
+    Active(Box<ActiveRequestReadView>),
+}
+
+/// Catalog authority that cannot be detached from its matching storage snapshot.
+pub(in crate::execution::interpreter) enum ActiveRequestReadView {
+    /// Planning and execution share one view while lifecycle publication is excluded.
+    Prepared {
+        view: StableRequestReadView,
+        catalog: Arc<crate::index_lifecycle::LoadedV2ScopeCatalog>,
+        _catalog_permit: Arc<crate::index_lifecycle::IndexScopeCatalogPermit>,
+    },
+    /// DDL released the process-local gate, while the pinned snapshot remains exact.
+    Pinned {
+        view: StableRequestReadView,
+        catalog: Arc<crate::index_lifecycle::LoadedV2ScopeCatalog>,
+    },
+    /// Public physical-plan execution resolves canonical records from this view.
+    Unprepared(StableRequestReadView),
+}
+
+impl ActiveRequestReadView {
+    fn view(&self) -> &StableRequestReadView {
+        match self {
+            Self::Prepared { view, .. } | Self::Pinned { view, .. } | Self::Unprepared(view) => {
+                view
+            }
+        }
+    }
+
+    fn catalog(&self) -> Option<&crate::index_lifecycle::LoadedV2ScopeCatalog> {
+        match self {
+            Self::Prepared { catalog, .. } | Self::Pinned { catalog, .. } => Some(catalog),
+            Self::Unprepared(_) => None,
+        }
+    }
+
+    fn release_catalog_permit(self) -> Self {
+        match self {
+            Self::Prepared { view, catalog, .. } => Self::Pinned { view, catalog },
+            unchanged @ (Self::Pinned { .. } | Self::Unprepared(_)) => unchanged,
+        }
+    }
+
+    fn clone_reader_snapshot(&self) -> Self {
+        match self {
+            Self::Prepared {
+                view,
+                catalog,
+                _catalog_permit,
+            } => Self::Prepared {
+                view: view.clone_reader_snapshot(),
+                catalog: Arc::clone(catalog),
+                _catalog_permit: Arc::clone(_catalog_permit),
+            },
+            Self::Pinned { view, catalog } => Self::Pinned {
+                view: view.clone_reader_snapshot(),
+                catalog: Arc::clone(catalog),
+            },
+            Self::Unprepared(view) => Self::Unprepared(view.clone_reader_snapshot()),
+        }
+    }
+
+    fn close(self) {
+        match self {
+            Self::Prepared { view, .. } | Self::Pinned { view, .. } | Self::Unprepared(view) => {
+                view.close()
+            }
+        }
+    }
+}
+
+impl RequestReadScopeState {
+    fn active(&self) -> Option<&ActiveRequestReadView> {
+        match self {
+            Self::Disabled => None,
+            Self::Active(active) => Some(active),
+        }
+    }
+
+    fn release_catalog_permit(&mut self) {
+        let state = std::mem::replace(self, Self::Disabled);
+        *self = match state {
+            Self::Disabled => Self::Disabled,
+            Self::Active(active) => Self::Active(Box::new((*active).release_catalog_permit())),
+        };
+    }
+}
+
 /// One read-only request view whose storage source cannot change between steps.
 pub(crate) enum StableRequestReadView {
     /// A reader-node view pinned to one checkpoint generation and sequence.
@@ -158,19 +251,34 @@ impl<'db> ExecutionContext<'db> {
         &mut self,
     ) -> Result<()> {
         assert!(
-            self.request_read_view.is_none(),
+            matches!(self.request_read_scope, RequestReadScopeState::Disabled),
             "request read view must be acquired exactly once"
         );
-        self.request_read_view = Some(match self.prepared_request_read_view.take() {
-            Some(view) => view,
-            None => Box::new(StableRequestReadView::open(self.db).await?),
-        });
+        let pending = std::mem::replace(
+            &mut self.pending_catalog_freshness,
+            runtime_context::PendingCatalogFreshness::Consumed,
+        );
+        let active = match pending {
+            runtime_context::PendingCatalogFreshness::Prepared(proof) => {
+                let (view, catalog, catalog_permit) = proof.into_read_parts();
+                ActiveRequestReadView::Prepared {
+                    view: *view,
+                    catalog,
+                    _catalog_permit: Arc::new(catalog_permit),
+                }
+            }
+            runtime_context::PendingCatalogFreshness::Unverified
+            | runtime_context::PendingCatalogFreshness::Consumed => {
+                ActiveRequestReadView::Unprepared(StableRequestReadView::open(self.db).await?)
+            }
+        };
+        self.request_read_scope = RequestReadScopeState::Active(Box::new(active));
         Ok(())
     }
 
     /// Verifies that a read plan acquired its request-scoped storage view.
     pub(in crate::execution::interpreter) fn validate_request_read_view(&self) -> Result<()> {
-        let Some(_) = self.request_read_view.as_deref() else {
+        let RequestReadScopeState::Active(_) = &self.request_read_scope else {
             return Err(HelixDbError::InvariantViolation(
                 "read plan completed without a request read view".to_string(),
             ));
@@ -180,7 +288,11 @@ impl<'db> ExecutionContext<'db> {
 
     /// Ends a successful read view after result materialization.
     pub(in crate::execution::interpreter) fn close_request_read_view(&mut self) -> Result<()> {
-        let Some(view) = self.request_read_view.take() else {
+        let state = std::mem::replace(
+            &mut self.request_read_scope,
+            RequestReadScopeState::Disabled,
+        );
+        let RequestReadScopeState::Active(view) = state else {
             return Err(HelixDbError::InvariantViolation(
                 "read plan completed without a request read view".to_string(),
             ));
@@ -193,7 +305,23 @@ impl<'db> ExecutionContext<'db> {
     pub(in crate::execution::interpreter) fn request_read_view(
         &self,
     ) -> Option<&StableRequestReadView> {
-        self.request_read_view.as_deref()
+        self.request_read_scope
+            .active()
+            .map(ActiveRequestReadView::view)
+    }
+
+    /// Returns the catalog decoded from the exact active read snapshot.
+    pub(in crate::execution::interpreter) fn request_read_index_catalog(
+        &self,
+    ) -> Option<&crate::index_lifecycle::LoadedV2ScopeCatalog> {
+        self.request_read_scope
+            .active()
+            .and_then(ActiveRequestReadView::catalog)
+    }
+
+    /// Releases only the process-local catalog gate before operation-owned DDL.
+    pub(in crate::execution::interpreter) fn release_read_catalog_permit_for_ddl(&mut self) {
+        self.request_read_scope.release_catalog_permit();
     }
 
     /// Returns whether this request view must keep plan stages serial.
@@ -205,12 +333,13 @@ impl<'db> ExecutionContext<'db> {
     }
 
     /// Clones a reader snapshot into one isolated parallel step context.
-    pub(in crate::execution::interpreter) fn clone_parallel_request_read_view(
+    pub(in crate::execution::interpreter) fn clone_parallel_request_read_scope(
         &self,
-    ) -> Option<Box<StableRequestReadView>> {
-        self.request_read_view()
-            .map(StableRequestReadView::clone_reader_snapshot)
-            .map(Box::new)
+    ) -> RequestReadScopeState {
+        match self.request_read_scope.active() {
+            Some(active) => RequestReadScopeState::Active(Box::new(active.clone_reader_snapshot())),
+            None => RequestReadScopeState::Disabled,
+        }
     }
 }
 

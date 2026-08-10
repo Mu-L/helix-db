@@ -7,7 +7,6 @@
 
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
-use std::sync::Arc;
 
 use futures::future;
 
@@ -131,9 +130,7 @@ impl<'db> ExecutionContext<'db> {
             variables: self.variables.shallow_snapshot(),
             step_outputs,
             step_output_uses,
-            request_read_view: self.clone_parallel_request_read_view(),
-            prepared_request_read_view: None,
-            prepared_index_catalog: self.prepared_index_catalog.as_ref().map(Arc::clone),
+            request_read_scope: self.clone_parallel_request_read_scope(),
             request_write_scope: runtime_context::RequestWriteScopeState::Disabled,
             pending_catalog_freshness: runtime_context::PendingCatalogFreshness::Consumed,
             row_mode_max_rows: self.row_mode_max_rows,

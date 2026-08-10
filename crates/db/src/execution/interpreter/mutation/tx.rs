@@ -23,6 +23,7 @@ impl<'db> ExecutionContext<'db> {
     /// Releases a planning-only catalog permit before operation-owned DDL.
     pub(in crate::execution::interpreter) fn discard_pending_catalog_freshness(&mut self) {
         self.pending_catalog_freshness = PendingCatalogFreshness::Consumed;
+        self.release_read_catalog_permit_for_ddl();
     }
 
     /// Opens the request transaction before the first plan step.
@@ -36,9 +37,6 @@ impl<'db> ExecutionContext<'db> {
             matches!(self.request_write_scope, RequestWriteScopeState::Disabled),
             "a request write scope can only be enabled once"
         );
-        if let Some(view) = self.prepared_request_read_view.take() {
-            (*view).close();
-        }
         let (txn, index_context) = self.begin_write_tx().await?;
         self.request_write_scope =
             RequestWriteScopeState::Active(Box::new(ActiveWriteTx { txn, index_context }));
@@ -448,7 +446,7 @@ mod additional_tests {
     }
 
     #[tokio::test]
-    async fn invalidated_proof_reloads_recreated_vector_and_text_settings_before_write_open() {
+    async fn overlapping_refresh_keeps_prepared_catalog_until_write_snapshot_opens() {
         use crate::config::{TextAnalyzerKind, TextIndexDefinition, VectorIndexDefinition};
         use crate::encoding::v2::keys::Key;
         use crate::encoding::v2::keys::ScopedKey;
@@ -565,7 +563,7 @@ mod additional_tests {
             .unwrap();
         db.refresh_runtime_catalog(scope)
             .await
-            .expect("an overlapping refresh invalidates only the volatile proof generation");
+            .expect("an overlapping in-memory refresh succeeds");
         let mut context = ExecutionContext::new_scoped_controlled_with_catalog_freshness(
             db.as_ref(),
             context::ParamBindings::default(),
@@ -609,12 +607,8 @@ mod additional_tests {
         let (transaction, index_context) =
             tokio::time::timeout(Duration::from_secs(5), context.begin_write_tx())
                 .await
-                .expect("write open reloads after the queued lifecycle change")
+                .expect("write snapshot opens under the prepared catalog gate")
                 .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), lifecycle)
-            .await
-            .expect("queued lifecycle publication finishes")
-            .expect("lifecycle task joins");
         assert!(index_context.active_generations().iter().any(|handle| {
             matches!(
                 handle,
@@ -622,9 +616,9 @@ mod additional_tests {
                     generation,
                     definition,
                     ..
-                } if generation.get() == 2
-                    && definition.dimension() == 4
-                    && definition.metric() == VectorDistanceMetric::Euclidean
+                } if generation.get() == 1
+                    && definition.dimension() == 3
+                    && definition.metric() == VectorDistanceMetric::Cosine
             )
         }));
         assert!(index_context.active_generations().iter().any(|handle| {
@@ -634,14 +628,22 @@ mod additional_tests {
                     generation,
                     definition,
                     ..
-                } if generation.get() == 2
-                    && definition.analyzer() == TextAnalyzerKind::StandardStemEn
-                    && definition.positions_enabled()
+                } if generation.get() == 1
+                    && definition.analyzer() == TextAnalyzerKind::Standard
+                    && !definition.positions_enabled()
             )
         }));
+        assert!(
+            !lifecycle.is_finished(),
+            "the transaction-owned mutation catalog must retain publication authority"
+        );
 
         drop(transaction);
         drop(index_context);
+        tokio::time::timeout(Duration::from_secs(5), lifecycle)
+            .await
+            .expect("queued lifecycle publication finishes after the write closes")
+            .expect("lifecycle task joins");
         drop(context);
         Arc::try_unwrap(db)
             .unwrap_or_else(|_| panic!("test owns the only database reference"))

@@ -14,7 +14,7 @@ use crate::search::vector;
 #[derive(Debug)]
 pub(crate) struct MutationIndexContext {
     _scope_permit: Option<crate::index_lifecycle::IndexScopeMutationPermit>,
-    active_generations: Vec<crate::index_lifecycle::ActiveIndexHandle>,
+    active: crate::index_lifecycle::mutation_catalog::ActiveMutationCatalog,
     secondary: crate::index_lifecycle::secondary::SecondaryMutationSet,
     secondary_runtime: crate::index_lifecycle::secondary::SecondaryMutationRuntime,
     vector: crate::index_lifecycle::vector::VectorMutationSet,
@@ -46,10 +46,10 @@ impl MutationIndexContext {
         simhasher_registry: Arc<vector::SimHasherRegistry>,
         vector_retained_payload_limit: std::num::NonZeroU64,
     ) -> Self {
-        let (active_generations, secondary, vector, text, routes) = loaded.into_components();
+        let (active, secondary, vector, text, routes) = loaded.into_components();
         Self {
             _scope_permit: Some(scope_permit),
-            active_generations,
+            active,
             secondary,
             secondary_runtime: crate::index_lifecycle::secondary::SecondaryMutationRuntime::default(
             ),
@@ -74,7 +74,7 @@ impl MutationIndexContext {
     ) -> Self {
         Self {
             _scope_permit: None,
-            active_generations: Vec::new(),
+            active: crate::index_lifecycle::mutation_catalog::ActiveMutationCatalog::default(),
             secondary: crate::index_lifecycle::secondary::SecondaryMutationSet::empty(),
             secondary_runtime: crate::index_lifecycle::secondary::SecondaryMutationRuntime::default(
             ),
@@ -102,7 +102,15 @@ impl MutationIndexContext {
     /// Returns exact Active capabilities loaded with the graph transaction.
     #[cfg(test)]
     pub(crate) fn active_generations(&self) -> &[crate::index_lifecycle::ActiveIndexHandle] {
-        &self.active_generations
+        self.active.generations()
+    }
+
+    /// Resolves one Active generation from this transaction's canonical catalog scan.
+    pub(crate) fn active_handle(
+        &self,
+        identity: &crate::index_lifecycle::IndexIdentity,
+    ) -> Option<&crate::index_lifecycle::ActiveIndexHandle> {
+        self.active.handle(identity)
     }
 
     /// Counts graph entities retained by the current Active text epoch.
@@ -282,7 +290,7 @@ impl MutationIndexContext {
     pub(crate) fn into_prepared(self) -> Result<PreparedMutationIndexContext, crate::HelixDbError> {
         let Self {
             _scope_permit,
-            active_generations,
+            active,
             secondary,
             secondary_runtime,
             vector,
@@ -300,7 +308,7 @@ impl MutationIndexContext {
         secondary_runtime.consume_prepared()?;
         Ok(PreparedMutationIndexContext {
             _scope_permit,
-            active_generations,
+            active_generations: active.into_generations(),
             _secondary: secondary,
             _vector: vector,
             _text: text,
@@ -322,7 +330,7 @@ impl MutationIndexContext {
         reader: &(impl slatedb::DbReadOps + Sync),
         error: slatedb::Error,
     ) -> crate::HelixDbError {
-        classify_commit_error(&self.active_generations, reader, error).await
+        classify_commit_error(self.active.generations(), reader, error).await
     }
 }
 
@@ -426,7 +434,7 @@ mod tests {
             )
             .await
             .expect("active record persists");
-        context.active_generations.push(handle);
+        context.active.insert_for_test(handle);
 
         let error = context
             .classify_commit_error(

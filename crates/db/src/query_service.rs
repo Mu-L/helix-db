@@ -925,9 +925,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_prepared_catalog_proof_falls_back_to_refresh() {
+    async fn overlapping_runtime_refresh_preserves_guarded_graph_write_authority() {
         let db = HelixDB::open(HelixDbSource::InMemory {
-            database: "query-service-stale-prepared-catalog".to_string(),
+            database: "query-service-guarded-prepared-catalog".to_string(),
         })
         .await
         .expect("writer should open");
@@ -939,14 +939,16 @@ mod tests {
         let prepared = db
             .planner_context_scoped_prepared(ParamBindings::default(), DataScope::LegacyUnscoped)
             .await
-            .expect("planner catalog refreshes");
+            .expect("planner captures a gated catalog and read snapshot");
         let plan = helix_planner::planning::plan_write_batch(&batch, prepared.context())
             .expect("write plans");
         db.refresh_runtime_catalog(DataScope::LegacyUnscoped)
             .await
-            .expect("intervening catalog publication succeeds");
-        let stale_generation = db.runtime_catalog_generation_for_tests(DataScope::LegacyUnscoped);
+            .expect("an overlapping in-memory catalog refresh succeeds");
+        let observed_generation =
+            db.runtime_catalog_generation_for_tests(DataScope::LegacyUnscoped);
 
+        crate::index_lifecycle::secondary::reset_equality_read_metrics();
         db.execute_prepared_scoped_controlled(
             &plan,
             ParamBindings::default(),
@@ -955,11 +957,12 @@ mod tests {
             prepared.into_catalog_proof(),
         )
         .await
-        .expect("stale proof safely falls back");
+        .expect("graph write opens under its prepared authority");
 
         assert_eq!(
             db.runtime_catalog_generation_for_tests(DataScope::LegacyUnscoped),
-            stale_generation + 1
+            observed_generation,
+            "a valid gated proof must not trigger a fallback catalog refresh"
         );
     }
 

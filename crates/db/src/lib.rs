@@ -549,12 +549,11 @@ impl HelixRuntimeState {
         self.catalog(scope).planner_snapshot()
     }
 
-    fn planner_snapshot_with_generation(
+    fn planner_snapshot_with_catalog(
         &self,
         scope: DataScope,
     ) -> (
         IndexCatalogSnapshot,
-        CatalogGeneration,
         Arc<index_lifecycle::LoadedV2ScopeCatalog>,
     ) {
         let loaded = self
@@ -563,11 +562,11 @@ impl HelixRuntimeState {
             .expect("scoped catalog must be loaded before planner access");
         (
             loaded.catalog.runtime().planner_snapshot(),
-            loaded.generation,
             Arc::clone(&loaded.catalog),
         )
     }
 
+    #[cfg(test)]
     fn generation(&self, scope: DataScope) -> CatalogGeneration {
         self.catalogs
             .get(&scope)
@@ -663,28 +662,31 @@ struct HelixDBInner {
 /// Non-forgeable evidence that planning observed one exact runtime catalog.
 ///
 /// The weak runtime identity prevents a proof from keeping a database alive or
-/// being reused against a different handle. The scope and generation prevent a
-/// tenant mismatch or intervening catalog publication from skipping refresh.
-/// The permit prevents canonical Active/drop publication until a write opens
-/// its serializable snapshot and loads the mutation catalog.
+/// being reused against a different handle. The scope prevents tenant mismatch.
+/// The permit keeps the exact read snapshot and catalog authoritative until a
+/// write opens its serializable snapshot and loads the mutation catalog.
 pub(crate) struct CatalogRefreshProof {
     runtime: Weak<HelixDBInner>,
     scope: DataScope,
-    generation: CatalogGeneration,
     catalog_permit: index_lifecycle::IndexScopeCatalogPermit,
     catalog: Arc<index_lifecycle::LoadedV2ScopeCatalog>,
-    read_view: Option<Box<execution::interpreter::read_view::StableRequestReadView>>,
+    read_view: Box<execution::interpreter::read_view::StableRequestReadView>,
 }
 
 impl CatalogRefreshProof {
-    fn execution_catalog(&self) -> Arc<index_lifecycle::LoadedV2ScopeCatalog> {
-        Arc::clone(&self.catalog)
+    fn into_read_parts(
+        self,
+    ) -> (
+        Box<execution::interpreter::read_view::StableRequestReadView>,
+        Arc<index_lifecycle::LoadedV2ScopeCatalog>,
+        index_lifecycle::IndexScopeCatalogPermit,
+    ) {
+        (self.read_view, self.catalog, self.catalog_permit)
     }
 
-    fn take_read_view(
-        &mut self,
-    ) -> Option<Box<execution::interpreter::read_view::StableRequestReadView>> {
-        self.read_view.take()
+    fn into_write_permit(self) -> index_lifecycle::IndexScopeCatalogPermit {
+        (*self.read_view).close();
+        self.catalog_permit
     }
 }
 
@@ -1523,14 +1525,14 @@ impl HelixDB {
             execution::interpreter::read_view::StableRequestReadView::open(self).await?;
         let loaded =
             index_lifecycle::repository::load_scope_catalog(&read_view, tenant_scope).await?;
-        let (indexes, generation, catalog) = {
+        let (indexes, catalog) = {
             let mut state = self
                 .inner
                 .runtime_state
                 .write()
                 .expect("runtime state lock is not poisoned");
             state.replace_catalog(tenant_scope, loaded);
-            state.planner_snapshot_with_generation(tenant_scope)
+            state.planner_snapshot_with_catalog(tenant_scope)
         };
         Ok(PreparedPlannerContext {
             context: PlannerContext {
@@ -1545,10 +1547,9 @@ impl HelixDB {
             proof: CatalogRefreshProof {
                 runtime: Arc::downgrade(&self.inner),
                 scope: tenant_scope,
-                generation,
                 catalog_permit,
                 catalog,
-                read_view: Some(Box::new(read_view)),
+                read_view: Box::new(read_view),
             },
         })
     }
@@ -2417,34 +2418,16 @@ impl HelixDB {
             .is_some_and(|runtime| Arc::ptr_eq(&runtime, &self.inner) && proof.scope == scope)
     }
 
-    /// Returns whether a write can reuse this exact runtime catalog publication.
-    pub(crate) fn catalog_refresh_proof_is_current(
-        &self,
-        proof: &CatalogRefreshProof,
-        scope: DataScope,
-    ) -> bool {
-        if !self.catalog_refresh_proof_belongs_to(proof, scope) {
-            return false;
-        }
-        self.inner
-            .runtime_state
-            .read()
-            .expect("runtime state lock is not poisoned")
-            .generation(scope)
-            == proof.generation
-    }
-
-    /// Transfers catalog authority when a planning proof still names this view.
+    /// Transfers catalog authority while its gate still excludes durable publication.
     pub(crate) fn consume_catalog_refresh_proof(
         &self,
         proof: CatalogRefreshProof,
         scope: DataScope,
     ) -> Option<index_lifecycle::IndexScopeCatalogPermit> {
-        if !self.catalog_refresh_proof_is_current(&proof, scope) {
+        if !self.catalog_refresh_proof_belongs_to(&proof, scope) {
             return None;
         }
-        let CatalogRefreshProof { catalog_permit, .. } = proof;
-        Some(catalog_permit)
+        Some(proof.into_write_permit())
     }
 
     #[cfg(test)]
