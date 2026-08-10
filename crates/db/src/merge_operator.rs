@@ -1,7 +1,5 @@
 //! SlateDB merge operator for Helix-owned keyspaces.
 
-use std::io::Cursor;
-
 use bytes::Bytes;
 use roaring::RoaringTreemap;
 use slatedb::{MergeOperator, MergeOperatorError};
@@ -11,6 +9,7 @@ use crate::encoding::v1::keys::vectors::{KEY_KIND_LAYER0_VEC_KS, VECTOR_HOT_KEYS
 use crate::encoding::v1::keys::{DataKeyKind, KeyPrefix};
 use crate::encoding::v1::values::{edges, vectors};
 use crate::encoding::v2::keys::{Key as V2Key, ScopedKey as V2ScopedKey};
+use crate::encoding::v2::values::SecondaryEqualityBitmapValue;
 use crate::encoding::NodeId;
 
 const EDGE_DELTA_MIN_LEN: usize = core::mem::size_of::<u8>();
@@ -65,9 +64,8 @@ impl BitmapMergeOperator {
             bitmap.insert(id);
             return Ok(());
         }
-        let decoded =
-            RoaringTreemap::deserialize_from(Cursor::new(bytes)).map_err(merge_decode_error)?;
-        *bitmap |= &decoded;
+        let decoded = SecondaryEqualityBitmapValue::decode(bytes).map_err(merge_decode_error)?;
+        *bitmap |= decoded.ids();
         Ok(())
     }
 
@@ -540,6 +538,7 @@ fn merge_decode_error(error: impl std::fmt::Display) -> MergeOperatorError {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use std::sync::Arc;
 
     use slatedb::object_store::memory::InMemory;
@@ -700,6 +699,40 @@ mod tests {
                 &key,
                 Some(portable_bitmap([1])),
                 &[Bytes::from(malformed_delta)],
+            )
+            .is_err());
+
+        let mut trailing_base = portable_bitmap([1]).to_vec();
+        trailing_base.push(0xFF);
+        assert!(operator
+            .merge(
+                &key,
+                Some(Bytes::from(trailing_base.clone())),
+                encode_bitmap_add(2),
+            )
+            .is_err());
+        assert!(operator
+            .merge_batch(
+                &key,
+                Some(Bytes::from(trailing_base)),
+                &[encode_bitmap_add(2)],
+            )
+            .is_err());
+
+        let mut trailing_operand = portable_bitmap([2]).to_vec();
+        trailing_operand.push(0xFF);
+        assert!(operator
+            .merge(
+                &key,
+                Some(portable_bitmap([1])),
+                Bytes::from(trailing_operand.clone()),
+            )
+            .is_err());
+        assert!(operator
+            .merge_batch(
+                &key,
+                Some(portable_bitmap([1])),
+                &[Bytes::from(trailing_operand)],
             )
             .is_err());
     }
