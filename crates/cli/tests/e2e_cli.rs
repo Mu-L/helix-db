@@ -6,6 +6,8 @@ use std::fs;
 use toml::Value as TomlValue;
 
 use support::{free_port, CliFixture};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn stdout(assert: Assert) -> String {
     String::from_utf8(assert.get_output().stdout.clone()).expect("stdout should be utf8")
@@ -560,4 +562,92 @@ gateway_url = "https://staging.example.com"
         );
         assert!(error.contains("No local instance specified"), "{error}");
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disk_start_reuses_an_existing_volume_without_creating_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let fixture = CliFixture::new_with_fake_runtime();
+    let project = fixture.root().join("existing-volume-project");
+    fixture
+        .command()
+        .args(["init", "--path"])
+        .arg(&project)
+        .args(["local", "--port"])
+        .arg(server.address().port().to_string())
+        .args(["--disk", "--no-skills"])
+        .assert()
+        .success();
+
+    fixture
+        .command()
+        .current_dir(&project)
+        .args(["start", "dev"])
+        .env("HELIX_TEST_RUNTIME_VOLUME_MODE", "existing")
+        .assert()
+        .success();
+
+    // an existing volume is inspected and reused, never re-created.
+    let log = fixture.runtime_log();
+    assert!(log.contains("volume inspect"), "{log}");
+    assert!(!log.contains("volume create"), "{log}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disk_start_tolerates_the_volume_create_race_but_surfaces_real_errors() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    // raced: inspect misses, create loses to another process, start still succeeds.
+    let raced = CliFixture::new_with_fake_runtime();
+    let raced_project = raced.root().join("raced-volume-project");
+    raced
+        .command()
+        .args(["init", "--path"])
+        .arg(&raced_project)
+        .args(["local", "--port"])
+        .arg(server.address().port().to_string())
+        .args(["--disk", "--no-skills"])
+        .assert()
+        .success();
+    raced
+        .command()
+        .current_dir(&raced_project)
+        .args(["start", "dev"])
+        .env("HELIX_TEST_RUNTIME_VOLUME_MODE", "raced")
+        .assert()
+        .success();
+
+    // denied: an unrelated create failure must fail the start with the real error.
+    let denied = CliFixture::new_with_fake_runtime();
+    let denied_project = denied.root().join("denied-volume-project");
+    denied
+        .command()
+        .args(["init", "--path"])
+        .arg(&denied_project)
+        .args(["local", "--port"])
+        .arg(server.address().port().to_string())
+        .args(["--disk", "--no-skills"])
+        .assert()
+        .success();
+    let error = stderr(
+        denied
+            .command()
+            .current_dir(&denied_project)
+            .args(["start", "dev"])
+            .env("HELIX_TEST_RUNTIME_VOLUME_MODE", "denied")
+            .assert()
+            .failure(),
+    );
+    assert!(error.contains("permission denied"), "{error}");
 }
