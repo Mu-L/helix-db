@@ -299,6 +299,34 @@ assert.deepEqual(parsed(restrictedVector).entries[0].query.root.vector_search_no
   k: { literal: 5 },
 });
 
+const restrictedText = readBatch().varAs("hits", g().nWithLabel("Doc").textSearch("Doc", "body", "graph", 5));
+assert.deepEqual(parsed(restrictedText).entries[0].query.root.text_search_nodes_within, {
+  input: {
+    nodes_where: {
+      predicate: {
+        eq: {
+          left: { property: "$label" },
+          right: { constant: { string: "Doc" } },
+        },
+      },
+    },
+  },
+  label: "Doc",
+  property: "body",
+  query_text: { value: { string: "graph" } },
+  k: { literal: 5 },
+});
+
+const restrictedTextEdges = readBatch().varAs(
+  "hits",
+  g().e(EdgeRef.all()).textSearchWith("MENTIONS", "body", PropertyInput.param("query"), Expr.param("limit"), PropertyInput.param("tenant")),
+);
+const restrictedTextEdgesRoot = parsed(restrictedTextEdges).entries[0].query.root.text_search_edges_within;
+assert.deepEqual(restrictedTextEdgesRoot.query_text, { expr: { param: "query" } });
+assert.deepEqual(restrictedTextEdgesRoot.k, { expr: { param: "limit" } });
+assert.deepEqual(restrictedTextEdgesRoot.tenant_value, { expr: { param: "tenant" } });
+assert.equal("edges" in restrictedTextEdgesRoot.input, true);
+
 const index = writeBatch().varAs("idx", g().createVectorIndexNodes("Doc", "embedding", 3, VectorDistanceMetric.Cosine, "tenant_id"));
 assert.deepEqual(parsed(index).entries[0].query.root, {
   create_index: {

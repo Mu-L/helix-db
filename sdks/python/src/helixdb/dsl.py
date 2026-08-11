@@ -1813,6 +1813,46 @@ class Step:
         )
 
     @classmethod
+    def text_search_nodes_within(
+        cls,
+        label: str,
+        property: str,
+        query_text: PropertyInput,
+        k: StreamBound,
+        tenant_value: PropertyInput | None = None,
+    ) -> "Step":
+        return cls.struct(
+            "TextSearchNodesWithin",
+            {
+                "label": label,
+                "property": property,
+                "tenant_value": tenant_value if tenant_value is not None else _OMIT,
+                "query_text": query_text,
+                "k": k,
+            },
+        )
+
+    @classmethod
+    def text_search_edges_within(
+        cls,
+        label: str,
+        property: str,
+        query_text: PropertyInput,
+        k: StreamBound,
+        tenant_value: PropertyInput | None = None,
+    ) -> "Step":
+        return cls.struct(
+            "TextSearchEdgesWithin",
+            {
+                "label": label,
+                "property": property,
+                "tenant_value": tenant_value if tenant_value is not None else _OMIT,
+                "query_text": query_text,
+                "k": k,
+            },
+        )
+
+    @classmethod
     def text_search_edges(
         cls,
         label: str,
@@ -2181,7 +2221,12 @@ class Step:
             return _ast_struct("EdgesWhere", {"predicate": self.payload})
         if self.variant in {"VectorSearchNodes", "TextSearchNodes", "VectorSearchEdges", "TextSearchEdges"}:
             return _ast_struct(self.variant, self.payload)
-        if self.variant in {"VectorSearchNodesWithin", "VectorSearchEdgesWithin"}:
+        if self.variant in {
+            "VectorSearchNodesWithin",
+            "VectorSearchEdgesWithin",
+            "TextSearchNodesWithin",
+            "TextSearchEdgesWithin",
+        }:
             return unary(self.variant, **self.payload)
         if self.variant in {"Out", "In", "Both", "OutE", "InE", "BothE"}:
             return unary(self.variant, label=self.payload if self.payload is not None else _OMIT)
@@ -2565,6 +2610,40 @@ class Traversal:
                 label,
                 property,
                 PropertyInput.from_value(query_vector),
+                StreamBound.from_value(k),
+                None if tenant_value is None else PropertyInput.from_value(tenant_value),
+            )
+        )
+
+    def text_search(
+        self,
+        label: str,
+        property: str,
+        query_text: str,
+        k: int,
+        tenant_value: PropertyValueInput | None = None,
+    ) -> "Traversal":
+        return self.text_search_with(label, property, query_text, k, tenant_value)
+
+    def text_search_with(
+        self,
+        label: str,
+        property: str,
+        query_text: PropertyInput | Expr | ParamRef | PropertyValueInput,
+        k: StreamBound | Expr | ParamRef | int,
+        tenant_value: PropertyInput | Expr | ParamRef | PropertyValueInput | None = None,
+    ) -> "Traversal":
+        if self.state == "nodes":
+            step = Step.text_search_nodes_within
+        elif self.state == "edges":
+            step = Step.text_search_edges_within
+        else:
+            raise TypeError("text_search requires a node or edge traversal")
+        return self._push(
+            step(
+                label,
+                property,
+                PropertyInput.from_value(query_text),
                 StreamBound.from_value(k),
                 None if tenant_value is None else PropertyInput.from_value(tenant_value),
             )
@@ -3820,6 +3899,8 @@ def _install_aliases() -> None:
             "vectorSearchEdgesWith": "vector_search_edges_with",
             "textSearchEdges": "text_search_edges",
             "textSearchEdgesWith": "text_search_edges_with",
+            "textSearch": "text_search",
+            "textSearchWith": "text_search_with",
             "createIndexIfNotExists": "create_index_if_not_exists",
             "dropIndex": "drop_index",
             "getIndexOperation": "get_index_operation",

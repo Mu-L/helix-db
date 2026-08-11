@@ -9,6 +9,7 @@ from helixdb import (
     BatchCondition,
     BindingProjection,
     DateTime,
+    EdgeRef,
     QueryError,
     QueryValue,
     Expr,
@@ -463,6 +464,55 @@ class DslAstTests(unittest.TestCase):
                 "k": {"literal": 5},
             },
         )
+
+        restricted_text = read_batch().var_as(
+            "hits",
+            g().n_with_label("Doc").text_search("Doc", "body", "graph", 5),
+        )
+        self.assertEqual(
+            parsed(restricted_text)["entries"][0]["query"]["root"]["text_search_nodes_within"],
+            {
+                "input": {
+                    "nodes_where": {
+                        "predicate": {
+                            "eq": {
+                                "left": {"property": "$label"},
+                                "right": {"constant": {"string": "Doc"}},
+                            }
+                        }
+                    }
+                },
+                "label": "Doc",
+                "property": "body",
+                "query_text": {"value": {"string": "graph"}},
+                "k": {"literal": 5},
+            },
+        )
+
+        restricted_text_edges = read_batch().var_as(
+            "hits",
+            g()
+            .e(EdgeRef.all())
+            .text_search_with(
+                "MENTIONS",
+                "body",
+                PropertyInput.param("query"),
+                Expr.param("limit"),
+                PropertyInput.param("tenant"),
+            ),
+        )
+        restricted_text_edges_root = parsed(restricted_text_edges)["entries"][0][
+            "query"
+        ]["root"]["text_search_edges_within"]
+        self.assertEqual(restricted_text_edges_root["query_text"], {"expr": {"param": "query"}})
+        self.assertEqual(restricted_text_edges_root["k"], {"expr": {"param": "limit"}})
+        self.assertEqual(
+            restricted_text_edges_root["tenant_value"], {"expr": {"param": "tenant"}}
+        )
+        self.assertIn("edges", restricted_text_edges_root["input"])
+
+        with self.assertRaisesRegex(TypeError, "node or edge traversal"):
+            g().n(NodeRef.all()).count().text_search("Doc", "body", "graph", 5)
 
         nested = (
             write_batch()

@@ -97,6 +97,30 @@ func TestTraversalScopedVectorSearchJSON(t *testing.T) {
 	}
 }
 
+func TestTraversalScopedTextSearchJSON(t *testing.T) {
+	tenant := ParamInput("tenant")
+	body, err := json.Marshal(Read().
+		VarAs("nodes", G().NWithLabel("Doc").TextSearchNodesWithin("Doc", "body", "graph", 5)).
+		VarAs("edges", G().E(AllEdges()).TextSearchEdgesWithinWith("MENTIONS", "body", ParamInput("query"), BoundExpr(ExprParam("limit")), &tenant)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonText := string(body)
+	for _, want := range []string{
+		`"text_search_nodes_within"`,
+		`"input":{"nodes_where"`,
+		`"query_text":{"value":{"string":"graph"}}`,
+		`"text_search_edges_within"`,
+		`"query_text":{"expr":{"param":"query"}}`,
+		`"k":{"expr":{"param":"limit"}}`,
+		`"tenant_value":{"expr":{"param":"tenant"}}`,
+	} {
+		if !strings.Contains(jsonText, want) {
+			t.Fatalf("restricted text JSON missing %s in %s", want, jsonText)
+		}
+	}
+}
+
 func TestVectorIndexSpecRequiresDimensionAndMetric(t *testing.T) {
 	spec := NodeVectorIndex("Doc", "embedding", 3, VectorDistanceCosine, "tenant_id")
 	body, err := json.Marshal(spec)
@@ -1004,10 +1028,14 @@ func TestIndexAndTraversalPublicSurfaceSerializes(t *testing.T) {
 		{"vector nodes typed", G().VectorSearchNodesWith("Doc", "embedding", ValueInput(F32Array(1, 2, 3)), BoundLiteral(3), &tenant)},
 		{"text nodes", G().TextSearchNodes("Doc", "body", ExprParam("query"), 5)},
 		{"text nodes typed", G().TextSearchNodesWith("Doc", "body", ParamInput("query"), BoundExpr(ExprParam("k")), &tenant)},
+		{"text nodes within", G().NWithLabel("Doc").TextSearchNodesWithin("Doc", "body", "query", 5)},
+		{"text nodes within typed", G().NWithLabel("Doc").TextSearchNodesWithinWith("Doc", "body", ParamInput("query"), BoundExpr(ExprParam("k")), &tenant)},
 		{"vector edges", G().VectorSearchEdges("SIMILAR", "embedding", []float32{1, 2, 3}, 5)},
 		{"vector edges typed", G().VectorSearchEdgesWith("SIMILAR", "embedding", ValueInput(F32Array(1, 2, 3)), BoundLiteral(3), nil)},
 		{"text edges", G().TextSearchEdges("MENTIONS", "body", "query", 5)},
 		{"text edges typed", G().TextSearchEdgesWith("MENTIONS", "body", ValueInput("query"), BoundLiteral(3), nil)},
+		{"text edges within", G().E(AllEdges()).TextSearchEdgesWithin("MENTIONS", "body", "query", 5)},
+		{"text edges within typed", G().E(AllEdges()).TextSearchEdgesWithinWith("MENTIONS", "body", ParamInput("query"), BoundExpr(ExprParam("k")), &tenant)},
 		{"in", G().N(NodeID(1)).In("FOLLOWS")},
 		{"both", G().N(NodeID(1)).Both()},
 		{"out edges", G().N(NodeID(1)).OutE("FOLLOWS")},

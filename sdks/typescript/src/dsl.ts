@@ -1409,6 +1409,36 @@ export class Step implements Encodable {
       k,
     });
   }
+  static textSearchNodesWithin(
+    label: string,
+    property: string,
+    queryText: PropertyInput,
+    k: StreamBound,
+    tenantValue?: PropertyInput | null,
+  ): Step {
+    return Step.struct("TextSearchNodesWithin", {
+      label,
+      property,
+      tenant_value: tenantValue ?? undefined,
+      query_text: queryText,
+      k,
+    });
+  }
+  static textSearchEdgesWithin(
+    label: string,
+    property: string,
+    queryText: PropertyInput,
+    k: StreamBound,
+    tenantValue?: PropertyInput | null,
+  ): Step {
+    return Step.struct("TextSearchEdgesWithin", {
+      label,
+      property,
+      tenant_value: tenantValue ?? undefined,
+      query_text: queryText,
+      k,
+    });
+  }
   static textSearchEdges(
     label: string,
     property: string,
@@ -1672,6 +1702,8 @@ export class Step implements Encodable {
         return astTag(this.variant, this.payload as Record<string, unknown>);
       case "VectorSearchNodesWithin":
       case "VectorSearchEdgesWithin":
+      case "TextSearchNodesWithin":
+      case "TextSearchEdgesWithin":
         return unary(this.variant, this.payload as Record<string, unknown>);
       case "Out":
       case "In":
@@ -2045,6 +2077,44 @@ export class Traversal<S extends TraversalState = "nodes", M extends MutationMod
             label,
             property,
             PropertyInput.from(queryVector as never),
+            StreamBound.from(k),
+            tenantValue == null ? null : PropertyInput.from(tenantValue as never),
+          );
+    return this.push(step, this.state, this.mode) as Traversal<T, M>;
+  }
+  /** Rank only the current node/edge stream by BM25 score. */
+  textSearch<T extends "nodes" | "edges">(
+    this: Traversal<T, M>,
+    label: string,
+    property: string,
+    queryText: string,
+    k: number,
+    tenantValue?: PropertyValueInput | null,
+  ): Traversal<T, M> {
+    return this.textSearchWith(label, property, queryText, k, tenantValue == null ? null : PropertyInput.value(tenantValue));
+  }
+  /** Runtime-input form of traversal-scoped BM25 ranking. */
+  textSearchWith<T extends "nodes" | "edges">(
+    this: Traversal<T, M>,
+    label: string,
+    property: string,
+    queryText: PropertyInput | Expr | ParamRef | PropertyValueInput,
+    k: StreamBound | Expr | ParamRef | number | bigint,
+    tenantValue?: PropertyInput | Expr | ParamRef | PropertyValueInput | null,
+  ): Traversal<T, M> {
+    const step =
+      this.state === "nodes"
+        ? Step.textSearchNodesWithin(
+            label,
+            property,
+            PropertyInput.from(queryText as never),
+            StreamBound.from(k),
+            tenantValue == null ? null : PropertyInput.from(tenantValue as never),
+          )
+        : Step.textSearchEdgesWithin(
+            label,
+            property,
+            PropertyInput.from(queryText as never),
             StreamBound.from(k),
             tenantValue == null ? null : PropertyInput.from(tenantValue as never),
           );
