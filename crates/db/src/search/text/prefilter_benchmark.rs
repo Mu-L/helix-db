@@ -23,7 +23,7 @@ use super::{
 };
 use crate::config::TextIndexDefinition;
 use crate::error::{HelixDbError, Result};
-use crate::index_v2::text::statistics::TextBm25Statistics;
+use crate::index_lifecycle::text::statistics::TextBm25Statistics;
 
 const DB_PATH: &str = "fts-prefilter-benchmark";
 const LABEL: &str = "FtsPrefilterDocument";
