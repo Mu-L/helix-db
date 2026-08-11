@@ -242,10 +242,12 @@ impl DbConfig {
 
     /// Build source-specific local defaults for an embedded handle.
     pub(crate) fn embedded_default(profile: EmbeddedStorageProfile) -> Self {
-        let mut slate = slatedb::Settings::default();
-        slate.flush_interval = Some(profile.flush_interval());
-        slate.l0_sst_size_bytes = EMBEDDED_L0_SST_BYTES;
-        slate.max_unflushed_bytes = EMBEDDED_MAX_UNFLUSHED_BYTES;
+        let slate = slatedb::Settings {
+            flush_interval: Some(profile.flush_interval()),
+            l0_sst_size_bytes: EMBEDDED_L0_SST_BYTES,
+            max_unflushed_bytes: EMBEDDED_MAX_UNFLUSHED_BYTES,
+            ..slatedb::Settings::default()
+        };
 
         let (block_bytes, metadata_bytes) = profile.slate_cache();
         let vector_memory = VectorMemorySettings::try_new(
