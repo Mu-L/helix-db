@@ -131,6 +131,51 @@ g()
   .where(Predicate.eq("email", Expr.param("email")));
 ```
 
+## Traversal-scoped text search
+
+Use `textSearch(...)` after a node or edge traversal to rank only the IDs in
+that current stream. This is an exact BM25 prefilter, not a post-search limit:
+the result is the same as searching the selected tenant partition exhaustively,
+intersecting with the unique input IDs, and taking the deterministic top `k`.
+
+BM25 statistics still come from the full tenant partition.
+
+```ts
+import { Expr, Predicate, PropertyInput, PropertyProjection, defineParams, g, param, readBatch } from "@helix-db/helix-db";
+
+const searchParams = defineParams({
+  tenantId: param.string(),
+  query: param.string(),
+  limit: param.i64(),
+});
+
+function searchVisibleDocuments(p = searchParams) {
+  return readBatch()
+    .varAs(
+      "documents",
+      g()
+        .nWithLabel("Document")
+        .where(Predicate.eq("tenantId", p.tenantId))
+        .textSearchWith("Document", "body", PropertyInput.param("query"), Expr.param("limit"), PropertyInput.param("tenantId"))
+        .project([PropertyProjection.renamed("$id", "id"), PropertyProjection.renamed("$score", "score"), PropertyProjection.new("title")]),
+    )
+    .returning(["documents"]);
+}
+```
+
+Use the literal form as
+`.textSearch("Document", "body", "graph databases", 10, "acme")`.
+The same `textSearch` and `textSearchWith` methods work on edge streams and
+emit `TextSearchEdgesWithin`. Source-level `textSearchNodes[With]` and
+`textSearchEdges[With]` remain whole-partition searches.
+
+Restricted results contain unique input IDs, return at most `k`, and order by
+`$score` descending then entity ID ascending. The selected input row keeps its
+bindings, path, and sack. An empty input returns without opening the text
+index. More than 1,000,000 unique candidates is a query error. For a
+tenant-scoped index, pass the same tenant partition used to build the candidate
+stream.
+
 ## Row Bindings
 
 Bindings retain correlated values across multi-hop traversals:

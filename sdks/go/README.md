@@ -137,6 +137,50 @@ Always pass explicit names to `Returning(...)` for values you want back. A
 zero-arg `Returning()` is supported for intentional empty responses and
 serializes as `"returns":[]`.
 
+## Traversal-scoped text search
+
+Use `TextSearchNodesWithin` or `TextSearchEdgesWithin` after building a
+candidate traversal. These methods perform exact BM25 ranking over only the
+current IDs. Results equal an exhaustive search of the selected tenant
+partition, intersected with the unique input IDs, followed by deterministic
+top-`k` selection.
+
+BM25 statistics still come from the full tenant partition.
+
+```go
+func SearchVisibleDocuments(tenantID, queryText string, limit int64) helix.Request {
+	q := helix.ReadQuery("search_visible_documents")
+	tenant := q.ParamString("tenant_id", tenantID)
+	query := q.ParamString("query", queryText)
+	k := q.ParamI64("limit", limit)
+
+	return q.
+		VarAs("documents",
+			helix.G().
+				NWithLabel("Document").
+				Where(helix.PredEq("tenantId", tenant)).
+				TextSearchNodesWithin("Document", "body", query, k, tenant).
+				Project(
+					helix.ProjectPropAs("$id", "id"),
+					helix.ProjectPropAs("$score", "score"),
+					helix.ProjectProp("title"),
+				),
+		).
+		Returning("documents")
+}
+```
+
+The typed runtime-input forms are `TextSearchNodesWithinWith` and
+`TextSearchEdgesWithinWith`. Source-level `TextSearchNodes[With]` and
+`TextSearchEdges[With]` remain whole-partition searches.
+
+Restricted results contain unique input IDs, return at most `k`, and order by
+`$score` descending then entity ID ascending. The selected input row keeps its
+bindings, path, and sack. An empty input returns without opening the text
+index. A wrong-kind input or more than 1,000,000 unique candidates is a query
+error. For a tenant-scoped index, pass the same tenant partition used to build
+the candidate stream.
+
 ## Row Bindings
 
 Use `Bind(...)` when a multi-hop traversal needs to keep earlier elements
