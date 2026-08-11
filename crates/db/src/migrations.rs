@@ -4902,6 +4902,18 @@ mod tests {
             .build()
             .await
             .expect("raw pre-migration db opens");
+        let tenant = TenantId::from_ulid_str("01KZ6WZ9QREKZZ87492YXBTFJ3")
+            .expect("production tenant ID is valid");
+        let mut legacy_tenant_key = Vec::new();
+        legacy_tenant_key.extend_from_slice(&tenant.as_u128().to_be_bytes());
+        DataKeyKind::IndexMetadata(MetadataKey::next_node_id_key())
+            .encode_into(&mut legacy_tenant_key);
+        raw.put(
+            &legacy_tenant_key,
+            Bytes::copy_from_slice(&1_u64.to_be_bytes()),
+        )
+        .await
+        .expect("legacy tenant row writes");
         raw.close().await.expect("raw pre-migration db closes");
         let source = crate::HelixDbSource::Disk {
             root: root.path().to_path_buf(),

@@ -214,6 +214,11 @@ fn migration_row(key: Bytes, value: Bytes) -> Result<Option<TenantKeyMigrationRo
     }))
 }
 
+/// Returns whether one markerless row needs the blocking tenant-envelope rewrite.
+pub(super) fn legacy_key_requires_migration(key: Bytes, value: Bytes) -> Result<bool> {
+    Ok(migration_row(key, value)?.is_some())
+}
+
 fn current_key_is_typed(key: &[u8], _value: &[u8]) -> Result<bool> {
     if GlobalKey::parse_from_slice(key).is_ok() {
         return Ok(true);

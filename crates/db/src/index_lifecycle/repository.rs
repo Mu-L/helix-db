@@ -227,17 +227,24 @@ pub(crate) async fn require_reader_bootstrap_or_legacy(
             reason: "read-only storage has a partial V2 bootstrap tuple".to_string(),
         });
     }
-    if !tenant_envelope_ready {
-        return Err(HelixDbError::WriterMigrationRequired {
-            requirement: WriterMigrationRequirement::IncompleteStorageSchema,
-        });
-    }
     let mut rows = reader.scan(..).await?;
     while let Some(row) = rows.next().await? {
         let is_global_v2 = row.key.starts_with(&GLOBAL_SENTINEL);
         let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
         let is_tenant_v2 = DataScope::strip_tenant_envelope(&row.key)
             .is_some_and(|(_, logical)| ScopedKey::parse_from_slice(logical).is_ok());
+        if !tenant_envelope_ready
+            && (is_global_v2
+                || is_unscoped_v2
+                || is_tenant_v2
+                || super::tenant_envelope_migration::legacy_key_requires_migration(
+                    row.key, row.value,
+                )?)
+        {
+            return Err(HelixDbError::WriterMigrationRequired {
+                requirement: WriterMigrationRequirement::IncompleteStorageSchema,
+            });
+        }
         if is_global_v2 || is_unscoped_v2 || is_tenant_v2 {
             return Err(HelixDbError::MigrationRequired {
                 reason: "read-only storage has V2 rows without the complete bootstrap tuple"
@@ -1518,6 +1525,30 @@ mod tests {
                 requirement: WriterMigrationRequirement::IncompleteStorageSchema,
             })
         ));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn markerless_unscoped_legacy_storage_remains_reader_compatible() {
+        let db = Db::builder(
+            "markerless-unscoped-legacy-reader",
+            Arc::new(InMemory::new()),
+        )
+        .build()
+        .await
+        .unwrap();
+        db.put(
+            GraphKey::Data {
+                scope: DataScope::LegacyUnscoped,
+                kind: DataKeyKind::IndexMetadata(MetadataKey::next_node_id_key()),
+            }
+            .to_bytes(),
+            Bytes::copy_from_slice(&1_u64.to_be_bytes()),
+        )
+        .await
+        .unwrap();
+
+        require_reader_bootstrap_or_legacy(&db).await.unwrap();
         db.close().await.unwrap();
     }
 
