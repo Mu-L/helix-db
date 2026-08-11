@@ -2556,7 +2556,8 @@ async fn stage_bitmap_changes(
     for (key, changes) in changes {
         if changes.values().all(|present| *present) {
             let additions = roaring::RoaringTreemap::from_iter(changes.keys().copied());
-            transaction.merge(key, SecondaryEqualityBitmapValue::new(additions).encode())?;
+            transaction
+                .merge_commutative(key, SecondaryEqualityBitmapValue::new(additions).encode())?;
             continue;
         }
 
@@ -4882,6 +4883,76 @@ mod tests {
         );
 
         db.close().await.expect("mixed bitmap database closes");
+    }
+
+    #[tokio::test]
+    async fn pure_bitmap_additions_commit_without_conflicts() {
+        let db = test_db("secondary-commutative-bitmap-additions").await;
+        let handle = active_read_handle(
+            &db,
+            SecondaryIndexDefinition::node_equality("User", "status")
+                .expect("node equality definition validates"),
+        )
+        .await;
+        let definition = handle
+            .secondary_definition()
+            .expect("secondary handle retains its definition");
+        let key = secondary_entry_key(
+            handle.scope(),
+            handle.index_id(),
+            handle.generation(),
+            definition,
+            CanonicalSecondaryValue::equality_string("shared"),
+            IndexEntityId::initial(),
+        )
+        .expect("bitmap key validates");
+        db.put(
+            &key,
+            SecondaryEqualityBitmapValue::new(roaring::RoaringTreemap::from_iter([1])).encode(),
+        )
+        .await
+        .expect("initial bitmap persists");
+
+        let left = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .expect("left bitmap transaction begins");
+        let right = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .expect("right bitmap transaction begins");
+        stage_bitmap_changes(
+            &left,
+            &BTreeMap::from([(key.clone(), BTreeMap::from([(2, true)]))]),
+        )
+        .await
+        .expect("left addition stages");
+        stage_bitmap_changes(
+            &right,
+            &BTreeMap::from([(key.clone(), BTreeMap::from([(3, true)]))]),
+        )
+        .await
+        .expect("right addition stages");
+
+        left.commit().await.expect("left addition commits");
+        right.commit().await.expect("right addition commits");
+        assert_eq!(
+            SecondaryEqualityBitmapValue::decode(
+                &db.get(&key)
+                    .await
+                    .expect("merged bitmap is readable")
+                    .expect("merged bitmap remains present"),
+            )
+            .expect("merged bitmap decodes")
+            .ids()
+            .iter()
+            .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+
+        db.close()
+            .await
+            .expect("commutative bitmap database closes");
     }
 
     #[tokio::test]
