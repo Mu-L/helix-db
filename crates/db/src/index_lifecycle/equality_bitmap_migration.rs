@@ -19,7 +19,7 @@ use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::tenant::TenantId;
 use crate::encoding::v2::keys::{
     CanonicalSecondaryValue, GlobalKey, IndexEntity, Key, RecordKind, ScopedKey,
-    SecondaryEqualityBitmapKey,
+    SecondaryEntryLane, SecondaryEqualityBitmapKey,
 };
 use crate::encoding::v2::values::{
     decode_index_record, decode_operation_record, encode_metadata_value, encode_operation_record,
@@ -57,7 +57,6 @@ struct BuildingEqualityGeneration {
 
 #[derive(Debug, Default)]
 struct MigrationCatalog {
-    all: Vec<EqualityGeneration>,
     active: Vec<EqualityGeneration>,
     building: Vec<BuildingEqualityGeneration>,
 }
@@ -193,12 +192,9 @@ pub(super) async fn migrate_v3_to_v4(db: &Db) -> Result<()> {
 
 pub(super) async fn cleanup_v3_nonunique_equality_rows(db: &Db) -> Result<()> {
     trip(EqualityBitmapMigrationFailpoint::CleanupBefore)?;
-    let catalog = discover_catalog(db).await?;
-    for generation in &catalog.all {
-        clear_v3_equality_generation(db, generation).await?;
-    }
+    clear_all_v3_nonunique_equality_rows(db).await?;
     trip(EqualityBitmapMigrationFailpoint::CleanupAfter)?;
-    crate::migrations::publish_index_storage_v4_cleanup_ready(db).await
+    verify_v3_equality_absent_and_publish_cleanup(db).await
 }
 
 async fn discover_catalog(db: &Db) -> Result<MigrationCatalog> {
@@ -238,7 +234,6 @@ async fn discover_catalog(db: &Db) -> Result<MigrationCatalog> {
             index_id: record.index_id(),
             generation: record.state().generation(),
         };
-        catalog.all.push(generation.clone());
         match record.state() {
             IndexStateV2::Active {
                 physical: PhysicalGeneration::Secondary { .. },
@@ -587,67 +582,61 @@ async fn clear_prefix(db: &Db, prefix: &Bytes) -> Result<()> {
     }
 }
 
-async fn clear_v3_equality_generation(db: &Db, generation: &EqualityGeneration) -> Result<()> {
-    let logical_prefix = ScopedKey::generation_prefix(
-        RecordKind::SecondaryEntry,
-        generation.index_id,
-        generation.generation,
-    );
-    clear_v3_equality_prefix(
-        db,
-        generation,
-        Key::data_prefix(generation.scope, logical_prefix),
-    )
-    .await
+async fn clear_all_v3_nonunique_equality_rows(db: &Db) -> Result<()> {
+    let mut rows = db.scan(..).await?;
+    let mut keys = Vec::with_capacity(MIGRATION_BATCH_SIZE);
+    while let Some(row) = rows.next().await? {
+        if !is_v3_nonunique_equality_key(&row.key) {
+            continue;
+        }
+        keys.push(row.key);
+        if keys.len() == MIGRATION_BATCH_SIZE {
+            delete_v3_equality_keys(db, core::mem::take(&mut keys)).await?;
+        }
+    }
+    if !keys.is_empty() {
+        delete_v3_equality_keys(db, keys).await?;
+    }
+    Ok(())
 }
 
-async fn clear_v3_equality_prefix(
-    db: &Db,
-    generation: &EqualityGeneration,
-    prefix: Bytes,
-) -> Result<()> {
-    loop {
-        let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
-        let mut rows = transaction.scan_prefix(&prefix, ..).await?;
-        let mut keys = Vec::with_capacity(MIGRATION_BATCH_SIZE);
-        while keys.len() < MIGRATION_BATCH_SIZE {
-            let Some(row) = rows.next().await? else {
-                break;
-            };
-            let parsed = Key::parse_from_slice(generation.scope, &row.key)?;
-            let Key::Data {
-                kind: ScopedKey::SecondaryEntry(entry),
-                ..
-            } = parsed
-            else {
-                return Err(corruption("V3 equality prefix yielded another key kind"));
-            };
-            let expected_lane = match generation.definition.element_kind() {
-                super::IndexElementKind::Node => {
-                    crate::encoding::v2::keys::SecondaryEntryLane::NodeEquality
-                }
-                super::IndexElementKind::Edge => {
-                    crate::encoding::v2::keys::SecondaryEntryLane::EdgeEquality
-                }
-            };
-            if entry.lane() != expected_lane || entry.entity_id().is_none() {
-                return Err(corruption(
-                    "V3 non-unique equality generation contains another row shape",
-                ));
-            }
-            keys.push(row.key);
-        }
-        if keys.is_empty() {
-            transaction.rollback();
-            return Ok(());
-        }
-        for key in keys {
-            transaction.delete(key)?;
-        }
-        trip(EqualityBitmapMigrationFailpoint::BatchBefore)?;
-        transaction.commit().await?;
-        trip(EqualityBitmapMigrationFailpoint::BatchAfter)?;
+async fn delete_v3_equality_keys(db: &Db, keys: Vec<Bytes>) -> Result<()> {
+    let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
+    for key in keys {
+        transaction.delete(key)?;
     }
+    trip(EqualityBitmapMigrationFailpoint::BatchBefore)?;
+    transaction.commit().await?;
+    trip(EqualityBitmapMigrationFailpoint::BatchAfter)
+}
+
+async fn verify_v3_equality_absent_and_publish_cleanup(db: &Db) -> Result<()> {
+    let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
+    let mut rows = transaction.scan(..).await?;
+    while let Some(row) = rows.next().await? {
+        if is_v3_nonunique_equality_key(&row.key) {
+            return Err(corruption(
+                "V3 non-unique equality row remained after global cleanup",
+            ));
+        }
+    }
+    crate::migrations::stage_index_storage_v4_cleanup_ready(&transaction)?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+fn is_v3_nonunique_equality_key(key: &[u8]) -> bool {
+    let Ok(Key::Data {
+        kind: ScopedKey::SecondaryEntry(entry),
+        ..
+    }) = Key::parse_data_from_slice(key)
+    else {
+        return false;
+    };
+    matches!(
+        entry.lane(),
+        SecondaryEntryLane::NodeEquality | SecondaryEntryLane::EdgeEquality
+    ) && entry.entity_id().is_some()
 }
 
 fn bitmap_prefix(generation: &EqualityGeneration) -> Bytes {
@@ -934,6 +923,166 @@ mod tests {
 
         assert!(cleanup_v3_nonunique_equality_rows(&db).await.is_err());
         assert!(was_triggered());
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cleanup_removes_orphaned_v3_rows_across_every_scope() {
+        let _guard = TEST_LOCK.lock().await;
+        let db = v3_db("v4-global-orphan-cleanup").await;
+        db.put(
+            Key::Global {
+                kind: GlobalKey::StorageVersion,
+            }
+            .to_bytes(),
+            encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
+                IndexStorageVersion::CURRENT,
+            )),
+        )
+        .await
+        .unwrap();
+        let tenant =
+            DataScope::Tenant(TenantId::from_ulid_str("01KZ6WZ9QREKZZ87492YXBTFJ3").unwrap());
+        put_v3_entry(
+            &db,
+            DataScope::LegacyUnscoped,
+            IndexId::new(31).unwrap(),
+            IndexGenerationId::new(41).unwrap(),
+            51,
+            "orphan-unscoped",
+        )
+        .await;
+        put_v3_entry(
+            &db,
+            tenant,
+            IndexId::new(32).unwrap(),
+            IndexGenerationId::new(42).unwrap(),
+            52,
+            "orphan-tenant",
+        )
+        .await;
+
+        let edge_id = super::super::IndexEntityId::new(53);
+        let edge_kind = ScopedKey::SecondaryEntry(
+            SecondaryEntryKey::try_new(
+                IndexId::new(33).unwrap(),
+                IndexGenerationId::new(43).unwrap(),
+                SecondaryEntryLane::EdgeEquality,
+                CanonicalSecondaryValue::equality_string("orphan-edge"),
+                Some(edge_id),
+            )
+            .unwrap(),
+        );
+        db.put(
+            tenant_envelope_migration::legacy_data_key(tenant, edge_kind),
+            encode_secondary_entry(&SecondaryEntryValue {
+                index_id: IndexId::new(33).unwrap(),
+                generation: IndexGenerationId::new(43).unwrap(),
+                lane: SecondaryEntryLane::EdgeEquality,
+                entity_id: edge_id,
+            }),
+        )
+        .await
+        .unwrap();
+
+        let unique_id = super::super::IndexEntityId::new(54);
+        let unique_kind = ScopedKey::SecondaryEntry(
+            SecondaryEntryKey::try_new(
+                IndexId::new(34).unwrap(),
+                IndexGenerationId::new(44).unwrap(),
+                SecondaryEntryLane::NodeUniqueEquality,
+                CanonicalSecondaryValue::equality_string("preserved-unique"),
+                None,
+            )
+            .unwrap(),
+        );
+        let unique_key = Key::Data {
+            scope: tenant,
+            kind: unique_kind.clone(),
+        }
+        .to_bytes();
+        let unique_value = encode_secondary_entry(&SecondaryEntryValue {
+            index_id: IndexId::new(34).unwrap(),
+            generation: IndexGenerationId::new(44).unwrap(),
+            lane: SecondaryEntryLane::NodeUniqueEquality,
+            entity_id: unique_id,
+        });
+        db.put(
+            tenant_envelope_migration::legacy_data_key(tenant, unique_kind),
+            unique_value.clone(),
+        )
+        .await
+        .unwrap();
+
+        super::super::repository::bootstrap_writer(&db)
+            .await
+            .unwrap();
+
+        let mut rows = db.scan(..).await.unwrap();
+        while let Some(row) = rows.next().await.unwrap() {
+            assert!(
+                !is_v3_nonunique_equality_key(&row.key),
+                "orphaned V3 row remained at {:?}",
+                row.key
+            );
+        }
+        assert_eq!(db.get(unique_key).await.unwrap(), Some(unique_value));
+        assert!(crate::migrations::index_storage_v4_cleanup_ready(&db)
+            .await
+            .unwrap());
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_cleanup_is_rechecked_after_tenant_migration() {
+        let _guard = TEST_LOCK.lock().await;
+        let db = v3_db("v4-cleanup-before-tenant-envelope").await;
+        db.put(
+            Key::Global {
+                kind: GlobalKey::StorageVersion,
+            }
+            .to_bytes(),
+            encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
+                IndexStorageVersion::CURRENT,
+            )),
+        )
+        .await
+        .unwrap();
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        crate::migrations::stage_index_storage_v4_cleanup_ready(&transaction).unwrap();
+        transaction.commit().await.unwrap();
+        let tenant =
+            DataScope::Tenant(TenantId::from_ulid_str("01KZ6WZ9QREKZZ87492YXBTFJ3").unwrap());
+        put_v3_entry(
+            &db,
+            tenant,
+            IndexId::new(35).unwrap(),
+            IndexGenerationId::new(45).unwrap(),
+            55,
+            "orphan-after-cleanup",
+        )
+        .await;
+        assert!(!crate::migrations::tenant_key_envelope_ready(&db)
+            .await
+            .unwrap());
+
+        super::super::repository::bootstrap_writer(&db)
+            .await
+            .unwrap();
+
+        let mut rows = db.scan(..).await.unwrap();
+        while let Some(row) = rows.next().await.unwrap() {
+            assert!(!is_v3_nonunique_equality_key(&row.key));
+        }
+        assert!(crate::migrations::tenant_key_envelope_ready(&db)
+            .await
+            .unwrap());
+        assert!(crate::migrations::index_storage_v4_cleanup_ready(&db)
+            .await
+            .unwrap());
         db.close().await.unwrap();
     }
 

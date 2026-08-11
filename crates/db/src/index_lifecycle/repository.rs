@@ -125,7 +125,7 @@ async fn preflight_writer_bootstrap(db: &Db) -> Result<WriterBootstrapPlan> {
 
     Ok(if version < IndexStorageVersion::CURRENT {
         WriterBootstrapPlan::MigrateToCurrent
-    } else if cleanup_ready {
+    } else if cleanup_ready && tenant_envelope_ready {
         WriterBootstrapPlan::Ready
     } else {
         WriterBootstrapPlan::CleanupCurrent

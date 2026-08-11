@@ -1296,14 +1296,6 @@ pub(crate) fn stage_index_storage_v4_cleanup_ready(transaction: &DbTransaction) 
     Ok(())
 }
 
-/// Durably publishes V4 cleanup completion after cleanup succeeds.
-pub(crate) async fn publish_index_storage_v4_cleanup_ready(db: &Db) -> Result<()> {
-    let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
-    stage_index_storage_v4_cleanup_ready(&transaction)?;
-    transaction.commit().await?;
-    Ok(())
-}
-
 /// Reopens legacy-definition migration for a production-coverage fixture.
 ///
 /// The caller must atomically stage a valid legacy catalog source in the same
