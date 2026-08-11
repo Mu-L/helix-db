@@ -635,11 +635,12 @@ pub(crate) async fn build_target(
 
     let mut all = raw.scan_with_options(.., &options).await?;
     while let Some(kv) = all.next().await? {
-        if exact_passthrough_key(&kv.key) {
-            writers.exact_keys.push(Record::new(
-                kv.key.clone(),
-                target_exact_value(&kv.key, &kv.value)?,
-            ))?;
+        let identity = migration_parity::migration_parity_legacy_tenant_key_identity(&kv.key);
+        if exact_passthrough_key(&identity) {
+            let value = target_exact_value(&identity, &kv.value)?;
+            writers
+                .exact_keys
+                .push(Record::new(identity.into_owned(), value))?;
         }
     }
 
@@ -1511,6 +1512,22 @@ mod tests {
         assert!(exact_passthrough_key(
             b"\xFFkv_vector_simhash_directory_v1_unrelated"
         ));
+    }
+
+    #[test]
+    fn migrated_tenant_passthrough_key_keeps_its_source_identity() {
+        let mut source = vec![0x77; core::mem::size_of::<u128>()];
+        source.push(0x02);
+        source.extend_from_slice(&8_u64.to_be_bytes());
+        let mut target = Vec::with_capacity(core::mem::size_of::<u8>() + source.len());
+        target.push(0xFD);
+        target.extend_from_slice(&source);
+
+        assert!(exact_passthrough_key(&source));
+        assert_eq!(
+            migration_parity::migration_parity_legacy_tenant_key_identity(&target).as_ref(),
+            source.as_slice()
+        );
     }
 
     #[test]

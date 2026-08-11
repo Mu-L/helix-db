@@ -4,6 +4,7 @@
 //! used by the local cross-repo migration harness to compare logical graph
 //! facts before and after storage-format migrations.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
@@ -1302,6 +1303,28 @@ pub fn decode_parity_bitmap(bytes: &[u8]) -> Result<Vec<u64>> {
     Ok(decode_roaring_treemap(bytes)?.iter().collect())
 }
 
+/// Return the pre-envelope physical identity for a typed tenant data key.
+///
+/// Migration parity compares logical ownership across storage versions. V4
+/// prepends the tenant sentinel, so a migrated `[0xFD][tenant][logical]` key
+/// must compare with its source `[tenant][logical]` key. Untyped `0xFD` keys
+/// are returned unchanged instead of being guessed to be tenant data.
+pub fn migration_parity_legacy_tenant_key_identity(key: &[u8]) -> Cow<'_, [u8]> {
+    let Some((tenant, logical)) = DataScope::strip_tenant_envelope(key) else {
+        return Cow::Borrowed(key);
+    };
+    if DataKeyKind::parse_from_slice(logical).is_err()
+        && ScopedKey::parse_from_slice(logical).is_err()
+    {
+        return Cow::Borrowed(key);
+    }
+
+    let mut identity = Vec::with_capacity(core::mem::size_of::<u128>() + logical.len());
+    identity.extend_from_slice(&tenant.as_u128().to_be_bytes());
+    identity.extend_from_slice(logical);
+    Cow::Owned(identity)
+}
+
 /// Construct bounded high-throughput options for independent parity scans.
 pub fn migration_parity_scan_options(
     read_ahead_bytes: usize,
@@ -2565,6 +2588,7 @@ fn increment_count(counts: &mut BTreeMap<String, u64>, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encoding::v1::keys::NodePropertyKey;
     use crate::encoding::v1::property::equality_value::{
         project_equality_value, EqualityValueProjection,
     };
@@ -2573,7 +2597,47 @@ mod tests {
     };
     use crate::encoding::v2::values::encode_secondary_entry;
     use crate::index_lifecycle::work::SecondaryEntryValue;
-    use crate::index_lifecycle::{IndexElementKind, IndexEntityId, IndexGenerationId, IndexId};
+    use crate::index_lifecycle::{
+        IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexOperationId,
+    };
+
+    #[test]
+    fn tenant_envelope_parity_identity_is_typed_and_legacy_shaped() {
+        let scope = DataScope::Tenant(crate::encoding::keys::tenant::TenantId::from_u128(
+            0x7777_7777_7777_7777_7777_7777_7777_7777,
+        ));
+        let key = Key::Data {
+            scope,
+            kind: DataKeyKind::NodeProperty(NodePropertyKey::new(8)),
+        }
+        .to_bytes();
+        let identity = migration_parity_legacy_tenant_key_identity(&key);
+
+        assert_eq!(identity.as_ref(), &key[core::mem::size_of::<u8>()..]);
+        let identity = identity.into_owned();
+        assert_eq!(
+            migration_parity_legacy_tenant_key_identity(&identity).as_ref(),
+            identity.as_slice()
+        );
+
+        let managed = IndexKey::Data {
+            scope,
+            kind: ScopedKey::operation(IndexOperationId::from_bytes([0x11; 16]).unwrap()),
+        }
+        .to_bytes();
+        assert_eq!(
+            migration_parity_legacy_tenant_key_identity(&managed).as_ref(),
+            &managed[core::mem::size_of::<u8>()..]
+        );
+
+        let mut untyped = vec![crate::encoding::keys::tenant::TENANT_KEY_PREFIX];
+        untyped.extend_from_slice(&[0x77; core::mem::size_of::<u128>()]);
+        untyped.extend_from_slice(b"not-a-typed-logical-key");
+        assert!(matches!(
+            migration_parity_legacy_tenant_key_identity(&untyped),
+            Cow::Borrowed(bytes) if bytes == untyped.as_slice()
+        ));
+    }
 
     #[test]
     fn v3_rows_and_v4_bitmap_decode_to_identical_memberships() {
