@@ -8,6 +8,8 @@ use crate::runtime;
 const OBJECT_STORE_PART_SIZE_BYTES: usize = 4 * 1024 * 1024;
 const OBJECT_STORE_SCAN_INTERVAL_SECS: u64 = 60 * 60;
 const OBJECT_STORE_MAX_OPEN_FILE_HANDLES: usize = 1_000;
+const EMBEDDED_MEMORY_SLATE_BLOCK_BYTES: u64 = 48 * 1024 * 1024;
+const EMBEDDED_MEMORY_SLATE_METADATA_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Portable cache profile accepted by every embedded SDK.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -33,7 +35,7 @@ pub struct EmbeddedCacheConfig {
     pub mode: EmbeddedCacheMode,
 }
 
-impl TryFrom<EmbeddedCacheConfig> for db::DbConfig {
+impl TryFrom<EmbeddedCacheConfig> for db::config::CacheConfig {
     type Error = HelixError;
 
     fn try_from(value: EmbeddedCacheConfig) -> Result<Self, Self::Error> {
@@ -47,6 +49,11 @@ impl TryFrom<EmbeddedCacheConfig> for db::DbConfig {
         let mode = match value.mode {
             EmbeddedCacheMode::VectorMemoryOnly => db::config::CacheMode::VectorMemoryOnly,
             EmbeddedCacheMode::Memory => db::config::CacheMode::Memory {
+                slate_db: db::config::SlateMemoryCacheConfig::try_new(
+                    EMBEDDED_MEMORY_SLATE_BLOCK_BYTES,
+                    EMBEDDED_MEMORY_SLATE_METADATA_BYTES,
+                )
+                .expect("embedded memory-cache capacities are nonzero"),
                 slate_warm: Default::default(),
                 fts: None,
             },
@@ -89,7 +96,7 @@ impl TryFrom<EmbeddedCacheConfig> for db::DbConfig {
                 }
             }
         };
-        Ok(db::DbConfig::new().with_cache(db::config::CacheConfig::new(vector_memory, mode)))
+        Ok(db::config::CacheConfig::new(vector_memory, mode))
     }
 }
 
@@ -164,8 +171,10 @@ impl HelixDB {
         source: HelixDbSource,
         cache: EmbeddedCacheConfig,
     ) -> Result<Arc<Self>, HelixError> {
-        let config = cache.try_into()?;
-        let inner = runtime::run(db::HelixDB::open_with_config(source.into(), config)).await??;
+        let cache = cache.try_into()?;
+        let source = db::HelixDbSource::from(source);
+        let config = source.embedded_default_config().with_cache(cache);
+        let inner = runtime::run(db::HelixDB::open_with_config(source, config)).await??;
         Ok(Arc::new(Self::new(inner)))
     }
 
@@ -182,9 +191,10 @@ impl HelixDB {
         source: HelixDbSource,
         cache: EmbeddedCacheConfig,
     ) -> Result<Arc<Self>, HelixError> {
-        let config = cache.try_into()?;
-        let inner =
-            runtime::run(db::HelixDB::open_reader_with_config(source.into(), config)).await??;
+        let cache = cache.try_into()?;
+        let source = db::HelixDbSource::from(source);
+        let config = source.embedded_default_config().with_cache(cache);
+        let inner = runtime::run(db::HelixDB::open_reader_with_config(source, config)).await??;
         Ok(Arc::new(Self::new(inner)))
     }
 
@@ -227,7 +237,10 @@ mod tests {
     use helix_ast::query::QueryRequest;
     use helix_ast::traversal::g;
 
-    use super::{EmbeddedCacheConfig, EmbeddedCacheMode, HelixDB, HelixDbSource};
+    use super::{
+        EmbeddedCacheConfig, EmbeddedCacheMode, HelixDB, HelixDbSource,
+        EMBEDDED_MEMORY_SLATE_BLOCK_BYTES, EMBEDDED_MEMORY_SLATE_METADATA_BYTES,
+    };
     use crate::HelixError;
 
     #[test]
@@ -240,22 +253,27 @@ mod tests {
             (
                 EmbeddedCacheMode::Memory,
                 db::config::CacheMode::Memory {
+                    slate_db: db::config::SlateMemoryCacheConfig::try_new(
+                        EMBEDDED_MEMORY_SLATE_BLOCK_BYTES,
+                        EMBEDDED_MEMORY_SLATE_METADATA_BYTES,
+                    )
+                    .expect("embedded memory-cache capacities are nonzero"),
                     slate_warm: Default::default(),
                     fts: None,
                 },
             ),
         ] {
-            let config: db::DbConfig = EmbeddedCacheConfig {
+            let config: db::config::CacheConfig = EmbeddedCacheConfig {
                 vector_memory_bytes: 1_024,
                 mode,
             }
             .try_into()
             .expect("portable profile should convert");
-            assert_eq!(config.cache().vector_memory().budget().bytes(), Some(1_024));
-            assert_eq!(config.cache().mode(), &expected);
+            assert_eq!(config.vector_memory().budget().bytes(), Some(1_024));
+            assert_eq!(config.mode(), &expected);
         }
 
-        let config: db::DbConfig = EmbeddedCacheConfig {
+        let config: db::config::CacheConfig = EmbeddedCacheConfig {
             vector_memory_bytes: 2_048,
             mode: EmbeddedCacheMode::Hybrid {
                 slate_memory_bytes: 4_096,
@@ -271,7 +289,7 @@ mod tests {
             slate_db,
             object_store,
             ..
-        } = config.cache().mode()
+        } = config.mode()
         else {
             panic!("expected hybrid cache mode");
         };
@@ -285,7 +303,7 @@ mod tests {
 
     #[test]
     fn embedded_cache_profiles_reject_invalid_limits_and_paths() {
-        let error = db::DbConfig::try_from(EmbeddedCacheConfig {
+        let error = db::config::CacheConfig::try_from(EmbeddedCacheConfig {
             vector_memory_bytes: 0,
             mode: EmbeddedCacheMode::Memory,
         })
@@ -315,7 +333,7 @@ mod tests {
                 object_store_disk_bytes: 1,
             },
         ] {
-            assert!(db::DbConfig::try_from(EmbeddedCacheConfig {
+            assert!(db::config::CacheConfig::try_from(EmbeddedCacheConfig {
                 vector_memory_bytes: 1,
                 mode,
             })
@@ -352,6 +370,16 @@ mod tests {
             let writer = HelixDB::open_with_config(source.clone(), cache.clone())
                 .await
                 .expect("configured writer should open");
+            assert_eq!(
+                writer
+                    .inner
+                    .config()
+                    .db()
+                    .slate()
+                    .to_writer_settings(None)
+                    .flush_interval,
+                Some(std::time::Duration::from_millis(3))
+            );
             writer.close().await.expect("writer should close");
 
             let reader = HelixDB::open_reader_with_config(source, cache)

@@ -15,8 +15,9 @@ pub use crate::index_lifecycle::ValidatedDynamicIndexDefinition;
 pub use cache::{
     CacheConfig, CacheMode, CacheWarmMode, FtsHybridCacheConfig, FtsMemoryCacheConfig,
     FtsWarmConfig, ObjectStoreWarmLevel, SimHasherCacheSettings, SlateHybridCacheConfig,
-    SlateObjectStoreCacheSettings, SlateRuntimeConfig, SlateWarmConfig, VectorMemoryBudget,
-    VectorMemoryHydrationMode, VectorMemorySettings, DEFAULT_VECTOR_MEMORY_BUDGET_BYTES,
+    SlateMemoryCacheConfig, SlateObjectStoreCacheSettings, SlateRuntimeConfig, SlateWarmConfig,
+    VectorMemoryBudget, VectorMemoryHydrationMode, VectorMemorySettings,
+    DEFAULT_VECTOR_MEMORY_BUDGET_BYTES,
 };
 pub use db::{DbConfig, EdgeEncoding, EdgeUpdatePolicy, HelixConfig, OpenAttribution};
 pub use definition_differences::{DefinitionDifference, NonEmptyDefinitionDifferences};
