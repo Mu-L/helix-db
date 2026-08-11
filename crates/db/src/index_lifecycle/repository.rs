@@ -45,9 +45,33 @@ fn metadata_or_migration_required(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WriterBootstrapPlan {
+    Initialize,
+    MigrateToCurrent,
+    CleanupCurrent,
+    Ready,
+}
+
 /// Initializes missing V2 metadata on legacy storage or validates the tuple.
 pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
+    let plan = preflight_writer_bootstrap(db).await?;
     super::tenant_envelope_migration::migrate_all_tenant_keys(db).await?;
+
+    match plan {
+        WriterBootstrapPlan::Initialize => initialize_writer_bootstrap(db).await,
+        WriterBootstrapPlan::MigrateToCurrent => {
+            super::equality_bitmap_migration::migrate_v3_to_v4(db).await
+        }
+        WriterBootstrapPlan::CleanupCurrent => {
+            super::equality_bitmap_migration::cleanup_v3_nonunique_equality_rows(db).await
+        }
+        WriterBootstrapPlan::Ready => Ok(()),
+    }
+}
+
+/// Validates all durable bootstrap state before tenant migration may write.
+async fn preflight_writer_bootstrap(db: &Db) -> Result<WriterBootstrapPlan> {
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
     let marker_key = global_key(GlobalKey::StorageVersion);
     let logical_key = global_key(GlobalKey::LogicalIndexIdWatermark);
@@ -56,6 +80,7 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
     let logical = transaction.get(&logical_key).await?;
     let vector = transaction.get(&vector_key).await?;
     let cleanup_ready = crate::migrations::index_storage_v4_cleanup_ready(&transaction).await?;
+    let tenant_envelope_ready = crate::migrations::tenant_key_envelope_ready(&transaction).await?;
 
     let Some(marker) = marker else {
         if logical.is_some() || vector.is_some() || cleanup_ready {
@@ -69,38 +94,15 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
             let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
             let is_tenant_v2 = DataScope::strip_tenant_envelope(&row.key)
                 .is_some_and(|(_, logical)| ScopedKey::parse_from_slice(logical).is_ok());
-            if is_global_v2 || is_unscoped_v2 || is_tenant_v2 {
+            if is_global_v2 || is_unscoped_v2 || (is_tenant_v2 && !tenant_envelope_ready) {
                 return Err(HelixDbError::MigrationRequired {
                     reason: "V2 storage rows exist without the complete bootstrap tuple"
                         .to_string(),
                 });
             }
         }
-        transaction.put(
-            marker_key,
-            encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
-                IndexStorageVersion::CURRENT,
-            )),
-        )?;
-        transaction.put(
-            logical_key,
-            encode_metadata_value(&IndexV2MetadataValue::LogicalIndexIdWatermark(
-                LogicalIndexIdWatermark {
-                    next_id: IndexId::initial(),
-                },
-            )),
-        )?;
-        transaction.put(
-            vector_key,
-            encode_metadata_value(&IndexV2MetadataValue::VectorPhysicalIdWatermark(
-                VectorPhysicalIdWatermark {
-                    next_id: VectorPhysicalIndexId::initial(),
-                },
-            )),
-        )?;
-        crate::migrations::stage_index_storage_v4_cleanup_ready(&transaction)?;
-        transaction.commit().await?;
-        return Ok(());
+        transaction.rollback();
+        return Ok(WriterBootstrapPlan::Initialize);
     };
 
     let IndexV2MetadataValue::StorageVersion(version) =
@@ -120,11 +122,54 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
         });
     }
     transaction.rollback();
-    if version < IndexStorageVersion::CURRENT {
-        super::equality_bitmap_migration::migrate_v3_to_v4(db).await?;
-    } else if !cleanup_ready {
-        super::equality_bitmap_migration::cleanup_v3_nonunique_equality_rows(db).await?;
+
+    Ok(if version < IndexStorageVersion::CURRENT {
+        WriterBootstrapPlan::MigrateToCurrent
+    } else if cleanup_ready {
+        WriterBootstrapPlan::Ready
+    } else {
+        WriterBootstrapPlan::CleanupCurrent
+    })
+}
+
+async fn initialize_writer_bootstrap(db: &Db) -> Result<()> {
+    let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
+    let marker_key = global_key(GlobalKey::StorageVersion);
+    let logical_key = global_key(GlobalKey::LogicalIndexIdWatermark);
+    let vector_key = global_key(GlobalKey::VectorPhysicalIdWatermark);
+    let marker = transaction.get(&marker_key).await?;
+    let logical = transaction.get(&logical_key).await?;
+    let vector = transaction.get(&vector_key).await?;
+    let cleanup_ready = crate::migrations::index_storage_v4_cleanup_ready(&transaction).await?;
+    if marker.is_some() || logical.is_some() || vector.is_some() || cleanup_ready {
+        return Err(HelixDbError::MigrationRequired {
+            reason: "V2 storage bootstrap changed after writer preflight".to_string(),
+        });
     }
+    transaction.put(
+        marker_key,
+        encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
+            IndexStorageVersion::CURRENT,
+        )),
+    )?;
+    transaction.put(
+        logical_key,
+        encode_metadata_value(&IndexV2MetadataValue::LogicalIndexIdWatermark(
+            LogicalIndexIdWatermark {
+                next_id: IndexId::initial(),
+            },
+        )),
+    )?;
+    transaction.put(
+        vector_key,
+        encode_metadata_value(&IndexV2MetadataValue::VectorPhysicalIdWatermark(
+            VectorPhysicalIdWatermark {
+                next_id: VectorPhysicalIndexId::initial(),
+            },
+        )),
+    )?;
+    crate::migrations::stage_index_storage_v4_cleanup_ready(&transaction)?;
+    transaction.commit().await?;
     Ok(())
 }
 
@@ -1314,6 +1359,124 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    async fn all_rows(db: &Db) -> Vec<(Bytes, Bytes)> {
+        let mut rows = db.scan(..).await.unwrap();
+        let mut collected = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            collected.push((row.key, row.value));
+        }
+        collected
+    }
+
+    #[tokio::test]
+    async fn rejected_writer_preflight_preserves_every_byte() {
+        for rejected_state in ["malformed", "partial", "v1", "v5"] {
+            let db = Db::builder(
+                format!("writer-preflight-preserves-{rejected_state}"),
+                Arc::new(InMemory::new()),
+            )
+            .build()
+            .await
+            .unwrap();
+            let tenant = TenantId::from_ulid_str("01KZ6WZ9QREKZZ87492YXBTFJ3").unwrap();
+            assert_eq!(tenant.as_u128().to_be_bytes()[0], 0x01);
+            let logical =
+                DataKeyKind::NodeProperty(crate::encoding::v1::keys::NodePropertyKey::new(11));
+            let mut tenant_key = Vec::new();
+            tenant_key.put_u128(tenant.as_u128());
+            logical.encode_into(&mut tenant_key);
+            db.put(&tenant_key, Bytes::from_static(b"tenant-row"))
+                .await
+                .unwrap();
+
+            match rejected_state {
+                "malformed" => {
+                    put_bootstrap_tuple(&db, IndexStorageVersion::CURRENT).await;
+                    db.put(
+                        global_key(GlobalKey::StorageVersion),
+                        Bytes::from_static(b"malformed"),
+                    )
+                    .await
+                    .unwrap();
+                }
+                "partial" => {
+                    db.put(
+                        global_key(GlobalKey::StorageVersion),
+                        encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
+                            IndexStorageVersion::CURRENT,
+                        )),
+                    )
+                    .await
+                    .unwrap();
+                }
+                "v1" => {
+                    put_bootstrap_tuple(&db, IndexStorageVersion::new(0x0001).unwrap()).await;
+                }
+                "v5" => {
+                    put_bootstrap_tuple(&db, IndexStorageVersion::new(0x0005).unwrap()).await;
+                }
+                _ => unreachable!(),
+            }
+            let before = all_rows(&db).await;
+
+            assert!(bootstrap_writer(&db).await.is_err());
+
+            assert_eq!(
+                all_rows(&db).await,
+                before,
+                "rejected state: {rejected_state}"
+            );
+            assert!(!crate::migrations::tenant_key_envelope_ready(&db)
+                .await
+                .unwrap());
+            db.close().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn markerless_bootstrap_resumes_after_tenant_migration_completed() {
+        let db = Db::builder(
+            "markerless-bootstrap-after-tenant-migration",
+            Arc::new(InMemory::new()),
+        )
+        .build()
+        .await
+        .unwrap();
+        let scope =
+            DataScope::Tenant(TenantId::from_ulid_str("01KZ6WZ9QREKZZ87492YXBTFJ3").unwrap());
+        let migrated_key = Key::Data {
+            scope,
+            kind: ScopedKey::operation(IndexOperationId::from_bytes([0x11; 16]).unwrap()),
+        }
+        .to_bytes();
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        transaction
+            .put(&migrated_key, Bytes::from_static(b"already-migrated"))
+            .unwrap();
+        crate::migrations::stage_tenant_key_envelope_ready(&transaction).unwrap();
+        transaction.commit().await.unwrap();
+
+        bootstrap_writer(&db).await.unwrap();
+
+        assert_eq!(
+            db.get(migrated_key).await.unwrap(),
+            Some(Bytes::from_static(b"already-migrated"))
+        );
+        let marker = db
+            .get(global_key(GlobalKey::StorageVersion))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            decode_metadata_value(&marker).unwrap(),
+            IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
+        );
+        db.close().await.unwrap();
     }
 
     #[test]
