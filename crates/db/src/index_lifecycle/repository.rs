@@ -94,6 +94,16 @@ async fn preflight_writer_bootstrap(db: &Db) -> Result<WriterBootstrapPlan> {
             let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
             let is_tenant_v2 = DataScope::strip_tenant_envelope(&row.key)
                 .is_some_and(|(_, logical)| ScopedKey::parse_from_slice(logical).is_ok());
+            let is_legacy_tenant = super::tenant_envelope_migration::legacy_key_requires_migration(
+                row.key, row.value,
+            )?;
+            if tenant_envelope_ready && is_legacy_tenant {
+                return Err(HelixDbError::MigrationRequired {
+                    reason:
+                        "tenant key envelope readiness is inconsistent with a legacy tenant key"
+                            .to_string(),
+                });
+            }
             if is_global_v2 || is_unscoped_v2 || (is_tenant_v2 && !tenant_envelope_ready) {
                 return Err(HelixDbError::MigrationRequired {
                     reason: "V2 storage rows exist without the complete bootstrap tuple"
@@ -233,26 +243,35 @@ pub(crate) async fn require_reader_bootstrap_or_legacy(
         let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
         let is_tenant_v2 = DataScope::strip_tenant_envelope(&row.key)
             .is_some_and(|(_, logical)| ScopedKey::parse_from_slice(logical).is_ok());
+        let is_legacy_tenant =
+            super::tenant_envelope_migration::legacy_key_requires_migration(row.key, row.value)?;
+        if tenant_envelope_ready && is_legacy_tenant {
+            return Err(HelixDbError::MigrationRequired {
+                reason: "tenant key envelope readiness is inconsistent with a legacy tenant key"
+                    .to_string(),
+            });
+        }
         if !tenant_envelope_ready
-            && (is_global_v2
-                || is_unscoped_v2
-                || is_tenant_v2
-                || super::tenant_envelope_migration::legacy_key_requires_migration(
-                    row.key, row.value,
-                )?)
+            && (is_global_v2 || is_unscoped_v2 || is_tenant_v2 || is_legacy_tenant)
         {
             return Err(HelixDbError::WriterMigrationRequired {
                 requirement: WriterMigrationRequirement::IncompleteStorageSchema,
             });
         }
-        if is_global_v2 || is_unscoped_v2 || is_tenant_v2 {
+        if is_global_v2 || is_unscoped_v2 {
             return Err(HelixDbError::MigrationRequired {
                 reason: "read-only storage has V2 rows without the complete bootstrap tuple"
                     .to_string(),
             });
         }
     }
-    Ok(())
+    if tenant_envelope_ready {
+        Err(HelixDbError::WriterMigrationRequired {
+            requirement: WriterMigrationRequirement::IncompleteStorageSchema,
+        })
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1467,6 +1486,12 @@ mod tests {
         crate::migrations::stage_tenant_key_envelope_ready(&transaction).unwrap();
         transaction.commit().await.unwrap();
 
+        assert!(matches!(
+            require_reader_bootstrap_or_legacy(&db).await,
+            Err(HelixDbError::WriterMigrationRequired {
+                requirement: WriterMigrationRequirement::IncompleteStorageSchema,
+            })
+        ));
         bootstrap_writer(&db).await.unwrap();
 
         assert_eq!(
@@ -1482,6 +1507,73 @@ mod tests {
             decode_metadata_value(&marker).unwrap(),
             IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
         );
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tenant_migration_readiness_alone_requires_writer_bootstrap() {
+        let db = Db::builder(
+            "tenant-migration-ready-before-bootstrap",
+            Arc::new(InMemory::new()),
+        )
+        .build()
+        .await
+        .unwrap();
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        crate::migrations::stage_tenant_key_envelope_ready(&transaction).unwrap();
+        transaction.commit().await.unwrap();
+
+        assert!(matches!(
+            require_reader_bootstrap_or_legacy(&db).await,
+            Err(HelixDbError::WriterMigrationRequired {
+                requirement: WriterMigrationRequirement::IncompleteStorageSchema,
+            })
+        ));
+        bootstrap_writer(&db).await.unwrap();
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tenant_migration_readiness_beside_legacy_row_fails_closed() {
+        let db = Db::builder(
+            "tenant-migration-ready-with-legacy-row",
+            Arc::new(InMemory::new()),
+        )
+        .build()
+        .await
+        .unwrap();
+        let tenant = TenantId::from_ulid_str("01KZ6WZ9QREKZZ87492YXBTFJ3").unwrap();
+        let kind = DataKeyKind::NodeProperty(crate::encoding::v1::keys::NodePropertyKey::new(11));
+        let mut legacy_key = Vec::new();
+        legacy_key.extend_from_slice(&tenant.as_u128().to_be_bytes());
+        kind.encode_into(&mut legacy_key);
+        db.put(legacy_key, Bytes::from_static(b"legacy-row"))
+            .await
+            .unwrap();
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        crate::migrations::stage_tenant_key_envelope_ready(&transaction).unwrap();
+        transaction.commit().await.unwrap();
+        let before = all_rows(&db).await;
+
+        assert!(matches!(
+            require_reader_bootstrap_or_legacy(&db).await,
+            Err(HelixDbError::MigrationRequired { reason })
+                if reason
+                    == "tenant key envelope readiness is inconsistent with a legacy tenant key"
+        ));
+        assert!(matches!(
+            bootstrap_writer(&db).await,
+            Err(HelixDbError::MigrationRequired { reason })
+                if reason
+                    == "tenant key envelope readiness is inconsistent with a legacy tenant key"
+        ));
+        assert_eq!(all_rows(&db).await, before);
         db.close().await.unwrap();
     }
 
