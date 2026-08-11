@@ -361,37 +361,58 @@ mod tests {
     use slatedb::object_store::memory::InMemory;
 
     use super::*;
+    use crate::encoding::indexes::range::RangeIndexDirection;
     use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey, NodePropertyKey};
-    use crate::encoding::v2::keys::{IndexOperationKey, Key};
-    use crate::encoding::v2::values::encode_operation_record;
+    use crate::encoding::v2::keys::{
+        CanonicalSecondaryValue, IndexEntity, IndexEntityStateKey, IndexOperationKey, Key,
+        PartitionFingerprint, SecondaryEntryKey, SecondaryEntryLane, TextBuildArtifactKey,
+        TextEntityStateKey, TextManifestRootKey, VectorPartitionMappingKey,
+    };
+    use crate::encoding::v2::values::{encode_build_delta, encode_operation_record};
+    use crate::index_lifecycle::work::CoalescedBuildDeltaValue;
     use crate::index_lifecycle::{
-        IndexComponent, IndexElementKind, IndexGenerationId, IndexId, IndexIdentity,
+        IndexComponent, IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexIdentity,
         IndexIdentityFamily, IndexOperationExecutionState, IndexOperationFamily, IndexOperationId,
         IndexOperationProgress, IndexOperationRecord, IndexOperationRevision, IndexRevision,
-        OperationCounters, PrefixScanProgress, SecondaryCleanupProgress,
+        OperationCounters, PrefixScanProgress, SecondaryBuildProgress, SecondaryBuildStage,
+        SecondaryCleanupProgress, TextBuildProgress, TextBuildStage, TextCleanupProgress,
+        VectorBuildProgress, VectorBuildStage, VectorCleanupProgress,
     };
 
-    fn operation(cursor: IndexCursor) -> IndexOperationRecord {
-        let progress = IndexOperationProgress::SecondaryCleanup(
-            SecondaryCleanupProgress::DeleteEntries(PrefixScanProgress {
-                cursor: Some(cursor),
-                counters: OperationCounters::default(),
-            }),
-        );
+    fn index_id() -> IndexId {
+        IndexId::new(7).unwrap()
+    }
+
+    fn generation() -> IndexGenerationId {
+        IndexGenerationId::new(9).unwrap()
+    }
+
+    fn identity(family: IndexOperationFamily) -> IndexIdentity {
+        let family = match family {
+            IndexOperationFamily::Secondary => IndexIdentityFamily::SecondaryRange,
+            IndexOperationFamily::Vector => IndexIdentityFamily::Vector,
+            IndexOperationFamily::Text => IndexIdentityFamily::Text,
+        };
+        IndexIdentity::new(
+            family,
+            IndexElementKind::Node,
+            IndexComponent::try_new("label", "Document").unwrap(),
+            IndexComponent::try_new("property", "value").unwrap(),
+        )
+    }
+
+    fn operation(ordinal: u8, progress: IndexOperationProgress) -> IndexOperationRecord {
+        let family = progress.family();
+        let kind = progress.kind();
         IndexOperationRecord::try_new(
-            IndexOperationId::from_bytes([7; 16]).unwrap(),
-            IndexId::new(3).unwrap(),
-            IndexIdentity::new(
-                IndexIdentityFamily::SecondaryRange,
-                IndexElementKind::Node,
-                IndexComponent::try_new("label", "Document").unwrap(),
-                IndexComponent::try_new("property", "value").unwrap(),
-            ),
-            IndexGenerationId::new(4).unwrap(),
+            IndexOperationId::from_bytes([ordinal; 16]).unwrap(),
+            index_id(),
+            identity(family),
+            generation(),
             IndexRevision::initial(),
             IndexOperationRevision::initial(),
-            progress.kind(),
-            IndexOperationFamily::Secondary,
+            kind,
+            family,
             progress,
             1,
             IndexOperationExecutionState::Queued {
@@ -399,6 +420,204 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    fn migrated_cursor(scope: DataScope, kind: ScopedKey) -> (IndexCursor, Bytes) {
+        let legacy = IndexCursor::try_new(legacy_data_key(scope, kind.clone())).unwrap();
+        let current = Key::Data { scope, kind }.to_bytes();
+        (legacy, current)
+    }
+
+    fn prefix(cursor: IndexCursor) -> PrefixScanProgress {
+        PrefixScanProgress {
+            cursor: Some(cursor),
+            counters: OperationCounters::default(),
+        }
+    }
+
+    fn operation_cases(scope: DataScope) -> Vec<(IndexOperationRecord, Bytes)> {
+        let entity = IndexEntity {
+            kind: IndexElementKind::Node,
+            id: IndexEntityId::new(11),
+        };
+        let applied = || {
+            ScopedKey::AppliedState(IndexEntityStateKey {
+                index_id: index_id(),
+                generation: generation(),
+                entity,
+            })
+        };
+        let (secondary_build, secondary_build_current) = migrated_cursor(scope, applied());
+        let (vector_build, vector_build_current) = migrated_cursor(scope, applied());
+        let mapping = || {
+            ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
+                index_id: index_id(),
+                generation: generation(),
+                partition: PartitionFingerprint::new([0x21; 32]),
+            })
+        };
+        let (vector_cleanup, vector_cleanup_current) = migrated_cursor(scope, mapping());
+        let range = ScopedKey::SecondaryEntry(
+            SecondaryEntryKey::try_new(
+                index_id(),
+                generation(),
+                SecondaryEntryLane::NodeRangeAscending,
+                CanonicalSecondaryValue::range_string(RangeIndexDirection::Asc, "shared"),
+                Some(entity.id),
+            )
+            .unwrap(),
+        );
+        let (secondary_cleanup, secondary_cleanup_current) = migrated_cursor(scope, range);
+        let root = TextManifestRootKey {
+            index_id: index_id(),
+            generation: generation(),
+            partition: PartitionFingerprint::new([0x22; 32]),
+        };
+        let (text_build, text_build_current) = migrated_cursor(
+            scope,
+            ScopedKey::TextBuildArtifact(TextBuildArtifactKey { root, ordinal: 3 }),
+        );
+        let (text_cleanup, text_cleanup_current) = migrated_cursor(
+            scope,
+            ScopedKey::TextEntityState(TextEntityStateKey { root, entity }),
+        );
+
+        vec![
+            (
+                operation(
+                    1,
+                    IndexOperationProgress::SecondaryBuild(SecondaryBuildProgress::Constructing(
+                        SecondaryBuildStage::Validate(prefix(secondary_build)),
+                    )),
+                ),
+                secondary_build_current,
+            ),
+            (
+                operation(
+                    2,
+                    IndexOperationProgress::SecondaryCleanup(
+                        SecondaryCleanupProgress::DeleteEntries(prefix(secondary_cleanup)),
+                    ),
+                ),
+                secondary_cleanup_current,
+            ),
+            (
+                operation(
+                    3,
+                    IndexOperationProgress::VectorBuild(VectorBuildProgress::Constructing(
+                        VectorBuildStage::ValidateDescriptor(prefix(vector_build)),
+                    )),
+                ),
+                vector_build_current,
+            ),
+            (
+                operation(
+                    4,
+                    IndexOperationProgress::VectorCleanup(VectorCleanupProgress::DeletePhysical(
+                        prefix(vector_cleanup),
+                    )),
+                ),
+                vector_cleanup_current,
+            ),
+            (
+                operation(
+                    5,
+                    IndexOperationProgress::TextBuild(TextBuildProgress::Constructing(
+                        TextBuildStage::PrepareManifests(prefix(text_build)),
+                    )),
+                ),
+                text_build_current,
+            ),
+            (
+                operation(
+                    6,
+                    IndexOperationProgress::TextCleanup(TextCleanupProgress::DeleteMetadata(
+                        prefix(text_cleanup),
+                    )),
+                ),
+                text_cleanup_current,
+            ),
+        ]
+    }
+
+    #[test]
+    fn managed_cursors_are_reframed_for_every_lifecycle_family() {
+        let scope = DataScope::Tenant(TenantId::from_u128(0xABCD));
+        for (operation, expected_cursor) in operation_cases(scope) {
+            assert!(
+                !super::super::repository::operation_record_cursors_are_valid(scope, &operation)
+            );
+            let encoded = encode_operation_record(&operation);
+            let migrated = migrate_legacy_value(
+                scope,
+                &TenantLogicalKey::Managed(ScopedKey::operation(operation.operation_id())),
+                encoded,
+            )
+            .unwrap();
+            let migrated = decode_operation_record(&migrated).unwrap();
+
+            assert_eq!(
+                migrated.operation_revision(),
+                operation.operation_revision()
+            );
+            assert_eq!(migrated.execution_state(), operation.execution_state());
+            assert!(super::super::repository::operation_record_cursors_are_valid(scope, &migrated));
+            assert!(migrated
+                .progress()
+                .cursors_are_valid(|cursor| cursor.as_bytes() == &expected_cursor));
+        }
+    }
+
+    #[test]
+    fn current_graph_cursors_and_non_operation_values_remain_zero_copy() {
+        let scope = DataScope::Tenant(TenantId::from_u128(0xABCD));
+        let graph_cursor = IndexCursor::try_new(
+            GraphKey::Data {
+                scope,
+                kind: DataKeyKind::NodeProperty(NodePropertyKey::new(11)),
+            }
+            .to_bytes(),
+        )
+        .unwrap();
+        let operation = operation(
+            7,
+            IndexOperationProgress::SecondaryBuild(SecondaryBuildProgress::Constructing(
+                SecondaryBuildStage::Scan(super::super::SourceScanProgress {
+                    inclusive_upper_bound: graph_cursor.clone(),
+                    cursor: Some(graph_cursor),
+                    counters: OperationCounters::default(),
+                }),
+            )),
+        );
+        let encoded = encode_operation_record(&operation);
+        let encoded_pointer = encoded.as_ptr();
+        let migrated = migrate_legacy_value(
+            scope,
+            &TenantLogicalKey::Managed(ScopedKey::operation(operation.operation_id())),
+            encoded,
+        )
+        .unwrap();
+        assert_eq!(migrated.as_ptr(), encoded_pointer);
+
+        let entity = IndexEntity {
+            kind: IndexElementKind::Node,
+            id: IndexEntityId::new(11),
+        };
+        let kind = ScopedKey::BuildDelta(IndexEntityStateKey {
+            index_id: index_id(),
+            generation: generation(),
+            entity,
+        });
+        let encoded = encode_build_delta(&CoalescedBuildDeltaValue {
+            index_id: index_id(),
+            generation: generation(),
+            entity_kind: entity.kind,
+            entity_id: entity.id,
+        });
+        let encoded_pointer = encoded.as_ptr();
+        let migrated =
+            migrate_legacy_value(scope, &TenantLogicalKey::Managed(kind), encoded).unwrap();
+        assert_eq!(migrated.as_ptr(), encoded_pointer);
     }
 
     #[tokio::test]
@@ -422,12 +641,15 @@ mod tests {
         let old_cursor = IndexCursor::try_new(old_graph.clone()).unwrap();
         let old_operation = legacy_data_key(scope, operation_kind.clone());
         db.put(&old_graph, graph_value.clone()).await.unwrap();
-        db.put(
-            &old_operation,
-            encode_operation_record(&operation(old_cursor)),
-        )
-        .await
-        .unwrap();
+        let operation = operation(
+            7,
+            IndexOperationProgress::SecondaryCleanup(SecondaryCleanupProgress::DeleteEntries(
+                prefix(old_cursor),
+            )),
+        );
+        db.put(&old_operation, encode_operation_record(&operation))
+            .await
+            .unwrap();
 
         migrate_all_tenant_keys(&db).await.unwrap();
         migrate_all_tenant_keys(&db).await.unwrap();
@@ -512,6 +734,23 @@ mod tests {
         let row = migration_row(Bytes::from(old), value).unwrap().unwrap();
 
         assert_eq!(row.destination_value.as_ptr(), value_pointer);
+    }
+
+    #[test]
+    fn valid_unscoped_rows_win_over_a_coincidental_tenant_suffix() {
+        use crate::encoding::v1::keys::EdgePropertyPairKey;
+
+        let key = GraphKey::Data {
+            scope: DataScope::LegacyUnscoped,
+            kind: DataKeyKind::EdgePropertyPair(EdgePropertyPairKey::new(1, 0xFF)),
+        }
+        .to_bytes();
+        assert!(DataKeyKind::parse_from_slice(&key).is_ok());
+        assert!(DataKeyKind::parse_from_slice(&key[TENANT_ID_LEN..]).is_ok());
+
+        assert!(migration_row(key, Bytes::from_static(b"unscoped"))
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
