@@ -378,7 +378,7 @@ mod tests {
                     .slate()
                     .to_writer_settings(None)
                     .flush_interval,
-                Some(std::time::Duration::from_millis(5))
+                Some(std::time::Duration::from_millis(3))
             );
             writer.close().await.expect("writer should close");
 

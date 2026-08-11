@@ -40,7 +40,7 @@ impl EmbeddedStorageProfile {
     const fn flush_interval(self) -> Duration {
         match self {
             Self::InMemory => Duration::from_millis(1),
-            Self::Disk => Duration::from_millis(5),
+            Self::Disk => Duration::from_millis(3),
         }
     }
 

@@ -2787,7 +2787,7 @@ mod tests {
                     root: PathBuf::from("/tmp/helix-embedded-default-contract"),
                     database: "disk-defaults".to_string(),
                 },
-                Duration::from_millis(5),
+                Duration::from_millis(3),
                 48 * 1024 * 1024,
                 16 * 1024 * 1024,
             ),
