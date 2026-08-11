@@ -512,8 +512,8 @@ fn logical_key(key: &[u8]) -> &[u8] {
         return key;
     }
 
-    if let Some((_, tenant_logical)) = DataScope::strip_tenant_envelope(key) {
-        if matches!(
+    if let Some((_, tenant_logical)) = DataScope::strip_tenant_envelope(key)
+        && matches!(
             tenant_logical.first().copied(),
             Some(
                 ADJACENCY_PREFIX
@@ -522,9 +522,9 @@ fn logical_key(key: &[u8]) -> &[u8] {
                     | PROPERTY_INDEX_PREFIX
                     | EDGE_PAIR_INDEX_PREFIX
             )
-        ) {
-            return tenant_logical;
-        }
+        )
+    {
+        return tenant_logical;
     }
     key
 }
