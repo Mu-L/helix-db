@@ -11,7 +11,7 @@ use std::num::NonZeroU64;
 use bytes::Bytes;
 
 use crate::config::VectorIndexDefinition;
-use crate::index_v2::{
+use crate::index_lifecycle::{
     IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
     IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
     VectorGenerationDescriptor, VectorPhysicalIndexId, VectorPhysicalLayout,
@@ -36,7 +36,7 @@ fn validated(generation: u64) -> ValidatedVectorGenerationHandle {
         70,
         NonZeroU64::new(generation).unwrap(),
         1,
-        crate::index_v2::IndexElementKind::Node,
+        crate::index_lifecycle::IndexElementKind::Node,
         VectorDimension::try_new(3).unwrap(),
     )
     .unwrap();
@@ -104,13 +104,16 @@ pub(crate) async fn run() {
     assert_ne!(first, successor);
     assert_eq!(
         first.generation(),
-        crate::index_v2::IndexGenerationId::initial()
+        crate::index_lifecycle::IndexGenerationId::initial()
     );
-    assert_eq!(first.index_id(), crate::index_v2::IndexId::new(7).unwrap());
+    assert_eq!(
+        first.index_id(),
+        crate::index_lifecycle::IndexId::new(7).unwrap()
+    );
     assert_eq!(first.physical_index_id(), 70);
     assert_eq!(
         first.record_revision(),
-        crate::index_v2::IndexRevision::initial()
+        crate::index_lifecycle::IndexRevision::initial()
     );
 
     {

@@ -1,24 +1,28 @@
 //! Secondary-index access and canonical-row integration tests.
 
+use std::collections::HashMap;
+
 use super::support::*;
 use crate::config::SecondaryIndexDefinition;
 use crate::encoding::indexes::equality::{EqualityIndexKey, GlobalEdgeEqualityIndexKey};
 use crate::encoding::indexes::range::RangeIndexDirection as StorageRangeIndexDirection;
 use crate::encoding::indexes::{hash_property_name, hash_property_value, IndexKey};
-use crate::encoding::v1::keys::index_v2::{
-    CanonicalSecondaryValue, IndexV2Key, SecondaryEntryKey, SecondaryEntryLane,
-};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2::{
-    encode_index_record, encode_work_value, IndexV2WorkValue,
+use crate::encoding::v2::keys::Key as ManagedKey;
+use crate::encoding::v2::keys::{
+    CanonicalSecondaryValue, ScopedKey, SecondaryEntryKey, SecondaryEntryLane,
+    SecondaryEqualityBitmapKey,
+};
+use crate::encoding::v2::values::{
+    encode_index_record, encode_secondary_entry, SecondaryEqualityBitmapValue,
 };
 use crate::error::{HelixDbError, IndexFamily, IndexLifecycleUnavailableReason};
 use crate::execution::interpreter::ExecutionContext;
-use crate::index_v2::work::SecondaryEntryValue;
-use crate::index_v2::{
-    IndexEntityId, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
-    IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
+use crate::index_lifecycle::work::SecondaryEntryValue;
+use crate::index_lifecycle::{
+    IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2,
+    IndexRevision, IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
     ValidatedSecondaryIndexDefinition,
 };
 
@@ -28,7 +32,7 @@ async fn seed_active_secondary_generation(
     definition: SecondaryIndexDefinition,
     index_id: u64,
     rows: &[(&str, u64)],
-) -> crate::index_v2::IndexIdentity {
+) -> crate::index_lifecycle::IndexIdentity {
     let definition = ValidatedDynamicIndexDefinition::try_from(definition)
         .expect("managed secondary fixture definition validates");
     let identity = definition.identity();
@@ -45,14 +49,16 @@ async fn seed_active_secondary_generation(
     let active = building
         .transition(IndexStateTransition::Activate)
         .expect("managed secondary fixture activates");
-    let handle =
-        crate::index_v2::ActiveIndexHandle::try_from_record(DataScope::LegacyUnscoped, &active)
-            .expect("managed secondary fixture projects an Active handle");
+    let handle = crate::index_lifecycle::ActiveIndexHandle::try_from_record(
+        DataScope::LegacyUnscoped,
+        &active,
+    )
+    .expect("managed secondary fixture projects an Active handle");
     db.inner_db()
         .put(
-            Key::Data {
+            ManagedKey::Data {
                 scope: DataScope::LegacyUnscoped,
-                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(identity.clone())),
+                kind: ScopedKey::index_record(identity.clone()),
             }
             .to_bytes(),
             encode_index_record(&active),
@@ -61,10 +67,47 @@ async fn seed_active_secondary_generation(
         .expect("managed secondary Active record persists");
 
     let definition = handle.secondary_definition().unwrap();
-    let lane = match definition {
+    let equality_element_kind = match definition {
         ValidatedSecondaryIndexDefinition::NodeEquality { unique: false, .. } => {
-            SecondaryEntryLane::NodeEquality
+            Some(IndexElementKind::Node)
         }
+        ValidatedSecondaryIndexDefinition::EdgeEquality { .. } => Some(IndexElementKind::Edge),
+        ValidatedSecondaryIndexDefinition::NodeEquality { unique: true, .. }
+        | ValidatedSecondaryIndexDefinition::NodeRange { .. }
+        | ValidatedSecondaryIndexDefinition::EdgeRange { .. } => None,
+    };
+    if let Some(element_kind) = equality_element_kind {
+        let mut bitmaps = HashMap::new();
+        for (value, entity_id) in rows {
+            let CanonicalSecondaryValue::Equality(value) =
+                CanonicalSecondaryValue::equality_string(value)
+            else {
+                unreachable!("string equality fixtures always produce equality values")
+            };
+            bitmaps
+                .entry(value)
+                .or_insert_with(roaring::RoaringTreemap::new)
+                .insert(*entity_id);
+        }
+        for (value, ids) in bitmaps {
+            let key =
+                SecondaryEqualityBitmapKey::try_new(index_id, generation, element_kind, value)
+                    .expect("managed equality bitmap key validates");
+            db.inner_db()
+                .put(
+                    ManagedKey::Data {
+                        scope: DataScope::LegacyUnscoped,
+                        kind: ScopedKey::SecondaryEqualityBitmap(key),
+                    }
+                    .to_bytes(),
+                    SecondaryEqualityBitmapValue::new(ids).encode(),
+                )
+                .await
+                .expect("managed equality bitmap persists");
+        }
+        return identity;
+    }
+    let lane = match definition {
         ValidatedSecondaryIndexDefinition::NodeEquality { unique: true, .. } => {
             SecondaryEntryLane::NodeUniqueEquality
         }
@@ -76,7 +119,10 @@ async fn seed_active_secondary_generation(
             direction: crate::config::RangeIndexDirection::Desc,
             ..
         } => SecondaryEntryLane::NodeRangeDescending,
-        ValidatedSecondaryIndexDefinition::EdgeEquality { .. } => SecondaryEntryLane::EdgeEquality,
+        ValidatedSecondaryIndexDefinition::NodeEquality { unique: false, .. }
+        | ValidatedSecondaryIndexDefinition::EdgeEquality { .. } => {
+            unreachable!("nonunique equality fixtures return after writing their bitmap")
+        }
         ValidatedSecondaryIndexDefinition::EdgeRange {
             direction: crate::config::RangeIndexDirection::Asc,
             ..
@@ -112,17 +158,17 @@ async fn seed_active_secondary_generation(
         .expect("managed secondary entry key validates");
         db.inner_db()
             .put(
-                Key::Data {
+                ManagedKey::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::SecondaryEntry(key)),
+                    kind: ScopedKey::SecondaryEntry(key),
                 }
                 .to_bytes(),
-                encode_work_value(&IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+                encode_secondary_entry(&SecondaryEntryValue {
                     index_id,
                     generation,
                     lane,
                     entity_id,
-                })),
+                }),
             )
             .await
             .expect("managed secondary entry persists");
@@ -333,7 +379,7 @@ async fn managed_secondary_access_uses_active_v2_rows() {
         ])
     );
 
-    let node_range_record = crate::index_v2::repository::load_index_record(
+    let node_range_record = crate::index_lifecycle::repository::load_index_record(
         db.inner_db().as_ref(),
         DataScope::LegacyUnscoped,
         &node_range_identity,
@@ -348,9 +394,9 @@ async fn managed_secondary_access_uses_active_v2_rows() {
         .unwrap();
     db.inner_db()
         .put(
-            Key::Data {
+            ManagedKey::Data {
                 scope: DataScope::LegacyUnscoped,
-                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(node_range_identity)),
+                kind: ScopedKey::index_record(node_range_identity),
             }
             .to_bytes(),
             encode_index_record(&dropping_node_range),
@@ -369,7 +415,7 @@ async fn managed_secondary_access_uses_active_v2_rows() {
         })
     ));
 
-    let record = crate::index_v2::repository::load_index_record(
+    let record = crate::index_lifecycle::repository::load_index_record(
         db.inner_db().as_ref(),
         DataScope::LegacyUnscoped,
         &equality_identity,
@@ -384,9 +430,9 @@ async fn managed_secondary_access_uses_active_v2_rows() {
         .unwrap();
     db.inner_db()
         .put(
-            Key::Data {
+            ManagedKey::Data {
                 scope: DataScope::LegacyUnscoped,
-                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(equality_identity)),
+                kind: ScopedKey::index_record(equality_identity),
             }
             .to_bytes(),
             encode_index_record(&dropping),
@@ -472,7 +518,7 @@ async fn edge_equality_access_uses_global_label_scoped_index() {
 }
 
 #[tokio::test]
-async fn regression_equality_lookup_exactly_filters_a_shared_digest_bucket() {
+async fn regression_equality_lookup_uses_the_full_canonical_value_key() {
     let db = test_support::open_db("access-equality-digest-collision").await;
     let matching = test_support::add_node_with_properties(
         &db,
@@ -490,7 +536,10 @@ async fn regression_equality_lookup_exactly_filters_a_shared_digest_bucket() {
         &db,
         SecondaryIndexDefinition::node_equality("User", "status").unwrap(),
         44,
-        &[("needle", matching), ("needle", collision)],
+        &[
+            ("needle", matching),
+            ("different canonical value", collision),
+        ],
     )
     .await;
 
@@ -509,12 +558,12 @@ async fn regression_equality_lookup_exactly_filters_a_shared_digest_bucket() {
     assert_eq!(
         actual,
         ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(matching)]),
-        "managed equality lookup must verify the exact stored property after digest lookup"
+        "managed equality lookup must address the complete canonical value"
     );
 }
 
 #[tokio::test]
-async fn regression_edge_equality_lookup_exactly_filters_a_shared_digest_bucket() {
+async fn regression_edge_equality_lookup_uses_the_full_canonical_value_key() {
     let db = test_support::open_db("access-edge-equality-digest-collision").await;
     let from = test_support::add_user(&db, "from").await;
     let to = test_support::add_user(&db, "to").await;
@@ -538,7 +587,10 @@ async fn regression_edge_equality_lookup_exactly_filters_a_shared_digest_bucket(
         &db,
         SecondaryIndexDefinition::edge_equality("FOLLOWS", "status").unwrap(),
         45,
-        &[("needle", matching), ("needle", collision)],
+        &[
+            ("needle", matching),
+            ("different canonical value", collision),
+        ],
     )
     .await;
 
@@ -559,7 +611,7 @@ async fn regression_edge_equality_lookup_exactly_filters_a_shared_digest_bucket(
     assert_eq!(
         actual,
         ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(matching)]),
-        "managed edge equality lookup must verify exact property bytes"
+        "managed edge equality lookup must address the complete canonical value"
     );
 }
 
@@ -1261,9 +1313,9 @@ async fn managed_secondary_access_propagates_corrupt_canonical_records() {
             .identity();
         db.inner_db()
             .put(
-                Key::Data {
+                ManagedKey::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(identity)),
+                    kind: ScopedKey::index_record(identity),
                 }
                 .to_bytes(),
                 bytes::Bytes::from_static(b"corrupt canonical record"),
@@ -1307,7 +1359,7 @@ async fn managed_secondary_access_propagates_corrupt_canonical_records() {
 #[tokio::test]
 async fn range_access_rejects_oversized_identity_components() {
     let db = test_support::open_db("access-oversized-range-identity").await;
-    let oversized = "x".repeat(crate::index_v2::INDEX_COMPONENT_MAX_LEN + 1);
+    let oversized = "x".repeat(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN + 1);
     let node = exec::ExecNodeAccessPlan::RangeIndex {
         index: catalog::NodeRangeIndexMeta::new(test_support::name("oversized-node-range")),
         key: catalog::ScopedPropertyDirectionKey::try_new(

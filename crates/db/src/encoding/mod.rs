@@ -2,6 +2,7 @@
 
 pub mod error;
 pub mod v1;
+pub(crate) mod v2;
 
 pub use v1::keys::EdgeId;
 pub use v1::keys::NodeId;

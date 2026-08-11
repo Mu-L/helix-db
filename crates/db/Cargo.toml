@@ -66,7 +66,7 @@ helix-db-testkit = { path = "../db-testkit" }
 [features]
 default = []
 migration-parity = []
-index-v2-lifecycle-testing = []
+index-lifecycle-testing = []
 test-util = ["tokio/test-util"]
 future-vector-codecs = []
 production-coverage = []
@@ -86,6 +86,16 @@ name = "write_path_mutations"
 harness = false
 
 [[bench]]
+name = "secondary_equality_hot_path"
+harness = false
+required-features = ["production-coverage"]
+
+[[bench]]
+name = "secondary_equality_read_scale"
+harness = false
+required-features = ["production-coverage"]
+
+[[bench]]
 name = "vector_batch_insert"
 harness = false
 required-features = ["production-coverage"]
@@ -95,7 +105,7 @@ name = "text_transaction_batching"
 harness = false
 required-features = [
     "production-coverage",
-    "index-v2-lifecycle-testing",
+    "index-lifecycle-testing",
 ]
 
 [[test]]
@@ -103,7 +113,7 @@ name = "production_internal_contracts"
 required-features = ["production-coverage"]
 
 [[test]]
-name = "production_index_v2_contracts"
+name = "production_index_lifecycle_contracts"
 required-features = ["production-coverage"]
 
 [[test]]
@@ -111,7 +121,7 @@ name = "production_migration_contracts"
 required-features = [
     "production-coverage",
     "migration-parity",
-    "index-v2-lifecycle-testing",
+    "index-lifecycle-testing",
 ]
 
 [[test]]
@@ -123,13 +133,13 @@ name = "production_text_correctness_regressions"
 required-features = [
     "production-coverage",
     "migration-parity",
-    "index-v2-lifecycle-testing",
+    "index-lifecycle-testing",
 ]
 
 [[test]]
-name = "production_index_v2_scale"
+name = "production_index_lifecycle_scale"
 required-features = ["production-scale"]
 
 [[test]]
-name = "index_v2_lifecycle_contracts"
-required-features = ["index-v2-lifecycle-testing"]
+name = "index_lifecycle_contracts"
+required-features = ["index-lifecycle-testing"]

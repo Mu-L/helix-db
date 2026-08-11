@@ -11,7 +11,7 @@ use bytemuck::{Pod, Zeroable};
 
 use super::*;
 use crate::config::{SecondaryIndexDefinition, VectorIndexDefinition};
-use crate::index_v2::{IndexStateTransition, VectorGenerationDescriptor};
+use crate::index_lifecycle::{IndexStateTransition, VectorGenerationDescriptor};
 use crate::search::vector::distance::{Cosine, Euclidean, Manhattan};
 use crate::search::vector::unaligned_vector::UnalignedVector;
 

@@ -23,6 +23,7 @@ impl<'db> ExecutionContext<'db> {
     /// Releases a planning-only catalog permit before operation-owned DDL.
     pub(in crate::execution::interpreter) fn discard_pending_catalog_freshness(&mut self) {
         self.pending_catalog_freshness = PendingCatalogFreshness::Consumed;
+        self.release_read_catalog_permit_for_ddl();
     }
 
     /// Opens the request transaction before the first plan step.
@@ -93,11 +94,12 @@ impl<'db> ExecutionContext<'db> {
             .begin(IsolationLevel::SerializableSnapshot)
             .await?;
         self.check_execution_deadline()?;
-        let mutation_catalog = crate::index_v2::mutation_catalog::MutationIndexCatalog::load(
-            &transaction,
-            self.tenant_scope,
-        )
-        .await?;
+        let mutation_catalog =
+            crate::index_lifecycle::mutation_catalog::MutationIndexCatalog::load(
+                &transaction,
+                self.tenant_scope,
+            )
+            .await?;
         drop(catalog_permit);
         self.check_execution_deadline()?;
         Ok((
@@ -336,7 +338,7 @@ mod additional_tests {
                 60,
                 NonZeroU64::MIN,
                 1,
-                crate::index_v2::IndexElementKind::Node,
+                crate::index_lifecycle::IndexElementKind::Node,
                 crate::search::vector::VectorDimension::try_new(2).unwrap(),
             )
             .unwrap(),
@@ -444,12 +446,12 @@ mod additional_tests {
     }
 
     #[tokio::test]
-    async fn invalidated_proof_reloads_recreated_vector_and_text_settings_before_write_open() {
+    async fn overlapping_refresh_keeps_prepared_catalog_until_write_snapshot_opens() {
         use crate::config::{TextAnalyzerKind, TextIndexDefinition, VectorIndexDefinition};
-        use crate::encoding::v1::keys::index_v2::IndexV2Key;
-        use crate::encoding::v1::keys::{DataKeyKind, Key};
-        use crate::encoding::v1::values::index_v2::encode_index_record;
-        use crate::index_v2::{
+        use crate::encoding::v2::keys::Key;
+        use crate::encoding::v2::keys::ScopedKey;
+        use crate::encoding::v2::values::encode_index_record;
+        use crate::index_lifecycle::{
             ActiveIndexHandle, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2,
             IndexRevision, IndexStateTransition, PhysicalGeneration,
             ValidatedDynamicIndexDefinition, VectorGenerationDescriptor, VectorPhysicalIndexId,
@@ -545,7 +547,7 @@ mod additional_tests {
             seed.put(
                 Key::Data {
                     scope,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(record.identity().clone())),
+                    kind: ScopedKey::index_record(record.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(record),
@@ -561,7 +563,7 @@ mod additional_tests {
             .unwrap();
         db.refresh_runtime_catalog(scope)
             .await
-            .expect("an overlapping refresh invalidates only the volatile proof generation");
+            .expect("an overlapping in-memory refresh succeeds");
         let mut context = ExecutionContext::new_scoped_controlled_with_catalog_freshness(
             db.as_ref(),
             context::ParamBindings::default(),
@@ -584,9 +586,7 @@ mod additional_tests {
                         .put(
                             Key::Data {
                                 scope,
-                                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(
-                                    record.identity().clone(),
-                                )),
+                                kind: ScopedKey::index_record(record.identity().clone()),
                             }
                             .to_bytes(),
                             encode_index_record(record),
@@ -607,12 +607,8 @@ mod additional_tests {
         let (transaction, index_context) =
             tokio::time::timeout(Duration::from_secs(5), context.begin_write_tx())
                 .await
-                .expect("write open reloads after the queued lifecycle change")
+                .expect("write snapshot opens under the prepared catalog gate")
                 .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), lifecycle)
-            .await
-            .expect("queued lifecycle publication finishes")
-            .expect("lifecycle task joins");
         assert!(index_context.active_generations().iter().any(|handle| {
             matches!(
                 handle,
@@ -620,9 +616,9 @@ mod additional_tests {
                     generation,
                     definition,
                     ..
-                } if generation.get() == 2
-                    && definition.dimension() == 4
-                    && definition.metric() == VectorDistanceMetric::Euclidean
+                } if generation.get() == 1
+                    && definition.dimension() == 3
+                    && definition.metric() == VectorDistanceMetric::Cosine
             )
         }));
         assert!(index_context.active_generations().iter().any(|handle| {
@@ -632,14 +628,22 @@ mod additional_tests {
                     generation,
                     definition,
                     ..
-                } if generation.get() == 2
-                    && definition.analyzer() == TextAnalyzerKind::StandardStemEn
-                    && definition.positions_enabled()
+                } if generation.get() == 1
+                    && definition.analyzer() == TextAnalyzerKind::Standard
+                    && !definition.positions_enabled()
             )
         }));
+        assert!(
+            !lifecycle.is_finished(),
+            "the transaction-owned mutation catalog must retain publication authority"
+        );
 
         drop(transaction);
         drop(index_context);
+        tokio::time::timeout(Duration::from_secs(5), lifecycle)
+            .await
+            .expect("queued lifecycle publication finishes after the write closes")
+            .expect("lifecycle task joins");
         drop(context);
         Arc::try_unwrap(db)
             .unwrap_or_else(|_| panic!("test owns the only database reference"))
@@ -905,10 +909,10 @@ mod additional_tests {
     #[tokio::test]
     async fn mutation_scope_projects_canonical_active_definitions() {
         use crate::config::SecondaryIndexDefinition;
-        use crate::encoding::v1::keys::index_v2::IndexV2Key;
-        use crate::encoding::v1::keys::{DataKeyKind, Key};
-        use crate::encoding::v1::values::index_v2::encode_index_record;
-        use crate::index_v2::{
+        use crate::encoding::v2::keys::Key;
+        use crate::encoding::v2::keys::ScopedKey;
+        use crate::encoding::v2::values::encode_index_record;
+        use crate::index_lifecycle::{
             IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
             IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
         };
@@ -935,7 +939,7 @@ mod additional_tests {
             .put(
                 Key::Data {
                     scope,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(active.identity().clone())),
+                    kind: ScopedKey::index_record(active.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&active),
@@ -960,10 +964,10 @@ mod additional_tests {
         use slatedb::object_store::ObjectStore;
 
         use crate::config::VectorIndexDefinition;
-        use crate::encoding::v1::keys::index_v2::IndexV2Key;
-        use crate::encoding::v1::keys::{DataKeyKind, Key};
-        use crate::encoding::v1::values::index_v2::encode_index_record;
-        use crate::index_v2::{
+        use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey};
+        use crate::encoding::v2::keys::{Key, ScopedKey};
+        use crate::encoding::v2::values::encode_index_record;
+        use crate::index_lifecycle::{
             IndexGenerationId, IndexOperationId, IndexRecordV2, IndexRevision,
             IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
             ValidatedVectorIndexDefinition, VectorGenerationDescriptor, VectorPhysicalLayout,
@@ -984,19 +988,20 @@ mod additional_tests {
             .build()
             .await
             .unwrap();
-        crate::index_v2::repository::bootstrap_writer(&raw)
+        crate::index_lifecycle::repository::bootstrap_writer(&raw)
             .await
             .unwrap();
         let seed = raw
             .begin(slatedb::IsolationLevel::SerializableSnapshot)
             .await
             .unwrap();
-        let index_id = crate::index_v2::repository::allocate_index_id(&seed)
+        let index_id = crate::index_lifecycle::repository::allocate_index_id(&seed)
             .await
             .unwrap();
-        let physical_index_id = crate::index_v2::repository::allocate_vector_physical_id(&seed)
-            .await
-            .unwrap();
+        let physical_index_id =
+            crate::index_lifecycle::repository::allocate_vector_physical_id(&seed)
+                .await
+                .unwrap();
         let active = IndexRecordV2::building(
             index_id,
             dynamic,
@@ -1014,7 +1019,7 @@ mod additional_tests {
         seed.put(
             Key::Data {
                 scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-                kind: DataKeyKind::IndexV2(IndexV2Key::index_record(active.identity().clone())),
+                kind: ScopedKey::index_record(active.identity().clone()),
             }
             .to_bytes(),
             encode_index_record(&active),
@@ -1042,9 +1047,7 @@ mod additional_tests {
             .put(
                 Key::Data {
                     scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(
-                        dropping.identity().clone(),
-                    )),
+                    kind: ScopedKey::index_record(dropping.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&dropping),
@@ -1060,7 +1063,7 @@ mod additional_tests {
                 record_revision: 2,
             }) if stale_index_id == index_id.get()
         ));
-        let staged_graph_key = Key::Data {
+        let staged_graph_key = GraphKey::Data {
             scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
             kind: DataKeyKind::NodeProperty(crate::encoding::v1::keys::NodePropertyKey::new(99)),
         }

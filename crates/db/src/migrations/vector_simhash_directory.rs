@@ -9,15 +9,17 @@ use serde::{Deserialize, Serialize};
 use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
 use crate::config::SearchIndexBatchLimits;
-use crate::encoding::v1::keys::index_v2::{GlobalIndexV2Key, IndexV2Key, IndexV2RecordKind};
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key};
-use crate::encoding::v1::values::index_v2::{
+#[cfg(test)]
+use crate::encoding::v1::keys::{DataKeyKind, Key};
+use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::{GlobalKey, RecordKind, ScopedKey};
+use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, decode_operation_record, encode_index_record,
     encode_operation_record,
 };
 use crate::error::{HelixDbError, Result};
-use crate::index_v2::{
+use crate::index_lifecycle::{
     ActiveIndexHandle, IndexOperationId, IndexRecordV2, IndexStateTransition, IndexStateV2,
     IndexV2MetadataValue, LegacyVectorPhysicalReservation, PhysicalGeneration,
     ValidatedDynamicIndexDefinition, ValidatedVectorIndexDefinition, VectorPhysicalIndexId,
@@ -384,10 +386,7 @@ async fn select_target(
 ) -> Result<()> {
     let started = std::time::Instant::now();
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
-    let prefix = Key::data_prefix(
-        scope,
-        IndexV2Key::logical_prefix(IndexV2RecordKind::IndexRecord),
-    );
+    let prefix = IndexKey::data_prefix(scope, ScopedKey::logical_prefix(RecordKind::IndexRecord));
     let mut rows = transaction
         .scan(scan_bounds_for_prefix(&prefix, after_index_key.as_ref()))
         .await?;
@@ -852,9 +851,9 @@ async fn publish(db: &Db, scope: DataScope, mut job: MigrationJob) -> Result<()>
                 "active directory target has invalid completed operation: {error}"
             ))
         })?;
-    let operation_key = Key::Data {
+    let operation_key = IndexKey::Data {
         scope,
-        kind: DataKeyKind::IndexV2(IndexV2Key::operation(operation_id)),
+        kind: ScopedKey::operation(operation_id),
     }
     .to_bytes();
     let Some(operation_value) = transaction.get(&operation_key).await? else {
@@ -1057,10 +1056,8 @@ async fn validate_reservation_record(
     index_id: u64,
     generation: u64,
 ) -> Result<()> {
-    let key = Key::Global {
-        kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-            physical_index_id,
-        )),
+    let key = IndexKey::Global {
+        kind: GlobalKey::LegacyVectorPhysicalReservation(physical_index_id),
     }
     .to_bytes();
     let Some(value) = transaction.get(key).await? else {
@@ -1093,10 +1090,10 @@ async fn validate_reservation_record(
 }
 
 fn decode_canonical_record(scope: DataScope, key: &[u8], value: &[u8]) -> Result<IndexRecordV2> {
-    let Key::Data {
-        kind: DataKeyKind::IndexV2(IndexV2Key::IndexRecord(key)),
+    let IndexKey::Data {
+        kind: ScopedKey::IndexRecord(key),
         ..
-    } = Key::parse_from_slice(scope, key)?
+    } = IndexKey::parse_from_slice(scope, key)?
     else {
         return Err(corruption(
             "canonical index prefix returned another key kind",
@@ -1335,11 +1332,11 @@ mod tests {
     use crate::encoding::v1::keys::vectors::{
         VectorKey, VectorSimHashDirectoryKey, VectorStorageLane,
     };
-    use crate::encoding::v1::values::index_v2::encode_metadata_value;
     use crate::encoding::v1::values::vectors::markers::{
         decode_simhash_directory_marker_v1, encode_simhash_directory_marker_v1,
     };
-    use crate::index_v2::{
+    use crate::encoding::v2::values::encode_metadata_value;
+    use crate::index_lifecycle::{
         BuildOperationOutcome, IndexGenerationId, IndexId, IndexOperationExecutionState,
         IndexOperationFamily, IndexOperationKind, IndexOperationOutcome, IndexOperationProgress,
         IndexOperationRecord, IndexOperationRevision, IndexRevision, NoCursorProgress,
@@ -1349,6 +1346,19 @@ mod tests {
         CanonicalVectorDirectoryBackfillOutcome, SearchParams, SimHashDirectoryValidationMode,
         SimHashDirectoryValidationOutcome, VectorDistanceMetric, VectorIndexConfig,
     };
+
+    #[cfg(not(feature = "production-coverage"))]
+    static VECTOR_MIGRATION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[cfg(feature = "production-coverage")]
+    async fn migration_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+        super::super::production_contracts::failpoint_contract_guard().await
+    }
+
+    #[cfg(not(feature = "production-coverage"))]
+    async fn migration_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+        VECTOR_MIGRATION_TEST_LOCK.lock().await
+    }
 
     struct LegacyFixture<D: Distance> {
         record: IndexRecordV2,
@@ -1371,7 +1381,7 @@ mod tests {
 
     fn definition(metric: VectorDistanceMetric, ordinal: u64) -> ValidatedVectorIndexDefinition {
         ValidatedVectorIndexDefinition::try_new(
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             format!("Document{ordinal}"),
             "embedding",
             None::<String>,
@@ -1471,9 +1481,9 @@ mod tests {
             .expect("catalog transaction opens");
         transaction
             .put(
-                Key::Data {
+                IndexKey::Data {
                     scope,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(record.identity().clone())),
+                    kind: ScopedKey::index_record(record.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&record),
@@ -1481,9 +1491,9 @@ mod tests {
             .expect("canonical record stages");
         transaction
             .put(
-                Key::Data {
+                IndexKey::Data {
                     scope,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::operation(operation_id)),
+                    kind: ScopedKey::operation(operation_id),
                 }
                 .to_bytes(),
                 encode_operation_record(&operation),
@@ -1491,10 +1501,8 @@ mod tests {
             .expect("completed operation stages");
         transaction
             .put(
-                Key::Global {
-                    kind: GlobalKeyKind::IndexV2(
-                        GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_index_id),
-                    ),
+                IndexKey::Global {
+                    kind: GlobalKey::LegacyVectorPhysicalReservation(physical_index_id),
                 }
                 .to_bytes(),
                 encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(
@@ -1594,6 +1602,7 @@ mod tests {
 
     #[tokio::test]
     async fn zero_targets_is_a_durable_no_op() {
+        let _failpoint_guard = migration_test_guard().await;
         let db = test_db().await;
         let job = run_to_completion(&db, one_row_limits()).await;
         assert_eq!(job.completed_targets, 0);
@@ -1604,6 +1613,7 @@ mod tests {
 
     #[tokio::test]
     async fn partial_directory_resumes_and_publishes_exact_correspondence() {
+        let _failpoint_guard = migration_test_guard().await;
         let db = test_db().await;
         let fixture = seed_active_legacy::<vector::distance::Cosine>(
             &db,
@@ -1642,7 +1652,7 @@ mod tests {
             before,
             "migration preserves every non-directory physical row"
         );
-        let record = crate::index_v2::repository::load_index_record(
+        let record = crate::index_lifecycle::repository::load_index_record(
             &db,
             DataScope::LegacyUnscoped,
             fixture.record.identity(),
@@ -1676,9 +1686,9 @@ mod tests {
             *completed_build_operation_id,
             fixture.operation.operation_id()
         );
-        let operation_key = Key::Data {
+        let operation_key = IndexKey::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: DataKeyKind::IndexV2(IndexV2Key::operation(fixture.operation.operation_id())),
+            kind: ScopedKey::operation(fixture.operation.operation_id()),
         }
         .to_bytes();
         let operation = decode_operation_record(
@@ -1698,7 +1708,7 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(
-            crate::index_v2::repository::load_legacy_vector_physical_reservation(
+            crate::index_lifecycle::repository::load_legacy_vector_physical_reservation(
                 &db,
                 fixture.physical_index_id,
             )
@@ -1710,7 +1720,7 @@ mod tests {
             })
         );
         assert!(
-            crate::index_v2::repository::revalidate_active_handle(&db, &fixture.active)
+            crate::index_lifecycle::repository::revalidate_active_handle(&db, &fixture.active)
                 .await
                 .is_err(),
             "publication invalidates the stale legacy authorization"
@@ -1756,6 +1766,7 @@ mod tests {
 
     #[tokio::test]
     async fn all_supported_metrics_and_multiple_targets_upgrade() {
+        let _failpoint_guard = migration_test_guard().await;
         let db = test_db().await;
         seed_active_legacy::<vector::distance::Cosine>(
             &db,
@@ -1787,6 +1798,7 @@ mod tests {
 
     #[tokio::test]
     async fn extra_marker_and_wrong_reservation_fail_closed() {
+        let _failpoint_guard = migration_test_guard().await;
         let db = test_db().await;
         let fixture = seed_active_legacy::<vector::distance::Cosine>(
             &db,
@@ -1825,10 +1837,8 @@ mod tests {
         assert!(matches!(error, HelixDbError::IndexCatalogCorruption(_)));
         assert!(decode_simhash_directory_marker_v1(&encode_simhash_directory_marker_v1(),).is_ok());
 
-        let reservation_key = Key::Global {
-            kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-                fixture.physical_index_id,
-            )),
+        let reservation_key = IndexKey::Global {
+            kind: GlobalKey::LegacyVectorPhysicalReservation(fixture.physical_index_id),
         }
         .to_bytes();
         db.put(
@@ -1848,6 +1858,7 @@ mod tests {
 
     #[tokio::test]
     async fn reader_fallback_precedes_blocking_writer_startup_upgrade() {
+        let _failpoint_guard = migration_test_guard().await;
         let token = crate::ProcessLocalDatabaseToken::new(format!(
             "vector-directory-startup-{}",
             uuid::Uuid::new_v4()
@@ -1858,7 +1869,7 @@ mod tests {
             .build()
             .await
             .expect("raw startup fixture opens");
-        crate::index_v2::repository::bootstrap_writer(&raw)
+        crate::index_lifecycle::repository::bootstrap_writer(&raw)
             .await
             .expect("V2 repository bootstraps");
         let fixture = seed_active_legacy::<vector::distance::Cosine>(
@@ -1931,6 +1942,7 @@ mod tests {
     #[cfg(any(feature = "migration-parity", feature = "production-coverage"))]
     #[tokio::test]
     async fn every_directory_commit_boundary_recovers_without_duplicate_writes() {
+        let _failpoint_guard = migration_test_guard().await;
         const BOUNDARIES: [super::super::MigrationFailpoint; 8] = [
             super::super::MigrationFailpoint::VectorDirectoryPreflightCommitBefore,
             super::super::MigrationFailpoint::VectorDirectoryPreflightCommitAfter,
@@ -1987,7 +1999,7 @@ mod tests {
                 "{} must not duplicate its marker write",
                 failpoint.as_str()
             );
-            let record = crate::index_v2::repository::load_index_record(
+            let record = crate::index_lifecycle::repository::load_index_record(
                 &db,
                 DataScope::LegacyUnscoped,
                 fixture.record.identity(),

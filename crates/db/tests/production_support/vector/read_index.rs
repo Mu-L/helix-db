@@ -68,7 +68,7 @@ pub(crate) async fn run() {
             40,
             NonZeroU64::MIN,
             1,
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             VectorDimension::try_new(3).unwrap(),
         )
         .unwrap(),
@@ -134,7 +134,7 @@ pub(crate) async fn run() {
             50,
             NonZeroU64::MIN,
             1,
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             VectorDimension::try_new(3).unwrap(),
         )
         .unwrap(),
@@ -158,7 +158,7 @@ pub(crate) async fn run() {
             60,
             NonZeroU64::MIN,
             1,
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             VectorDimension::try_new(3).unwrap(),
         )
         .unwrap(),

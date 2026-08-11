@@ -31,15 +31,6 @@
     "reason": "The named contract asserts both directly created and catalog-projected current generations own SimHashDirectoryV1. LLVM constant-folds the const matches expression while retaining this zero-count source region."
   },
   {
-    "path": "crates/db/src/search/vector/hydration.rs",
-    "lines": [
-      198
-    ],
-    "classification": "named-test",
-    "evidence": "vector_hydration_exercises_active_generation_boundaries",
-    "reason": "The named contract supplies an unavailable non-vector handle and proves hydration skips it. The residual zero-count line is the tracing field expression emitted by that exercised branch."
-  },
-  {
     "path": "crates/db/src/search/vector/index.rs",
     "lines": [
       325,

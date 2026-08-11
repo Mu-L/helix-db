@@ -29,23 +29,23 @@ jobs:
         run: |
           test_binary="$(
             cargo test --release -p db --features production-scale \
-              --test production_index_v2_scale --no-run --message-format=json \
+              --test production_index_lifecycle_scale --no-run --message-format=json \
               | jq -r 'select(
                   .reason == "compiler-artifact"
-                  and .target.name == "production_index_v2_scale"
+                  and .target.name == "production_index_lifecycle_scale"
                   and .executable != null
                 ) | .executable' \
               | tail -n 1
           )"
           test -x "$test_binary"
           mkdir -p vector-100k-test
-          cp "$test_binary" vector-100k-test/production_index_v2_scale
-          sha256sum vector-100k-test/production_index_v2_scale \
+          cp "$test_binary" vector-100k-test/production_index_lifecycle_scale
+          sha256sum vector-100k-test/production_index_lifecycle_scale \
             >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: vector-100k-test-${{ github.sha }}
-          path: vector-100k-test/production_index_v2_scale
+          path: vector-100k-test/production_index_lifecycle_scale
           if-no-files-found: error
           retention-days: 1
 
@@ -65,7 +65,7 @@ jobs:
           echo "Feature set: production-scale" >> "$GITHUB_STEP_SUMMARY"
       - name: Run the isolated public vector lifecycle
         run: |
-          chmod +x vector-100k-test/production_index_v2_scale
-          vector-100k-test/production_index_v2_scale \
-            index_v2_vector_scale_contract \
+          chmod +x vector-100k-test/production_index_lifecycle_scale
+          vector-100k-test/production_index_lifecycle_scale \
+            index_lifecycle_vector_scale_contract \
             --exact --nocapture --test-threads=1

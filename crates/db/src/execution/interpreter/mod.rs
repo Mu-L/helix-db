@@ -10,7 +10,7 @@ mod ddl;
 mod dependencies;
 mod dispatch;
 mod mutation;
-mod read_view;
+pub(crate) mod read_view;
 mod reserved;
 mod row_mode;
 mod runtime_context;
@@ -99,6 +99,11 @@ impl<'db> Interpreter<'db> {
         execution_control: crate::execution_control::ExecutionControl,
         proof: crate::CatalogRefreshProof,
     ) -> Self {
+        let catalog_freshness = if db.catalog_refresh_proof_belongs_to(&proof, tenant_scope) {
+            runtime_context::PendingCatalogFreshness::Prepared(proof)
+        } else {
+            runtime_context::PendingCatalogFreshness::Unverified
+        };
         Self {
             db,
             ctx: ExecutionContext::new_scoped_controlled_with_catalog_freshness(
@@ -106,7 +111,7 @@ impl<'db> Interpreter<'db> {
                 params,
                 tenant_scope,
                 execution_control,
-                runtime_context::PendingCatalogFreshness::Prepared(proof),
+                catalog_freshness,
             ),
         }
     }
@@ -458,7 +463,7 @@ mod cutover_tests {
     #[tokio::test]
     async fn graph_write_records_vector_build_delta_in_its_graph_transaction() {
         let db = test_support::open_db("mutation-v2-vector-build-delta").await;
-        let definition = crate::index_v2::ValidatedDynamicIndexDefinition::try_from(
+        let definition = crate::index_lifecycle::ValidatedDynamicIndexDefinition::try_from(
             crate::config::VectorIndexDefinition::new_node(
                 "User",
                 "embedding",
@@ -468,7 +473,7 @@ mod cutover_tests {
             .expect("vector definition"),
         )
         .expect("validated vector definition");
-        let source_upper_bound = crate::index_v2::IndexCursor::try_new(
+        let source_upper_bound = crate::index_lifecycle::IndexCursor::try_new(
             keys::Key::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(0)),
@@ -479,16 +484,16 @@ mod cutover_tests {
         let crate::HelixStorage::Writer(writer) = db.storage() else {
             panic!("test database is a writer");
         };
-        let receipt = crate::index_v2::lifecycle::create_index_operation(
+        let receipt = crate::index_lifecycle::lifecycle::create_index_operation(
             writer.db(),
             DataScope::LegacyUnscoped,
             definition,
             ir::IndexCreateMode::ErrorIfExists,
-            crate::index_v2::lifecycle::InitialBuildProgress::vector(source_upper_bound),
+            crate::index_lifecycle::lifecycle::InitialBuildProgress::vector(source_upper_bound),
         )
         .await
         .expect("vector build fixture is enqueued");
-        let crate::index_v2::IndexDdlReceipt::Accepted {
+        let crate::index_lifecycle::IndexDdlReceipt::Accepted {
             index_id,
             generation,
             ..
@@ -518,18 +523,18 @@ mod cutover_tests {
             .await
             .expect("graph mutation and vector delta commit together");
 
-        let delta_key = keys::Key::Data {
+        let delta_key = crate::encoding::v2::keys::Key::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: keys::DataKeyKind::IndexV2(keys::index_v2::IndexV2Key::BuildDelta(
-                keys::index_v2::IndexEntityStateKey {
+            kind: crate::encoding::v2::keys::ScopedKey::BuildDelta(
+                crate::encoding::v2::keys::IndexEntityStateKey {
                     index_id,
                     generation,
-                    entity: keys::index_v2::IndexEntity {
-                        kind: crate::index_v2::IndexElementKind::Node,
-                        id: crate::index_v2::IndexEntityId::new(0),
+                    entity: crate::encoding::v2::keys::IndexEntity {
+                        kind: crate::index_lifecycle::IndexElementKind::Node,
+                        id: crate::index_lifecycle::IndexEntityId::new(0),
                     },
                 },
-            )),
+            ),
         }
         .to_bytes();
         assert!(db.inner_db().get(delta_key).await.unwrap().is_some());
@@ -544,11 +549,11 @@ mod cutover_tests {
     #[tokio::test]
     async fn graph_write_records_text_build_delta_in_its_graph_transaction() {
         let db = test_support::open_db("mutation-v2-text-build-delta").await;
-        let definition = crate::index_v2::ValidatedDynamicIndexDefinition::try_from(
+        let definition = crate::index_lifecycle::ValidatedDynamicIndexDefinition::try_from(
             crate::config::TextIndexDefinition::new_node("User", "bio").expect("text definition"),
         )
         .expect("validated text definition");
-        let source_upper_bound = crate::index_v2::IndexCursor::try_new(
+        let source_upper_bound = crate::index_lifecycle::IndexCursor::try_new(
             keys::Key::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(0)),
@@ -559,16 +564,16 @@ mod cutover_tests {
         let crate::HelixStorage::Writer(writer) = db.storage() else {
             panic!("test database is a writer");
         };
-        let receipt = crate::index_v2::lifecycle::create_index_operation(
+        let receipt = crate::index_lifecycle::lifecycle::create_index_operation(
             writer.db(),
             DataScope::LegacyUnscoped,
             definition,
             ir::IndexCreateMode::ErrorIfExists,
-            crate::index_v2::lifecycle::InitialBuildProgress::text(source_upper_bound),
+            crate::index_lifecycle::lifecycle::InitialBuildProgress::text(source_upper_bound),
         )
         .await
         .expect("text build fixture is enqueued");
-        let crate::index_v2::IndexDdlReceipt::Accepted {
+        let crate::index_lifecycle::IndexDdlReceipt::Accepted {
             index_id,
             generation,
             ..
@@ -598,18 +603,18 @@ mod cutover_tests {
             .await
             .expect("graph mutation and text delta commit together");
 
-        let delta_key = keys::Key::Data {
+        let delta_key = crate::encoding::v2::keys::Key::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: keys::DataKeyKind::IndexV2(keys::index_v2::IndexV2Key::BuildDelta(
-                keys::index_v2::IndexEntityStateKey {
+            kind: crate::encoding::v2::keys::ScopedKey::BuildDelta(
+                crate::encoding::v2::keys::IndexEntityStateKey {
                     index_id,
                     generation,
-                    entity: keys::index_v2::IndexEntity {
-                        kind: crate::index_v2::IndexElementKind::Node,
-                        id: crate::index_v2::IndexEntityId::new(0),
+                    entity: crate::encoding::v2::keys::IndexEntity {
+                        kind: crate::index_lifecycle::IndexElementKind::Node,
+                        id: crate::index_lifecycle::IndexEntityId::new(0),
                     },
                 },
-            )),
+            ),
         }
         .to_bytes();
         let value = db
@@ -618,14 +623,17 @@ mod cutover_tests {
             .await
             .expect("text delta read succeeds")
             .expect("text delta committed with graph row");
-        let values::index_v2::IndexV2WorkValue::CoalescedBuildDelta(delta) =
-            values::index_v2::decode_work_value(&value).expect("text delta decodes")
-        else {
-            panic!("text delta key contains its typed coalesced value");
-        };
+        let delta =
+            crate::encoding::v2::values::decode_build_delta(&value).expect("text delta decodes");
         assert_eq!(delta.index_id, index_id);
         assert_eq!(delta.generation, generation);
-        assert_eq!(delta.entity_kind, crate::index_v2::IndexElementKind::Node);
-        assert_eq!(delta.entity_id, crate::index_v2::IndexEntityId::new(0));
+        assert_eq!(
+            delta.entity_kind,
+            crate::index_lifecycle::IndexElementKind::Node
+        );
+        assert_eq!(
+            delta.entity_id,
+            crate::index_lifecycle::IndexEntityId::new(0)
+        );
     }
 }

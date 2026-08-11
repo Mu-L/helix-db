@@ -5,7 +5,14 @@
 //! callers remain explicitly unscoped while tenant callers use an isolated key
 //! namespace.
 
+use bytes::BufMut;
+
 use crate::encoding::error::EncodingError;
+
+/// Physical marker introducing every tenant-scoped key.
+pub(crate) const TENANT_KEY_PREFIX: u8 = 0xFD;
+pub(crate) const TENANT_ID_LEN: usize = core::mem::size_of::<u128>();
+pub(crate) const TENANT_ENVELOPE_LEN: usize = core::mem::size_of::<u8>() + TENANT_ID_LEN;
 
 /// Storage tenant identifier encoded into physical keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -67,8 +74,6 @@ pub enum DataScope {
 }
 
 impl DataScope {
-    pub(crate) const PREFIX_LEN: usize = core::mem::size_of::<u128>();
-
     /// Return true if this request uses the legacy namespace.
     pub const fn is_unscoped(self) -> bool {
         matches!(self, Self::LegacyUnscoped)
@@ -77,8 +82,30 @@ impl DataScope {
     pub(crate) const fn encoded_len(self) -> usize {
         match self {
             Self::LegacyUnscoped => 0,
-            Self::Tenant(_) => Self::PREFIX_LEN,
+            Self::Tenant(_) => TENANT_ENVELOPE_LEN,
         }
+    }
+
+    /// Encode the complete physical tenant envelope.
+    pub(crate) fn encode_key_prefix<B: BufMut>(self, buffer: &mut B) {
+        if let Self::Tenant(tenant_id) = self {
+            buffer.put_u8(TENANT_KEY_PREFIX);
+            buffer.put_u128(tenant_id.as_u128());
+        }
+    }
+
+    /// Decode the tenant scope and logical suffix from a physically enveloped key.
+    pub(crate) fn strip_tenant_envelope(key: &[u8]) -> Option<(TenantId, &[u8])> {
+        const TENANT_ID_OFFSET: usize = core::mem::size_of::<u8>();
+        if key.len() < TENANT_ENVELOPE_LEN || key[0] != TENANT_KEY_PREFIX {
+            return None;
+        }
+        let tenant_id = TenantId::from_u128(u128::from_be_bytes(
+            key[TENANT_ID_OFFSET..TENANT_ID_OFFSET + TENANT_ID_LEN]
+                .try_into()
+                .expect("validated tenant ID slice is sixteen bytes"),
+        ));
+        Some((tenant_id, &key[TENANT_ENVELOPE_LEN..]))
     }
 
     /// Strip this tenant scope from a physical key returned by storage scans.
@@ -86,11 +113,8 @@ impl DataScope {
         match self {
             Self::LegacyUnscoped => Some(key),
             Self::Tenant(tenant_id) => {
-                let prefix = tenant_id.as_u128().to_be_bytes();
-                if key.len() < Self::PREFIX_LEN {
-                    return None;
-                }
-                (key[0..Self::PREFIX_LEN] == prefix).then_some(&key[Self::PREFIX_LEN..])
+                let (encoded_tenant, logical) = Self::strip_tenant_envelope(key)?;
+                (encoded_tenant == tenant_id).then_some(logical)
             }
         }
     }
@@ -229,12 +253,13 @@ mod tests {
         let scope = DataScope::Tenant(tenant);
         let logical = b"\x02logical";
         let physical = {
-            let mut bytes = tenant.as_u128().to_be_bytes().to_vec();
+            let mut bytes = vec![TENANT_KEY_PREFIX];
+            bytes.extend_from_slice(&tenant.as_u128().to_be_bytes());
             bytes.extend_from_slice(logical);
             bytes
         };
 
-        assert_eq!(physical.len(), 16 + logical.len());
+        assert_eq!(physical.len(), TENANT_ENVELOPE_LEN + logical.len());
         assert_eq!(scope.strip_key(&physical), Some(logical.as_ref()));
         assert_eq!(
             DataScope::LegacyUnscoped.strip_key(logical),
@@ -247,13 +272,32 @@ mod tests {
         let tenant = TenantId::from_ulid_str("0000000000000000000000000A").expect("valid tenant");
         let other = TenantId::from_ulid_str("0000000000000000000000000B").expect("valid tenant");
         let scope = DataScope::Tenant(tenant);
-        let mut wrong_prefix = other.as_u128().to_be_bytes().to_vec();
+        let mut wrong_prefix = vec![TENANT_KEY_PREFIX];
+        wrong_prefix.extend_from_slice(&other.as_u128().to_be_bytes());
         wrong_prefix.extend_from_slice(b"logical");
 
         assert!(DataScope::LegacyUnscoped.is_unscoped());
         assert_eq!(DataScope::LegacyUnscoped.encoded_len(), 0);
-        assert_eq!(scope.encoded_len(), DataScope::PREFIX_LEN);
+        assert_eq!(scope.encoded_len(), TENANT_ENVELOPE_LEN);
         assert_eq!(scope.strip_key(b"short"), None);
         assert_eq!(scope.strip_key(&wrong_prefix), None);
+    }
+
+    #[test]
+    fn tenant_envelope_is_exactly_one_marker_plus_the_tenant_id() {
+        let tenant = TenantId::from_u128(0xABCD);
+        let mut encoded = Vec::new();
+        DataScope::Tenant(tenant).encode_key_prefix(&mut encoded);
+
+        assert_eq!(encoded.len(), TENANT_ENVELOPE_LEN);
+        assert_eq!(encoded[0], TENANT_KEY_PREFIX);
+        assert_eq!(
+            &encoded[1..1 + TENANT_ID_LEN],
+            &tenant.as_u128().to_be_bytes()
+        );
+        assert_eq!(
+            DataScope::strip_tenant_envelope(&encoded),
+            Some((tenant, &[][..]))
+        );
     }
 }

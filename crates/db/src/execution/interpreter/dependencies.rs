@@ -315,9 +315,12 @@ mod tests {
         let mut lifecycle = ExecutionContext::new(&lifecycle_db, context::ParamBindings::default());
         lifecycle.step_outputs.insert(
             step_id(1),
-            ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-                operation_id: crate::index_v2::IndexOperationId::from_bytes([7; 16]).unwrap(),
-            }),
+            ExecutionValue::IndexDdlReceipt(
+                crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+                    operation_id: crate::index_lifecycle::IndexOperationId::from_bytes([7; 16])
+                        .unwrap(),
+                },
+            ),
         );
         let err = lifecycle
             .dependency_input(&[step_id(1), step_id(1)])

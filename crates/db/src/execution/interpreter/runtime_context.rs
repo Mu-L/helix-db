@@ -274,8 +274,8 @@ pub(in crate::execution::interpreter) struct ExecutionContext<'db> {
     pub(in crate::execution::interpreter) variables: ExecutionValueStore<ir::NonEmptyString>,
     pub(in crate::execution::interpreter) step_outputs: ExecutionValueStore<exec::ExecStepId>,
     pub(in crate::execution::interpreter) step_output_uses: StepOutputUsePlan,
-    pub(in crate::execution::interpreter) request_read_view:
-        Option<Box<super::read_view::StableRequestReadView>>,
+    pub(in crate::execution::interpreter) request_read_scope:
+        super::read_view::RequestReadScopeState,
     pub(in crate::execution::interpreter) request_write_scope: RequestWriteScopeState,
     pub(in crate::execution::interpreter) pending_catalog_freshness: PendingCatalogFreshness,
     pub(in crate::execution::interpreter) row_mode_max_rows: row_mode::RowModeMaxRowsSetting,
@@ -341,7 +341,7 @@ impl<'db> ExecutionContext<'db> {
             variables: ExecutionValueStore::default(),
             step_outputs: ExecutionValueStore::default(),
             step_output_uses: StepOutputUsePlan::default(),
-            request_read_view: None,
+            request_read_scope: super::read_view::RequestReadScopeState::Disabled,
             request_write_scope: RequestWriteScopeState::Disabled,
             pending_catalog_freshness: catalog_freshness,
             row_mode_max_rows: row_mode::RowModeMaxRowsSetting::default(),

@@ -14,17 +14,18 @@ use slatedb::{DbReadOps, DbTransaction};
 
 use crate::config;
 use crate::encoding::keys::tenant::DataScope;
-use crate::encoding::v1::keys::index_v2::{GlobalIndexV2Key, IndexV2Key, IndexV2RecordKind};
 use crate::encoding::v1::keys::vectors::{
     VectorIndexMetadataKey, VectorKey, VectorStorageLane, VectorTxnGuardKey,
 };
-use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key};
-use crate::encoding::v1::values::index_v2::{
+use crate::encoding::v1::keys::{DataKeyKind, Key};
+use crate::encoding::v1::values::vectors::metadata::decode_legacy_metadata;
+use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::{GlobalKey, RecordKind, ScopedKey};
+use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, encode_metadata_value,
 };
-use crate::encoding::v1::values::vectors::metadata::decode_legacy_metadata;
 use crate::error::{HelixDbError, Result};
-use crate::index_v2::{
+use crate::index_lifecycle::{
     IndexGenerationId, IndexId, IndexStateV2, IndexV2MetadataValue,
     LegacyVectorPhysicalReservation, ValidatedDynamicIndexDefinition,
     ValidatedVectorIndexDefinition, VectorPhysicalIndexId,
@@ -65,17 +66,15 @@ impl LegacyVectorRetirementCatalog {
         read: &(impl DbReadOps + Send + Sync),
         scope: DataScope,
     ) -> Result<Self> {
-        let prefix = Key::data_prefix(
-            scope,
-            IndexV2Key::logical_prefix(IndexV2RecordKind::IndexRecord),
-        );
+        let prefix =
+            IndexKey::data_prefix(scope, ScopedKey::logical_prefix(RecordKind::IndexRecord));
         let mut rows = read.scan_prefix(prefix, ..).await?;
         let mut active = BTreeMap::new();
         while let Some(row) = rows.next().await? {
-            let Key::Data {
-                kind: DataKeyKind::IndexV2(IndexV2Key::IndexRecord(key)),
+            let IndexKey::Data {
+                kind: ScopedKey::IndexRecord(key),
                 ..
-            } = Key::parse_from_slice(scope, &row.key)?
+            } = IndexKey::parse_from_slice(scope, &row.key)?
             else {
                 return Err(HelixDbError::IndexCatalogCorruption(
                     "vector retirement catalog scan returned another key kind".to_string(),
@@ -214,10 +213,8 @@ impl LegacyVectorRetirementCatalog {
 }
 
 fn reservation_key(physical_id: VectorPhysicalIndexId) -> Bytes {
-    Key::Global {
-        kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-            physical_id,
-        )),
+    IndexKey::Global {
+        kind: GlobalKey::LegacyVectorPhysicalReservation(physical_id),
     }
     .to_bytes()
 }
@@ -269,8 +266,8 @@ pub(super) async fn fence_sources_batch(
         let Some(row) = rows.next().await? else {
             break;
         };
-        let GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_id) =
-            GlobalIndexV2Key::parse_from_slice(&row.key)?
+        let GlobalKey::LegacyVectorPhysicalReservation(physical_id) =
+            GlobalKey::parse_from_slice(&row.key)?
         else {
             return Err(HelixDbError::IndexCatalogCorruption(
                 "legacy vector fence scan returned another global key".to_string(),
@@ -555,8 +552,8 @@ pub(super) async fn delete_core_batch(
         let Some(row) = rows.next().await? else {
             break;
         };
-        let GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_id) =
-            GlobalIndexV2Key::parse_from_slice(&row.key)?
+        let GlobalKey::LegacyVectorPhysicalReservation(physical_id) =
+            GlobalKey::parse_from_slice(&row.key)?
         else {
             return Err(HelixDbError::IndexCatalogCorruption(
                 "legacy vector core scan returned another global key".to_string(),
@@ -800,8 +797,8 @@ pub(super) async fn release_reservations_batch(
         let Some(row) = rows.next().await? else {
             break;
         };
-        let GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_id) =
-            GlobalIndexV2Key::parse_from_slice(&row.key)?
+        let GlobalKey::LegacyVectorPhysicalReservation(physical_id) =
+            GlobalKey::parse_from_slice(&row.key)?
         else {
             return Err(HelixDbError::IndexCatalogCorruption(
                 "legacy vector reservation release returned another global key".to_string(),

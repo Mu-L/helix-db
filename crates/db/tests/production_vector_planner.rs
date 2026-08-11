@@ -15,7 +15,7 @@ use db::encoding::v1::keys::tenant::DataScope;
 use db::execution::interpreter::{
     ElementRef, ExecutionResult, ExecutionRow, ExecutionScalar, ExecutionValue,
 };
-use db::index_v2::{IndexDdlReceipt, IndexOperationBlockerCode, IndexOperationStatus};
+use db::index_lifecycle::{IndexDdlReceipt, IndexOperationBlockerCode, IndexOperationStatus};
 use db::search::{vector::VectorDistanceMetric, vector_index_name};
 use db::{HelixDB, HelixDbSource, ProcessLocalDatabaseToken};
 use helix_ast::batch;
@@ -1018,7 +1018,7 @@ fn record_public_rejection<T>(
 /// Waits for a public DDL operation to reach any terminal state.
 async fn wait_for_terminal(
     db: &HelixDB,
-    operation_id: db::index_v2::IndexOperationId,
+    operation_id: db::index_lifecycle::IndexOperationId,
 ) -> IndexOperationStatus {
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
@@ -1041,7 +1041,7 @@ async fn wait_for_terminal(
 }
 
 /// Extracts one accepted or resumed DDL operation ID.
-fn accepted_operation_id(result: ExecutionResult) -> db::index_v2::IndexOperationId {
+fn accepted_operation_id(result: ExecutionResult) -> db::index_lifecycle::IndexOperationId {
     let Some(ExecutionValue::IndexDdlReceipt(receipt)) = result.last else {
         panic!("vector lifecycle DDL returns one receipt");
     };
@@ -1065,7 +1065,7 @@ enum ExpectedVectorTerminal {
 /// Waits for one exact public vector operation state.
 async fn wait_for_expected(
     db: &HelixDB,
-    operation_id: db::index_v2::IndexOperationId,
+    operation_id: db::index_lifecycle::IndexOperationId,
     expected: ExpectedVectorTerminal,
 ) -> IndexOperationStatus {
     tokio::time::timeout(Duration::from_secs(30), async {

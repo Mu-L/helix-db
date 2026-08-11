@@ -32,8 +32,8 @@ impl<'db> ExecutionContext<'db> {
         let identity = crate::config::split_scoped_secondary_index_property(property)
             .map(|(label, property)| {
                 secondary_identity(
-                    crate::index_v2::IndexIdentityFamily::SecondaryEquality,
-                    crate::index_v2::IndexElementKind::Node,
+                    crate::index_lifecycle::IndexIdentityFamily::SecondaryEquality,
+                    crate::index_lifecycle::IndexElementKind::Node,
                     label,
                     property,
                 )
@@ -128,8 +128,8 @@ impl<'db> ExecutionContext<'db> {
         let identity = crate::config::split_scoped_secondary_index_property(property)
             .map(|(label, property)| {
                 secondary_identity(
-                    crate::index_v2::IndexIdentityFamily::SecondaryEquality,
-                    crate::index_v2::IndexElementKind::Edge,
+                    crate::index_lifecycle::IndexIdentityFamily::SecondaryEquality,
+                    crate::index_lifecycle::IndexElementKind::Edge,
                     label,
                     property,
                 )
@@ -368,16 +368,16 @@ impl<'db> ExecutionContext<'db> {
 
 /// Constructs the canonical V2 identity corresponding to one planner key.
 fn secondary_identity(
-    family: crate::index_v2::IndexIdentityFamily,
-    element_kind: crate::index_v2::IndexElementKind,
+    family: crate::index_lifecycle::IndexIdentityFamily,
+    element_kind: crate::index_lifecycle::IndexElementKind,
     label: &str,
     property: &str,
-) -> Result<crate::index_v2::IndexIdentity> {
-    Ok(crate::index_v2::IndexIdentity::new(
+) -> Result<crate::index_lifecycle::IndexIdentity> {
+    Ok(crate::index_lifecycle::IndexIdentity::new(
         family,
         element_kind,
-        crate::index_v2::IndexComponent::try_new("label", label)?,
-        crate::index_v2::IndexComponent::try_new("property", property)?,
+        crate::index_lifecycle::IndexComponent::try_new("label", label)?,
+        crate::index_lifecycle::IndexComponent::try_new("property", property)?,
     ))
 }
 
@@ -385,7 +385,7 @@ fn secondary_identity(
 async fn lookup_equality_in_view(
     context: &ExecutionContext<'_>,
     reader: &(impl DbReadOps + Send + Sync),
-    identity: Option<&crate::index_v2::IndexIdentity>,
+    identity: Option<&crate::index_lifecycle::IndexIdentity>,
     property: &str,
     value: &DbPropertyValue,
 ) -> Result<roaring::RoaringTreemap> {
@@ -405,17 +405,40 @@ async fn lookup_equality_in_view(
         .await
 }
 
-/// Point-loads and scans a present canonical equality identity.
-///
+/// Resolves one request-authorized equality generation and reads its physical row.
 async fn lookup_managed_equality_in_view(
     context: &ExecutionContext<'_>,
     reader: &(impl DbReadOps + Send + Sync),
-    identity: &crate::index_v2::IndexIdentity,
+    identity: &crate::index_lifecycle::IndexIdentity,
     value: &DbPropertyValue,
 ) -> Result<roaring::RoaringTreemap> {
-    let Some(record) =
-        crate::index_v2::repository::load_index_record(reader, context.tenant_scope, identity)
-            .await?
+    if let Some(active_write) = context.active_write_tx() {
+        let Some(active) = active_write.index_context.active_handle(identity) else {
+            return Err(HelixDbError::IndexLifecycleUnavailable {
+                family: crate::error::IndexFamily::Secondary,
+                reason: crate::error::IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+            });
+        };
+        return lookup_managed_active_equality_in_view(reader, active, value).await;
+    }
+
+    if let Some(catalog) = context.request_read_index_catalog() {
+        let Some(active) = catalog.handle(identity) else {
+            return Err(HelixDbError::IndexLifecycleUnavailable {
+                family: crate::error::IndexFamily::Secondary,
+                reason: crate::error::IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
+            });
+        };
+        return lookup_managed_active_equality_in_view(reader, active, value).await;
+    }
+
+    crate::index_lifecycle::secondary::record_equality_point_read();
+    let Some(record) = crate::index_lifecycle::repository::load_index_record(
+        reader,
+        context.tenant_scope,
+        identity,
+    )
+    .await?
     else {
         return Err(HelixDbError::IndexLifecycleUnavailable {
             family: crate::error::IndexFamily::Secondary,
@@ -423,19 +446,31 @@ async fn lookup_managed_equality_in_view(
         });
     };
     let Some(active) =
-        crate::index_v2::ActiveIndexHandle::try_from_record(context.tenant_scope, &record)
+        crate::index_lifecycle::ActiveIndexHandle::try_from_record(context.tenant_scope, &record)
     else {
         return Err(HelixDbError::IndexLifecycleUnavailable {
             family: crate::error::IndexFamily::Secondary,
             reason: crate::error::IndexLifecycleUnavailableReason::CanonicalStateUnavailable,
         });
     };
-    if !matches!(active, crate::index_v2::ActiveIndexHandle::Secondary { .. }) {
+    lookup_managed_active_equality_in_view(reader, &active, value).await
+}
+
+async fn lookup_managed_active_equality_in_view(
+    reader: &(impl DbReadOps + Send + Sync),
+    active: &crate::index_lifecycle::ActiveIndexHandle,
+    value: &DbPropertyValue,
+) -> Result<roaring::RoaringTreemap> {
+    if !matches!(
+        active,
+        crate::index_lifecycle::ActiveIndexHandle::Secondary { .. }
+    ) {
         return Err(HelixDbError::IndexCatalogCorruption(
             "secondary equality identity resolved another Active family".to_string(),
         ));
     }
-    crate::index_v2::secondary::lookup_active_equality_generation(reader, &active, value).await
+    crate::index_lifecycle::secondary::lookup_active_equality_generation(reader, active, value)
+        .await
 }
 
 pub(super) fn limited_index_ids(
@@ -454,14 +489,11 @@ pub(super) fn scoped_property_key(key: &catalog::ScopedPropertyKey) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::test_support;
+    use super::*;
     use helix_ast::query::QueryValue;
     use helix_ast::value::PropertyValue;
     use helix_planner::context;
-    use slatedb::IsolationLevel;
-
-    use super::super::super::runtime_context::ActiveWriteTx;
-    use super::super::super::test_support;
-    use super::*;
 
     fn name(value: &str) -> ir::NonEmptyString {
         test_support::name(value)
@@ -664,21 +696,11 @@ mod tests {
             vec![("status", PropertyValue::from("active"))],
         )
         .await;
-        let txn = db
-            .inner_db()
-            .begin(IsolationLevel::Snapshot)
-            .await
-            .expect("snapshot transaction begins");
         let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
-        context.request_write_scope =
-            super::super::super::runtime_context::RequestWriteScopeState::Active(Box::new(
-                ActiveWriteTx {
-                    txn,
-                    index_context: super::super::super::mutation::MutationIndexContext::for_configured_index_test(
-                        std::sync::Arc::clone(db.simhasher_registry()),
-                    ),
-                },
-            ));
+        context
+            .enable_request_write_scope()
+            .await
+            .expect("transaction and its exact mutation catalog open together");
 
         assert_eq!(
             context
@@ -720,6 +742,7 @@ mod tests {
                 .expect("transaction endpoint lookup succeeds"),
             Some((alice, bob))
         );
+        context.abort_request_write_scope();
     }
 
     #[tokio::test]

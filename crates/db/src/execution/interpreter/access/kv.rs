@@ -205,8 +205,7 @@ fn parse_element_id(keyspace: exec::ElementKeyspace, key: &[u8]) -> Option<u64> 
         | keys::DataKeyKind::EdgeEndpoints(_)
         | keys::DataKeyKind::EdgePairIndex(..)
         | keys::DataKeyKind::Vector(_)
-        | keys::DataKeyKind::IndexMetadata(_)
-        | keys::DataKeyKind::IndexV2(_) => None,
+        | keys::DataKeyKind::IndexMetadata(_) => None,
     }
 }
 

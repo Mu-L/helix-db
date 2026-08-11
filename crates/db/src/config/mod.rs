@@ -11,7 +11,7 @@ pub(crate) mod search_index_backfill;
 pub(crate) mod secondary_index_lifecycle;
 pub(crate) mod utils;
 
-pub use crate::index_v2::ValidatedDynamicIndexDefinition;
+pub use crate::index_lifecycle::ValidatedDynamicIndexDefinition;
 pub use cache::{
     CacheConfig, CacheMode, CacheWarmMode, FtsHybridCacheConfig, FtsMemoryCacheConfig,
     FtsWarmConfig, ObjectStoreWarmLevel, SimHasherCacheSettings, SlateHybridCacheConfig,

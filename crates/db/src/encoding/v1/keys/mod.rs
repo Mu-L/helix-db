@@ -2,7 +2,6 @@
 
 //! Typed V1 database keys and the scoped key framing boundary.
 
-pub(crate) mod index_v2;
 mod keys;
 pub(crate) mod metadata;
 pub mod tenant;
@@ -39,7 +38,6 @@ pub(crate) enum KeyPrefix {
     PropertyIndex,
     EdgeEndpoints,
     EdgePairIndex,
-    IndexV2,
     Metadata,
 }
 
@@ -54,7 +52,6 @@ impl KeyPrefix {
             KeyPrefix::PropertyIndex => 0x03,
             KeyPrefix::EdgeEndpoints => 0x04,
             KeyPrefix::EdgePairIndex => 0x05,
-            KeyPrefix::IndexV2 => 0x06,
             KeyPrefix::Metadata => 0xFF,
         }
     }
@@ -69,7 +66,6 @@ impl KeyPrefix {
             KeyPrefix::PropertyIndex => &[0x03],
             KeyPrefix::EdgeEndpoints => &[0x04],
             KeyPrefix::EdgePairIndex => &[0x05],
-            KeyPrefix::IndexV2 => &[0x06],
             KeyPrefix::Metadata => &[0xFF],
         }
     }
@@ -83,7 +79,6 @@ impl KeyPrefix {
             0x03 => Ok(KeyPrefix::PropertyIndex),
             0x04 => Ok(KeyPrefix::EdgeEndpoints),
             0x05 => Ok(KeyPrefix::EdgePairIndex),
-            0x06 => Ok(KeyPrefix::IndexV2),
             0xFF => Ok(KeyPrefix::Metadata),
             _ => Err(EncodingError::InvalidKeyPrefix(u)),
         }
@@ -172,9 +167,6 @@ pub(crate) enum DataKeyKind<'a> {
 
     /// Tenant-owned index catalog and runtime metadata.
     IndexMetadata(MetadataKey<'a>),
-
-    /// Canonical V2 logical index records.
-    IndexV2(index_v2::IndexV2Key),
 }
 
 impl<'a> DataKeyKind<'a> {
@@ -191,7 +183,6 @@ impl<'a> DataKeyKind<'a> {
             DataKeyKind::EdgePairIndex(key) => key.into(),
             DataKeyKind::Vector(_) => KeyPrefix::PropertyIndex,
             DataKeyKind::IndexMetadata(key) => key.into(),
-            DataKeyKind::IndexV2(_) => KeyPrefix::IndexV2,
         }
     }
 
@@ -208,7 +199,6 @@ impl<'a> DataKeyKind<'a> {
             DataKeyKind::PropertyIndex(_)
             | DataKeyKind::Vector(_)
             | DataKeyKind::IndexMetadata(_) => 0,
-            DataKeyKind::IndexV2(_) => 0,
         }
     }
 
@@ -225,7 +215,6 @@ impl<'a> DataKeyKind<'a> {
             DataKeyKind::EdgePairIndex(key) => key.encoded_len(),
             DataKeyKind::Vector(key) => key.encoded_len(),
             DataKeyKind::IndexMetadata(key) => key.encoded_len(),
-            DataKeyKind::IndexV2(key) => key.encoded_len(),
         }
     }
 
@@ -245,7 +234,6 @@ impl<'a> DataKeyKind<'a> {
             DataKeyKind::PropertyIndex(index_key) => index_key.encode_into(buf),
             DataKeyKind::Vector(vector_key) => vector_key.encode_into(buf),
             DataKeyKind::IndexMetadata(key) => key.encode_into(buf),
-            DataKeyKind::IndexV2(key) => key.encode_into(buf),
         }
     }
 
@@ -290,9 +278,6 @@ impl<'a> DataKeyKind<'a> {
             KeyPrefix::EdgePairIndex => Ok(DataKeyKind::EdgePairIndex(
                 EdgePairIndexKey::parse_from_slice(slice)?,
             )),
-            KeyPrefix::IndexV2 => Ok(DataKeyKind::IndexV2(
-                index_v2::IndexV2Key::parse_from_slice(slice)?,
-            )),
             KeyPrefix::Metadata => Ok(DataKeyKind::IndexMetadata(MetadataKey::parse_from_slice(
                 slice,
             )?)),
@@ -314,8 +299,6 @@ impl<'a> DataKeyKind<'a> {
 pub(crate) enum GlobalKeyKind<'a> {
     /// `[0xFF]...`
     Metadata(MetadataKey<'a>),
-    /// V2-only database-global marker, queue, reachability, and GC keys.
-    IndexV2(index_v2::GlobalIndexV2Key),
 }
 
 impl<'a> GlobalKeyKind<'a> {
@@ -323,7 +306,6 @@ impl<'a> GlobalKeyKind<'a> {
     fn encoded_len(&self) -> usize {
         match self {
             Self::Metadata(key) => key.encoded_len(),
-            Self::IndexV2(key) => key.encoded_len(),
         }
     }
 
@@ -331,7 +313,6 @@ impl<'a> GlobalKeyKind<'a> {
     pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
         match self {
             Self::Metadata(key) => key.encode_into(buf),
-            Self::IndexV2(key) => key.encode_into(buf),
         }
     }
 }
@@ -352,9 +333,9 @@ impl<'a> Key<'a> {
     pub(crate) fn data_prefix(scope: DataScope, logical_prefix: Bytes) -> Bytes {
         match scope {
             DataScope::LegacyUnscoped => logical_prefix,
-            DataScope::Tenant(tenant_id) => {
-                let mut bytes = Vec::with_capacity(DataScope::PREFIX_LEN + logical_prefix.len());
-                bytes.put_u128(tenant_id.as_u128());
+            scope @ DataScope::Tenant(_) => {
+                let mut bytes = Vec::with_capacity(scope.encoded_len() + logical_prefix.len());
+                scope.encode_key_prefix(&mut bytes);
                 bytes.extend_from_slice(&logical_prefix);
                 Bytes::from(bytes)
             }
@@ -400,9 +381,7 @@ impl<'a> Key<'a> {
         match self {
             Self::Global { kind } => kind.encode_into(&mut bytes),
             Self::Data { scope, kind } => {
-                if let DataScope::Tenant(tenant_id) = scope {
-                    bytes.put_u128(tenant_id.as_u128());
-                }
+                scope.encode_key_prefix(&mut bytes);
                 kind.encode_into(&mut bytes);
             }
         }
@@ -442,8 +421,6 @@ mod tests {
         assert_eq!(KeyPrefix::EdgeEndpoints.as_slice(), &[0x04]);
         assert_eq!(KeyPrefix::EdgePairIndex.as_u8(), 0x05);
         assert_eq!(KeyPrefix::EdgePairIndex.as_slice(), &[0x05]);
-        assert_eq!(KeyPrefix::IndexV2.as_u8(), 0x06);
-        assert_eq!(KeyPrefix::IndexV2.as_slice(), &[0x06]);
         assert_eq!(KeyPrefix::Metadata.as_u8(), 0xFF);
         assert_eq!(KeyPrefix::Metadata.as_slice(), &[0xFF]);
         assert!(matches!(
@@ -458,7 +435,10 @@ mod tests {
             KeyPrefix::from_slice(&[0x05]).unwrap(),
             KeyPrefix::EdgePairIndex
         );
-        assert_eq!(KeyPrefix::from_slice(&[0x06]).unwrap(), KeyPrefix::IndexV2);
+        assert!(matches!(
+            KeyPrefix::from_slice(&[0x06]),
+            Err(EncodingError::InvalidKeyPrefix(0x06))
+        ));
         assert_eq!(KeyPrefix::from_slice(&[0xFF]).unwrap(), KeyPrefix::Metadata);
         assert!(matches!(
             KeyPrefix::from_slice(&[]),
@@ -877,7 +857,8 @@ mod tests {
             kind: DataKeyKind::NodeProperty(NodePropertyKey::new(42)),
         }
         .to_bytes();
-        let mut expected = tenant.as_u128().to_be_bytes().to_vec();
+        let mut expected = vec![tenant::TENANT_KEY_PREFIX];
+        expected.extend_from_slice(&tenant.as_u128().to_be_bytes());
         expected.extend_from_slice(
             DataKeyKind::NodeProperty(NodePropertyKey::new(42))
                 .to_bytes()
@@ -914,7 +895,8 @@ mod tests {
                 if message == "physical key does not match tenant scope"
         ));
 
-        let mut malformed = tenant_a.as_u128().to_be_bytes().to_vec();
+        let mut malformed = vec![tenant::TENANT_KEY_PREFIX];
+        malformed.extend_from_slice(&tenant_a.as_u128().to_be_bytes());
         malformed.push(0xFE);
         assert!(matches!(
             Key::parse_from_slice(DataScope::Tenant(tenant_a), &malformed),
@@ -932,7 +914,8 @@ mod tests {
         }
         .to_bytes();
 
-        let mut expected = tenant.as_u128().to_be_bytes().to_vec();
+        let mut expected = vec![tenant::TENANT_KEY_PREFIX];
+        expected.extend_from_slice(&tenant.as_u128().to_be_bytes());
         expected.extend_from_slice(&[0x03, 0x04]);
         expected.extend_from_slice(&label_hash);
 

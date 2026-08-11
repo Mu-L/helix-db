@@ -19,7 +19,7 @@ use crate::config::VectorIndexDefinition;
 use crate::encoding::v1::keys::vectors::{
     VectorIndexMetadataKey, VectorKey, VectorSimHashKey, VectorStorageLane, VectorUpperNeighborsKey,
 };
-use crate::index_v2::ValidatedVectorIndexDefinition;
+use crate::index_lifecycle::ValidatedVectorIndexDefinition;
 use crate::search::vector::distance::{self, Cosine};
 use crate::search::vector::generation::{CURRENT_SIMHASH_ALGORITHM_VERSION, CURRENT_SIMHASH_SEED};
 use crate::search::vector::read_fault_production_support::{FaultingRead, ReadFault};

@@ -25,7 +25,7 @@ impl<'db> ExecutionContext<'db> {
         let limit = limit.map(|limit| limit.get());
         let query = range_query(self, range)?;
         let identity = secondary_range_identity(
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             key.label.as_ref(),
             key.property.as_ref(),
         )?;
@@ -72,7 +72,7 @@ impl<'db> ExecutionContext<'db> {
         let limit = limit.map(|limit| limit.get());
         let query = range_query(self, range)?;
         let identity = secondary_range_identity(
-            crate::index_v2::IndexElementKind::Edge,
+            crate::index_lifecycle::IndexElementKind::Edge,
             key.label.as_ref(),
             key.property.as_ref(),
         )?;
@@ -115,15 +115,15 @@ impl<'db> ExecutionContext<'db> {
 /// Direction remains part of the validated definition carried by the Active
 /// handle and is checked against the planner request before physical I/O.
 fn secondary_range_identity(
-    element_kind: crate::index_v2::IndexElementKind,
+    element_kind: crate::index_lifecycle::IndexElementKind,
     label: &str,
     property: &str,
-) -> Result<crate::index_v2::IndexIdentity> {
-    Ok(crate::index_v2::IndexIdentity::new(
-        crate::index_v2::IndexIdentityFamily::SecondaryRange,
+) -> Result<crate::index_lifecycle::IndexIdentity> {
+    Ok(crate::index_lifecycle::IndexIdentity::new(
+        crate::index_lifecycle::IndexIdentityFamily::SecondaryRange,
         element_kind,
-        crate::index_v2::IndexComponent::try_new("label", label)?,
-        crate::index_v2::IndexComponent::try_new("property", property)?,
+        crate::index_lifecycle::IndexComponent::try_new("label", label)?,
+        crate::index_lifecycle::IndexComponent::try_new("property", property)?,
     ))
 }
 
@@ -131,7 +131,7 @@ fn secondary_range_identity(
 async fn scan_node_range_in_view(
     context: &ExecutionContext<'_>,
     reader: &(impl DbReadOps + Send + Sync),
-    identity: &crate::index_v2::IndexIdentity,
+    identity: &crate::index_lifecycle::IndexIdentity,
     query: &OwnedRangeQuery,
     direction: StorageRangeIndexDirection,
     limit: Option<usize>,
@@ -147,7 +147,7 @@ async fn scan_node_range_in_view(
 async fn scan_edge_range_in_view(
     context: &ExecutionContext<'_>,
     reader: &(impl DbReadOps + Send + Sync),
-    identity: &crate::index_v2::IndexIdentity,
+    identity: &crate::index_lifecycle::IndexIdentity,
     query: &OwnedRangeQuery,
     direction: StorageRangeIndexDirection,
     limit: Option<usize>,
@@ -165,14 +165,17 @@ async fn scan_edge_range_in_view(
 async fn scan_managed_range_in_view(
     context: &ExecutionContext<'_>,
     reader: &(impl DbReadOps + Send + Sync),
-    identity: &crate::index_v2::IndexIdentity,
-    query: Option<&crate::index_v2::secondary::SecondaryRangeQuery>,
+    identity: &crate::index_lifecycle::IndexIdentity,
+    query: Option<&crate::index_lifecycle::secondary::SecondaryRangeQuery>,
     requested_direction: StorageRangeIndexDirection,
     limit: Option<usize>,
 ) -> Result<Vec<u64>> {
-    let Some(record) =
-        crate::index_v2::repository::load_index_record(reader, context.tenant_scope, identity)
-            .await?
+    let Some(record) = crate::index_lifecycle::repository::load_index_record(
+        reader,
+        context.tenant_scope,
+        identity,
+    )
+    .await?
     else {
         return Err(HelixDbError::IndexLifecycleUnavailable {
             family: crate::error::IndexFamily::Secondary,
@@ -180,7 +183,7 @@ async fn scan_managed_range_in_view(
         });
     };
     let Some(active) =
-        crate::index_v2::ActiveIndexHandle::try_from_record(context.tenant_scope, &record)
+        crate::index_lifecycle::ActiveIndexHandle::try_from_record(context.tenant_scope, &record)
     else {
         return Err(HelixDbError::IndexLifecycleUnavailable {
             family: crate::error::IndexFamily::Secondary,
@@ -201,12 +204,13 @@ async fn scan_managed_range_in_view(
             "planner range direction disagrees with its Active secondary definition".to_string(),
         ));
     }
-    crate::index_v2::secondary::scan_active_range_generation(reader, &active, query, limit).await
+    crate::index_lifecycle::secondary::scan_active_range_generation(reader, &active, query, limit)
+        .await
 }
 
 enum OwnedRangeQuery {
     All,
-    Bounded(crate::index_v2::secondary::SecondaryRangeQuery),
+    Bounded(crate::index_lifecycle::secondary::SecondaryRangeQuery),
 }
 
 fn range_query(ctx: &ExecutionContext<'_>, range: &ir::IndexRange) -> Result<OwnedRangeQuery> {
@@ -215,7 +219,7 @@ fn range_query(ctx: &ExecutionContext<'_>, range: &ir::IndexRange) -> Result<Own
         ir::IndexRange::Lower { lower } => {
             let value = range_value(ctx, bound_value(lower))?;
             Ok(OwnedRangeQuery::Bounded(
-                crate::index_v2::secondary::SecondaryRangeQuery::Lower {
+                crate::index_lifecycle::secondary::SecondaryRangeQuery::Lower {
                     value,
                     inclusive: bound_is_inclusive(lower),
                 },
@@ -224,7 +228,7 @@ fn range_query(ctx: &ExecutionContext<'_>, range: &ir::IndexRange) -> Result<Own
         ir::IndexRange::Upper { upper } => {
             let value = range_value(ctx, bound_value(upper))?;
             Ok(OwnedRangeQuery::Bounded(
-                crate::index_v2::secondary::SecondaryRangeQuery::Upper {
+                crate::index_lifecycle::secondary::SecondaryRangeQuery::Upper {
                     value,
                     inclusive: bound_is_inclusive(upper),
                 },
@@ -234,7 +238,7 @@ fn range_query(ctx: &ExecutionContext<'_>, range: &ir::IndexRange) -> Result<Own
             let lower = range_value(ctx, bound_value(bounds.lower()))?;
             let upper = range_value(ctx, bound_value(bounds.upper()))?;
             Ok(OwnedRangeQuery::Bounded(
-                crate::index_v2::secondary::SecondaryRangeQuery::Between {
+                crate::index_lifecycle::secondary::SecondaryRangeQuery::Between {
                     lower,
                     lower_inclusive: bound_is_inclusive(bounds.lower()),
                     upper,

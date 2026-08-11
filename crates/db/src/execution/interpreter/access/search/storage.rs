@@ -29,7 +29,7 @@ use slatedb::DbReadOps;
 /// searched with another generation's canonical definition.
 pub(super) struct ResolvedTextManifestRoot<'generation> {
     generation: &'generation ResolvedTextGenerationHandle,
-    root: crate::index_v2::text::serving::ValidatedActiveTextManifestRoot,
+    root: crate::index_lifecycle::text::serving::ValidatedActiveTextManifestRoot,
 }
 
 impl<'db> ExecutionContext<'db> {
@@ -280,7 +280,7 @@ async fn load_text_root_in_view<'generation>(
     reader: &(impl DbReadOps + Sync),
     generation: &'generation ResolvedTextGenerationHandle,
 ) -> Result<Option<ResolvedTextManifestRoot<'generation>>> {
-    let root = crate::index_v2::text::serving::load_active_manifest_root(
+    let root = crate::index_lifecycle::text::serving::load_active_manifest_root(
         reader,
         generation.physical(),
         generation.partition(),
@@ -300,7 +300,7 @@ async fn search_text_manifest_in_view(
     let generation = manifest.generation;
     let root = &manifest.root;
     let definition = generation.physical().definition();
-    let statistics = match crate::index_v2::text::statistics::load_query_statistics(
+    let statistics = match crate::index_lifecycle::text::statistics::load_query_statistics(
         reader,
         generation.physical().scope(),
         root.index_id(),
@@ -311,22 +311,23 @@ async fn search_text_manifest_in_view(
     )
     .await?
     {
-        crate::index_v2::text::statistics::LoadedTextQueryStatistics::EmptyQuery => {
+        crate::index_lifecycle::text::statistics::LoadedTextQueryStatistics::EmptyQuery => {
             return Ok(Vec::new());
         }
-        crate::index_v2::text::statistics::LoadedTextQueryStatistics::EmptyCorpus => {
+        crate::index_lifecycle::text::statistics::LoadedTextQueryStatistics::EmptyCorpus => {
             return Ok(Vec::new());
         }
-        crate::index_v2::text::statistics::LoadedTextQueryStatistics::Ready(statistics) => {
+        crate::index_lifecycle::text::statistics::LoadedTextQueryStatistics::Ready(statistics) => {
             statistics
         }
     };
     const PAGE_READ_CONCURRENCY: usize = 4;
     let loaded_pages = futures::stream::iter(0..root.page_count())
         .map(|page| async move {
-            #[cfg(feature = "index-v2-lifecycle-testing")]
-            crate::index_v2_lifecycle_testing::pause_text_search_before_manifest_page(page).await;
-            crate::index_v2::text::serving::load_active_manifest_page(reader, root, page).await
+            #[cfg(feature = "index-lifecycle-testing")]
+            crate::index_lifecycle_testing::pause_text_search_before_manifest_page(page).await;
+            crate::index_lifecycle::text::serving::load_active_manifest_page(reader, root, page)
+                .await
         })
         .buffered(PAGE_READ_CONCURRENCY)
         .collect::<Vec<_>>()
@@ -445,16 +446,18 @@ mod tests {
     use super::*;
     use crate::config::TextIndexDefinition;
     use crate::encoding::keys::tenant::DataScope;
-    use crate::encoding::v1::keys::index_v2::{
-        IndexEntity, IndexV2Key, TextEntityStateKey, TextManifestPageKey, TextManifestRootKey,
+    use crate::encoding::v2::keys::Key;
+    use crate::encoding::v2::keys::{
+        IndexEntity, ScopedKey, TextEntityStateKey, TextManifestPageKey, TextManifestRootKey,
     };
-    use crate::encoding::v1::keys::{DataKeyKind, Key};
-    use crate::encoding::v1::values::index_v2::{encode_index_record, encode_work_value};
-    use crate::index_v2::work::{
+    use crate::encoding::v2::values::{
+        encode_index_record, encode_manifest_page, encode_manifest_root, encode_text_entity_state,
+    };
+    use crate::index_lifecycle::work::{
         BlobRef, SplitRef, TextEntityStateValue, TextManifestPageValue, TextManifestRootValue,
         TextPartition,
     };
-    use crate::index_v2::{
+    use crate::index_lifecycle::{
         IndexEntityId, IndexGenerationId, IndexOperationId, IndexRecordV2, IndexRevision,
         IndexStateTransition, PhysicalGeneration, TextLogicalVersion, TextManifestRevision,
         ValidatedDynamicIndexDefinition, ValidatedTextIndexDefinition,
@@ -602,7 +605,7 @@ mod tests {
             .begin(slatedb::IsolationLevel::SerializableSnapshot)
             .await
             .unwrap();
-        let index_id = crate::index_v2::repository::allocate_index_id(&transaction)
+        let index_id = crate::index_lifecycle::repository::allocate_index_id(&transaction)
             .await
             .unwrap();
         let generation = IndexGenerationId::initial();
@@ -620,7 +623,7 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::index_record(active.identity().clone())),
+                    kind: ScopedKey::index_record(active.identity().clone()),
                 }
                 .to_bytes(),
                 encode_index_record(&active),
@@ -636,21 +639,19 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::TextManifestRoot(root)),
+                    kind: ScopedKey::TextManifestRoot(root),
                 }
                 .to_bytes(),
-                encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(
-                        TextManifestRootValue::try_new(
-                            index_id,
-                            generation,
-                            partition.clone(),
-                            TextManifestRevision::new(3).unwrap(),
-                            2,
-                            2,
-                        )
-                        .unwrap(),
-                    ),
+                encode_manifest_root(
+                    &TextManifestRootValue::try_new(
+                        index_id,
+                        generation,
+                        partition.clone(),
+                        TextManifestRevision::new(3).unwrap(),
+                        2,
+                        2,
+                    )
+                    .unwrap(),
                 ),
             )
             .unwrap();
@@ -660,74 +661,65 @@ mod tests {
                 .put(
                     Key::Data {
                         scope: DataScope::LegacyUnscoped,
-                        kind: DataKeyKind::IndexV2(IndexV2Key::TextManifestPage(
-                            TextManifestPageKey { root, page },
-                        )),
+                        kind: ScopedKey::TextManifestPage(TextManifestPageKey { root, page }),
                     }
                     .to_bytes(),
-                    encode_work_value(
-                        &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestPage(
-                            TextManifestPageValue::try_new(
-                                index_id,
-                                generation,
-                                partition.clone(),
-                                page,
-                                vec![split],
-                            )
-                            .unwrap(),
-                        ),
+                    encode_manifest_page(
+                        &TextManifestPageValue::try_new(
+                            index_id,
+                            generation,
+                            partition.clone(),
+                            page,
+                            vec![split],
+                        )
+                        .unwrap(),
                     ),
                 )
                 .unwrap();
         }
         let mut statistics =
-            crate::index_v2::text::statistics::PreparedTextStatisticsBatch::default();
+            crate::index_lifecycle::text::statistics::PreparedTextStatisticsBatch::default();
         for (entity_id, text) in documents {
             let entity = IndexEntity {
-                kind: crate::index_v2::IndexElementKind::Node,
+                kind: crate::index_lifecycle::IndexElementKind::Node,
                 id: IndexEntityId::new(entity_id),
             };
-            let contribution = crate::index_v2::text::statistics::present_contribution(
+            let contribution = crate::index_lifecycle::text::statistics::present_contribution(
                 runtime.analyzer(),
                 partition.clone(),
                 text,
             )
             .unwrap();
-            let transition = crate::index_v2::text::statistics::prepare_source_scan_in_batch(
-                &transaction,
-                &statistics,
-                DataScope::LegacyUnscoped,
-                index_id,
-                generation,
-                entity,
-                contribution,
-            )
-            .await
-            .unwrap()
-            .unwrap();
+            let transition =
+                crate::index_lifecycle::text::statistics::prepare_source_scan_in_batch(
+                    &transaction,
+                    &statistics,
+                    DataScope::LegacyUnscoped,
+                    index_id,
+                    generation,
+                    entity,
+                    contribution,
+                )
+                .await
+                .unwrap()
+                .unwrap();
             statistics.push(transition).unwrap();
             transaction
                 .put(
                     Key::Data {
                         scope: DataScope::LegacyUnscoped,
-                        kind: DataKeyKind::IndexV2(IndexV2Key::TextEntityState(
-                            TextEntityStateKey { root, entity },
-                        )),
+                        kind: ScopedKey::TextEntityState(TextEntityStateKey { root, entity }),
                     }
                     .to_bytes(),
-                    encode_work_value(
-                        &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextEntityState(
-                            TextEntityStateValue {
-                                index_id,
-                                generation,
-                                partition: partition.clone(),
-                                entity_kind: entity.kind,
-                                entity_id: entity.id,
-                                logical_version: TextLogicalVersion::initial(),
-                                live: true,
-                            },
-                        ),
-                    ),
+                    encode_text_entity_state(&TextEntityStateValue {
+                        index_id,
+                        generation,
+                        partition: partition.clone(),
+                        entity_kind: entity.kind,
+                        entity_id: entity.id,
+                        logical_version: TextLogicalVersion::initial(),
+                        live: true,
+                    }),
                 )
                 .unwrap();
         }
@@ -817,28 +809,24 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::TextEntityState(TextEntityStateKey {
+                    kind: ScopedKey::TextEntityState(TextEntityStateKey {
                         root,
                         entity: IndexEntity {
-                            kind: crate::index_v2::IndexElementKind::Node,
+                            kind: crate::index_lifecycle::IndexElementKind::Node,
                             id: IndexEntityId::new(9),
                         },
-                    })),
+                    }),
                 }
                 .to_bytes(),
-                encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextEntityState(
-                        TextEntityStateValue {
-                            index_id,
-                            generation,
-                            partition: partition.clone(),
-                            entity_kind: crate::index_v2::IndexElementKind::Node,
-                            entity_id: IndexEntityId::new(9),
-                            logical_version: TextLogicalVersion::initial(),
-                            live: false,
-                        },
-                    ),
-                ),
+                encode_text_entity_state(&TextEntityStateValue {
+                    index_id,
+                    generation,
+                    partition: partition.clone(),
+                    entity_kind: crate::index_lifecycle::IndexElementKind::Node,
+                    entity_id: IndexEntityId::new(9),
+                    logical_version: TextLogicalVersion::initial(),
+                    live: false,
+                }),
             )
             .await
             .unwrap();
@@ -872,21 +860,19 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::TextManifestRoot(root)),
+                    kind: ScopedKey::TextManifestRoot(root),
                 }
                 .to_bytes(),
-                encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(
-                        TextManifestRootValue::try_new(
-                            index_id,
-                            generation,
-                            partition.clone(),
-                            TextManifestRevision::new(3).unwrap(),
-                            1,
-                            1,
-                        )
-                        .unwrap(),
-                    ),
+                encode_manifest_root(
+                    &TextManifestRootValue::try_new(
+                        index_id,
+                        generation,
+                        partition.clone(),
+                        TextManifestRevision::new(3).unwrap(),
+                        1,
+                        1,
+                    )
+                    .unwrap(),
                 ),
             )
             .unwrap();
@@ -894,17 +880,12 @@ mod tests {
             .put(
                 Key::Data {
                     scope: DataScope::LegacyUnscoped,
-                    kind: DataKeyKind::IndexV2(IndexV2Key::TextManifestPage(TextManifestPageKey {
-                        root,
-                        page: 0,
-                    })),
+                    kind: ScopedKey::TextManifestPage(TextManifestPageKey { root, page: 0 }),
                 }
                 .to_bytes(),
-                encode_work_value(
-                    &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestPage(
-                        TextManifestPageValue::try_new(index_id, generation, partition, 0, splits)
-                            .unwrap(),
-                    ),
+                encode_manifest_page(
+                    &TextManifestPageValue::try_new(index_id, generation, partition, 0, splits)
+                        .unwrap(),
                 ),
             )
             .unwrap();
@@ -947,7 +928,7 @@ mod tests {
             crate::search::vector::index_id_from_name(physical_name),
             NonZeroU64::MIN,
             1,
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             VectorDimension::try_new(2).unwrap(),
         )
         .unwrap();
@@ -988,7 +969,7 @@ mod tests {
             crate::search::vector::index_id_from_name(physical_name),
             NonZeroU64::MIN,
             1,
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             VectorDimension::try_new(2).unwrap(),
         )
         .unwrap();
@@ -1042,7 +1023,7 @@ mod tests {
             crate::search::vector::index_id_from_name("managed-vector"),
             NonZeroU64::MIN,
             1,
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             VectorDimension::try_new(3).unwrap(),
         )
         .unwrap();
@@ -1098,7 +1079,7 @@ mod tests {
             crate::search::vector::index_id_from_name(physical_name),
             NonZeroU64::MIN,
             1,
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             VectorDimension::try_new(2).unwrap(),
         )
         .unwrap();
@@ -1171,7 +1152,7 @@ mod tests {
             crate::search::vector::index_id_from_name(physical_name),
             NonZeroU64::MIN,
             1,
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             VectorDimension::try_new(2).unwrap(),
         )
         .unwrap();
@@ -1244,7 +1225,7 @@ mod tests {
             crate::search::vector::index_id_from_name("request-vector"),
             NonZeroU64::MIN,
             1,
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             VectorDimension::try_new(2).unwrap(),
         )
         .unwrap();

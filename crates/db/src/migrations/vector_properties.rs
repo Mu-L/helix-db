@@ -17,7 +17,7 @@ use crate::encoding::keys::tenant::DataScope;
 use crate::encoding::property::{self, Property};
 use crate::encoding::v1::keys::{DataKeyKind, EdgePropertyByIdKey, Key, KeyPrefix};
 use crate::error::{HelixDbError, Result};
-use crate::index_v2::{IndexElementKind, ValidatedDynamicIndexDefinition};
+use crate::index_lifecycle::{IndexElementKind, ValidatedDynamicIndexDefinition};
 use crate::search;
 use crate::search::vector::{self, VectorIndex};
 
@@ -32,8 +32,10 @@ use super::{
 /// unrelated definitions. The catalog is rebuilt after a crash and remains
 /// immutable until materialization completes.
 pub(super) struct LegacyVectorPropertyCatalog {
-    by_scope:
-        BTreeMap<(IndexElementKind, String), Vec<crate::index_v2::ValidatedVectorIndexDefinition>>,
+    by_scope: BTreeMap<
+        (IndexElementKind, String),
+        Vec<crate::index_lifecycle::ValidatedVectorIndexDefinition>,
+    >,
 }
 
 impl LegacyVectorPropertyCatalog {
@@ -44,7 +46,7 @@ impl LegacyVectorPropertyCatalog {
     ) -> Result<Self> {
         let mut by_scope = BTreeMap::<
             (IndexElementKind, String),
-            Vec<crate::index_v2::ValidatedVectorIndexDefinition>,
+            Vec<crate::index_lifecycle::ValidatedVectorIndexDefinition>,
         >::new();
         let mut identities = BTreeSet::new();
         for row in super::load_legacy_definition_rows(read, scope).await? {
@@ -83,7 +85,7 @@ impl LegacyVectorPropertyCatalog {
         &self,
         element_kind: IndexElementKind,
         properties: &[Property],
-    ) -> &[crate::index_v2::ValidatedVectorIndexDefinition] {
+    ) -> &[crate::index_lifecycle::ValidatedVectorIndexDefinition] {
         let Some(label) = super::label_of(properties) else {
             return &[];
         };
@@ -409,7 +411,7 @@ mod tests {
     };
     use crate::encoding::v1::values::edge_endpoints::EdgeEndpointsValue;
     use crate::encoding::v1::values::vectors::{metadata, simhash};
-    use crate::index_v2::ValidatedVectorIndexDefinition;
+    use crate::index_lifecycle::ValidatedVectorIndexDefinition;
     use crate::search::vector::{self, Item, VectorDistanceMetric, VectorIndexConfig};
 
     async fn database(name: &str) -> Db {

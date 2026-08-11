@@ -429,7 +429,7 @@ mod tests {
                 902,
                 std::num::NonZeroU64::MIN,
                 1,
-                crate::index_v2::IndexElementKind::Node,
+                crate::index_lifecycle::IndexElementKind::Node,
                 crate::search::vector::VectorDimension::try_new(4).unwrap(),
             )
             .unwrap(),

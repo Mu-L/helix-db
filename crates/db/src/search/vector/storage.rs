@@ -36,7 +36,7 @@ use crate::encoding::v1::values::vectors::{
 };
 use crate::encoding::NodeId;
 use crate::error::HelixDbError;
-use crate::index_v2::{ValidatedVectorIndexDefinition, VectorPhysicalIndexId};
+use crate::index_lifecycle::{ValidatedVectorIndexDefinition, VectorPhysicalIndexId};
 
 // Legacy item validation delegates metric semantics to the central decoder.
 #[cfg(any(test, feature = "production-coverage"))]
@@ -2559,7 +2559,7 @@ mod tests {
     use crate::encoding::keys::tenant::TenantId;
     use crate::encoding::v1::keys::vectors::VectorIndexMetadataKey;
     use crate::encoding::v1::values::vectors::simhash::encode_simhash;
-    use crate::index_v2::ValidatedDynamicIndexDefinition;
+    use crate::index_lifecycle::ValidatedDynamicIndexDefinition;
     use crate::search::vector::{distance, Item, VectorDistanceMetric};
 
     fn legacy_definition() -> ValidatedVectorIndexDefinition {

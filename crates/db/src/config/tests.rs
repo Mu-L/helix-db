@@ -10,7 +10,7 @@ use super::{
     TextIndexDefinition, VectorElementType, VectorIndexDefinition, VectorMemoryBudget,
     VectorMemoryHydrationMode, VectorMemorySettings,
 };
-use crate::index_v2::{
+use crate::index_lifecycle::{
     IndexElementKind, IndexIdentityFamily, ValidatedDynamicIndexDefinition,
     ValidatedSecondaryIndexDefinition,
 };

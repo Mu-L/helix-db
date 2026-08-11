@@ -17,7 +17,7 @@ use crate::config::VectorIndexDefinition;
 use crate::encoding::keys::tenant::TenantId;
 use crate::encoding::v1::keys::vectors::VectorTxnGuardKey;
 use crate::encoding::v1::values::vectors::simhash::encode_simhash;
-use crate::index_v2::{ValidatedDynamicIndexDefinition, ValidatedVectorIndexDefinition};
+use crate::index_lifecycle::{ValidatedDynamicIndexDefinition, ValidatedVectorIndexDefinition};
 use crate::search::vector::read_fault_production_support::{FaultingRead, ReadFault};
 use crate::search::vector::{distance, encode_item, Item, VectorDistanceMetric, VectorIndexConfig};
 

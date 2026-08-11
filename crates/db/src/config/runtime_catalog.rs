@@ -4,11 +4,11 @@ use helix_ast::index::RangeIndexDirection;
 use helix_planner::{catalog, ir};
 
 use crate::error::{HelixDbError, Result};
-use crate::{config, index_v2};
+use crate::{config, index_lifecycle};
 
 pub(crate) fn dynamic_index_definition_from_create_spec(
     spec: &ir::IndexDdlCreateSpec,
-) -> Result<crate::index_v2::ValidatedDynamicIndexDefinition> {
+) -> Result<crate::index_lifecycle::ValidatedDynamicIndexDefinition> {
     match spec {
         ir::IndexDdlCreateSpec::NodeEquality { key, uniqueness } => {
             let definition = match uniqueness {
@@ -93,62 +93,62 @@ pub(crate) fn dynamic_index_definition_from_create_spec(
 /// validated definition.
 pub(crate) fn dynamic_index_identity_from_drop_spec(
     spec: &ir::IndexDdlDropSpec,
-) -> Result<index_v2::IndexIdentity> {
+) -> Result<index_lifecycle::IndexIdentity> {
     let (family, element_kind, label, property) = match spec {
         ir::IndexDdlDropSpec::NodeEquality { key, .. } => (
-            index_v2::IndexIdentityFamily::SecondaryEquality,
-            index_v2::IndexElementKind::Node,
+            index_lifecycle::IndexIdentityFamily::SecondaryEquality,
+            index_lifecycle::IndexElementKind::Node,
             key.label.as_ref(),
             key.property.as_ref(),
         ),
         ir::IndexDdlDropSpec::NodeRange { key } => (
-            index_v2::IndexIdentityFamily::SecondaryRange,
-            index_v2::IndexElementKind::Node,
+            index_lifecycle::IndexIdentityFamily::SecondaryRange,
+            index_lifecycle::IndexElementKind::Node,
             key.label.as_ref(),
             key.property.as_ref(),
         ),
         ir::IndexDdlDropSpec::EdgeEquality { key } => (
-            index_v2::IndexIdentityFamily::SecondaryEquality,
-            index_v2::IndexElementKind::Edge,
+            index_lifecycle::IndexIdentityFamily::SecondaryEquality,
+            index_lifecycle::IndexElementKind::Edge,
             key.label.as_ref(),
             key.property.as_ref(),
         ),
         ir::IndexDdlDropSpec::EdgeRange { key } => (
-            index_v2::IndexIdentityFamily::SecondaryRange,
-            index_v2::IndexElementKind::Edge,
+            index_lifecycle::IndexIdentityFamily::SecondaryRange,
+            index_lifecycle::IndexElementKind::Edge,
             key.label.as_ref(),
             key.property.as_ref(),
         ),
         ir::IndexDdlDropSpec::NodeVector { key } => (
-            index_v2::IndexIdentityFamily::Vector,
-            index_v2::IndexElementKind::Node,
+            index_lifecycle::IndexIdentityFamily::Vector,
+            index_lifecycle::IndexElementKind::Node,
             key.label.as_ref(),
             key.property.as_ref(),
         ),
         ir::IndexDdlDropSpec::EdgeVector { key } => (
-            index_v2::IndexIdentityFamily::Vector,
-            index_v2::IndexElementKind::Edge,
+            index_lifecycle::IndexIdentityFamily::Vector,
+            index_lifecycle::IndexElementKind::Edge,
             key.label.as_ref(),
             key.property.as_ref(),
         ),
         ir::IndexDdlDropSpec::NodeText { key } => (
-            index_v2::IndexIdentityFamily::Text,
-            index_v2::IndexElementKind::Node,
+            index_lifecycle::IndexIdentityFamily::Text,
+            index_lifecycle::IndexElementKind::Node,
             key.label.as_ref(),
             key.property.as_ref(),
         ),
         ir::IndexDdlDropSpec::EdgeText { key } => (
-            index_v2::IndexIdentityFamily::Text,
-            index_v2::IndexElementKind::Edge,
+            index_lifecycle::IndexIdentityFamily::Text,
+            index_lifecycle::IndexElementKind::Edge,
             key.label.as_ref(),
             key.property.as_ref(),
         ),
     };
-    Ok(index_v2::IndexIdentity::new(
+    Ok(index_lifecycle::IndexIdentity::new(
         family,
         element_kind,
-        index_v2::IndexComponent::try_new("label", label)?,
-        index_v2::IndexComponent::try_new("property", property)?,
+        index_lifecycle::IndexComponent::try_new("label", label)?,
+        index_lifecycle::IndexComponent::try_new("property", property)?,
     ))
 }
 
@@ -160,8 +160,8 @@ pub(crate) fn dynamic_index_identity_from_drop_spec(
 /// definition again, closing a concurrent drop/recreate race.
 pub(crate) fn dynamic_index_definition_from_canonical_drop_spec(
     spec: &ir::IndexDdlDropSpec,
-    canonical: &index_v2::ValidatedDynamicIndexDefinition,
-) -> Result<index_v2::ValidatedDynamicIndexDefinition> {
+    canonical: &index_lifecycle::ValidatedDynamicIndexDefinition,
+) -> Result<index_lifecycle::ValidatedDynamicIndexDefinition> {
     let identity = dynamic_index_identity_from_drop_spec(spec)?;
     if canonical.identity() != identity {
         return Err(HelixDbError::IndexNotFound(format!("{identity:?}")));
@@ -179,7 +179,7 @@ pub(crate) fn dynamic_index_definition_from_canonical_drop_spec(
 pub(crate) fn dynamic_index_definition_from_drop_spec(
     spec: &ir::IndexDdlDropSpec,
     indexes: &config::RuntimeIndexCatalog,
-) -> Result<crate::index_v2::ValidatedDynamicIndexDefinition> {
+) -> Result<crate::index_lifecycle::ValidatedDynamicIndexDefinition> {
     let snapshot = indexes.planner_snapshot();
     let definition = match spec {
         ir::IndexDdlDropSpec::NodeEquality { .. }

@@ -24,7 +24,7 @@ use crate::encoding::v1::keys::vectors::{
     VectorIndexMetadataKey, VectorItemKey, VectorKey, VectorSimHashKey, VectorStorageLane,
 };
 use crate::encoding::v1::values::vectors::simhash::encode_simhash;
-use crate::index_v2::{ValidatedDynamicIndexDefinition, ValidatedVectorIndexDefinition};
+use crate::index_lifecycle::{ValidatedDynamicIndexDefinition, ValidatedVectorIndexDefinition};
 
 const DIMENSION: usize = 2;
 

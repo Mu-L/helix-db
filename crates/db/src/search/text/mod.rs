@@ -41,7 +41,7 @@ use crate::encoding::property::property::Property;
 use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::{keys, EdgeId, NodeId};
 use crate::error::HelixDbError;
-use crate::index_v2::work::{self, SplitPruning};
+use crate::index_lifecycle::work::{self, SplitPruning};
 use crate::search::{
     get_edge_properties_by_id, make_text_index_live_state_key_scoped,
     make_text_index_manifest_key_scoped, make_text_index_manifest_prefix_scoped,
@@ -462,11 +462,11 @@ pub async fn search_manifest_with_live_state_scoped(
 pub(crate) async fn search_manifest_with_v2_live_state_scoped(
     reader: &(impl DbReadOps + Send + Sync),
     runtime: TextSearchRuntime<'_>,
-    root: &crate::index_v2::text::serving::ValidatedActiveTextManifestRoot,
+    root: &crate::index_lifecycle::text::serving::ValidatedActiveTextManifestRoot,
     manifest: &TextIndexGenerationManifest,
     query: &str,
     k: usize,
-    statistics: &crate::index_v2::text::statistics::TextBm25Statistics,
+    statistics: &crate::index_lifecycle::text::statistics::TextBm25Statistics,
 ) -> Result<Vec<TextSearchHit>, HelixDbError> {
     search_manifest_with_state_source(
         reader,
@@ -489,7 +489,7 @@ enum TextLiveStateSource<'a> {
         index_name: &'a str,
     },
     /// Generation-owned state under an exact Active V2 manifest root.
-    V2(&'a crate::index_v2::text::serving::ValidatedActiveTextManifestRoot),
+    V2(&'a crate::index_lifecycle::text::serving::ValidatedActiveTextManifestRoot),
 }
 
 /// Runs the common split search while keeping live-state ownership explicit.
@@ -500,7 +500,7 @@ async fn search_manifest_with_state_source(
     state_source: TextLiveStateSource<'_>,
     query: &str,
     k: usize,
-    statistics: Option<&crate::index_v2::text::statistics::TextBm25Statistics>,
+    statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
 ) -> Result<Vec<TextSearchHit>, HelixDbError> {
     const SPLIT_READ_CONCURRENCY: usize = 8;
     const STATE_BATCH_SIZE: usize = 512;
@@ -717,7 +717,7 @@ impl SplitSearchReader {
         analyzer: TextAnalyzerKind,
         query: &str,
         limit: usize,
-        statistics: Option<&crate::index_v2::text::statistics::TextBm25Statistics>,
+        statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
     ) -> Result<Vec<TextSearchCandidate>, HelixDbError> {
         match self {
             Self::Cached(split) => {
@@ -759,9 +759,10 @@ async fn load_text_live_states_batch(
             }
         }
         TextLiveStateSource::V2(root) => {
-            let states =
-                crate::index_v2::text::serving::load_active_entity_states(reader, root, entity_ids)
-                    .await?;
+            let states = crate::index_lifecycle::text::serving::load_active_entity_states(
+                reader, root, entity_ids,
+            )
+            .await?;
             live_states.extend(states.into_iter().map(|(entity_id, state)| {
                 (
                     entity_id,
@@ -1725,7 +1726,7 @@ pub(crate) fn search_reader_candidates_with_statistics(
     analyzer: TextAnalyzerKind,
     query: &str,
     k: usize,
-    statistics: Option<&crate::index_v2::text::statistics::TextBm25Statistics>,
+    statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
 ) -> Result<Vec<TextSearchCandidate>, HelixDbError> {
     let terms = analyze_query_terms(analyzer, query);
     if terms.is_empty() || k == 0 {

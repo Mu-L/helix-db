@@ -23,7 +23,7 @@ impl VectorIndexConfig {
     /// This constructs the unchanged deployed metadata DTO; no V2 field is
     /// appended to its persisted bytes.
     pub(crate) fn from_v2_definition(
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         index_name: impl Into<String>,
     ) -> Self {
         Self {
@@ -180,7 +180,8 @@ mod tests {
         .with_adaptive_failure_prob(0.25)
         .unwrap();
         let definition =
-            crate::index_v2::ValidatedVectorIndexDefinition::try_from_runtime(&runtime).unwrap();
+            crate::index_lifecycle::ValidatedVectorIndexDefinition::try_from_runtime(&runtime)
+                .unwrap();
         let config = VectorIndexConfig::from_v2_definition(&definition, "v2-physical-17");
 
         assert_eq!(config.index_name, "v2-physical-17");
