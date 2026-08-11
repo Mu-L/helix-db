@@ -1,6 +1,11 @@
 use std::num::{NonZeroU64, NonZeroUsize};
+use std::time::Duration;
 
-use super::cache::{CacheConfig, SlateRuntimeConfig};
+use super::cache::{
+    CacheConfig, CacheMode, FtsMemoryCacheConfig, FtsWarmConfig, SimHasherCacheSettings,
+    SlateMemoryCacheConfig, SlateRuntimeConfig, SlateWarmConfig, VectorMemoryBudget,
+    VectorMemorySettings,
+};
 use super::index_lifecycle_throughput::IndexLifecycleThroughputTuning;
 use super::migrations::MigrationTuning;
 use super::search_index_backfill::SearchIndexBackfillLimits;
@@ -11,6 +16,47 @@ use crate::encoding::v1::values::edges::{
     ENCODING_TYPE_NONE,
 };
 use crate::id_allocator::DEFAULT_LEASE_SIZE;
+
+const MIB: u64 = 1024 * 1024;
+const EMBEDDED_VECTOR_MEMORY_BYTES: u64 = 64 * MIB;
+const EMBEDDED_SIMHASHER_MEMORY_BYTES: usize = 8 * MIB as usize;
+const EMBEDDED_SIMHASHER_ENTRIES: usize = 16;
+const EMBEDDED_FTS_MEMORY_BYTES: u64 = 16 * MIB;
+const EMBEDDED_FTS_GENERATION_GRACE_PERIOD_SECS: u64 = 300;
+const EMBEDDED_IN_MEMORY_SLATE_BLOCK_BYTES: u64 = 16 * MIB;
+const EMBEDDED_IN_MEMORY_SLATE_METADATA_BYTES: u64 = 8 * MIB;
+const EMBEDDED_DISK_SLATE_BLOCK_BYTES: u64 = 48 * MIB;
+const EMBEDDED_DISK_SLATE_METADATA_BYTES: u64 = 16 * MIB;
+const EMBEDDED_L0_SST_BYTES: usize = 16 * MIB as usize;
+const EMBEDDED_MAX_UNFLUSHED_BYTES: usize = 64 * MIB as usize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EmbeddedStorageProfile {
+    InMemory,
+    Disk,
+}
+
+impl EmbeddedStorageProfile {
+    const fn flush_interval(self) -> Duration {
+        match self {
+            Self::InMemory => Duration::from_millis(1),
+            Self::Disk => Duration::from_millis(5),
+        }
+    }
+
+    const fn slate_cache(self) -> (u64, u64) {
+        match self {
+            Self::InMemory => (
+                EMBEDDED_IN_MEMORY_SLATE_BLOCK_BYTES,
+                EMBEDDED_IN_MEMORY_SLATE_METADATA_BYTES,
+            ),
+            Self::Disk => (
+                EMBEDDED_DISK_SLATE_BLOCK_BYTES,
+                EMBEDDED_DISK_SLATE_METADATA_BYTES,
+            ),
+        }
+    }
+}
 
 /// Edge storage encoding selected for newly written edge lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -192,6 +238,46 @@ impl DbConfig {
             migrations: MigrationTuning::default(),
             open_attribution: None,
         }
+    }
+
+    /// Build source-specific local defaults for an embedded handle.
+    pub(crate) fn embedded_default(profile: EmbeddedStorageProfile) -> Self {
+        let mut slate = slatedb::Settings::default();
+        slate.flush_interval = Some(profile.flush_interval());
+        slate.l0_sst_size_bytes = EMBEDDED_L0_SST_BYTES;
+        slate.max_unflushed_bytes = EMBEDDED_MAX_UNFLUSHED_BYTES;
+
+        let (block_bytes, metadata_bytes) = profile.slate_cache();
+        let vector_memory = VectorMemorySettings::try_new(
+            VectorMemoryBudget::bounded(EMBEDDED_VECTOR_MEMORY_BYTES)
+                .expect("embedded vector cache capacity is nonzero"),
+            5,
+        )
+        .expect("embedded vector cache settings are valid")
+        .with_simhasher_cache(
+            SimHasherCacheSettings::try_new(
+                EMBEDDED_SIMHASHER_MEMORY_BYTES,
+                EMBEDDED_SIMHASHER_ENTRIES,
+            )
+            .expect("embedded SimHasher cache limits are nonzero"),
+        );
+        let cache = CacheConfig::new(
+            vector_memory,
+            CacheMode::Memory {
+                slate_db: SlateMemoryCacheConfig::try_new(block_bytes, metadata_bytes)
+                    .expect("embedded SlateDB cache capacities are nonzero"),
+                slate_warm: SlateWarmConfig::Off,
+                fts: Some(
+                    FtsMemoryCacheConfig::try_new(
+                        EMBEDDED_FTS_MEMORY_BYTES,
+                        FtsWarmConfig::Off,
+                        EMBEDDED_FTS_GENERATION_GRACE_PERIOD_SECS,
+                    )
+                    .expect("embedded FTS cache settings are valid"),
+                ),
+            },
+        );
+        Self::new().with_slate_settings(slate).with_cache(cache)
     }
 
     /// Edge encoding used for newly written edge lists.

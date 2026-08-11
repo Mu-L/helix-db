@@ -6,9 +6,9 @@ use super::{
     HelixConfig, NonEmptyPathBuf, ObjectStoreWarmLevel, RangeIndexDirection, RuntimeIndexCatalog,
     SearchIndexBackfillLimits, SecondaryIndexDefinition, SecondaryIndexElementType,
     SecondaryIndexKind, SecondaryIndexLifecycleBatchRows, SimHasherCacheSettings,
-    SlateHybridCacheConfig, SlateObjectStoreCacheSettings, TextAnalyzerKind, TextElementType,
-    TextIndexDefinition, VectorElementType, VectorIndexDefinition, VectorMemoryBudget,
-    VectorMemoryHydrationMode, VectorMemorySettings,
+    SlateHybridCacheConfig, SlateMemoryCacheConfig, SlateObjectStoreCacheSettings,
+    TextAnalyzerKind, TextElementType, TextIndexDefinition, VectorElementType,
+    VectorIndexDefinition, VectorMemoryBudget, VectorMemoryHydrationMode, VectorMemorySettings,
 };
 use crate::index_lifecycle::{
     IndexElementKind, IndexIdentityFamily, ValidatedDynamicIndexDefinition,
@@ -396,6 +396,8 @@ fn cache_constructor_edges_and_accessors_are_explicit_contracts() {
     );
     assert_eq!(slate_hybrid.disk().bytes(), 256);
     assert!(SlateHybridCacheConfig::try_new(64, "", 256).is_err());
+    assert!(SlateMemoryCacheConfig::try_new(0, 1).is_err());
+    assert!(SlateMemoryCacheConfig::try_new(1, 0).is_err());
     assert!(super::SlateWarmConfig::background(0, 1).is_err());
     assert!(super::SlateWarmConfig::blocking(1, 0).is_err());
     assert!(FtsWarmConfig::background(0, None).is_err());
@@ -413,6 +415,7 @@ fn cache_config_represents_vector_only_memory_and_hybrid_states() {
     let memory = CacheConfig::new(
         VectorMemorySettings::default(),
         CacheMode::Memory {
+            slate_db: SlateMemoryCacheConfig::try_new(48, 16).expect("valid Slate memory cache"),
             slate_warm: Default::default(),
             fts: Some(FtsMemoryCacheConfig::default()),
         },

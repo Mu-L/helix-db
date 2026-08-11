@@ -38,7 +38,7 @@ pub use config::{DbConfig, HelixConfig};
 
 #[cfg(any(test, feature = "production-coverage"))]
 use config::ValidatedDynamicIndexDefinition;
-use config::{runtime_catalog, CacheMode, RuntimeIndexCatalog};
+use config::{db::EmbeddedStorageProfile, runtime_catalog, CacheMode, RuntimeIndexCatalog};
 use error::{HelixDbError, Result};
 use execution::interpreter::{ExecutionResult, Interpreter};
 use foyer::{
@@ -56,8 +56,9 @@ use helix_planner::{
 use id_allocator::{EdgeIdAllocator, NodeIdAllocator};
 use serde_json::Value as JsonValue;
 use slatedb::db_cache::{
+    foyer::{FoyerCache, FoyerCacheOptions},
     foyer_hybrid::{FoyerHybridCache, FoyerHybridCacheMetrics},
-    CacheUsageSnapshot, CachedEntry, DbCache,
+    CacheUsageSnapshot, CachedEntry, DbCache, SplitCache,
 };
 #[cfg(test)]
 use slatedb::object_store::memory::InMemory;
@@ -260,6 +261,21 @@ pub enum HelixDbSource {
 }
 
 impl HelixDbSource {
+    /// Build the bounded defaults used by an embedded handle for this source.
+    ///
+    /// Local storage uses a shorter durability cadence and smaller cache/write-buffer
+    /// bounds than remote object storage. Object storage retains the general runtime
+    /// defaults because its latency and request-cost tradeoffs are different.
+    pub fn embedded_default_config(&self) -> DbConfig {
+        match self {
+            Self::InMemory { .. } | Self::InMemoryToken { .. } => {
+                DbConfig::embedded_default(EmbeddedStorageProfile::InMemory)
+            }
+            Self::Disk { .. } => DbConfig::embedded_default(EmbeddedStorageProfile::Disk),
+            Self::ObjectStorage { .. } => DbConfig::new(),
+        }
+    }
+
     fn into_parts(self) -> Result<(String, Arc<dyn ObjectStore>)> {
         match self {
             Self::InMemory { database } => {
@@ -739,7 +755,8 @@ enum CloseState {
 impl HelixDB {
     /// Open a read/write database handle.
     pub async fn open(source: HelixDbSource) -> Result<Self> {
-        Self::open_with_config(source, DbConfig::new()).await
+        let config = source.embedded_default_config();
+        Self::open_with_config(source, config).await
     }
 
     /// Open a read/write database handle backed by a caller-provided object store.
@@ -884,11 +901,10 @@ impl HelixDB {
 
         match config.cache().mode() {
             CacheMode::VectorMemoryOnly => builder = builder.with_db_cache_disabled(),
-            CacheMode::Memory { .. } => {}
-            CacheMode::Hybrid { .. } => {
+            CacheMode::Memory { .. } | CacheMode::Hybrid { .. } => {
                 let Some(cache) = &slate_db_cache else {
                     return Err(HelixDbError::Config(
-                        "hybrid cache mode must build a SlateDB cache".into(),
+                        "configured SlateDB cache mode must build a cache".into(),
                     ));
                 };
                 builder = builder.with_db_cache(Arc::clone(cache));
@@ -936,7 +952,8 @@ impl HelixDB {
 
     /// Open a read-only database handle.
     pub async fn open_reader(source: HelixDbSource) -> Result<Self> {
-        Self::open_reader_with_config(source, DbConfig::new()).await
+        let config = source.embedded_default_config();
+        Self::open_reader_with_config(source, config).await
     }
 
     /// Open a read-only database handle with explicit tuning config.
@@ -1020,11 +1037,10 @@ impl HelixDB {
             );
         match config.cache().mode() {
             CacheMode::VectorMemoryOnly => builder = builder.with_db_cache_disabled(),
-            CacheMode::Memory { .. } => {}
-            CacheMode::Hybrid { .. } => {
+            CacheMode::Memory { .. } | CacheMode::Hybrid { .. } => {
                 let Some(cache) = &slate_db_cache else {
                     return Err(HelixDbError::Config(
-                        "hybrid cache mode must build a SlateDB cache".into(),
+                        "configured SlateDB cache mode must build a cache".into(),
                     ));
                 };
                 builder = builder.with_db_cache(Arc::clone(cache));
@@ -2597,7 +2613,25 @@ fn foyer_disk_block_size(disk_capacity_bytes: usize) -> usize {
 
 async fn build_slate_db_cache(config: &CacheMode) -> Result<Option<Arc<dyn DbCache>>> {
     match config {
-        CacheMode::VectorMemoryOnly | CacheMode::Memory { .. } => Ok(None),
+        CacheMode::VectorMemoryOnly => Ok(None),
+        CacheMode::Memory { slate_db, .. } => {
+            let block_cache: Arc<dyn DbCache> =
+                Arc::new(FoyerCache::new_with_opts(FoyerCacheOptions {
+                    max_capacity: slate_db.block_bytes(),
+                    ..Default::default()
+                }));
+            let metadata_cache: Arc<dyn DbCache> =
+                Arc::new(FoyerCache::new_with_opts(FoyerCacheOptions {
+                    max_capacity: slate_db.metadata_bytes(),
+                    ..Default::default()
+                }));
+            Ok(Some(Arc::new(
+                SplitCache::new()
+                    .with_block_cache(Some(block_cache))
+                    .with_meta_cache(Some(metadata_cache))
+                    .build(),
+            )))
+        }
         CacheMode::Hybrid { slate_db, .. } => {
             let metrics = FoyerHybridCacheMetrics::new();
             let cache = HybridCacheBuilder::new()
@@ -2710,6 +2744,81 @@ mod tests {
         );
     }
 
+    #[test]
+    fn embedded_sources_select_bounded_local_defaults() {
+        for (source, flush_interval, block_bytes, metadata_bytes) in [
+            (
+                HelixDbSource::InMemory {
+                    database: "memory-defaults".to_string(),
+                },
+                Duration::from_millis(1),
+                16 * 1024 * 1024,
+                8 * 1024 * 1024,
+            ),
+            (
+                HelixDbSource::Disk {
+                    root: PathBuf::from("/tmp/helix-embedded-default-contract"),
+                    database: "disk-defaults".to_string(),
+                },
+                Duration::from_millis(5),
+                48 * 1024 * 1024,
+                16 * 1024 * 1024,
+            ),
+        ] {
+            let config = source.embedded_default_config();
+            let slate = config.slate().to_writer_settings(None);
+            assert_eq!(slate.flush_interval, Some(flush_interval));
+            assert_eq!(slate.l0_sst_size_bytes, 16 * 1024 * 1024);
+            assert_eq!(slate.max_unflushed_bytes, 64 * 1024 * 1024);
+            assert_eq!(
+                config.cache().vector_memory().budget().bytes(),
+                Some(64 * 1024 * 1024)
+            );
+            assert_eq!(
+                config.cache().vector_memory().simhasher_cache().bytes(),
+                8 * 1024 * 1024
+            );
+            let CacheMode::Memory {
+                slate_db,
+                slate_warm,
+                fts: Some(fts),
+            } = config.cache().mode()
+            else {
+                panic!("embedded local defaults must use bounded memory caches");
+            };
+            assert_eq!(slate_db.block_bytes(), block_bytes);
+            assert_eq!(slate_db.metadata_bytes(), metadata_bytes);
+            assert_eq!(slate_warm, &crate::config::SlateWarmConfig::Off);
+            assert_eq!(fts.memory_bytes(), 16 * 1024 * 1024);
+            assert_eq!(fts.warm(), &crate::config::FtsWarmConfig::Off);
+        }
+
+        let object_storage = HelixDbSource::ObjectStorage {
+            database: "remote-defaults".to_string(),
+            bucket: "bucket".to_string(),
+            region: "region".to_string(),
+            endpoint: None,
+            allow_http: false,
+        }
+        .embedded_default_config();
+        assert_eq!(
+            object_storage
+                .slate()
+                .to_writer_settings(None)
+                .flush_interval,
+            Some(Duration::from_millis(100))
+        );
+        assert_eq!(
+            object_storage.cache().vector_memory().budget().bytes(),
+            Some(256 * 1024 * 1024)
+        );
+        let CacheMode::Memory { slate_db, .. } = object_storage.cache().mode() else {
+            panic!("object storage retains the general memory-cache profile");
+        };
+        assert_eq!(slate_db.block_bytes(), 512 * 1024 * 1024);
+        assert_eq!(slate_db.metadata_bytes(), 128 * 1024 * 1024);
+    }
+
     #[tokio::test]
     async fn cache_stats_are_publishable_without_cache_io() {
         let db = HelixDB::open(HelixDbSource::InMemory {
@@ -2725,20 +2834,43 @@ mod tests {
             CacheTierSnapshot::disabled(CacheUsageSemantics::AllocatedBlocks)
         );
         assert!(matches!(
+            snapshot.slate_memory.state,
+            CacheTierState::Ready {
+                capacity_bytes: Some(25_165_824),
+                ..
+            }
+        ));
+        assert!(matches!(
             snapshot.fts_memory.state,
             CacheTierState::Ready {
                 used_bytes: 0,
-                capacity_bytes: Some(_),
+                capacity_bytes: Some(16_777_216),
             }
         ));
         assert!(matches!(
             snapshot.vector_memory.state,
             CacheTierState::Ready {
                 used_bytes: 0,
-                capacity_bytes: Some(_),
+                capacity_bytes: Some(67_108_864),
             }
         ));
         db.close().await.expect("close database");
+
+        let root = tempfile::tempdir().expect("disk cache-stats root");
+        let db = HelixDB::open(HelixDbSource::Disk {
+            root: root.path().to_path_buf(),
+            database: "disk-cache-stats-contract".to_string(),
+        })
+        .await
+        .expect("open disk database");
+        assert!(matches!(
+            db.cache_stats().slate_memory.state,
+            CacheTierState::Ready {
+                capacity_bytes: Some(67_108_864),
+                ..
+            }
+        ));
+        db.close().await.expect("close disk database");
     }
 
     #[tokio::test]

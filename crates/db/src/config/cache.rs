@@ -113,6 +113,50 @@ impl SlateHybridCacheConfig {
     }
 }
 
+/// Checked capacities for SlateDB's in-memory block and metadata caches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlateMemoryCacheConfig {
+    block_bytes: NonZeroU64,
+    metadata_bytes: NonZeroU64,
+}
+
+impl SlateMemoryCacheConfig {
+    /// Build independently bounded block and metadata cache tiers.
+    ///
+    /// ```
+    /// use db::config::SlateMemoryCacheConfig;
+    ///
+    /// let cache = SlateMemoryCacheConfig::try_new(48 * 1024 * 1024, 16 * 1024 * 1024)?;
+    /// assert_eq!(cache.total_bytes(), 64 * 1024 * 1024);
+    /// # Ok::<(), db::config::ConfigError>(())
+    /// ```
+    pub fn try_new(block_bytes: u64, metadata_bytes: u64) -> ConfigResult<Self> {
+        Ok(Self {
+            block_bytes: NonZeroU64::new(block_bytes)
+                .ok_or_else(|| ConfigError::new("Slate block cache must be nonzero"))?,
+            metadata_bytes: NonZeroU64::new(metadata_bytes)
+                .ok_or_else(|| ConfigError::new("Slate metadata cache must be nonzero"))?,
+        })
+    }
+
+    /// Resident block-cache capacity.
+    pub const fn block_bytes(self) -> u64 {
+        self.block_bytes.get()
+    }
+
+    /// Resident metadata-cache capacity.
+    pub const fn metadata_bytes(self) -> u64 {
+        self.metadata_bytes.get()
+    }
+
+    /// Combined resident capacity.
+    pub const fn total_bytes(self) -> u64 {
+        self.block_bytes
+            .get()
+            .saturating_add(self.metadata_bytes.get())
+    }
+}
+
 const DEFAULT_SLATE_WARM_CONCURRENCY: usize = 4;
 const DEFAULT_SLATE_WARM_SST_LIMIT: usize = 256;
 
@@ -791,8 +835,10 @@ impl Default for VectorMemorySettings {
 pub enum CacheMode {
     /// Keep only vector memory stores enabled.
     VectorMemoryOnly,
-    /// Use SlateDB's default in-memory block/meta cache and optional FTS cache.
+    /// Use bounded in-memory SlateDB block/meta caches and an optional FTS cache.
     Memory {
+        /// SlateDB block and metadata cache capacities.
+        slate_db: SlateMemoryCacheConfig,
         /// SlateDB metadata warm policy.
         slate_warm: SlateWarmConfig,
         /// Optional shared FTS split cache.
@@ -960,6 +1006,11 @@ impl Default for CacheConfig {
         Self::new(
             VectorMemorySettings::default(),
             CacheMode::Memory {
+                slate_db: SlateMemoryCacheConfig::try_new(
+                    slatedb::db_cache::DEFAULT_BLOCK_CACHE_CAPACITY,
+                    slatedb::db_cache::DEFAULT_META_CACHE_CAPACITY,
+                )
+                .expect("default SlateDB cache capacities are nonzero"),
                 slate_warm: SlateWarmConfig::default(),
                 fts: Some(FtsMemoryCacheConfig::default()),
             },
