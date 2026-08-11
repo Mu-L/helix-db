@@ -33,6 +33,28 @@ pub(crate) struct TextBm25Statistics {
     document_frequencies: BTreeMap<Bytes, u64>,
 }
 
+#[cfg(feature = "production-coverage")]
+impl TextBm25Statistics {
+    /// Constructs exact corpus statistics for the production FTS benchmark fixture.
+    pub(crate) fn for_benchmark(
+        total_document_count: u64,
+        total_token_count: u64,
+        document_frequencies: BTreeMap<Bytes, u64>,
+    ) -> Self {
+        assert!(
+            document_frequencies
+                .values()
+                .all(|frequency| *frequency <= total_document_count),
+            "benchmark document frequencies cannot exceed the corpus"
+        );
+        Self {
+            total_document_count,
+            total_token_count,
+            document_frequencies,
+        }
+    }
+}
+
 impl tantivy::query::Bm25StatisticsProvider for TextBm25Statistics {
     fn total_num_tokens(&self, _field: tantivy::schema::Field) -> tantivy::Result<u64> {
         Ok(self.total_token_count)

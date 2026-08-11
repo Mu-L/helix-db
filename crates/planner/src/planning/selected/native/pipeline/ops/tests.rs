@@ -224,3 +224,68 @@ fn traversal_scoped_vector_search_preserves_input_and_resolves_the_index() {
             )
     ));
 }
+
+#[test]
+fn traversal_scoped_text_search_preserves_input_and_resolves_the_index() {
+    let key = catalog::SearchIndexKey::try_new(catalog::ElementKind::Node, "Doc", "body").unwrap();
+    let ctx = crate::context::PlannerContext {
+        indexes: catalog::IndexCatalogSnapshot::default()
+            .with_text(key, catalog::SearchIndexScope::Unscoped),
+        ..crate::context::PlannerContext::default()
+    };
+    let root = AstNode::TextSearchNodesWithin {
+        input: input(),
+        label: "Doc".to_owned(),
+        property: "body".to_owned(),
+        tenant_value: None,
+        query_text: PropertyInput::from("needle"),
+        k: StreamBound::Literal(10),
+    };
+
+    let parsed = search::pipeline_op_from_ast(&ctx, &root).unwrap();
+    let contract::NativePipelineOpMatch::Op(parsed) = parsed else {
+        panic!("expected traversal-scoped text pipeline op");
+    };
+    let (input, op) = parsed.into_parts();
+    assert!(matches!(input, AstNode::Context));
+    assert!(matches!(
+        op,
+        logical::StreamPipelineOp::TextSearch { plan }
+            if matches!(plan.as_ref(),
+                ir::RestrictedTextSearchPlan::Nodes { key, query_text, k, .. }
+                    if key.label.as_ref() == "Doc"
+                        && key.property.as_ref() == "body"
+                        && matches!(query_text, ir::TextQueryInputPlan::Text(text) if text.as_ref() == "needle")
+                        && matches!(k, ir::SearchLimitPlan::Literal(value) if value.get() == 10)
+            )
+    ));
+}
+
+#[test]
+fn traversal_scoped_edge_text_search_uses_the_edge_plan_variant() {
+    let key =
+        catalog::SearchIndexKey::try_new(catalog::ElementKind::Edge, "ABOUT", "body").unwrap();
+    let ctx = crate::context::PlannerContext {
+        indexes: catalog::IndexCatalogSnapshot::default()
+            .with_text(key, catalog::SearchIndexScope::Unscoped),
+        ..crate::context::PlannerContext::default()
+    };
+    let root = AstNode::TextSearchEdgesWithin {
+        input: input(),
+        label: "ABOUT".to_owned(),
+        property: "body".to_owned(),
+        tenant_value: None,
+        query_text: PropertyInput::from("needle"),
+        k: StreamBound::Literal(3),
+    };
+
+    let parsed = search::pipeline_op_from_ast(&ctx, &root).unwrap();
+    let contract::NativePipelineOpMatch::Op(parsed) = parsed else {
+        panic!("expected traversal-scoped edge text pipeline op");
+    };
+    assert!(matches!(
+        parsed.into_parts().1,
+        logical::StreamPipelineOp::TextSearch { plan }
+            if matches!(plan.as_ref(), ir::RestrictedTextSearchPlan::Edges { .. })
+    ));
+}

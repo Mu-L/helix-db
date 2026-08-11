@@ -170,6 +170,46 @@ pub(in crate::rules) fn stream_pipeline_op_contract(
                 storage.explicit_sort(rows),
             )
         }
+        logical::StreamPipelineOp::TextSearch { plan } => {
+            let upper = match plan.as_ref() {
+                ir::RestrictedTextSearchPlan::Nodes { k, .. }
+                | ir::RestrictedTextSearchPlan::Edges { k, .. } => match k {
+                    ir::SearchLimitPlan::Literal(k) => Some(k.get()),
+                    ir::SearchLimitPlan::Expr(_) => None,
+                },
+            };
+            (
+                physical::PhysicalPipelineOp::Stream(physical::PhysicalStreamOp::TextSearch),
+                properties::DeliveredProperties {
+                    cardinality: properties::CardinalityBounds::zero_to(
+                        match (delivered.cardinality.upper(), upper) {
+                            (Some(delivered), Some(search)) => Some(delivered.min(search)),
+                            (delivered, search) => delivered.or(search),
+                        },
+                    ),
+                    materialization: properties::Materialization::Materialized,
+                    ordering: properties::DeliveredOrdering::ByKeys(
+                        ir::OrderKeys::new(ir::AtLeast::<_, 1>::from_one_and_rest(
+                            ir::OrderKey {
+                                property: ir::NonEmptyString::new("$score")
+                                    .expect("score virtual property is non-empty"),
+                                order: helix_ast::traversal::Order::Desc,
+                            },
+                            vec![ir::OrderKey {
+                                property: ir::NonEmptyString::new("$id")
+                                    .expect("ID virtual property is non-empty"),
+                                order: helix_ast::traversal::Order::Asc,
+                            }],
+                        ))
+                        .expect("score and ID ordering keys are unique"),
+                    ),
+                    effect: properties::EffectKind::OrderSensitive,
+                    key_locality: properties::KeyLocality::Unknown,
+                    ..delivered
+                },
+                storage.explicit_sort(rows),
+            )
+        }
         logical::StreamPipelineOp::Variable { op } => (
             physical::PhysicalPipelineOp::Stream(physical::PhysicalStreamOp::Variable),
             stream_variable_delivered_properties(delivered, op),

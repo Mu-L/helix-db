@@ -119,6 +119,26 @@ impl ExecutableDagBuilder<'_> {
                     cost: self.profile.explicit_sort(rows),
                 }
             }
+            logical::StreamPipelineOp::TextSearch { plan } => {
+                let k = match plan.as_ref() {
+                    ir::RestrictedTextSearchPlan::Nodes { k, .. }
+                    | ir::RestrictedTextSearchPlan::Edges { k, .. } => match k {
+                        ir::SearchLimitPlan::Literal(k) => Some(k.get()),
+                        ir::SearchLimitPlan::Expr(_) => None,
+                    },
+                };
+                StepDraft {
+                    dependencies: vec![input_id],
+                    output,
+                    condition,
+                    op: ExecOp::TextSearch { plan: plan.clone() },
+                    schedule: ExecSchedule::Barrier,
+                    delivered: materialized_delivered_properties(limit_delivered_properties(
+                        delivered, k,
+                    )),
+                    cost: self.profile.explicit_sort(rows),
+                }
+            }
             logical::StreamPipelineOp::Variable { op } => StepDraft {
                 dependencies: vec![input_id],
                 output,

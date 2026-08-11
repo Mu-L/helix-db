@@ -1,5 +1,7 @@
 //! Vector and text search access dispatch contracts.
 
+use std::sync::Arc;
+
 use helix_planner::ir;
 
 use super::limits::SearchReadLimit;
@@ -7,6 +9,7 @@ use super::tenant::{validate_text_search_tenant, validate_vector_search_tenant};
 use super::*;
 use crate::config::{TextElementType, VectorElementType};
 use crate::encoding::v1::values::vector_generation::{ActiveScoreSemantic, VectorEntityKind};
+use crate::search::text::{RestrictedTextCandidates, TextSearchScope};
 use crate::search::vector::distance::{Cosine, Euclidean, Manhattan};
 use crate::search::vector::RestrictedVectorCandidates;
 use crate::search::vector::{TypedVectorSearchResult, VectorDistanceMetric};
@@ -28,6 +31,28 @@ impl<'a> RestrictedVectorSearchRead<'a> {
 enum VectorSearchScope<'a> {
     Unrestricted(SearchReadLimit<'a>),
     Restricted(RestrictedVectorSearchRead<'a>),
+}
+
+pub(in crate::execution::interpreter::access) struct RestrictedTextSearchRead<'a> {
+    limit: SearchReadLimit<'a>,
+    candidates: Arc<RestrictedTextCandidates>,
+}
+
+impl<'a> RestrictedTextSearchRead<'a> {
+    pub(in crate::execution::interpreter::access) const fn new(
+        limit: SearchReadLimit<'a>,
+        candidates: Arc<RestrictedTextCandidates>,
+    ) -> Self {
+        Self { limit, candidates }
+    }
+}
+
+struct TextSearchAccess<'a> {
+    element_type: TextElementType,
+    label: &'a ir::NonEmptyString,
+    property: &'a ir::NonEmptyString,
+    index: &'a ir::SearchIndexPlan,
+    query_text: &'a ir::TextQueryInputPlan,
 }
 
 impl<'db> ExecutionContext<'db> {
@@ -187,10 +212,55 @@ impl<'db> ExecutionContext<'db> {
         query_text: &ir::TextQueryInputPlan,
         limit: SearchReadLimit<'_>,
     ) -> Result<Vec<crate::search::text::TextSearchHit>> {
-        let definition = self.text_definition(element_type, label, property)?;
-        let tenant_value = self.search_tenant_value(&index.tenant).await?;
-        validate_text_search_tenant(&definition, &index.tenant, tenant_value.as_ref())?;
-        let query = self.search_query_text(query_text).await?;
+        let access = TextSearchAccess {
+            element_type,
+            label,
+            property,
+            index,
+            query_text,
+        };
+        self.text_search_hits_with_scope(&access, limit, TextSearchScope::Unrestricted)
+            .await
+    }
+
+    pub(in crate::execution::interpreter::access) async fn restricted_text_search_hits(
+        &self,
+        element_type: TextElementType,
+        label: &ir::NonEmptyString,
+        property: &ir::NonEmptyString,
+        index: &ir::SearchIndexPlan,
+        query_text: &ir::TextQueryInputPlan,
+        read: RestrictedTextSearchRead<'_>,
+    ) -> Result<Vec<crate::search::text::TextSearchHit>> {
+        let access = TextSearchAccess {
+            element_type,
+            label,
+            property,
+            index,
+            query_text,
+        };
+        self.text_search_hits_with_scope(
+            &access,
+            read.limit,
+            TextSearchScope::restricted(read.candidates),
+        )
+        .await
+    }
+
+    async fn text_search_hits_with_scope(
+        &self,
+        access: &TextSearchAccess<'_>,
+        limit: SearchReadLimit<'_>,
+        scope: TextSearchScope,
+    ) -> Result<Vec<crate::search::text::TextSearchHit>> {
+        if scope.is_empty_restricted() {
+            return Ok(Vec::new());
+        }
+        let definition =
+            self.text_definition(access.element_type, access.label, access.property)?;
+        let tenant_value = self.search_tenant_value(&access.index.tenant).await?;
+        validate_text_search_tenant(&definition, &access.index.tenant, tenant_value.as_ref())?;
+        let query = self.search_query_text(access.query_text).await?;
         let k = self.effective_search_limit(limit).await?;
 
         let generation = self
@@ -199,6 +269,7 @@ impl<'db> ExecutionContext<'db> {
         let Some(manifest) = self.load_text_manifest_root(generation.as_ref()).await? else {
             return Ok(Vec::new());
         };
-        self.search_text_manifest(&manifest, &query, k).await
+        self.search_text_manifest_with_scope(&manifest, &query, k, scope)
+            .await
     }
 }

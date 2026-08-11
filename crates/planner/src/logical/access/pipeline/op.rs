@@ -55,6 +55,11 @@ pub enum StreamPipelineOp {
         /// Node- or edge-bound search plan.
         plan: Box<ir::RestrictedVectorSearchPlan>,
     },
+    /// BM25 ranking restricted to the exact current stream.
+    TextSearch {
+        /// Node- or edge-bound search plan.
+        plan: Box<ir::RestrictedTextSearchPlan>,
+    },
     /// Side-effect-free stream variable operation.
     Variable {
         /// Variable operation.
@@ -89,6 +94,8 @@ pub enum StreamPipelineOpKind {
     Expand,
     /// `StreamPipelineOp::VectorSearch`.
     VectorSearch,
+    /// `StreamPipelineOp::TextSearch`.
+    TextSearch,
     /// `StreamPipelineOp::Variable`.
     Variable,
     /// `StreamPipelineOp::VariableWrite`.
@@ -99,7 +106,7 @@ pub enum StreamPipelineOpKind {
 
 impl StreamPipelineOpKind {
     /// All stream-pipeline operator families.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Filter,
         Self::Window,
         Self::Limit,
@@ -108,6 +115,7 @@ impl StreamPipelineOpKind {
         Self::Order,
         Self::Expand,
         Self::VectorSearch,
+        Self::TextSearch,
         Self::Variable,
         Self::VariableWrite,
         Self::Distinct,
@@ -126,6 +134,7 @@ impl StreamPipelineOp {
             Self::Order { .. } => StreamPipelineOpKind::Order,
             Self::Expand { .. } => StreamPipelineOpKind::Expand,
             Self::VectorSearch { .. } => StreamPipelineOpKind::VectorSearch,
+            Self::TextSearch { .. } => StreamPipelineOpKind::TextSearch,
             Self::Variable { .. } => StreamPipelineOpKind::Variable,
             Self::VariableWrite { .. } => StreamPipelineOpKind::VariableWrite,
             Self::Distinct => StreamPipelineOpKind::Distinct,
@@ -135,7 +144,9 @@ impl StreamPipelineOp {
     /// Effect introduced by this pipeline operator.
     pub const fn effect(&self) -> properties::EffectKind {
         match self {
-            Self::VectorSearch { .. } => properties::EffectKind::OrderSensitive,
+            Self::VectorSearch { .. } | Self::TextSearch { .. } => {
+                properties::EffectKind::OrderSensitive
+            }
             Self::VariableWrite { .. } => properties::EffectKind::Barrier,
             Self::Filter { .. }
             | Self::Window { .. }
@@ -205,6 +216,7 @@ mod tests {
                     k: ir::SearchLimitPlan::Literal(std::num::NonZeroUsize::MIN),
                 }),
             },
+            variants_text_search(),
             StreamPipelineOp::Variable {
                 op: PureStreamVariableOp::Bind(variable("row")),
             },
@@ -220,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn vector_search_is_pure_order_sensitive_and_variable_write_is_a_barrier() {
+    fn search_is_order_sensitive_and_variable_write_is_a_barrier() {
         let pure_ops = [
             StreamPipelineOp::Limit {
                 count: ir::StreamBoundPlan::Literal(1),
@@ -236,6 +248,10 @@ mod tests {
             .all(|op| op.effect() == properties::EffectKind::Pure));
         assert_eq!(
             variants_vector_search().effect(),
+            properties::EffectKind::OrderSensitive
+        );
+        assert_eq!(
+            variants_text_search().effect(),
             properties::EffectKind::OrderSensitive
         );
         assert_eq!(
@@ -257,6 +273,23 @@ mod tests {
                 },
                 query_vector: ir::VectorQueryInputPlan::new(helix_ast::value::PropertyInput::from(
                     vec![1.0_f32],
+                ))
+                .unwrap(),
+                k: ir::SearchLimitPlan::Literal(std::num::NonZeroUsize::MIN),
+            }),
+        }
+    }
+
+    fn variants_text_search() -> StreamPipelineOp {
+        StreamPipelineOp::TextSearch {
+            plan: Box::new(ir::RestrictedTextSearchPlan::Nodes {
+                key: crate::catalog::NodeSearchIndexKey::try_new("Doc", "body").unwrap(),
+                index: ir::SearchIndexPlan {
+                    index_id: variable("idx"),
+                    tenant: ir::SearchTenantPlan::Unscoped,
+                },
+                query_text: ir::TextQueryInputPlan::new(helix_ast::value::PropertyInput::from(
+                    "needle",
                 ))
                 .unwrap(),
                 k: ir::SearchLimitPlan::Literal(std::num::NonZeroUsize::MIN),

@@ -182,6 +182,38 @@ pub enum AstNode {
         /// Result count.
         k: StreamBound,
     },
+    /// Rank the current node stream by one text index.
+    TextSearchNodesWithin {
+        /// Input node stream whose IDs are the exact candidate filter.
+        input: Box<AstNode>,
+        /// Label scope.
+        label: String,
+        /// Text property.
+        property: String,
+        /// Optional tenant value.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant_value: Option<PropertyInput>,
+        /// Query text input.
+        query_text: PropertyInput,
+        /// Result count.
+        k: StreamBound,
+    },
+    /// Rank the current edge stream by one text index.
+    TextSearchEdgesWithin {
+        /// Input edge stream whose IDs are the exact candidate filter.
+        input: Box<AstNode>,
+        /// Label scope.
+        label: String,
+        /// Text property.
+        property: String,
+        /// Optional tenant value.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant_value: Option<PropertyInput>,
+        /// Query text input.
+        query_text: PropertyInput,
+        /// Result count.
+        k: StreamBound,
+    },
     /// Rank the current node stream by one vector index.
     VectorSearchNodesWithin {
         /// Input node stream whose IDs are the exact candidate filter.
@@ -656,7 +688,9 @@ impl AstNode {
             | Self::DropEdge { .. }
             | Self::DropEdgeLabeled { .. }
             | Self::DropEdgeById { .. } => false,
-            Self::VectorSearchNodesWithin { input, .. }
+            Self::TextSearchNodesWithin { input, .. }
+            | Self::TextSearchEdgesWithin { input, .. }
+            | Self::VectorSearchNodesWithin { input, .. }
             | Self::VectorSearchEdgesWithin { input, .. }
             | Self::Out { input, .. }
             | Self::In { input, .. }
@@ -780,6 +814,20 @@ enum Operation {
     Without(String),
     EdgeHas(String, PropertyInput),
     EdgeHasLabel(String),
+    TextSearchNodesWithin {
+        label: String,
+        property: String,
+        tenant_value: Option<PropertyInput>,
+        query_text: PropertyInput,
+        k: StreamBound,
+    },
+    TextSearchEdgesWithin {
+        label: String,
+        property: String,
+        tenant_value: Option<PropertyInput>,
+        query_text: PropertyInput,
+        k: StreamBound,
+    },
     VectorSearchNodesWithin {
         label: String,
         property: String,
@@ -886,6 +934,34 @@ impl Operation {
                 value,
             },
             Self::EdgeHasLabel(label) => AstNode::EdgeHasLabel { input, label },
+            Self::TextSearchNodesWithin {
+                label,
+                property,
+                tenant_value,
+                query_text,
+                k,
+            } => AstNode::TextSearchNodesWithin {
+                input,
+                label,
+                property,
+                tenant_value,
+                query_text,
+                k,
+            },
+            Self::TextSearchEdgesWithin {
+                label,
+                property,
+                tenant_value,
+                query_text,
+                k,
+            } => AstNode::TextSearchEdgesWithin {
+                input,
+                label,
+                property,
+                tenant_value,
+                query_text,
+                k,
+            },
             Self::VectorSearchNodesWithin {
                 label,
                 property,
@@ -1819,6 +1895,42 @@ impl<M: MutationMode> Traversal<OnNodes, M> {
         })
     }
 
+    /// Rank only the current node stream by BM25 score.
+    pub fn text_search(
+        self,
+        label: impl Into<String>,
+        property: impl Into<String>,
+        query_text: impl Into<String>,
+        k: usize,
+        tenant_value: Option<PropertyValue>,
+    ) -> Self {
+        self.text_search_with(
+            label,
+            property,
+            query_text.into(),
+            k,
+            tenant_value.map(PropertyInput::from),
+        )
+    }
+
+    /// Rank only the current node stream with runtime text inputs.
+    pub fn text_search_with(
+        self,
+        label: impl Into<String>,
+        property: impl Into<String>,
+        query_text: impl Into<PropertyInput>,
+        k: impl Into<StreamBound>,
+        tenant_value: Option<PropertyInput>,
+    ) -> Self {
+        self.push(Operation::TextSearchNodesWithin {
+            label: label.into(),
+            property: property.into(),
+            tenant_value,
+            query_text: query_text.into(),
+            k: k.into(),
+        })
+    }
+
     /// Deduplicate.
     pub fn dedup(self) -> Self {
         self.push(Operation::Dedup)
@@ -2189,6 +2301,42 @@ impl<M: MutationMode> Traversal<OnEdges, M> {
             property: property.into(),
             tenant_value,
             query_vector: query_vector.into(),
+            k: k.into(),
+        })
+    }
+
+    /// Rank only the current edge stream by BM25 score.
+    pub fn text_search(
+        self,
+        label: impl Into<String>,
+        property: impl Into<String>,
+        query_text: impl Into<String>,
+        k: usize,
+        tenant_value: Option<PropertyValue>,
+    ) -> Self {
+        self.text_search_with(
+            label,
+            property,
+            query_text.into(),
+            k,
+            tenant_value.map(PropertyInput::from),
+        )
+    }
+
+    /// Rank only the current edge stream with runtime text inputs.
+    pub fn text_search_with(
+        self,
+        label: impl Into<String>,
+        property: impl Into<String>,
+        query_text: impl Into<PropertyInput>,
+        k: impl Into<StreamBound>,
+        tenant_value: Option<PropertyInput>,
+    ) -> Self {
+        self.push(Operation::TextSearchEdgesWithin {
+            label: label.into(),
+            property: property.into(),
+            tenant_value,
+            query_text: query_text.into(),
             k: k.into(),
         })
     }

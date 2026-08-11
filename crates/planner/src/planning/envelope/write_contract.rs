@@ -65,6 +65,8 @@ fn validate_write_root(root: &AstNode) -> Result<(), error::PlannerError> {
         | AstNode::Without { input, .. }
         | AstNode::EdgeHas { input, .. }
         | AstNode::EdgeHasLabel { input, .. }
+        | AstNode::TextSearchNodesWithin { input, .. }
+        | AstNode::TextSearchEdgesWithin { input, .. }
         | AstNode::VectorSearchNodesWithin { input, .. }
         | AstNode::VectorSearchEdgesWithin { input, .. }
         | AstNode::Limit { input, .. }

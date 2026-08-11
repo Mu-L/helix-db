@@ -61,9 +61,10 @@ fn pipeline_op_family_from_ast<'a>(
         | AstNode::Range { .. }
         | AstNode::OrderBy { .. }
         | AstNode::OrderByMultiple { .. } => bounds::pipeline_op_from_ast(root),
-        AstNode::VectorSearchNodesWithin { .. } | AstNode::VectorSearchEdgesWithin { .. } => {
-            search::pipeline_op_from_ast(ctx, root)
-        }
+        AstNode::VectorSearchNodesWithin { .. }
+        | AstNode::VectorSearchEdgesWithin { .. }
+        | AstNode::TextSearchNodesWithin { .. }
+        | AstNode::TextSearchEdgesWithin { .. } => search::pipeline_op_from_ast(ctx, root),
         AstNode::Within { .. }
         | AstNode::Without { .. }
         | AstNode::Select { .. }

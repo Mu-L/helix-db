@@ -245,26 +245,29 @@ impl<'db> ExecutionContext<'db> {
     /// The page, split, and batched V2 candidate-state reads all use the same
     /// admitted request view. Query-level overfetch retains only live global
     /// candidates while opening and searching independent splits concurrently.
-    pub(in crate::execution::interpreter::access::search) async fn search_text_manifest(
+    pub(in crate::execution::interpreter::access::search) async fn search_text_manifest_with_scope(
         &self,
         manifest: &ResolvedTextManifestRoot<'_>,
         query: &str,
         k: usize,
+        scope: search::text::TextSearchScope,
     ) -> Result<Vec<search::text::TextSearchHit>> {
         if let Some(active) = self.active_write_tx() {
-            return search_text_manifest_in_view(self, &active.txn, manifest, query, k).await;
+            return search_text_manifest_in_view(self, &active.txn, manifest, query, k, scope)
+                .await;
         }
         if let Some(view) = self.request_read_view() {
-            return search_text_manifest_in_view(self, view, manifest, query, k).await;
+            return search_text_manifest_in_view(self, view, manifest, query, k, scope).await;
         }
         #[cfg(test)]
         {
             match self.db.storage() {
                 HelixStorage::Reader(reader) => {
-                    search_text_manifest_in_view(self, reader.as_ref(), manifest, query, k).await
+                    search_text_manifest_in_view(self, reader.as_ref(), manifest, query, k, scope)
+                        .await
                 }
                 HelixStorage::Writer(writer) => {
-                    search_text_manifest_in_view(self, writer.db(), manifest, query, k).await
+                    search_text_manifest_in_view(self, writer.db(), manifest, query, k, scope).await
                 }
             }
         }
@@ -296,6 +299,7 @@ async fn search_text_manifest_in_view(
     manifest: &ResolvedTextManifestRoot<'_>,
     query: &str,
     k: usize,
+    scope: search::text::TextSearchScope,
 ) -> Result<Vec<search::text::TextSearchHit>> {
     let generation = manifest.generation;
     let root = &manifest.root;
@@ -388,7 +392,7 @@ async fn search_text_manifest_in_view(
         primary,
     );
     generation_manifest.splits = splits;
-    search::text::search_manifest_with_v2_live_state_scoped(
+    search::text::search_manifest_with_v2_live_state_scoped_and_scope(
         reader,
         search::text::TextSearchRuntime::new(
             context.db.object_store(),
@@ -397,9 +401,8 @@ async fn search_text_manifest_in_view(
         ),
         root,
         &generation_manifest,
-        query,
-        k,
         &statistics,
+        search::text::TextSearchRequest::new(query, k, scope),
     )
     .await
 }
@@ -745,7 +748,12 @@ mod tests {
             .unwrap()
             .unwrap();
         let storage_hits = context
-            .search_text_manifest(&manifest, "storage", 1)
+            .search_text_manifest_with_scope(
+                &manifest,
+                "storage",
+                1,
+                search::text::TextSearchScope::Unrestricted,
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -758,7 +766,12 @@ mod tests {
         assert!(storage_hits.iter().all(|hit| hit.score.is_finite()));
 
         let planner_hits = context
-            .search_text_manifest(&manifest, "planner", 1)
+            .search_text_manifest_with_scope(
+                &manifest,
+                "planner",
+                1,
+                search::text::TextSearchScope::Unrestricted,
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -792,7 +805,12 @@ mod tests {
             .unwrap()
             .unwrap();
         let reader_hits = reader_context
-            .search_text_manifest(&reader_manifest, "planner", 1)
+            .search_text_manifest_with_scope(
+                &reader_manifest,
+                "planner",
+                1,
+                search::text::TextSearchScope::Unrestricted,
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -846,7 +864,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(filtered
-            .search_text_manifest(&filtered_manifest, "storage", 1)
+            .search_text_manifest_with_scope(
+                &filtered_manifest,
+                "storage",
+                1,
+                search::text::TextSearchScope::Unrestricted,
+            )
             .await
             .unwrap()
             .is_empty());
@@ -903,7 +926,12 @@ mod tests {
             .unwrap();
         assert!(matches!(
             corrupt_context
-                .search_text_manifest(&corrupt_root, "storage", 1)
+                .search_text_manifest_with_scope(
+                    &corrupt_root,
+                    "storage",
+                    1,
+                    search::text::TextSearchScope::Unrestricted,
+                )
                 .await,
             Err(HelixDbError::IndexCatalogCorruption(message))
                 if message.contains("pages exceed their root split count")

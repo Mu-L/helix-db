@@ -65,6 +65,8 @@ fn validate_ast_context(root: &AstNode, scope: NativeAstScope) -> Result<(), err
         | AstNode::Without { input, .. }
         | AstNode::EdgeHas { input, .. }
         | AstNode::EdgeHasLabel { input, .. }
+        | AstNode::TextSearchNodesWithin { input, .. }
+        | AstNode::TextSearchEdgesWithin { input, .. }
         | AstNode::VectorSearchNodesWithin { input, .. }
         | AstNode::VectorSearchEdgesWithin { input, .. }
         | AstNode::Limit { input, .. }
@@ -319,6 +321,8 @@ fn validate_after_bind_with_context(
         | AstNode::Dedup { input }
         | AstNode::Within { input, .. }
         | AstNode::Without { input, .. }
+        | AstNode::TextSearchNodesWithin { input, .. }
+        | AstNode::TextSearchEdgesWithin { input, .. }
         | AstNode::VectorSearchNodesWithin { input, .. }
         | AstNode::VectorSearchEdgesWithin { input, .. }
         | AstNode::Limit { input, .. }

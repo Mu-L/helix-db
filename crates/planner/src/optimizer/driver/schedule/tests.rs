@@ -122,6 +122,20 @@ fn stream_op(kind: logical::StreamPipelineOpKind) -> logical::StreamPipelineOp {
                 k: ir::SearchLimitPlan::Literal(std::num::NonZeroUsize::MIN),
             }),
         },
+        logical::StreamPipelineOpKind::TextSearch => logical::StreamPipelineOp::TextSearch {
+            plan: Box::new(ir::RestrictedTextSearchPlan::Nodes {
+                key: catalog::NodeSearchIndexKey::try_new("Doc", "body").unwrap(),
+                index: ir::SearchIndexPlan {
+                    index_id: ir::NonEmptyString::new("idx").unwrap(),
+                    tenant: ir::SearchTenantPlan::Unscoped,
+                },
+                query_text: ir::TextQueryInputPlan::new(helix_ast::value::PropertyInput::from(
+                    "needle",
+                ))
+                .unwrap(),
+                k: ir::SearchLimitPlan::Literal(std::num::NonZeroUsize::MIN),
+            }),
+        },
         logical::StreamPipelineOpKind::Variable => logical::StreamPipelineOp::Variable {
             op: logical::PureStreamVariableOp::Within(ir::NonEmptyString::new("allowed").unwrap()),
         },

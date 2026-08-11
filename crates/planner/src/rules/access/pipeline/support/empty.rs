@@ -33,6 +33,7 @@ pub(super) fn empty_pipeline_result(
             | logical::StreamPipelineOp::Range { .. }
             | logical::StreamPipelineOp::Order { .. }
             | logical::StreamPipelineOp::VectorSearch { .. }
+            | logical::StreamPipelineOp::TextSearch { .. }
             | logical::StreamPipelineOp::Distinct => {}
             logical::StreamPipelineOp::Expand { plan } => {
                 element = match plan.output {

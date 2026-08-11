@@ -178,6 +178,7 @@ impl<'a> Analyzer<'a> {
             }
             exec::ExecOp::Distinct
             | exec::ExecOp::VectorSearch { .. }
+            | exec::ExecOp::TextSearch { .. }
             | exec::ExecOp::Project { .. }
             | exec::ExecOp::Aggregate { .. }
             | exec::ExecOp::Variable { .. }
@@ -481,6 +482,7 @@ fn traversal_depth_for_op(op: &exec::ExecOp, parent_depth: usize) -> usize {
         ),
         exec::ExecOp::Filter { .. }
         | exec::ExecOp::VectorSearch { .. }
+        | exec::ExecOp::TextSearch { .. }
         | exec::ExecOp::Limit { .. }
         | exec::ExecOp::Skip { .. }
         | exec::ExecOp::Range { .. }
@@ -642,6 +644,7 @@ fn lineage_for_step(
         ),
         exec::ExecOp::Filter { .. }
         | exec::ExecOp::VectorSearch { .. }
+        | exec::ExecOp::TextSearch { .. }
         | exec::ExecOp::Limit { .. }
         | exec::ExecOp::Skip { .. }
         | exec::ExecOp::Range { .. }
@@ -682,6 +685,7 @@ fn unbounded_scan_scope(op: &exec::ExecOp) -> Option<AccessScope> {
         exec::ExecOp::KvRead(read) => unbounded_kv_read_scope(read),
         exec::ExecOp::Expand { .. }
         | exec::ExecOp::VectorSearch { .. }
+        | exec::ExecOp::TextSearch { .. }
         | exec::ExecOp::Filter { .. }
         | exec::ExecOp::Limit { .. }
         | exec::ExecOp::Skip { .. }

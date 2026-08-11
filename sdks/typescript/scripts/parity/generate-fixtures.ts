@@ -1215,6 +1215,8 @@ function remainingReadContractFixture(): Fixture {
       .varAs("vector_nodes_within", g().nWithLabel("ParityUser").vectorSearch("ParityUser", "embedding", [1, 0, 0], 5))
       .varAs("vector_edges_within", g().e(EdgeRef.all()).hasLabel("FOLLOWS").vectorSearch("FOLLOWS", "embedding", [1, 0], 5))
       .varAs("text_edges", g().textSearchEdges("FOLLOWS", "note", "graph", 5).edgeProperties())
+      .varAs("text_nodes_within", g().nWithLabel("ParityUser").textSearch("ParityUser", "bio", "graph", 5))
+      .varAs("text_edges_within", g().e(EdgeRef.all()).hasLabel("FOLLOWS").textSearch("FOLLOWS", "note", "graph", 5))
       .varAsIf("previous", BatchCondition.prevNotEmpty(), g().n(NodeRef.all()).count())
       .varAsIf("not_empty", BatchCondition.varNotEmpty("expressions_and_predicates"), g().n(NodeRef.all()).count())
       .varAsIf("empty", BatchCondition.varEmpty("missing"), g().n(NodeRef.all()).count())
@@ -1251,6 +1253,8 @@ function remainingReadContractFixture(): Fixture {
         "vector_nodes_within",
         "vector_edges_within",
         "text_edges",
+        "text_nodes_within",
+        "text_edges_within",
         "previous",
         "not_empty",
         "empty",

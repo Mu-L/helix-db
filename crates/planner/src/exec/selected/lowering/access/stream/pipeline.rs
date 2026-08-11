@@ -37,6 +37,7 @@ impl ExecutableDagBuilder<'_> {
             | logical::StreamPipelineOp::Order { .. }
             | logical::StreamPipelineOp::Expand { .. }
             | logical::StreamPipelineOp::VectorSearch { .. }
+            | logical::StreamPipelineOp::TextSearch { .. }
             | logical::StreamPipelineOp::Variable { .. }
             | logical::StreamPipelineOp::VariableWrite { .. }
             | logical::StreamPipelineOp::Distinct => None,

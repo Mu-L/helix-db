@@ -48,6 +48,11 @@ impl<'db> ExecutionContext<'db> {
                     .run(self.restricted_vector_search(input, plan))
                     .await
             }
+            exec::ExecOp::TextSearch { plan } => {
+                execution_control
+                    .run(self.restricted_text_search(input, plan))
+                    .await
+            }
             exec::ExecOp::Filter { predicate } => {
                 execution_control.run(self.filter(input, predicate)).await
             }

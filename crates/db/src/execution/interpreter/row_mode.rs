@@ -86,6 +86,7 @@ pub(in crate::execution::interpreter) fn op_name(op: &exec::ExecOp) -> &'static 
         exec::ExecOp::KvRead(_) => "kv_read()",
         exec::ExecOp::Expand { plan } => expand_op_name(plan),
         exec::ExecOp::VectorSearch { .. } => "vector_search()",
+        exec::ExecOp::TextSearch { .. } => "text_search()",
         exec::ExecOp::Filter { .. } => "filter()",
         exec::ExecOp::Limit { .. } => "limit()",
         exec::ExecOp::Skip { .. } => "skip()",

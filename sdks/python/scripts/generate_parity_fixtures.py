@@ -807,6 +807,19 @@ def remaining_read_contract() -> Fixture:
             "text_edges",
             g().text_search_edges("FOLLOWS", "note", "graph", 5).edge_properties(),
         )
+        .var_as(
+            "text_nodes_within",
+            g()
+            .n_with_label("ParityUser")
+            .text_search("ParityUser", "bio", "graph", 5),
+        )
+        .var_as(
+            "text_edges_within",
+            g()
+            .e(EdgeRef.all())
+            .has_label("FOLLOWS")
+            .text_search("FOLLOWS", "note", "graph", 5),
+        )
         .var_as_if(
             "previous",
             BatchCondition.prev_not_empty(),
@@ -863,6 +876,8 @@ def remaining_read_contract() -> Fixture:
                 "vector_nodes_within",
                 "vector_edges_within",
                 "text_edges",
+                "text_nodes_within",
+                "text_edges_within",
                 "previous",
                 "not_empty",
                 "empty",

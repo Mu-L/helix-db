@@ -438,6 +438,50 @@ Multitenant behavior in the current Helix interpreter:
 - multitenant index + unknown tenant => empty result set
 - write with vector present but missing tenant property => write error
 
+## Traversal-scoped text search
+
+Use `.text_search(...)` after a node or edge traversal to rank only the IDs in
+that current stream. This is an exact BM25 prefilter: results equal an
+exhaustive search of the selected tenant partition, intersected with the unique
+input IDs, followed by deterministic top-`k` selection.
+
+BM25 statistics still come from the full tenant partition.
+
+```rust
+read_batch()
+    .var_as(
+        "documents",
+        g()
+            .n_with_label("Document")
+            .where_(Predicate::eq("tenant_id", "acme"))
+            .text_search(
+                "Document",
+                "body",
+                "graph databases",
+                10,
+                Some(PropertyValue::from("acme")),
+            )
+            .project(vec![
+                PropertyProjection::renamed("$id", "id"),
+                PropertyProjection::renamed("$score", "score"),
+                PropertyProjection::new("title"),
+            ]),
+    )
+    .returning(["documents"]);
+```
+
+Use `.text_search_with(...)` for runtime `PropertyInput` and `StreamBound`
+values. The same method names work on edge streams. Source-level
+`text_search_nodes[_with]` and `text_search_edges[_with]` remain
+whole-partition searches.
+
+Restricted results contain unique input IDs, return at most `k`, and order by
+`$score` descending then entity ID ascending. The selected input row keeps its
+bindings, path, and sack. An empty input returns without opening the text
+index. A non-node/edge stream or more than 1,000,000 unique candidates is a
+query error. For a tenant-scoped index, pass the same tenant partition used to
+build the candidate stream.
+
 ## Edge-First Reads
 
 ```rust

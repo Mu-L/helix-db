@@ -260,6 +260,7 @@ fn is_parallel_isolated_step(step: &exec::ExecStep) -> bool {
                 | exec::ExecOp::KvRead(_)
                 | exec::ExecOp::Expand { .. }
                 | exec::ExecOp::VectorSearch { .. }
+                | exec::ExecOp::TextSearch { .. }
                 | exec::ExecOp::Filter { .. }
                 | exec::ExecOp::Limit { .. }
                 | exec::ExecOp::Skip { .. }

@@ -102,6 +102,68 @@ body = query.to_query_json(
 )
 ```
 
+## Traversal-scoped text search
+
+Use `text_search(...)` after a node or edge traversal to rank only the IDs in
+that current stream. This is an exact BM25 prefilter: results equal an
+exhaustive search of the selected tenant partition, intersected with the unique
+input IDs, followed by deterministic top-`k` selection.
+
+BM25 statistics still come from the full tenant partition.
+
+```python
+from helixdb import (
+    Predicate,
+    PropertyProjection,
+    define_params,
+    g,
+    param,
+    read_batch,
+)
+
+search_params = define_params({
+    "tenant_id": param.string(),
+    "query": param.string(),
+    "limit": param.i64(),
+})
+
+query = (
+    read_batch()
+    .var_as(
+        "documents",
+        g()
+        .n_with_label("Document")
+        .where(Predicate.eq("tenantId", search_params.tenant_id))
+        .text_search_with(
+            "Document",
+            "body",
+            search_params.query,
+            search_params.limit,
+            search_params.tenant_id,
+        )
+        .project([
+            PropertyProjection.renamed("$id", "id"),
+            PropertyProjection.renamed("$score", "score"),
+            PropertyProjection.new("title"),
+        ]),
+    )
+    .returning(["documents"])
+)
+```
+
+Use the literal form as
+`.text_search("Document", "body", "graph databases", 10, "acme")`.
+The same methods work on edge streams. Source-level
+`text_search_nodes[_with]` and `text_search_edges[_with]` remain
+whole-partition searches.
+
+Restricted results contain unique input IDs, return at most `k`, and order by
+`$score` descending then entity ID ascending. The selected input row keeps its
+bindings, path, and sack. An empty input returns without opening the text
+index. A non-node/edge stream or more than 1,000,000 unique candidates is a
+query error. For a tenant-scoped index, pass the same tenant partition used to
+build the candidate stream.
+
 ## Row Bindings
 
 Use `bind(...)` when a multi-hop traversal needs to keep earlier elements

@@ -64,6 +64,9 @@ pub(in crate::execution::interpreter) fn required_for(
         exec::ExecOp::VectorSearch { .. } => {
             RequiredMutationVisibility::one(DeferredMutationFamily::Vector)
         }
+        exec::ExecOp::TextSearch { .. } => {
+            RequiredMutationVisibility::one(DeferredMutationFamily::Text)
+        }
         exec::ExecOp::KvRead(_)
         | exec::ExecOp::Reserved { .. }
         | exec::ExecOp::Barrier { .. }

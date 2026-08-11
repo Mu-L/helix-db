@@ -42,6 +42,16 @@ pub(in crate::exec::selected::lowering) fn selected_stream_pipeline_delivered_pr
             };
             materialized_delivered_properties(limit_delivered_properties(delivered, k))
         }
+        logical::StreamPipelineOp::TextSearch { plan } => {
+            let k = match plan.as_ref() {
+                ir::RestrictedTextSearchPlan::Nodes { k, .. }
+                | ir::RestrictedTextSearchPlan::Edges { k, .. } => match k {
+                    ir::SearchLimitPlan::Literal(k) => Some(k.get()),
+                    ir::SearchLimitPlan::Expr(_) => None,
+                },
+            };
+            materialized_delivered_properties(limit_delivered_properties(delivered, k))
+        }
         logical::StreamPipelineOp::Variable { op } => {
             variable::selected_stream_variable_delivered_properties(delivered, op)
         }

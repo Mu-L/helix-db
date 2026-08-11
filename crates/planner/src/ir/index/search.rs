@@ -5,6 +5,34 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::ir::{NonEmptyString, PropertyInputPlan};
 use crate::{catalog, ir};
 
+/// Downstream BM25 ranking over the exact current stream.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RestrictedTextSearchPlan {
+    /// Current rows and the selected index both contain nodes.
+    Nodes {
+        /// Canonical node text-index key.
+        key: catalog::NodeSearchIndexKey,
+        /// Search index execution metadata.
+        index: SearchIndexPlan,
+        /// Query text.
+        query_text: ir::TextQueryInputPlan,
+        /// Result count.
+        k: ir::SearchLimitPlan,
+    },
+    /// Current rows and the selected index both contain edges.
+    Edges {
+        /// Canonical edge text-index key.
+        key: catalog::EdgeSearchIndexKey,
+        /// Search index execution metadata.
+        index: SearchIndexPlan,
+        /// Query text.
+        query_text: ir::TextQueryInputPlan,
+        /// Result count.
+        k: ir::SearchLimitPlan,
+    },
+}
+
 /// Downstream vector ranking over the exact current stream.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -71,6 +71,8 @@ impl NativeAstFamily {
             | AstNode::TextSearchEdges { .. }
             | AstNode::VectorSearchNodesWithin { .. }
             | AstNode::VectorSearchEdgesWithin { .. }
+            | AstNode::TextSearchNodesWithin { .. }
+            | AstNode::TextSearchEdgesWithin { .. }
             | AstNode::Has { .. }
             | AstNode::EdgeHas { .. }
             | AstNode::HasLabel { .. }

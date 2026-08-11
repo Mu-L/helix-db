@@ -20,4 +20,6 @@ pub(super) use self::limits::limited_search_k;
 pub(in crate::execution::interpreter::access) use self::limits::SearchReadLimit;
 #[cfg(test)]
 pub(super) use self::tenant::validate_vector_search_tenant;
-pub(in crate::execution::interpreter::access) use dispatch::RestrictedVectorSearchRead;
+pub(in crate::execution::interpreter::access) use dispatch::{
+    RestrictedTextSearchRead, RestrictedVectorSearchRead,
+};
