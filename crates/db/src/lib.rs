@@ -390,6 +390,7 @@ impl std::ops::Deref for HelixWriter {
 
 struct VectorMemoryRefreshTask {
     shutdown: watch::Sender<bool>,
+    initial_refresh: watch::Receiver<bool>,
     handle: JoinHandle<()>,
 }
 
@@ -1956,13 +1957,30 @@ impl HelixDB {
         Ok(summary)
     }
 
-    /// Wait for any currently owned startup warm tasks to finish.
+    /// Wait for owned startup warm tasks and the initial vector refresh to finish.
     pub async fn wait_for_startup_cache_warm(&self) {
         if let Some(task) = self.inner.caches.startup_tasks.slate.lock().await.take() {
             task.wait().await;
         }
         if let Some(task) = self.inner.caches.startup_tasks.fts.lock().await.take() {
             task.wait().await;
+        }
+        let initial_vector_refresh = self
+            .inner
+            .caches
+            .vector_memory
+            .refresh_task
+            .lock()
+            .await
+            .as_ref()
+            .map(|task| task.initial_refresh.clone());
+        let Some(mut initial_vector_refresh) = initial_vector_refresh else {
+            return;
+        };
+        while !*initial_vector_refresh.borrow() {
+            if initial_vector_refresh.changed().await.is_err() {
+                break;
+            }
         }
     }
 
@@ -2160,7 +2178,9 @@ impl HelixDB {
         let budget = settings.budget();
         let interval = Duration::from_secs(settings.poll_interval_secs());
         let (shutdown, mut shutdown_rx) = watch::channel(false);
+        let (initial_refresh_tx, initial_refresh) = watch::channel(false);
         let handle = tokio::spawn(async move {
+            let mut initial_refresh_tx = Some(initial_refresh_tx);
             loop {
                 if *shutdown_rx.borrow() {
                     break;
@@ -2175,6 +2195,9 @@ impl HelixDB {
                 drop(database);
                 if let Err(err) = result {
                     tracing::warn!(error = %err, "failed to refresh vector memory stores");
+                }
+                if let Some(initial_refresh_tx) = initial_refresh_tx.take() {
+                    let _ = initial_refresh_tx.send(true);
                 }
                 tokio::select! {
                     changed = shutdown_rx.changed() => {
@@ -2192,7 +2215,11 @@ impl HelixDB {
             }
         });
         *self.inner.caches.vector_memory.refresh_task.lock().await =
-            Some(VectorMemoryRefreshTask { shutdown, handle });
+            Some(VectorMemoryRefreshTask {
+                shutdown,
+                initial_refresh,
+                handle,
+            });
         Ok(())
     }
 
@@ -2935,11 +2962,11 @@ mod tests {
         db.wait_for_startup_cache_warm().await;
         let fts = db.fts_cache_state().await.expect("FTS cache state");
         assert!(fts.enabled);
-        assert_eq!(fts.resolved_memory_budget_bytes, 64 * 1024 * 1024);
+        assert_eq!(fts.resolved_memory_budget_bytes, 16 * 1024 * 1024);
         let slate = db.slate_cache_state().await;
-        assert!(slate.enabled);
-        assert_eq!(slate.warm_mode, Some(config::CacheWarmMode::Background));
-        assert_eq!(slate.last_warm.expect("warm completed").sst_count, 0);
+        assert!(!slate.enabled);
+        assert_eq!(slate.warm_mode, Some(config::CacheWarmMode::Off));
+        assert!(slate.last_warm.is_none());
         assert_eq!(
             db.warm_fts_cache()
                 .await
