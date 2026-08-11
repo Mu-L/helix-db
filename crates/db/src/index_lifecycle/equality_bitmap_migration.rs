@@ -5,7 +5,7 @@
 //! marker write; V3 rows are deleted only afterward, so every committed prefix
 //! is restart-safe.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -14,7 +14,9 @@ use roaring::RoaringTreemap;
 use slatedb::{Db, IsolationLevel};
 
 use crate::encoding::property::decode_properties;
-use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
+use crate::encoding::v1::keys::tenant::DataScope;
+#[cfg(test)]
+use crate::encoding::v1::keys::tenant::TenantId;
 use crate::encoding::v2::keys::{
     CanonicalSecondaryValue, GlobalKey, IndexEntity, Key, RecordKind, ScopedKey,
     SecondaryEqualityBitmapKey,
@@ -29,7 +31,8 @@ use super::operation::{
     IndexOperationExecutionState, IndexOperationProgress, SecondaryBuildProgress,
     SecondaryBuildStage, SourceScanProgress,
 };
-use super::tenant_envelope_migration::{self, TenantMigrationExclusions};
+#[cfg(test)]
+use super::tenant_envelope_migration;
 use super::{
     IndexOperationRecord, IndexStateV2, IndexStorageVersion, IndexV2MetadataValue,
     OperationCounters, OperationQueuePointerValue, PhysicalGeneration,
@@ -54,7 +57,6 @@ struct BuildingEqualityGeneration {
 
 #[derive(Debug, Default)]
 struct MigrationCatalog {
-    tenant_scopes: BTreeSet<TenantId>,
     all: Vec<EqualityGeneration>,
     active: Vec<EqualityGeneration>,
     building: Vec<BuildingEqualityGeneration>,
@@ -150,14 +152,6 @@ fn trip(failpoint: EqualityBitmapMigrationFailpoint) -> Result<()> {
     Err(injected_error(failpoint))
 }
 
-pub(super) fn trip_batch_before() -> Result<()> {
-    trip(EqualityBitmapMigrationFailpoint::BatchBefore)
-}
-
-pub(super) fn trip_batch_after() -> Result<()> {
-    trip(EqualityBitmapMigrationFailpoint::BatchAfter)
-}
-
 fn injected_error(failpoint: EqualityBitmapMigrationFailpoint) -> HelixDbError {
     HelixDbError::InvariantViolation(format!(
         "injected equality bitmap migration failpoint {}",
@@ -169,18 +163,6 @@ pub(super) async fn migrate_v3_to_v4(db: &Db) -> Result<()> {
     trip(EqualityBitmapMigrationFailpoint::InitializationBefore)?;
     let catalog = discover_catalog(db).await?;
     trip(EqualityBitmapMigrationFailpoint::InitializationAfter)?;
-    tenant_envelope_migration::reject_unowned_v3_tenant_keys(db, &catalog.tenant_scopes).await?;
-
-    let mut exclusions = TenantMigrationExclusions::default();
-    for building in &catalog.building {
-        exclusions.exclude_building_equality(
-            building.generation.scope,
-            building.generation.index_id,
-            building.generation.generation,
-            building.operation_id,
-        );
-    }
-    tenant_envelope_migration::copy_v3_tenant_keys(db, &catalog.tenant_scopes, &exclusions).await?;
 
     for generation in &catalog.active {
         rebuild_active_generation(db, generation).await?;
@@ -190,8 +172,6 @@ pub(super) async fn migrate_v3_to_v4(db: &Db) -> Result<()> {
     }
 
     trip(EqualityBitmapMigrationFailpoint::VerificationBefore)?;
-    tenant_envelope_migration::verify_v3_tenant_keys(db, &catalog.tenant_scopes, &exclusions)
-        .await?;
     trip(EqualityBitmapMigrationFailpoint::VerificationAfter)?;
 
     trip(EqualityBitmapMigrationFailpoint::PublicationBefore)?;
@@ -217,7 +197,6 @@ pub(super) async fn cleanup_v3_nonunique_equality_rows(db: &Db) -> Result<()> {
     for generation in &catalog.all {
         clear_v3_equality_generation(db, generation).await?;
     }
-    tenant_envelope_migration::cleanup_v3_tenant_keys(db, &catalog.tenant_scopes).await?;
     trip(EqualityBitmapMigrationFailpoint::CleanupAfter)?;
     crate::migrations::publish_index_storage_v4_cleanup_ready(db).await
 }
@@ -246,9 +225,6 @@ async fn discover_catalog(db: &Db) -> Result<MigrationCatalog> {
             return Err(corruption(
                 "index-record migration key has ambiguous physical scope",
             ));
-        }
-        if let DataScope::Tenant(tenant) = scope {
-            catalog.tenant_scopes.insert(tenant);
         }
         let ValidatedDynamicIndexDefinition::Secondary(definition) = record.definition() else {
             continue;
@@ -289,32 +265,14 @@ async fn discover_catalog(db: &Db) -> Result<MigrationCatalog> {
 }
 
 fn index_record_candidates(key: &[u8]) -> Result<Vec<(DataScope, ScopedKey)>> {
-    const PREFIX_LEN: usize = core::mem::size_of::<u8>();
-    const KIND_LEN: usize = core::mem::size_of::<u8>();
-    let mut candidates = Vec::with_capacity(2);
-    if key.len() >= PREFIX_LEN + KIND_LEN
-        && key[0] == ScopedKey::key_prefix()
-        && key[PREFIX_LEN] == RecordKind::IndexRecord.as_u8()
-        && let Ok(kind) = ScopedKey::parse_from_slice(key)
-    {
-        candidates.push((DataScope::LegacyUnscoped, kind));
+    let Ok(Key::Data { scope, kind }) = Key::parse_data_from_slice(key) else {
+        return Ok(Vec::new());
+    };
+    if matches!(kind, ScopedKey::IndexRecord(_)) {
+        Ok(vec![(scope, kind)])
+    } else {
+        Ok(Vec::new())
     }
-    if key.len() >= DataScope::PREFIX_LEN + PREFIX_LEN + KIND_LEN
-        && key[DataScope::PREFIX_LEN] == ScopedKey::key_prefix()
-        && key[DataScope::PREFIX_LEN + PREFIX_LEN] == RecordKind::IndexRecord.as_u8()
-        && let Ok(kind) = ScopedKey::parse_from_slice(
-            &key[DataScope::PREFIX_LEN..DataScope::PREFIX_LEN + key.len() - DataScope::PREFIX_LEN],
-        )
-    {
-        let tenant = u128::from_be_bytes(
-            key[0..DataScope::PREFIX_LEN]
-                .try_into()
-                .expect("validated tenant prefix is sixteen bytes"),
-        );
-        let scope = DataScope::Tenant(TenantId::from_u128(tenant));
-        candidates.push((scope, kind));
-    }
-    Ok(candidates)
 }
 
 async fn rebuild_active_generation(db: &Db, generation: &EqualityGeneration) -> Result<()> {
@@ -548,19 +506,8 @@ async fn restart_building_generation(db: &Db, building: &BuildingEqualityGenerat
         kind: ScopedKey::operation(building.operation_id),
     }
     .to_bytes();
-    let legacy_operation_key = tenant_envelope_migration::legacy_data_key(
-        building.generation.scope,
-        ScopedKey::operation(building.operation_id),
-    );
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
     let operation_bytes = transaction.get(&operation_key).await?;
-    let operation_bytes = match operation_bytes {
-        Some(operation_bytes) => Some(operation_bytes),
-        None if legacy_operation_key != operation_key => {
-            transaction.get(&legacy_operation_key).await?
-        }
-        None => None,
-    };
     let Some(operation_bytes) = operation_bytes else {
         return Err(corruption(
             "Building equality generation has no lifecycle operation",
@@ -646,43 +593,18 @@ async fn clear_v3_equality_generation(db: &Db, generation: &EqualityGeneration) 
         generation.index_id,
         generation.generation,
     );
-    match generation.scope {
-        DataScope::LegacyUnscoped => {
-            clear_v3_equality_prefix(
-                db,
-                generation,
-                Key::data_prefix(generation.scope, logical_prefix),
-                false,
-            )
-            .await
-        }
-        DataScope::Tenant(_) => {
-            clear_v3_equality_prefix(
-                db,
-                generation,
-                tenant_envelope_migration::legacy_data_prefix(
-                    generation.scope,
-                    logical_prefix.clone(),
-                ),
-                true,
-            )
-            .await?;
-            clear_v3_equality_prefix(
-                db,
-                generation,
-                Key::data_prefix(generation.scope, logical_prefix),
-                false,
-            )
-            .await
-        }
-    }
+    clear_v3_equality_prefix(
+        db,
+        generation,
+        Key::data_prefix(generation.scope, logical_prefix),
+    )
+    .await
 }
 
 async fn clear_v3_equality_prefix(
     db: &Db,
     generation: &EqualityGeneration,
     prefix: Bytes,
-    legacy_tenant_envelope: bool,
 ) -> Result<()> {
     loop {
         let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
@@ -692,11 +614,7 @@ async fn clear_v3_equality_prefix(
             let Some(row) = rows.next().await? else {
                 break;
             };
-            let parsed = if legacy_tenant_envelope {
-                tenant_envelope_migration::parse_legacy_data_key(generation.scope, &row.key)?
-            } else {
-                Key::parse_from_slice(generation.scope, &row.key)?
-            };
+            let parsed = Key::parse_from_slice(generation.scope, &row.key)?;
             let Key::Data {
                 kind: ScopedKey::SecondaryEntry(entry),
                 ..
@@ -1247,13 +1165,13 @@ mod tests {
         assert!(matches!(
             super::super::repository::bootstrap_writer(&db).await,
             Err(HelixDbError::IndexCatalogCorruption(message))
-                if message.contains("conflicts with its V3 source value")
+                if message.contains("destination conflicts with its legacy source")
         ));
         db.close().await.unwrap();
     }
 
     #[tokio::test]
-    async fn tenant_migration_rejects_v2_rows_without_a_catalog_root() {
+    async fn tenant_migration_preserves_managed_rows_without_a_catalog_root() {
         let _guard = TEST_LOCK.lock().await;
         let db = v3_db("v4-tenant-envelope-orphan").await;
         let tenant = DataScope::Tenant(TenantId::from_u128(7));
@@ -1267,23 +1185,25 @@ mod tests {
             )
             .unwrap(),
         );
-        db.put(
-            tenant_envelope_migration::legacy_data_key(tenant, kind),
-            encode_secondary_entry(&SecondaryEntryValue {
-                index_id: IndexId::new(2).unwrap(),
-                generation: IndexGenerationId::initial(),
-                lane: SecondaryEntryLane::NodeUniqueEquality,
-                entity_id: super::super::IndexEntityId::new(1),
-            }),
-        )
-        .await
-        .unwrap();
+        let old_key = tenant_envelope_migration::legacy_data_key(tenant, kind.clone());
+        let new_key = Key::Data {
+            scope: tenant,
+            kind,
+        }
+        .to_bytes();
+        let value = encode_secondary_entry(&SecondaryEntryValue {
+            index_id: IndexId::new(2).unwrap(),
+            generation: IndexGenerationId::initial(),
+            lane: SecondaryEntryLane::NodeUniqueEquality,
+            entity_id: super::super::IndexEntityId::new(1),
+        });
+        db.put(&old_key, value.clone()).await.unwrap();
 
-        assert!(matches!(
-            super::super::repository::bootstrap_writer(&db).await,
-            Err(HelixDbError::IndexCatalogCorruption(message))
-                if message.contains("has no catalog root")
-        ));
+        super::super::repository::bootstrap_writer(&db)
+            .await
+            .unwrap();
+        assert_eq!(db.get(old_key).await.unwrap(), None);
+        assert_eq!(db.get(new_key).await.unwrap(), Some(value));
         db.close().await.unwrap();
     }
 

@@ -13,7 +13,7 @@ use crate::encoding::v1::keys::vectors::{VectorKey, VectorStorageLane};
 use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey, KeyPrefix};
 use crate::encoding::v2::keys::Key;
 use crate::encoding::v2::keys::{
-    GlobalKey, RecordKind, ScopedKey, VectorPartitionMappingKey, GLOBAL_SENTINEL, TENANT_SENTINEL,
+    GlobalKey, RecordKind, ScopedKey, VectorPartitionMappingKey, GLOBAL_SENTINEL,
 };
 use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, decode_partition_mapping, encode_metadata_value,
@@ -47,6 +47,7 @@ fn metadata_or_migration_required(
 
 /// Initializes missing V2 metadata on legacy storage or validates the tuple.
 pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
+    super::tenant_envelope_migration::migrate_all_tenant_keys(db).await?;
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
     let marker_key = global_key(GlobalKey::StorageVersion);
     let logical_key = global_key(GlobalKey::LogicalIndexIdWatermark);
@@ -66,7 +67,8 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
         while let Some(row) = rows.next().await? {
             let is_global_v2 = row.key.starts_with(&GLOBAL_SENTINEL);
             let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
-            let is_tenant_v2 = row.key.starts_with(&TENANT_SENTINEL);
+            let is_tenant_v2 = DataScope::strip_tenant_envelope(&row.key)
+                .is_some_and(|(_, logical)| ScopedKey::parse_from_slice(logical).is_ok());
             if is_global_v2 || is_unscoped_v2 || is_tenant_v2 {
                 return Err(HelixDbError::MigrationRequired {
                     reason: "V2 storage rows exist without the complete bootstrap tuple"
@@ -134,6 +136,7 @@ pub(crate) async fn bootstrap_writer(db: &Db) -> Result<()> {
 pub(crate) async fn require_reader_bootstrap_or_legacy(
     reader: &(impl DbReadOps + Send + Sync),
 ) -> Result<()> {
+    let tenant_envelope_ready = crate::migrations::tenant_key_envelope_ready(reader).await?;
     let marker_key = global_key(GlobalKey::StorageVersion);
     let logical_key = global_key(GlobalKey::LogicalIndexIdWatermark);
     let vector_key = global_key(GlobalKey::VectorPhysicalIdWatermark);
@@ -144,23 +147,31 @@ pub(crate) async fn require_reader_bootstrap_or_legacy(
         let bootstrap = validate_bootstrap_values(&marker, logical.as_deref(), vector.as_deref())?;
         let progress =
             crate::migrations::storage_schema_progress(reader, DataScope::LegacyUnscoped).await?;
-        return match (bootstrap, progress) {
+        return match (bootstrap, progress, tenant_envelope_ready) {
             (
                 ValidatedReaderBootstrap::WriterMigration(requirement),
                 crate::migrations::StorageSchemaProgress::NotStarted
                 | crate::migrations::StorageSchemaProgress::GraphReady
                 | crate::migrations::StorageSchemaProgress::IndexReady
                 | crate::migrations::StorageSchemaProgress::Complete,
+                _,
             ) => Err(HelixDbError::WriterMigrationRequired { requirement }),
             (
                 ValidatedReaderBootstrap::Current,
                 crate::migrations::StorageSchemaProgress::Complete,
+                true,
             ) => Ok(()),
             (
                 ValidatedReaderBootstrap::Current,
                 crate::migrations::StorageSchemaProgress::NotStarted
                 | crate::migrations::StorageSchemaProgress::GraphReady
                 | crate::migrations::StorageSchemaProgress::IndexReady,
+                _,
+            )
+            | (
+                ValidatedReaderBootstrap::Current,
+                crate::migrations::StorageSchemaProgress::Complete,
+                false,
             ) => Err(HelixDbError::WriterMigrationRequired {
                 requirement: WriterMigrationRequirement::IncompleteStorageSchema,
             }),
@@ -171,11 +182,17 @@ pub(crate) async fn require_reader_bootstrap_or_legacy(
             reason: "read-only storage has a partial V2 bootstrap tuple".to_string(),
         });
     }
+    if !tenant_envelope_ready {
+        return Err(HelixDbError::WriterMigrationRequired {
+            requirement: WriterMigrationRequirement::IncompleteStorageSchema,
+        });
+    }
     let mut rows = reader.scan(..).await?;
     while let Some(row) = rows.next().await? {
         let is_global_v2 = row.key.starts_with(&GLOBAL_SENTINEL);
         let is_unscoped_v2 = row.key.first().copied() == Some(ScopedKey::key_prefix());
-        let is_tenant_v2 = row.key.starts_with(&TENANT_SENTINEL);
+        let is_tenant_v2 = DataScope::strip_tenant_envelope(&row.key)
+            .is_some_and(|(_, logical)| ScopedKey::parse_from_slice(logical).is_ok());
         if is_global_v2 || is_unscoped_v2 || is_tenant_v2 {
             return Err(HelixDbError::MigrationRequired {
                 reason: "read-only storage has V2 rows without the complete bootstrap tuple"
@@ -1205,11 +1222,12 @@ async fn allocate_operation_id_from(
 mod tests {
     use std::sync::Arc;
 
+    use bytes::BufMut;
     use slatedb::object_store::memory::InMemory;
 
     use super::*;
     use crate::encoding::v1::keys::metadata::MetadataKey;
-    use crate::encoding::v1::keys::tenant::TenantId;
+    use crate::encoding::v1::keys::tenant::{TenantId, TENANT_KEY_PREFIX};
     use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey};
 
     #[test]
@@ -1334,8 +1352,9 @@ mod tests {
 
         assert!(matches!(
             require_reader_bootstrap_or_legacy(&db).await,
-            Err(HelixDbError::MigrationRequired { reason })
-                if reason == "read-only storage has V2 rows without the complete bootstrap tuple"
+            Err(HelixDbError::WriterMigrationRequired {
+                requirement: WriterMigrationRequirement::IncompleteStorageSchema,
+            })
         ));
         db.close().await.unwrap();
     }
@@ -1381,8 +1400,9 @@ mod tests {
 
             assert!(matches!(
                 require_reader_bootstrap_or_legacy(&db).await,
-                Err(HelixDbError::MigrationRequired { reason })
-                    if reason == "read-only storage has V2 rows without the complete bootstrap tuple"
+                Err(HelixDbError::WriterMigrationRequired {
+                    requirement: WriterMigrationRequirement::IncompleteStorageSchema,
+                })
             ));
             assert!(matches!(
                 bootstrap_writer(&db).await,
@@ -1402,28 +1422,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adversarial_v1_tenant_prefix_remains_a_legacy_negative_control() {
+    async fn legacy_tenant_id_starting_with_the_marker_is_migrated() {
         let scope = DataScope::Tenant(TenantId::from_u128(u128::from_be_bytes([0xFD; 16])));
-        let key = GraphKey::Data {
-            scope,
-            kind: DataKeyKind::IndexMetadata(MetadataKey::next_node_id_key()),
-        }
-        .to_bytes();
-        assert!(!key.starts_with(&TENANT_SENTINEL));
+        let DataScope::Tenant(tenant) = scope else {
+            unreachable!()
+        };
+        let kind = DataKeyKind::IndexMetadata(MetadataKey::next_node_id_key());
+        let mut legacy_key = Vec::new();
+        legacy_key.put_u128(tenant.as_u128());
+        kind.encode_into(&mut legacy_key);
+        let legacy_key = Bytes::from(legacy_key);
+        let current_key = GraphKey::Data { scope, kind }.to_bytes();
+        assert_eq!(legacy_key.first().copied(), Some(TENANT_KEY_PREFIX));
+        assert_eq!(current_key.first().copied(), Some(TENANT_KEY_PREFIX));
+        assert_eq!(
+            current_key.len(),
+            legacy_key.len() + core::mem::size_of::<u8>()
+        );
         let db = Db::builder("adversarial-v1-tenant-prefix", Arc::new(InMemory::new()))
             .build()
             .await
             .unwrap();
-        db.put(&key, Bytes::from_static(b"v1-value")).await.unwrap();
-
-        require_reader_bootstrap_or_legacy(&db)
+        db.put(&legacy_key, Bytes::from_static(b"v1-value"))
             .await
-            .expect("a valid V1 tenant row remains readable as legacy storage");
+            .unwrap();
+
+        assert!(matches!(
+            require_reader_bootstrap_or_legacy(&db).await,
+            Err(HelixDbError::WriterMigrationRequired {
+                requirement: WriterMigrationRequirement::IncompleteStorageSchema,
+            })
+        ));
         bootstrap_writer(&db)
             .await
-            .expect("a valid V1 tenant row permits writer bootstrap");
+            .expect("writer bootstrap migrates the legacy tenant row");
+        assert_eq!(db.get(&legacy_key).await.unwrap(), None);
         assert_eq!(
-            db.get(&key).await.unwrap(),
+            db.get(&current_key).await.unwrap(),
             Some(Bytes::from_static(b"v1-value"))
         );
         let marker = db

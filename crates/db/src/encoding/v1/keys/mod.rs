@@ -333,9 +333,9 @@ impl<'a> Key<'a> {
     pub(crate) fn data_prefix(scope: DataScope, logical_prefix: Bytes) -> Bytes {
         match scope {
             DataScope::LegacyUnscoped => logical_prefix,
-            DataScope::Tenant(tenant_id) => {
-                let mut bytes = Vec::with_capacity(DataScope::PREFIX_LEN + logical_prefix.len());
-                bytes.put_u128(tenant_id.as_u128());
+            scope @ DataScope::Tenant(_) => {
+                let mut bytes = Vec::with_capacity(scope.encoded_len() + logical_prefix.len());
+                scope.encode_key_prefix(&mut bytes);
                 bytes.extend_from_slice(&logical_prefix);
                 Bytes::from(bytes)
             }
@@ -381,9 +381,7 @@ impl<'a> Key<'a> {
         match self {
             Self::Global { kind } => kind.encode_into(&mut bytes),
             Self::Data { scope, kind } => {
-                if let DataScope::Tenant(tenant_id) = scope {
-                    bytes.put_u128(tenant_id.as_u128());
-                }
+                scope.encode_key_prefix(&mut bytes);
                 kind.encode_into(&mut bytes);
             }
         }
@@ -859,7 +857,8 @@ mod tests {
             kind: DataKeyKind::NodeProperty(NodePropertyKey::new(42)),
         }
         .to_bytes();
-        let mut expected = tenant.as_u128().to_be_bytes().to_vec();
+        let mut expected = vec![tenant::TENANT_KEY_PREFIX];
+        expected.extend_from_slice(&tenant.as_u128().to_be_bytes());
         expected.extend_from_slice(
             DataKeyKind::NodeProperty(NodePropertyKey::new(42))
                 .to_bytes()
@@ -896,7 +895,8 @@ mod tests {
                 if message == "physical key does not match tenant scope"
         ));
 
-        let mut malformed = tenant_a.as_u128().to_be_bytes().to_vec();
+        let mut malformed = vec![tenant::TENANT_KEY_PREFIX];
+        malformed.extend_from_slice(&tenant_a.as_u128().to_be_bytes());
         malformed.push(0xFE);
         assert!(matches!(
             Key::parse_from_slice(DataScope::Tenant(tenant_a), &malformed),
@@ -914,7 +914,8 @@ mod tests {
         }
         .to_bytes();
 
-        let mut expected = tenant.as_u128().to_be_bytes().to_vec();
+        let mut expected = vec![tenant::TENANT_KEY_PREFIX];
+        expected.extend_from_slice(&tenant.as_u128().to_be_bytes());
         expected.extend_from_slice(&[0x03, 0x04]);
         expected.extend_from_slice(&label_hash);
 

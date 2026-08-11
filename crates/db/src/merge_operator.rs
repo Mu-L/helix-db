@@ -512,8 +512,7 @@ fn logical_key(key: &[u8]) -> &[u8] {
         return key;
     }
 
-    if key.len() > DataScope::PREFIX_LEN {
-        let tenant_logical = &key[DataScope::PREFIX_LEN..];
+    if let Some((_, tenant_logical)) = DataScope::strip_tenant_envelope(key) {
         if matches!(
             tenant_logical.first().copied(),
             Some(

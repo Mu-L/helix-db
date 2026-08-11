@@ -41,6 +41,7 @@ use crate::HelixWriter;
 const MIGRATION_JOB_PREFIX: &[u8] = b"kv_migration_job:";
 const GRAPH_FORMAT_V1_READY: &[u8] = b"kv_migration_ready:graph_format_v1";
 const INDEX_V2_MIGRATION_READY: &[u8] = b"kv_migration_ready:index_v2_catalog_v1";
+const TENANT_KEY_ENVELOPE_READY: &[u8] = b"kv_migration_ready:tenant_key_envelope_v1";
 const INDEX_STORAGE_V4_CLEANUP_READY: &[u8] = b"kv_migration_ready:index_storage_v4_cleanup";
 const STORAGE_SCHEMA_VERSION: u64 = 1;
 const STORAGE_SCHEMA_COMPLETE: &[u8] = b"storage_schema_complete:v1";
@@ -1255,6 +1256,35 @@ pub(crate) async fn index_storage_v4_cleanup_ready(
             reason: "index storage V4 cleanup readiness marker is malformed".to_string(),
         }),
     }
+}
+
+/// Returns whether every tenant-owned physical key uses the one-byte envelope.
+pub(crate) async fn tenant_key_envelope_ready(
+    read: &(impl DbReadOps + Send + Sync),
+) -> Result<bool> {
+    match read
+        .get(scoped_metadata_key(
+            DataScope::LegacyUnscoped,
+            TENANT_KEY_ENVELOPE_READY,
+        ))
+        .await?
+        .as_deref()
+    {
+        None => Ok(false),
+        Some(b"1") => Ok(true),
+        Some(_) => Err(HelixDbError::MigrationRequired {
+            reason: "tenant key envelope readiness marker is malformed".to_string(),
+        }),
+    }
+}
+
+/// Stages tenant-envelope completion in the caller's migration transaction.
+pub(crate) fn stage_tenant_key_envelope_ready(transaction: &DbTransaction) -> Result<()> {
+    transaction.put(
+        scoped_metadata_key(DataScope::LegacyUnscoped, TENANT_KEY_ENVELOPE_READY),
+        Bytes::from_static(b"1"),
+    )?;
+    Ok(())
 }
 
 /// Stages V4 cleanup completion in the caller's existing transaction.
@@ -4278,6 +4308,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tenant_key_envelope_readiness_is_byte_frozen_and_strict() {
+        let key = scoped_metadata_key(DataScope::LegacyUnscoped, TENANT_KEY_ENVELOPE_READY);
+        assert_eq!(
+            key.as_ref(),
+            b"\xFFkv_migration_ready:tenant_key_envelope_v1"
+        );
+
+        let db = Db::builder("tenant-key-envelope-readiness", Arc::new(InMemory::new()))
+            .build()
+            .await
+            .unwrap();
+        assert!(!tenant_key_envelope_ready(&db).await.unwrap());
+
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        stage_tenant_key_envelope_ready(&transaction).unwrap();
+        transaction.commit().await.unwrap();
+        assert_eq!(
+            db.get(&key).await.unwrap().as_deref(),
+            Some(b"1".as_slice())
+        );
+        assert!(tenant_key_envelope_ready(&db).await.unwrap());
+
+        db.put(key, Bytes::from_static(b"invalid")).await.unwrap();
+        assert!(matches!(
+            tenant_key_envelope_ready(&db).await,
+            Err(HelixDbError::MigrationRequired { reason })
+                if reason == "tenant key envelope readiness marker is malformed"
+        ));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn storage_schema_progress_accepts_only_ordered_prefixes() {
         let cases = [
             ((false, false, false), StorageSchemaProgress::NotStarted),
@@ -4834,7 +4899,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reader_opens_legacy_storage_without_mutating_bootstrap_metadata() {
+    async fn reader_requires_tenant_migration_without_mutating_bootstrap_metadata() {
         let root = tempfile::tempdir().expect("temporary object-store root");
         let database = "reader-requires-migration";
         let object_store = Arc::new(
@@ -4851,25 +4916,15 @@ mod tests {
             database: database.to_string(),
         };
 
-        let reader = HelixDB::open_reader(source.clone())
-            .await
-            .expect("pre-migration reader opens without mutating storage");
-        let crate::HelixStorage::Reader(storage) = reader.storage() else {
-            panic!("expected reader storage");
+        let Err(error) = HelixDB::open_reader(source.clone()).await else {
+            panic!("pre-migration reader requires blocking writer startup");
         };
-        assert!(
-            !index_v2_migration_ready(storage.as_ref(), DataScope::LegacyUnscoped)
-                .await
-                .expect("migration completion marker reads"),
-            "reader must not create the migration completion marker"
-        );
-        assert!(
-            !storage_schema_complete(storage.as_ref(), DataScope::LegacyUnscoped)
-                .await
-                .expect("storage schema completion marker reads"),
-            "reader must not create the storage schema completion marker"
-        );
-        reader.close().await.expect("legacy reader closes");
+        assert!(matches!(
+            error,
+            HelixDbError::WriterMigrationRequired {
+                requirement: crate::error::WriterMigrationRequirement::IncompleteStorageSchema,
+            }
+        ));
 
         let object_store = Arc::new(
             slatedb::object_store::local::LocalFileSystem::new_with_prefix(root.path())
@@ -4878,7 +4933,25 @@ mod tests {
         let raw = Db::builder(database, object_store)
             .build()
             .await
-            .expect("raw tuple-only db opens");
+            .expect("raw pre-migration db reopens");
+        assert!(
+            !tenant_key_envelope_ready(&raw)
+                .await
+                .expect("tenant migration marker reads"),
+            "reader must not create the tenant migration marker"
+        );
+        assert!(
+            !index_v2_migration_ready(&raw, DataScope::LegacyUnscoped)
+                .await
+                .expect("migration completion marker reads"),
+            "reader must not create the migration completion marker"
+        );
+        assert!(
+            !storage_schema_complete(&raw, DataScope::LegacyUnscoped)
+                .await
+                .expect("storage schema completion marker reads"),
+            "reader must not create the storage schema completion marker"
+        );
         crate::index_lifecycle::repository::bootstrap_writer(&raw)
             .await
             .expect("writer bootstrap tuple commits");

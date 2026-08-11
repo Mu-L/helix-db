@@ -1,7 +1,7 @@
 //! Typed construction and parsing for the canonical V2 index namespace.
 //!
 //! Scoped records always begin with logical data prefix `0x06`. Tenant-scoped
-//! records add the explicit physical envelope `[0xFD; 17][tenant id]`, while
+//! records add the explicit physical envelope `[0xFD][tenant id]`, while
 //! database-global records use the exact seventeen-byte `0xFE` sentinel. A
 //! physical V2 key therefore declares its scope without inspecting arbitrary
 //! tenant bytes.
@@ -15,7 +15,7 @@ use crate::index_lifecycle::{
     IndexIdentityFamily, IndexOperationId,
 };
 
-use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
+use crate::encoding::v1::keys::tenant::{DataScope, TENANT_ENVELOPE_LEN, TENANT_KEY_PREFIX};
 
 pub(crate) mod global;
 pub(crate) mod indexes;
@@ -42,15 +42,6 @@ pub(super) const HASH_LEN: usize = 32;
 /// Maximum complete cursor, logical-owner, or global reference key length.
 pub(crate) const KEY_MAX_LEN: usize = 1024 * 1024;
 const DATA_PREFIX: u8 = 0x06;
-const TENANT_SENTINEL_LEN: usize = DataScope::PREFIX_LEN + core::mem::size_of::<u8>();
-/// Exact V2-only tenant envelope sentinel.
-///
-/// A V1 tenant key has an arbitrary sixteen-byte tenant ID followed by a V1
-/// key prefix. Since `0xFD` is not a legal V1 key prefix, seventeen `0xFD`
-/// bytes cannot prefix any valid V1 tenant key.
-pub(crate) const TENANT_SENTINEL: [u8; TENANT_SENTINEL_LEN] = [0xFD; TENANT_SENTINEL_LEN];
-pub(crate) const TENANT_ENVELOPE_LEN: usize = TENANT_SENTINEL_LEN + DataScope::PREFIX_LEN;
-
 /// Complete physical key for one lifecycle-managed index record.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum Key {
@@ -62,10 +53,9 @@ impl Key {
     pub(crate) fn data_prefix(scope: DataScope, logical_prefix: Bytes) -> Bytes {
         match scope {
             DataScope::LegacyUnscoped => logical_prefix,
-            DataScope::Tenant(tenant_id) => {
-                let mut bytes = Vec::with_capacity(TENANT_ENVELOPE_LEN + logical_prefix.len());
-                bytes.put_slice(&TENANT_SENTINEL);
-                bytes.put_u128(tenant_id.as_u128());
+            scope @ DataScope::Tenant(_) => {
+                let mut bytes = Vec::with_capacity(scope.encoded_len() + logical_prefix.len());
+                scope.encode_key_prefix(&mut bytes);
                 bytes.put_slice(&logical_prefix);
                 Bytes::from(bytes)
             }
@@ -73,30 +63,10 @@ impl Key {
     }
 
     pub(crate) fn parse_from_slice(scope: DataScope, slice: &[u8]) -> Result<Self, EncodingError> {
-        const TENANT_ID_OFFSET: usize = TENANT_SENTINEL_LEN;
-        const LOGICAL_OFFSET: usize = TENANT_SENTINEL_LEN + DataScope::PREFIX_LEN;
-        let logical = match scope {
-            DataScope::LegacyUnscoped => slice,
-            DataScope::Tenant(tenant_id) => {
-                if slice.len() < TENANT_ENVELOPE_LEN {
-                    return Err(EncodingError::BufferTooShort {
-                        expected: TENANT_ENVELOPE_LEN,
-                        actual: slice.len(),
-                    });
-                }
-                if slice[0..TENANT_SENTINEL_LEN] != TENANT_SENTINEL {
-                    return Err(EncodingError::InvalidKeyPrefix(slice[0]));
-                }
-                let expected_tenant = tenant_id.as_u128().to_be_bytes();
-                if slice[TENANT_ID_OFFSET..TENANT_ID_OFFSET + DataScope::PREFIX_LEN]
-                    != expected_tenant
-                {
-                    return Err(EncodingError::InvalidKey(
-                        "physical key does not match index data scope".to_string(),
-                    ));
-                }
-                &slice[LOGICAL_OFFSET..LOGICAL_OFFSET + slice.len() - LOGICAL_OFFSET]
-            }
+        let Some(logical) = scope.strip_key(slice) else {
+            return Err(EncodingError::InvalidKey(
+                "physical key does not match index data scope".to_string(),
+            ));
         };
         Ok(Self::Data {
             scope,
@@ -106,30 +76,26 @@ impl Key {
 
     /// Parses one physical V2 data key whose explicit envelope owns its scope.
     pub(crate) fn parse_data_from_slice(slice: &[u8]) -> Result<Self, EncodingError> {
-        const TENANT_ID_OFFSET: usize = TENANT_SENTINEL_LEN;
-        const LOGICAL_OFFSET: usize = TENANT_SENTINEL_LEN + DataScope::PREFIX_LEN;
         let Some(prefix) = slice.first().copied() else {
             return Err(EncodingError::BufferTooShort {
                 expected: PREFIX_LEN,
                 actual: 0,
             });
         };
-        if slice.starts_with(&TENANT_SENTINEL) {
+        if prefix == TENANT_KEY_PREFIX {
             if slice.len() < TENANT_ENVELOPE_LEN + PREFIX_LEN + KIND_LEN {
                 return Err(EncodingError::BufferTooShort {
                     expected: TENANT_ENVELOPE_LEN + PREFIX_LEN + KIND_LEN,
                     actual: slice.len(),
                 });
             }
-            let tenant = u128::from_be_bytes(
-                slice[TENANT_ID_OFFSET..TENANT_ID_OFFSET + DataScope::PREFIX_LEN]
-                    .try_into()
-                    .expect("validated tenant id slice is sixteen bytes"),
-            );
-            if slice[LOGICAL_OFFSET] != DATA_PREFIX {
-                return Err(EncodingError::InvalidKeyPrefix(slice[LOGICAL_OFFSET]));
+            let Some((tenant, logical)) = DataScope::strip_tenant_envelope(slice) else {
+                return Err(EncodingError::InvalidKeyPrefix(prefix));
+            };
+            if logical[0] != DATA_PREFIX {
+                return Err(EncodingError::InvalidKeyPrefix(logical[0]));
             }
-            Self::parse_from_slice(DataScope::Tenant(TenantId::from_u128(tenant)), slice)
+            Self::parse_from_slice(DataScope::Tenant(tenant), slice)
         } else if prefix == DATA_PREFIX {
             Self::parse_from_slice(DataScope::LegacyUnscoped, slice)
         } else {
@@ -151,10 +117,7 @@ impl Key {
         match self {
             Self::Global { kind } => kind.encode_into(&mut bytes),
             Self::Data { scope, kind } => {
-                if let DataScope::Tenant(tenant_id) = scope {
-                    bytes.put_slice(&TENANT_SENTINEL);
-                    bytes.put_u128(tenant_id.as_u128());
-                }
+                scope.encode_key_prefix(&mut bytes);
                 kind.encode_into(&mut bytes);
             }
         }
@@ -982,7 +945,7 @@ vector.partition_mapping=060f000000000000000100000000000000022222222222222222222
             format!("unscoped={}\ntenant={}\n", hex(&unscoped), hex(&scoped)),
             @"
 unscoped=06050000000000000001000000000000000201e9cf50951f33fb140000000b04000000067368617265640000000000000003
-tenant=fdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfd0102030405060708111213141516171806050000000000000001000000000000000201e9cf50951f33fb140000000b04000000067368617265640000000000000003
+tenant=fd0102030405060708111213141516171806050000000000000001000000000000000201e9cf50951f33fb140000000b04000000067368617265640000000000000003
 "
         );
         assert_eq!(
@@ -994,7 +957,7 @@ tenant=fdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfd010203040506070811121314151617180605000
             scoped
         );
 
-        let legacy_tenant = &scoped[TENANT_SENTINEL_LEN..];
+        let legacy_tenant = &scoped[core::mem::size_of::<u8>()..];
         assert!(Key::parse_from_slice(tenant, legacy_tenant).is_err());
         assert!(Key::parse_data_from_slice(legacy_tenant).is_err());
     }
@@ -1013,27 +976,25 @@ tenant=fdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfd010203040506070811121314151617180605000
                 kind: kind.clone(),
             };
             let encoded = key.to_bytes();
-            assert!(encoded.starts_with(&TENANT_SENTINEL));
+            assert_eq!(encoded.first().copied(), Some(TENANT_KEY_PREFIX));
             assert_eq!(Key::parse_data_from_slice(&encoded).unwrap(), key);
         }
     }
 
     #[test]
-    fn tenant_sentinel_is_disjoint_from_every_v1_tenant_key() {
-        assert!(crate::encoding::v1::keys::KeyPrefix::from_u8(
-            TENANT_SENTINEL[TENANT_SENTINEL_LEN - core::mem::size_of::<u8>()]
-        )
-        .is_err());
+    fn legacy_tenant_key_requires_the_one_byte_envelope() {
+        let tenant = TenantId::from_u128(0x0102_0304_0506_0708_1112_1314_1516_1718);
+        let kind = ScopedKey::operation(IndexOperationId::from_bytes([0x11; UUID_LEN]).unwrap());
+        let current = Key::Data {
+            scope: DataScope::Tenant(tenant),
+            kind,
+        }
+        .to_bytes();
+        let legacy = &current[core::mem::size_of::<u8>()..];
 
-        let legacy = {
-            let mut bytes = vec![0xFD; DataScope::PREFIX_LEN];
-            bytes.push(ScopedKey::key_prefix());
-            bytes.push(RecordKind::Operation.as_u8());
-            bytes.extend_from_slice(&[0x11; UUID_LEN]);
-            bytes
-        };
-        assert!(!legacy.starts_with(&TENANT_SENTINEL));
-        assert!(Key::parse_data_from_slice(&legacy).is_err());
+        assert_eq!(current[0], TENANT_KEY_PREFIX);
+        assert!(Key::parse_data_from_slice(legacy).is_err());
+        assert!(Key::parse_from_slice(DataScope::Tenant(tenant), legacy).is_err());
     }
 
     #[test]
