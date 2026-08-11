@@ -1,5 +1,6 @@
 //! Exact traversal candidate membership for full-text search.
 
+use std::num::NonZeroU64;
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
@@ -17,23 +18,64 @@ pub(crate) enum RestrictedTextCandidates {
     NonEmpty(RoaringTreemap),
 }
 
+/// Builds an exact candidate bitmap while enforcing its unique-ID limit.
+#[derive(Debug)]
+pub(crate) struct RestrictedTextCandidatesBuilder {
+    bitmap: RoaringTreemap,
+    limit: NonZeroU64,
+}
+
+impl RestrictedTextCandidatesBuilder {
+    pub(crate) fn new() -> Self {
+        Self {
+            bitmap: RoaringTreemap::new(),
+            limit: NonZeroU64::new(MAX_RESTRICTED_CANDIDATES)
+                .expect("the restricted candidate limit is non-zero"),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_limit(limit: NonZeroU64) -> Self {
+        Self {
+            bitmap: RoaringTreemap::new(),
+            limit,
+        }
+    }
+
+    /// Returns whether the ID was newly retained.
+    pub(crate) fn try_insert(&mut self, id: u64) -> Result<bool, HelixDbError> {
+        if self.bitmap.contains(id) {
+            return Ok(false);
+        }
+        if self.bitmap.len() >= self.limit.get() {
+            return Err(HelixDbError::Query(format!(
+                "restricted text search accepts at most {} unique candidates",
+                self.limit
+            )));
+        }
+        let inserted = self.bitmap.insert(id);
+        debug_assert!(inserted, "a previously absent candidate must be inserted");
+        Ok(true)
+    }
+
+    pub(crate) fn finish(self) -> RestrictedTextCandidates {
+        if self.bitmap.is_empty() {
+            RestrictedTextCandidates::Empty
+        } else {
+            RestrictedTextCandidates::NonEmpty(self.bitmap)
+        }
+    }
+}
+
 impl RestrictedTextCandidates {
     /// Canonicalizes duplicate traversal rows into one exact bounded bitmap.
+    #[cfg(any(test, feature = "production-coverage"))]
     pub(crate) fn from_ids(ids: impl IntoIterator<Item = u64>) -> Result<Self, HelixDbError> {
-        let mut bitmap = RoaringTreemap::new();
+        let mut builder = RestrictedTextCandidatesBuilder::new();
         for id in ids {
-            bitmap.insert(id);
-            if bitmap.len() > MAX_RESTRICTED_CANDIDATES {
-                return Err(HelixDbError::Query(format!(
-                    "restricted text search accepts at most {MAX_RESTRICTED_CANDIDATES} unique candidates"
-                )));
-            }
+            builder.try_insert(id)?;
         }
-        if bitmap.is_empty() {
-            Ok(Self::Empty)
-        } else {
-            Ok(Self::NonEmpty(bitmap))
-        }
+        Ok(builder.finish())
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -99,5 +141,23 @@ mod tests {
         let error = RestrictedTextCandidates::from_ids(0..=MAX_RESTRICTED_CANDIDATES)
             .expect_err("the unique candidate cap must fail closed");
         assert!(error.to_string().contains("at most 1000000"));
+    }
+
+    #[test]
+    fn builder_rejects_before_retaining_an_overflowing_unique_id() {
+        let mut builder = RestrictedTextCandidatesBuilder::with_limit(NonZeroU64::new(2).unwrap());
+        assert!(builder.try_insert(1).unwrap());
+        assert!(!builder.try_insert(1).unwrap());
+        assert!(builder.try_insert(2).unwrap());
+
+        let error = builder
+            .try_insert(3)
+            .expect_err("the third unique ID must fail before insertion");
+        assert!(error.to_string().contains("at most 2"));
+
+        let candidates = builder.finish();
+        assert!(candidates.contains(1));
+        assert!(candidates.contains(2));
+        assert!(!candidates.contains(3));
     }
 }

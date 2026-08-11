@@ -10,12 +10,21 @@ use super::search::{RestrictedTextSearchRead, SearchReadLimit};
 use crate::config::TextElementType;
 use crate::encoding::property::property_value::PropertyValue as DbPropertyValue;
 use crate::error::{HelixDbError, Result};
-use crate::search::text::{RestrictedTextCandidates, TextSearchHit};
+use crate::search::text::{
+    RestrictedTextCandidates, RestrictedTextCandidatesBuilder, TextSearchHit,
+};
+
+#[derive(Debug)]
+struct RestrictedTextRows {
+    rows_by_id: BTreeMap<u64, ExecutionRow>,
+    candidates: RestrictedTextCandidates,
+}
 
 fn unique_restricted_rows(
     rows: Vec<ExecutionRow>,
     element_type: TextElementType,
-) -> Result<BTreeMap<u64, ExecutionRow>> {
+    mut candidates: RestrictedTextCandidatesBuilder,
+) -> Result<RestrictedTextRows> {
     let mut rows_by_id = BTreeMap::new();
     for row in rows {
         let Some(current) = &row.current else {
@@ -33,9 +42,18 @@ fn unique_restricted_rows(
                 ));
             }
         };
-        rows_by_id.entry(id).or_insert(row);
+        if candidates.try_insert(id)? {
+            let previous = rows_by_id.insert(id, row);
+            debug_assert!(
+                previous.is_none(),
+                "the candidate bitmap and retained traversal rows must agree"
+            );
+        }
     }
-    Ok(rows_by_id)
+    Ok(RestrictedTextRows {
+        rows_by_id,
+        candidates: candidates.finish(),
+    })
 }
 
 fn materialize_restricted_results(
@@ -103,10 +121,11 @@ impl<'db> ExecutionContext<'db> {
             ),
         };
 
-        let rows_by_id = unique_restricted_rows(rows, element_type)?;
-        let candidates = Arc::new(RestrictedTextCandidates::from_ids(
-            rows_by_id.keys().copied(),
-        )?);
+        let RestrictedTextRows {
+            rows_by_id,
+            candidates,
+        } = unique_restricted_rows(rows, element_type, RestrictedTextCandidatesBuilder::new())?;
+        let candidates = Arc::new(candidates);
         let results = self
             .restricted_text_search_hits(
                 element_type,
@@ -156,9 +175,17 @@ mod tests {
         );
         let second = ExecutionRow::current(ElementRef::Node(2));
 
-        let rows =
-            unique_restricted_rows(vec![first, duplicate, second], TextElementType::Node).unwrap();
-        let ranked = materialize_restricted_results(rows, vec![hit(2, 4.0), hit(1, 3.0)]).unwrap();
+        let rows = unique_restricted_rows(
+            vec![first, duplicate, second],
+            TextElementType::Node,
+            RestrictedTextCandidatesBuilder::new(),
+        )
+        .unwrap();
+        assert!(rows.candidates.contains(1));
+        assert!(rows.candidates.contains(2));
+        let ranked =
+            materialize_restricted_results(rows.rows_by_id, vec![hit(2, 4.0), hit(1, 3.0)])
+                .unwrap();
 
         assert_eq!(ranked.len(), 2);
         assert_eq!(ranked[1].bindings, first_before.bindings);
@@ -180,6 +207,7 @@ mod tests {
         let error = unique_restricted_rows(
             vec![ExecutionRow::current(ElementRef::Edge(1))],
             TextElementType::Node,
+            RestrictedTextCandidatesBuilder::new(),
         )
         .expect_err("node FTS must reject edge rows");
         assert!(error.to_string().contains("index kind"));
@@ -187,10 +215,29 @@ mod tests {
         let rows = unique_restricted_rows(
             vec![ExecutionRow::current(ElementRef::Node(1))],
             TextElementType::Node,
+            RestrictedTextCandidatesBuilder::new(),
         )
         .unwrap();
-        let error = materialize_restricted_results(rows, vec![hit(2, 1.0)])
+        let error = materialize_restricted_results(rows.rows_by_id, vec![hit(2, 1.0)])
             .expect_err("results outside the candidate bitmap must fail closed");
         assert!(error.to_string().contains("outside its exact bitmap"));
+    }
+
+    #[test]
+    fn row_collection_rejects_unique_overflow_while_deduplicating() {
+        let rows = vec![
+            ExecutionRow::current(ElementRef::Node(1)),
+            ExecutionRow::current(ElementRef::Node(1)),
+            ExecutionRow::current(ElementRef::Node(2)),
+            ExecutionRow::current(ElementRef::Node(3)),
+        ];
+        let error = unique_restricted_rows(
+            rows,
+            TextElementType::Node,
+            RestrictedTextCandidatesBuilder::with_limit(std::num::NonZeroU64::new(2).unwrap()),
+        )
+        .expect_err("the third unique row must fail during collection");
+
+        assert!(error.to_string().contains("at most 2"));
     }
 }

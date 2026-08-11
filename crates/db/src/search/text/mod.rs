@@ -83,7 +83,9 @@ pub use prefilter_benchmark::{
     FtsPrefilterBenchmarkCase, FtsPrefilterBenchmarkFixture, FtsPrefilterBenchmarkLayout,
     FtsPrefilterBenchmarkSample, FtsPrefilterBenchmarkStrategy,
 };
-pub(crate) use restricted::{RestrictedTextCandidates, TextSearchScope};
+pub(crate) use restricted::{
+    RestrictedTextCandidates, RestrictedTextCandidatesBuilder, TextSearchScope,
+};
 pub(crate) use split::{
     build_split_bundle, build_split_bundle_from_directory, decode_footer_cache_entry_bytes,
     open_split_directory_from_file, read_footer_cache_entry_from_file,
