@@ -40,13 +40,6 @@ impl RestrictedTextCandidates {
         matches!(self, Self::Empty)
     }
 
-    pub(crate) fn len(&self) -> u64 {
-        match self {
-            Self::Empty => 0,
-            Self::NonEmpty(bitmap) => bitmap.len(),
-        }
-    }
-
     pub(crate) fn contains(&self, entity_id: u64) -> bool {
         match self {
             Self::Empty => false,
@@ -88,7 +81,10 @@ mod tests {
     fn candidates_deduplicate_and_preserve_exact_membership() {
         let candidates = RestrictedTextCandidates::from_ids([9, 2, 9, 4]).unwrap();
 
-        assert_eq!(candidates.len(), 3);
+        let RestrictedTextCandidates::NonEmpty(bitmap) = &candidates else {
+            panic!("non-empty candidate input must produce a non-empty bitmap");
+        };
+        assert_eq!(bitmap.len(), 3);
         assert!(candidates.contains(2));
         assert!(candidates.contains(4));
         assert!(candidates.contains(9));

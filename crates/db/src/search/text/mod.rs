@@ -537,17 +537,11 @@ async fn search_manifest_with_state_source(
         frontier_score: Option<f32>,
     }
 
-    let candidate_upper_bound = scope
-        .candidates()
-        .map(|candidates| usize::try_from(candidates.len()).unwrap_or(usize::MAX));
     let opened = futures::stream::iter(manifest.split_refs().iter().cloned())
         .map(|split_ref| async {
             let index_reader = SplitSearchReader::open(&runtime, &split_ref).await?;
             index_reader.warm(manifest.analyzer, query).await?;
-            let total_docs = candidate_upper_bound.map_or_else(
-                || index_reader.total_docs(),
-                |bound| index_reader.total_docs().min(bound),
-            );
+            let total_docs = index_reader.total_docs();
             Ok::<_, HelixDbError>(SplitSearchState {
                 split_ref,
                 reader: Arc::new(index_reader),
@@ -2920,6 +2914,66 @@ mod tests {
                 .map(|hit| hit.entity_id)
                 .collect::<Vec<_>>(),
             vec![2]
+        );
+    }
+
+    #[tokio::test]
+    async fn restricted_live_state_search_refills_past_stale_version_in_same_split() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let db = Db::builder("restricted-text-same-split-refill", Arc::clone(&store))
+            .build()
+            .await
+            .unwrap();
+        let definition = TextIndexDefinition::new_node("Doc", "body").unwrap();
+        let index_name = resolve_physical_index_name(&definition, None).unwrap();
+        let manifest = persist_documents_as_manifest(
+            &store,
+            "restricted-text-same-split-refill",
+            &definition,
+            &index_name,
+            &[
+                TextDocumentInput::new(1, "needle").with_logical_version(1),
+                TextDocumentInput::new(1, "needle padding padding padding padding")
+                    .with_logical_version(2),
+            ],
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        let transaction = db.begin(IsolationLevel::Snapshot).await.unwrap();
+        transaction
+            .put(
+                make_text_index_live_state_key_scoped(DataScope::LegacyUnscoped, &index_name, 1),
+                Bytes::from(encode_live_state_bytes(&TextIndexLiveState::live(2)).unwrap()),
+            )
+            .unwrap();
+        transaction.commit().await.unwrap();
+
+        let candidates = Arc::new(RestrictedTextCandidates::from_ids([1]).unwrap());
+        let hits = search_manifest_with_state_source(
+            &db,
+            TextSearchRuntime::new(&store, "restricted-text-same-split-refill", None),
+            &manifest,
+            TextLiveStateSource::Legacy {
+                scope: DataScope::LegacyUnscoped,
+                index_name: &index_name,
+            },
+            None,
+            TextSearchRequest::new(
+                "needle",
+                1,
+                TextSearchScope::restricted(Arc::clone(&candidates)),
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            hits.into_iter()
+                .map(|hit| hit.entity_id)
+                .collect::<Vec<_>>(),
+            vec![1]
         );
     }
 
