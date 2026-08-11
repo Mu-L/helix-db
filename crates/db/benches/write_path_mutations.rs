@@ -17,6 +17,10 @@ use helix_planner::{context::ParamBindings, exec::ExecutablePlan, planning};
 #[global_allocator]
 static ALLOC: divan::AllocProfiler = divan::AllocProfiler::system();
 
+// Bound setup planning so the benchmark does not measure or exhaust the
+// production optimizer's request-wide wall-clock budget.
+const SEED_BATCH_SIZE: usize = 100;
+
 fn main() {
     divan::main();
 }
@@ -71,37 +75,40 @@ async fn seed_and_plan(entity_count: usize) -> (Arc<HelixDB>, MutationPlans) {
     );
     db.wait_for_startup_cache_warm().await;
 
-    let mut create = write_batch();
-    for node_id in 0..entity_count {
-        let variable = format!("node_{node_id}");
-        create = create.var_as(
-            &variable,
-            g().add_n(
-                "MutationBenchNode",
-                vec![
-                    ("status", PropertyInput::from("ready")),
-                    (
-                        "external_id",
-                        PropertyInput::from(format!("node-{node_id}")),
-                    ),
-                    ("attribute_1", PropertyInput::from(node_id as i64)),
-                    ("attribute_2", PropertyInput::from(node_id as i64 + 1)),
-                    ("attribute_3", PropertyInput::from(node_id as i64 + 2)),
-                    ("attribute_4", PropertyInput::from(node_id as i64 + 3)),
-                    ("attribute_5", PropertyInput::from(node_id as i64 + 4)),
-                    ("attribute_6", PropertyInput::from(node_id as i64 + 5)),
-                    ("attribute_7", PropertyInput::from(node_id as i64 + 6)),
-                    ("attribute_8", PropertyInput::from(node_id as i64 + 7)),
-                ],
-            ),
-        );
+    for batch_start in (0..entity_count).step_by(SEED_BATCH_SIZE) {
+        let batch_end = (batch_start + SEED_BATCH_SIZE).min(entity_count);
+        let mut create = write_batch();
+        for node_id in batch_start..batch_end {
+            let variable = format!("node_{node_id}");
+            create = create.var_as(
+                &variable,
+                g().add_n(
+                    "MutationBenchNode",
+                    vec![
+                        ("status", PropertyInput::from("ready")),
+                        (
+                            "external_id",
+                            PropertyInput::from(format!("node-{node_id}")),
+                        ),
+                        ("attribute_1", PropertyInput::from(node_id as i64)),
+                        ("attribute_2", PropertyInput::from(node_id as i64 + 1)),
+                        ("attribute_3", PropertyInput::from(node_id as i64 + 2)),
+                        ("attribute_4", PropertyInput::from(node_id as i64 + 3)),
+                        ("attribute_5", PropertyInput::from(node_id as i64 + 4)),
+                        ("attribute_6", PropertyInput::from(node_id as i64 + 5)),
+                        ("attribute_7", PropertyInput::from(node_id as i64 + 6)),
+                        ("attribute_8", PropertyInput::from(node_id as i64 + 7)),
+                    ],
+                ),
+            );
+        }
+        let create_plan =
+            planning::plan_write_batch(&create, &db.planner_context(ParamBindings::default()))
+                .expect("mutation benchmark graph plans");
+        db.execute(&create_plan, ParamBindings::default())
+            .await
+            .expect("mutation benchmark graph batch is created");
     }
-    let create_plan =
-        planning::plan_write_batch(&create, &db.planner_context(ParamBindings::default()))
-            .expect("mutation benchmark graph plans");
-    db.execute(&create_plan, ParamBindings::default())
-        .await
-        .expect("mutation benchmark graph is created");
 
     let no_op = write_batch().var_as(
         "updated",
