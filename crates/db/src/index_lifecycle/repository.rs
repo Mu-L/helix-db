@@ -1267,7 +1267,6 @@ async fn allocate_operation_id_from(
 mod tests {
     use std::sync::Arc;
 
-    use bytes::BufMut;
     use slatedb::object_store::memory::InMemory;
 
     use super::*;
@@ -1385,7 +1384,7 @@ mod tests {
             let logical =
                 DataKeyKind::NodeProperty(crate::encoding::v1::keys::NodePropertyKey::new(11));
             let mut tenant_key = Vec::new();
-            tenant_key.put_u128(tenant.as_u128());
+            tenant_key.extend_from_slice(&tenant.as_u128().to_be_bytes());
             logical.encode_into(&mut tenant_key);
             db.put(&tenant_key, Bytes::from_static(b"tenant-row"))
                 .await
@@ -1592,7 +1591,7 @@ mod tests {
         };
         let kind = DataKeyKind::IndexMetadata(MetadataKey::next_node_id_key());
         let mut legacy_key = Vec::new();
-        legacy_key.put_u128(tenant.as_u128());
+        legacy_key.extend_from_slice(&tenant.as_u128().to_be_bytes());
         kind.encode_into(&mut legacy_key);
         let legacy_key = Bytes::from(legacy_key);
         let current_key = GraphKey::Data { scope, kind }.to_bytes();
