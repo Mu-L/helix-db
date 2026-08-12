@@ -3268,66 +3268,122 @@ This query requires an active three-dimensional cosine vector index on
 `Project.embedding`. Create and activate that index before running the request.
 
 ```rust Rust
-read_batch()
-    .var_as(
-        "matches",
-        g()
-            .n_with_label_where("User", SourcePredicate::eq("username", "alice"))
-            .out(Some("OWNS"))
-            .vector_search(
-                "Project",
-                "embedding",
-                vec![1.0f32, 0.0, 0.0],
-                5,
-                None,
-            )
-            .value_map(Some(vec!["$id", "name", "$distance"])),
-    )
-    .returning(["matches"]);
+use helix_db::dsl::prelude::*;
+
+#[query]
+fn owned_project_matches(
+    username: String,
+    query_vector: Vec<f32>,
+    limit: i64,
+) -> ReadBatch {
+    read_batch()
+        .var_as(
+            "matches",
+            g()
+                .n_with_label_where("User", SourcePredicate::eq("username", username))
+                .out(Some("OWNS"))
+                .vector_search_with("Project", "embedding", query_vector, limit, None)
+                .value_map(Some(vec!["$id", "name", "$distance"])),
+        )
+        .returning(["matches"])
+}
+
+let request = owned_project_matches(
+    "alice".to_string(),
+    vec![1.0f32, 0.0, 0.0],
+    5,
+)?;
 ```
 
 ```ts TypeScript
-readBatch()
+import {
+  SourcePredicate,
+  defineParams,
+  g,
+  param,
+  readBatch,
+} from "@helix-db/helix-db";
+
+const params = defineParams({
+  username: param.string(),
+  query_vector: param.array(param.f32()),
+  limit: param.i64(),
+});
+
+const query = readBatch()
   .varAs(
     "matches",
     g()
-      .nWithLabelWhere("User", SourcePredicate.eq("username", "alice"))
+      .nWithLabelWhere("User", SourcePredicate.eq("username", params.username))
       .out("OWNS")
-      .vectorSearch("Project", "embedding", [1, 0, 0], 5, null)
+      .vectorSearchWith("Project", "embedding", params.query_vector, params.limit)
       .valueMap(["$id", "name", "$distance"]),
   )
   .returning(["matches"]);
+
+const request = query.toQueryRequest(
+  params,
+  { username: "alice", query_vector: [1, 0, 0], limit: 5n },
+  { queryName: "owned_project_matches" },
+);
 ```
 
 ```go Go
-helix.ReadQuery("owned_project_matches").
+q := helix.ReadQuery("owned_project_matches")
+username := q.ParamString("username", "alice")
+queryVector := q.ParamArray(
+	"query_vector",
+	[]float32{1, 0, 0},
+	helix.ParamTypeF32(),
+)
+limit := q.ParamI64("limit", 5)
+
+request := q.
 	VarAs(
 		"matches",
 		helix.G().
-			NWithLabelWhere("User", helix.SourceEq("username", "alice")).
+			NWithLabelWhere("User", helix.SourceEq("username", username)).
 			Out("OWNS").
-			VectorSearchNodesWithin("Project", "embedding", []float32{1, 0, 0}, 5).
+			VectorSearchNodesWithin("Project", "embedding", queryVector, limit).
 			ValueMap("$id", "name", "$distance"),
 	).
 	Returning("matches")
 ```
 
 ```python Python
-(
+from helixdb import SourcePredicate, define_params, g, param, read_batch
+
+params = define_params({
+    "username": param.string(),
+    "query_vector": param.array(param.f32()),
+    "limit": param.i64(),
+})
+
+query = (
     read_batch()
     .var_as(
         "matches",
         g()
         .n_with_label_where(
-            "User", SourcePredicate.eq("username", "alice")
+            "User", SourcePredicate.eq("username", params.username)
         )
         .out("OWNS")
-        .vector_search(
-            "Project", "embedding", [1.0, 0.0, 0.0], 5
+        .vector_search_with(
+            "Project", "embedding", params.query_vector, params.limit
         )
         .value_map(["$id", "name", "$distance"]),
     )
     .returning(["matches"])
+)
+
+request = query.to_query_request(
+    params,
+    {
+        "username": "alice",
+        "query_vector": [1.0, 0.0, 0.0],
+        "limit": 5,
+    },
+    query_name="owned_project_matches",
 )
 ```
 
@@ -3360,7 +3416,7 @@ helix.ReadQuery("owned_project_matches").
                                 {
                                   "eq": {
                                     "left": { "property": "username" },
-                                    "right": { "constant": { "string": "alice" } }
+                                    "right": { "param": "username" }
                                   }
                                 }
                               ]
@@ -3373,10 +3429,8 @@ helix.ReadQuery("owned_project_matches").
                   },
                   "label": "Project",
                   "property": "embedding",
-                  "query_vector": {
-                    "value": { "f32_array": [1, 0, 0] }
-                  },
-                  "k": { "literal": 5 }
+                  "query_vector": { "expr": { "param": "query_vector" } },
+                  "k": { "expr": { "param": "limit" } }
                 }
               },
               "properties": ["$id", "name", "$distance"]
@@ -3386,12 +3440,24 @@ helix.ReadQuery("owned_project_matches").
       }],
       "returns": ["matches"]
     }
+  },
+  "parameters": {
+    "username": "alice",
+    "query_vector": [1, 0, 0],
+    "limit": 5
+  },
+  "parameter_types": {
+    "username": "string",
+    "query_vector": { "array": "f32" },
+    "limit": "i64"
   }
 }
 ```
 
-Use `VectorSearchEdgesWithin` in Go after an edge traversal. Rust, TypeScript, and
-Python select the node or edge wire operation from the current traversal state.
+Use `VectorSearchEdgesWithin` in Go after an edge traversal. Rust
+`vector_search_with`, TypeScript `vectorSearchWith`, and Python
+`vector_search_with` select the node or edge wire operation from the current stream.
+Their literal forms are `vector_search` and `vectorSearch`.
 
 ### Requirements
 
