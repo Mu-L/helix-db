@@ -38,7 +38,7 @@ Full walkthrough: https://docs.helix-db.com/cli/getting-started
 - [Vector indexes](https://docs.helix-db.com/database/helix-db/query-guides/vector-indexes): Create dimensioned vector indexes and run nearest-neighbor search — Page type: Guide
 - [Text indexes](https://docs.helix-db.com/database/helix-db/query-guides/text-indexes): Create BM25 indexes for ranked full-text search — Page type: Guide
 - [Traverse relationships](https://docs.helix-db.com/database/helix-db/query-guides/traversals): Follow edges, retain row-local bindings, and control duplicate paths — Page type: Guide
-- [Filtering](https://docs.helix-db.com/database/helix-db/query-guides/filtering): Narrow traversal streams with predicates and exact vector candidate sets — Page type: Guide
+- [Filtering](https://docs.helix-db.com/database/helix-db/query-guides/filtering): Narrow traversal streams with predicates and exact search candidate sets — Page type: Guide
 - [Shape query results](https://docs.helix-db.com/database/helix-db/query-guides/projections): Return properties, computed values, aggregates, and correlated binding rows — Page type: Guide
 - [Branch, repeat, and condition queries](https://docs.helix-db.com/database/helix-db/query-guides/advanced): Compose sub-traversals and gate named entries without leaving one transaction — Page type: Guide
 - [Bind typed query parameters](https://docs.helix-db.com/database/helix-db/query-guides/parameters): Keep the operation tree stable while request values change — Page type: Guide

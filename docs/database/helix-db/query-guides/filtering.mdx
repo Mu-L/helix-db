@@ -1,6 +1,6 @@
 ---
 title: "Filtering"
-description: "Narrow traversal streams with predicates and exact vector candidate sets"
+description: "Narrow traversal streams with predicates and exact search candidate sets"
 sidebarTitle: "Filtering"
 pageType: "Guide"
 ---
@@ -8,8 +8,8 @@ pageType: "Guide"
 <div className="flex flex-wrap gap-2"><Badge color="blue" size="sm">Guide</Badge></div>
 
 Use a source predicate to select the initial candidates and `.where(...)` for
-expression-based filtering later in a traversal. Vector prefiltering applies the same
-idea to similarity search by ranking only an exact traversal-defined candidate set.
+expression-based filtering later in a traversal. Vector and full-text search
+prefiltering rank only an exact traversal-defined candidate set.
 
 ## Common predicates
 
@@ -276,6 +276,177 @@ Use a source vector search when the whole indexed label and optional tenant part
 is the intended candidate set. Use vector prefiltering when relationships,
 permissions, or earlier filters define membership.
 
+## FTS prefiltering
+
+Full-text search (FTS) prefiltering starts with a node or edge traversal, then ranks
+only the unique IDs in that stream by BM25 score. Use it when relationships,
+permissions, or earlier predicates define which records are eligible for text search.
+
+The execution order is **graph traversal → exact candidate membership → BM25 ranking
+→ top k**. Results are identical to an exhaustive BM25 search of the selected tenant
+partition, intersected with the candidate IDs, followed by deterministic top-k
+selection. BM25 statistics still come from the full tenant partition.
+
+### Rank a node stream
+
+This request finds documents the current user can read, ranks that exact set for
+`"graph databases"`, and returns the top five.
+
+<Note>
+This query requires an active text index on `Document.body`. Create and activate that
+index before running the request.
+</Note>
+
+<CodeGroup>
+
+```rust Rust
+read_batch()
+    .var_as(
+        "matches",
+        g()
+            .n_with_label_where("User", SourcePredicate::eq("username", "alice"))
+            .out(Some("CAN_READ"))
+            .text_search(
+                "Document",
+                "body",
+                "graph databases",
+                5,
+                None,
+            )
+            .value_map(Some(vec!["$id", "title", "$score"])),
+    )
+    .returning(["matches"]);
+```
+
+```ts TypeScript
+readBatch()
+  .varAs(
+    "matches",
+    g()
+      .nWithLabelWhere("User", SourcePredicate.eq("username", "alice"))
+      .out("CAN_READ")
+      .textSearch("Document", "body", "graph databases", 5, null)
+      .valueMap(["$id", "title", "$score"]),
+  )
+  .returning(["matches"]);
+```
+
+```go Go
+helix.ReadQuery("readable_document_matches").
+	VarAs(
+		"matches",
+		helix.G().
+			NWithLabelWhere("User", helix.SourceEq("username", "alice")).
+			Out("CAN_READ").
+			TextSearchNodesWithin("Document", "body", "graph databases", 5).
+			ValueMap("$id", "title", "$score"),
+	).
+	Returning("matches")
+```
+
+```python Python
+(
+    read_batch()
+    .var_as(
+        "matches",
+        g()
+        .n_with_label_where(
+            "User", SourcePredicate.eq("username", "alice")
+        )
+        .out("CAN_READ")
+        .text_search(
+            "Document", "body", "graph databases", 5
+        )
+        .value_map(["$id", "title", "$score"]),
+    )
+    .returning(["matches"])
+)
+```
+
+```json JSON
+{
+  "request_type": "read",
+  "query_name": "readable_document_matches",
+  "query": {
+    "read": {
+      "entries": [{
+        "query": {
+          "name": "matches",
+          "root": {
+            "value_map": {
+              "input": {
+                "text_search_nodes_within": {
+                  "input": {
+                    "out": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "and": {
+                              "predicates": [
+                                {
+                                  "eq": {
+                                    "left": { "property": "$label" },
+                                    "right": { "constant": { "string": "User" } }
+                                  }
+                                },
+                                {
+                                  "eq": {
+                                    "left": { "property": "username" },
+                                    "right": { "constant": { "string": "alice" } }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "label": "CAN_READ"
+                    }
+                  },
+                  "label": "Document",
+                  "property": "body",
+                  "query_text": {
+                    "value": { "string": "graph databases" }
+                  },
+                  "k": { "literal": 5 }
+                }
+              },
+              "properties": ["$id", "title", "$score"]
+            }
+          }
+        }
+      }],
+      "returns": ["matches"]
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+Use `TextSearchEdgesWithin` in Go after an edge traversal. Rust, TypeScript, and
+Python select the node or edge wire operation from the current traversal state. Use
+the `*With` forms for parameterized query text, `k`, or tenant values.
+
+### Result contract
+
+- Output IDs are a deduplicated subset of the input IDs.
+- The result contains at most `min(unique candidates, k)` rows.
+- Rows are ordered by BM25 score descending, then entity ID ascending.
+- The selected input row keeps its bindings, path, and sack; `$score` is attached.
+- Empty input returns without opening the text index.
+- A wrong-kind input or more than 1,000,000 unique candidates is a query error.
+- A tenant-partitioned index requires the same tenant value used to build the
+  candidate stream.
+
+### When to search without a prefilter
+
+Use a source text search when the whole indexed label and optional tenant partition
+is the intended candidate set. Do not implement exact FTS filtering as source text
+search followed by `.where(...)`: excluded high-scoring hits can consume the source
+top-k and leave fewer than `k` eligible results. Build the candidate stream first and
+use FTS prefiltering when membership is authoritative.
+
 ## Next steps
 
 <CardGroup cols={2}>
@@ -287,6 +458,9 @@ permissions, or earlier filters define membership.
   </Card>
   <Card title="Vector indexes" icon="circle-nodes" href="/database/helix-db/query-guides/vector-indexes">
     Create the dimensioned index used for ranking.
+  </Card>
+  <Card title="Text indexes" icon="align-left" href="/database/helix-db/query-guides/text-indexes">
+    Create the BM25 index used for full-text ranking.
   </Card>
   <Card title="Project search results" icon="table-columns" href="/database/helix-db/query-guides/projections">
     Preserve ranked hit metadata before continuing a traversal.
