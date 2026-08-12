@@ -36,7 +36,7 @@ export const ClaudeCodeLogo = () => (
 
 The hosted HelixDB MCP server gives agents read-only access to your Helix Cloud
 workspaces, projects, databases, query insights, latency, recommendations,
-usage, and dedicated-cluster health.
+active indexes, usage, and dedicated-cluster health.
 
 - It uses browser-based OAuth through WorkOS. You do not create or copy an API key.
 - It returns only resources your Helix user can currently access.
@@ -226,6 +226,7 @@ After connecting, ask your agent to:
 - “Find my slowest queries over the last 24 hours and summarize their planner findings.”
 - “Compare p50, p95, and p99 query latency for this database.”
 - “List current query recommendations, grouped by severity.”
+- “List the active indexes the planner can use for this database.”
 - “Check CPU, memory, storage, and topology for this dedicated cluster.”
 
 ## Available tools
@@ -235,11 +236,33 @@ After connecting, ask your agent to:
 | `helix_list_workspaces` | List active workspaces the signed-in user can access. |
 | `helix_list_projects` | List active projects in an authorized workspace. |
 | `helix_list_databases` | List dedicated clusters and tenant databases in an authorized project. |
+| `helix_list_database_indexes` | List the writer-authoritative active indexes visible to the planner for a cluster or tenant database. |
 | `helix_get_query_insights` | Get query counts, failures, average/maximum latency, and typed planner findings. It does not return percentiles. |
 | `helix_get_query_latency` | Get authoritative p50, p95, p99, and maximum query latency. |
 | `helix_list_query_recommendations` | List structured recommendations without raw recommendation bodies. |
 | `helix_get_database_usage` | Get hourly or daily read and write counts for a cluster or tenant database. |
 | `helix_get_cluster_health` | Get CPU, memory, storage, and topology for a dedicated cluster. Components report availability independently. |
+
+### Active index inventory
+
+`helix_list_database_indexes` accepts a database reference such as
+`tenant:<id>` or `cluster:<id>`. It returns `content_trust`, `database`,
+`observed_at`, and an ordered `indexes` array. Every index contains:
+
+- `index_id`
+- `element`: `node` or `edge`
+- `kind`: `equality`, `range`, `vector`, or `full_text`
+- `label`
+- `property`
+
+The response includes `unique` only for node equality indexes, including when
+its value is `false`. It includes `direction` only for range indexes and
+`tenant_property` only for scoped vector or full-text indexes.
+
+The inventory contains only indexes that are active and visible to the planner
+at `observed_at`. Pending, building, failed, and dropped indexes are not
+included. An empty `indexes` array means no active indexes were visible; it
+does not report lifecycle state for inactive indexes.
 
 ## Troubleshooting
 
