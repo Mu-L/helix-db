@@ -342,7 +342,7 @@ Use a source vector search when the whole indexed label and optional tenant part
 is the intended candidate set. Use vector prefiltering when relationships,
 permissions, or earlier filters define membership.
 
-## FTS prefiltering
+## Full Text Search prefiltering
 
 Full-text search (FTS) prefiltering starts with a node or edge traversal, then ranks
 only the unique IDs in that stream by BM25 score. Use it when relationships,
@@ -366,66 +366,118 @@ index before running the request.
 <CodeGroup>
 
 ```rust Rust
-read_batch()
-    .var_as(
-        "matches",
-        g()
-            .n_with_label_where("User", SourcePredicate::eq("username", "alice"))
-            .out(Some("CAN_READ"))
-            .text_search(
-                "Document",
-                "body",
-                "graph databases",
-                5,
-                None,
-            )
-            .value_map(Some(vec!["$id", "title", "$score"])),
-    )
-    .returning(["matches"]);
+use helix_db::dsl::prelude::*;
+
+#[query]
+fn readable_document_matches(
+    username: String,
+    query_text: String,
+    limit: i64,
+) -> ReadBatch {
+    read_batch()
+        .var_as(
+            "matches",
+            g()
+                .n_with_label_where("User", SourcePredicate::eq("username", username))
+                .out(Some("CAN_READ"))
+                .text_search_with("Document", "body", query_text, limit, None)
+                .value_map(Some(vec!["$id", "title", "$score"])),
+        )
+        .returning(["matches"])
+}
+
+let request = readable_document_matches(
+    "alice".to_string(),
+    "graph databases".to_string(),
+    5,
+)?;
 ```
 
 ```ts TypeScript
-readBatch()
+import {
+  SourcePredicate,
+  defineParams,
+  g,
+  param,
+  readBatch,
+} from "@helix-db/helix-db";
+
+const params = defineParams({
+  username: param.string(),
+  query_text: param.string(),
+  limit: param.i64(),
+});
+
+const query = readBatch()
   .varAs(
     "matches",
     g()
-      .nWithLabelWhere("User", SourcePredicate.eq("username", "alice"))
+      .nWithLabelWhere("User", SourcePredicate.eq("username", params.username))
       .out("CAN_READ")
-      .textSearch("Document", "body", "graph databases", 5, null)
+      .textSearchWith("Document", "body", params.query_text, params.limit)
       .valueMap(["$id", "title", "$score"]),
   )
   .returning(["matches"]);
+
+const request = query.toQueryRequest(
+  params,
+  { username: "alice", query_text: "graph databases", limit: 5n },
+  { queryName: "readable_document_matches" },
+);
 ```
 
 ```go Go
-helix.ReadQuery("readable_document_matches").
+q := helix.ReadQuery("readable_document_matches")
+username := q.ParamString("username", "alice")
+queryText := q.ParamString("query_text", "graph databases")
+limit := q.ParamI64("limit", 5)
+
+request := q.
 	VarAs(
 		"matches",
 		helix.G().
-			NWithLabelWhere("User", helix.SourceEq("username", "alice")).
+			NWithLabelWhere("User", helix.SourceEq("username", username)).
 			Out("CAN_READ").
-			TextSearchNodesWithin("Document", "body", "graph databases", 5).
+			TextSearchNodesWithin("Document", "body", queryText, limit).
 			ValueMap("$id", "title", "$score"),
 	).
 	Returning("matches")
 ```
 
 ```python Python
-(
+from helixdb import SourcePredicate, define_params, g, param, read_batch
+
+params = define_params({
+    "username": param.string(),
+    "query_text": param.string(),
+    "limit": param.i64(),
+})
+
+query = (
     read_batch()
     .var_as(
         "matches",
         g()
         .n_with_label_where(
-            "User", SourcePredicate.eq("username", "alice")
+            "User", SourcePredicate.eq("username", params.username)
         )
         .out("CAN_READ")
-        .text_search(
-            "Document", "body", "graph databases", 5
+        .text_search_with(
+            "Document", "body", params.query_text, params.limit
         )
         .value_map(["$id", "title", "$score"]),
     )
     .returning(["matches"])
+)
+
+request = query.to_query_request(
+    params,
+    {
+        "username": "alice",
+        "query_text": "graph databases",
+        "limit": 5,
+    },
+    query_name="readable_document_matches",
 )
 ```
 
@@ -458,7 +510,7 @@ helix.ReadQuery("readable_document_matches").
                                 {
                                   "eq": {
                                     "left": { "property": "username" },
-                                    "right": { "constant": { "string": "alice" } }
+                                    "right": { "param": "username" }
                                   }
                                 }
                               ]
@@ -471,10 +523,8 @@ helix.ReadQuery("readable_document_matches").
                   },
                   "label": "Document",
                   "property": "body",
-                  "query_text": {
-                    "value": { "string": "graph databases" }
-                  },
-                  "k": { "literal": 5 }
+                  "query_text": { "expr": { "param": "query_text" } },
+                  "k": { "expr": { "param": "limit" } }
                 }
               },
               "properties": ["$id", "title", "$score"]
@@ -484,15 +534,26 @@ helix.ReadQuery("readable_document_matches").
       }],
       "returns": ["matches"]
     }
+  },
+  "parameters": {
+    "username": "alice",
+    "query_text": "graph databases",
+    "limit": 5
+  },
+  "parameter_types": {
+    "username": "string",
+    "query_text": "string",
+    "limit": "i64"
   }
 }
 ```
 
 </CodeGroup>
 
-Use `TextSearchEdgesWithin` in Go after an edge traversal. Rust, TypeScript, and
-Python select the node or edge wire operation from the current traversal state. Use
-the `*With` forms for parameterized query text, `k`, or tenant values.
+Use `TextSearchEdgesWithin` in Go after an edge traversal. Rust
+`text_search_with`, TypeScript `textSearchWith`, and Python `text_search_with`
+select the node or edge wire operation from the current stream. Their literal forms
+are `text_search` and `textSearch`.
 
 ### Result contract
 
