@@ -5,11 +5,17 @@
 //! completion before a writer handle is returned; background migrations use the
 //! same job state and can resume after restart.
 
+pub(crate) mod background;
+mod indexes;
+pub(crate) mod startup;
+mod tenant;
 mod vector_properties;
 mod vector_retirement;
 #[cfg(feature = "production-scale")]
 mod vector_scale;
 mod vector_simhash_directory;
+
+pub(crate) use tenant::envelope::legacy_key_requires_migration;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -1143,7 +1149,6 @@ impl AsRef<[u8]> for MigrationJobKey {
 }
 
 /// Prefix used to scan all migration jobs for one scope.
-#[cfg(any(test, feature = "migration-parity", feature = "production-coverage"))]
 pub(crate) fn migration_job_scan_prefix_scoped(scope: DataScope) -> Bytes {
     scoped_metadata_key(scope, MIGRATION_JOB_PREFIX)
 }
@@ -3174,7 +3179,6 @@ async fn process_migration_once_by_id_with_catalog_measured(
 }
 
 /// Process one runnable background migration job.
-#[cfg(any(test, feature = "migration-parity", feature = "production-coverage"))]
 pub(crate) async fn process_migration_once(
     writer: &HelixWriter,
     scope: DataScope,
@@ -4956,7 +4960,7 @@ mod tests {
                 .expect("storage schema completion marker reads"),
             "reader must not create the storage schema completion marker"
         );
-        crate::index_lifecycle::repository::bootstrap_writer(&raw)
+        crate::migrations::startup::bootstrap_writer(&raw)
             .await
             .expect("writer bootstrap tuple commits");
         raw.flush().await.expect("bootstrap tuple flushes");
@@ -5259,7 +5263,7 @@ pub(crate) mod production_contracts {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let database = database("writer-migration-requirements");
         let fixture = raw(&database, store).await;
-        crate::index_lifecycle::repository::bootstrap_writer(&fixture)
+        crate::migrations::startup::bootstrap_writer(&fixture)
             .await
             .expect("current bootstrap tuple commits");
 
@@ -7300,7 +7304,7 @@ pub(crate) mod production_contracts {
         let tuple_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let tuple_database = database("reader-gate-tuple-only");
         let tuple = raw(&tuple_database, Arc::clone(&tuple_store)).await;
-        crate::index_lifecycle::repository::bootstrap_writer(&tuple)
+        crate::migrations::startup::bootstrap_writer(&tuple)
             .await
             .expect("tuple-only writer bootstrap commits");
         assert_current_storage_version(&tuple).await;
@@ -7342,7 +7346,7 @@ pub(crate) mod production_contracts {
             let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
             let database = database(&format!("reader-gate-{name}"));
             let fixture = raw(&database, Arc::clone(&store)).await;
-            crate::index_lifecycle::repository::bootstrap_writer(&fixture)
+            crate::migrations::startup::bootstrap_writer(&fixture)
                 .await
                 .expect("malformed-readiness bootstrap commits");
             fixture
@@ -7629,7 +7633,7 @@ pub(crate) mod production_contracts {
             let database = database(name);
             let raw = raw(&database, Arc::clone(&store)).await;
             seed_bootstrap_tuple(&raw, marker, include_logical, include_vector).await;
-            let error = crate::index_lifecycle::repository::bootstrap_writer(&raw)
+            let error = crate::migrations::startup::bootstrap_writer(&raw)
                 .await
                 .expect_err("invalid bootstrap tuple must fail closed");
             assert!(

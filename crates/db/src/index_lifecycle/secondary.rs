@@ -2670,7 +2670,7 @@ impl BatchAccounting {
     }
 }
 
-pub(super) fn canonical_value(
+pub(crate) fn canonical_value(
     definition: &ValidatedSecondaryIndexDefinition,
     properties: &[Property],
     _entity_id: IndexEntityId,
@@ -2741,7 +2741,7 @@ pub(super) fn canonical_value(
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) enum SecondaryValueError {
+pub(crate) enum SecondaryValueError {
     UnsupportedEquality(&'static str),
     UnsupportedRange(&'static str),
     NaNRange,
@@ -3286,7 +3286,7 @@ fn definition_lane(definition: &ValidatedSecondaryIndexDefinition) -> SecondaryE
     }
 }
 
-pub(super) fn definition_uses_equality_bitmap(
+pub(crate) fn definition_uses_equality_bitmap(
     definition: &ValidatedSecondaryIndexDefinition,
 ) -> bool {
     matches!(
@@ -3403,7 +3403,7 @@ async fn read_authoritative_properties(
         .transpose()
 }
 
-pub(super) fn authoritative_property_key(scope: DataScope, entity: IndexEntity) -> Bytes {
+pub(crate) fn authoritative_property_key(scope: DataScope, entity: IndexEntity) -> Bytes {
     match entity.kind {
         IndexElementKind::Node => Key::Data {
             scope,
@@ -3450,7 +3450,7 @@ async fn generation_has_rows(
     Ok(rows.next().await?.is_some())
 }
 
-pub(super) fn source_prefix(scope: DataScope, kind: IndexElementKind) -> Bytes {
+pub(crate) fn source_prefix(scope: DataScope, kind: IndexElementKind) -> Bytes {
     let prefix = match kind {
         IndexElementKind::Node => KeyPrefix::NodeProperty,
         IndexElementKind::Edge => KeyPrefix::EdgePropertyById,
@@ -3458,7 +3458,7 @@ pub(super) fn source_prefix(scope: DataScope, kind: IndexElementKind) -> Bytes {
     Key::data_prefix(scope, Bytes::copy_from_slice(prefix.as_slice()))
 }
 
-pub(super) fn source_entity(
+pub(crate) fn source_entity(
     scope: DataScope,
     expected: IndexElementKind,
     key: &[u8],
@@ -3554,11 +3554,11 @@ mod tests {
         claim_operation, execute_claimed_step, observe_operation_pointer, read_operation,
         ClaimPermission, CommittedOperationStep, OperationPointerObservation,
     };
-    use crate::index_lifecycle::repository::bootstrap_writer;
     use crate::index_lifecycle::{
         ClaimSequence, IndexDdlReceipt, IndexOperationExecutionState, IndexOperationId,
         IndexOperationKind, IndexRevision, IndexStateTransition, PhysicalGeneration, WriterEpoch,
     };
+    use crate::migrations::startup::bootstrap_writer;
 
     const NOW_MILLIS: u64 = 1;
 

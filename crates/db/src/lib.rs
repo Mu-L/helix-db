@@ -359,7 +359,7 @@ pub(crate) struct HelixWriter {
 }
 
 impl HelixWriter {
-    fn new(db: Arc<Db>, lease_size: u64) -> Self {
+    pub(crate) fn new(db: Arc<Db>, lease_size: u64) -> Self {
         Self {
             db: Arc::clone(&db),
             node_ids: Arc::new(NodeIdAllocator::new(Arc::clone(&db), lease_size)),
@@ -665,6 +665,7 @@ struct HelixDBInner {
     index_capabilities: index_lifecycle::worker::IndexFamilyCapabilities,
     index_worker_wake: Option<index_lifecycle::worker::IndexWorkerWakeHandle>,
     index_worker: Mutex<Option<index_lifecycle::worker::IndexWorkerSupervisor>>,
+    migration_worker: Mutex<Option<migrations::background::MigrationWorkerSupervisor>>,
     index_claim_sequences: Arc<index_lifecycle::worker::ClaimSequenceAllocator>,
     secondary_lifecycle_step: Mutex<()>,
     #[cfg(feature = "index-lifecycle-testing")]
@@ -841,16 +842,7 @@ impl HelixDB {
                 .build()
                 .await?,
         );
-        index_lifecycle::repository::bootstrap_writer(&db).await?;
-        migrations::preflight_legacy_vector_reservations(&db).await?;
-        let writer = HelixWriter::new(Arc::clone(&db), config.id_lease_size());
-        migrations::run_blocking_startup_migration(&writer, config.migrations()).await?;
-        index_lifecycle::outbox::reconcile_legacy_reader_coordination_operations(
-            &db,
-            DataScope::LegacyUnscoped,
-        )
-        .await?;
-        index_lifecycle::outbox::reconcile_operation_queue(&db).await?;
+        let writer = migrations::startup::prepare_writer(Arc::clone(&db), &config).await?;
         let loaded_catalog =
             index_lifecycle::repository::load_scope_catalog(db.as_ref(), DataScope::LegacyUnscoped)
                 .await?;
@@ -863,8 +855,8 @@ impl HelixDB {
             None,
             fts_cache,
         );
-        migrations::migrate_legacy_definitions(&db).await?;
-        Box::pin(migrations::migrate_active_vector_simhash_directories(&db)).await?;
+        migrations::startup::finish_writer(&db).await?;
+        db.start_background_migration_worker().await;
         Ok(db)
     }
 
@@ -912,16 +904,7 @@ impl HelixDB {
             }
         }
         let db = Arc::new(builder.build().await?);
-        index_lifecycle::repository::bootstrap_writer(&db).await?;
-        migrations::preflight_legacy_vector_reservations(&db).await?;
-        let writer = HelixWriter::new(Arc::clone(&db), config.id_lease_size());
-        migrations::run_blocking_startup_migration(&writer, config.migrations()).await?;
-        index_lifecycle::outbox::reconcile_legacy_reader_coordination_operations(
-            &db,
-            DataScope::LegacyUnscoped,
-        )
-        .await?;
-        index_lifecycle::outbox::reconcile_operation_queue(&db).await?;
+        let writer = migrations::startup::prepare_writer(Arc::clone(&db), &config).await?;
         let loaded_catalog =
             index_lifecycle::repository::load_scope_catalog(db.as_ref(), DataScope::LegacyUnscoped)
                 .await?;
@@ -935,19 +918,14 @@ impl HelixDB {
             fts_cache,
             index_scheduling,
         );
-        if let Err(error) = migrations::migrate_legacy_definitions(&db).await {
-            let _ = db.close().await;
-            return Err(error);
-        }
-        if let Err(error) =
-            Box::pin(migrations::migrate_active_vector_simhash_directories(&db)).await
-        {
+        if let Err(error) = migrations::startup::finish_writer(&db).await {
             let _ = db.close().await;
             return Err(error);
         }
         db.run_configured_startup_cache_warm().await?;
         db.run_configured_vector_memory_warm(vector_memory_settings)
             .await?;
+        db.start_background_migration_worker().await;
         Ok(db)
     }
 
@@ -1203,6 +1181,7 @@ impl HelixDB {
                 index_capabilities,
                 index_worker_wake,
                 index_worker: Mutex::new(index_worker),
+                migration_worker: Mutex::new(None),
                 index_claim_sequences,
                 secondary_lifecycle_step: Mutex::new(()),
                 #[cfg(feature = "index-lifecycle-testing")]
@@ -1228,6 +1207,20 @@ impl HelixDB {
     /// Whether this handle can execute write plans.
     pub fn is_writer_mode(&self) -> bool {
         self.mode() == HelixDbMode::Writer
+    }
+
+    async fn start_background_migration_worker(&self) {
+        let tuning = self.inner.config.db().migrations();
+        let HelixStorage::Writer(writer) = self.inner.storage.handle() else {
+            return;
+        };
+        let mut worker = self.inner.migration_worker.lock().await;
+        if worker.is_none() {
+            *worker = migrations::background::MigrationWorkerSupervisor::start_if_enabled(
+                Arc::clone(writer),
+                tuning,
+            );
+        }
     }
 
     /// Reports readiness of graph, secondary, and vector operations.
@@ -1699,8 +1692,8 @@ impl HelixDB {
     /// Cancels owned tasks and idempotently closes the underlying storage.
     ///
     /// Concurrent callers either perform the close or wait for the current
-    /// attempt. The outbox worker is always joined before SlateDB or its cache
-    /// closes, preserving its acyclic ownership contract.
+    /// attempt. Migration and outbox workers are always joined before SlateDB
+    /// or its cache closes, preserving their acyclic ownership contracts.
     pub async fn close(&self) -> Result<()> {
         loop {
             let wait = {
@@ -1735,6 +1728,9 @@ impl HelixDB {
                 .take();
             if let Some(runtime) = self.inner.query_metrics_runtime.lock().await.take() {
                 runtime.shutdown().await;
+            }
+            if let Some(worker) = self.inner.migration_worker.lock().await.take() {
+                worker.stop().await;
             }
             if let Some(worker) = self.inner.index_worker.lock().await.take() {
                 worker.stop().await;
