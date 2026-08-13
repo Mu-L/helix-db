@@ -406,7 +406,7 @@ impl<'db> ExecutionContext<'db> {
         let pair_keys = pairs
             .iter()
             .map(|(from, to)| {
-                keys::Key::Data {
+                keys::DataKey::Data {
                     scope: self.tenant_scope,
                     kind: keys::DataKeyKind::EdgePairIndex(keys::EdgePairIndexKey::new(*from, *to)),
                 }
@@ -442,7 +442,7 @@ impl<'db> ExecutionContext<'db> {
         let property_keys = pair_edge_ids
             .iter()
             .map(|edge_id| {
-                keys::Key::Data {
+                keys::DataKey::Data {
                     scope: self.tenant_scope,
                     kind: keys::DataKeyKind::EdgePropertyById(keys::EdgePropertyByIdKey::new(
                         *edge_id,

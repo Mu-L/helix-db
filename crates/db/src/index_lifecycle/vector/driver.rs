@@ -23,7 +23,7 @@ use crate::encoding::property::{decode_properties, Property};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::VectorStorageLane;
 use crate::encoding::v1::keys::{DataKeyKind, Key, KeyPrefix};
-use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
 use crate::encoding::v2::keys::{
     GlobalKey, IndexEntity, IndexEntityStateKey, RecordKind, ScopedKey,
 };

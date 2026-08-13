@@ -5,7 +5,7 @@ use bytes::Bytes;
 use crate::encoding::error::EncodingError;
 use crate::index_lifecycle::work::{VectorPartitionMappingValue, VectorTenantPartition};
 
-use super::super::{
+use super::super::super::{
     model_error, put_generation, put_index_id, put_partition, take_generation, take_index_id,
     take_partition, work_model_error, ValueDecoder, ValueEncoder,
 };

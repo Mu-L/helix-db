@@ -13,13 +13,13 @@ use bytes::Bytes;
 use slatedb::{DbReadOps, DbTransaction};
 
 use crate::config;
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::v1::keys::vectors::{
     VectorIndexMetadataKey, VectorKey, VectorStorageLane, VectorTxnGuardKey,
 };
 use crate::encoding::v1::keys::{DataKeyKind, Key};
 use crate::encoding::v1::values::vectors::metadata::decode_legacy_metadata;
-use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
 use crate::encoding::v2::keys::{GlobalKey, RecordKind, ScopedKey};
 use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, encode_metadata_value,

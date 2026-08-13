@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use slatedb::DbReadOps;
 
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::keys::ManagedIndexKey;
 use crate::encoding::v2::keys::{RecordKind, ScopedKey};
 use crate::encoding::v2::values::decode_index_record;
 use crate::error::{HelixDbError, Result};
@@ -311,7 +311,8 @@ impl MutationIndexCatalog {
         transaction: &(impl DbReadOps + Sync),
         scope: DataScope,
     ) -> Result<Self> {
-        let prefix = Key::data_prefix(scope, ScopedKey::logical_prefix(RecordKind::IndexRecord));
+        let prefix =
+            ManagedIndexKey::data_prefix(scope, ScopedKey::logical_prefix(RecordKind::IndexRecord));
         let mut rows = transaction.scan_prefix(prefix, ..).await?;
         let mut active = ActiveMutationCatalog::default();
         let mut secondary = secondary::SecondaryMutationSet::default();
@@ -320,10 +321,10 @@ impl MutationIndexCatalog {
         let mut routes = MutationRouteCatalog::default();
 
         while let Some(row) = rows.next().await? {
-            let Key::Data {
+            let ManagedIndexKey::Data {
                 kind: ScopedKey::IndexRecord(key),
                 ..
-            } = Key::parse_from_slice(scope, &row.key)?
+            } = ManagedIndexKey::parse_from_slice(scope, &row.key)?
             else {
                 return Err(corruption(
                     "mutation catalog prefix yielded another key kind",
@@ -581,7 +582,7 @@ mod tests {
             .expect("seed transaction opens");
         for record in &records {
             seed.put(
-                Key::Data {
+                ManagedIndexKey::Data {
                     scope,
                     kind: ScopedKey::index_record(record.identity().clone()),
                 }

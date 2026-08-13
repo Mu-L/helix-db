@@ -439,7 +439,7 @@ async fn assert_generation_rows_absent(
         RecordKind::TextStatisticsEntity,
         RecordKind::SecondaryEqualityBitmap,
     ] {
-        let prefix = crate::encoding::v2::keys::Key::data_prefix(
+        let prefix = crate::encoding::v2::keys::ManagedIndexKey::data_prefix(
             scope,
             ScopedKey::generation_prefix(kind, index_id, generation),
         );

@@ -23,10 +23,10 @@ use std::time::Instant;
 
 use slatedb::object_store::ObjectStoreExt;
 
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::property::{encode_properties, Property};
 use crate::encoding::v1::keys::{DataKeyKind, Key, NodePropertyKey};
-use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
 use crate::error::{HelixDbError, Result};
 use crate::index_lifecycle::outbox::{self, ClaimPermission, OperationPointerObservation};
 use crate::index_lifecycle::work;

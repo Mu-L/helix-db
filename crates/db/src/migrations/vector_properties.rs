@@ -13,7 +13,7 @@ use bytes::Bytes;
 use slatedb::{DbReadOps, DbTransaction};
 
 use crate::config;
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::property::{self, Property};
 use crate::encoding::v1::keys::{DataKeyKind, EdgePropertyByIdKey, Key, KeyPrefix};
 use crate::error::{HelixDbError, Result};

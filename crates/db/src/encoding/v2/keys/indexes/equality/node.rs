@@ -7,7 +7,7 @@ use crate::encoding::{
         PROPERTY_HASH_MAX_LEN, VALUE_HASH_MAX_LEN,
     },
     keys::{KeyPrefix, PREFIX_LEN},
-    v1::read_u64,
+    v2::keys::codec::read_u64,
     NodeId,
 };
 use bytes::BufMut;
@@ -430,7 +430,7 @@ impl From<&GlobalEdgeEqualityIndexKey> for IndexPrefix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encoding::indexes::IndexKey;
+    use crate::encoding::indexes::PropertyIndexKey;
 
     #[test]
     fn equality_index_key_has_exact_layout_and_round_trips() {

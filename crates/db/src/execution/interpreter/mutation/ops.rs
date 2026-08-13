@@ -389,7 +389,7 @@ impl<'db> ExecutionContext<'db> {
             .iter()
             .flat_map(|from| {
                 targets.iter().map(move |target| {
-                    keys::Key::Data {
+                    keys::DataKey::Data {
                         scope: tenant_scope,
                         kind: keys::DataKeyKind::EdgePairIndex(keys::EdgePairIndexKey::new(
                             *from, *target,

@@ -1,8 +1,8 @@
-//! V1 graph data keys with typed construction and parsing boundaries.
+//! Graph data keys with typed construction and parsing boundaries.
 
 use bytes::BufMut;
 
-use crate::encoding::{error::EncodingError, v1::read_u64, EdgeId, NodeId};
+use crate::encoding::{error::EncodingError, v2::keys::codec::read_u64, EdgeId, NodeId};
 
 use super::{KeyPrefix, ID_LEN, PREFIX_LEN};
 

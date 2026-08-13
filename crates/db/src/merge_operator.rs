@@ -4,11 +4,11 @@ use bytes::Bytes;
 use roaring::RoaringTreemap;
 use slatedb::{MergeOperator, MergeOperatorError};
 
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::v1::keys::vectors::{KEY_KIND_LAYER0_VEC_KS, VECTOR_HOT_KEYSPACE_PREFIX};
 use crate::encoding::v1::keys::{DataKeyKind, KeyPrefix};
 use crate::encoding::v1::values::{edges, vectors};
-use crate::encoding::v2::keys::{Key as V2Key, ScopedKey as V2ScopedKey};
+use crate::encoding::v2::keys::{ManagedIndexKey as V2Key, ScopedKey as V2ScopedKey};
 use crate::encoding::v2::values::SecondaryEqualityBitmapValue;
 use crate::encoding::NodeId;
 
@@ -599,7 +599,7 @@ mod tests {
     #[test]
     fn edge_merge_batch_applies_oldest_to_newest() {
         let key = Key::Data {
-            scope: crate::encoding::keys::tenant::DataScope::LegacyUnscoped,
+            scope: crate::encoding::keys::scope::DataScope::LegacyUnscoped,
             kind: DataKeyKind::Adjacency(AdjacencyKey::new(1)),
         }
         .to_bytes();

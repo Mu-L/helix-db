@@ -29,7 +29,7 @@ use slatedb::DbTransaction;
 #[cfg(test)]
 use slatedb::IsolationLevel;
 
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 #[cfg(test)]
 use crate::encoding::v1::keys::vectors::VectorKey;
 #[cfg(test)]
@@ -2071,7 +2071,7 @@ mod tests {
     #[test]
     fn test_handle_modes_scopes_and_candidate_ordering_contracts() {
         let scope = DataScope::Tenant(
-            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000A")
+            crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000A")
                 .unwrap(),
         );
         let scoped = VectorIndex::<Cosine>::new_scoped("scoped", scope);

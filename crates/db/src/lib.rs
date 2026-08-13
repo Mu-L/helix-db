@@ -67,7 +67,7 @@ use slatedb::{CacheTarget, Db, DbCacheManagerOps, DbMetadataOps, DbReader};
 use tokio::sync::{oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 
 /// Open mode for a [`HelixDB`] handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2696,7 +2696,7 @@ async fn build_slate_db_cache(config: &CacheMode) -> Result<Option<Arc<dyn DbCac
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encoding::keys::tenant::TenantId;
+    use crate::encoding::keys::scope::TenantId;
     use helix_ast::batch::{read_batch, write_batch};
     use helix_ast::graph::NodeRef;
     use helix_ast::query::QueryRequest;
@@ -3221,7 +3221,7 @@ mod tests {
             physical_index_id,
         )
         .unwrap();
-        let record_key = crate::encoding::v2::keys::Key::Data {
+        let record_key = crate::encoding::v2::keys::ManagedIndexKey::Data {
             scope,
             kind: ScopedKey::index_record(record.identity().clone()),
         }

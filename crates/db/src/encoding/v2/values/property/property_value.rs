@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use std::{cmp::Ordering, collections::BTreeMap};
 
 use crate::encoding::property::{datetime_millis_to_rfc3339, sortable_i64_index_string};
-use crate::encoding::v1::property::canonical_number::CanonicalNumber;
+use crate::encoding::v2::values::property::canonical_number::CanonicalNumber;
 
 ///
 /// Supports primitive types (bool, i64, f64, string, bytes) and arrays.

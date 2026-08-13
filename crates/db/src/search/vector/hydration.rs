@@ -20,7 +20,7 @@ use super::memory_store::{
 use super::ValidatedVectorGenerationHandle;
 #[cfg(test)]
 use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
 use crate::encoding::v2::keys::{RecordKind, ScopedKey};
 use crate::encoding::v2::values::decode_partition_mapping;
 use crate::error::{HelixDbError, Result};

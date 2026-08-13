@@ -2,7 +2,7 @@ use crate::encoding::{
     error::EncodingError,
     indexes::{EdgeDirection, IndexPrefix, ValueHash, INDEX_PREFIX_LEN, VALUE_HASH_MAX_LEN},
     keys::{KeyPrefix, PREFIX_LEN},
-    v1::read_u64,
+    v2::keys::codec::read_u64,
     NodeId,
 };
 use bytes::BufMut;
@@ -214,7 +214,7 @@ impl From<&EdgeLabelNeighborKey> for IndexPrefix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encoding::indexes::IndexKey;
+    use crate::encoding::indexes::PropertyIndexKey;
 
     const LABEL_HASH: ValueHash = [5, 6, 7, 8, 9, 10, 11, 12];
 

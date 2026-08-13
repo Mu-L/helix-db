@@ -25,14 +25,14 @@ use serde::{Deserialize, Serialize};
 use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
 use crate::config;
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::property::{decode_properties, Property};
 use crate::encoding::v1::keys::vectors::VectorKey;
 use crate::encoding::v1::keys::{
     AdjacencyKey, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey, EdgePropertyByIdKey, Key,
     KeyPrefix, MetadataKey,
 };
-use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
 use crate::encoding::{EdgeId, NodeId};
 use crate::error::{HelixDbError, Result};
 use crate::search;
@@ -4227,7 +4227,7 @@ mod tests {
     use slatedb::object_store::memory::InMemory;
 
     use super::*;
-    use crate::encoding::keys::tenant::TenantId;
+    use crate::encoding::keys::scope::TenantId;
     use crate::encoding::keys::{
         AdjacencyKey, EdgeEndpointsKey, EdgePairIndexKey, EdgePropertyByIdKey, EdgePropertyPairKey,
     };
@@ -5229,7 +5229,7 @@ pub(crate) mod production_contracts {
     use crate::encoding::v1::keys::vectors::{
         VectorIndexMetadataKey, VectorItemKey, VectorKey, VectorSimHashKey,
     };
-    use crate::encoding::v1::keys::Key;
+    use crate::encoding::v1::keys::DataKey;
     use crate::encoding::v2::keys::{GlobalKey, ScopedKey};
     use crate::encoding::v2::values::{
         decode_metadata_value, encode_index_record, encode_metadata_value,

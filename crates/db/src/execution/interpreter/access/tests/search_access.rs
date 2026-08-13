@@ -599,12 +599,12 @@ async fn text_dispatch_reports_missing_definition_and_manifest_corruption() {
     db.refresh_runtime_catalog(crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped)
         .await
         .unwrap();
-    let root_key = crate::encoding::v2::keys::Key::Data {
+    let root_key = crate::encoding::v2::keys::ManagedIndexKey::Data {
         scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
         kind: crate::encoding::v2::keys::ScopedKey::TextManifestRoot(root),
     }
     .to_bytes();
-    let page_key = crate::encoding::v2::keys::Key::Data {
+    let page_key = crate::encoding::v2::keys::ManagedIndexKey::Data {
         scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
         kind: crate::encoding::v2::keys::ScopedKey::TextManifestPage(
             crate::encoding::v2::keys::TextManifestPageKey { root, page: 0 },
@@ -726,7 +726,7 @@ async fn text_dispatch_returns_empty_for_an_absent_managed_tenant_partition() {
     .expect("tenant text record activates");
     db.inner_db()
         .put(
-            crate::encoding::v2::keys::Key::Data {
+            crate::encoding::v2::keys::ManagedIndexKey::Data {
                 scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
                 kind: crate::encoding::v2::keys::ScopedKey::index_record(record.identity().clone()),
             }

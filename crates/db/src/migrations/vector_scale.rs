@@ -35,7 +35,7 @@ use crate::encoding::v1::keys::vectors::{
 };
 use crate::encoding::v1::keys::{DataKeyKind, Key, NodePropertyKey};
 use crate::encoding::v1::values::vectors::{metadata, simhash};
-use crate::encoding::v2::keys::{GlobalKey, Key as IndexKey, ScopedKey};
+use crate::encoding::v2::keys::{GlobalKey, ManagedIndexKey as IndexKey, ScopedKey};
 use crate::encoding::v2::values::{
     encode_index_record, encode_metadata_value, encode_operation_record,
 };

@@ -16,7 +16,7 @@ const NODE_ID_LEN: usize = core::mem::size_of::<NodeId>();
 /// Encodes a flat sequence of big-endian node IDs in its deployed format.
 ///
 /// ```
-/// use db::encoding::v1::values::vectors::neighbors::{
+/// use db::encoding::v2::values::indexes::vector::neighbors::{
 ///     decode_flat_neighbors, encode_flat_neighbors,
 /// };
 ///

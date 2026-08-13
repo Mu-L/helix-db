@@ -130,7 +130,7 @@ impl<'db> ExecutionContext<'db> {
         node_id: u64,
         direction: ir::ExpandDirection,
     ) -> Result<Vec<u64>> {
-        let key = keys::Key::Data {
+        let key = keys::DataKey::Data {
             scope: self.tenant_scope,
             kind: keys::DataKeyKind::Adjacency(keys::AdjacencyKey::new(node_id)),
         }
@@ -156,7 +156,7 @@ impl<'db> ExecutionContext<'db> {
         node_id: u64,
         direction: ir::ExpandDirection,
     ) -> Result<BTreeSet<u64>> {
-        let key = keys::Key::Data {
+        let key = keys::DataKey::Data {
             scope: self.tenant_scope,
             kind: keys::DataKeyKind::Adjacency(keys::AdjacencyKey::new(node_id)),
         }

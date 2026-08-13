@@ -15,7 +15,7 @@ use crate::encoding::v1::keys::{
 };
 use crate::encoding::v1::values::id_allocation::IdAllocationWatermarkValue;
 use crate::encoding::v2::keys::GlobalKey;
-use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
 use crate::encoding::v2::values::{
     decode_index_record, decode_metadata_value, decode_operation_record, encode_index_record,
     encode_metadata_value, encode_operation_record,

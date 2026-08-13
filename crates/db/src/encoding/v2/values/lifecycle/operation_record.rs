@@ -893,7 +893,7 @@ mod wire_fixtures {
 
     use super::*;
     use crate::config::SecondaryIndexDefinition;
-    use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
+    use crate::encoding::v2::keys::scope::{DataScope, TenantId};
     use crate::encoding::v2::values::global::{decode_metadata_value, encode_metadata_value};
     use crate::index_lifecycle::{
         IndexCursor, IndexGenerationId, IndexId, IndexOperationExecutionState, IndexOperationId,

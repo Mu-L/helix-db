@@ -19,7 +19,7 @@ impl<'db> ExecutionContext<'db> {
         let mut rows = Vec::new();
         for id in ids {
             self.check_execution_deadline()?;
-            let key = keys::Key::Data {
+            let key = keys::DataKey::Data {
                 scope: self.tenant_scope,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(id)),
             }
@@ -38,7 +38,7 @@ impl<'db> ExecutionContext<'db> {
         let mut rows = Vec::new();
         for id in ids {
             self.check_execution_deadline()?;
-            let key = keys::Key::Data {
+            let key = keys::DataKey::Data {
                 scope: self.tenant_scope,
                 kind: keys::DataKeyKind::EdgeEndpoints(keys::EdgeEndpointsKey::new(id)),
             }
@@ -62,7 +62,7 @@ impl<'db> ExecutionContext<'db> {
                     "edge-bound vector result reached node row materialization".to_string(),
                 ));
             };
-            let key = keys::Key::Data {
+            let key = keys::DataKey::Data {
                 scope: self.tenant_scope,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(entity_id)),
             }
@@ -86,7 +86,7 @@ impl<'db> ExecutionContext<'db> {
                     "node-bound vector result reached edge row materialization".to_string(),
                 ));
             };
-            let key = keys::Key::Data {
+            let key = keys::DataKey::Data {
                 scope: self.tenant_scope,
                 kind: keys::DataKeyKind::EdgeEndpoints(keys::EdgeEndpointsKey::new(entity_id)),
             }
@@ -104,7 +104,7 @@ impl<'db> ExecutionContext<'db> {
     ) -> Result<ExecutionValue> {
         let mut rows = Vec::new();
         for result in results {
-            let key = keys::Key::Data {
+            let key = keys::DataKey::Data {
                 scope: self.tenant_scope,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(result.entity_id)),
             }
@@ -122,7 +122,7 @@ impl<'db> ExecutionContext<'db> {
     ) -> Result<ExecutionValue> {
         let mut rows = Vec::new();
         for result in results {
-            let key = keys::Key::Data {
+            let key = keys::DataKey::Data {
                 scope: self.tenant_scope,
                 kind: keys::DataKeyKind::EdgeEndpoints(keys::EdgeEndpointsKey::new(
                     result.entity_id,

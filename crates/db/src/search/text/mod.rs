@@ -35,7 +35,7 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::config::{TextAnalyzerKind, TextIndexDefinition};
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::property::decode_properties;
 use crate::encoding::property::property::Property;
 use crate::encoding::property::property_value::PropertyValue;
@@ -2211,7 +2211,7 @@ fn sha256_hex(sha256: [u8; 32]) -> String {
 mod tests {
     use super::*;
     use crate::config::{TextAnalyzerKind, TextIndexDefinition};
-    use crate::encoding::keys::tenant::TenantId;
+    use crate::encoding::keys::scope::TenantId;
     use crate::encoding::property::encode_properties;
     use proptest::prelude::*;
     use slatedb::object_store::memory::InMemory;
@@ -3019,7 +3019,7 @@ mod tests {
         let tx = db.begin(IsolationLevel::Snapshot).await.unwrap();
         tx.put(Bytes::from_static(&[0x02]), Bytes::new()).unwrap();
         tx.put(
-            keys::Key::Data {
+            keys::DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(1)),
             }
@@ -3031,7 +3031,7 @@ mod tests {
         )
         .unwrap();
         tx.put(
-            keys::Key::Data {
+            keys::DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(2)),
             }
@@ -3079,7 +3079,7 @@ mod tests {
 
         let tx = db.begin(IsolationLevel::Snapshot).await.unwrap();
         tx.put(
-            keys::Key::Data {
+            keys::DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(3)),
             }

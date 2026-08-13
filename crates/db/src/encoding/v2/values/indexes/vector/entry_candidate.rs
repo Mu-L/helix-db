@@ -14,7 +14,7 @@ const ENTRY_CANDIDATE_LAYER_LEN: usize = core::mem::size_of::<u16>();
 /// Encodes an entry-candidate node layer in the deployed `[layer:2 BE]` format.
 ///
 /// ```
-/// use db::encoding::v1::values::vectors::entry::{
+/// use db::encoding::v2::values::indexes::vector::entry_candidate::{
 ///     decode_entry_candidate_layer, encode_entry_candidate_layer,
 /// };
 ///

@@ -1,0 +1,1 @@
+//! Lifecycle index-record values.

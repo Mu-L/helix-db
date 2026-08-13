@@ -1,14 +1,14 @@
-//! V1 metadata keys for allocators, manifests, and scoped database state.
+//! Metadata keys for allocators, manifests, and scoped database state.
 
 use bytes::{BufMut, Bytes};
 
 use crate::encoding::error::EncodingError;
 
-use super::{tenant::DataScope, DataKeyKind, Key, KeyPrefix, PREFIX_LEN};
+use super::{scope::DataScope, DataKey, DataKeyKind, KeyPrefix, PREFIX_LEN};
 
-/// Key for next node ID high watermark (for lease-based allocation)
+/// DataKey for next node ID high watermark (for lease-based allocation)
 pub const NEXT_NODE_ID: &[u8] = b"next_node_id";
-/// Key for next edge ID high watermark (for lease-based allocation)
+/// DataKey for next edge ID high watermark (for lease-based allocation)
 pub const NEXT_EDGE_ID: &[u8] = b"next_edge_id";
 const TEXT_INDEX_MANIFEST_PREFIX: &[u8] = b"text_manifest:";
 const DYNAMIC_INDEX_PREFIX: &[u8] = b"dynamic_index:";
@@ -89,13 +89,13 @@ impl<'a> MetadataKey<'a> {
 }
 
 impl<'a> MetadataKey<'a> {
-    /// Key for next node ID high watermark
+    /// DataKey for next node ID high watermark
     #[inline]
     pub fn next_node_id_key() -> Self {
         Self::new(NEXT_NODE_ID)
     }
 
-    /// Key for next edge ID high watermark
+    /// DataKey for next edge ID high watermark
     #[inline]
     pub fn next_edge_id_key() -> Self {
         Self::new(NEXT_EDGE_ID)
@@ -182,7 +182,7 @@ pub(crate) fn text_index_version_counter_key_scoped(scope: DataScope, index_name
 }
 
 fn data_metadata_key_scoped(scope: DataScope, name: &[u8]) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::IndexMetadata(MetadataKey::new(name)),
     }

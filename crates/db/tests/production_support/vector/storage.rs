@@ -14,7 +14,7 @@ use slatedb::{Db, IsolationLevel};
 
 use super::*;
 use crate::config::VectorIndexDefinition;
-use crate::encoding::keys::tenant::TenantId;
+use crate::encoding::keys::scope::TenantId;
 use crate::encoding::v1::keys::vectors::VectorTxnGuardKey;
 use crate::encoding::v1::values::vectors::simhash::encode_simhash;
 use crate::index_lifecycle::{ValidatedDynamicIndexDefinition, ValidatedVectorIndexDefinition};

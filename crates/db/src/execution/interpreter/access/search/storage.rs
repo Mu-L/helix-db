@@ -448,8 +448,8 @@ mod tests {
 
     use super::*;
     use crate::config::TextIndexDefinition;
-    use crate::encoding::keys::tenant::DataScope;
-    use crate::encoding::v2::keys::Key;
+    use crate::encoding::keys::scope::DataScope;
+    use crate::encoding::v2::keys::ManagedIndexKey;
     use crate::encoding::v2::keys::{
         IndexEntity, ScopedKey, TextEntityStateKey, TextManifestPageKey, TextManifestRootKey,
     };

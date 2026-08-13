@@ -15,7 +15,7 @@ use bytes::Bytes;
 use slatedb::DbReadOps;
 
 use crate::encoding::error::EncodingError;
-use crate::encoding::keys::{tenant::DataScope, DataKeyKind, Key};
+use crate::encoding::keys::{scope::DataScope, DataKey, DataKeyKind};
 use crate::encoding::v1::keys::vectors::{
     VectorEntryCandidateKey, VectorEntryCandidateNodeKey, VectorEntryCandidatePrefixKey,
     VectorIndexMetadataKey, VectorItemKey, VectorItemPrefixKey, VectorKey,
@@ -138,7 +138,7 @@ impl VectorRowKeyspace {
     /// Logical key serialization remains owned by `encoding::v1`; this method
     /// only applies the bound tenant scope at the final storage boundary.
     pub(crate) fn key(&self, key: VectorKey) -> Bytes {
-        Key::Data {
+        DataKey::Data {
             scope: self.scope,
             kind: DataKeyKind::Vector(key),
         }
@@ -2556,7 +2556,7 @@ mod tests {
 
     use super::*;
     use crate::config::VectorIndexDefinition;
-    use crate::encoding::keys::tenant::TenantId;
+    use crate::encoding::keys::scope::TenantId;
     use crate::encoding::v1::keys::vectors::VectorIndexMetadataKey;
     use crate::encoding::v1::values::vectors::simhash::encode_simhash;
     use crate::index_lifecycle::ValidatedDynamicIndexDefinition;

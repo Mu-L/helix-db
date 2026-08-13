@@ -416,7 +416,7 @@ mod tests {
     use super::*;
     use crate::config::TextAnalyzerKind;
     use crate::encoding::v1::keys::tenant::DataScope;
-    use crate::encoding::v2::keys::Key;
+    use crate::encoding::v2::keys::ManagedIndexKey;
     use crate::encoding::v2::keys::ScopedKey;
     use crate::encoding::v2::values::encode_index_record;
     use crate::index_lifecycle::{

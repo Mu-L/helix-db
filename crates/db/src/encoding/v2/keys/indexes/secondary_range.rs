@@ -3,7 +3,7 @@
 use bytes::BufMut;
 
 use crate::encoding::error::EncodingError;
-use crate::encoding::v1::property::range_value::CanonicalRangeValue;
+use crate::encoding::v2::values::property::range_index_value::CanonicalRangeValue;
 use crate::index_lifecycle::{IndexEntityId, IndexGenerationId, IndexId};
 
 use super::super::{KEY_MAX_LEN, KIND_LEN, PREFIX_LEN, U64_LEN};

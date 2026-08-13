@@ -16,13 +16,6 @@ use super::{
 };
 use crate::encoding::{error::EncodingError, NodeId};
 
-pub mod entry;
-pub(crate) mod item;
-pub(crate) mod markers;
-pub(crate) mod metadata;
-pub mod neighbors;
-pub(crate) mod simhash;
-
 /// Encoding type: compact packed layer-0 neighbor list.
 ///
 /// Value must remain > 0x04 to avoid edge-delta marker overlap.

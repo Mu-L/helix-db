@@ -12,7 +12,7 @@ use crate::encoding::{
         PROPERTY_HASH_MAX_LEN,
     },
     keys::{KeyPrefix, ID_LEN, PREFIX_LEN},
-    v1::read_u64,
+    v2::keys::codec::read_u64,
     EdgeId, NodeId,
 };
 use bytes::BufMut;
@@ -100,9 +100,9 @@ impl RangeIndexDirection {
 /// Note BOTH direction use this key variant but reside in different indexes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RangeIndexKey<'a> {
-    pub(super) range_direction: RangeIndexDirection,
+    pub(in crate::encoding::v2::keys::indexes) range_direction: RangeIndexDirection,
     property_hash: PropertyHash,
-    pub(super) value: Cow<'a, str>,
+    pub(in crate::encoding::v2::keys::indexes) value: Cow<'a, str>,
     node_id: NodeId,
 }
 
@@ -289,10 +289,10 @@ impl EdgeRangeIndexDirection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EdgeRangeIndexKey<'a> {
     pub(super) edge_direction: EdgeDirection,
-    pub(super) range_direction: EdgeRangeIndexDirection,
+    pub(in crate::encoding::v2::keys::indexes) range_direction: EdgeRangeIndexDirection,
     source: NodeId,
     property_hash: PropertyHash,
-    pub(super) value: Cow<'a, str>,
+    pub(in crate::encoding::v2::keys::indexes) value: Cow<'a, str>,
     edge_id: EdgeId,
 }
 
@@ -514,9 +514,9 @@ impl From<&EdgeRangeIndexKey<'_>> for IndexPrefix {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GlobalEdgeRangeIndexKey<'a> {
-    pub(super) range_direction: RangeIndexDirection,
+    pub(in crate::encoding::v2::keys::indexes) range_direction: RangeIndexDirection,
     property_hash: PropertyHash,
-    pub(super) value: Cow<'a, str>,
+    pub(in crate::encoding::v2::keys::indexes) value: Cow<'a, str>,
     edge_id: EdgeId,
 }
 

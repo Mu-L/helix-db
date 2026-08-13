@@ -1,0 +1,1 @@
+//! Vector entry-candidate keys.

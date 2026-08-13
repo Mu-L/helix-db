@@ -423,7 +423,7 @@ mod tests {
             .expect("active record projects an active handle");
         inner
             .put(
-                crate::encoding::v2::keys::Key::Data {
+                crate::encoding::v2::keys::ManagedIndexKey::Data {
                     scope,
                     kind: crate::encoding::v2::keys::ScopedKey::index_record(
                         record.identity().clone(),

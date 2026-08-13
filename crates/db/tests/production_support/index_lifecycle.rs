@@ -956,7 +956,7 @@ async fn assert_operation_queue_empty(db: &Db) {
 async fn assert_failed_create_is_absent(db: &Db, definition: &ValidatedDynamicIndexDefinition) {
     assert!(db
         .get(
-            crate::encoding::v2::keys::Key::Data {
+            crate::encoding::v2::keys::ManagedIndexKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: ScopedKey::index_record(definition.identity().clone()),
             }

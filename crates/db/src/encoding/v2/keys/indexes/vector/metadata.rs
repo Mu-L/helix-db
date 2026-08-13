@@ -2,7 +2,7 @@
 
 use crate::index_lifecycle::{IndexGenerationId, IndexId};
 
-use super::text::PartitionFingerprint;
+use super::super::text::PartitionFingerprint;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct VectorPartitionMappingKey {

@@ -17,7 +17,7 @@ use serde::Serialize;
 
 use crate::config::SecondaryIndexDefinition;
 use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v2::keys::{Key, RecordKind, ScopedKey};
+use crate::encoding::v2::keys::{ManagedIndexKey as Key, RecordKind, ScopedKey};
 use crate::encoding::v2::values::SecondaryEqualityBitmapValue;
 use crate::execution::interpreter::{ExecutionScalar, ExecutionValue};
 use crate::index_lifecycle::ValidatedDynamicIndexDefinition;

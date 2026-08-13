@@ -365,7 +365,7 @@ mod additional_tests {
 
     /// Writes one typed row so the request has a real SlateDB commit sequence.
     fn stage_storage_write(active: &ActiveWriteTx, value: &'static [u8]) {
-        let key = crate::encoding::v1::keys::Key::Data {
+        let key = crate::encoding::v1::keys::DataKey::Data {
             scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
             kind: crate::encoding::v1::keys::DataKeyKind::NodeProperty(
                 crate::encoding::v1::keys::NodePropertyKey::new(99),
@@ -448,7 +448,7 @@ mod additional_tests {
     #[tokio::test]
     async fn overlapping_refresh_keeps_prepared_catalog_until_write_snapshot_opens() {
         use crate::config::{TextAnalyzerKind, TextIndexDefinition, VectorIndexDefinition};
-        use crate::encoding::v2::keys::Key;
+        use crate::encoding::v2::keys::ManagedIndexKey;
         use crate::encoding::v2::keys::ScopedKey;
         use crate::encoding::v2::values::encode_index_record;
         use crate::index_lifecycle::{
@@ -676,8 +676,8 @@ mod additional_tests {
         let db = test_support::open_db("mutation-deadline-after-commit-start").await;
         let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
         context.enable_request_write_scope().await.unwrap();
-        let key = crate::encoding::keys::Key::Data {
-            scope: crate::encoding::keys::tenant::DataScope::LegacyUnscoped,
+        let key = crate::encoding::keys::DataKey::Data {
+            scope: crate::encoding::keys::scope::DataScope::LegacyUnscoped,
             kind: crate::encoding::keys::DataKeyKind::NodeProperty(
                 crate::encoding::keys::NodePropertyKey::new(100),
             ),
@@ -743,8 +743,8 @@ mod additional_tests {
 
         context.abort_request_write_scope();
         assert!(store.get_upper_vector(7).is_some());
-        let key = crate::encoding::keys::Key::Data {
-            scope: crate::encoding::keys::tenant::DataScope::LegacyUnscoped,
+        let key = crate::encoding::keys::DataKey::Data {
+            scope: crate::encoding::keys::scope::DataScope::LegacyUnscoped,
             kind: crate::encoding::keys::DataKeyKind::NodeProperty(
                 crate::encoding::keys::NodePropertyKey::new(99),
             ),
@@ -770,8 +770,8 @@ mod additional_tests {
 
         drop(context);
 
-        let key = crate::encoding::keys::Key::Data {
-            scope: crate::encoding::keys::tenant::DataScope::LegacyUnscoped,
+        let key = crate::encoding::keys::DataKey::Data {
+            scope: crate::encoding::keys::scope::DataScope::LegacyUnscoped,
             kind: crate::encoding::keys::DataKeyKind::NodeProperty(
                 crate::encoding::keys::NodePropertyKey::new(99),
             ),
@@ -803,7 +803,7 @@ mod additional_tests {
             .begin(slatedb::IsolationLevel::Snapshot)
             .await
             .unwrap();
-        let key = crate::encoding::v1::keys::Key::Data {
+        let key = crate::encoding::v1::keys::DataKey::Data {
             scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
             kind: crate::encoding::v1::keys::DataKeyKind::NodeProperty(
                 crate::encoding::v1::keys::NodePropertyKey::new(99),
@@ -887,7 +887,7 @@ mod additional_tests {
             .begin(slatedb::IsolationLevel::Snapshot)
             .await
             .unwrap();
-        let key = crate::encoding::v1::keys::Key::Data {
+        let key = crate::encoding::v1::keys::DataKey::Data {
             scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
             kind: crate::encoding::v1::keys::DataKeyKind::NodeProperty(
                 crate::encoding::v1::keys::NodePropertyKey::new(99),
@@ -909,7 +909,7 @@ mod additional_tests {
     #[tokio::test]
     async fn mutation_scope_projects_canonical_active_definitions() {
         use crate::config::SecondaryIndexDefinition;
-        use crate::encoding::v2::keys::Key;
+        use crate::encoding::v2::keys::ManagedIndexKey;
         use crate::encoding::v2::keys::ScopedKey;
         use crate::encoding::v2::values::encode_index_record;
         use crate::index_lifecycle::{
@@ -965,7 +965,7 @@ mod additional_tests {
 
         use crate::config::VectorIndexDefinition;
         use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey};
-        use crate::encoding::v2::keys::{Key, ScopedKey};
+        use crate::encoding::v2::keys::{ManagedIndexKey as Key, ScopedKey};
         use crate::encoding::v2::values::encode_index_record;
         use crate::index_lifecycle::{
             IndexGenerationId, IndexOperationId, IndexRecordV2, IndexRevision,

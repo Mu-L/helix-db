@@ -1,0 +1,1 @@
+//! Lifecycle entity-state values.

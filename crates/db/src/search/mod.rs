@@ -35,21 +35,21 @@ use crate::encoding::indexes::equality::{
     EdgeDirection as EdgeEqualityDirection, EdgeEqualityIndexKey, EqualityIndexKey,
 };
 use crate::encoding::indexes::label::{EdgeLabelKey, EdgeLabelNeighborKey};
-use crate::encoding::indexes::range::{
-    EdgeRangeIndexDirection, EdgeRangeIndexKey, GlobalEdgeRangeIndexKey, RangeIndexDirection,
-    RangeIndexKey,
-};
-use crate::encoding::indexes::scan_prefixes::{
+use crate::encoding::indexes::prefix::{
     exclusive_prefix_end_bound, EdgeEqualityScanPrefix, EdgeLabelScanPrefix, EdgeRangeScanPrefix,
     EdgeRangeScanValuePrefix, EqualityScanPrefix, GlobalEdgeEqualityScanPrefix,
     GlobalEdgeRangeScanPrefix, GlobalEdgeRangeScanValuePrefix, RangeScanPrefix,
     RangeScanValuePrefix,
 };
+use crate::encoding::indexes::range::{
+    EdgeRangeIndexDirection, EdgeRangeIndexKey, GlobalEdgeRangeIndexKey, RangeIndexDirection,
+    RangeIndexKey,
+};
 use crate::encoding::indexes::{
     hash_property_name, hash_property_value, EdgeDirection as EdgeRangeDirection,
 };
 use crate::encoding::keys::metadata::{self as key_metadata, TextMetadataElement};
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::keys::{EdgeEndpointsKey, EdgePropertyByIdKey};
 use crate::encoding::property::property::Property;
 use crate::encoding::property::property_value::PropertyValue;
@@ -3675,10 +3675,10 @@ mod tests {
             .await
             .expect("transaction starts");
         let tenant_a =
-            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000A")
+            crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000A")
                 .expect("valid tenant");
         let tenant_b =
-            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000B")
+            crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000B")
                 .expect("valid tenant");
         let scope_a = DataScope::Tenant(tenant_a);
         let scope_b = DataScope::Tenant(tenant_b);
@@ -3735,10 +3735,10 @@ mod tests {
         .await
         .expect("db opens");
         let tenant_a =
-            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000A")
+            crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000A")
                 .expect("valid tenant");
         let tenant_b =
-            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000B")
+            crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000B")
                 .expect("valid tenant");
         let normal_property = scoped_secondary_index_property("User", "status");
 
@@ -4164,7 +4164,7 @@ mod tests {
             .await
             .expect("transaction starts");
         let tenant =
-            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000A")
+            crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000A")
                 .expect("valid tenant");
         let scope = DataScope::Tenant(tenant);
 
@@ -4395,7 +4395,7 @@ mod tests {
             .contains(100));
 
         let tenant =
-            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000A")
+            crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000A")
                 .expect("valid tenant");
         let scope = DataScope::Tenant(tenant);
         add_to_edge_equality_index_scoped(&txn, 1, 2, 200, "status", "active", scope)
@@ -5059,10 +5059,10 @@ mod tests {
             .await
             .expect("transaction starts");
         let tenant_a =
-            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000A")
+            crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000A")
                 .expect("valid tenant");
         let tenant_b =
-            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000B")
+            crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000B")
                 .expect("valid tenant");
         let scope_a = DataScope::Tenant(tenant_a);
         let scope_b = DataScope::Tenant(tenant_b);

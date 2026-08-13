@@ -9,7 +9,7 @@ use slatedb::{Db, IsolationLevel};
 
 use crate::config::TextBackfillCompactionLimits;
 use crate::encoding::v2::keys as index_keys;
-use crate::encoding::v2::keys::Key;
+use crate::encoding::v2::keys::ManagedIndexKey;
 use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
 use crate::index_lifecycle::{self, work};
@@ -447,7 +447,7 @@ fn scoped_key(
     scope: crate::encoding::v1::keys::tenant::DataScope,
     key: index_keys::ScopedKey,
 ) -> Bytes {
-    Key::Data { scope, kind: key }.to_bytes()
+    ManagedIndexKey::Data { scope, kind: key }.to_bytes()
 }
 
 fn compaction_error(
@@ -639,7 +639,7 @@ mod tests {
             0,
         )
         .unwrap();
-        let pointer_key = Key::Global {
+        let pointer_key = ManagedIndexKey::Global {
             kind: index_keys::GlobalKey::TextCompactionPointer(target),
         }
         .to_bytes();

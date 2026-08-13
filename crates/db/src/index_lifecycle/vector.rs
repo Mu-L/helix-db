@@ -23,7 +23,7 @@ use crate::encoding::v1::keys::vectors::{
 };
 use crate::encoding::v1::keys::{DataKeyKind, Key};
 use crate::encoding::v1::property::encode_index_partition_value;
-use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
 use crate::encoding::v2::keys::{IndexEntity, IndexEntityStateKey, ScopedKey};
 #[cfg(test)]
 use crate::encoding::v2::values::decode_index_record;

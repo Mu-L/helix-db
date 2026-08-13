@@ -18,7 +18,7 @@ use crate::config::{
     SecondaryIndexLifecycleBatchRows, SecondaryIndexLifecycleTuning, TextAnalyzerKind,
     TextElementType, TextIndexDefinition, ValidatedDynamicIndexDefinition,
 };
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::property::{self, property_value::PropertyValue, Property};
 use crate::encoding::v1::keys::{
     DataKeyKind, EdgeEndpointsKey, EdgePropertyByIdKey, Key, NodePropertyKey,

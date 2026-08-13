@@ -29,7 +29,7 @@ use super::simhash::SimHash;
 use super::storage::{SimHashRow, VectorRowKeyspace, VectorRows};
 #[cfg(feature = "production-coverage")]
 use crate::encoding::error::EncodingError;
-use crate::encoding::keys::{tenant::DataScope, DataKeyKind, Key};
+use crate::encoding::keys::{scope::DataScope, DataKey, DataKeyKind};
 use crate::encoding::v1::keys::vectors::{VectorKey, VectorMemoryPrefixKey};
 #[cfg(test)]
 use crate::encoding::v1::keys::vectors::{
@@ -745,7 +745,7 @@ impl VectorMemoryStore {
     where
         R: DbReadOps + Send + Sync,
     {
-        let prefix = Key::Data {
+        let prefix = DataKey::Data {
             scope: self.scope,
             kind: DataKeyKind::Vector(VectorKey::MemoryPrefix(VectorMemoryPrefixKey::new(
                 self.index_id,

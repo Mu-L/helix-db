@@ -10,7 +10,7 @@
 use std::num::NonZeroU64;
 use std::num::{NonZeroU16, NonZeroUsize};
 
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::index_lifecycle::{
     ActiveIndexHandle, IndexElementKind, IndexGenerationId, IndexId, IndexOperationId,
     IndexRecordV2, IndexRevision, IndexStateV2, PhysicalGeneration,

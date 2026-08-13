@@ -18,7 +18,7 @@ use crate::encoding::v1::keys::tenant::DataScope;
 #[cfg(test)]
 use crate::encoding::v1::keys::tenant::TenantId;
 use crate::encoding::v2::keys::{
-    CanonicalSecondaryValue, GlobalKey, IndexEntity, Key, RecordKind, ScopedKey,
+    CanonicalSecondaryValue, GlobalKey, IndexEntity, ManagedIndexKey as Key, RecordKind, ScopedKey,
     SecondaryEntryLane, SecondaryEqualityBitmapKey,
 };
 use crate::encoding::v2::values::{

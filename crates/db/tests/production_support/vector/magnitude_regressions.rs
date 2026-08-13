@@ -19,7 +19,7 @@ use super::storage::{
 use super::unaligned_vector::UnalignedVector;
 use super::*;
 use crate::config::VectorIndexDefinition;
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::v1::keys::vectors::{
     VectorIndexMetadataKey, VectorItemKey, VectorKey, VectorSimHashKey, VectorStorageLane,
 };

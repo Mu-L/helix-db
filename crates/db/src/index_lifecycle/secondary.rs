@@ -46,7 +46,7 @@ use crate::encoding::v1::property::range_value::{
 };
 #[cfg(test)]
 use crate::encoding::v1::values::id_allocation::IdAllocationWatermarkValue;
-use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
 use crate::encoding::v2::keys::{
     CanonicalSecondaryValue, IndexEntity, IndexEntityStateKey, RecordKind, ScopedKey,
     SecondaryEntryKey, SecondaryEntryLane, SecondaryEqualityBitmapKey,

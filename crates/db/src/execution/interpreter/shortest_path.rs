@@ -132,7 +132,7 @@ impl<'db> ExecutionContext<'db> {
     }
 
     async fn node_exists(&self, node_id: u64) -> Result<bool> {
-        let key = keys::Key::Data {
+        let key = keys::DataKey::Data {
             scope: self.tenant_scope,
             kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(node_id)),
         }
@@ -162,7 +162,7 @@ impl<'db> ExecutionContext<'db> {
         node_id: u64,
         direction: ShortestPathDirection,
     ) -> Result<Vec<u64>> {
-        let key = keys::Key::Data {
+        let key = keys::DataKey::Data {
             scope: self.tenant_scope,
             kind: keys::DataKeyKind::Adjacency(keys::AdjacencyKey::new(node_id)),
         }
@@ -329,7 +329,7 @@ mod tests {
         ] {
             inner
                 .put(
-                    keys::Key::Data {
+                    keys::DataKey::Data {
                         scope: keys::tenant::DataScope::LegacyUnscoped,
                         kind: keys::DataKeyKind::PropertyIndex(
                             indexes::IndexKey::EdgeLabelNeighbor(

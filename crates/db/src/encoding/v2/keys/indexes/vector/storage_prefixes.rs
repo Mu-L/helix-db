@@ -1788,7 +1788,7 @@ impl VectorReverseEdgeKey {
 mod tests {
     use std::borrow::Cow;
 
-    use crate::encoding::v1::indexes::{
+    use crate::encoding::v2::keys::indexes::{
         range::{EdgeRangeIndexDirection, EdgeRangeIndexKey},
         EdgeDirection,
     };

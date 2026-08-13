@@ -29,7 +29,7 @@ use crate::config::{
 use crate::encoding::property;
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{DataKeyKind, Key, KeyPrefix};
-use crate::encoding::v2::keys::Key as IndexKey;
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
 use crate::encoding::v2::keys::{
     IndexEntity, IndexEntityStateKey, PartitionFingerprint, RecordKind, ScopedKey,
     TextBuildArtifactKey, TextEntityStateKey, TextManifestRootKey,
