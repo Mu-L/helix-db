@@ -5079,6 +5079,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn default_writer_starts_owned_background_cleanup_worker() {
+        let object_store = Arc::new(InMemory::new());
+        let database = "migration-default-background-worker";
+        let raw = Db::builder(database, object_store.clone())
+            .build()
+            .await
+            .expect("raw db opens");
+        let legacy_key = Key::Data {
+            scope: DataScope::LegacyUnscoped,
+            kind: DataKeyKind::EdgePropertyPair(EdgePropertyPairKey::new(11, 17)),
+        }
+        .to_bytes();
+        raw.put(
+            &legacy_key,
+            property::encode_properties(&[Property::string("$label", "FOLLOWS")]),
+        )
+        .await
+        .expect("legacy pair row writes");
+        raw.close().await.expect("raw db closes");
+
+        let db = HelixDB::open_with_object_store(database, object_store)
+            .await
+            .expect("default writer opens and starts its migration worker");
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if db
+                    .inner_db()
+                    .get(&legacy_key)
+                    .await
+                    .expect("legacy key read succeeds")
+                    .is_none()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("owned background worker removes the obsolete row");
+
+        db.close().await.expect("writer joins its migration worker");
+    }
+
+    #[tokio::test]
     async fn startup_rewrites_legacy_pair_when_pair_index_has_non_equivalent_edge() {
         let object_store = Arc::new(InMemory::new());
         let database = "migration-startup-preserves-non-equivalent-legacy-pair";

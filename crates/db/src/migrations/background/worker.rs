@@ -43,6 +43,42 @@ impl MigrationWorkerSupervisor {
     }
 }
 
+async fn run(
+    writer: Arc<HelixWriter>,
+    tuning: MigrationTuning,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    loop {
+        if *shutdown.borrow() {
+            return;
+        }
+
+        let delay_millis = match super::super::process_migration_once(
+            &writer,
+            DataScope::LegacyUnscoped,
+            tuning,
+        )
+        .await
+        {
+            Ok(true) => tuning.active_interval_millis().get(),
+            Ok(false) => tuning.idle_interval_millis().get(),
+            Err(error) => {
+                tracing::warn!(%error, "background migration batch failed; retrying after idle interval");
+                tuning.idle_interval_millis().get()
+            }
+        };
+
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(delay_millis)) => {}
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use slatedb::object_store::memory::InMemory;
@@ -186,41 +222,5 @@ mod tests {
 
         worker.stop().await;
         db.close().await.expect("test database closes");
-    }
-}
-
-async fn run(
-    writer: Arc<HelixWriter>,
-    tuning: MigrationTuning,
-    mut shutdown: watch::Receiver<bool>,
-) {
-    loop {
-        if *shutdown.borrow() {
-            return;
-        }
-
-        let delay_millis = match super::super::process_migration_once(
-            &writer,
-            DataScope::LegacyUnscoped,
-            tuning,
-        )
-        .await
-        {
-            Ok(true) => tuning.active_interval_millis().get(),
-            Ok(false) => tuning.idle_interval_millis().get(),
-            Err(error) => {
-                tracing::warn!(%error, "background migration batch failed; retrying after idle interval");
-                tuning.idle_interval_millis().get()
-            }
-        };
-
-        tokio::select! {
-            _ = tokio::time::sleep(Duration::from_millis(delay_millis)) => {}
-            changed = shutdown.changed() => {
-                if changed.is_err() || *shutdown.borrow() {
-                    return;
-                }
-            }
-        }
     }
 }
