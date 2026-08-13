@@ -1422,9 +1422,7 @@ async fn public_query_boundary_covers_branch_partition_edges() {
     };
     let scalar_subplan = || {
         subplan(exec::ExecOp::Count {
-            plan: Box::new(exec::ExecCountPlan::InputRows {
-                window: exec::ExecCountWindowPlan::identity(),
-            }),
+            plan: Box::new(exec::ExecCountPlan::Constant(0)),
         })
     };
     let branch_plan = |plan| {
@@ -7293,9 +7291,7 @@ async fn public_executable_plan_boundary_covers_merge_and_dependency_shapes() {
     let scalar_plan = dependency_plan(vec![
         (
             exec::ExecOp::Count {
-                plan: Box::new(exec::ExecCountPlan::InputRows {
-                    window: exec::ExecCountWindowPlan::identity(),
-                }),
+                plan: Box::new(exec::ExecCountPlan::Constant(0)),
             },
             exec::ExecSchedule::Pipeline,
         ),
@@ -7339,9 +7335,7 @@ async fn public_executable_plan_boundary_covers_merge_and_dependency_shapes() {
         ),
         (
             exec::ExecOp::Count {
-                plan: Box::new(exec::ExecCountPlan::InputRows {
-                    window: exec::ExecCountWindowPlan::identity(),
-                }),
+                plan: Box::new(exec::ExecCountPlan::Constant(0)),
             },
             exec::ExecSchedule::Pipeline,
         ),
