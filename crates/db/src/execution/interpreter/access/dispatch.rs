@@ -244,16 +244,16 @@ mod tests {
 
         let mut results = vec![
             crate::search::vector::TypedVectorSearchResult::from_physical(
-                crate::encoding::v1::values::vector_generation::VectorEntityKind::Node,
-                crate::encoding::v1::values::vector_generation::ActiveScoreSemantic::ManhattanF32V1,
+                crate::encoding::v2::values::indexes::vector::VectorEntityKind::Node,
+                crate::encoding::v2::values::indexes::vector::ActiveScoreSemantic::ManhattanF32V1,
                 crate::search::vector::SearchResult::new(
                     1,
                     crate::search::vector::DistanceScore::try_new(0.1).unwrap(),
                 ),
             ),
             crate::search::vector::TypedVectorSearchResult::from_physical(
-                crate::encoding::v1::values::vector_generation::VectorEntityKind::Node,
-                crate::encoding::v1::values::vector_generation::ActiveScoreSemantic::ManhattanF32V1,
+                crate::encoding::v2::values::indexes::vector::VectorEntityKind::Node,
+                crate::encoding::v2::values::indexes::vector::ActiveScoreSemantic::ManhattanF32V1,
                 crate::search::vector::SearchResult::new(
                     2,
                     crate::search::vector::DistanceScore::try_new(0.2).unwrap(),

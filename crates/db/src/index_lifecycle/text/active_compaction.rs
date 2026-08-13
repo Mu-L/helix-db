@@ -444,7 +444,7 @@ fn runtime_split(split: work::SplitRef) -> crate::search::text::TextSplitRef {
 }
 
 fn scoped_key(
-    scope: crate::encoding::v1::keys::tenant::DataScope,
+    scope: crate::encoding::v2::keys::scope::DataScope,
     key: index_keys::ScopedKey,
 ) -> Bytes {
     ManagedIndexKey::Data { scope, kind: key }.to_bytes()
@@ -524,7 +524,7 @@ mod tests {
         .unwrap()
         .transition(index_lifecycle::IndexStateTransition::Activate)
         .unwrap();
-        let scope = crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped;
+        let scope = crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped;
         db.put(
             scoped_key(
                 scope,

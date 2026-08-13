@@ -9,8 +9,8 @@
 use bytes::{BufMut, Bytes};
 use slatedb::{Db, IsolationLevel};
 
-use crate::encoding::v1::keys::tenant::{DataScope, TenantId, TENANT_ID_LEN, TENANT_KEY_PREFIX};
-use crate::encoding::v1::keys::DataKeyKind;
+use crate::encoding::v2::keys::scope::{DataScope, TenantId, TENANT_ID_LEN, TENANT_KEY_PREFIX};
+use crate::encoding::v2::keys::DataKeyKind;
 use crate::encoding::v2::keys::{GlobalKey, ScopedKey};
 use crate::encoding::v2::values::{
     decode_applied_state, decode_build_artifact, decode_build_delta, decode_corpus_statistics,
@@ -367,12 +367,12 @@ mod tests {
 
     use super::*;
     use crate::encoding::indexes::range::RangeIndexDirection;
-    use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey, NodePropertyKey};
     use crate::encoding::v2::keys::{
-        CanonicalSecondaryValue, IndexEntity, IndexEntityStateKey, IndexOperationKey, Key,
-        PartitionFingerprint, SecondaryEntryKey, SecondaryEntryLane, TextBuildArtifactKey,
-        TextEntityStateKey, TextManifestRootKey, VectorPartitionMappingKey,
+        CanonicalSecondaryValue, IndexEntity, IndexEntityStateKey, IndexOperationKey,
+        ManagedIndexKey, PartitionFingerprint, SecondaryEntryKey, SecondaryEntryLane,
+        TextBuildArtifactKey, TextEntityStateKey, TextManifestRootKey, VectorPartitionMappingKey,
     };
+    use crate::encoding::v2::keys::{DataKey as GraphKey, DataKeyKind, NodePropertyKey};
     use crate::encoding::v2::values::{encode_build_delta, encode_operation_record};
     use crate::index_lifecycle::work::CoalescedBuildDeltaValue;
     use crate::index_lifecycle::{
@@ -429,7 +429,7 @@ mod tests {
 
     fn migrated_cursor(scope: DataScope, kind: ScopedKey) -> (IndexCursor, Bytes) {
         let legacy = IndexCursor::try_new(legacy_data_key(scope, kind.clone())).unwrap();
-        let current = Key::Data { scope, kind }.to_bytes();
+        let current = ManagedIndexKey::Data { scope, kind }.to_bytes();
         (legacy, current)
     }
 
@@ -673,7 +673,7 @@ mod tests {
         assert_eq!(db.get(&old_operation).await.unwrap(), None);
         let migrated = db
             .get(
-                Key::Data {
+                ManagedIndexKey::Data {
                     scope,
                     kind: operation_kind,
                 }
@@ -743,7 +743,7 @@ mod tests {
 
     #[test]
     fn valid_unscoped_rows_win_over_a_coincidental_tenant_suffix() {
-        use crate::encoding::v1::keys::EdgePropertyPairKey;
+        use crate::encoding::v2::keys::EdgePropertyPairKey;
 
         let key = GraphKey::Data {
             scope: DataScope::LegacyUnscoped,

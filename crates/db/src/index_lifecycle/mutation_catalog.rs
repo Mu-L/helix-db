@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use slatedb::DbReadOps;
 
-use crate::encoding::v1::keys::tenant::DataScope;
+use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::ManagedIndexKey;
 use crate::encoding::v2::keys::{RecordKind, ScopedKey};
 use crate::encoding::v2::values::decode_index_record;
@@ -242,8 +242,8 @@ impl MutationRouteCatalog {
     pub(crate) fn targets_for_states(
         &self,
         element_kind: super::IndexElementKind,
-        before: &[crate::encoding::v1::property::Property],
-        after: &[crate::encoding::v1::property::Property],
+        before: &[crate::encoding::v2::values::property::Property],
+        after: &[crate::encoding::v2::values::property::Property],
     ) -> RoutedMutationTargets<'_> {
         let before_label = graph_label(before);
         let after_label = graph_label(after);
@@ -294,7 +294,7 @@ impl MutationRouteCatalog {
     }
 }
 
-fn graph_label(properties: &[crate::encoding::v1::property::Property]) -> Option<&str> {
+fn graph_label(properties: &[crate::encoding::v2::values::property::Property]) -> Option<&str> {
     properties
         .iter()
         .find(|property| property.name == "$label")
@@ -615,17 +615,17 @@ mod tests {
                 scope,
                 crate::index_lifecycle::graph_mutation::GraphEntity::node(1),
                 crate::index_lifecycle::graph_mutation::CanonicalPropertyRow::new(vec![
-                    crate::encoding::v1::property::Property::string("$label", "TextActive"),
-                    crate::encoding::v1::property::Property::string("body", "routed"),
+                    crate::encoding::v2::values::property::Property::string("$label", "TextActive"),
+                    crate::encoding::v2::values::property::Property::string("body", "routed"),
                 ]),
             )),
             RoutedMutationTargets::One(targets)
                 if targets == [MutationRouteTarget::TextActive(0)]
         ));
         let vector_row = crate::index_lifecycle::graph_mutation::CanonicalPropertyRow::new(vec![
-            crate::encoding::v1::property::Property::string("$label", "VectorActive"),
-            crate::encoding::v1::property::Property::string("embedding", "before"),
-            crate::encoding::v1::property::Property::string("unrelated", "before"),
+            crate::encoding::v2::values::property::Property::string("$label", "VectorActive"),
+            crate::encoding::v2::values::property::Property::string("embedding", "before"),
+            crate::encoding::v2::values::property::Property::string("unrelated", "before"),
         ]);
         let crate::index_lifecycle::graph_mutation::PropertyEditOutcome::Changed(unrelated) =
             crate::index_lifecycle::graph_mutation::GraphMutationTransition::edit(
@@ -633,7 +633,7 @@ mod tests {
                 crate::index_lifecycle::graph_mutation::GraphEntity::node(2),
                 vector_row.clone(),
                 crate::index_lifecycle::graph_mutation::PropertyEdit::set(
-                    crate::encoding::v1::property::Property::string("unrelated", "after"),
+                    crate::encoding::v2::values::property::Property::string("unrelated", "after"),
                 ),
             )
         else {
@@ -649,7 +649,7 @@ mod tests {
                 crate::index_lifecycle::graph_mutation::GraphEntity::node(2),
                 vector_row,
                 crate::index_lifecycle::graph_mutation::PropertyEdit::set(
-                    crate::encoding::v1::property::Property::string("embedding", "after"),
+                    crate::encoding::v2::values::property::Property::string("embedding", "after"),
                 ),
             )
         else {

@@ -8,8 +8,8 @@ use std::num::{NonZeroU16, NonZeroUsize};
 use std::sync::{Arc, OnceLock};
 
 use crate::encoding::keys::{scope::DataScope, DataKey, DataKeyKind};
-use crate::encoding::v1::keys::vectors::{VectorKey, VectorSimHashKey};
-use crate::encoding::v1::values::vectors::simhash::{decode_simhash, encode_simhash};
+use crate::encoding::v2::keys::indexes::vector::{VectorKey, VectorSimHashKey};
+use crate::encoding::v2::values::indexes::vector::simhash::{decode_simhash, encode_simhash};
 use crate::encoding::NodeId;
 use crate::error::HelixDbError;
 use crate::search::vector::generation::{CURRENT_SIMHASH_ALGORITHM_VERSION, CURRENT_SIMHASH_SEED};
@@ -297,7 +297,7 @@ pub(crate) mod production_contracts;
 mod tests {
     use super::*;
     use crate::encoding::keys::scope::{DataScope, TenantId};
-    use crate::encoding::v1::keys::vectors::{VectorKey, VectorSimHashKey};
+    use crate::encoding::v2::keys::indexes::vector::{VectorKey, VectorSimHashKey};
     use slatedb::object_store::memory::InMemory;
     use slatedb::{Db, IsolationLevel};
     use std::sync::Arc;

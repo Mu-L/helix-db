@@ -19,7 +19,7 @@ use bytes::Bytes;
 use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
 use crate::config::SearchIndexBatchLimits;
-use crate::encoding::v1::keys::tenant::DataScope;
+use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::ManagedIndexKey;
 use crate::encoding::v2::keys::{GlobalKey, GlobalKind, RecordKind, ScopedKey};
 use crate::encoding::v2::values::{

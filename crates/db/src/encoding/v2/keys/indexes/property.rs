@@ -10,10 +10,15 @@ use crate::encoding::{
             RangeIndexDirection, RangeIndexKey,
         },
     },
-    keys::{KeyPrefix, PREFIX_LEN},
+    keys::PREFIX_LEN,
     EdgeId, NodeId,
 };
 use bytes::BufMut;
+
+#[cfg(test)]
+use crate::encoding::keys::KeyPrefix;
+
+use super::{direction::EdgeDirection, prefix::IndexPrefix};
 
 pub type PropertyHash = [u8; 4];
 pub type ValueHash = [u8; 8];
@@ -39,146 +44,6 @@ pub(crate) fn hash_property_value(value: &str) -> [u8; 8] {
     let mut hasher = siphasher::sip::SipHasher13::new_with_keys(0, 0);
     value.hash(&mut hasher);
     hasher.finish().to_be_bytes()
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum EdgeDirection {
-    Out = 0x00,
-    In = 0x01,
-}
-
-impl EdgeDirection {
-    pub(crate) fn from_u8(u: u8) -> Result<Self, EncodingError> {
-        match u {
-            0x00 => Ok(EdgeDirection::Out),
-            0x01 => Ok(EdgeDirection::In),
-            _ => Err(EncodingError::InvalidEdgeIndexDirection(u)),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn as_u8(&self) -> u8 {
-        match self {
-            EdgeDirection::Out => 0x00,
-            EdgeDirection::In => 0x01,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum IndexPrefix {
-    Equality,
-    Range(RangeIndexDirection),
-    EdgeEquality,
-    EdgeLabel,
-    EdgeLabelNeighbor(EdgeDirection),
-    EdgeRange(EdgeRangeIndexDirection, EdgeDirection),
-    GlobalEdgeEquality,
-    GlobalEdgeRange(RangeIndexDirection),
-}
-
-impl IndexPrefix {
-    pub const fn as_slice(&self) -> &[u8] {
-        match self {
-            IndexPrefix::Equality => &[0x00],
-            IndexPrefix::Range(direction) => match direction {
-                RangeIndexDirection::Asc => &[0x01],
-                RangeIndexDirection::Desc => &[0x05],
-            },
-            IndexPrefix::EdgeEquality => &[0x02],
-            IndexPrefix::EdgeLabel => &[0x04],
-            IndexPrefix::EdgeLabelNeighbor(direction) => match direction {
-                EdgeDirection::Out => &[0x10, 0x00],
-                EdgeDirection::In => &[0x10, 0x01],
-            },
-            IndexPrefix::GlobalEdgeEquality => &[0x08],
-            IndexPrefix::GlobalEdgeRange(direction) => match direction {
-                RangeIndexDirection::Asc => &[0x09],
-                RangeIndexDirection::Desc => &[0x0a],
-            },
-            IndexPrefix::EdgeRange(range_direction, edge_direction) => match range_direction {
-                EdgeRangeIndexDirection::Asc => match edge_direction {
-                    EdgeDirection::Out => {
-                        &[EdgeRangeIndexDirection::Asc as u8, EdgeDirection::Out as u8]
-                    }
-                    EdgeDirection::In => {
-                        &[EdgeRangeIndexDirection::Asc as u8, EdgeDirection::In as u8]
-                    }
-                },
-                EdgeRangeIndexDirection::Desc => match edge_direction {
-                    EdgeDirection::Out => &[
-                        EdgeRangeIndexDirection::Desc as u8,
-                        EdgeDirection::Out as u8,
-                    ],
-                    EdgeDirection::In => {
-                        &[EdgeRangeIndexDirection::Desc as u8, EdgeDirection::In as u8]
-                    }
-                },
-            },
-        }
-    }
-
-    pub fn from_slice(slice: &[u8]) -> Result<Self, EncodingError> {
-        if slice.len() < PREFIX_LEN + INDEX_PREFIX_LEN {
-            return Err(EncodingError::BufferTooShort {
-                expected: PREFIX_LEN + INDEX_PREFIX_LEN,
-                actual: slice.len(),
-            });
-        }
-
-        if KeyPrefix::from_u8(slice[0])? != KeyPrefix::PropertyIndex {
-            return Err(EncodingError::InvalidKey(format!(
-                "expected PropertyIndex key prefix ({:#04x}), got {:#04x}",
-                KeyPrefix::PropertyIndex.as_u8(),
-                slice[0]
-            )));
-        }
-
-        match slice[PREFIX_LEN] {
-            0x00 => Ok(IndexPrefix::Equality),
-            0x01 => Ok(IndexPrefix::Range(RangeIndexDirection::Asc)),
-            0x05 => Ok(IndexPrefix::Range(RangeIndexDirection::Desc)),
-            0x02 => Ok(IndexPrefix::EdgeEquality),
-            0x04 => Ok(IndexPrefix::EdgeLabel),
-            0x08 => Ok(IndexPrefix::GlobalEdgeEquality),
-            0x09 => Ok(IndexPrefix::GlobalEdgeRange(RangeIndexDirection::Asc)),
-            0x0a => Ok(IndexPrefix::GlobalEdgeRange(RangeIndexDirection::Desc)),
-            0x10 => {
-                if slice.len() < PREFIX_LEN + INDEX_PREFIX_LEN + size_of::<EdgeDirection>() {
-                    return Err(EncodingError::BufferTooShort {
-                        expected: PREFIX_LEN + INDEX_PREFIX_LEN + size_of::<EdgeDirection>(),
-                        actual: slice.len(),
-                    });
-                }
-
-                let edge_direction = EdgeDirection::from_u8(slice[PREFIX_LEN + INDEX_PREFIX_LEN])?;
-                Ok(IndexPrefix::EdgeLabelNeighbor(edge_direction))
-            }
-            0x03 | 0x06 => {
-                if slice.len() < PREFIX_LEN + INDEX_PREFIX_LEN + size_of::<EdgeDirection>() {
-                    return Err(EncodingError::BufferTooShort {
-                        expected: PREFIX_LEN + INDEX_PREFIX_LEN + size_of::<EdgeDirection>(),
-                        actual: slice.len(),
-                    });
-                }
-
-                let edge_direction = EdgeDirection::from_u8(slice[PREFIX_LEN + INDEX_PREFIX_LEN])?;
-                match slice[PREFIX_LEN] {
-                    0x03 => Ok(IndexPrefix::EdgeRange(
-                        EdgeRangeIndexDirection::Asc,
-                        edge_direction,
-                    )),
-                    0x06 => Ok(IndexPrefix::EdgeRange(
-                        EdgeRangeIndexDirection::Desc,
-                        edge_direction,
-                    )),
-                    _ => unreachable!("edge range index prefix was checked above"),
-                }
-            }
-            invalid => Err(EncodingError::InvalidIndexPrefix(invalid)),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

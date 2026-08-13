@@ -1,9 +1,8 @@
 //! Equality-index key codecs.
 
-mod edge;
-mod node;
-mod scans;
+pub(crate) mod edge;
+pub(crate) mod node;
+pub(crate) mod scans;
 
-pub(crate) use node::{
-    EdgeDirection, EdgeEqualityIndexKey, EqualityIndexKey, GlobalEdgeEqualityIndexKey,
-};
+pub(crate) use edge::{EdgeDirection, EdgeEqualityIndexKey, GlobalEdgeEqualityIndexKey};
+pub(crate) use node::EqualityIndexKey;

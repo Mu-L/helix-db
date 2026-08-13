@@ -1,16 +1,132 @@
-#![allow(dead_code)]
+//! Shared property-index prefix parsing and exclusive scan bounds.
+
+use bytes::Bytes;
 
 use crate::encoding::{
+    error::EncodingError,
     indexes::{
-        equality::EdgeDirection as EqualityEdgeDirection,
         range::{EdgeRangeIndexDirection, RangeIndexDirection},
-        EdgeDirection as RangeEdgeDirection, IndexPrefix, PropertyHash, ValueHash,
-        INDEX_PREFIX_LEN, NODE_ID_MAX_LEN, PROPERTY_HASH_MAX_LEN, VALUE_HASH_MAX_LEN,
+        EdgeDirection,
     },
     keys::{KeyPrefix, PREFIX_LEN},
-    NodeId,
 };
-use bytes::{BufMut, Bytes};
+
+use super::property::INDEX_PREFIX_LEN;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IndexPrefix {
+    Equality,
+    Range(RangeIndexDirection),
+    EdgeEquality,
+    EdgeLabel,
+    EdgeLabelNeighbor(EdgeDirection),
+    EdgeRange(EdgeRangeIndexDirection, EdgeDirection),
+    GlobalEdgeEquality,
+    GlobalEdgeRange(RangeIndexDirection),
+}
+
+impl IndexPrefix {
+    pub const fn as_slice(&self) -> &[u8] {
+        match self {
+            IndexPrefix::Equality => &[0x00],
+            IndexPrefix::Range(direction) => match direction {
+                RangeIndexDirection::Asc => &[0x01],
+                RangeIndexDirection::Desc => &[0x05],
+            },
+            IndexPrefix::EdgeEquality => &[0x02],
+            IndexPrefix::EdgeLabel => &[0x04],
+            IndexPrefix::EdgeLabelNeighbor(direction) => match direction {
+                EdgeDirection::Out => &[0x10, 0x00],
+                EdgeDirection::In => &[0x10, 0x01],
+            },
+            IndexPrefix::GlobalEdgeEquality => &[0x08],
+            IndexPrefix::GlobalEdgeRange(direction) => match direction {
+                RangeIndexDirection::Asc => &[0x09],
+                RangeIndexDirection::Desc => &[0x0a],
+            },
+            IndexPrefix::EdgeRange(range_direction, edge_direction) => match range_direction {
+                EdgeRangeIndexDirection::Asc => match edge_direction {
+                    EdgeDirection::Out => {
+                        &[EdgeRangeIndexDirection::Asc as u8, EdgeDirection::Out as u8]
+                    }
+                    EdgeDirection::In => {
+                        &[EdgeRangeIndexDirection::Asc as u8, EdgeDirection::In as u8]
+                    }
+                },
+                EdgeRangeIndexDirection::Desc => match edge_direction {
+                    EdgeDirection::Out => &[
+                        EdgeRangeIndexDirection::Desc as u8,
+                        EdgeDirection::Out as u8,
+                    ],
+                    EdgeDirection::In => {
+                        &[EdgeRangeIndexDirection::Desc as u8, EdgeDirection::In as u8]
+                    }
+                },
+            },
+        }
+    }
+
+    pub fn from_slice(slice: &[u8]) -> Result<Self, EncodingError> {
+        if slice.len() < PREFIX_LEN + INDEX_PREFIX_LEN {
+            return Err(EncodingError::BufferTooShort {
+                expected: PREFIX_LEN + INDEX_PREFIX_LEN,
+                actual: slice.len(),
+            });
+        }
+
+        if KeyPrefix::from_u8(slice[0])? != KeyPrefix::PropertyIndex {
+            return Err(EncodingError::InvalidKey(format!(
+                "expected PropertyIndex key prefix ({:#04x}), got {:#04x}",
+                KeyPrefix::PropertyIndex.as_u8(),
+                slice[0]
+            )));
+        }
+
+        match slice[PREFIX_LEN] {
+            0x00 => Ok(IndexPrefix::Equality),
+            0x01 => Ok(IndexPrefix::Range(RangeIndexDirection::Asc)),
+            0x05 => Ok(IndexPrefix::Range(RangeIndexDirection::Desc)),
+            0x02 => Ok(IndexPrefix::EdgeEquality),
+            0x04 => Ok(IndexPrefix::EdgeLabel),
+            0x08 => Ok(IndexPrefix::GlobalEdgeEquality),
+            0x09 => Ok(IndexPrefix::GlobalEdgeRange(RangeIndexDirection::Asc)),
+            0x0a => Ok(IndexPrefix::GlobalEdgeRange(RangeIndexDirection::Desc)),
+            0x10 => {
+                if slice.len() < PREFIX_LEN + INDEX_PREFIX_LEN + size_of::<EdgeDirection>() {
+                    return Err(EncodingError::BufferTooShort {
+                        expected: PREFIX_LEN + INDEX_PREFIX_LEN + size_of::<EdgeDirection>(),
+                        actual: slice.len(),
+                    });
+                }
+
+                let edge_direction = EdgeDirection::from_u8(slice[PREFIX_LEN + INDEX_PREFIX_LEN])?;
+                Ok(IndexPrefix::EdgeLabelNeighbor(edge_direction))
+            }
+            0x03 | 0x06 => {
+                if slice.len() < PREFIX_LEN + INDEX_PREFIX_LEN + size_of::<EdgeDirection>() {
+                    return Err(EncodingError::BufferTooShort {
+                        expected: PREFIX_LEN + INDEX_PREFIX_LEN + size_of::<EdgeDirection>(),
+                        actual: slice.len(),
+                    });
+                }
+
+                let edge_direction = EdgeDirection::from_u8(slice[PREFIX_LEN + INDEX_PREFIX_LEN])?;
+                match slice[PREFIX_LEN] {
+                    0x03 => Ok(IndexPrefix::EdgeRange(
+                        EdgeRangeIndexDirection::Asc,
+                        edge_direction,
+                    )),
+                    0x06 => Ok(IndexPrefix::EdgeRange(
+                        EdgeRangeIndexDirection::Desc,
+                        edge_direction,
+                    )),
+                    _ => unreachable!("edge range index prefix was checked above"),
+                }
+            }
+            invalid => Err(EncodingError::InvalidIndexPrefix(invalid)),
+        }
+    }
+}
 
 pub(crate) fn exclusive_prefix_end_bound(prefix: &Bytes) -> Option<Bytes> {
     let mut end = prefix.to_vec();
@@ -20,719 +136,14 @@ pub(crate) fn exclusive_prefix_end_bound(prefix: &Bytes) -> Option<Bytes> {
     Some(Bytes::from(end))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EqualityScanPrefix {
-    Index,
-    Property {
-        property_hash: PropertyHash,
-    },
-    PropertyValue {
-        property_hash: PropertyHash,
-        value_hash: ValueHash,
-    },
-}
-
-impl EqualityScanPrefix {
-    pub(crate) fn to_bytes(self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut buf);
-        Bytes::from(buf)
-    }
-
-    pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-        buf.put_slice(IndexPrefix::Equality.as_slice());
-
-        match self {
-            EqualityScanPrefix::Index => {}
-            EqualityScanPrefix::Property { property_hash }
-            | EqualityScanPrefix::PropertyValue { property_hash, .. } => {
-                buf.put_slice(property_hash);
-            }
-        }
-
-        let EqualityScanPrefix::PropertyValue { value_hash, .. } = self else {
-            return;
-        };
-        buf.put_slice(value_hash);
-    }
-
-    const fn encoded_len(&self) -> usize {
-        match self {
-            EqualityScanPrefix::Index => PREFIX_LEN + INDEX_PREFIX_LEN,
-            EqualityScanPrefix::Property { .. } => {
-                PREFIX_LEN + INDEX_PREFIX_LEN + PROPERTY_HASH_MAX_LEN
-            }
-            EqualityScanPrefix::PropertyValue { .. } => {
-                PREFIX_LEN + INDEX_PREFIX_LEN + PROPERTY_HASH_MAX_LEN + VALUE_HASH_MAX_LEN
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EdgeEqualityScanPrefix {
-    Index,
-    Direction {
-        direction: EqualityEdgeDirection,
-    },
-    Source {
-        direction: EqualityEdgeDirection,
-        source: NodeId,
-    },
-    Property {
-        direction: EqualityEdgeDirection,
-        source: NodeId,
-        property_hash: PropertyHash,
-    },
-    PropertyValue {
-        direction: EqualityEdgeDirection,
-        source: NodeId,
-        property_hash: PropertyHash,
-        value_hash: ValueHash,
-    },
-}
-
-impl EdgeEqualityScanPrefix {
-    pub(crate) fn to_bytes(self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut buf);
-        Bytes::from(buf)
-    }
-
-    pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-        buf.put_slice(IndexPrefix::EdgeEquality.as_slice());
-
-        match self {
-            EdgeEqualityScanPrefix::Index => {}
-            EdgeEqualityScanPrefix::Direction { direction } => {
-                buf.put_u8(direction.as_u8());
-            }
-            EdgeEqualityScanPrefix::Source { direction, source } => {
-                buf.put_u8(direction.as_u8());
-                buf.put_u64(*source);
-            }
-            EdgeEqualityScanPrefix::Property {
-                direction,
-                source,
-                property_hash,
-            } => {
-                buf.put_u8(direction.as_u8());
-                buf.put_u64(*source);
-                buf.put_slice(property_hash);
-            }
-            EdgeEqualityScanPrefix::PropertyValue {
-                direction,
-                source,
-                property_hash,
-                value_hash,
-            } => {
-                buf.put_u8(direction.as_u8());
-                buf.put_u64(*source);
-                buf.put_slice(property_hash);
-                buf.put_slice(value_hash);
-            }
-        }
-    }
-
-    const fn encoded_len(&self) -> usize {
-        match self {
-            EdgeEqualityScanPrefix::Index => PREFIX_LEN + INDEX_PREFIX_LEN,
-            EdgeEqualityScanPrefix::Direction { .. } => {
-                PREFIX_LEN + INDEX_PREFIX_LEN + core::mem::size_of::<EqualityEdgeDirection>()
-            }
-            EdgeEqualityScanPrefix::Source { .. } => {
-                PREFIX_LEN
-                    + INDEX_PREFIX_LEN
-                    + core::mem::size_of::<EqualityEdgeDirection>()
-                    + NODE_ID_MAX_LEN
-            }
-            EdgeEqualityScanPrefix::Property { .. } => {
-                PREFIX_LEN
-                    + INDEX_PREFIX_LEN
-                    + core::mem::size_of::<EqualityEdgeDirection>()
-                    + NODE_ID_MAX_LEN
-                    + PROPERTY_HASH_MAX_LEN
-            }
-            EdgeEqualityScanPrefix::PropertyValue { .. } => {
-                PREFIX_LEN
-                    + INDEX_PREFIX_LEN
-                    + core::mem::size_of::<EqualityEdgeDirection>()
-                    + NODE_ID_MAX_LEN
-                    + PROPERTY_HASH_MAX_LEN
-                    + VALUE_HASH_MAX_LEN
-            }
-        }
-    }
-}
-
-/// Typed prefixes for the current global edge-equality row family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GlobalEdgeEqualityScanPrefix {
-    /// Every global edge-equality row.
-    Index,
-    /// Rows belonging to one exact scoped-property hash.
-    Property { property_hash: PropertyHash },
-    /// The one row belonging to an exact scoped property and value hash.
-    PropertyValue {
-        property_hash: PropertyHash,
-        value_hash: ValueHash,
-    },
-}
-
-impl GlobalEdgeEqualityScanPrefix {
-    /// Encodes a prefix using the unchanged global edge-equality key layout.
-    pub(crate) fn to_bytes(self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut buf);
-        Bytes::from(buf)
-    }
-
-    /// Appends the exact prefix segments selected by this closed shape.
-    pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-        buf.put_slice(IndexPrefix::GlobalEdgeEquality.as_slice());
-
-        match self {
-            Self::Index => {}
-            Self::Property { property_hash } | Self::PropertyValue { property_hash, .. } => {
-                buf.put_slice(property_hash)
-            }
-        }
-        let Self::PropertyValue { value_hash, .. } = self else {
-            return;
-        };
-        buf.put_slice(value_hash);
-    }
-
-    /// Returns the exact number of bytes selected by this prefix shape.
-    const fn encoded_len(&self) -> usize {
-        match self {
-            Self::Index => PREFIX_LEN + INDEX_PREFIX_LEN,
-            Self::Property { .. } => PREFIX_LEN + INDEX_PREFIX_LEN + PROPERTY_HASH_MAX_LEN,
-            Self::PropertyValue { .. } => {
-                PREFIX_LEN + INDEX_PREFIX_LEN + PROPERTY_HASH_MAX_LEN + VALUE_HASH_MAX_LEN
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EdgeLabelScanPrefix {
-    Index,
-    Label { label_hash: ValueHash },
-}
-
-impl EdgeLabelScanPrefix {
-    pub(crate) fn to_bytes(self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut buf);
-        Bytes::from(buf)
-    }
-
-    pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-        buf.put_slice(IndexPrefix::EdgeLabel.as_slice());
-
-        let EdgeLabelScanPrefix::Label { label_hash } = self else {
-            return;
-        };
-        buf.put_slice(label_hash);
-    }
-
-    const fn encoded_len(&self) -> usize {
-        match self {
-            EdgeLabelScanPrefix::Index => PREFIX_LEN + INDEX_PREFIX_LEN,
-            EdgeLabelScanPrefix::Label { .. } => PREFIX_LEN + INDEX_PREFIX_LEN + VALUE_HASH_MAX_LEN,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EdgeLabelNeighborScanPrefix {
-    Index,
-    Direction {
-        direction: RangeEdgeDirection,
-    },
-    Endpoint {
-        direction: RangeEdgeDirection,
-        node_id: NodeId,
-    },
-    Label {
-        direction: RangeEdgeDirection,
-        node_id: NodeId,
-        label_hash: ValueHash,
-    },
-}
-
-impl EdgeLabelNeighborScanPrefix {
-    pub(crate) fn to_bytes(self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut buf);
-        Bytes::from(buf)
-    }
-
-    pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-        match self {
-            EdgeLabelNeighborScanPrefix::Index => {
-                buf.put_u8(0x10);
-            }
-            EdgeLabelNeighborScanPrefix::Direction { direction } => {
-                buf.put_slice(IndexPrefix::EdgeLabelNeighbor(*direction).as_slice());
-            }
-            EdgeLabelNeighborScanPrefix::Endpoint { direction, node_id } => {
-                buf.put_slice(IndexPrefix::EdgeLabelNeighbor(*direction).as_slice());
-                buf.put_u64(*node_id);
-            }
-            EdgeLabelNeighborScanPrefix::Label {
-                direction,
-                node_id,
-                label_hash,
-            } => {
-                buf.put_slice(IndexPrefix::EdgeLabelNeighbor(*direction).as_slice());
-                buf.put_u64(*node_id);
-                buf.put_slice(label_hash);
-            }
-        }
-    }
-
-    const fn encoded_len(&self) -> usize {
-        match self {
-            EdgeLabelNeighborScanPrefix::Index => PREFIX_LEN + INDEX_PREFIX_LEN,
-            EdgeLabelNeighborScanPrefix::Direction { .. } => {
-                PREFIX_LEN + INDEX_PREFIX_LEN + core::mem::size_of::<RangeEdgeDirection>()
-            }
-            EdgeLabelNeighborScanPrefix::Endpoint { .. } => {
-                PREFIX_LEN
-                    + INDEX_PREFIX_LEN
-                    + core::mem::size_of::<RangeEdgeDirection>()
-                    + NODE_ID_MAX_LEN
-            }
-            EdgeLabelNeighborScanPrefix::Label { .. } => {
-                PREFIX_LEN
-                    + INDEX_PREFIX_LEN
-                    + core::mem::size_of::<RangeEdgeDirection>()
-                    + NODE_ID_MAX_LEN
-                    + VALUE_HASH_MAX_LEN
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RangeScanPrefix<'a> {
-    Direction {
-        direction: RangeIndexDirection,
-    },
-    Property {
-        direction: RangeIndexDirection,
-        property_hash: PropertyHash,
-    },
-    PropertyValue(RangeScanValuePrefix<'a>),
-}
-
-impl<'a> RangeScanPrefix<'a> {
-    pub(crate) fn to_bytes(self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut buf);
-        Bytes::from(buf)
-    }
-
-    pub(crate) fn exclusive_end_bound(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len() + 1);
-        self.encode_into(&mut buf);
-        buf.put_u8(0xFF);
-        Bytes::from(buf)
-    }
-
-    pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        match self {
-            RangeScanPrefix::Direction { direction } => {
-                buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-                buf.put_slice(IndexPrefix::Range(*direction).as_slice());
-            }
-            RangeScanPrefix::Property {
-                direction,
-                property_hash,
-            } => {
-                buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-                buf.put_slice(IndexPrefix::Range(*direction).as_slice());
-                buf.put_slice(property_hash);
-            }
-            RangeScanPrefix::PropertyValue(prefix) => prefix.encode_into(buf),
-        }
-    }
-
-    fn encoded_len(&self) -> usize {
-        match self {
-            RangeScanPrefix::Direction { .. } => PREFIX_LEN + INDEX_PREFIX_LEN,
-            RangeScanPrefix::Property { .. } => {
-                PREFIX_LEN + INDEX_PREFIX_LEN + PROPERTY_HASH_MAX_LEN
-            }
-            RangeScanPrefix::PropertyValue(prefix) => prefix.encoded_len(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RangeScanValuePrefix<'a> {
-    direction: RangeIndexDirection,
-    property_hash: PropertyHash,
-    value: &'a str,
-}
-
-impl<'a> RangeScanValuePrefix<'a> {
-    pub(crate) const fn new(
-        direction: RangeIndexDirection,
-        property_hash: PropertyHash,
-        value: &'a str,
-    ) -> Self {
-        Self {
-            direction,
-            property_hash,
-            value,
-        }
-    }
-
-    pub(crate) fn to_bytes(self) -> Bytes {
-        RangeScanPrefix::PropertyValue(self).to_bytes()
-    }
-
-    pub(crate) fn exclusive_end_bound(&self) -> Bytes {
-        RangeScanPrefix::PropertyValue(*self).exclusive_end_bound()
-    }
-
-    pub(crate) fn inclusive_end_bound(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len() + NODE_ID_MAX_LEN + 1);
-        self.encode_into(&mut buf);
-        buf.put_u64(u64::MAX);
-        buf.put_u8(0);
-        Bytes::from(buf)
-    }
-
-    fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-        buf.put_slice(IndexPrefix::Range(self.direction).as_slice());
-        buf.put_slice(&self.property_hash);
-        put_ordered_value(
-            buf,
-            matches!(self.direction, RangeIndexDirection::Desc),
-            self.value,
-        );
-    }
-
-    fn encoded_len(&self) -> usize {
-        PREFIX_LEN
-            + INDEX_PREFIX_LEN
-            + PROPERTY_HASH_MAX_LEN
-            + ordered_value_len(
-                matches!(self.direction, RangeIndexDirection::Desc),
-                self.value,
-            )
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GlobalEdgeRangeScanPrefix<'a> {
-    Direction {
-        direction: RangeIndexDirection,
-    },
-    Property {
-        direction: RangeIndexDirection,
-        property_hash: PropertyHash,
-    },
-    PropertyValue(GlobalEdgeRangeScanValuePrefix<'a>),
-}
-
-impl<'a> GlobalEdgeRangeScanPrefix<'a> {
-    pub(crate) fn to_bytes(self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut buf);
-        Bytes::from(buf)
-    }
-
-    pub(crate) fn exclusive_end_bound(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len() + 1);
-        self.encode_into(&mut buf);
-        buf.put_u8(0xFF);
-        Bytes::from(buf)
-    }
-
-    pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        match self {
-            GlobalEdgeRangeScanPrefix::Direction { direction } => {
-                buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-                buf.put_slice(IndexPrefix::GlobalEdgeRange(*direction).as_slice());
-            }
-            GlobalEdgeRangeScanPrefix::Property {
-                direction,
-                property_hash,
-            } => {
-                buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-                buf.put_slice(IndexPrefix::GlobalEdgeRange(*direction).as_slice());
-                buf.put_slice(property_hash);
-            }
-            GlobalEdgeRangeScanPrefix::PropertyValue(prefix) => prefix.encode_into(buf),
-        }
-    }
-
-    fn encoded_len(&self) -> usize {
-        match self {
-            GlobalEdgeRangeScanPrefix::Direction { .. } => PREFIX_LEN + INDEX_PREFIX_LEN,
-            GlobalEdgeRangeScanPrefix::Property { .. } => {
-                PREFIX_LEN + INDEX_PREFIX_LEN + PROPERTY_HASH_MAX_LEN
-            }
-            GlobalEdgeRangeScanPrefix::PropertyValue(prefix) => prefix.encoded_len(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GlobalEdgeRangeScanValuePrefix<'a> {
-    direction: RangeIndexDirection,
-    property_hash: PropertyHash,
-    value: &'a str,
-}
-
-impl<'a> GlobalEdgeRangeScanValuePrefix<'a> {
-    pub(crate) const fn new(
-        direction: RangeIndexDirection,
-        property_hash: PropertyHash,
-        value: &'a str,
-    ) -> Self {
-        Self {
-            direction,
-            property_hash,
-            value,
-        }
-    }
-
-    pub(crate) fn to_bytes(self) -> Bytes {
-        GlobalEdgeRangeScanPrefix::PropertyValue(self).to_bytes()
-    }
-
-    pub(crate) fn inclusive_end_bound(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len() + NODE_ID_MAX_LEN + 1);
-        self.encode_into(&mut buf);
-        buf.put_u64(u64::MAX);
-        buf.put_u8(0);
-        Bytes::from(buf)
-    }
-
-    fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-        buf.put_slice(IndexPrefix::GlobalEdgeRange(self.direction).as_slice());
-        buf.put_slice(&self.property_hash);
-        put_ordered_value(
-            buf,
-            matches!(self.direction, RangeIndexDirection::Desc),
-            self.value,
-        );
-    }
-
-    fn encoded_len(&self) -> usize {
-        PREFIX_LEN
-            + INDEX_PREFIX_LEN
-            + PROPERTY_HASH_MAX_LEN
-            + ordered_value_len(
-                matches!(self.direction, RangeIndexDirection::Desc),
-                self.value,
-            )
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EdgeRangeScanPrefix<'a> {
-    Direction {
-        edge_direction: RangeEdgeDirection,
-        range_direction: EdgeRangeIndexDirection,
-    },
-    Endpoint {
-        edge_direction: RangeEdgeDirection,
-        range_direction: EdgeRangeIndexDirection,
-        endpoint: NodeId,
-    },
-    Property {
-        edge_direction: RangeEdgeDirection,
-        range_direction: EdgeRangeIndexDirection,
-        endpoint: NodeId,
-        property_hash: PropertyHash,
-    },
-    PropertyValue(EdgeRangeScanValuePrefix<'a>),
-}
-
-impl<'a> EdgeRangeScanPrefix<'a> {
-    pub(crate) fn to_bytes(self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut buf);
-        Bytes::from(buf)
-    }
-
-    pub(crate) fn exclusive_end_bound(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len() + 1);
-        self.encode_into(&mut buf);
-        buf.put_u8(0xFF);
-        Bytes::from(buf)
-    }
-
-    pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        match self {
-            EdgeRangeScanPrefix::Direction {
-                edge_direction,
-                range_direction,
-            } => {
-                buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-                buf.put_slice(IndexPrefix::EdgeRange(*range_direction, *edge_direction).as_slice());
-            }
-            EdgeRangeScanPrefix::Endpoint {
-                edge_direction,
-                range_direction,
-                endpoint,
-            } => {
-                buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-                buf.put_slice(IndexPrefix::EdgeRange(*range_direction, *edge_direction).as_slice());
-                buf.put_u64(*endpoint);
-            }
-            EdgeRangeScanPrefix::Property {
-                edge_direction,
-                range_direction,
-                endpoint,
-                property_hash,
-            } => {
-                buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-                buf.put_slice(IndexPrefix::EdgeRange(*range_direction, *edge_direction).as_slice());
-                buf.put_u64(*endpoint);
-                buf.put_slice(property_hash);
-            }
-            EdgeRangeScanPrefix::PropertyValue(prefix) => prefix.encode_into(buf),
-        }
-    }
-
-    fn encoded_len(&self) -> usize {
-        match self {
-            EdgeRangeScanPrefix::Direction { .. } => {
-                PREFIX_LEN + INDEX_PREFIX_LEN + core::mem::size_of::<RangeEdgeDirection>()
-            }
-            EdgeRangeScanPrefix::Endpoint { .. } => {
-                PREFIX_LEN
-                    + INDEX_PREFIX_LEN
-                    + core::mem::size_of::<RangeEdgeDirection>()
-                    + NODE_ID_MAX_LEN
-            }
-            EdgeRangeScanPrefix::Property { .. } => {
-                PREFIX_LEN
-                    + INDEX_PREFIX_LEN
-                    + core::mem::size_of::<RangeEdgeDirection>()
-                    + NODE_ID_MAX_LEN
-                    + PROPERTY_HASH_MAX_LEN
-            }
-            EdgeRangeScanPrefix::PropertyValue(prefix) => prefix.encoded_len(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct EdgeRangeScanValuePrefix<'a> {
-    edge_direction: RangeEdgeDirection,
-    range_direction: EdgeRangeIndexDirection,
-    endpoint: NodeId,
-    property_hash: PropertyHash,
-    value: &'a str,
-}
-
-impl<'a> EdgeRangeScanValuePrefix<'a> {
-    pub(crate) const fn new(
-        edge_direction: RangeEdgeDirection,
-        range_direction: EdgeRangeIndexDirection,
-        endpoint: NodeId,
-        property_hash: PropertyHash,
-        value: &'a str,
-    ) -> Self {
-        Self {
-            edge_direction,
-            range_direction,
-            endpoint,
-            property_hash,
-            value,
-        }
-    }
-
-    pub(crate) fn to_bytes(self) -> Bytes {
-        EdgeRangeScanPrefix::PropertyValue(self).to_bytes()
-    }
-
-    pub(crate) fn exclusive_end_bound(&self) -> Bytes {
-        EdgeRangeScanPrefix::PropertyValue(*self).exclusive_end_bound()
-    }
-
-    pub(crate) fn inclusive_end_bound(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(self.encoded_len() + NODE_ID_MAX_LEN + 1);
-        self.encode_into(&mut buf);
-        buf.put_u64(u64::MAX);
-        buf.put_u8(0);
-        Bytes::from(buf)
-    }
-
-    fn encode_into<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
-        buf.put_slice(IndexPrefix::EdgeRange(self.range_direction, self.edge_direction).as_slice());
-        buf.put_u64(self.endpoint);
-        buf.put_slice(&self.property_hash);
-        put_ordered_value(
-            buf,
-            matches!(self.range_direction, EdgeRangeIndexDirection::Desc),
-            self.value,
-        );
-    }
-
-    fn encoded_len(&self) -> usize {
-        PREFIX_LEN
-            + INDEX_PREFIX_LEN
-            + core::mem::size_of::<RangeEdgeDirection>()
-            + NODE_ID_MAX_LEN
-            + PROPERTY_HASH_MAX_LEN
-            + ordered_value_len(
-                matches!(self.range_direction, EdgeRangeIndexDirection::Desc),
-                self.value,
-            )
-    }
-}
-
-fn put_ordered_value<B: BufMut>(buf: &mut B, descending: bool, value: &str) {
-    match descending {
-        false => buf.put_slice(value.as_bytes()),
-        true => {
-            for byte in value.as_bytes() {
-                buf.put_u8(!byte);
-                if *byte == 0x00 {
-                    buf.put_u8(!0xFF);
-                }
-            }
-            buf.put_u8(!0x00);
-            buf.put_u8(!0x01);
-        }
-    }
-}
-
-fn ordered_value_len(descending: bool, value: &str) -> usize {
-    match descending {
-        false => value.len(),
-        true => {
-            value
-                .as_bytes()
-                .iter()
-                .map(|byte| if *byte == 0x00 { 2 } else { 1 })
-                .sum::<usize>()
-                + 2
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::direction::EdgeDirection as RangeEdgeDirection;
+    use super::super::equality::{scans::*, EdgeDirection as EqualityEdgeDirection};
+    use super::super::label::{EdgeLabelNeighborScanPrefix, EdgeLabelScanPrefix};
+    use super::super::range::scans::*;
     use super::*;
+    use crate::encoding::indexes::{PropertyHash, ValueHash};
 
     const PROP: PropertyHash = [1, 2, 3, 4];
     const VALUE: ValueHash = [5, 6, 7, 8, 9, 10, 11, 12];

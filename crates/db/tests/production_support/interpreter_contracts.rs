@@ -27,14 +27,14 @@ use crate::encoding::indexes::{
 };
 use crate::encoding::property::property_value::PropertyValue as DbPropertyValue;
 use crate::encoding::property::Property;
-use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{
-    AdjacencyKey, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey, Key, NodePropertyKey,
-};
-use crate::encoding::v1::values::vector_generation::{ActiveScoreSemantic, VectorEntityKind};
-use crate::encoding::v1::values::{edges, secondary};
 use crate::encoding::v2::keys as index_keys;
+use crate::encoding::v2::keys::scope::DataScope;
+use crate::encoding::v2::keys::{
+    AdjacencyKey, DataKey, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey, NodePropertyKey,
+};
 use crate::encoding::v2::values as index_values;
+use crate::encoding::v2::values::indexes::vector::{ActiveScoreSemantic, VectorEntityKind};
+use crate::encoding::v2::values::{adjacency as edges, indexes as secondary};
 use crate::index_lifecycle::{
     IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
     IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
@@ -195,7 +195,7 @@ pub async fn run_request_mode_and_isolated_mutation_contracts() {
         created,
         ExecutionValue::Stream(vec![ExecutionRow::current(ElementRef::Node(0))])
     );
-    let node_key = Key::Data {
+    let node_key = DataKey::Data {
         scope: DataScope::LegacyUnscoped,
         kind: DataKeyKind::NodeProperty(NodePropertyKey::new(0)),
     }
@@ -206,7 +206,7 @@ pub async fn run_request_mode_and_isolated_mutation_contracts() {
         .expect("isolated node reads")
         .expect("isolated node is durable before the context closes");
     assert_eq!(
-        crate::encoding::v1::property::decode_properties(&stored)
+        crate::encoding::v2::values::property::decode_properties(&stored)
             .expect("isolated node properties decode"),
         vec![Property::string("$label", "Isolated")]
     );
@@ -216,7 +216,7 @@ pub async fn run_request_mode_and_isolated_mutation_contracts() {
 
 /// Encodes one unscoped V2 logical key through the canonical V1 boundary.
 fn scoped_key(logical: index_keys::ScopedKey) -> Bytes {
-    index_keys::Key::Data {
+    index_keys::ManagedIndexKey::Data {
         scope: DataScope::LegacyUnscoped,
         kind: logical,
     }
@@ -225,7 +225,7 @@ fn scoped_key(logical: index_keys::ScopedKey) -> Bytes {
 
 /// Captures every scoped V2 key/value so conflicts cannot hide lane-specific writes.
 async fn scoped_v2_snapshot(db: &Db) -> Vec<(Bytes, Bytes)> {
-    let prefix = index_keys::Key::data_prefix(
+    let prefix = index_keys::ManagedIndexKey::data_prefix(
         DataScope::LegacyUnscoped,
         Bytes::from(vec![index_keys::ScopedKey::key_prefix()]),
     );
@@ -355,19 +355,19 @@ async fn run_value_dependency_and_row_contracts() {
     let transaction = raw.begin(IsolationLevel::Snapshot).await.unwrap();
     transaction
         .put(
-            Key::Data {
+            DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: DataKeyKind::NodeProperty(NodePropertyKey::new(7)),
             }
             .to_bytes(),
-            crate::encoding::v1::property::encode_properties(&[Property::string(
+            crate::encoding::v2::values::property::encode_properties(&[Property::string(
                 "$label", "Document",
             )]),
         )
         .unwrap();
     transaction
         .put(
-            Key::Data {
+            DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: DataKeyKind::EdgeEndpoints(EdgeEndpointsKey::new(9)),
             }
@@ -732,13 +732,13 @@ pub(crate) async fn run_active_text_graph_conflict() {
         "the prepared Active mutation uploads exactly one immutable blob"
     );
 
-    let graph_key = Key::Data {
+    let graph_key = DataKey::Data {
         scope: DataScope::LegacyUnscoped,
         kind: DataKeyKind::NodeProperty(NodePropertyKey::new(0)),
     }
     .to_bytes();
     let competing_properties =
-        crate::encoding::v1::property::encode_properties(&[Property::string(
+        crate::encoding::v2::values::property::encode_properties(&[Property::string(
             "$label",
             "Competing",
         )]);
@@ -955,7 +955,7 @@ pub(crate) async fn run_request_read_view_guards() {
 }
 
 fn topology_node_label_key(scope: DataScope, label: &str) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(
             crate::encoding::indexes::equality::EqualityIndexKey::new(
@@ -968,7 +968,7 @@ fn topology_node_label_key(scope: DataScope, label: &str) -> Bytes {
 }
 
 fn topology_edge_pair_key(scope: DataScope, from: u64, to: u64) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::EdgePairIndex(EdgePairIndexKey::new(from, to)),
     }
@@ -976,7 +976,7 @@ fn topology_edge_pair_key(scope: DataScope, from: u64, to: u64) -> Bytes {
 }
 
 fn topology_adjacency_key(scope: DataScope, node: u64) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::Adjacency(AdjacencyKey::new(node)),
     }
@@ -989,7 +989,7 @@ fn topology_edge_label_neighbor_key(
     node: u64,
     label: &str,
 ) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
             EdgeLabelNeighborKey::new(direction, node, hash_property_value(label)),
@@ -999,7 +999,7 @@ fn topology_edge_label_neighbor_key(
 }
 
 fn topology_global_edge_label_key(scope: DataScope, label: &str) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(
             hash_property_value(label),
@@ -1940,7 +1940,7 @@ mod text_transaction_benchmark {
             root.partition,
             page,
         )?;
-        let key = index_keys::Key::Global {
+        let key = index_keys::ManagedIndexKey::Global {
             kind: index_keys::GlobalKey::TextCompactionPointer(target),
         }
         .to_bytes();
@@ -1962,7 +1962,7 @@ mod text_transaction_benchmark {
     fn tenant_root(tenant: &str) -> index_keys::TextManifestRootKey {
         let tenant_value = Property::string("tenant", tenant).value;
         let partition = crate::index_lifecycle::work::TextPartition::try_tenant_value(
-            crate::encoding::v1::property::encode_index_partition_value(&tenant_value),
+            crate::encoding::v2::values::property::encode_index_partition_value(&tenant_value),
         )
         .expect("tenant partition validates");
         index_keys::TextManifestRootKey {

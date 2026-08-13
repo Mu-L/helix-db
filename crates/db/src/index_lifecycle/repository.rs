@@ -8,8 +8,8 @@
 use bytes::Bytes;
 use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
-use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::vectors::{VectorKey, VectorStorageLane};
+use crate::encoding::v2::keys::indexes::vector::{VectorKey, VectorStorageLane};
+use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::ManagedIndexKey;
 use crate::encoding::v2::keys::{DataKey as GraphKey, DataKeyKind, KeyPrefix};
 use crate::encoding::v2::keys::{
@@ -1296,8 +1296,8 @@ mod tests {
     use slatedb::object_store::memory::InMemory;
 
     use super::*;
-    use crate::encoding::v1::keys::metadata::MetadataKey;
-    use crate::encoding::v1::keys::tenant::{TenantId, TENANT_KEY_PREFIX};
+    use crate::encoding::v2::keys::metadata::MetadataKey;
+    use crate::encoding::v2::keys::scope::{TenantId, TENANT_KEY_PREFIX};
     use crate::encoding::v2::keys::{DataKey as GraphKey, DataKeyKind};
 
     #[test]
@@ -1408,7 +1408,7 @@ mod tests {
             let tenant = TenantId::from_ulid_str("01KZ6WZ9QREKZZ87492YXBTFJ3").unwrap();
             assert_eq!(tenant.as_u128().to_be_bytes()[0], 0x01);
             let logical =
-                DataKeyKind::NodeProperty(crate::encoding::v1::keys::NodePropertyKey::new(11));
+                DataKeyKind::NodeProperty(crate::encoding::v2::keys::NodePropertyKey::new(11));
             let mut tenant_key = Vec::new();
             tenant_key.extend_from_slice(&tenant.as_u128().to_be_bytes());
             logical.encode_into(&mut tenant_key);
@@ -1546,7 +1546,7 @@ mod tests {
         .await
         .unwrap();
         let tenant = TenantId::from_ulid_str("01KZ6WZ9QREKZZ87492YXBTFJ3").unwrap();
-        let kind = DataKeyKind::NodeProperty(crate::encoding::v1::keys::NodePropertyKey::new(11));
+        let kind = DataKeyKind::NodeProperty(crate::encoding::v2::keys::NodePropertyKey::new(11));
         let mut legacy_key = Vec::new();
         legacy_key.extend_from_slice(&tenant.as_u128().to_be_bytes());
         kind.encode_into(&mut legacy_key);

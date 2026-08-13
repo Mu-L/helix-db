@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 //! Feature-gated migration parity diagnostics.
 //!
 //! This module is intentionally excluded from the default crate surface. It is
@@ -1294,7 +1296,7 @@ pub fn migration_parity_secondary_catalog_row() -> Result<(Bytes, Bytes)> {
 
 /// Decode a materialized adjacency value into exact outgoing and incoming sets.
 pub fn decode_parity_adjacency(bytes: &[u8]) -> Result<(Vec<u64>, Vec<u64>)> {
-    let edges = values::edges::decode_edges(bytes)?;
+    let edges = values::adjacency::decode_edges(bytes)?;
     Ok((edges.iter_out().collect(), edges.iter_in().collect()))
 }
 
@@ -2326,7 +2328,7 @@ async fn scan_adjacency(
         else {
             continue;
         };
-        let edges = values::edges::decode_edges(&kv.value)?;
+        let edges = values::adjacency::decode_edges(&kv.value)?;
         snapshot.adjacency.insert(
             key.node_id(),
             ParityAdjacency {

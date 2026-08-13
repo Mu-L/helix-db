@@ -16,7 +16,7 @@ use bytes::Bytes;
 use slatedb::DbTransaction;
 
 use crate::encoding::property::Property;
-use crate::encoding::v1::keys::tenant::DataScope;
+use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::ManagedIndexKey;
 #[cfg(test)]
 use crate::encoding::v2::keys::RecordKind;
@@ -605,7 +605,7 @@ pub(super) fn stage_validated_text_build_deltas(
     Ok(())
 }
 
-/// Encodes one scoped V2 key through the canonical `encoding/v1` boundary.
+/// Encodes one scoped V2 key through the canonical `encoding/v2` boundary.
 fn scoped_index_key(scope: DataScope, key: ScopedKey) -> bytes::Bytes {
     ManagedIndexKey::Data { scope, kind: key }.to_bytes()
 }

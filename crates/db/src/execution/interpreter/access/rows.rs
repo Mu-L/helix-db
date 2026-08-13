@@ -164,7 +164,7 @@ mod tests {
 
     use super::super::super::test_support;
     use super::*;
-    use crate::encoding::v1::values::vector_generation::{ActiveScoreSemantic, VectorEntityKind};
+    use crate::encoding::v2::values::indexes::vector::{ActiveScoreSemantic, VectorEntityKind};
     use crate::search::vector::{DistanceScore, SearchResult};
 
     fn vector_result(kind: VectorEntityKind, entity_id: u64) -> TypedVectorSearchResult {

@@ -11,7 +11,7 @@ use helix_ast::traversal::ShortestPathDirection;
 
 use super::*;
 use crate::encoding::keys;
-use crate::encoding::v1::values;
+use crate::encoding::v2::values;
 
 impl<'db> ExecutionContext<'db> {
     pub(in crate::execution::interpreter) async fn execute_shortest_path(
@@ -170,7 +170,7 @@ impl<'db> ExecutionContext<'db> {
         let Some(value) = self.get_raw(&key).await? else {
             return Ok(Vec::new());
         };
-        let edges = values::edges::decode_edges(&value)?;
+        let edges = values::adjacency::decode_edges(&value)?;
         let mut out = BTreeSet::new();
         match direction {
             ShortestPathDirection::Out | ShortestPathDirection::Both => {
@@ -222,7 +222,7 @@ mod tests {
 
     use super::super::test_support;
     use super::*;
-    use crate::encoding::v1::{indexes, keys};
+    use crate::encoding::{indexes, keys};
 
     fn plan(source: NodeRef, target: NodeRef) -> ir::ShortestPathPlan {
         ir::ShortestPathPlan {
@@ -330,9 +330,9 @@ mod tests {
             inner
                 .put(
                     keys::DataKey::Data {
-                        scope: keys::tenant::DataScope::LegacyUnscoped,
+                        scope: keys::scope::DataScope::LegacyUnscoped,
                         kind: keys::DataKeyKind::PropertyIndex(
-                            indexes::IndexKey::EdgeLabelNeighbor(
+                            indexes::PropertyIndexKey::EdgeLabelNeighbor(
                                 indexes::label::EdgeLabelNeighborKey::new(
                                     index_direction,
                                     7,

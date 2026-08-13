@@ -368,7 +368,7 @@ pub(super) async fn seed_vector_index<D: search::vector::Distance>(
     .transition(crate::index_lifecycle::IndexStateTransition::Activate)
     .expect("test vector generation activates");
     let active = crate::index_lifecycle::ActiveIndexHandle::try_from_record(
-        crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
+        crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
         &record,
     )
     .expect("active test vector record projects a handle");
@@ -395,7 +395,7 @@ pub(super) async fn seed_vector_index<D: search::vector::Distance>(
             .expect("vector inserts");
     }
     let key = crate::encoding::v2::keys::ManagedIndexKey::Data {
-        scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
+        scope: crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
         kind: crate::encoding::v2::keys::ScopedKey::index_record(record.identity().clone()),
     }
     .to_bytes();
@@ -498,7 +498,7 @@ pub(super) async fn seed_managed_text_index(
     .expect("managed text fixture starts building")
     .transition(crate::index_lifecycle::IndexStateTransition::Activate)
     .expect("managed text fixture activates");
-    let scope = crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped;
+    let scope = crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped;
     transaction
         .put(
             crate::encoding::v2::keys::ManagedIndexKey::Data {

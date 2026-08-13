@@ -1,5 +1,7 @@
 //! Deprecated property-index key paths.
 
+#![allow(deprecated, unused_imports)]
+
 #[deprecated(note = "use encoding::v2::keys::indexes::equality")]
 pub(crate) mod equality {
     #[deprecated(note = "use encoding::v2::keys::indexes::equality")]
@@ -20,8 +22,16 @@ pub(crate) mod range {
 
 #[deprecated(note = "use encoding::v2::keys::indexes::prefix")]
 pub(crate) mod scan_prefixes {
+    #[deprecated(note = "use encoding::v2::keys::indexes::equality::scans")]
+    pub(crate) use crate::encoding::v2::keys::indexes::equality::scans::*;
+    #[deprecated(note = "use encoding::v2::keys::indexes::label")]
+    pub(crate) use crate::encoding::v2::keys::indexes::label::{
+        EdgeLabelNeighborScanPrefix, EdgeLabelScanPrefix,
+    };
     #[deprecated(note = "use encoding::v2::keys::indexes::prefix")]
     pub(crate) use crate::encoding::v2::keys::indexes::prefix::*;
+    #[deprecated(note = "use encoding::v2::keys::indexes::range::scans")]
+    pub(crate) use crate::encoding::v2::keys::indexes::range::scans::*;
 }
 
 #[deprecated(note = "use encoding::v2::keys::indexes")]

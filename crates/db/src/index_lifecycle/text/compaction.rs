@@ -16,8 +16,8 @@ use bytes::Bytes;
 use slatedb::DbTransaction;
 
 use crate::config::{SearchIndexBatchLimits, TextBackfillCompactionLimits};
-use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v2::keys as index_keys;
+use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::ManagedIndexKey;
 use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
@@ -364,7 +364,7 @@ fn retirement_measurement(
     (1, u64::try_from(artifact_key.len()).unwrap_or(u64::MAX))
 }
 
-/// Encodes one scoped V2 key through the canonical `encoding/v1` boundary.
+/// Encodes one scoped V2 key through the canonical `encoding/v2` boundary.
 fn scoped_key(scope: DataScope, key: index_keys::ScopedKey) -> Bytes {
     ManagedIndexKey::Data { scope, kind: key }.to_bytes()
 }

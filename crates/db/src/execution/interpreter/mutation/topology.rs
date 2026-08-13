@@ -16,10 +16,10 @@ use crate::encoding::indexes::label::{EdgeLabelKey, EdgeLabelNeighborKey};
 use crate::encoding::indexes::{
     hash_property_name, hash_property_value, EdgeDirection, PropertyIndexKey,
 };
-use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{AdjacencyKey, DataKeyKind, EdgePairIndexKey, Key};
-use crate::encoding::v1::values::edges::Edges;
-use crate::encoding::v1::values::{edges, secondary};
+use crate::encoding::v2::keys::scope::DataScope;
+use crate::encoding::v2::keys::{AdjacencyKey, DataKey, DataKeyKind, EdgePairIndexKey};
+use crate::encoding::v2::values::adjacency::Edges;
+use crate::encoding::v2::values::{adjacency as edges, indexes as secondary};
 use crate::{HelixDbError, Result};
 
 /// A final membership operation for one ID within the current epoch.
@@ -246,7 +246,7 @@ impl TopologyMutationRuntime {
         direction: helix_planner::ir::ExpandDirection,
         mutation: MembershipMutation,
     ) -> Result<()> {
-        let key = Key::Data {
+        let key = DataKey::Data {
             scope,
             kind: DataKeyKind::Adjacency(AdjacencyKey::new(node)),
         }
@@ -451,7 +451,7 @@ impl TopologyMutationRuntime {
 }
 
 fn node_label_key(scope: DataScope, label: &str) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(
             crate::encoding::indexes::equality::EqualityIndexKey::new(
@@ -464,7 +464,7 @@ fn node_label_key(scope: DataScope, label: &str) -> Bytes {
 }
 
 fn edge_pair_key(scope: DataScope, from: u64, to: u64) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::EdgePairIndex(EdgePairIndexKey::new(from, to)),
     }
@@ -477,7 +477,7 @@ fn edge_label_neighbor_key(
     node: u64,
     label: &str,
 ) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
             EdgeLabelNeighborKey::new(direction, node, hash_property_value(label)),
@@ -487,7 +487,7 @@ fn edge_label_neighbor_key(
 }
 
 fn global_edge_label_key(scope: DataScope, label: &str) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(
             hash_property_value(label),
@@ -573,7 +573,7 @@ mod tests {
         let adjacency = edges::decode_edges(
             &transaction
                 .get(
-                    Key::Data {
+                    DataKey::Data {
                         scope,
                         kind: DataKeyKind::Adjacency(AdjacencyKey::new(1)),
                     }

@@ -50,7 +50,7 @@ pub enum PropertyValue {
 }
 
 impl PropertyValue {
-    /// Returns whether two values have exactly the same V1 representation.
+    /// Returns whether two values have exactly the same persisted representation.
     ///
     /// This is intentionally stricter than query equality and `PartialEq`:
     /// float sign bits and NaN payloads are persisted and therefore participate

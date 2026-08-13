@@ -1,11 +1,14 @@
 use crate::encoding::{
     error::EncodingError,
-    indexes::{EdgeDirection, IndexPrefix, ValueHash, INDEX_PREFIX_LEN, VALUE_HASH_MAX_LEN},
+    indexes::{
+        EdgeDirection, IndexPrefix, ValueHash, INDEX_PREFIX_LEN, NODE_ID_MAX_LEN,
+        VALUE_HASH_MAX_LEN,
+    },
     keys::{KeyPrefix, PREFIX_LEN},
     v2::keys::codec::read_u64,
     NodeId,
 };
-use bytes::BufMut;
+use bytes::{BufMut, Bytes};
 
 /// Edge label index: label -> set of EdgeIds.
 ///
@@ -220,18 +223,18 @@ mod tests {
 
     #[test]
     fn edge_label_key_has_exact_layout_and_round_trips() {
-        let key = IndexKey::EdgeLabel(EdgeLabelKey::new(LABEL_HASH));
+        let key = PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(LABEL_HASH));
         let mut encoded = Vec::with_capacity(key.encoded_len());
         key.encode_into(&mut encoded);
 
         assert_eq!(encoded.as_slice(), &[0x03, 0x04, 5, 6, 7, 8, 9, 10, 11, 12]);
-        assert_eq!(IndexKey::parse_from_slice(&encoded).unwrap(), key);
+        assert_eq!(PropertyIndexKey::parse_from_slice(&encoded).unwrap(), key);
     }
 
     #[test]
     fn edge_label_neighbor_key_has_exact_layout_and_round_trips() {
         let node_id = 0x0102_0304_0506_0708u64;
-        let key = IndexKey::EdgeLabelNeighbor(EdgeLabelNeighborKey::new(
+        let key = PropertyIndexKey::EdgeLabelNeighbor(EdgeLabelNeighborKey::new(
             EdgeDirection::Out,
             node_id,
             LABEL_HASH,
@@ -244,7 +247,7 @@ mod tests {
         expected.extend_from_slice(&LABEL_HASH);
 
         assert_eq!(encoded, expected);
-        assert_eq!(IndexKey::parse_from_slice(&encoded).unwrap(), key);
+        assert_eq!(PropertyIndexKey::parse_from_slice(&encoded).unwrap(), key);
     }
 
     #[test]
@@ -345,5 +348,112 @@ mod tests {
             EdgeLabelNeighborKey::parse_from_slice(&wrong_neighbor_index_prefix),
             Err(EncodingError::Custom(_))
         ));
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum EdgeLabelScanPrefix {
+    Index,
+    Label { label_hash: ValueHash },
+}
+
+#[allow(dead_code)]
+impl EdgeLabelScanPrefix {
+    pub(crate) fn to_bytes(self) -> Bytes {
+        let mut buf = Vec::with_capacity(self.encoded_len());
+        self.encode_into(&mut buf);
+        Bytes::from(buf)
+    }
+
+    pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
+        buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
+        buf.put_slice(IndexPrefix::EdgeLabel.as_slice());
+
+        let EdgeLabelScanPrefix::Label { label_hash } = self else {
+            return;
+        };
+        buf.put_slice(label_hash);
+    }
+
+    const fn encoded_len(&self) -> usize {
+        match self {
+            EdgeLabelScanPrefix::Index => PREFIX_LEN + INDEX_PREFIX_LEN,
+            EdgeLabelScanPrefix::Label { .. } => PREFIX_LEN + INDEX_PREFIX_LEN + VALUE_HASH_MAX_LEN,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum EdgeLabelNeighborScanPrefix {
+    Index,
+    Direction {
+        direction: EdgeDirection,
+    },
+    Endpoint {
+        direction: EdgeDirection,
+        node_id: NodeId,
+    },
+    Label {
+        direction: EdgeDirection,
+        node_id: NodeId,
+        label_hash: ValueHash,
+    },
+}
+
+#[allow(dead_code)]
+impl EdgeLabelNeighborScanPrefix {
+    pub(crate) fn to_bytes(self) -> Bytes {
+        let mut buf = Vec::with_capacity(self.encoded_len());
+        self.encode_into(&mut buf);
+        Bytes::from(buf)
+    }
+
+    pub(crate) fn encode_into<B: BufMut>(&self, buf: &mut B) {
+        buf.put_u8(KeyPrefix::PropertyIndex.as_u8());
+        match self {
+            EdgeLabelNeighborScanPrefix::Index => {
+                buf.put_u8(0x10);
+            }
+            EdgeLabelNeighborScanPrefix::Direction { direction } => {
+                buf.put_slice(IndexPrefix::EdgeLabelNeighbor(*direction).as_slice());
+            }
+            EdgeLabelNeighborScanPrefix::Endpoint { direction, node_id } => {
+                buf.put_slice(IndexPrefix::EdgeLabelNeighbor(*direction).as_slice());
+                buf.put_u64(*node_id);
+            }
+            EdgeLabelNeighborScanPrefix::Label {
+                direction,
+                node_id,
+                label_hash,
+            } => {
+                buf.put_slice(IndexPrefix::EdgeLabelNeighbor(*direction).as_slice());
+                buf.put_u64(*node_id);
+                buf.put_slice(label_hash);
+            }
+        }
+    }
+
+    const fn encoded_len(&self) -> usize {
+        match self {
+            EdgeLabelNeighborScanPrefix::Index => PREFIX_LEN + INDEX_PREFIX_LEN,
+            EdgeLabelNeighborScanPrefix::Direction { .. } => {
+                PREFIX_LEN + INDEX_PREFIX_LEN + core::mem::size_of::<EdgeDirection>()
+            }
+            EdgeLabelNeighborScanPrefix::Endpoint { .. } => {
+                PREFIX_LEN
+                    + INDEX_PREFIX_LEN
+                    + core::mem::size_of::<EdgeDirection>()
+                    + NODE_ID_MAX_LEN
+            }
+            EdgeLabelNeighborScanPrefix::Label { .. } => {
+                PREFIX_LEN
+                    + INDEX_PREFIX_LEN
+                    + core::mem::size_of::<EdgeDirection>()
+                    + NODE_ID_MAX_LEN
+                    + VALUE_HASH_MAX_LEN
+            }
+        }
     }
 }

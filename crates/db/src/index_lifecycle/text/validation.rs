@@ -16,8 +16,8 @@ use bytes::Bytes;
 use slatedb::DbTransaction;
 
 use crate::config::SearchIndexBatchLimits;
-use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v2::keys as index_keys;
+use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::ManagedIndexKey;
 use crate::encoding::v2::values as index_values;
 use crate::error::{HelixDbError, Result};
@@ -725,7 +725,7 @@ fn blocked_database(
     })
 }
 
-/// Encodes a complete generation prefix through the canonical V1 key codec.
+/// Encodes a complete generation prefix through the canonical key codec.
 fn generation_prefix(
     scope: DataScope,
     kind: index_keys::RecordKind,
@@ -741,7 +741,7 @@ fn generation_prefix(
     )
 }
 
-/// Encodes one scoped logical key through the canonical V1 key codec.
+/// Encodes one scoped logical key through the canonical key codec.
 fn scoped_key(scope: DataScope, key: index_keys::ScopedKey) -> Bytes {
     ManagedIndexKey::Data { scope, kind: key }.to_bytes()
 }

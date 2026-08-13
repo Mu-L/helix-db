@@ -370,7 +370,7 @@ impl<'db> ExecutionContext<'db> {
                 .next()
                 .expect("each observed edge has one endpoint result")
                 .map(|value| {
-                    crate::encoding::v1::values::edge_endpoints::EdgeEndpointsValue::decode(&value)
+                    crate::encoding::v2::values::edge_endpoints::EdgeEndpointsValue::decode(&value)
                         .map(|endpoints| (endpoints.source(), endpoints.target()))
                 })
                 .transpose()?;
@@ -420,7 +420,7 @@ impl<'db> ExecutionContext<'db> {
             .map(|(pair, value)| {
                 let edge_ids = value
                     .map(|value| {
-                        values::secondary::SecondaryEqualityValue::decode(&value)
+                        values::indexes::SecondaryEqualityValue::decode(&value)
                             .map(|value| value.into_ids())
                     })
                     .transpose()?

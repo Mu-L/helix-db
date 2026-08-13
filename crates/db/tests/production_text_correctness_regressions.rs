@@ -9,7 +9,7 @@ use db::config::{
     DbConfig, SearchIndexBackfillLimits, SearchIndexBatchLimits, TextAnalyzerKind,
     TextIndexDefinition, VectorIndexDefinition,
 };
-use db::encoding::v1::keys::tenant::DataScope;
+use db::encoding::v2::keys::scope::DataScope;
 use db::execution::interpreter::{ElementRef, ExecutionResult, ExecutionRow, ExecutionValue};
 use db::index_lifecycle::{
     IndexDdlReceipt, IndexOperationId, IndexOperationStage, IndexOperationStatus,

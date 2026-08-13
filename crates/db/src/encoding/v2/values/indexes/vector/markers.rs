@@ -37,7 +37,7 @@ pub(crate) fn encode_simhash_directory_marker_v1() -> Bytes {
     Bytes::copy_from_slice(&[SIMHASH_DIRECTORY_MARKER_V1])
 }
 
-/// Validates the exact V1 SimHash directory marker.
+/// Validates the exact deployed SimHash directory marker.
 pub(crate) fn decode_simhash_directory_marker_v1(data: &[u8]) -> Result<(), EncodingError> {
     if data.len() != SIMHASH_DIRECTORY_MARKER_LEN {
         return Err(EncodingError::BufferTooShort {

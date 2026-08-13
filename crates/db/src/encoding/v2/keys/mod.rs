@@ -26,6 +26,7 @@ pub(crate) use indexes::vector::VectorPartitionMappingKey;
 pub(crate) use indexes::{
     CanonicalSecondaryValue, SecondaryEntryKey, SecondaryEntryLane, SecondaryEqualityBitmapKey,
 };
+#[allow(unused_imports)]
 pub(crate) use lifecycle::{IndexEntity, IndexEntityStateKey, IndexOperationKey, IndexRecordKey};
 pub(crate) use managed_index::{
     decode_generation, decode_identity, decode_index_id, decode_operation_id, encode_identity,

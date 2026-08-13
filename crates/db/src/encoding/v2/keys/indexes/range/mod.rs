@@ -1,10 +1,10 @@
 //! Ordered range-index key codecs.
 
-mod edge;
-mod node;
-mod scans;
+pub(crate) mod edge;
+pub(crate) mod node;
+pub(crate) mod scans;
 
-pub(crate) use node::{
-    decode_range_value, EdgeRangeIndexKey, GlobalEdgeRangeIndexKey, RangeIndexKey,
-};
-pub use node::{EdgeRangeIndexDirection, RangeIndexDirection};
+pub use edge::EdgeRangeIndexDirection;
+pub(crate) use edge::{EdgeRangeIndexKey, GlobalEdgeRangeIndexKey};
+pub use node::RangeIndexDirection;
+pub(crate) use node::RangeIndexKey;

@@ -1,5 +1,7 @@
 //! Deprecated graph-key paths.
 
+#![allow(deprecated, unused_imports)]
+
 #[deprecated(note = "use encoding::v2::keys::metadata")]
 pub(crate) mod metadata {
     #[deprecated(note = "use encoding::v2::keys::metadata")]
@@ -20,7 +22,7 @@ pub(crate) mod vectors {
 
 #[deprecated(note = "use encoding::v2::keys")]
 pub(crate) use crate::encoding::v2::keys::{
-    AdjacencyKey, DataKey as Key, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey,
+    AdjacencyKey, DataKey, DataKey as Key, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey,
     EdgePropertyByIdKey, EdgePropertyPairKey, GlobalKeyKind, KeyPrefix, MetadataKey,
     NodePropertyKey, ID_LEN, PREFIX_LEN,
 };

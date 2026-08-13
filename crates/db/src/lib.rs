@@ -3164,9 +3164,9 @@ mod tests {
         use bytes::Bytes;
         use slatedb::IsolationLevel;
 
-        use crate::encoding::v1::keys::vectors::{VectorKey, VectorUpperVectorKey};
-        use crate::encoding::v1::keys::{DataKeyKind, Key};
+        use crate::encoding::v2::keys::indexes::vector::{VectorKey, VectorUpperVectorKey};
         use crate::encoding::v2::keys::ScopedKey;
+        use crate::encoding::v2::keys::{DataKey, DataKeyKind};
         use crate::encoding::v2::values::encode_index_record;
 
         let db = HelixDB::open(HelixDbSource::InMemory {
@@ -3226,7 +3226,7 @@ mod tests {
             kind: ScopedKey::index_record(record.identity().clone()),
         }
         .to_bytes();
-        let vector_key = Key::Data {
+        let vector_key = DataKey::Data {
             scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
                 physical_index_id.get(),
@@ -3563,7 +3563,7 @@ mod tests {
 
     #[tokio::test]
     async fn lifecycle_control_facade_and_dsl_use_the_exact_request_scope() {
-        use crate::encoding::v1::keys::{DataKeyKind, Key, NodePropertyKey};
+        use crate::encoding::v2::keys::{DataKey, DataKeyKind, NodePropertyKey};
 
         let db = HelixDB::open(HelixDbSource::InMemory {
             database: "lifecycle-control-facade".to_string(),
@@ -3577,7 +3577,7 @@ mod tests {
         )
         .expect("validated secondary definition");
         let cursor = index_lifecycle::IndexCursor::try_new(
-            Key::Data {
+            DataKey::Data {
                 scope,
                 kind: DataKeyKind::NodeProperty(NodePropertyKey::new(42)),
             }
@@ -3663,7 +3663,7 @@ mod tests {
 
     #[tokio::test]
     async fn disk_source_reopens_as_reader() {
-        use crate::encoding::v1::keys::{DataKeyKind, Key, NodePropertyKey};
+        use crate::encoding::v2::keys::{DataKey, DataKeyKind, NodePropertyKey};
 
         let root = tempfile::tempdir().expect("disk root");
         let database = "facade-disk".to_string();
@@ -3680,7 +3680,7 @@ mod tests {
         )
         .expect("validated secondary definition");
         let cursor = index_lifecycle::IndexCursor::try_new(
-            Key::Data {
+            DataKey::Data {
                 scope,
                 kind: DataKeyKind::NodeProperty(NodePropertyKey::new(42)),
             }

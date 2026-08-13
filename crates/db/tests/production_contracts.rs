@@ -8,7 +8,7 @@
 use std::{cmp::Ordering, collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use db::config::{self, VectorIndexDefinition};
-use db::encoding::v1::values::vectors::{decode_layer0_neighbors, encode_layer0_neighbors};
+use db::encoding::v2::values::indexes::vector::{decode_layer0_neighbors, encode_layer0_neighbors};
 use db::execution::interpreter::{ElementRef, ExecutionResult, ExecutionScalar, ExecutionValue};
 use db::search::vector::distance::{Cosine, Distance, Euclidean, Manhattan};
 use db::search::vector::unaligned_vector::{SimHashError, UnalignedVector};

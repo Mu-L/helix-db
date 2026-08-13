@@ -43,7 +43,7 @@ use crate::encoding::keys::scope::DataScope;
 use crate::encoding::property::decode_properties;
 use crate::encoding::property::property_value::PropertyValue as DbPropertyValue;
 use crate::encoding::property::Property;
-use crate::encoding::v1::values;
+use crate::encoding::v2::values;
 use crate::error::{HelixDbError, Result};
 use crate::HelixDB;
 

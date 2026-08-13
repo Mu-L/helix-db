@@ -17,11 +17,11 @@ use crate::index_lifecycle::{
     IndexIdentityFamily, IndexOperationId,
 };
 
-use super::global::{GlobalKey, GlobalKind, TextCompactionTarget, GLOBAL_SENTINEL};
+use super::global::GlobalKey;
 use super::indexes::text::{
-    BlobHash, PartitionFingerprint, TextBuildArtifactKey, TextCorpusStatisticsKey,
-    TextEntityStateKey, TextManifestPageKey, TextManifestRootKey, TextStatisticsEntityKey,
-    TextTermFingerprint, TextTermStatisticsKey,
+    PartitionFingerprint, TextBuildArtifactKey, TextCorpusStatisticsKey, TextEntityStateKey,
+    TextManifestPageKey, TextManifestRootKey, TextStatisticsEntityKey, TextTermFingerprint,
+    TextTermStatisticsKey,
 };
 use super::indexes::vector::VectorPartitionMappingKey;
 use super::indexes::{
@@ -658,7 +658,7 @@ mod wire_fixtures {
 
     use super::*;
     use crate::encoding::indexes::range::RangeIndexDirection;
-    use crate::encoding::v2::keys::scope::TenantId;
+    use crate::encoding::v2::keys::{global::TextCompactionTarget, scope::TenantId};
     use crate::index_lifecycle::VectorPhysicalIndexId;
 
     pub(crate) fn index_id() -> IndexId {

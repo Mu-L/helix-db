@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Bound;
 use std::time::{Duration, Instant};
 
-use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v2::keys as index_keys;
+use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::ManagedIndexKey;
 use crate::encoding::v2::values as index_values;
 use crate::index_lifecycle::work::{AppliedFamilyState, SplitRef};

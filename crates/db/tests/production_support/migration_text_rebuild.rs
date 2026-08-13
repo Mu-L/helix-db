@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 //! Feature-gated populated legacy-text migration fixtures.
 //!
 //! These helpers construct only deployed graph, catalog, text-metadata, and

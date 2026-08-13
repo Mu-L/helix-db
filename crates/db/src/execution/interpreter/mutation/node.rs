@@ -448,7 +448,7 @@ impl<'db> ExecutionContext<'db> {
             let Some(value) = value else {
                 continue;
             };
-            edge_ids.extend(values::secondary::SecondaryEqualityValue::decode(&value)?.into_ids());
+            edge_ids.extend(values::indexes::SecondaryEqualityValue::decode(&value)?.into_ids());
         }
         Ok(edge_ids)
     }

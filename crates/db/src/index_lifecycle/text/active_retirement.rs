@@ -4,7 +4,7 @@
 //! requires no new blob. The authoritative graph transaction must still bump
 //! the old partition's manifest revision and write an exact dead entity-state
 //! row so readers reject every older split version. This module prepares those
-//! two canonical V1 rows, retains their exact Active-record/root/state reads,
+//! two canonical rows, retains their exact Active-record/root/state reads,
 //! and separates fallible revalidation from infallible staging. Request-level
 //! orchestration can therefore admit and validate all retirements, uploads, and
 //! hidden-build deltas before buffering any graph or index write.
@@ -258,7 +258,7 @@ mod tests {
         SearchIndexBackfillLimits, SearchIndexBatchLimits, SecondaryIndexDefinition,
         TextAnalyzerKind, TextBackfillCompactionLimits, TextBuildArtifactLimits,
     };
-    use crate::encoding::v1::keys::tenant::DataScope;
+    use crate::encoding::v2::keys::scope::DataScope;
     use crate::encoding::v2::keys::ManagedIndexKey;
     use crate::index_lifecycle::{
         IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexOperationId,
@@ -278,7 +278,7 @@ mod tests {
     }
 
     fn scoped_key(scope: DataScope, logical: index_keys::ScopedKey) -> Bytes {
-        Key::Data {
+        ManagedIndexKey::Data {
             scope,
             kind: logical,
         }

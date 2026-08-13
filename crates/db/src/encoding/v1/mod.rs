@@ -1,5 +1,7 @@
 //! Deprecated V1 paths retained for migrations and compatibility checks.
 
+#![allow(deprecated, unused_imports)]
+
 #[deprecated(note = "use encoding::v2::keys::indexes")]
 pub mod indexes;
 #[deprecated(note = "use encoding::v2::keys")]

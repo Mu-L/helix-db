@@ -410,7 +410,7 @@ impl<'db> ExecutionContext<'db> {
                 continue;
             };
             candidate_edge_ids
-                .extend(values::secondary::SecondaryEqualityValue::decode(&value)?.into_ids());
+                .extend(values::indexes::SecondaryEqualityValue::decode(&value)?.into_ids());
         }
         let mut observed_edges = self
             .observe_edge_deletions(

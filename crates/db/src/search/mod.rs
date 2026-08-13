@@ -32,16 +32,16 @@ use slatedb::DbTransaction;
 
 use crate::config::{TextElementType, VectorElementType};
 use crate::encoding::indexes::equality::{
+    scans::{EdgeEqualityScanPrefix, EqualityScanPrefix, GlobalEdgeEqualityScanPrefix},
     EdgeDirection as EdgeEqualityDirection, EdgeEqualityIndexKey, EqualityIndexKey,
 };
-use crate::encoding::indexes::label::{EdgeLabelKey, EdgeLabelNeighborKey};
-use crate::encoding::indexes::prefix::{
-    exclusive_prefix_end_bound, EdgeEqualityScanPrefix, EdgeLabelScanPrefix, EdgeRangeScanPrefix,
-    EdgeRangeScanValuePrefix, EqualityScanPrefix, GlobalEdgeEqualityScanPrefix,
-    GlobalEdgeRangeScanPrefix, GlobalEdgeRangeScanValuePrefix, RangeScanPrefix,
-    RangeScanValuePrefix,
-};
+use crate::encoding::indexes::label::{EdgeLabelKey, EdgeLabelNeighborKey, EdgeLabelScanPrefix};
+use crate::encoding::indexes::prefix::exclusive_prefix_end_bound;
 use crate::encoding::indexes::range::{
+    scans::{
+        EdgeRangeScanPrefix, EdgeRangeScanValuePrefix, GlobalEdgeRangeScanPrefix,
+        GlobalEdgeRangeScanValuePrefix, RangeScanPrefix, RangeScanValuePrefix,
+    },
     EdgeRangeIndexDirection, EdgeRangeIndexKey, GlobalEdgeRangeIndexKey, RangeIndexDirection,
     RangeIndexKey,
 };
@@ -54,15 +54,11 @@ use crate::encoding::keys::{EdgeEndpointsKey, EdgePropertyByIdKey};
 use crate::encoding::property::property::Property;
 use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::property::{decode_properties, encode_properties};
-use crate::encoding::v1::values::edge_endpoints::EdgeEndpointsValue;
-use crate::encoding::v1::values::secondary::SecondaryEqualityValue;
-use crate::encoding::{
-    v1::{
-        indexes::IndexKey,
-        keys::{DataKeyKind, Key},
-    },
-    EdgeId, NodeId,
-};
+use crate::encoding::v2::keys::indexes::PropertyIndexKey;
+use crate::encoding::v2::keys::{DataKey, DataKeyKind};
+use crate::encoding::v2::values::edge_endpoints::EdgeEndpointsValue;
+use crate::encoding::v2::values::indexes::SecondaryEqualityValue;
+use crate::encoding::{EdgeId, NodeId};
 use crate::error::HelixDbError;
 use slatedb::DbReadOps;
 
@@ -415,9 +411,9 @@ pub fn migration_parity_graph_hash_contract(
     rows.insert("property_value_hash".to_string(), value_hash.to_vec());
     rows.insert(
         "node_equality_key".to_string(),
-        Key::Data {
+        DataKey::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: DataKeyKind::PropertyIndex(IndexKey::Equality(EqualityIndexKey::new(
+            kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(EqualityIndexKey::new(
                 property_hash,
                 value_hash,
             ))),
@@ -437,9 +433,9 @@ pub fn migration_parity_graph_hash_contract(
     ] {
         rows.insert(
             format!("node_range_{name}_key"),
-            Key::Data {
+            DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
-                kind: DataKeyKind::PropertyIndex(IndexKey::Range(RangeIndexKey::new(
+                kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Range(RangeIndexKey::new(
                     direction,
                     property_hash,
                     Cow::Borrowed(value),
@@ -471,9 +467,9 @@ pub fn migration_parity_graph_hash_contract(
     ] {
         rows.insert(
             format!("edge_equality_{name}_key"),
-            Key::Data {
+            DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
-                kind: DataKeyKind::PropertyIndex(IndexKey::EdgeEquality(
+                kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeEquality(
                     EdgeEqualityIndexKey::new(direction, endpoint, property_hash, value_hash),
                 )),
             }
@@ -483,9 +479,11 @@ pub fn migration_parity_graph_hash_contract(
     }
     rows.insert(
         "global_edge_label_key".to_string(),
-        Key::Data {
+        DataKey::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabel(EdgeLabelKey::new(label_hash))),
+            kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(
+                label_hash,
+            ))),
         }
         .to_bytes()
         .to_vec(),
@@ -496,9 +494,9 @@ pub fn migration_parity_graph_hash_contract(
     ] {
         rows.insert(
             format!("edge_label_{name}_key"),
-            Key::Data {
+            DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
-                kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabelNeighbor(
+                kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
                     EdgeLabelNeighborKey::new(direction, endpoint, label_hash),
                 )),
             }
@@ -511,7 +509,7 @@ pub fn migration_parity_graph_hash_contract(
         ] {
             rows.insert(
                 format!("edge_range_{name}_{range_name}_key"),
-                Key::Data {
+                DataKey::Data {
                     scope: DataScope::LegacyUnscoped,
                     kind: edge_range_key_with_direction(
                         direction,
@@ -629,9 +627,9 @@ pub async fn add_to_equality_index_scoped(
     node_id: NodeId,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::Equality(EqualityIndexKey::new(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(EqualityIndexKey::new(
             hash_property_name(property),
             hash_property_value(value),
         ))),
@@ -660,9 +658,9 @@ pub async fn remove_from_equality_index_scoped(
     node_id: NodeId,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::Equality(EqualityIndexKey::new(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(EqualityIndexKey::new(
             hash_property_name(property),
             hash_property_value(value),
         ))),
@@ -697,9 +695,9 @@ pub async fn lookup_equality_index_scoped(
     value: &str,
     tenant_scope: DataScope,
 ) -> Result<Vec<NodeId>, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::Equality(EqualityIndexKey::new(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(EqualityIndexKey::new(
             hash_property_name(property),
             hash_property_value(value),
         ))),
@@ -730,9 +728,9 @@ pub async fn lookup_equality_index_set_scoped(
     value: &str,
     tenant_scope: DataScope,
 ) -> Result<RoaringTreemap, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::Equality(EqualityIndexKey::new(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(EqualityIndexKey::new(
             hash_property_name(property),
             hash_property_value(value),
         ))),
@@ -789,7 +787,7 @@ pub async fn scan_equality_index_property_prefix_limited_filtered_scoped(
     }
     .to_bytes();
     let mut iter = txn
-        .scan_prefix(Key::data_prefix(tenant_scope, prefix), ..)
+        .scan_prefix(DataKey::data_prefix(tenant_scope, prefix), ..)
         .await?;
     let mut results = RoaringTreemap::new();
 
@@ -846,9 +844,9 @@ pub async fn add_to_range_index_with_direction_scoped(
     direction: RangeIndexDirection,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::Range(RangeIndexKey::new(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Range(RangeIndexKey::new(
             direction,
             hash_property_name(property),
             Cow::Borrowed(value),
@@ -898,9 +896,9 @@ pub async fn remove_from_range_index_with_direction_scoped(
     direction: RangeIndexDirection,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::Range(RangeIndexKey::new(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Range(RangeIndexKey::new(
             direction,
             hash_property_name(property),
             Cow::Borrowed(value),
@@ -934,7 +932,7 @@ pub async fn scan_range_index_scoped(
     }
     .to_bytes();
     let mut iter = txn
-        .scan_prefix(Key::data_prefix(tenant_scope, prefix), ..)
+        .scan_prefix(DataKey::data_prefix(tenant_scope, prefix), ..)
         .await?;
 
     let mut results = Vec::new();
@@ -1029,7 +1027,7 @@ fn edge_range_key_with_direction<'a>(
     edge_id: EdgeId,
     direction: RangeIndexDirection,
 ) -> DataKeyKind<'a> {
-    DataKeyKind::PropertyIndex(IndexKey::EdgeRange(EdgeRangeIndexKey::new(
+    DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeRange(EdgeRangeIndexKey::new(
         edge_direction,
         edge_range_index_direction(direction),
         node,
@@ -1045,12 +1043,14 @@ fn global_edge_range_key_with_direction<'a>(
     edge_id: EdgeId,
     direction: RangeIndexDirection,
 ) -> DataKeyKind<'a> {
-    DataKeyKind::PropertyIndex(IndexKey::GlobalEdgeRange(GlobalEdgeRangeIndexKey::new(
-        direction,
-        hash_property_name(property),
-        Cow::Borrowed(value),
-        edge_id,
-    )))
+    DataKeyKind::PropertyIndex(PropertyIndexKey::GlobalEdgeRange(
+        GlobalEdgeRangeIndexKey::new(
+            direction,
+            hash_property_name(property),
+            Cow::Borrowed(value),
+            edge_id,
+        ),
+    ))
 }
 
 fn global_edge_range_value_prefix_with_direction(
@@ -1199,7 +1199,7 @@ async fn scan_range_index_bounded_in_direction_scoped(
     }
     .to_bytes();
     let (start, end) = range_scan_bounds_with_direction(&prefix, property_hash, &query, direction);
-    let (start, end) = Key::data_range(tenant_scope, start, end);
+    let (start, end) = DataKey::data_range(tenant_scope, start, end);
     let mut iter = txn.scan(start..end).await?;
     let mut results = Vec::new();
 
@@ -1591,25 +1591,23 @@ pub async fn add_to_edge_label_index_scoped(
     let label_hash = hash_property_value(label);
 
     // Update outgoing index: from + label -> to
-    let out_key =
-        Key::Data {
-            scope: tenant_scope,
-            kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabelNeighbor(
-                EdgeLabelNeighborKey::new(EdgeRangeDirection::Out, from, label_hash),
-            )),
-        }
-        .to_bytes();
+    let out_key = DataKey::Data {
+        scope: tenant_scope,
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
+            EdgeLabelNeighborKey::new(EdgeRangeDirection::Out, from, label_hash),
+        )),
+    }
+    .to_bytes();
     txn.merge_commutative(&out_key, crate::merge_operator::encode_bitmap_add(to))?;
 
     // Update incoming index: to + label -> from
-    let in_key =
-        Key::Data {
-            scope: tenant_scope,
-            kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabelNeighbor(
-                EdgeLabelNeighborKey::new(EdgeRangeDirection::In, to, label_hash),
-            )),
-        }
-        .to_bytes();
+    let in_key = DataKey::Data {
+        scope: tenant_scope,
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
+            EdgeLabelNeighborKey::new(EdgeRangeDirection::In, to, label_hash),
+        )),
+    }
+    .to_bytes();
     txn.merge_commutative(&in_key, crate::merge_operator::encode_bitmap_add(from))?;
 
     Ok(())
@@ -1635,14 +1633,13 @@ pub async fn remove_from_edge_label_index_scoped(
     let label_hash = hash_property_value(label);
 
     // Update outgoing index
-    let out_key =
-        Key::Data {
-            scope: tenant_scope,
-            kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabelNeighbor(
-                EdgeLabelNeighborKey::new(EdgeRangeDirection::Out, from, label_hash),
-            )),
-        }
-        .to_bytes();
+    let out_key = DataKey::Data {
+        scope: tenant_scope,
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
+            EdgeLabelNeighborKey::new(EdgeRangeDirection::Out, from, label_hash),
+        )),
+    }
+    .to_bytes();
     if let Some(data) = txn.get(&out_key).await? {
         let mut bitmap = decode_roaring_treemap(&data)?;
         bitmap.remove(to);
@@ -1654,14 +1651,13 @@ pub async fn remove_from_edge_label_index_scoped(
     }
 
     // Update incoming index
-    let in_key =
-        Key::Data {
-            scope: tenant_scope,
-            kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabelNeighbor(
-                EdgeLabelNeighborKey::new(EdgeRangeDirection::In, to, label_hash),
-            )),
-        }
-        .to_bytes();
+    let in_key = DataKey::Data {
+        scope: tenant_scope,
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
+            EdgeLabelNeighborKey::new(EdgeRangeDirection::In, to, label_hash),
+        )),
+    }
+    .to_bytes();
     if let Some(data) = txn.get(&in_key).await? {
         let mut bitmap = decode_roaring_treemap(&data)?;
         bitmap.remove(from);
@@ -1692,13 +1688,11 @@ pub async fn lookup_out_neighbors_by_label_scoped(
     label: &str,
     tenant_scope: DataScope,
 ) -> Result<RoaringTreemap, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabelNeighbor(EdgeLabelNeighborKey::new(
-            EdgeRangeDirection::Out,
-            source,
-            hash_property_value(label),
-        ))),
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
+            EdgeLabelNeighborKey::new(EdgeRangeDirection::Out, source, hash_property_value(label)),
+        )),
     }
     .to_bytes();
     match txn.get(&key).await? {
@@ -1724,13 +1718,11 @@ pub async fn lookup_in_neighbors_by_label_scoped(
     label: &str,
     tenant_scope: DataScope,
 ) -> Result<RoaringTreemap, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabelNeighbor(EdgeLabelNeighborKey::new(
-            EdgeRangeDirection::In,
-            target,
-            hash_property_value(label),
-        ))),
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
+            EdgeLabelNeighborKey::new(EdgeRangeDirection::In, target, hash_property_value(label)),
+        )),
     }
     .to_bytes();
     match txn.get(&key).await? {
@@ -1773,33 +1765,37 @@ pub async fn add_to_edge_equality_index_scoped(
     value: &str,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let out_key = Key::Data {
+    let out_key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeEquality(EdgeEqualityIndexKey::new(
-            EdgeEqualityDirection::Out,
-            from,
-            hash_property_name(property),
-            hash_property_value(value),
-        ))),
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeEquality(
+            EdgeEqualityIndexKey::new(
+                EdgeEqualityDirection::Out,
+                from,
+                hash_property_name(property),
+                hash_property_value(value),
+            ),
+        )),
     }
     .to_bytes();
     txn.merge_commutative(&out_key, crate::merge_operator::encode_bitmap_add(edge_id))?;
 
-    let in_key = Key::Data {
+    let in_key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeEquality(EdgeEqualityIndexKey::new(
-            EdgeEqualityDirection::In,
-            to,
-            hash_property_name(property),
-            hash_property_value(value),
-        ))),
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeEquality(
+            EdgeEqualityIndexKey::new(
+                EdgeEqualityDirection::In,
+                to,
+                hash_property_name(property),
+                hash_property_value(value),
+            ),
+        )),
     }
     .to_bytes();
     txn.merge_commutative(&in_key, crate::merge_operator::encode_bitmap_add(edge_id))?;
 
-    let global_key = Key::Data {
+    let global_key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::GlobalEdgeEquality(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::GlobalEdgeEquality(
             crate::encoding::indexes::equality::GlobalEdgeEqualityIndexKey::new(
                 hash_property_name(property),
                 hash_property_value(value),
@@ -1845,14 +1841,16 @@ pub async fn remove_from_edge_equality_index_scoped(
     value: &str,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let out_key = Key::Data {
+    let out_key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeEquality(EdgeEqualityIndexKey::new(
-            EdgeEqualityDirection::Out,
-            from,
-            hash_property_name(property),
-            hash_property_value(value),
-        ))),
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeEquality(
+            EdgeEqualityIndexKey::new(
+                EdgeEqualityDirection::Out,
+                from,
+                hash_property_name(property),
+                hash_property_value(value),
+            ),
+        )),
     }
     .to_bytes();
     if let Some(data) = txn.get(&out_key).await? {
@@ -1865,14 +1863,16 @@ pub async fn remove_from_edge_equality_index_scoped(
         }
     }
 
-    let in_key = Key::Data {
+    let in_key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeEquality(EdgeEqualityIndexKey::new(
-            EdgeEqualityDirection::In,
-            to,
-            hash_property_name(property),
-            hash_property_value(value),
-        ))),
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeEquality(
+            EdgeEqualityIndexKey::new(
+                EdgeEqualityDirection::In,
+                to,
+                hash_property_name(property),
+                hash_property_value(value),
+            ),
+        )),
     }
     .to_bytes();
     if let Some(data) = txn.get(&in_key).await? {
@@ -1885,9 +1885,9 @@ pub async fn remove_from_edge_equality_index_scoped(
         }
     }
 
-    let global_key = Key::Data {
+    let global_key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::GlobalEdgeEquality(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::GlobalEdgeEquality(
             crate::encoding::indexes::equality::GlobalEdgeEqualityIndexKey::new(
                 hash_property_name(property),
                 hash_property_value(value),
@@ -1926,14 +1926,16 @@ pub async fn lookup_edges_out_by_equality_scoped(
     value: &str,
     tenant_scope: DataScope,
 ) -> Result<RoaringTreemap, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeEquality(EdgeEqualityIndexKey::new(
-            EdgeEqualityDirection::Out,
-            source,
-            hash_property_name(property),
-            hash_property_value(value),
-        ))),
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeEquality(
+            EdgeEqualityIndexKey::new(
+                EdgeEqualityDirection::Out,
+                source,
+                hash_property_name(property),
+                hash_property_value(value),
+            ),
+        )),
     }
     .to_bytes();
     match txn.get(&key).await? {
@@ -1960,14 +1962,16 @@ pub async fn lookup_edges_in_by_equality_scoped(
     value: &str,
     tenant_scope: DataScope,
 ) -> Result<RoaringTreemap, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeEquality(EdgeEqualityIndexKey::new(
-            EdgeEqualityDirection::In,
-            target,
-            hash_property_name(property),
-            hash_property_value(value),
-        ))),
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeEquality(
+            EdgeEqualityIndexKey::new(
+                EdgeEqualityDirection::In,
+                target,
+                hash_property_name(property),
+                hash_property_value(value),
+            ),
+        )),
     }
     .to_bytes();
     match txn.get(&key).await? {
@@ -2013,9 +2017,9 @@ pub async fn add_to_global_edge_label_index_scoped(
     edge_id: EdgeId,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabel(EdgeLabelKey::new(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(
             hash_property_value(label),
         ))),
     }
@@ -2039,9 +2043,9 @@ pub async fn remove_from_global_edge_label_index_scoped(
     edge_id: EdgeId,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabel(EdgeLabelKey::new(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(
             hash_property_value(label),
         ))),
     }
@@ -2071,9 +2075,9 @@ pub async fn lookup_global_edge_label_index_scoped(
     label: &str,
     tenant_scope: DataScope,
 ) -> Result<RoaringTreemap, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabel(EdgeLabelKey::new(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(
             hash_property_value(label),
         ))),
     }
@@ -2099,9 +2103,9 @@ pub async fn lookup_global_edge_equality_index_scoped(
     value: &str,
     tenant_scope: DataScope,
 ) -> Result<RoaringTreemap, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::GlobalEdgeEquality(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::GlobalEdgeEquality(
             crate::encoding::indexes::equality::GlobalEdgeEqualityIndexKey::new(
                 hash_property_name(property),
                 hash_property_value(value),
@@ -2130,7 +2134,7 @@ pub async fn lookup_edge_pair_index_scoped(
     to: NodeId,
     tenant_scope: DataScope,
 ) -> Result<RoaringTreemap, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
         kind: DataKeyKind::EdgePairIndex(crate::encoding::keys::EdgePairIndexKey::new(from, to)),
     }
@@ -2158,7 +2162,7 @@ pub async fn add_to_edge_pair_index_scoped(
     edge_id: EdgeId,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
         kind: DataKeyKind::EdgePairIndex(crate::encoding::keys::EdgePairIndexKey::new(from, to)),
     }
@@ -2184,7 +2188,7 @@ pub async fn remove_from_edge_pair_index_scoped(
     edge_id: EdgeId,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
         kind: DataKeyKind::EdgePairIndex(crate::encoding::keys::EdgePairIndexKey::new(from, to)),
     }
@@ -2228,7 +2232,7 @@ pub async fn clear_global_edge_label_indexes_scoped(
     txn: &DbTransaction,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let prefix = Key::data_prefix(tenant_scope, EdgeLabelScanPrefix::Index.to_bytes());
+    let prefix = DataKey::data_prefix(tenant_scope, EdgeLabelScanPrefix::Index.to_bytes());
     let mut iter = txn.scan_prefix(prefix, ..).await?;
     let mut keys = Vec::new();
     while let Some(kv) = iter.next().await? {
@@ -2303,7 +2307,7 @@ pub async fn add_to_edge_range_index_with_direction_scoped(
         edge_id,
         direction,
     );
-    let out_key = Key::Data {
+    let out_key = DataKey::Data {
         scope: tenant_scope,
         kind: out_key,
     }
@@ -2318,7 +2322,7 @@ pub async fn add_to_edge_range_index_with_direction_scoped(
         edge_id,
         direction,
     );
-    let in_key = Key::Data {
+    let in_key = DataKey::Data {
         scope: tenant_scope,
         kind: in_key,
     }
@@ -2326,7 +2330,7 @@ pub async fn add_to_edge_range_index_with_direction_scoped(
     txn.put(&in_key, Bytes::new())?;
 
     let global_key = global_edge_range_key_with_direction(property, value, edge_id, direction);
-    let global_key = Key::Data {
+    let global_key = DataKey::Data {
         scope: tenant_scope,
         kind: global_key,
     }
@@ -2399,7 +2403,7 @@ pub async fn remove_from_edge_range_index_with_direction_scoped(
         edge_id,
         direction,
     );
-    let out_key = Key::Data {
+    let out_key = DataKey::Data {
         scope: tenant_scope,
         kind: out_key,
     }
@@ -2414,7 +2418,7 @@ pub async fn remove_from_edge_range_index_with_direction_scoped(
         edge_id,
         direction,
     );
-    let in_key = Key::Data {
+    let in_key = DataKey::Data {
         scope: tenant_scope,
         kind: in_key,
     }
@@ -2422,7 +2426,7 @@ pub async fn remove_from_edge_range_index_with_direction_scoped(
     txn.delete(&in_key)?;
 
     let global_key = global_edge_range_key_with_direction(property, value, edge_id, direction);
-    let global_key = Key::Data {
+    let global_key = DataKey::Data {
         scope: tenant_scope,
         kind: global_key,
     }
@@ -2558,7 +2562,7 @@ pub async fn scan_global_edge_range_index_all_with_direction_limited_scoped(
     let property_hash = hash_property_name(property);
     let prefix = global_edge_range_prefix_with_direction(property, direction);
     let mut iter = txn
-        .scan_prefix(Key::data_prefix(tenant_scope, prefix), ..)
+        .scan_prefix(DataKey::data_prefix(tenant_scope, prefix), ..)
         .await?;
     let mut results = Vec::new();
 
@@ -2611,7 +2615,7 @@ pub async fn scan_global_edge_range_index_with_direction_limited_scoped(
     let prefix = global_edge_range_prefix_with_direction(property, direction);
     let (start, end) =
         global_edge_range_scan_bounds_with_direction(&prefix, property, &query, direction);
-    let (start, end) = Key::data_range(tenant_scope, start, end);
+    let (start, end) = DataKey::data_range(tenant_scope, start, end);
 
     let mut iter = txn.scan(start..end).await?;
     let mut results = Vec::new();
@@ -3020,7 +3024,7 @@ pub async fn store_edge_endpoints_scoped(
     to: NodeId,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
         kind: DataKeyKind::EdgeEndpoints(EdgeEndpointsKey::new(edge_id)),
     }
@@ -3042,7 +3046,7 @@ pub async fn get_edge_endpoints_scoped(
     edge_id: EdgeId,
     tenant_scope: DataScope,
 ) -> Result<Option<(NodeId, NodeId)>, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
         kind: DataKeyKind::EdgeEndpoints(EdgeEndpointsKey::new(edge_id)),
     }
@@ -3069,7 +3073,7 @@ pub async fn delete_edge_endpoints_scoped(
     edge_id: EdgeId,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
         kind: DataKeyKind::EdgeEndpoints(EdgeEndpointsKey::new(edge_id)),
     }
@@ -3093,7 +3097,7 @@ pub async fn store_edge_properties_by_id_scoped(
     properties: &[Property],
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
         kind: DataKeyKind::EdgePropertyById(EdgePropertyByIdKey::new(edge_id)),
     }
@@ -3115,7 +3119,7 @@ pub async fn get_edge_properties_by_id_scoped(
     edge_id: EdgeId,
     tenant_scope: DataScope,
 ) -> Result<Vec<Property>, HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
         kind: DataKeyKind::EdgePropertyById(EdgePropertyByIdKey::new(edge_id)),
     }
@@ -3139,7 +3143,7 @@ pub async fn delete_edge_properties_by_id_scoped(
     edge_id: EdgeId,
     tenant_scope: DataScope,
 ) -> Result<(), HelixDbError> {
-    let key = Key::Data {
+    let key = DataKey::Data {
         scope: tenant_scope,
         kind: DataKeyKind::EdgePropertyById(EdgePropertyByIdKey::new(edge_id)),
     }
@@ -3174,8 +3178,11 @@ mod tests {
     }
 
     fn current_range_bytes(direction: RangeIndexDirection, value: &PropertyValue) -> Vec<u8> {
-        let crate::encoding::v1::property::range_value::RangeValueProjection::Indexed(value) =
-            crate::encoding::v1::property::range_value::project_range_value(value, direction)
+        let crate::encoding::v2::values::property::range_index_value::RangeValueProjection::Indexed(
+            value,
+        ) = crate::encoding::v2::values::property::range_index_value::project_range_value(
+            value, direction,
+        )
         else {
             panic!("range regression fixture must be indexable");
         };
@@ -3187,11 +3194,12 @@ mod tests {
         value: &str,
         entity_id: u64,
     ) -> Vec<u8> {
-        let crate::encoding::v1::property::range_value::RangeValueProjection::Indexed(value) =
-            crate::encoding::v1::property::range_value::project_range_value(
-                &PropertyValue::String(value.to_string()),
-                direction,
-            )
+        let crate::encoding::v2::values::property::range_index_value::RangeValueProjection::Indexed(
+            value,
+        ) = crate::encoding::v2::values::property::range_index_value::project_range_value(
+            &PropertyValue::String(value.to_string()),
+            direction,
+        )
         else {
             panic!("range regression fixture must be indexable");
         };
@@ -3199,7 +3207,7 @@ mod tests {
     }
 
     fn assert_distinct_equality_identities(left: PropertyValue, right: PropertyValue) {
-        use crate::encoding::v1::property::equality_value::project_equality_value;
+        use crate::encoding::v2::values::property::equality_index_value::project_equality_value;
 
         assert_ne!(
             project_equality_value(&left),
@@ -3254,7 +3262,7 @@ mod tests {
 
     #[test]
     fn regression_secondary_equality_canonicalization_matches_semantic_numeric_equality() {
-        use crate::encoding::v1::property::equality_value::project_equality_value;
+        use crate::encoding::v2::values::property::equality_index_value::project_equality_value;
 
         let equal_pairs = [
             (PropertyValue::I64(42), PropertyValue::F64(42.0)),
@@ -3707,9 +3715,9 @@ mod tests {
             .expect("legacy lookup succeeds")
             .is_empty());
 
-        let malformed_key = Key::Data {
+        let malformed_key = DataKey::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: DataKeyKind::PropertyIndex(IndexKey::Equality(EqualityIndexKey::new(
+            kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(EqualityIndexKey::new(
                 hash_property_name("broken"),
                 hash_property_value("value"),
             ))),
@@ -4993,23 +5001,25 @@ mod tests {
             .await
             .expect("global label index write succeeds");
 
-        let out_key = Key::Data {
+        let out_key = DataKey::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabelNeighbor(
+            kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
                 EdgeLabelNeighborKey::new(EdgeRangeDirection::Out, 1, label_hash),
             )),
         }
         .to_bytes();
-        let in_key = Key::Data {
+        let in_key = DataKey::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabelNeighbor(
+            kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
                 EdgeLabelNeighborKey::new(EdgeRangeDirection::In, 2, label_hash),
             )),
         }
         .to_bytes();
-        let global_key = Key::Data {
+        let global_key = DataKey::Data {
             scope: DataScope::LegacyUnscoped,
-            kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabel(EdgeLabelKey::new(label_hash))),
+            kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(
+                label_hash,
+            ))),
         }
         .to_bytes();
 

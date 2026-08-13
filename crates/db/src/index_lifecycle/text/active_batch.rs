@@ -14,11 +14,11 @@ use slatedb::DbTransaction;
 use tokio::sync::Semaphore;
 
 use crate::config::ActiveTextMutationLimits;
-use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::property::Property;
 use crate::encoding::v2::keys as index_keys;
+use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::ManagedIndexKey;
 use crate::encoding::v2::values as index_values;
+use crate::encoding::v2::values::property::Property;
 use crate::error::{HelixDbError, Result};
 use crate::index_lifecycle::graph_mutation::{CanonicalPropertyRow, GraphEntity};
 use crate::index_lifecycle::{self, work};

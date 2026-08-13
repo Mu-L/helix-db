@@ -31,15 +31,15 @@ use slatedb::IsolationLevel;
 
 use crate::encoding::keys::scope::DataScope;
 #[cfg(test)]
-use crate::encoding::v1::keys::vectors::VectorKey;
+use crate::encoding::v2::keys::indexes::vector::VectorKey;
 #[cfg(test)]
-use crate::encoding::v1::keys::vectors::{
+use crate::encoding::v2::keys::indexes::vector::{
     VectorEntryCandidateKey, VectorEntryCandidateNodeKey, VectorIndexMetadataKey, VectorItemKey,
     VectorL0PrefixKey, VectorLayer0NeighborsKey, VectorMemoryPrefixKey, VectorReverseEdgeKey,
     VectorReverseEdgePrefixKey, VectorSimHashKey, VectorTxnGuardKey, VectorUpperVectorKey,
 };
 #[cfg(test)]
-use crate::encoding::v1::values::vectors::simhash::encode_simhash;
+use crate::encoding::v2::values::indexes::vector::simhash::encode_simhash;
 use crate::encoding::NodeId;
 use crate::error::HelixDbError;
 #[cfg(test)]
@@ -1626,7 +1626,9 @@ mod tests {
     use slatedb::object_store::memory::InMemory;
 
     use super::*;
-    use crate::encoding::v1::values::vectors::{decode_layer0_neighbors, encode_layer0_neighbors};
+    use crate::encoding::v2::values::indexes::vector::{
+        decode_layer0_neighbors, encode_layer0_neighbors,
+    };
     use crate::search::vector::distance::{Cosine, Euclidean};
     use crate::search::vector::{SimHash, VectorConfigError, VectorDimensionError};
 
@@ -2151,7 +2153,7 @@ mod tests {
         let txn = db.begin(IsolationLevel::Snapshot).await.unwrap();
         txn.put(
             &guard_key,
-            crate::encoding::v1::values::vectors::markers::encode_active_txn_guard(),
+            crate::encoding::v2::values::indexes::vector::markers::encode_active_txn_guard(),
         )
         .unwrap();
         txn.commit().await.unwrap();

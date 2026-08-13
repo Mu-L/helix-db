@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use roaring::RoaringTreemap;
 
-use super::codec_legacy::{take_slice, take_u32_le, take_u8, ENCODING_TYPE_LEN, U32_LEN};
+use super::codec::{take_slice, take_u32_le, take_u8, ENCODING_TYPE_LEN, U32_LEN};
 use crate::encoding::{error::EncodingError, NodeId};
 
 const BITMAP_LEN_PREFIX_LEN: usize = U32_LEN;

@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn element_id_parser_rejects_typed_metadata_keys() {
         let key = keys::DataKey::Data {
-            scope: keys::tenant::DataScope::LegacyUnscoped,
+            scope: keys::scope::DataScope::LegacyUnscoped,
             kind: keys::DataKeyKind::IndexMetadata(keys::metadata::MetadataKey::new(b"catalog")),
         }
         .to_bytes();

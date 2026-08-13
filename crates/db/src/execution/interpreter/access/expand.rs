@@ -10,7 +10,7 @@ use helix_planner::ir;
 
 use super::super::*;
 use crate::encoding::keys;
-use crate::encoding::v1::values;
+use crate::encoding::v2::values;
 
 impl<'db> ExecutionContext<'db> {
     pub(in crate::execution::interpreter) async fn expand(
@@ -138,7 +138,7 @@ impl<'db> ExecutionContext<'db> {
         let Some(value) = self.get_raw(&key).await? else {
             return Ok(Vec::new());
         };
-        let edges = values::edges::decode_edges(&value)?;
+        let edges = values::adjacency::decode_edges(&value)?;
         let mut out = BTreeSet::new();
         match direction {
             ir::ExpandDirection::Out | ir::ExpandDirection::Both => out.extend(edges.iter_out()),
@@ -164,7 +164,7 @@ impl<'db> ExecutionContext<'db> {
         let Some(value) = self.get_raw(&key).await? else {
             return Ok(BTreeSet::new());
         };
-        let edges = values::edges::decode_edges(&value)?;
+        let edges = values::adjacency::decode_edges(&value)?;
         let mut out = BTreeSet::new();
         if matches!(
             direction,

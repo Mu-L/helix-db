@@ -2,11 +2,10 @@
 
 pub mod adjacency;
 mod codec;
-mod codec_legacy;
 pub(crate) mod edge_endpoints;
 mod global;
 pub(crate) mod id_allocation;
-pub(crate) mod indexes;
+pub mod indexes;
 mod lifecycle;
 pub mod property;
 
@@ -28,21 +27,3 @@ pub(crate) use lifecycle::{
     decode_operation_record_with_compatibility, encode_applied_state, encode_build_delta,
     encode_index_record, encode_operation_record,
 };
-
-use crate::config::{RangeIndexDirection, TextAnalyzerKind};
-use crate::encoding::error::EncodingError;
-use crate::encoding::indexes::range::RangeIndexDirection as StorageRangeIndexDirection;
-use crate::encoding::v2::keys::scope::{DataScope, TenantId};
-use crate::encoding::v2::keys::{CanonicalSecondaryValue, SecondaryEntryLane};
-use crate::index_lifecycle::work::{BlobRef, SplitPruning, SplitRef, SPLIT_PRUNING_BLOOM_WORDS};
-use crate::index_lifecycle::{
-    ActiveVectorCodecV2, ClaimSequence, CosineNormPolicyV2, IndexComponent, IndexCursor,
-    IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexIdentity,
-    IndexIdentityFamily, IndexOperationBlocker, IndexOperationId, IndexOperationRevision,
-    IndexRevision, OperationClaim, OperationCounters, PhysicalGeneration, TextLogicalVersion,
-    TextManifestRevision, TextPartition, ValidatedDynamicIndexDefinition,
-    ValidatedSecondaryIndexDefinition, ValidatedTextIndexDefinition,
-    ValidatedVectorIndexDefinition, VectorGenerationDescriptor, VectorPhysicalIndexId,
-    VectorPhysicalLayout, VectorRoutingLayoutV2, VectorScoreSemanticV2, WriterEpoch,
-};
-use crate::search::vector::VectorDistanceMetric;

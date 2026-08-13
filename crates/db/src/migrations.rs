@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 //! Durable KV migration jobs.
 //!
 //! Migration progress is stored in the same scoped data-metadata namespace as

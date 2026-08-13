@@ -17,7 +17,7 @@ use crate::config::{
     SearchIndexBackfillLimits, SearchIndexBatchLimits, SecondaryIndexDefinition, TextAnalyzerKind,
     TextBackfillCompactionLimits, TextBuildArtifactLimits,
 };
-use crate::encoding::v1::keys::tenant::DataScope;
+use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::ManagedIndexKey;
 use crate::index_lifecycle::{
     IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2,

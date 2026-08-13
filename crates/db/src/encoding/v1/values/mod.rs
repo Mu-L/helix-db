@@ -1,5 +1,7 @@
 //! Deprecated stored-value paths.
 
+#![allow(deprecated, unused_imports)]
+
 #[deprecated(note = "use encoding::v2::values::edge_endpoints")]
 pub(crate) mod edge_endpoints {
     #[deprecated(note = "use encoding::v2::values::edge_endpoints")]
@@ -28,7 +30,7 @@ pub(crate) mod secondary {
 #[deprecated(note = "use encoding::v2::values::indexes::text")]
 pub(crate) mod text_index {
     #[deprecated(note = "use encoding::v2::values::indexes::text")]
-    pub(crate) use crate::encoding::v2::values::indexes::text_legacy::*;
+    pub(crate) use crate::encoding::v2::values::indexes::text::*;
 }
 
 #[deprecated(note = "use encoding::v2::values::indexes::vector::generation")]

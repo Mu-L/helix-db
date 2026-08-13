@@ -18,7 +18,7 @@ pub struct Property {
 }
 
 impl Property {
-    /// Returns whether the name and value have exactly the same persisted V1
+    /// Returns whether the name and value have exactly the same persisted
     /// representation.
     pub(crate) fn same_v1_representation(&self, other: &Self) -> bool {
         self.name == other.name && self.value.same_v1_representation(&other.value)

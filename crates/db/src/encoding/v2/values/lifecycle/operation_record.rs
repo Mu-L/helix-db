@@ -1,213 +1,30 @@
+//! Lifecycle operation-record values.
+
 //! Canonical metadata, logical index-record, and operation codecs.
 
 use bytes::Bytes;
 
 use crate::encoding::error::EncodingError;
-use crate::index_lifecycle::work::{
-    AppliedEntityStateValue, AppliedFamilyState, CoalescedBuildDeltaValue,
-};
 use crate::index_lifecycle::{
     BuildOperationOutcome, IndexOperationExecutionState, IndexOperationFamily, IndexOperationKind,
     IndexOperationOutcome, IndexOperationProgress, IndexOperationQueueSchedule,
-    IndexOperationRecord, IndexRecordV2, IndexStateV2, LegacyVectorDirectoryValidationProgress,
-    LegacyVectorValidationLane, LegacyVectorValidationProgress, NoCursorProgress,
-    PrefixScanProgress, SecondaryBuildProgress, SecondaryBuildStage, SecondaryCleanupProgress,
-    SourceScanProgress, TextBuildProgress, TextBuildStage, TextCleanupProgress,
-    TextManifestPageValidationProgress, TextManifestPartitionValidation,
-    TextManifestValidationProgress, VectorBuildProgress, VectorBuildStage, VectorCleanupProgress,
+    IndexOperationRecord, LegacyVectorDirectoryValidationProgress, LegacyVectorValidationLane,
+    LegacyVectorValidationProgress, NoCursorProgress, PrefixScanProgress, SecondaryBuildProgress,
+    SecondaryBuildStage, SecondaryCleanupProgress, SourceScanProgress, TextBuildProgress,
+    TextBuildStage, TextCleanupProgress, TextManifestPageValidationProgress,
+    TextManifestPartitionValidation, TextManifestValidationProgress, VectorBuildProgress,
+    VectorBuildStage, VectorCleanupProgress,
 };
+
+#[cfg(test)]
+use crate::index_lifecycle::work::{
+    AppliedEntityStateValue, AppliedFamilyState, CoalescedBuildDeltaValue,
+};
+#[cfg(test)]
+use crate::index_lifecycle::IndexRecordV2;
 
 use super::*;
 
-const INDEX_RECORD_KIND: u8 = 0x01;
-const OPERATION_RECORD_KIND: u8 = 0x02;
-const BUILD_DELTA_KIND: u8 = 0x03;
-const APPLIED_STATE_KIND: u8 = 0x04;
-
-pub(crate) fn encode_build_delta(value: &CoalescedBuildDeltaValue) -> Bytes {
-    let mut encoder = ValueEncoder::with_header(BUILD_DELTA_KIND);
-    put_index_id(&mut encoder, value.index_id);
-    put_generation(&mut encoder, value.generation);
-    put_element_kind(&mut encoder, value.entity_kind);
-    encoder.put_u64(value.entity_id.get());
-    encoder.finish()
-}
-
-pub(crate) fn decode_build_delta(value: &[u8]) -> Result<CoalescedBuildDeltaValue, EncodingError> {
-    let mut decoder = ValueDecoder::new(value)?;
-    if decoder.kind() != BUILD_DELTA_KIND {
-        return Err(EncodingError::UnexpectedValueKind {
-            expected: BUILD_DELTA_KIND,
-            actual: decoder.kind(),
-        });
-    }
-    let decoded = CoalescedBuildDeltaValue {
-        index_id: take_index_id(&mut decoder)?,
-        generation: take_generation(&mut decoder)?,
-        entity_kind: take_element_kind(&mut decoder)?,
-        entity_id: crate::index_lifecycle::IndexEntityId::new(decoder.take_u64()?),
-    };
-    decoder.finish()?;
-    Ok(decoded)
-}
-
-pub(crate) fn encode_applied_state(value: &AppliedEntityStateValue) -> Bytes {
-    let mut encoder = ValueEncoder::with_header(APPLIED_STATE_KIND);
-    put_index_id(&mut encoder, value.index_id);
-    put_generation(&mut encoder, value.generation);
-    put_element_kind(&mut encoder, value.entity_kind);
-    encoder.put_u64(value.entity_id.get());
-    match &value.state {
-        AppliedFamilyState::Secondary(state) => {
-            encoder.put_u8(0x01);
-            put_option(&mut encoder, state.as_ref(), put_secondary_value);
-        }
-        AppliedFamilyState::Vector(state) => {
-            encoder.put_u8(0x02);
-            put_option(&mut encoder, state.as_ref(), put_partition);
-        }
-        AppliedFamilyState::Text(state) => {
-            encoder.put_u8(0x03);
-            put_option(&mut encoder, state.as_ref(), |encoder, state| {
-                put_partition(encoder, &state.0);
-                encoder.put_u64(state.1.get());
-            });
-        }
-    }
-    encoder.finish()
-}
-
-pub(crate) fn decode_applied_state(value: &[u8]) -> Result<AppliedEntityStateValue, EncodingError> {
-    let mut decoder = ValueDecoder::new(value)?;
-    if decoder.kind() != APPLIED_STATE_KIND {
-        return Err(EncodingError::UnexpectedValueKind {
-            expected: APPLIED_STATE_KIND,
-            actual: decoder.kind(),
-        });
-    }
-    let index_id = take_index_id(&mut decoder)?;
-    let generation = take_generation(&mut decoder)?;
-    let entity_kind = take_element_kind(&mut decoder)?;
-    let entity_id = crate::index_lifecycle::IndexEntityId::new(decoder.take_u64()?);
-    let state = match decoder.take_u8()? {
-        0x01 => AppliedFamilyState::Secondary(decoder.take_option(take_secondary_value)?),
-        0x02 => AppliedFamilyState::Vector(decoder.take_option(take_partition)?),
-        0x03 => AppliedFamilyState::Text(decoder.take_option(|decoder| {
-            Ok((take_partition(decoder)?, take_logical_version(decoder)?))
-        })?),
-        unknown => return Err(unknown_discriminant("applied-state family", unknown)),
-    };
-    decoder.finish()?;
-    Ok(AppliedEntityStateValue {
-        index_id,
-        generation,
-        entity_kind,
-        entity_id,
-        state,
-    })
-}
-
-/// Encodes the only persisted logical index record.
-pub(crate) fn encode_index_record(record: &IndexRecordV2) -> Bytes {
-    let mut encoder = ValueEncoder::with_header(INDEX_RECORD_KIND);
-    put_index_id(&mut encoder, record.index_id());
-    put_identity(&mut encoder, record.identity());
-    put_definition(&mut encoder, record.definition());
-    put_revision(&mut encoder, record.revision());
-    put_index_state(&mut encoder, record.state());
-    encoder.finish()
-}
-
-/// Decodes and cross-validates a canonical logical index record.
-pub(crate) fn decode_index_record(value: &[u8]) -> Result<IndexRecordV2, EncodingError> {
-    let mut decoder = ValueDecoder::new(value)?;
-    if decoder.kind() != INDEX_RECORD_KIND {
-        return Err(EncodingError::UnexpectedValueKind {
-            expected: INDEX_RECORD_KIND,
-            actual: decoder.kind(),
-        });
-    }
-    let index_id = take_index_id(&mut decoder)?;
-    let identity = take_identity(&mut decoder)?;
-    let definition = take_definition(&mut decoder)?;
-    let revision = take_revision(&mut decoder)?;
-    let state = take_index_state(&mut decoder)?;
-    decoder.finish()?;
-    IndexRecordV2::try_new(index_id, identity, definition, revision, state).map_err(model_error)
-}
-
-fn put_index_state(encoder: &mut ValueEncoder, state: &IndexStateV2) {
-    match state {
-        IndexStateV2::Building {
-            physical,
-            build_operation_id,
-        } => {
-            encoder.put_u8(0x01);
-            put_physical_generation(encoder, physical);
-            put_operation_id(encoder, *build_operation_id);
-        }
-        IndexStateV2::Active {
-            physical,
-            completed_build_operation_id,
-        } => {
-            encoder.put_u8(0x02);
-            put_physical_generation(encoder, physical);
-            put_operation_id(encoder, *completed_build_operation_id);
-        }
-        IndexStateV2::Aborting {
-            physical,
-            build_operation_id,
-        } => {
-            encoder.put_u8(0x03);
-            put_physical_generation(encoder, physical);
-            put_operation_id(encoder, *build_operation_id);
-        }
-        IndexStateV2::Dropping {
-            physical,
-            drop_operation_id,
-        } => {
-            encoder.put_u8(0x04);
-            put_physical_generation(encoder, physical);
-            put_operation_id(encoder, *drop_operation_id);
-        }
-        IndexStateV2::Dropped {
-            last_generation,
-            completed_operation_id,
-        } => {
-            encoder.put_u8(0x05);
-            put_generation(encoder, *last_generation);
-            put_operation_id(encoder, *completed_operation_id);
-        }
-    }
-}
-
-fn take_index_state(decoder: &mut ValueDecoder<'_>) -> Result<IndexStateV2, EncodingError> {
-    match decoder.take_u8()? {
-        0x01 => Ok(IndexStateV2::Building {
-            physical: take_physical_generation(decoder)?,
-            build_operation_id: take_operation_id(decoder)?,
-        }),
-        0x02 => Ok(IndexStateV2::Active {
-            physical: take_physical_generation(decoder)?,
-            completed_build_operation_id: take_operation_id(decoder)?,
-        }),
-        0x03 => Ok(IndexStateV2::Aborting {
-            physical: take_physical_generation(decoder)?,
-            build_operation_id: take_operation_id(decoder)?,
-        }),
-        0x04 => Ok(IndexStateV2::Dropping {
-            physical: take_physical_generation(decoder)?,
-            drop_operation_id: take_operation_id(decoder)?,
-        }),
-        0x05 => Ok(IndexStateV2::Dropped {
-            last_generation: take_generation(decoder)?,
-            completed_operation_id: take_operation_id(decoder)?,
-        }),
-        unknown => Err(unknown_discriminant("index state", unknown)),
-    }
-}
-
-/// Encodes one durable outbox operation.
 pub(crate) fn encode_operation_record(record: &IndexOperationRecord) -> Bytes {
     let mut encoder = ValueEncoder::with_header(OPERATION_RECORD_KIND);
     put_operation_id(&mut encoder, record.operation_id());
@@ -893,13 +710,14 @@ mod wire_fixtures {
 
     use super::*;
     use crate::config::SecondaryIndexDefinition;
+    use crate::encoding::v2::keys::indexes::CanonicalSecondaryValue;
     use crate::encoding::v2::keys::scope::{DataScope, TenantId};
     use crate::encoding::v2::values::global::{decode_metadata_value, encode_metadata_value};
     use crate::index_lifecycle::{
-        IndexCursor, IndexGenerationId, IndexId, IndexOperationExecutionState, IndexOperationId,
-        IndexOperationRevision, IndexRevision, IndexStorageVersion, IndexV2MetadataValue,
-        LegacyVectorPhysicalReservation, LogicalIndexIdWatermark, OperationCounters,
-        OperationQueuePointerValue, PhysicalGeneration, SourceScanProgress,
+        IndexCursor, IndexElementKind, IndexGenerationId, IndexId, IndexOperationExecutionState,
+        IndexOperationId, IndexOperationRevision, IndexRevision, IndexStorageVersion,
+        IndexV2MetadataValue, LegacyVectorPhysicalReservation, LogicalIndexIdWatermark,
+        OperationCounters, OperationQueuePointerValue, PhysicalGeneration, SourceScanProgress,
         TextCompactionPointerValue, TextManifestRevision, ValidatedDynamicIndexDefinition,
         VectorPhysicalIdWatermark, VectorPhysicalIndexId,
     };
