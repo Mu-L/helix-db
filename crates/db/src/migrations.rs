@@ -5231,7 +5231,6 @@ pub(crate) mod production_contracts {
     use crate::encoding::v1::keys::vectors::{
         VectorIndexMetadataKey, VectorItemKey, VectorKey, VectorSimHashKey,
     };
-    use crate::encoding::v1::keys::DataKey;
     use crate::encoding::v2::keys::{GlobalKey, ScopedKey};
     use crate::encoding::v2::values::{
         decode_metadata_value, encode_index_record, encode_metadata_value,

@@ -21,7 +21,10 @@ use crate::encoding::v2::{
         decode_index_record, decode_manifest_page, decode_manifest_root, decode_metadata_value,
         decode_operation_record, decode_partition_mapping, decode_secondary_entry,
         decode_statistics_entity, decode_term_statistics, decode_text_entity_state,
-        indexes::{self as secondary, text as text_index, vector as vectors},
+        indexes::{
+            equality as secondary_equality, range as secondary_range, text as text_index,
+            vector as vectors,
+        },
         property::equality_index_value::{project_equality_value, EqualityValueProjection},
         SecondaryEqualityBitmapValue,
     },
@@ -152,10 +155,10 @@ fn typed_work_value_is_valid(data: &[u8]) -> bool {
 pub fn decode_current_secondary_record(selector: u8, data: &[u8]) {
     match selector % 2 {
         0 => {
-            let _ = secondary::SecondaryRangePresence::decode(data);
+            let _ = secondary_range::SecondaryRangePresence::decode(data);
         }
         _ => {
-            let _ = secondary::SecondaryEqualityValue::decode(data);
+            let _ = secondary_equality::SecondaryEqualityValue::decode(data);
         }
     }
 }
@@ -178,7 +181,7 @@ pub fn decode_current_search_record(selector: u8, data: &[u8]) {
             let _ = text_index::decode_live_state(data);
         }
         3 => {
-            let _ = vectors::entry::decode_entry_candidate_layer(data);
+            let _ = vectors::entry_candidate::decode_entry_candidate_layer(data);
         }
         4 => {
             let _ = vectors::neighbors::decode_flat_neighbors(data);
@@ -261,7 +264,10 @@ mod tests {
         let version = include_bytes!("../fuzz/corpus/current_search_records/text-version.json");
         assert!(text_index::decode_version_counter(&version[1..version.len() - 1]).is_ok());
         let entry = include_bytes!("../fuzz/corpus/current_search_records/vector-entry.bin");
-        assert!(vectors::entry::decode_entry_candidate_layer(&entry[1..entry.len() - 1]).is_ok());
+        assert!(
+            vectors::entry_candidate::decode_entry_candidate_layer(&entry[1..entry.len() - 1])
+                .is_ok()
+        );
         let simhash = include_bytes!("../fuzz/corpus/current_search_records/vector-simhash.bin");
         assert!(vectors::simhash::decode_simhash(&simhash[1..simhash.len() - 1]).is_ok());
         let layer0 =
