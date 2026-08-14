@@ -9,11 +9,11 @@ const LEGACY_TEXT_MANIFEST_FORMAT_VERSION: u32 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LegacyTextManifestError {
-    #[error("legacy text manifest JSON failed: {0}")]
+    #[error("failed to decode text manifest: {0}")]
     Json(serde_json::Error),
-    #[error("unsupported legacy text manifest format version {0}")]
+    #[error("unsupported text manifest format version {0}")]
     UnsupportedVersion(u32),
-    #[error("legacy text manifest must contain its primary split first")]
+    #[error("text manifest must contain its primary split as the first split")]
     InvalidPrimarySplit,
 }
 
