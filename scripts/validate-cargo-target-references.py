@@ -30,6 +30,15 @@ MATRIX_TEST = re.compile(r"^\s+test:\s*(?P<test>[A-Za-z0-9_:.-]+)\s*$", re.MULTI
 FLAG_KIND = {"--test": "test", "--bench": "bench", "--bin": "bin"}
 TARGET_KIND_ORDER = ("lib", "test", "bench", "bin")
 CODEC_OWNERS = {
+    "legacy/tenant_envelope.rs": "struct LegacyTenantEnvelope",
+    "legacy/edge_property_pair.rs": "struct LegacyEdgePropertyPairKey",
+    "legacy/index_catalog.rs": "enum LegacyDynamicIndexCatalogEntry",
+    "legacy/text/storage_keys.rs": "enum LegacyTextMetadataElement",
+    "legacy/text/manifest.rs": "enum LegacyTextManifestError",
+    "legacy/text/live_state.rs": "struct LegacyTextLiveStateError",
+    "legacy/text/version_counter.rs": "enum LegacyTextVersionCounterError",
+    "legacy/vector/metadata.rs": "struct LegacyVectorIndexMetadata",
+    "legacy/vector/transaction_guard.rs": "struct LegacyVectorTxnGuardKey",
     "keys/global.rs": "enum GlobalKey",
     "keys/lifecycle.rs": "struct IndexRecordKey",
     "keys/indexes/secondary.rs": "struct SecondaryEqualityEntryKey",
@@ -44,6 +53,18 @@ CODEC_OWNERS = {
 }
 V2_SOURCE_FILES = {
     "mod.rs",
+    "legacy/mod.rs",
+    "legacy/tenant_envelope.rs",
+    "legacy/edge_property_pair.rs",
+    "legacy/index_catalog.rs",
+    "legacy/text/mod.rs",
+    "legacy/text/storage_keys.rs",
+    "legacy/text/manifest.rs",
+    "legacy/text/live_state.rs",
+    "legacy/text/version_counter.rs",
+    "legacy/vector/mod.rs",
+    "legacy/vector/metadata.rs",
+    "legacy/vector/transaction_guard.rs",
     "keys/mod.rs",
     "keys/codec.rs",
     "keys/scope.rs",
@@ -70,7 +91,6 @@ V2_SOURCE_FILES = {
     "keys/indexes/range/scans.rs",
     "keys/indexes/vector/mod.rs",
     "keys/indexes/vector/metadata.rs",
-    "keys/indexes/vector/transaction_guard.rs",
     "keys/indexes/vector/layer0.rs",
     "keys/indexes/vector/items.rs",
     "keys/indexes/vector/entry_candidates.rs",
@@ -494,6 +514,103 @@ def validate_codec_architecture(root: Path) -> list[str]:
                 f"{path.relative_to(root)}: use {path.stem}/mod.rs for a module with children"
             )
 
+    legacy = v2 / "legacy"
+    legacy_implementation = re.compile(
+        r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:fn|struct|enum|trait|impl|const|static|type)\b",
+        re.MULTILINE,
+    )
+    for path in legacy.rglob("mod.rs"):
+        if legacy_implementation.search(path.read_text()):
+            errors.append(
+                f"{path.relative_to(root)}: legacy mod.rs must contain declarations and re-exports only"
+            )
+
+    legacy_codec_declaration = re.compile(
+        r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+"
+        r"(?:LegacyTenantEnvelope|LegacyEdgePropertyPairKey|LegacyDynamicIndexCatalogEntry|"
+        r"LegacyTextMetadataElement|LegacyTextManifestError|LegacyTextLiveStateError|"
+        r"LegacyTextVersionCounterError|LegacyVectorIndexMetadata|LegacyVectorTxnGuardKey)\b"
+        r"|^\s*const\s+(?:DYNAMIC_INDEX_PREFIX|TEXT_INDEX_MANIFEST_PREFIX|ACTIVE_TXN_GUARD)\b",
+        re.MULTILINE,
+    )
+    for path in source_root.rglob("*.rs"):
+        if path.is_relative_to(legacy):
+            continue
+        if legacy_codec_declaration.search(path.read_text()):
+            errors.append(
+                f"{path.relative_to(root)}: legacy codec implementation must live in encoding/v2/legacy"
+            )
+
+    fixture_encoders = {
+        "encode_for_contract",
+        "encode_row_for_contract",
+        "encode_legacy_metadata_for_contract",
+        "encode_active_txn_guard",
+    }
+    for path in legacy.rglob("*.rs"):
+        lines = path.read_text().splitlines()
+        for line_number, line in enumerate(lines):
+            if not any(re.search(rf"\bfn\s+{name}\b", line) for name in fixture_encoders):
+                continue
+            previous = line_number - 1
+            while previous >= 0 and not lines[previous].strip():
+                previous -= 1
+            gated = False
+            while previous >= 0 and lines[previous].strip().startswith("#["):
+                gated |= lines[previous].strip().startswith("#[cfg(")
+                previous -= 1
+            if not gated:
+                errors.append(
+                    f"{path.relative_to(root)}:{line_number + 1}: legacy fixture encoder is not compile-gated"
+                )
+
+    def legacy_dependency_allowed(relative_path: str) -> bool:
+        return (
+            relative_path.startswith("crates/db/src/encoding/v2/legacy/")
+            or relative_path.startswith("crates/db/src/encoding/v1/")
+            or relative_path in {
+                "crates/db/src/encoding/v2/keys/data.rs",
+                "crates/db/src/encoding/v2/keys/indexes/vector/mod.rs",
+                "crates/db/src/encoding/v2/keys/indexes/vector/storage_prefixes.rs",
+                "crates/db/src/fuzzing.rs",
+                "crates/db/src/index_lifecycle/cursor_contracts.rs",
+                "crates/db/src/index_lifecycle/tenant_envelope_migration.rs",
+                "crates/db/src/index_lifecycle/vector.rs",
+                "crates/db/src/index_lifecycle/vector/driver.rs",
+                "crates/db/src/index_lifecycle_testing.rs",
+                "crates/db/src/migration_parity.rs",
+                "crates/db/src/migrations.rs",
+                "crates/db/src/search/mod.rs",
+                "crates/db/src/search/text/mod.rs",
+                "crates/db/src/search/vector/index.rs",
+                "crates/db/src/search/vector/mod.rs",
+                "crates/db/src/search/vector/storage.rs",
+            }
+            or relative_path.startswith("crates/db/src/migrations/")
+            or relative_path.startswith("crates/db/tests/")
+        )
+
+    fixture_encoder_call = re.compile(
+        r"\b(?:encode_for_contract|encode_row_for_contract|"
+        r"encode_legacy_metadata_for_contract|encode_active_txn_guard)\s*\("
+    )
+    for path in source_root.rglob("*.rs"):
+        relative_path = path.relative_to(root).as_posix()
+        text = path.read_text()
+        if "encoding::v2::legacy" in text and not legacy_dependency_allowed(relative_path):
+            errors.append(f"{relative_path}: legacy dependency is outside the compatibility allowlist")
+        if path.is_relative_to(legacy) or relative_path.startswith("crates/db/src/migrations/"):
+            continue
+        production_text = text.split("#[cfg(test)]\nmod tests", 1)[0]
+        if fixture_encoder_call.search(production_text) and relative_path not in {
+            "crates/db/src/index_lifecycle_testing.rs",
+            "crates/db/src/index_lifecycle/tenant_envelope_migration.rs",
+            "crates/db/src/migration_parity.rs",
+            "crates/db/src/migrations.rs",
+            "crates/db/src/search/text/mod.rs",
+        }:
+            errors.append(f"{relative_path}: production source calls a legacy fixture encoder")
+
     v1 = source_root / "encoding" / "v1"
     actual_v1_files = {
         path.relative_to(v1).as_posix() for path in v1.rglob("*.rs")
@@ -515,10 +632,8 @@ def validate_codec_architecture(root: Path) -> list[str]:
         for line_number, line in enumerate(lines):
             if not public_facade_item.search(line):
                 continue
-            previous = line_number - 1
-            while previous >= 0 and not lines[previous].strip():
-                previous -= 1
-            if previous < 0 or not lines[previous].strip().startswith("#[deprecated("):
+            attributes = "\n".join(lines[max(0, line_number - 8) : line_number])
+            if re.search(r"#\[deprecated\([\s\S]*?\)\]\s*$", attributes) is None:
                 errors.append(
                     f"{path.relative_to(root)}:{line_number + 1}: V1 facade item is not deprecated"
                 )
