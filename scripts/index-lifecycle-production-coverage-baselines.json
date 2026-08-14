@@ -2,12 +2,12 @@
   "schema_version": 1,
   "uncovered_test_required_positions": {
     "lines": {
-      "count": 1804,
-      "sha256": "571c3bbc0a08e5df1f0616bf2a8cca1659ab4da9392c71ef9af178628bd991f2"
+      "count": 1803,
+      "sha256": "ca5a05b6e0643c0b09f34c7bf3296b3a939d4a8af505102da3e5978033a048dd"
     },
     "functions": {
       "count": 143,
-      "sha256": "1883542706492809a861eab14c54a235fe60013803f0a9c6193f5649aa2639a0"
+      "sha256": "6baad249967e2f20a97c7bc32ef7737ccd00099e5603a930b52f64e82baa97e3"
     },
     "classification": "test-required",
     "reason": "Every remaining uncovered Index V2 production position is part of the explicit merged test backlog. Exact line and function digests make additions, removals, and newly covered positions require a reviewed baseline update; structurally unreachable, platform-gated, and LLVM-artifact positions remain individually justified in the exclusions file."
