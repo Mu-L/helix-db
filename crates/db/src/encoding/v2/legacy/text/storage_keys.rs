@@ -109,6 +109,7 @@ mod tests {
             live_state_key(scope, "x", 7).as_ref(),
             b"\xfftext_live:x:00000000000000000007"
         );
+        assert_eq!(live_state_prefix(scope, "x").as_ref(), b"\xfftext_live:x:");
         assert_eq!(
             version_counter_key(scope, "x").as_ref(),
             b"\xfftext_version:x"

@@ -230,6 +230,7 @@ fn data_metadata_key(scope: DataScope, name: &[u8]) -> Bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encoding::v2::keys::AdjacencyKey;
 
     #[test]
     fn deployed_enum_names_are_explicit_and_frozen() {
@@ -343,24 +344,41 @@ mod tests {
 
     #[test]
     fn catalog_row_round_trips_and_rejects_bad_json() {
+        let scope = DataScope::LegacyUnscoped;
         let identity = LegacyDynamicIndexKey::Text {
             element_type: LegacyTextElementType::Node,
             label: "Post".to_string(),
             property: "body".to_string(),
         };
         let entry = LegacyDynamicIndexCatalogEntry::Tombstone { tombstone: true };
-        let (key, value) =
-            encode_row_for_contract(DataScope::LegacyUnscoped, &identity, &entry).unwrap();
-        let decoded = LegacyDefinitionRow::decode(DataScope::LegacyUnscoped, key, &value).unwrap();
+        let (key, value) = encode_row_for_contract(scope, &identity, &entry).unwrap();
+        let decoded = LegacyDefinitionRow::decode(scope, key, &value).unwrap();
         assert_eq!(decoded.identity, identity);
         assert_eq!(decoded.entry, entry);
-        let (_, malformed) =
-            encode_row_for_contract(DataScope::LegacyUnscoped, &identity, &entry).unwrap();
+        let (_, malformed) = encode_row_for_contract(scope, &identity, &entry).unwrap();
         assert!(LegacyDefinitionRow::decode(
-            DataScope::LegacyUnscoped,
+            scope,
             decoded.storage_key,
             &[malformed.as_ref(), b"x"].concat()
         )
         .is_err());
+
+        let wrong_kind = DataKey::Data {
+            scope,
+            kind: DataKeyKind::Adjacency(AdjacencyKey::new(7)),
+        }
+        .to_bytes();
+        assert!(matches!(
+            LegacyDefinitionRow::decode(scope, wrong_kind, &value),
+            Err(LegacyIndexCatalogError::WrongKeyKind)
+        ));
+        assert!(matches!(
+            LegacyDefinitionRow::decode(scope, data_metadata_key(scope, b"other"), &value),
+            Err(LegacyIndexCatalogError::MissingIdentity)
+        ));
+        assert!(matches!(
+            LegacyDefinitionRow::decode(scope, catalog_storage_key(scope, b"not-json"), &value),
+            Err(LegacyIndexCatalogError::IdentityJson(_))
+        ));
     }
 }
