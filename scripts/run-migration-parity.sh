@@ -33,7 +33,7 @@ case "$PROFILE" in
 esac
 
 contracts() {
-    cargo test --locked -p db --features production-coverage --test production_migration_contracts
+    cargo test --locked -p db --features "production-coverage migration-parity index-lifecycle-testing" --test production_migration_contracts
     cargo test --locked -p db --features production-coverage --test production_index_lifecycle_contracts
 }
 
