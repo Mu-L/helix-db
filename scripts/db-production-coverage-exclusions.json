@@ -565,37 +565,37 @@
   },
   {
     "path": "crates/db/src/search/vector/memory_store.rs",
-    "line": 793,
+    "line": 795,
     "reason": "SlateDB scan_prefix returns only rows under the exact DataScope-qualified prefix used to create the iterator, so stripping that same scope cannot fail.",
     "evidence": "vector_memory_store_exercises_cache_and_hydration_boundaries"
   },
   {
     "path": "crates/db/src/search/vector/memory_store.rs",
-    "line": 848,
+    "line": 850,
     "reason": "This error value belongs to the platform-gated resident-byte overflow that cannot occur in a supported 64-bit address space.",
     "evidence": "vector_memory_store_exercises_cache_and_hydration_boundaries and db-vector-production-coverage architecture matrix"
   },
   {
     "path": "crates/db/src/search/vector/memory_store.rs",
-    "line": 858,
+    "line": 860,
     "reason": "This error value belongs to the platform-gated live-entry-count overflow that cannot occur in a supported process address space.",
     "evidence": "vector_memory_store_exercises_cache_and_hydration_boundaries and db-vector-production-coverage architecture matrix"
   },
   {
     "path": "crates/db/src/search/vector/memory_store.rs",
-    "line": 880,
+    "line": 882,
     "reason": "This error belongs to the platform-gated usize-to-u64 key-length conversion that cannot fail on supported 64-bit targets.",
     "evidence": "vector_memory_store_exercises_cache_and_hydration_boundaries and db-vector-production-coverage architecture matrix"
   },
   {
     "path": "crates/db/src/search/vector/memory_store.rs",
-    "line": 885,
+    "line": 887,
     "reason": "This error belongs to the platform-gated usize-to-u64 value-length conversion that cannot fail on supported 64-bit targets.",
     "evidence": "vector_memory_store_exercises_cache_and_hydration_boundaries and db-vector-production-coverage architecture matrix"
   },
   {
     "path": "crates/db/src/search/vector/mod.rs",
-    "line": 919,
+    "line": 921,
     "reason": "After checked round-up addition succeeds, dividing by the nonzero word size and multiplying by that same word size cannot exceed the rounded dividend.",
     "evidence": "vector_primitives_exercise_active_codec_and_runtime_boundaries and db-vector-production-coverage architecture matrix"
   }

@@ -1,6 +1,6 @@
 //! Deprecated property-value paths.
 
-#![allow(deprecated, unused_imports)]
+#![allow(clippy::module_inception, deprecated, unused_imports)]
 
 #[deprecated(note = "use encoding::v2::values::property::canonical_number")]
 pub(crate) mod canonical_number {

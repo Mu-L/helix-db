@@ -1,5 +1,7 @@
 //! Persisted graph-property rows and canonical index values.
 
+#![allow(clippy::module_inception)]
+
 pub(crate) mod canonical_number;
 pub(crate) mod equality_index_value;
 pub mod property;
