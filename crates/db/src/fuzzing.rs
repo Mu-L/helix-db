@@ -11,6 +11,10 @@ use roaring::RoaringTreemap;
 use slatedb::MergeOperator;
 
 use crate::encoding::property::property_value::PropertyValue;
+use crate::encoding::v2::legacy::{
+    text::{live_state, manifest, version_counter},
+    vector::transaction_guard,
+};
 use crate::encoding::v2::{
     keys::{
         scope::{DataScope, TenantId},
@@ -21,10 +25,7 @@ use crate::encoding::v2::{
         decode_index_record, decode_manifest_page, decode_manifest_root, decode_metadata_value,
         decode_operation_record, decode_partition_mapping, decode_secondary_entry,
         decode_statistics_entity, decode_term_statistics, decode_text_entity_state,
-        indexes::{
-            equality as secondary_equality, range as secondary_range, text as text_index,
-            vector as vectors,
-        },
+        indexes::{equality as secondary_equality, range as secondary_range, vector as vectors},
         property::equality_index_value::{project_equality_value, EqualityValueProjection},
         SecondaryEqualityBitmapValue,
     },
@@ -172,13 +173,13 @@ pub fn decode_current_secondary_record(selector: u8, data: &[u8]) {
 pub fn decode_current_search_record(selector: u8, data: &[u8]) {
     match selector % 11 {
         0 => {
-            let _ = text_index::decode_manifest(data);
+            let _ = manifest::decode(data);
         }
         1 => {
-            let _ = text_index::decode_version_counter(data);
+            let _ = version_counter::decode(data);
         }
         2 => {
-            let _ = text_index::decode_live_state(data);
+            let _ = live_state::decode(data);
         }
         3 => {
             let _ = vectors::entry_candidate::decode_entry_candidate_layer(data);
@@ -199,7 +200,7 @@ pub fn decode_current_search_record(selector: u8, data: &[u8]) {
             let _ = vectors::decode_layer0_neighbors_and_simhash(data);
         }
         9 => {
-            let _ = vectors::markers::decode_active_txn_guard(data);
+            let _ = transaction_guard::decode_active_txn_guard(data);
         }
         _ => {
             let header_len = data.first().copied().map_or(0, usize::from);
@@ -258,11 +259,14 @@ mod tests {
     #[test]
     fn checked_in_corpus_seeds_are_contract_valid() {
         let manifest = include_bytes!("../fuzz/corpus/current_search_records/text-manifest.json");
-        assert!(text_index::decode_manifest(&manifest[1..manifest.len() - 1]).is_ok());
+        assert!(crate::encoding::v2::legacy::text::manifest::decode(
+            &manifest[1..manifest.len() - 1]
+        )
+        .is_ok());
         let live = include_bytes!("../fuzz/corpus/current_search_records/text-live-state.json");
-        assert!(text_index::decode_live_state(&live[1..live.len() - 1]).is_ok());
+        assert!(live_state::decode(&live[1..live.len() - 1]).is_ok());
         let version = include_bytes!("../fuzz/corpus/current_search_records/text-version.json");
-        assert!(text_index::decode_version_counter(&version[1..version.len() - 1]).is_ok());
+        assert!(version_counter::decode(&version[1..version.len() - 1]).is_ok());
         let entry = include_bytes!("../fuzz/corpus/current_search_records/vector-entry.bin");
         assert!(
             vectors::entry_candidate::decode_entry_candidate_layer(&entry[1..entry.len() - 1])

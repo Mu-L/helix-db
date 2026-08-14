@@ -1,13 +1,13 @@
 //! Typed graph-data keys and the scoped key framing boundary.
 
 pub(crate) use super::graph::{
-    AdjacencyKey, EdgeEndpointsKey, EdgePairIndexKey, EdgePropertyByIdKey, EdgePropertyPairKey,
-    NodePropertyKey,
+    AdjacencyKey, EdgeEndpointsKey, EdgePairIndexKey, EdgePropertyByIdKey, NodePropertyKey,
 };
 use super::indexes::property::PropertyIndexKey;
 use super::indexes::vector::VectorKey;
 use super::metadata::MetadataKey;
 use super::scope::DataScope;
+use crate::encoding::v2::legacy::edge_property_pair::LegacyEdgePropertyPairKey;
 
 use crate::encoding::error::EncodingError;
 use bytes::{BufMut, Bytes};
@@ -141,7 +141,7 @@ pub(crate) enum DataKeyKind<'a> {
     Adjacency(AdjacencyKey),
 
     /// Legacy/simple edge property key: `[0x01][from:8][to:8]`
-    EdgePropertyPair(EdgePropertyPairKey),
+    EdgePropertyPair(LegacyEdgePropertyPairKey),
 
     /// Multigraph edge property key: `[0x01][edge_id:8]`
     EdgePropertyById(EdgePropertyByIdKey),
@@ -250,7 +250,7 @@ impl<'a> DataKeyKind<'a> {
                     EdgePropertyByIdKey::parse_from_slice(slice)?,
                 )),
                 len if len == PREFIX_LEN + ID_LEN * 2 => Ok(DataKeyKind::EdgePropertyPair(
-                    EdgePropertyPairKey::parse_from_slice(slice)?,
+                    LegacyEdgePropertyPairKey::parse_from_slice(slice)?,
                 )),
                 actual if actual < PREFIX_LEN + ID_LEN => Err(EncodingError::BufferTooShort {
                     expected: PREFIX_LEN + ID_LEN,
@@ -387,6 +387,8 @@ impl<'a> DataKey<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::encoding::v2::legacy::edge_property_pair::LegacyEdgePropertyPairKey as EdgePropertyPairKey;
+
     use super::*;
     use crate::encoding::{
         indexes::{equality::EqualityIndexKey, label::EdgeLabelKey, PropertyIndexKey},

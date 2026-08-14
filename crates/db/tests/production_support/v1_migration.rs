@@ -29,8 +29,7 @@ use crate::encoding::property::{decode_properties, encode_properties, Property};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::{VectorIndexMetadataKey, VectorKey};
 use crate::encoding::v1::keys::{
-    DataKeyKind, EdgeEndpointsKey, EdgePropertyByIdKey, EdgePropertyPairKey, Key, MetadataKey,
-    NodePropertyKey,
+    DataKeyKind, EdgeEndpointsKey, EdgePropertyByIdKey, EdgePropertyPairKey, Key, NodePropertyKey,
 };
 use crate::encoding::v1::values::edge_endpoints::EdgeEndpointsValue;
 use crate::index_lifecycle::{
@@ -448,7 +447,7 @@ fn active_observations(db: &HelixDB) -> Vec<V1ActiveIndexObservation> {
 pub(super) async fn legacy_catalog_empty_raw(db: &Db) -> bool {
     let prefix = Key::data_prefix(
         DataScope::LegacyUnscoped,
-        MetadataKey::dynamic_index_prefix().to_bytes(),
+        crate::encoding::v2::legacy::index_catalog::catalog_scan_prefix(DataScope::LegacyUnscoped),
     );
     let mut rows = db
         .scan_prefix(prefix, ..)

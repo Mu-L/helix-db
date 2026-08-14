@@ -23,14 +23,16 @@ use crate::encoding::v2::keys::indexes::vector::{
     VectorSimHashDirectoryKey, VectorSimHashDirectoryPrefixKey, VectorSimHashKey,
     VectorStorageLane, VectorUpperNeighborsKey, VectorUpperVectorKey,
 };
+use crate::encoding::v2::legacy::vector::{
+    metadata::decode_legacy_metadata, transaction_guard::decode_active_txn_guard,
+};
 use crate::encoding::v2::values::indexes::vector::{
     decode_layer0_neighbors, encode_layer0_neighbors,
     entry_candidate::{decode_entry_candidate_layer, encode_entry_candidate_layer},
     markers::{
-        decode_active_txn_guard, decode_empty_marker, decode_simhash_directory_marker_v1,
-        encode_empty_marker, encode_simhash_directory_marker_v1,
+        decode_empty_marker, decode_simhash_directory_marker_v1, encode_empty_marker,
+        encode_simhash_directory_marker_v1,
     },
-    metadata::decode_legacy_metadata,
     neighbors::{decode_upper_neighbors, encode_upper_neighbors},
     simhash::decode_simhash,
 };
@@ -2592,16 +2594,16 @@ mod tests {
             (
                 VectorKey::IndexMetadata(VectorIndexMetadataKey::new(index_id)),
                 Bytes::copy_from_slice(
-                    &crate::encoding::v2::values::indexes::vector::metadata::encode_legacy_metadata_for_contract(
+                    &crate::encoding::v2::legacy::vector::metadata::encode_legacy_metadata_for_contract(
                         &metadata,
                     ),
                 ),
             ),
             (
                 VectorKey::TxnGuard(
-                    crate::encoding::v2::keys::indexes::vector::VectorTxnGuardKey::new(index_id),
+                    crate::encoding::v2::legacy::vector::transaction_guard::LegacyVectorTxnGuardKey::new(index_id),
                 ),
-                crate::encoding::v2::values::indexes::vector::markers::encode_active_txn_guard(),
+                crate::encoding::v2::legacy::vector::transaction_guard::encode_active_txn_guard(),
             ),
             (
                 VectorKey::Layer0Neighbors(VectorLayer0NeighborsKey::new(index_id, 1)),
@@ -2709,7 +2711,7 @@ mod tests {
                     keyspace.index_id(),
                 ))),
                 Bytes::copy_from_slice(
-                    &crate::encoding::v2::values::indexes::vector::metadata::encode_legacy_metadata_for_contract(
+                    &crate::encoding::v2::legacy::vector::metadata::encode_legacy_metadata_for_contract(
                         &metadata,
                     ),
                 ),
@@ -2718,11 +2720,11 @@ mod tests {
         transaction
             .put(
                 keyspace.key(VectorKey::TxnGuard(
-                    crate::encoding::v2::keys::indexes::vector::VectorTxnGuardKey::new(
+                    crate::encoding::v2::legacy::vector::transaction_guard::LegacyVectorTxnGuardKey::new(
                         keyspace.index_id(),
                     ),
                 )),
-                crate::encoding::v2::values::indexes::vector::markers::encode_active_txn_guard(),
+                crate::encoding::v2::legacy::vector::transaction_guard::encode_active_txn_guard(),
             )
             .unwrap();
         transaction.commit().await.unwrap();
@@ -2829,7 +2831,7 @@ mod tests {
                     keyspace.index_id(),
                 ))),
                 Bytes::copy_from_slice(
-                    &crate::encoding::v2::values::indexes::vector::metadata::encode_legacy_metadata_for_contract(
+                    &crate::encoding::v2::legacy::vector::metadata::encode_legacy_metadata_for_contract(
                         &metadata,
                     ),
                 ),

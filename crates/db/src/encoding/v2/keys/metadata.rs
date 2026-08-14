@@ -4,30 +4,12 @@ use bytes::{BufMut, Bytes};
 
 use crate::encoding::error::EncodingError;
 
-use super::{scope::DataScope, DataKey, DataKeyKind, KeyPrefix, PREFIX_LEN};
+use super::{KeyPrefix, PREFIX_LEN};
 
 /// DataKey for next node ID high watermark (for lease-based allocation)
 pub const NEXT_NODE_ID: &[u8] = b"next_node_id";
 /// DataKey for next edge ID high watermark (for lease-based allocation)
 pub const NEXT_EDGE_ID: &[u8] = b"next_edge_id";
-const TEXT_INDEX_MANIFEST_PREFIX: &[u8] = b"text_manifest:";
-const DYNAMIC_INDEX_PREFIX: &[u8] = b"dynamic_index:";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TextMetadataElement {
-    Node,
-    Edge,
-}
-
-impl TextMetadataElement {
-    const fn as_prefix(self) -> char {
-        match self {
-            Self::Node => 'n',
-            Self::Edge => 'e',
-        }
-    }
-}
-
 /// Metadata storage key.
 ///
 /// ```text
@@ -67,7 +49,6 @@ impl<'a> MetadataKey<'a> {
         Ok(Self::new(&slice[PREFIX_LEN..]))
     }
 
-    #[cfg(test)]
     pub(crate) const fn name(&self) -> &'a [u8] {
         self.name
     }
@@ -100,93 +81,6 @@ impl<'a> MetadataKey<'a> {
     pub fn next_edge_id_key() -> Self {
         Self::new(NEXT_EDGE_ID)
     }
-
-    /// Prefix of persisted pre-V2 dynamic index definition rows.
-    pub(crate) const fn dynamic_index_prefix() -> Self {
-        Self::new(DYNAMIC_INDEX_PREFIX)
-    }
-
-    /// Returns the JSON-encoded legacy identity from a dynamic catalog row.
-    pub(crate) fn dynamic_index_encoded_identity(&self) -> Option<&'a [u8]> {
-        self.name.strip_prefix(DYNAMIC_INDEX_PREFIX)
-    }
-}
-
-/// Complete scoped key for one persisted pre-V2 dynamic index definition.
-#[cfg(any(test, feature = "migration-parity", feature = "production-coverage"))]
-pub(crate) fn dynamic_index_storage_key_scoped(scope: DataScope, encoded_identity: &[u8]) -> Bytes {
-    let mut name = Vec::with_capacity(DYNAMIC_INDEX_PREFIX.len() + encoded_identity.len());
-    name.extend_from_slice(DYNAMIC_INDEX_PREFIX);
-    name.extend_from_slice(encoded_identity);
-    data_metadata_key_scoped(scope, &name)
-}
-
-pub(crate) fn text_index_manifest_key_scoped(scope: DataScope, index_name: &str) -> Bytes {
-    data_metadata_key_scoped(scope, format!("text_manifest:{index_name}").as_bytes())
-}
-
-pub(crate) fn text_index_manifest_scan_prefix_scoped(scope: DataScope) -> Bytes {
-    data_metadata_key_scoped(scope, TEXT_INDEX_MANIFEST_PREFIX)
-}
-
-pub(crate) fn text_index_manifest_prefix_scoped(
-    scope: DataScope,
-    element_type: TextMetadataElement,
-    label_hash: u64,
-    property_hash: u64,
-    tenant_scoped: bool,
-) -> Bytes {
-    let element_prefix = element_type.as_prefix();
-    let prefix = if tenant_scoped {
-        format!("text_manifest:ftsmt:{element_prefix}:{label_hash:016x}:{property_hash:016x}:")
-    } else {
-        format!("text_manifest:fts:{element_prefix}:{label_hash:016x}:{property_hash:016x}")
-    };
-    data_metadata_key_scoped(scope, prefix.as_bytes())
-}
-
-pub(crate) fn text_index_txn_guard_key_scoped(scope: DataScope, index_name: &str) -> Bytes {
-    data_metadata_key_scoped(scope, format!("text_guard:{index_name}").as_bytes())
-}
-
-pub(crate) fn text_definition_guard_key_scoped(
-    scope: DataScope,
-    element_type: TextMetadataElement,
-    label_hash: u64,
-    property_hash: u64,
-) -> Bytes {
-    let element_prefix = element_type.as_prefix();
-    data_metadata_key_scoped(
-        scope,
-        format!("text_def:{element_prefix}:{label_hash:016x}:{property_hash:016x}").as_bytes(),
-    )
-}
-
-pub(crate) fn text_index_live_state_key_scoped(
-    scope: DataScope,
-    index_name: &str,
-    entity_id: u64,
-) -> Bytes {
-    data_metadata_key_scoped(
-        scope,
-        format!("text_live:{index_name}:{entity_id:020}").as_bytes(),
-    )
-}
-
-pub(crate) fn text_index_live_state_prefix_scoped(scope: DataScope, index_name: &str) -> Bytes {
-    data_metadata_key_scoped(scope, format!("text_live:{index_name}:").as_bytes())
-}
-
-pub(crate) fn text_index_version_counter_key_scoped(scope: DataScope, index_name: &str) -> Bytes {
-    data_metadata_key_scoped(scope, format!("text_version:{index_name}").as_bytes())
-}
-
-fn data_metadata_key_scoped(scope: DataScope, name: &[u8]) -> Bytes {
-    DataKey::Data {
-        scope,
-        kind: DataKeyKind::IndexMetadata(MetadataKey::new(name)),
-    }
-    .to_bytes()
 }
 
 impl<'a> From<&MetadataKey<'a>> for KeyPrefix {

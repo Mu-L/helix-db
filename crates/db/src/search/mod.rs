@@ -48,7 +48,6 @@ use crate::encoding::indexes::range::{
 use crate::encoding::indexes::{
     hash_property_name, hash_property_value, EdgeDirection as EdgeRangeDirection,
 };
-use crate::encoding::keys::metadata::{self as key_metadata, TextMetadataElement};
 use crate::encoding::keys::scope::DataScope;
 use crate::encoding::keys::{EdgeEndpointsKey, EdgePropertyByIdKey};
 use crate::encoding::property::property::Property;
@@ -56,6 +55,9 @@ use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::property::{decode_properties, encode_properties};
 use crate::encoding::v2::keys::indexes::PropertyIndexKey;
 use crate::encoding::v2::keys::{DataKey, DataKeyKind};
+use crate::encoding::v2::legacy::text::storage_keys::{
+    self as key_metadata, LegacyTextMetadataElement as TextMetadataElement,
+};
 use crate::encoding::v2::values::edge_endpoints::EdgeEndpointsValue;
 use crate::encoding::v2::values::indexes::SecondaryEqualityValue;
 use crate::encoding::{EdgeId, NodeId};
@@ -186,7 +188,7 @@ pub fn make_text_index_manifest_key(index_name: &str) -> Bytes {
 }
 
 pub fn make_text_index_manifest_key_scoped(scope: DataScope, index_name: &str) -> Bytes {
-    key_metadata::text_index_manifest_key_scoped(scope, index_name)
+    key_metadata::manifest_key(scope, index_name)
 }
 
 /// Build the metadata prefix used for scanning all text manifest rows.
@@ -195,7 +197,7 @@ pub fn make_text_index_manifest_scan_prefix() -> Bytes {
 }
 
 pub fn make_text_index_manifest_scan_prefix_scoped(scope: DataScope) -> Bytes {
-    key_metadata::text_index_manifest_scan_prefix_scoped(scope)
+    key_metadata::manifest_scan_prefix(scope)
 }
 
 /// Build a metadata prefix for scanning text manifest rows for one logical definition.
@@ -223,7 +225,7 @@ pub fn make_text_index_manifest_prefix_scoped(
 ) -> Bytes {
     let label_hash = hash_index_component(label);
     let prop_hash = hash_index_component(property);
-    key_metadata::text_index_manifest_prefix_scoped(
+    key_metadata::manifest_prefix(
         scope,
         text_metadata_element(element_type),
         label_hash,
@@ -238,7 +240,7 @@ pub fn make_text_index_txn_guard_key(index_name: &str) -> Bytes {
 }
 
 pub fn make_text_index_txn_guard_key_scoped(scope: DataScope, index_name: &str) -> Bytes {
-    key_metadata::text_index_txn_guard_key_scoped(scope, index_name)
+    key_metadata::transaction_guard_key(scope, index_name)
 }
 
 /// Build the SSI guard key for a logical text index definition.
@@ -258,7 +260,7 @@ pub fn make_text_definition_guard_key_scoped(
 ) -> Bytes {
     let label_hash = hash_index_component(label);
     let prop_hash = hash_index_component(property);
-    key_metadata::text_definition_guard_key_scoped(
+    key_metadata::definition_guard_key(
         scope,
         text_metadata_element(element_type),
         label_hash,
@@ -276,7 +278,7 @@ pub fn make_text_index_live_state_key_scoped(
     index_name: &str,
     entity_id: u64,
 ) -> Bytes {
-    key_metadata::text_index_live_state_key_scoped(scope, index_name, entity_id)
+    key_metadata::live_state_key(scope, index_name, entity_id)
 }
 
 /// Build the metadata prefix for all live-state rows of one physical text index.
@@ -285,7 +287,7 @@ pub fn make_text_index_live_state_prefix(index_name: &str) -> Bytes {
 }
 
 pub fn make_text_index_live_state_prefix_scoped(scope: DataScope, index_name: &str) -> Bytes {
-    key_metadata::text_index_live_state_prefix_scoped(scope, index_name)
+    key_metadata::live_state_prefix(scope, index_name)
 }
 
 /// Build the metadata key holding the latest logical version counter for a physical text index.
@@ -294,7 +296,7 @@ pub fn make_text_index_version_counter_key(index_name: &str) -> Bytes {
 }
 
 pub fn make_text_index_version_counter_key_scoped(scope: DataScope, index_name: &str) -> Bytes {
-    key_metadata::text_index_version_counter_key_scoped(scope, index_name)
+    key_metadata::version_counter_key(scope, index_name)
 }
 
 const fn text_metadata_element(element_type: TextElementType) -> TextMetadataElement {

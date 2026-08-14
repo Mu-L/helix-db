@@ -6,15 +6,15 @@ use crate::encoding::{error::EncodingError, NodeId};
 
 const KEYSPACE_PREFIX_LEN: usize = core::mem::size_of::<u8>();
 const INDEX_TYPE_LEN: usize = core::mem::size_of::<u8>();
-const INDEX_ID_LEN: usize = core::mem::size_of::<u64>();
+pub(crate) const INDEX_ID_LEN: usize = core::mem::size_of::<u64>();
 const KEY_KIND_LEN: usize = core::mem::size_of::<u8>();
 const ORDER_CODE_LEN: usize = core::mem::size_of::<u64>();
 const LAYER_LEN: usize = core::mem::size_of::<u16>();
 const NODE_ID_LEN: usize = core::mem::size_of::<NodeId>();
 
-const DEFAULT_INDEX_TYPE_OFFSET: usize = KEYSPACE_PREFIX_LEN;
-const DEFAULT_INDEX_ID_OFFSET: usize = KEYSPACE_PREFIX_LEN + INDEX_TYPE_LEN;
-const DEFAULT_KIND_OFFSET: usize = KEYSPACE_PREFIX_LEN + INDEX_TYPE_LEN + INDEX_ID_LEN;
+pub(crate) const DEFAULT_INDEX_TYPE_OFFSET: usize = KEYSPACE_PREFIX_LEN;
+pub(crate) const DEFAULT_INDEX_ID_OFFSET: usize = KEYSPACE_PREFIX_LEN + INDEX_TYPE_LEN;
+pub(crate) const DEFAULT_KIND_OFFSET: usize = KEYSPACE_PREFIX_LEN + INDEX_TYPE_LEN + INDEX_ID_LEN;
 
 const VECTOR_INDEX_ID_OFFSET: usize = KEYSPACE_PREFIX_LEN;
 const VECTOR_KIND_OFFSET: usize = KEYSPACE_PREFIX_LEN + INDEX_ID_LEN;
@@ -59,7 +59,6 @@ pub(crate) mod metadata;
 mod reverse_edges;
 mod simhash;
 mod storage_prefixes;
-mod transaction_guard;
 mod upper_layers;
 
 pub(crate) use entry_candidates::*;
@@ -69,8 +68,11 @@ pub(crate) use metadata::*;
 pub(crate) use reverse_edges::*;
 pub(crate) use simhash::*;
 pub(crate) use storage_prefixes::*;
-pub(crate) use transaction_guard::*;
 pub(crate) use upper_layers::*;
+
+use crate::encoding::v2::legacy::vector::transaction_guard::LegacyVectorTxnGuardKey;
+#[cfg(test)]
+use crate::encoding::v2::legacy::vector::transaction_guard::LegacyVectorTxnGuardKey as VectorTxnGuardKey;
 
 /// Typed vector-index key shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +82,7 @@ pub(crate) enum VectorKey {
     /// `[0x03][0x03][index_id:8]`
     IndexPrefix(VectorIndexPrefixKey),
     /// `[0x03][0x03][index_id:8][kind=txn_guard]`
-    TxnGuard(VectorTxnGuardKey),
+    TxnGuard(LegacyVectorTxnGuardKey),
     /// `[0xF0][index_id:8][kind=l0_vec_ks][node_id:8]`
     Layer0Neighbors(VectorLayer0NeighborsKey),
     /// `[0xF1][index_id:8][kind=vec]`
@@ -265,7 +267,7 @@ impl VectorKey {
                             VectorIndexMetadataKey::parse_from_slice(slice)?,
                         )),
                         KEY_KIND_TXN_GUARD => {
-                            Ok(Self::TxnGuard(VectorTxnGuardKey::parse_from_slice(slice)?))
+                            Ok(Self::TxnGuard(LegacyVectorTxnGuardKey::parse_from_slice(slice)?))
                         }
                         kind => Err(EncodingError::InvalidKey(format!(
                             "invalid vector default key kind: {kind:#04x}"

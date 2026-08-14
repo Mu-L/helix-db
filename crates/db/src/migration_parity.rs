@@ -2224,7 +2224,7 @@ async fn scan_v2_state(
         })?;
     state.vector_migration.reused_physical_ids.sort_unstable();
 
-    let legacy_prefix = Key::data_prefix(scope, MetadataKey::dynamic_index_prefix().to_bytes());
+    let legacy_prefix = crate::encoding::v2::legacy::index_catalog::catalog_scan_prefix(scope);
     let mut legacy = read.scan_prefix(legacy_prefix, ..).await?;
     while legacy.next().await?.is_some() {
         state.legacy_definition_rows += 1;

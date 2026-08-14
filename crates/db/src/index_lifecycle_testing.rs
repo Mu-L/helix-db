@@ -957,7 +957,7 @@ impl LifecycleTestController {
             }
             .to_bytes(),
             bytes::Bytes::copy_from_slice(
-                &crate::encoding::v2::values::indexes::vector::metadata::encode_legacy_metadata_for_contract(
+                &crate::encoding::v2::legacy::vector::metadata::encode_legacy_metadata_for_contract(
                     &metadata,
                 ),
             ),

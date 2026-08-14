@@ -15,8 +15,9 @@ use crate::encoding::v2::keys::{
     TextStatisticsEntityKey, TextTermFingerprint, TextTermStatisticsKey, VectorPartitionMappingKey,
 };
 use crate::encoding::v2::keys::{
-    DataKey as GraphKey, DataKeyKind, EdgePropertyByIdKey, EdgePropertyPairKey, NodePropertyKey,
+    DataKey as GraphKey, DataKeyKind, EdgePropertyByIdKey, NodePropertyKey,
 };
+use crate::encoding::v2::legacy::edge_property_pair::LegacyEdgePropertyPairKey;
 
 use super::*;
 
@@ -93,7 +94,7 @@ fn legacy_edge_pair_cursor(scope: DataScope, from: u64, to: u64) -> IndexCursor 
     cursor(
         GraphKey::Data {
             scope,
-            kind: DataKeyKind::EdgePropertyPair(EdgePropertyPairKey::new(from, to)),
+            kind: DataKeyKind::EdgePropertyPair(LegacyEdgePropertyPairKey::new(from, to)),
         }
         .to_bytes(),
     )

@@ -1,16 +1,10 @@
 //! Current-format marker and sentinel values for vector rows.
 //!
-//! Empty marker values remain represented by an empty byte string. Historical
-//! vector transaction guards used the deployed single byte `[1]`; current
-//! mutations no longer write that generation-wide hot key, but the exact codec
-//! remains part of the unchanged physical vector-row format and migration
-//! source inventory.
+//! Empty marker values remain represented by an empty byte string.
 
 use crate::encoding::error::EncodingError;
 use bytes::Bytes;
 
-const ACTIVE_TXN_GUARD: u8 = 1;
-const TXN_GUARD_LEN: usize = core::mem::size_of::<u8>();
 const SIMHASH_DIRECTORY_MARKER_V1: u8 = 1;
 const SIMHASH_DIRECTORY_MARKER_LEN: usize = core::mem::size_of::<u8>();
 
@@ -54,30 +48,6 @@ pub(crate) fn decode_simhash_directory_marker_v1(data: &[u8]) -> Result<(), Enco
     Ok(())
 }
 
-/// Encodes the legacy deployed vector transaction-guard value `[1]`.
-#[must_use]
-#[cfg(any(test, feature = "fuzzing", feature = "production-coverage"))]
-pub(crate) fn encode_active_txn_guard() -> Bytes {
-    Bytes::copy_from_slice(&[ACTIVE_TXN_GUARD])
-}
-
-/// Validates a deployed vector transaction-guard value for physical cleanup.
-pub(crate) fn decode_active_txn_guard(data: &[u8]) -> Result<(), EncodingError> {
-    if data.len() != TXN_GUARD_LEN {
-        return Err(EncodingError::BufferTooShort {
-            expected: TXN_GUARD_LEN,
-            actual: data.len(),
-        });
-    }
-    if data[0] != ACTIVE_TXN_GUARD {
-        return Err(EncodingError::Custom(format!(
-            "invalid vector transaction guard marker {:#04x}",
-            data[0]
-        )));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,14 +61,5 @@ mod tests {
         assert!(decode_simhash_directory_marker_v1(&[1]).is_ok());
         assert!(decode_simhash_directory_marker_v1(&[]).is_err());
         assert!(decode_simhash_directory_marker_v1(&[2]).is_err());
-        assert_eq!(encode_active_txn_guard().as_ref(), &[1]);
-        assert!(decode_active_txn_guard(&[1]).is_ok());
-    }
-
-    #[test]
-    fn transaction_guard_rejects_wrong_length_and_discriminant() {
-        assert!(decode_active_txn_guard(&[]).is_err());
-        assert!(decode_active_txn_guard(&[1, 0]).is_err());
-        assert!(decode_active_txn_guard(&[2]).is_err());
     }
 }

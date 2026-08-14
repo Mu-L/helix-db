@@ -1,6 +1,7 @@
 //! Vector keyspace lanes and scan prefixes.
 
 use super::*;
+use crate::encoding::v2::legacy::vector::transaction_guard::LegacyVectorTxnGuardKey;
 
 /// can be absent while hot or layer-0 residue remains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +28,7 @@ pub(crate) enum VectorMetadataScanRow {
     /// One physical vector index's metadata row.
     IndexMetadata(VectorIndexMetadataKey),
     /// One physical vector index's active transaction guard.
-    TxnGuard(VectorTxnGuardKey),
+    TxnGuard(LegacyVectorTxnGuardKey),
 }
 
 impl VectorMetadataScanPrefix {

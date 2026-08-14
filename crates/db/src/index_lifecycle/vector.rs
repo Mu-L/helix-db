@@ -18,12 +18,15 @@ use slatedb::DbTransaction;
 use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::property::Property;
 use crate::encoding::v2::keys::indexes::vector::{
-    VectorIndexMetadataKey, VectorKey, VectorStorageLane, VectorTxnGuardKey,
+    VectorIndexMetadataKey, VectorKey, VectorStorageLane,
 };
 use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
 use crate::encoding::v2::keys::{DataKey, DataKeyKind};
 use crate::encoding::v2::keys::{IndexEntity, IndexEntityStateKey, ScopedKey};
+use crate::encoding::v2::legacy::vector::transaction_guard::{
+    decode_active_txn_guard, LegacyVectorTxnGuardKey,
+};
 #[cfg(test)]
 use crate::encoding::v2::values::decode_index_record;
 use crate::encoding::v2::values::encode_build_delta;
@@ -626,7 +629,7 @@ async fn reclaim_empty_tenant_partition<D: Distance>(
     .to_bytes();
     let guard_key = DataKey::Data {
         scope,
-        kind: DataKeyKind::Vector(VectorKey::TxnGuard(VectorTxnGuardKey::new(
+        kind: DataKeyKind::Vector(VectorKey::TxnGuard(LegacyVectorTxnGuardKey::new(
             physical_index_id,
         ))),
     }
@@ -639,10 +642,7 @@ async fn reclaim_empty_tenant_partition<D: Distance>(
                 continue;
             }
             if lane == VectorStorageLane::Core && row.key == guard_key {
-                crate::encoding::v2::values::indexes::vector::markers::decode_active_txn_guard(
-                    &row.value,
-                )
-                .map_err(|error| {
+                decode_active_txn_guard(&row.value).map_err(|error| {
                     HelixDbError::InvariantViolation(format!(
                         "empty tenant vector partition has a malformed transaction guard: {error}"
                     ))

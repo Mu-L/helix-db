@@ -36,8 +36,10 @@ use crate::encoding::v2::keys::indexes::vector::VectorKey;
 use crate::encoding::v2::keys::indexes::vector::{
     VectorEntryCandidateKey, VectorEntryCandidateNodeKey, VectorIndexMetadataKey, VectorItemKey,
     VectorL0PrefixKey, VectorLayer0NeighborsKey, VectorMemoryPrefixKey, VectorReverseEdgeKey,
-    VectorReverseEdgePrefixKey, VectorSimHashKey, VectorTxnGuardKey, VectorUpperVectorKey,
+    VectorReverseEdgePrefixKey, VectorSimHashKey, VectorUpperVectorKey,
 };
+#[cfg(test)]
+use crate::encoding::v2::legacy::vector::transaction_guard::LegacyVectorTxnGuardKey as VectorTxnGuardKey;
 #[cfg(test)]
 use crate::encoding::v2::values::indexes::vector::simhash::encode_simhash;
 use crate::encoding::NodeId;
@@ -2153,7 +2155,7 @@ mod tests {
         let txn = db.begin(IsolationLevel::Snapshot).await.unwrap();
         txn.put(
             &guard_key,
-            crate::encoding::v2::values::indexes::vector::markers::encode_active_txn_guard(),
+            crate::encoding::v2::legacy::vector::transaction_guard::encode_active_txn_guard(),
         )
         .unwrap();
         txn.commit().await.unwrap();

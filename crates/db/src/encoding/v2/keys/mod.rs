@@ -14,8 +14,7 @@ pub(crate) use data::{DataKey, DataKeyKind, GlobalKeyKind, KeyPrefix, ID_LEN, PR
 pub use data::{EdgeId, NodeId};
 pub(crate) use global::{GlobalKey, GlobalKind, TextCompactionTarget, GLOBAL_SENTINEL};
 pub(crate) use graph::{
-    AdjacencyKey, EdgeEndpointsKey, EdgePairIndexKey, EdgePropertyByIdKey, EdgePropertyPairKey,
-    NodePropertyKey,
+    AdjacencyKey, EdgeEndpointsKey, EdgePairIndexKey, EdgePropertyByIdKey, NodePropertyKey,
 };
 pub(crate) use indexes::text::{
     BlobHash, PartitionFingerprint, TextBuildArtifactKey, TextCorpusStatisticsKey,

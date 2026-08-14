@@ -29,8 +29,18 @@ pub(crate) mod secondary {
 #[cfg(any(test, feature = "fuzzing", feature = "production-coverage"))]
 #[deprecated(note = "use encoding::v2::values::indexes::text")]
 pub(crate) mod text_index {
-    #[deprecated(note = "use encoding::v2::values::indexes::text")]
-    pub(crate) use crate::encoding::v2::values::indexes::text::*;
+    #[deprecated(note = "use encoding::v2::legacy::text")]
+    pub(crate) use crate::encoding::v2::legacy::text::{
+        live_state::decode as decode_live_state, manifest::decode as decode_manifest,
+        version_counter::decode as decode_version_counter,
+    };
+    #[cfg(any(test, feature = "production-coverage"))]
+    #[deprecated(note = "use encoding::v2::legacy::text")]
+    pub(crate) use crate::encoding::v2::legacy::text::{
+        live_state::encode_for_contract as encode_live_state,
+        manifest::encode_for_contract as encode_manifest,
+        version_counter::encode_for_contract as encode_version_counter,
+    };
 }
 
 #[deprecated(note = "use encoding::v2::values::indexes::vector::generation")]
@@ -59,11 +69,21 @@ pub mod vectors {
     }
     #[deprecated(note = "use encoding::v2::values::indexes::vector::markers")]
     pub(crate) mod markers {
+        #[deprecated(note = "use encoding::v2::legacy::vector::transaction_guard")]
+        pub(crate) use crate::encoding::v2::legacy::vector::transaction_guard::decode_active_txn_guard;
+        #[cfg(any(test, feature = "fuzzing", feature = "production-coverage"))]
+        #[deprecated(note = "use encoding::v2::legacy::vector::transaction_guard")]
+        pub(crate) use crate::encoding::v2::legacy::vector::transaction_guard::encode_active_txn_guard;
         #[deprecated(note = "use encoding::v2::values::indexes::vector::markers")]
         pub(crate) use crate::encoding::v2::values::indexes::vector::markers::*;
     }
     #[deprecated(note = "use encoding::v2::values::indexes::vector::metadata")]
     pub(crate) mod metadata {
+        #[deprecated(note = "use encoding::v2::legacy::vector::metadata")]
+        pub(crate) use crate::encoding::v2::legacy::vector::metadata::decode_legacy_metadata;
+        #[cfg(any(test, feature = "production-coverage"))]
+        #[deprecated(note = "use encoding::v2::legacy::vector::metadata")]
+        pub(crate) use crate::encoding::v2::legacy::vector::metadata::encode_legacy_metadata_for_contract;
         #[deprecated(note = "use encoding::v2::values::indexes::vector::metadata")]
         pub(crate) use crate::encoding::v2::values::indexes::vector::metadata::*;
     }
