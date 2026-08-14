@@ -37,7 +37,7 @@ helix start [INSTANCE] [OPTIONS]
 
 ## Behavior
 
-- Pulls `ghcr.io/helixdb/helixdb:v0.0.3` (or the image/tag set in `[local.<instance>]`).
+- Pulls `ghcr.io/helixdb/helixdb:v0.0.4` (or the image/tag set in `[local.<instance>]`).
 - Names the container `helix-<project>-<instance>` and publishes the configured port to container port `8080`.
 - Uses Docker or Podman based on `[project] container_runtime` in `helix.toml`.
 - Default storage is in-memory. Passing `--disk` starts a MinIO sidecar, creates the `helix-db` bucket, and runs `helixdb` with S3-compatible storage environment variables.
