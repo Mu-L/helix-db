@@ -99,7 +99,7 @@ fn assert_e2e_count_is_one(output: &str) {
 }
 
 #[test]
-#[ignore = "requires Docker and pulls ghcr.io/helixdb/helixdb:v0.0.3"]
+#[ignore = "requires Docker and pulls ghcr.io/helixdb/helixdb:v0.0.4"]
 fn local_runtime_lifecycle_and_query_smoke() {
     let fixture = CliFixture::new();
     let port = free_port();
@@ -221,7 +221,7 @@ fn local_runtime_lifecycle_and_query_smoke() {
 }
 
 #[test]
-#[ignore = "requires Docker and pulls ghcr.io/helixdb/helixdb:v0.0.3 plus MinIO"]
+#[ignore = "requires Docker and pulls ghcr.io/helixdb/helixdb:v0.0.4 plus MinIO"]
 fn disk_runtime_persists_data_across_stop_and_start() {
     let fixture = CliFixture::new();
     let port = free_port();

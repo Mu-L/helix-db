@@ -62,7 +62,7 @@ If you'd rather wire things up yourself:
    mkdir my-helix-app && cd my-helix-app
    helix init
   ```
-2. **Start a local instance.** Runs `ghcr.io/helixdb/helixdb:v0.0.3` in a background container on port `6969` and waits for `GET /healthz` to report ready.
+2. **Start a local instance.** Runs `ghcr.io/helixdb/helixdb:v0.0.4` in a background container on port `6969` and waits for `GET /healthz` to report ready.
   ```bash
    helix start dev
   ```

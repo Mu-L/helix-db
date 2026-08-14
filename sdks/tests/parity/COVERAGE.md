@@ -38,6 +38,6 @@ server baseline:
 
 ```sh
 python sdks/python/scripts/run_server_parity.py \
-  --image ghcr.io/helixdb/helixdb:v0.0.3 \
+  --image ghcr.io/helixdb/helixdb:v0.0.4 \
   --baseline-results sdks/tests/parity/results/rust
 ```

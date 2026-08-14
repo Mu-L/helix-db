@@ -27,7 +27,7 @@ name = "my-helix-app"
 [local.dev]
 port = 6969
 image = "ghcr.io/helixdb/helixdb"
-tag = "v0.0.3"
+tag = "v0.0.4"
 # Optional; defaults to in-memory when omitted.
 # storage = "disk"
 
@@ -55,7 +55,7 @@ One block per local instance. The instance name is the table key (e.g. `[local.d
 |-----|------|---------|-------------|
 | `port` | Number | `6969` | Host port published to container port `8080`. |
 | `image` | String | `ghcr.io/helixdb/helixdb` | Container image used by [`helix start`](/cli/command-reference/start). |
-| `tag` | String | `v0.0.3` | Image tag. |
+| `tag` | String | `v0.0.4` | Image tag. |
 | `storage` | `memory` \| `disk` | `memory` | Local storage mode. `disk` uses a CLI-managed MinIO container and persistent volume. |
 
 You can define as many local instances as you want, each on a different port:

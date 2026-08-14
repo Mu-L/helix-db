@@ -95,7 +95,7 @@ request out to every eligible database backend and discards their response bodie
 The command succeeds silently on `204 No Content` after at least one backend
 succeeds; partial backend failure does not fail the warm-up. If every target fails,
 the gateway returns the normal deterministic error. A standalone local instance
-warms its single process; the `v0.0.3` runtime returns `200 OK` with the normal
+warms its single process; the `v0.0.4` runtime returns `200 OK` with the normal
 query body. A managed cluster with no eligible warming target returns
 `503 Service Unavailable`.
 
