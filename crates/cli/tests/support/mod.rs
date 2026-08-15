@@ -92,6 +92,17 @@ impl CliFixture {
     }
 
     #[allow(dead_code)]
+    pub fn with_fake_tools_named(mut self, tools: &[&str]) -> Self {
+        let directory = self.root.join("tools");
+        fs::create_dir_all(&directory).expect("create fake tool directory");
+        for tool in tools {
+            install_fake_tool(&directory, tool);
+        }
+        self.test_tool_dir = Some(directory);
+        self
+    }
+
+    #[allow(dead_code)]
     pub fn write_credentials(&self, user_id: &str, api_key: &str) {
         let directory = &self.helix_home;
         fs::create_dir_all(directory).expect("create credentials directory");
