@@ -1544,7 +1544,7 @@ impl AgentKind {
             AgentKind::ClaudeCode => "claude",
             AgentKind::OpenAiCodex => "codex",
             AgentKind::OpenCode => "opencode",
-            AgentKind::CursorAgent => "agent",
+            AgentKind::CursorAgent => "cursor-agent",
         }
     }
 
@@ -1717,12 +1717,17 @@ fn build_agent_argv(
             args
         }
         AgentKind::CursorAgent => {
-            let mut args = vec![
-                "-p".to_string(),
+            let mut args = Vec::new();
+            if matches!(mode, PermissionMode::FullAuto) {
+                args.push("-p".to_string());
+                args.push("--output-format".to_string());
+                args.push("text".to_string());
+            }
+            args.extend([
                 "--trust".to_string(),
                 "--workspace".to_string(),
                 project_dir.display().to_string(),
-            ];
+            ]);
             if matches!(mode, PermissionMode::FullAuto) {
                 args.push("--force".to_string());
                 args.push("--approve-mcps".to_string());
@@ -1911,10 +1916,19 @@ async fn launch_agent(kind: AgentKind, mode: PermissionMode, project_dir: &Path)
     let progress = format!("Cheffing in {}", project_dir.display());
     let completion = format!("Cheffed in {}", project_dir.display());
     let mut step = Step::with_messages(&progress, &completion);
-    step.start();
+    let interactive = matches!(
+        (kind, mode),
+        (AgentKind::CursorAgent, PermissionMode::Scoped)
+    );
+    if !interactive {
+        step.start();
+    }
 
     let run_result = match kind {
         AgentKind::ClaudeCode => launch_claude_streaming(mode, project_dir, &mut step).await,
+        AgentKind::CursorAgent if mode == PermissionMode::Scoped => {
+            launch_other_interactive(kind, mode, project_dir)
+        }
         AgentKind::OpenAiCodex | AgentKind::OpenCode | AgentKind::CursorAgent => {
             launch_other_captured(kind, mode, project_dir)
         }
@@ -1951,6 +1965,31 @@ async fn launch_agent(kind: AgentKind, mode: PermissionMode, project_dir: &Path)
         final_stats: None,
         final_summary: None,
         transcript: vec![format!("agent launch error: {error}")],
+    })
+}
+
+fn launch_other_interactive(
+    kind: AgentKind,
+    mode: PermissionMode,
+    project_dir: &Path,
+) -> Result<AgentRunReport> {
+    let argv = build_agent_argv(kind, mode, PROMPT_FILENAME, project_dir);
+    let status = external_tools::command(kind.external_tool())
+        .args(&argv)
+        .current_dir(project_dir)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
+
+    Ok(AgentRunReport {
+        agent: kind,
+        permission_mode: mode,
+        success: status.success(),
+        exit_code: status.code(),
+        final_stats: None,
+        final_summary: None,
+        transcript: Vec::new(),
     })
 }
 
@@ -2970,7 +3009,7 @@ mod tests {
         assert_eq!(AgentKind::ClaudeCode.binary(), "claude");
         assert_eq!(AgentKind::OpenAiCodex.binary(), "codex");
         assert_eq!(AgentKind::OpenCode.binary(), "opencode");
-        assert_eq!(AgentKind::CursorAgent.binary(), "agent");
+        assert_eq!(AgentKind::CursorAgent.binary(), "cursor-agent");
         assert_eq!(AgentKind::CursorAgent.display(), "Cursor Agent");
     }
 
@@ -3086,6 +3125,11 @@ mod tests {
             Path::new("/tmp/proj"),
         );
         assert_eq!(argv[0], "-p");
+        let output_format = argv
+            .iter()
+            .position(|a| a == "--output-format")
+            .expect("--output-format present");
+        assert_eq!(argv[output_format + 1], "text");
         assert!(argv.iter().any(|a| a == "--trust"));
         assert!(argv.iter().any(|a| a == "--force"));
         assert!(argv.iter().any(|a| a == "--approve-mcps"));
@@ -3106,7 +3150,8 @@ mod tests {
             "HELIX_CHEF_PROMPT.md",
             Path::new("/tmp/proj"),
         );
-        assert_eq!(argv[0], "-p");
+        assert!(!argv.iter().any(|a| a == "-p"));
+        assert!(!argv.iter().any(|a| a == "--output-format"));
         assert!(argv.iter().any(|a| a == "--trust"));
         assert!(argv.iter().any(|a| a == "--workspace"));
         assert!(!argv.iter().any(|a| a == "--force"));
