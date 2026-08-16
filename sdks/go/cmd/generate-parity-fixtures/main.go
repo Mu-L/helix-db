@@ -616,7 +616,10 @@ func runtimeFixtures() []fixture {
 				VarAs("edge", helix.G().N(helix.NodeVar("source")).AddE("FOLLOWS", helix.NodeVar("target"), helix.Props{
 					helix.Prop("note", "dropitemedge"),
 				})).
-				Returning("source", "target", "edge"),
+				VarAs("source_values", helix.G().N(helix.NodeVar("source")).Values("externalId", "bio")).
+				VarAs("target_values", helix.G().N(helix.NodeVar("target")).Values("externalId")).
+				VarAs("edge_values", helix.G().E(helix.EdgeVar("edge")).Values("note")).
+				Returning("source_values", "target_values", "edge_values"),
 		),
 		runtime(
 			"905-read-text-drop-candidates",

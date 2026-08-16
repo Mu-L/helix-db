@@ -2377,7 +2377,20 @@ fn runtime_fixtures() -> Vec<Fixture> {
                             vec![("note", PropertyInput::from("dropitemedge"))],
                         ),
                     )
-                    .returning(["source", "target", "edge"]),
+                    .var_as(
+                        "source_values",
+                        g().n(NodeRef::var("source"))
+                            .values(vec!["externalId", "bio"]),
+                    )
+                    .var_as(
+                        "target_values",
+                        g().n(NodeRef::var("target")).values(vec!["externalId"]),
+                    )
+                    .var_as(
+                        "edge_values",
+                        g().e(EdgeRef::var("edge")).values(vec!["note"]),
+                    )
+                    .returning(["source_values", "target_values", "edge_values"]),
             ),
         ),
         runtime(
