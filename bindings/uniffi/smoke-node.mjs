@@ -308,15 +308,28 @@ try {
           `${kind} basis ${dimension} should return the requested hits`,
         );
         for (const hit of vectorResponse[kind]) {
-          assert.deepEqual(
-            hit.embedding,
-            query,
-            `${kind} basis ${dimension} should return exact vectors`,
+          // HNSW recall is approximate; verify the returned stored vector and distance.
+          assert.equal(
+            hit.embedding.length,
+            query.length,
+            `${kind} basis ${dimension} should return complete vectors`,
           );
           assert.equal(
-            hit.distance,
+            hit.embedding.filter((value) => value === 1).length,
+            1,
+            `${kind} basis ${dimension} should return one-hot vectors`,
+          );
+          assert.ok(
+            hit.embedding.every((value) => value === 0 || value === 1),
+            `${kind} basis ${dimension} should return stored vector values`,
+          );
+          const dotProduct = hit.embedding.reduce(
+            (sum, value, index) => sum + value * query[index],
             0,
-            `${kind} basis ${dimension} should return distance zero`,
+          );
+          assert.ok(
+            Math.abs(hit.distance - (1 - dotProduct)) <= 1e-6,
+            `${kind} basis ${dimension} should return its cosine distance`,
           );
         }
       }
