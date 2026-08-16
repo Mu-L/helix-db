@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { structuralJsonEqual } from "../../src/index.js";
+import { canonicalizeJson, parseJsonStructural, structuralJsonEqual } from "../../src/index.js";
 import { workspaceRoot } from "./paths.js";
 
 const EXPECTED_RUNTIME = 233;
@@ -249,9 +249,13 @@ async function compareResults(baselineRoot: string, candidateRoot: string, basel
   const mismatches: string[] = [];
   for (const file of baselineFiles) {
     const [baseline, value] = await Promise.all([readFile(join(baselineRoot, file), "utf8"), readFile(join(candidateRoot, file), "utf8")]);
-    if (!structuralJsonEqual(baseline, value)) mismatches.push(file);
+    if (!structuralJsonEqual(baseline, value)) {
+      mismatches.push(
+        `${file}\nRust: ${JSON.stringify(canonicalizeJson(parseJsonStructural(baseline)))}\n${candidate}: ${JSON.stringify(canonicalizeJson(parseJsonStructural(value)))}`,
+      );
+    }
   }
-  if (mismatches.length > 0) throw new Error(`${candidate} embedded result mismatches:\n${mismatches.join("\n")}`);
+  if (mismatches.length > 0) throw new Error(`${candidate} embedded result mismatches:\n\n${mismatches.join("\n\n")}`);
 }
 
 function assertFixtureCount(label: string, files: string[]) {
