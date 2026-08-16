@@ -93,3 +93,121 @@ async fn headless_chef_runs_setup_and_surfaces_external_tool_errors() {
     assert!(prompt.contains("# HelixDB MVP Builder"));
     assert!(prompt.contains("Personal CRM"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn headless_chef_launches_cursor_agent() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v2/query"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let fixture = CliFixture::new_with_fake_runtime().with_fake_tools_named(&[
+        "cargo",
+        "node",
+        "npm",
+        "npx",
+        "curl",
+        "cursor-agent",
+    ]);
+    let project = fixture.home().join("my-first-helix-project");
+    fixture
+        .command()
+        .args(["init", "--path"])
+        .arg(&project)
+        .args(["local", "--port"])
+        .arg(server.address().port().to_string())
+        .arg("--no-skills")
+        .assert()
+        .success();
+    fs::create_dir_all(project.join("web")).unwrap();
+    fs::write(project.join("web/package.json"), "{}").unwrap();
+
+    let chef = stdout(
+        fixture
+            .command()
+            .current_dir(fixture.root())
+            .arg("chef")
+            .env("HELIX_SKIP_CLOUD_AUTH", "1")
+            .env("HELIX_TEST_CHEF_PERMISSION_MODE", "full_auto")
+            .env("HELIX_TEST_TOOL_STDOUT", "Built successfully")
+            .assert()
+            .success(),
+    );
+    assert!(chef.contains("Built successfully"));
+    let tools = fixture.tool_log();
+    assert!(tools.contains("cursor-agent -p"));
+    assert!(tools.contains("--output-format text"));
+    assert!(tools.contains("--force"));
+    assert!(tools.contains("--trust"));
+    assert!(tools.contains("--approve-mcps"));
+    assert!(tools.contains("--workspace"));
+    assert!(tools.contains("HELIX_CHEF_PROMPT.md"));
+    assert!(!tools.contains("claude --append-system-prompt-file"));
+    assert!(!tools.contains("codex exec"));
+    assert!(!tools.contains("opencode run"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scoped_chef_launches_cursor_agent_interactively() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v2/query"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let fixture = CliFixture::new_with_fake_runtime().with_fake_tools_named(&[
+        "cargo",
+        "node",
+        "npm",
+        "npx",
+        "curl",
+        "cursor-agent",
+    ]);
+    let project = fixture.home().join("my-first-helix-project");
+    fixture
+        .command()
+        .args(["init", "--path"])
+        .arg(&project)
+        .args(["local", "--port"])
+        .arg(server.address().port().to_string())
+        .arg("--no-skills")
+        .assert()
+        .success();
+    fs::create_dir_all(project.join("web")).unwrap();
+    fs::write(project.join("web/package.json"), "{}").unwrap();
+
+    fixture
+        .command()
+        .current_dir(fixture.root())
+        .arg("chef")
+        .env("HELIX_SKIP_CLOUD_AUTH", "1")
+        .env("HELIX_TEST_CHEF_PERMISSION_MODE", "scoped")
+        .env("HELIX_TEST_TOOL_STDOUT", "Built successfully")
+        .assert()
+        .success();
+
+    let tools = fixture.tool_log();
+    assert!(tools.contains("cursor-agent --trust"));
+    assert!(tools.contains("--workspace"));
+    assert!(tools.contains("HELIX_CHEF_PROMPT.md"));
+    assert!(!tools.contains("cursor-agent -p"));
+    assert!(!tools.contains("--force"));
+    assert!(!tools.contains("--output-format"));
+}

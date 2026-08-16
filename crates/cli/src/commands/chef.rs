@@ -1535,6 +1535,7 @@ enum AgentKind {
     ClaudeCode,
     OpenAiCodex,
     OpenCode,
+    CursorAgent,
 }
 
 impl AgentKind {
@@ -1543,6 +1544,7 @@ impl AgentKind {
             AgentKind::ClaudeCode => "claude",
             AgentKind::OpenAiCodex => "codex",
             AgentKind::OpenCode => "opencode",
+            AgentKind::CursorAgent => "cursor-agent",
         }
     }
 
@@ -1551,6 +1553,7 @@ impl AgentKind {
             AgentKind::ClaudeCode => "Claude Code",
             AgentKind::OpenAiCodex => "OpenAI Codex",
             AgentKind::OpenCode => "OpenCode",
+            AgentKind::CursorAgent => "Cursor Agent",
         }
     }
 
@@ -1559,6 +1562,7 @@ impl AgentKind {
             AgentKind::ClaudeCode => ExternalTool::ClaudeCode,
             AgentKind::OpenAiCodex => ExternalTool::OpenAiCodex,
             AgentKind::OpenCode => ExternalTool::OpenCode,
+            AgentKind::CursorAgent => ExternalTool::CursorAgent,
         }
     }
 }
@@ -1573,6 +1577,7 @@ const AGENT_PRIORITY: &[AgentKind] = &[
     AgentKind::ClaudeCode,
     AgentKind::OpenAiCodex,
     AgentKind::OpenCode,
+    AgentKind::CursorAgent,
 ];
 
 const PROMPT_FILENAME: &str = "HELIX_CHEF_PROMPT.md";
@@ -1705,6 +1710,27 @@ fn build_agent_argv(
             ];
             if matches!(mode, PermissionMode::FullAuto) {
                 args.push("--dangerously-skip-permissions".to_string());
+            }
+            args.push(format!(
+                "Follow the spec in ./{prompt_file}. {AGENT_USER_PROMPT}"
+            ));
+            args
+        }
+        AgentKind::CursorAgent => {
+            let mut args = Vec::new();
+            if matches!(mode, PermissionMode::FullAuto) {
+                args.push("-p".to_string());
+                args.push("--output-format".to_string());
+                args.push("text".to_string());
+            }
+            args.extend([
+                "--trust".to_string(),
+                "--workspace".to_string(),
+                project_dir.display().to_string(),
+            ]);
+            if matches!(mode, PermissionMode::FullAuto) {
+                args.push("--force".to_string());
+                args.push("--approve-mcps".to_string());
             }
             args.push(format!(
                 "Follow the spec in ./{prompt_file}. {AGENT_USER_PROMPT}"
@@ -1890,11 +1916,20 @@ async fn launch_agent(kind: AgentKind, mode: PermissionMode, project_dir: &Path)
     let progress = format!("Cheffing in {}", project_dir.display());
     let completion = format!("Cheffed in {}", project_dir.display());
     let mut step = Step::with_messages(&progress, &completion);
-    step.start();
+    let interactive = matches!(
+        (kind, mode),
+        (AgentKind::CursorAgent, PermissionMode::Scoped)
+    );
+    if !interactive {
+        step.start();
+    }
 
     let run_result = match kind {
         AgentKind::ClaudeCode => launch_claude_streaming(mode, project_dir, &mut step).await,
-        AgentKind::OpenAiCodex | AgentKind::OpenCode => {
+        AgentKind::CursorAgent if mode == PermissionMode::Scoped => {
+            launch_other_interactive(kind, mode, project_dir)
+        }
+        AgentKind::OpenAiCodex | AgentKind::OpenCode | AgentKind::CursorAgent => {
             launch_other_captured(kind, mode, project_dir)
         }
     };
@@ -1930,6 +1965,31 @@ async fn launch_agent(kind: AgentKind, mode: PermissionMode, project_dir: &Path)
         final_stats: None,
         final_summary: None,
         transcript: vec![format!("agent launch error: {error}")],
+    })
+}
+
+fn launch_other_interactive(
+    kind: AgentKind,
+    mode: PermissionMode,
+    project_dir: &Path,
+) -> Result<AgentRunReport> {
+    let argv = build_agent_argv(kind, mode, PROMPT_FILENAME, project_dir);
+    let status = external_tools::command(kind.external_tool())
+        .args(&argv)
+        .current_dir(project_dir)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
+
+    Ok(AgentRunReport {
+        agent: kind,
+        permission_mode: mode,
+        success: status.success(),
+        exit_code: status.code(),
+        final_stats: None,
+        final_summary: None,
+        transcript: Vec::new(),
     })
 }
 
@@ -2102,12 +2162,12 @@ async fn launch_claude_streaming(
 }
 
 fn print_no_agent_fallback(project_dir: &Path) {
-    let lead = format!(
-        "No supported coding-agent CLI was found in PATH ({}, {}, {}).",
-        AgentKind::ClaudeCode.binary(),
-        AgentKind::OpenAiCodex.binary(),
-        AgentKind::OpenCode.binary(),
-    );
+    let binaries = AGENT_PRIORITY
+        .iter()
+        .map(|agent| agent.binary())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let lead = format!("No supported coding-agent CLI was found in PATH ({binaries}).");
     print_paste_prompt_hint(project_dir, &lead);
 }
 
@@ -2936,18 +2996,21 @@ mod tests {
     }
 
     #[test]
-    fn agent_priority_is_claude_codex_opencode() {
+    fn agent_priority_is_claude_codex_opencode_cursor() {
         assert_eq!(
             AGENT_PRIORITY,
             &[
                 AgentKind::ClaudeCode,
                 AgentKind::OpenAiCodex,
                 AgentKind::OpenCode,
+                AgentKind::CursorAgent,
             ],
         );
         assert_eq!(AgentKind::ClaudeCode.binary(), "claude");
         assert_eq!(AgentKind::OpenAiCodex.binary(), "codex");
         assert_eq!(AgentKind::OpenCode.binary(), "opencode");
+        assert_eq!(AgentKind::CursorAgent.binary(), "cursor-agent");
+        assert_eq!(AgentKind::CursorAgent.display(), "Cursor Agent");
     }
 
     #[test]
@@ -3051,6 +3114,50 @@ mod tests {
         assert_eq!(argv[0], "run");
         assert_eq!(argv[1], "--dir");
         assert!(!argv.iter().any(|a| a == "--dangerously-skip-permissions"));
+    }
+
+    #[test]
+    fn build_agent_argv_cursor_full_auto() {
+        let argv = build_agent_argv(
+            AgentKind::CursorAgent,
+            PermissionMode::FullAuto,
+            "HELIX_CHEF_PROMPT.md",
+            Path::new("/tmp/proj"),
+        );
+        assert_eq!(argv[0], "-p");
+        let output_format = argv
+            .iter()
+            .position(|a| a == "--output-format")
+            .expect("--output-format present");
+        assert_eq!(argv[output_format + 1], "text");
+        assert!(argv.iter().any(|a| a == "--trust"));
+        assert!(argv.iter().any(|a| a == "--force"));
+        assert!(argv.iter().any(|a| a == "--approve-mcps"));
+        let workspace = argv
+            .iter()
+            .position(|a| a == "--workspace")
+            .expect("--workspace present");
+        assert_eq!(argv[workspace + 1], "/tmp/proj");
+        assert!(argv.last().unwrap().contains("HELIX_CHEF_PROMPT.md"));
+        assert!(argv.last().unwrap().contains(AGENT_USER_PROMPT));
+    }
+
+    #[test]
+    fn build_agent_argv_cursor_scoped() {
+        let argv = build_agent_argv(
+            AgentKind::CursorAgent,
+            PermissionMode::Scoped,
+            "HELIX_CHEF_PROMPT.md",
+            Path::new("/tmp/proj"),
+        );
+        assert!(!argv.iter().any(|a| a == "-p"));
+        assert!(!argv.iter().any(|a| a == "--output-format"));
+        assert!(argv.iter().any(|a| a == "--trust"));
+        assert!(argv.iter().any(|a| a == "--workspace"));
+        assert!(!argv.iter().any(|a| a == "--force"));
+        assert!(!argv.iter().any(|a| a == "--yolo"));
+        assert!(!argv.iter().any(|a| a == "--approve-mcps"));
+        assert!(argv.last().unwrap().contains("HELIX_CHEF_PROMPT.md"));
     }
 
     // ---------- Claude stream-json event parsing ----------
