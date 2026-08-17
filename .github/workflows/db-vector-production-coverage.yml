@@ -2,6 +2,12 @@ name: Production coverage
 
 on:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - converted_to_draft
     paths:
       - ".github/workflows/cloud-launch-vector-100k.yml"
       - ".github/workflows/db-vector-production-coverage.yml"
@@ -26,11 +32,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: production-coverage-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   production-coverage:
     name: DB production thresholds
-    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'coverage'
-    runs-on: blacksmith-6vcpu-macos-15
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.event_name != 'workflow_dispatch' || inputs.profile == 'coverage')
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v6
@@ -47,8 +59,10 @@ jobs:
 
   server-production-coverage:
     name: Transport and query-service thresholds
-    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'coverage'
-    runs-on: blacksmith-6vcpu-macos-15
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.event_name != 'workflow_dispatch' || inputs.profile == 'coverage')
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -63,29 +77,31 @@ jobs:
 
   architecture-kernels:
     name: ${{ matrix.kernel }}
-    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'coverage'
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.event_name != 'workflow_dispatch' || inputs.profile == 'coverage')
     strategy:
       fail-fast: false
       matrix:
         include:
           - kernel: x86_64 scalar reference
-            runner: blacksmith-2vcpu-ubuntu-2404
+            runner: ubuntu-24.04
             rustflags: -C target-cpu=x86-64
             features: production-coverage,force-vector-scalar-kernel
           - kernel: x86_64 SSE4.1
-            runner: blacksmith-2vcpu-ubuntu-2404
+            runner: ubuntu-24.04
             rustflags: -C target-cpu=x86-64 -C target-feature=+sse4.1,-avx,-avx2,-fma
             features: production-coverage
           - kernel: x86_64 AVX FMA
-            runner: blacksmith-2vcpu-ubuntu-2404
+            runner: ubuntu-24.04
             rustflags: -C target-cpu=x86-64 -C target-feature=+sse4.1,+avx,+avx2,+fma
             features: production-coverage
           - kernel: aarch64 scalar reference
-            runner: blacksmith-6vcpu-macos-15
+            runner: ubuntu-24.04-arm
             rustflags: ""
             features: production-coverage,force-vector-scalar-kernel
           - kernel: aarch64 NEON
-            runner: blacksmith-6vcpu-macos-15
+            runner: ubuntu-24.04-arm
             rustflags: -C target-feature=+neon
             features: production-coverage
     runs-on: ${{ matrix.runner }}
