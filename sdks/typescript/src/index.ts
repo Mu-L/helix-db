@@ -27,12 +27,33 @@ const QUERY_PATH = "/v2/query";
 export class HelixError extends Error {
   readonly kind: "Network" | "Remote" | "Serialization" | "InvalidUrl" | "InvalidRequest" | "EmbeddedUnavailable" | "Embedded";
   readonly details?: string;
+  readonly statusCode?: number;
+  readonly code?: string;
+  readonly serverMessage?: string;
+  readonly serverDetails?: unknown;
+  readonly rawBody?: string;
 
-  private constructor(kind: HelixError["kind"], message: string, details?: string) {
+  private constructor(
+    kind: HelixError["kind"],
+    message: string,
+    details?: string,
+    remote?: {
+      statusCode: number;
+      code?: string;
+      serverMessage: string;
+      serverDetails?: unknown;
+      rawBody: string;
+    },
+  ) {
     super(message);
     this.name = "HelixError";
     this.kind = kind;
     this.details = details;
+    this.statusCode = remote?.statusCode;
+    this.code = remote?.code;
+    this.serverMessage = remote?.serverMessage;
+    this.serverDetails = remote?.serverDetails;
+    this.rawBody = remote?.rawBody;
   }
 
   static network(message: string, url?: string): HelixError {
@@ -42,8 +63,37 @@ export class HelixError extends Error {
     return new HelixError("Network", `error communicating with server: ${message}.${hint}`, message);
   }
 
-  static remote(details: string): HelixError {
-    return new HelixError("Remote", `got error from server: ${details}`, details);
+  static remote(details: string): HelixError;
+  static remote(statusCode: number, rawBody: string, statusText: string): HelixError;
+  static remote(statusCodeOrDetails: number | string, rawBody = "", statusText = ""): HelixError {
+    if (typeof statusCodeOrDetails === "string") {
+      return new HelixError("Remote", `got error from server: ${statusCodeOrDetails}`, statusCodeOrDetails);
+    }
+
+    const statusCode = statusCodeOrDetails;
+    let code: string | undefined;
+    let serverMessage: string | undefined;
+    let serverDetails: unknown;
+    try {
+      const parsed: unknown = JSON.parse(rawBody);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        const body = parsed as Record<string, unknown>;
+        if (typeof body.code === "string") code = body.code;
+        if (typeof body.message === "string" && body.message.length > 0) serverMessage = body.message;
+        else if (typeof body.error === "string" && body.error.length > 0) serverMessage = body.error;
+        if (Object.prototype.hasOwnProperty.call(body, "details")) serverDetails = body.details;
+      }
+    } catch {}
+
+    serverMessage = (serverMessage ?? rawBody) || statusText || `unknown error with code: ${statusCode}`;
+    const details = rawBody || serverMessage;
+    return new HelixError("Remote", `got error from server: ${serverMessage}`, details, {
+      statusCode,
+      code,
+      serverMessage,
+      serverDetails,
+      rawBody,
+    });
   }
 
   static serialization(message: string): HelixError {
@@ -64,6 +114,14 @@ export class HelixError extends Error {
 
   static embedded(message: string): HelixError {
     return new HelixError("Embedded", `embedded HelixDB error: ${message}`, message);
+  }
+
+  isConflict(): boolean {
+    return this.kind === "Remote" && this.statusCode === 409;
+  }
+
+  isRateLimited(): boolean {
+    return this.kind === "Remote" && this.statusCode === 429;
   }
 }
 
@@ -325,14 +383,13 @@ export class QueryExecutionRequest<R = unknown> {
       return new Uint8Array(await response.arrayBuffer());
     }
 
-    let details: string;
+    let rawBody: string;
     try {
-      details = await response.text();
+      rawBody = await response.text();
     } catch {
-      details = response.statusText;
+      rawBody = "";
     }
-    if (details.length === 0) details = response.statusText || `unknown error with code: ${response.status}`;
-    throw HelixError.remote(details);
+    throw HelixError.remote(response.status, rawBody, response.statusText);
   }
 
   async send(): Promise<R> {
