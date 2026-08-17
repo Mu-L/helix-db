@@ -56,8 +56,8 @@ databases, provision a database, and create API keys.
 
 ## Test the connection
 
-Set the three values copied from the database page, then send an empty read
-request. A successful response confirms the connection.
+Set the three values copied from the database page, then count the database's
+nodes. A successful response, such as `{"node_count":0}`, confirms the connection.
 
 ```bash
 export HELIX_ENDPOINT="<endpoint>"
@@ -69,7 +69,7 @@ curl --fail-with-body \
   -H "Authorization: Bearer $HELIX_API_KEY" \
   -H "x-helix-tenant-id: $HELIX_DATABASE_ID" \
   -H "Content-Type: application/json" \
-  -d '{"request_type":"read","query":{"read":{"entries":[],"returns":[]}}}'
+  -d '{"request_type":"read","query":{"read":{"entries":[{"query":{"name":"node_count","root":{"count":{"input":{"nodes":{"reference":"all"}}}}}}],"returns":["node_count"]}}}'
 ```
 
 Keep API keys in a secrets manager or environment variable. Do not commit them
