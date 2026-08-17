@@ -4209,55 +4209,35 @@ execution. A managed cluster with no eligible warming target returns
     Authenticate and connect a project.
   </Card>
 
-# Using the Dashboard
+# Using the Cloud
 
 Page type: Tutorial
 
 <div className="flex flex-wrap gap-2"><Badge color="green" size="sm">Tutorial</Badge></div>
 
-Use the Helix Cloud dashboard to organize databases into workspaces and projects,
-choose a managed plan, and create API keys.
+Use Helix Cloud to create a workspace, choose a monthly plan shared by its
+databases, provision a database, and create API keys.
 
     </Frame>
   </Step>
 
-  <Step title="Create a workspace">
-    Enter a workspace name, select the region for future dedicated clusters,
-    and select **Create Workspace**.
-
-    <Note>
-      New workspaces currently support only the `us-east-1` region.
-    </Note>
+  <Step title="Create a workspace and choose a plan">
+    Enter a workspace name, choose a monthly plan, and select **Create
+    workspace**. The plan's read and write allowances are shared by every
+    database in the workspace. You can change the plan later from **Billing**.
 
     <Frame>
-      <img src="/images/helix-cloud/dashboard/02-create-workspace.png" alt="Create a Workspace form with workspace name and region fields" />
+      <img src="/images/helix-cloud/dashboard/02-create-workspace.png" alt="Create a workspace form with workspace name and monthly plan options" />
     </Frame>
   </Step>
 
-  <Step title="Create a project">
-    Select **Create Project**, then give the project a name. Projects group the
-    databases and dedicated clusters for an application or environment.
+  <Step title="Create a database">
+    Enter a database name and select **Create Database**. Helix Cloud generates
+    its URL slug. The database has isolated data and uses the workspace's shared
+    monthly allowance.
 
     <Frame>
-      <img src="/images/helix-cloud/dashboard/03-create-project.png" alt="Helix Cloud project list with the Create Project action" />
-    </Frame>
-  </Step>
-
-  <Step title="Start creating a database">
-    Open the project and select **Create Database**.
-
-    <Frame>
-      <img src="/images/helix-cloud/dashboard/04-project-databases.png" alt="Empty project with options to create a database or deploy a dedicated cluster" />
-    </Frame>
-  </Step>
-
-  <Step title="Choose a name and plan">
-    Keep **Database** selected, enter a database name, choose a monthly plan,
-    and select **Create Database**. The plan determines the included read and
-    write query allowance.
-
-    <Frame>
-      <img src="/images/helix-cloud/dashboard/05-create-database.png" alt="Create Database form with database name and monthly plan options" />
+      <img src="/images/helix-cloud/dashboard/03-create-database.png" alt="Create a Database form with a database name field" />
     </Frame>
   </Step>
 
@@ -4267,58 +4247,26 @@ choose a managed plan, and create API keys.
     or use an existing one and copy its value when it is shown.
 
     <Frame>
-      <img src="/images/helix-cloud/dashboard/06-database-details.png" alt="Active database details page with endpoint, database ID, API keys, and query insights" />
+      <img src="/images/helix-cloud/dashboard/04-database-details.png" alt="Active database details page with connection details, workspace plan, API keys, and query insights" />
     </Frame>
   </Step>
 
 ## Test the connection
 
-Set the three values copied from the database page, then send this read-only
-query. It counts `User` nodes, so it also succeeds on a new database with a count
-of `0`.
+Set the three values copied from the database page, then send an empty read
+request. A successful response confirms the connection.
 
 ```bash
-export HELIX_ENDPOINT="https://<cluster>.cluster.helix-db.com"
+export HELIX_ENDPOINT="<endpoint>"
 export HELIX_DATABASE_ID="<database-id>"
 export HELIX_API_KEY="<api-key>"
 
-curl --fail-with-body --silent --show-error \
+curl --fail-with-body \
   "$HELIX_ENDPOINT/v2/query" \
-  --header "Authorization: Bearer $HELIX_API_KEY" \
-  --header "x-helix-tenant-id: $HELIX_DATABASE_ID" \
-  --header "Content-Type: application/json" \
-  --data-binary @- <<'JSON'
-{
-  "request_type": "read",
-  "query_name": "connection_test",
-  "query": {
-    "read": {
-      "entries": [
-        {
-          "query": {
-            "name": "user_count",
-            "root": {
-              "count": {
-                "input": {
-                  "nodes_where": {
-                    "predicate": {
-                      "eq": {
-                        "left": { "property": "$label" },
-                        "right": { "constant": { "string": "User" } }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      ],
-      "returns": ["user_count"]
-    }
-  }
-}
-JSON
+  -H "Authorization: Bearer $HELIX_API_KEY" \
+  -H "x-helix-tenant-id: $HELIX_DATABASE_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"request_type":"read","query":{"read":{"entries":[],"returns":[]}}}'
 ```
 
 Keep API keys in a secrets manager or environment variable. Do not commit them
