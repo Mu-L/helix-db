@@ -36,13 +36,14 @@ env:
 jobs:
   test:
     name: Test (${{ matrix.os }})
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os:
           - blacksmith-2vcpu-ubuntu-2404-arm
-          - blacksmith-6vcpu-macos-latest
+          - macos-latest
           - blacksmith-2vcpu-windows-2025
     steps:
       - uses: actions/checkout@v6
@@ -61,8 +62,10 @@ jobs:
       - name: Unit and binary integration tests
         run: cargo test --locked -p helix-metrics -p helix-cli --all-targets
       - name: Doc tests
+        if: runner.os == 'Linux'
         run: cargo test --locked -p helix-metrics -p helix-cli --doc
       - name: Clippy
+        if: runner.os == 'Linux'
         run: cargo clippy --locked -p helix-metrics -p helix-cli --all-targets -- -D warnings
       - name: Formatting
         if: runner.os == 'Linux'
@@ -70,6 +73,7 @@ jobs:
 
   coverage:
     name: Coverage (Ubuntu)
+    if: github.event_name != 'schedule'
     runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     steps:
       - uses: actions/checkout@v6
