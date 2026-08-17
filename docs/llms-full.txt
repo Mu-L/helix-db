@@ -4263,10 +4263,31 @@ export HELIX_API_KEY="<api-key>"
 
 curl --fail-with-body \
   "$HELIX_ENDPOINT/v2/query" \
-  -H "Authorization: Bearer $HELIX_API_KEY" \
-  -H "x-helix-tenant-id: $HELIX_DATABASE_ID" \
-  -H "Content-Type: application/json" \
-  -d '{"request_type":"read","query":{"read":{"entries":[{"query":{"name":"node_count","root":{"count":{"input":{"nodes":{"reference":"all"}}}}}}],"returns":["node_count"]}}}'
+  --header "Authorization: Bearer $HELIX_API_KEY" \
+  --header "x-helix-tenant-id: $HELIX_DATABASE_ID" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "request_type": "read",
+    "query": {
+      "read": {
+        "entries": [
+          {
+            "query": {
+              "name": "node_count",
+              "root": {
+                "count": {
+                  "input": {
+                    "nodes": { "reference": "all" }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "returns": ["node_count"]
+      }
+    }
+  }'
 ```
 
 Keep API keys in a secrets manager or environment variable. Do not commit them
