@@ -45,7 +45,7 @@ Full walkthrough: https://docs.helix-db.com/cli/getting-started
 
 ## Helix Cloud — Start Here
 - [Connect to Helix Cloud](https://docs.helix-db.com/database/helix-cloud/start-here/working-with-enterprise): Send dynamic requests through a managed gateway — Page type: Guide
-- [Using the Cloud](https://docs.helix-db.com/database/helix-cloud/start-here/using-the-dashboard): Sign in, create a workspace and choose its plan, provision a database, and test the connection — Page type: Tutorial
+- [Using the Cloud](https://docs.helix-db.com/database/helix-cloud/start-here/using-the-cloud): Sign in, create a workspace and choose its plan, provision a database, and test the connection — Page type: Tutorial
 - [Architecture](https://docs.helix-db.com/database/helix-cloud/start-here/architecture) — Page type: Concept
 
 ## Connect and automate
