@@ -963,7 +963,19 @@ def base_runtime_fixtures() -> list[RuntimeFixture]:
                         [("note", PropertyInput.value("dropitemedge"))],
                     ),
                 )
-                .returning(["source", "target", "edge"])
+                .var_as(
+                    "source_values",
+                    g().n(NodeRef.var("source")).values(["externalId", "bio"]),
+                )
+                .var_as(
+                    "target_values",
+                    g().n(NodeRef.var("target")).values(["externalId"]),
+                )
+                .var_as(
+                    "edge_values",
+                    g().e(EdgeRef.var("edge")).values(["note"]),
+                )
+                .returning(["source_values", "target_values", "edge_values"])
             ),
         ),
         (

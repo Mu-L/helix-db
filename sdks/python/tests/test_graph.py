@@ -3,11 +3,11 @@ import unittest
 
 from helixdb import EdgeRef, NodeRef, SourcePredicate, g
 from helixdb.graph import (
-    BetweennessOptions,
     EDGE_SOURCE,
     EXTERNAL_ID,
-    GraphMetadataSelection,
+    BetweennessOptions,
     GraphEdgeId,
+    GraphMetadataSelection,
     GraphSelection,
     IdentitySelection,
     LayoutOptions,
@@ -15,8 +15,8 @@ from helixdb.graph import (
     LouvainOptions,
     NativeGraph,
     TraversalOptions,
-    _decode_external_id,
     _decode_edge_id,
+    _decode_external_id,
     _encode_edge_id,
     _encode_external_id,
     external_id_from_json,
@@ -97,11 +97,7 @@ class _NativeGraph:
         return self.nodes()[0] if _decode_external_id(node_id) == "a" else None
 
     def edge(self, edge_id):
-        return (
-            self.edges()[0]
-            if _decode_edge_id(edge_id) == GraphEdgeId.original("e1")
-            else None
-        )
+        return self.edges()[0] if _decode_edge_id(edge_id) == GraphEdgeId.original("e1") else None
 
     def louvain_communities(self, resolution, threshold, seed, max_levels):
         return _Record(
@@ -171,9 +167,7 @@ class GraphSdkTests(unittest.TestCase):
             .to_json_string()
         )
         payload = json.dumps(request)
-        self.assertEqual(
-            request["query"]["read"]["returns"], ["nodes", "edges", "metadata"]
-        )
+        self.assertEqual(request["query"]["read"]["returns"], ["nodes", "edges", "metadata"])
         self.assertIn('"literal": 2', payload)
         self.assertEqual(payload.count('"alias": "graph_name"'), 1)
 
@@ -188,9 +182,7 @@ class GraphSdkTests(unittest.TestCase):
             self.selection(kind="directed")
         with self.assertRaises(ValueError):
             self.selection(
-                node_identity=IdentitySelection.tagged_property(
-                    "__helix_graph_collision"
-                )
+                node_identity=IdentitySelection.tagged_property("__helix_graph_collision")
             )
         with self.assertRaises(ValueError):
             self.selection(graphify_edge_key=IdentitySelection.internal_id())
@@ -271,15 +263,11 @@ class GraphSdkTests(unittest.TestCase):
             record = _ExternalIdRecord(encoded=_encode_external_id(value))
             decoded = _decode_external_id(record)
             if isinstance(value, float):
-                self.assertEqual(
-                    _encode_external_id(decoded), _encode_external_id(value)
-                )
+                self.assertEqual(_encode_external_id(decoded), _encode_external_id(value))
             else:
                 self.assertEqual(decoded, value)
             json_value = json.loads(json.dumps(external_id_to_json(value)))
-            self.assertEqual(
-                external_id_to_json(external_id_from_json(json_value)), json_value
-            )
+            self.assertEqual(external_id_to_json(external_id_from_json(json_value)), json_value)
         self.assertNotEqual(_encode_external_id(1), _encode_external_id("1"))
         self.assertNotEqual(_encode_external_id(True), _encode_external_id("true"))
 

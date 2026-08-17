@@ -6,11 +6,11 @@ returned graph executes in Rust over the retained immutable topology.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
 import json
 import math
 import struct
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, Union
 
 from .client import Client, HelixError
@@ -128,9 +128,7 @@ class GraphSelection:
     metadata: GraphMetadataSelection | None = None
     node_properties: tuple[str, ...] = ()
     edge_properties: tuple[str, ...] = ()
-    node_identity: IdentitySelection = field(
-        default_factory=IdentitySelection.internal_id
-    )
+    node_identity: IdentitySelection = field(default_factory=IdentitySelection.internal_id)
     graphify_edge_key: IdentitySelection | None = None
     weight_property: str | None = None
     max_nodes: int | None = None
@@ -140,10 +138,7 @@ class GraphSelection:
     def __post_init__(self) -> None:
         if self.kind not in {"graph", "digraph", "multigraph", "multidigraph"}:
             raise ValueError("invalid graph kind")
-        if (
-            self.graphify_edge_key is not None
-            and self.graphify_edge_key.mode == "internal_id"
-        ):
+        if self.graphify_edge_key is not None and self.graphify_edge_key.mode == "internal_id":
             raise ValueError("Graphify edge keys must be selected from a property")
         properties = (
             *self.node_properties,
@@ -168,11 +163,7 @@ class GraphSelection:
         starts = (
             self.node_traversal.into_steps()[:1],
             self.edge_traversal.into_steps()[:1],
-            *(
-                ()
-                if self.metadata is None
-                else (self.metadata.traversal.into_steps()[:1],)
-            ),
+            *(() if self.metadata is None else (self.metadata.traversal.into_steps()[:1],)),
         )
         if not self.allow_full_scan and any(
             steps
@@ -190,10 +181,7 @@ class GraphSelection:
                 EXTERNAL_ID,
             ),
             Projection.property("$label", NODE_LABEL),
-            *(
-                Projection.property(name, name)
-                for name in sorted(set(self.node_properties))
-            ),
+            *(Projection.property(name, name) for name in sorted(set(self.node_properties))),
         ]
         edge_projection = [
             Projection.property("$id", EDGE_ID),
@@ -202,16 +190,11 @@ class GraphSelection:
             Projection.property("$label", EDGE_LABEL),
         ]
         if self.graphify_edge_key is not None:
-            edge_projection.append(
-                Projection.property(self.graphify_edge_key.property, EDGE_KEY)
-            )
+            edge_projection.append(Projection.property(self.graphify_edge_key.property, EDGE_KEY))
         if self.weight_property is not None:
-            edge_projection.append(
-                Projection.property(self.weight_property, EDGE_WEIGHT)
-            )
+            edge_projection.append(Projection.property(self.weight_property, EDGE_WEIGHT))
         edge_projection.extend(
-            Projection.property(name, name)
-            for name in sorted(set(self.edge_properties))
+            Projection.property(name, name) for name in sorted(set(self.edge_properties))
         )
         nodes = self.node_traversal
         edges = self.edge_traversal
@@ -227,8 +210,7 @@ class GraphSelection:
         returns = ["nodes", "edges"]
         if self.metadata is not None:
             metadata_projection = [
-                Projection.property(name, name)
-                for name in sorted(set(self.metadata.properties))
+                Projection.property(name, name) for name in sorted(set(self.metadata.properties))
             ]
             batch = batch.var_as(
                 "metadata",
@@ -482,9 +464,7 @@ class LayoutOptions:
         for node_id, x, y in self.initial_positions:
             encoded = _encode_external_id(node_id)
             if encoded in seen or not math.isfinite(x) or not math.isfinite(y):
-                raise ValueError(
-                    "initial positions require unique IDs and finite coordinates"
-                )
+                raise ValueError("initial positions require unique IDs and finite coordinates")
             seen.add(encoded)
 
 
@@ -516,9 +496,7 @@ class NativeGraph:
         return _decode_json(self._native.graph_attributes_json())
 
     def contains_node(self, node_id: ExternalId) -> bool:
-        return bool(
-            self._native.contains_node(_native_external_id(self._module, node_id))
-        )
+        return bool(self._native.contains_node(_native_external_id(self._module, node_id)))
 
     def contains_edge(self, edge_id: GraphEdgeId | str) -> bool:
         return bool(self._native.contains_edge(_native_edge_id(self._module, edge_id)))
@@ -551,33 +529,25 @@ class NativeGraph:
     def successors(self, node_id: ExternalId) -> tuple[ExternalId, ...]:
         return tuple(
             _decode_external_id(value)
-            for value in self._native.successors(
-                _native_external_id(self._module, node_id)
-            )
+            for value in self._native.successors(_native_external_id(self._module, node_id))
         )
 
     def predecessors(self, node_id: ExternalId) -> tuple[ExternalId, ...]:
         return tuple(
             _decode_external_id(value)
-            for value in self._native.predecessors(
-                _native_external_id(self._module, node_id)
-            )
+            for value in self._native.predecessors(_native_external_id(self._module, node_id))
         )
 
     def out_edge_ids(self, node_id: ExternalId) -> tuple[GraphEdgeId, ...]:
         return tuple(
             _decode_edge_id(edge_id)
-            for edge_id in self._native.out_edge_ids(
-                _native_external_id(self._module, node_id)
-            )
+            for edge_id in self._native.out_edge_ids(_native_external_id(self._module, node_id))
         )
 
     def in_edge_ids(self, node_id: ExternalId) -> tuple[GraphEdgeId, ...]:
         return tuple(
             _decode_edge_id(edge_id)
-            for edge_id in self._native.in_edge_ids(
-                _native_external_id(self._module, node_id)
-            )
+            for edge_id in self._native.in_edge_ids(_native_external_id(self._module, node_id))
         )
 
     def incident_edge_ids(self, node_id: ExternalId) -> tuple[GraphEdgeId, ...]:
@@ -643,9 +613,7 @@ class NativeGraph:
         options = options or BetweennessOptions()
         return tuple(
             NodeScore(_decode_external_id(score.node_id), float(score.score))
-            for score in self._native.betweenness_centrality(
-                _betweenness(self._module, options)
-            )
+            for score in self._native.betweenness_centrality(_betweenness(self._module, options))
         )
 
     def edge_betweenness_centrality(
@@ -655,11 +623,7 @@ class NativeGraph:
         return tuple(
             EdgeScore(
                 _decode_edge_id(score.edge_id),
-                (
-                    None
-                    if score.graphify_key is None
-                    else _decode_external_id(score.graphify_key)
-                ),
+                (None if score.graphify_key is None else _decode_external_id(score.graphify_key)),
                 _decode_external_id(score.source),
                 _decode_external_id(score.target),
                 float(score.score),
@@ -669,9 +633,7 @@ class NativeGraph:
             )
         )
 
-    def simple_cycles(
-        self, length_bound: int, max_cycles: int | None = None
-    ) -> CycleResult:
+    def simple_cycles(self, length_bound: int, max_cycles: int | None = None) -> CycleResult:
         _positive_int(length_bound, "length_bound")
         if max_cycles is not None:
             _positive_int(max_cycles, "max_cycles")
@@ -723,11 +685,7 @@ class NativeGraph:
             tuple(
                 TraversedEdge(
                     _decode_edge_id(edge.edge_id),
-                    (
-                        None
-                        if edge.graphify_key is None
-                        else _decode_external_id(edge.graphify_key)
-                    ),
+                    (None if edge.graphify_key is None else _decode_external_id(edge.graphify_key)),
                     _decode_external_id(edge.source),
                     _decode_external_id(edge.target),
                     _edge_traversal_direction(native, edge.traversal_direction),
@@ -769,11 +727,7 @@ class NativeGraph:
             tuple(
                 PathEdge(
                     _decode_edge_id(edge.edge_id),
-                    (
-                        None
-                        if edge.graphify_key is None
-                        else _decode_external_id(edge.graphify_key)
-                    ),
+                    (None if edge.graphify_key is None else _decode_external_id(edge.graphify_key)),
                     _decode_external_id(edge.source),
                     _decode_external_id(edge.target),
                     _edge_traversal_direction(self._module, edge.traversal_direction),
@@ -784,9 +738,7 @@ class NativeGraph:
             ),
         )
 
-    def louvain_communities(
-        self, options: LouvainOptions | None = None
-    ) -> CommunityResult:
+    def louvain_communities(self, options: LouvainOptions | None = None) -> CommunityResult:
         options = options or LouvainOptions()
         result = self._native.louvain_communities(
             options.resolution, options.threshold, options.seed, options.max_levels
@@ -814,9 +766,7 @@ class NativeGraph:
             int(result.winning_trial),
         )
 
-    def spring_layout(
-        self, options: LayoutOptions | None = None
-    ) -> tuple[NodePosition, ...]:
+    def spring_layout(self, options: LayoutOptions | None = None) -> tuple[NodePosition, ...]:
         options = options or LayoutOptions()
         return tuple(
             NodePosition(_decode_external_id(position.node_id), position.x, position.y)
@@ -903,9 +853,7 @@ def load_graph(client: Client, selection: GraphSelection) -> NativeGraph:
 def _native_graph_module() -> Any:
     try:
         import helixdb_uniffi as native
-    except (
-        ImportError
-    ) as exc:  # pragma: no cover - native package is platform-specific.
+    except ImportError as exc:  # pragma: no cover - native package is platform-specific.
         raise HelixError.embedded_unavailable(
             "native graph bindings are not installed", cause=exc
         ) from exc
@@ -942,11 +890,7 @@ def _edge(record: Any) -> GraphEdge:
         _decode_edge_id(record.id),
         _decode_external_id(record.source),
         _decode_external_id(record.target),
-        (
-            None
-            if record.graphify_key is None
-            else _decode_external_id(record.graphify_key)
-        ),
+        (None if record.graphify_key is None else _decode_external_id(record.graphify_key)),
         record.label,
         record.weight,
         _decode_json(record.attributes_json),
@@ -1148,9 +1092,9 @@ def _direction(native: Any, direction: TraversalDirection) -> Any:
 def _edge_traversal_direction(native: Any, direction: Any) -> EdgeTraversalDirection:
     if direction == native.NativeEdgeTraversalDirection.FORWARD:
         return "forward"
-    assert (
-        direction == native.NativeEdgeTraversalDirection.REVERSE
-    ), "generated binding returned an unknown edge traversal direction"
+    assert direction == native.NativeEdgeTraversalDirection.REVERSE, (
+        "generated binding returned an unknown edge traversal direction"
+    )
     return "reverse"
 
 

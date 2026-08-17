@@ -23,7 +23,7 @@ if (packageJson.name !== "@helix-db/helix-db-embedded") {
 }
 
 Object.assign(packageJson, {
-  version: "0.3.2",
+  version: "0.3.3",
   description:
     "Embedded HelixDB runtime and native graph algorithms for the HelixDB JavaScript SDK",
   license: "Apache-2.0",

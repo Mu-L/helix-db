@@ -641,7 +641,10 @@ export function runtimeFixtures(): Fixture[] {
               .n(NodeRef.var("source"))
               .addE("FOLLOWS", NodeRef.var("target"), [["note", PropertyInput.value("dropitemedge")]]),
           )
-          .returning(["source", "target", "edge"]),
+          .varAs("source_values", g().n(NodeRef.var("source")).values(["externalId", "bio"]))
+          .varAs("target_values", g().n(NodeRef.var("target")).values(["externalId"]))
+          .varAs("edge_values", g().e(EdgeRef.var("edge")).values(["note"]))
+          .returning(["source_values", "target_values", "edge_values"]),
       ),
     ),
     runtime(
