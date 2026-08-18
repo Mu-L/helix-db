@@ -3146,7 +3146,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "slatedb"
 version = "0.15.0"
-source = "git+https://github.com/HelixDB/slatedb.git?rev=a60a1234f8b6a184381b0b0b2dc88c1cabd010f7#a60a1234f8b6a184381b0b0b2dc88c1cabd010f7"
+source = "git+https://github.com/HelixDB/slatedb.git?rev=30d9f28cfeb93cf95652aac2b7724811c5c49630#30d9f28cfeb93cf95652aac2b7724811c5c49630"
 dependencies = [
  "async-channel",
  "async-trait",
@@ -3191,7 +3191,7 @@ dependencies = [
 [[package]]
 name = "slatedb-common"
 version = "0.15.0"
-source = "git+https://github.com/HelixDB/slatedb.git?rev=a60a1234f8b6a184381b0b0b2dc88c1cabd010f7#a60a1234f8b6a184381b0b0b2dc88c1cabd010f7"
+source = "git+https://github.com/HelixDB/slatedb.git?rev=30d9f28cfeb93cf95652aac2b7724811c5c49630#30d9f28cfeb93cf95652aac2b7724811c5c49630"
 dependencies = [
  "chrono",
  "log",
@@ -3206,7 +3206,7 @@ dependencies = [
 [[package]]
 name = "slatedb-txn-obj"
 version = "0.15.0"
-source = "git+https://github.com/HelixDB/slatedb.git?rev=a60a1234f8b6a184381b0b0b2dc88c1cabd010f7#a60a1234f8b6a184381b0b0b2dc88c1cabd010f7"
+source = "git+https://github.com/HelixDB/slatedb.git?rev=30d9f28cfeb93cf95652aac2b7724811c5c49630#30d9f28cfeb93cf95652aac2b7724811c5c49630"
 dependencies = [
  "async-trait",
  "bytes",
