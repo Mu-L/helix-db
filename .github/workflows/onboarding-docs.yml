@@ -1,0 +1,108 @@
+name: Onboarding docs
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/onboarding-docs.yml"
+      - ".github/workflows/cli.yml"
+      - "README.md"
+      - "crates/cli/CLAUDE.md"
+      - "crates/cli/install.ps1"
+      - "crates/cli/src/commands/init.rs"
+      - "crates/cli/src/commands/chef.rs"
+      - "docs/**"
+      - "sdks/go/go.mod"
+      - "sdks/python/pyproject.toml"
+      - "sdks/rust/Cargo.toml"
+      - "sdks/typescript/package.json"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/onboarding-docs.yml"
+      - ".github/workflows/cli.yml"
+      - "README.md"
+      - "crates/cli/CLAUDE.md"
+      - "crates/cli/install.ps1"
+      - "crates/cli/src/commands/init.rs"
+      - "crates/cli/src/commands/chef.rs"
+      - "docs/**"
+      - "sdks/go/go.mod"
+      - "sdks/python/pyproject.toml"
+      - "sdks/rust/Cargo.toml"
+      - "sdks/typescript/package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onboarding-docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  docs-contracts:
+    name: Links and install commands
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Validate documentation contracts
+        run: node docs/scripts/check-docs.mjs
+      - name: Validate generated documentation indexes
+        run: |
+          node docs/scripts/generate-llms.mjs --check
+          node docs/scripts/generate-llms-full.mjs --check
+
+  powershell-installer:
+    name: Windows PowerShell installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install a fixture release asset
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $fixture = Join-Path $env:RUNNER_TEMP "helix-fixture.exe"
+          $source = @'
+          using System;
+
+          public static class Program
+          {
+              public static int Main(string[] args)
+              {
+                  if (args.Length == 1 && args[0] == "--version")
+                  {
+                      Console.WriteLine("Helix CLI 9.8.7");
+                      return 0;
+                  }
+                  return 1;
+              }
+          }
+          '@
+          Add-Type `
+            -TypeDefinition $source `
+            -OutputAssembly $fixture `
+            -OutputType ConsoleApplication
+
+          $installDir = Join-Path $env:RUNNER_TEMP "helix-bin"
+          & ./crates/cli/install.ps1 `
+            -InstallDir $installDir `
+            -Version "v9.8.7" `
+            -AssetPath $fixture `
+            -NoPathUpdate `
+            -Force
+
+          $actual = & (Join-Path $installDir "helix.exe") --version
+          if ($actual -ne "Helix CLI 9.8.7") {
+            throw "Expected 'Helix CLI 9.8.7', got '$actual'."
+          }
+
+          & ./crates/cli/install.ps1 `
+            -InstallDir $installDir `
+            -Version "v9.8.7" `
+            -AssetPath $fixture `
+            -NoPathUpdate
