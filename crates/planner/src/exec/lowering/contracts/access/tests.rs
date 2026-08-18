@@ -93,6 +93,23 @@ fn delivered_properties_preserve_range_order_and_key_locality() {
 }
 
 #[test]
+fn delivered_properties_do_not_inherit_nested_intersection_ordering() {
+    let nested = source(ir::NodeAccessPlan::Intersect(ir::AtLeast::from_pair(
+        source(node_range(helix_ast::index::RangeIndexDirection::Desc)),
+        source(ir::NodeAccessPlan::Empty),
+    )));
+    let plan = ir::NodeAccessPlan::Intersect(ir::AtLeast::from_pair(
+        nested,
+        source(ir::NodeAccessPlan::Empty),
+    ));
+
+    assert_eq!(
+        delivered::node_access_delivered_properties(&plan).ordering,
+        properties::DeliveredOrdering::Unordered
+    );
+}
+
+#[test]
 fn element_point_delivered_properties_are_exact_and_close() {
     let delivered = delivered::element_point_delivered_properties(properties::ElementKind::Edge, 2);
     assert_eq!(delivered.element, Some(properties::ElementKind::Edge));

@@ -196,3 +196,38 @@ fn set_and_filter_contracts_reuse_shared_child_costs() {
     );
     assert_eq!(intersection.estimated_rows, cost::EstimatedRows::rows(3));
 }
+
+#[test]
+fn intersection_contract_inherits_order_only_from_a_direct_range_child() {
+    let key = range_key();
+    let stats = context::StatsSnapshot::default().with_node_range_cardinality(key.clone(), 5);
+    let storage = cost::StorageCostProfile::default();
+    let flat = access_contract::<TestFamily>(
+        &TestPlan::Intersect(vec![
+            TestPlan::Range(key.clone()),
+            non_unique_equality("node_eq:User:email", eq_key()),
+        ]),
+        &storage,
+        &stats,
+    );
+    let nested = access_contract::<TestFamily>(
+        &TestPlan::Intersect(vec![
+            TestPlan::Intersect(vec![
+                TestPlan::Range(key),
+                non_unique_equality("node_eq:User:email", eq_key()),
+            ]),
+            non_unique_equality("node_eq:User:tenant", eq_key()),
+        ]),
+        &storage,
+        &stats,
+    );
+
+    assert!(matches!(
+        flat.delivered.ordering,
+        properties::DeliveredOrdering::ByKeys(_)
+    ));
+    assert_eq!(
+        nested.delivered.ordering,
+        properties::DeliveredOrdering::Unordered
+    );
+}

@@ -5535,6 +5535,257 @@ async fn public_query_boundary_covers_active_secondary_index_families() {
 }
 
 #[tokio::test]
+async fn ordered_multi_range_intersections_match_explicit_sort_prefixes() {
+    let db = HelixDB::open(HelixDbSource::InMemory {
+        database: "production-ordered-multi-range-intersections".to_owned(),
+    })
+    .await
+    .expect("ordered multi-range fixture opens");
+    let fixture = batch::write_batch()
+        .var_as(
+            "first",
+            traversal::g().add_n(
+                "Metric",
+                vec![
+                    ("age", PropertyInput::from(1_i64)),
+                    ("score", PropertyInput::from(30_i64)),
+                ],
+            ),
+        )
+        .var_as(
+            "second",
+            traversal::g().add_n(
+                "Metric",
+                vec![
+                    ("age", PropertyInput::from(2_i64)),
+                    ("score", PropertyInput::from(10_i64)),
+                ],
+            ),
+        )
+        .var_as(
+            "third",
+            traversal::g().add_n(
+                "Metric",
+                vec![
+                    ("age", PropertyInput::from(3_i64)),
+                    ("score", PropertyInput::from(20_i64)),
+                ],
+            ),
+        )
+        .var_as(
+            "first_edge",
+            traversal::g().n(NodeRef::var("first")).add_e(
+                "MEASURED",
+                NodeRef::var("second"),
+                vec![
+                    ("age", PropertyInput::from(30_i64)),
+                    ("score", PropertyInput::from(1_i64)),
+                ],
+            ),
+        )
+        .var_as(
+            "second_edge",
+            traversal::g().n(NodeRef::var("second")).add_e(
+                "MEASURED",
+                NodeRef::var("third"),
+                vec![
+                    ("age", PropertyInput::from(20_i64)),
+                    ("score", PropertyInput::from(2_i64)),
+                ],
+            ),
+        )
+        .var_as(
+            "third_edge",
+            traversal::g().n(NodeRef::var("first")).add_e(
+                "MEASURED",
+                NodeRef::var("third"),
+                vec![
+                    ("age", PropertyInput::from(10_i64)),
+                    ("score", PropertyInput::from(3_i64)),
+                ],
+            ),
+        )
+        .returning(Vec::<String>::new());
+    db.query(QueryRequest::write(fixture)).await.unwrap();
+
+    for (spec, description) in [
+        (
+            index::IndexSpec::node_range("Metric", "age"),
+            "ascending node age range index",
+        ),
+        (
+            index::IndexSpec::node_range("Metric", "score"),
+            "ascending node score range index",
+        ),
+        (
+            index::IndexSpec::edge_range_desc("MEASURED", "age"),
+            "descending edge age range index",
+        ),
+        (
+            index::IndexSpec::edge_range_desc("MEASURED", "score"),
+            "descending edge score range index",
+        ),
+    ] {
+        let receipt = db
+            .query(QueryRequest::write(
+                batch::write_batch()
+                    .var_as("operation", traversal::g().create_index_if_not_exists(spec))
+                    .returning(["operation"]),
+            ))
+            .await
+            .unwrap();
+        let operation_id = receipt["operation"]["operation_id"]
+            .as_str()
+            .expect("accepted range-index operation has an ID");
+        await_index_operation_success(&db, operation_id, description).await;
+    }
+
+    let node_batch = batch::read_batch()
+        .var_as(
+            "result",
+            traversal::g()
+                .n_with_label_where(
+                    "Metric",
+                    Predicate::and(vec![
+                        Predicate::gte("age", 0_i64),
+                        Predicate::gte("score", 0_i64),
+                    ]),
+                )
+                .order_by("score", traversal::Order::Asc)
+                .limit(2_usize)
+                .id(),
+        )
+        .returning(["result"]);
+    let edge_batch = batch::read_batch()
+        .var_as(
+            "result",
+            traversal::g()
+                .e_with_label_where(
+                    "MEASURED",
+                    Predicate::and(vec![
+                        Predicate::lte("age", 100_i64),
+                        Predicate::lte("score", 100_i64),
+                    ]),
+                )
+                .order_by("score", traversal::Order::Desc)
+                .limit(2_usize)
+                .id(),
+        )
+        .returning(["result"]);
+    let mut indexed_context = db.planner_context(context::ParamBindings::default());
+    indexed_context.stats = context::StatsSnapshot::default()
+        .with_node_range_cardinality(
+            catalog::ScopedPropertyDirectionKey::try_new(
+                "Metric",
+                "age",
+                index::RangeIndexDirection::Asc,
+            )
+            .unwrap(),
+            1,
+        )
+        .with_node_range_cardinality(
+            catalog::ScopedPropertyDirectionKey::try_new(
+                "Metric",
+                "score",
+                index::RangeIndexDirection::Asc,
+            )
+            .unwrap(),
+            3,
+        )
+        .with_edge_range_cardinality(
+            catalog::ScopedPropertyDirectionKey::try_new(
+                "MEASURED",
+                "age",
+                index::RangeIndexDirection::Desc,
+            )
+            .unwrap(),
+            1,
+        )
+        .with_edge_range_cardinality(
+            catalog::ScopedPropertyDirectionKey::try_new(
+                "MEASURED",
+                "score",
+                index::RangeIndexDirection::Desc,
+            )
+            .unwrap(),
+            3,
+        );
+
+    for (read, expected_driver, expected) in [
+        (
+            &node_batch,
+            properties::ElementKind::Node,
+            ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(1), ExecutionScalar::NodeId(2)]),
+        ),
+        (
+            &edge_batch,
+            properties::ElementKind::Edge,
+            ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(2), ExecutionScalar::EdgeId(1)]),
+        ),
+    ] {
+        let indexed = planning::plan_read_batch(read, &indexed_context)
+            .expect("indexed ordered multi-range query plans");
+        let scan = planning::plan_read_batch(read, &context::PlannerContext::default())
+            .expect("full-scan ordered multi-range query plans");
+        let indexed_access = indexed
+            .steps()
+            .iter()
+            .find_map(|step| match &step.op {
+                exec::ExecOp::Access { plan } => Some(match plan.as_ref() {
+                    exec::ExecAccessPlan::Limited(limited) => limited.source(),
+                    access => access,
+                }),
+                _ => None,
+            })
+            .expect("indexed plan has an access step");
+        match (expected_driver, indexed_access) {
+            (
+                properties::ElementKind::Node,
+                exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::SecondarySet {
+                    set: exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, .. },
+                }),
+            ) => assert_eq!(driver.key.property.as_ref(), "score"),
+            (
+                properties::ElementKind::Edge,
+                exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::SecondarySet {
+                    set: exec::ExecEdgeSecondarySetPlan::OrderedIntersect { driver, .. },
+                }),
+            ) => assert_eq!(driver.key.property.as_ref(), "score"),
+            (_, access) => panic!("expected ordered secondary intersection, got {access:?}"),
+        }
+        assert!(
+            indexed
+                .steps()
+                .iter()
+                .all(|step| !matches!(step.op, exec::ExecOp::Order { .. })),
+            "indexed plan should elide explicit sorting: {:?}",
+            indexed.steps()
+        );
+        assert!(
+            scan.steps()
+                .iter()
+                .any(|step| matches!(step.op, exec::ExecOp::Order { .. })),
+            "full-scan reference should sort explicitly: {:?}",
+            scan.steps()
+        );
+
+        let indexed_result = db
+            .execute(&indexed, context::ParamBindings::default())
+            .await
+            .expect("indexed ordered multi-range query executes");
+        let scan_result = db
+            .execute(&scan, context::ParamBindings::default())
+            .await
+            .expect("full-scan ordered multi-range query executes");
+        assert_eq!(indexed_result.last, Some(expected.clone()));
+        assert_eq!(indexed_result.last, scan_result.last);
+        assert_eq!(indexed_result.returns, scan_result.returns);
+    }
+
+    db.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn public_query_boundary_covers_dynamic_bounds_and_parameter_errors() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-dynamic-bounds".to_owned(),

@@ -788,6 +788,81 @@ fn cascades_ordered_secondary_intersections_elide_explicit_sorts() {
 }
 
 #[test]
+fn cascades_ordered_secondary_intersections_promote_the_requested_range_driver() {
+    let node_age =
+        ScopedPropertyDirectionKey::try_new("User", "age", RangeIndexDirection::Asc).unwrap();
+    let node_score =
+        ScopedPropertyDirectionKey::try_new("User", "score", RangeIndexDirection::Asc).unwrap();
+    let edge_age =
+        ScopedPropertyDirectionKey::try_new("FOLLOWS", "age", RangeIndexDirection::Desc).unwrap();
+    let edge_score =
+        ScopedPropertyDirectionKey::try_new("FOLLOWS", "score", RangeIndexDirection::Desc).unwrap();
+    let indexes = builtin_label_indexes()
+        .with_node_range(node_age.clone())
+        .with_node_range(node_score.clone())
+        .with_edge_range(edge_age.clone())
+        .with_edge_range(edge_score.clone());
+    let stats = StatsSnapshot::default()
+        .with_node_range_cardinality(node_age, 2)
+        .with_node_range_cardinality(node_score, 20)
+        .with_edge_range_cardinality(edge_age, 2)
+        .with_edge_range_cardinality(edge_score, 20);
+    let node = executable_traversal(
+        g().n_with_label_where(
+            "User",
+            Predicate::and(vec![Predicate::gte("age", 18), Predicate::gte("score", 0)]),
+        )
+        .order_by("score", Order::Asc)
+        .limit(2usize),
+        PlannerContext {
+            indexes: indexes.clone(),
+            stats: stats.clone(),
+            ..PlannerContext::default()
+        },
+    );
+    let edge = executable_traversal(
+        g().e_with_label_where(
+            "FOLLOWS",
+            Predicate::and(vec![Predicate::lte("age", 99), Predicate::lte("score", 99)]),
+        )
+        .order_by("score", Order::Desc)
+        .limit(2usize),
+        PlannerContext {
+            indexes,
+            stats,
+            ..PlannerContext::default()
+        },
+    );
+
+    assert!(matches!(
+        unwrapped_first_exec_access(&node),
+        ExecAccessPlan::Node(ExecNodeAccessPlan::SecondarySet {
+            set: crate::exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, filters }
+        }) if driver.key.property == "score"
+            && filters.iter().any(|filter| matches!(
+                filter,
+                crate::exec::ExecNodeSecondarySetPlan::Range(range)
+                    if range.key.property == "age"
+            ))
+    ));
+    assert!(matches!(
+        unwrapped_first_exec_access(&edge),
+        ExecAccessPlan::Edge(ExecEdgeAccessPlan::SecondarySet {
+            set: crate::exec::ExecEdgeSecondarySetPlan::OrderedIntersect { driver, filters }
+        }) if driver.key.property == "score"
+            && filters.iter().any(|filter| matches!(
+                filter,
+                crate::exec::ExecEdgeSecondarySetPlan::Range(range)
+                    if range.key.property == "age"
+            ))
+    ));
+    assert_no_exec_op_family(&node, ExecOpFamily::Order);
+    assert_no_exec_op_family(&edge, ExecOpFamily::Order);
+    assert_eq!(first_limited_access_limit(&node), Some(2));
+    assert_eq!(first_limited_access_limit(&edge), Some(2));
+}
+
+#[test]
 fn cascades_index_set_limits_remain_semantic_after_set_merges() {
     let indexes = chosen_plan_indexes();
 
