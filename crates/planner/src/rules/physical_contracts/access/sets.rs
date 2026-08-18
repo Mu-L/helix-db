@@ -37,10 +37,10 @@ pub(super) fn access_set_contract(
         );
     };
     if access == physical::PhysicalAccess::SetIntersection {
-        let ordering = delivered_children
+        let ordering = children
             .iter()
-            .map(|child| child.ordering.clone())
-            .find(|ordering| matches!(ordering, properties::DeliveredOrdering::ByKeys(_)))
+            .find(|child| child.access == physical::PhysicalAccess::RangeIndex)
+            .map(|child| child.delivered.ordering.clone())
             .unwrap_or(properties::DeliveredOrdering::Unordered);
         delivered = with_ordering(delivered, ordering);
     }

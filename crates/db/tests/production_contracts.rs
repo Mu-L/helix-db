@@ -5652,8 +5652,7 @@ async fn ordered_multi_range_intersections_match_explicit_sort_prefixes() {
                     ]),
                 )
                 .order_by("score", traversal::Order::Asc)
-                .limit(2_usize)
-                .id(),
+                .limit(2_usize),
         )
         .returning(["result"]);
     let edge_batch = batch::read_batch()
@@ -5668,8 +5667,7 @@ async fn ordered_multi_range_intersections_match_explicit_sort_prefixes() {
                     ]),
                 )
                 .order_by("score", traversal::Order::Desc)
-                .limit(2_usize)
-                .id(),
+                .limit(2_usize),
         )
         .returning(["result"]);
     let mut indexed_context = db.planner_context(context::ParamBindings::default());
@@ -5690,7 +5688,7 @@ async fn ordered_multi_range_intersections_match_explicit_sort_prefixes() {
                 index::RangeIndexDirection::Asc,
             )
             .unwrap(),
-            3,
+            20,
         )
         .with_edge_range_cardinality(
             catalog::ScopedPropertyDirectionKey::try_new(
@@ -5699,7 +5697,7 @@ async fn ordered_multi_range_intersections_match_explicit_sort_prefixes() {
                 index::RangeIndexDirection::Desc,
             )
             .unwrap(),
-            1,
+            2,
         )
         .with_edge_range_cardinality(
             catalog::ScopedPropertyDirectionKey::try_new(
@@ -5708,19 +5706,19 @@ async fn ordered_multi_range_intersections_match_explicit_sort_prefixes() {
                 index::RangeIndexDirection::Desc,
             )
             .unwrap(),
-            3,
+            20,
         );
 
     for (read, expected_driver, expected) in [
         (
             &node_batch,
             properties::ElementKind::Node,
-            ExecutionValue::Scalars(vec![ExecutionScalar::NodeId(1), ExecutionScalar::NodeId(2)]),
+            vec![ElementRef::Node(1), ElementRef::Node(2)],
         ),
         (
             &edge_batch,
             properties::ElementKind::Edge,
-            ExecutionValue::Scalars(vec![ExecutionScalar::EdgeId(2), ExecutionScalar::EdgeId(1)]),
+            vec![ElementRef::Edge(2), ElementRef::Edge(1)],
         ),
     ] {
         let indexed = planning::plan_read_batch(read, &indexed_context)
@@ -5744,13 +5742,25 @@ async fn ordered_multi_range_intersections_match_explicit_sort_prefixes() {
                 exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::SecondarySet {
                     set: exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, .. },
                 }),
-            ) => assert_eq!(driver.key.property.as_ref(), "score"),
+            ) => assert_eq!(
+                driver.key.property.as_ref(),
+                "score",
+                "unexpected indexed node plan: {:?}; trace: {:?}",
+                indexed.steps(),
+                indexed.trace()
+            ),
             (
                 properties::ElementKind::Edge,
                 exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::SecondarySet {
                     set: exec::ExecEdgeSecondarySetPlan::OrderedIntersect { driver, .. },
                 }),
-            ) => assert_eq!(driver.key.property.as_ref(), "score"),
+            ) => assert_eq!(
+                driver.key.property.as_ref(),
+                "score",
+                "unexpected indexed edge plan: {:?}; trace: {:?}",
+                indexed.steps(),
+                indexed.trace()
+            ),
             (_, access) => panic!("expected ordered secondary intersection, got {access:?}"),
         }
         assert!(
@@ -5777,9 +5787,16 @@ async fn ordered_multi_range_intersections_match_explicit_sort_prefixes() {
             .execute(&scan, context::ParamBindings::default())
             .await
             .expect("full-scan ordered multi-range query executes");
-        assert_eq!(indexed_result.last, Some(expected.clone()));
         assert_eq!(indexed_result.last, scan_result.last);
         assert_eq!(indexed_result.returns, scan_result.returns);
+        let Some(ExecutionValue::Stream(rows)) = indexed_result.last else {
+            panic!("ordered multi-range query should return a stream");
+        };
+        let actual = rows
+            .into_iter()
+            .map(|row| row.current.expect("result row has a current element"))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 
     db.close().await.unwrap();

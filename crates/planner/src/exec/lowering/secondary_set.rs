@@ -294,6 +294,38 @@ mod tests {
         ir::NodeAccessSourcePlan::new(plan).expect("test source is valid")
     }
 
+    fn edge_source(plan: ir::EdgeAccessPlan) -> ir::EdgeAccessSourcePlan {
+        ir::EdgeAccessSourcePlan::new(plan).expect("test source is valid")
+    }
+
+    fn node_range(property: &str) -> ir::NodeAccessPlan {
+        ir::NodeAccessPlan::RangeIndex {
+            index: crate::catalog::NodeRangeIndexMeta::try_new(format!("user_{property}"))
+                .expect("test index ID is non-empty"),
+            key: crate::catalog::ScopedPropertyDirectionKey::try_new(
+                "User",
+                property,
+                RangeIndexDirection::Asc,
+            )
+            .expect("test range key is valid"),
+            range: ir::IndexRange::All,
+        }
+    }
+
+    fn edge_range(property: &str) -> ir::EdgeAccessPlan {
+        ir::EdgeAccessPlan::RangeIndex {
+            index: crate::catalog::EdgeRangeIndexMeta::try_new(format!("follows_{property}"))
+                .expect("test index ID is non-empty"),
+            key: crate::catalog::ScopedPropertyDirectionKey::try_new(
+                "FOLLOWS",
+                property,
+                RangeIndexDirection::Desc,
+            )
+            .expect("test range key is valid"),
+            range: ir::IndexRange::All,
+        }
+    }
+
     #[test]
     fn same_index_union_batches_values_into_one_equality_leaf() {
         let plan = ir::NodeAccessPlan::Union(ir::AtLeast::from_pair(
@@ -321,26 +353,64 @@ mod tests {
 
     #[test]
     fn range_intersection_becomes_an_ordered_driver_with_filters() {
-        let range = ir::NodeAccessPlan::RangeIndex {
-            index: crate::catalog::NodeRangeIndexMeta::try_new("user_age")
-                .expect("test index ID is non-empty"),
-            key: crate::catalog::ScopedPropertyDirectionKey::try_new(
-                "User",
-                "age",
-                RangeIndexDirection::Desc,
-            )
-            .expect("test range key is valid"),
-            range: ir::IndexRange::All,
-        };
         let plan = ir::NodeAccessPlan::Intersect(ir::AtLeast::from_pair(
             node_source(node_equality("status", PropertyValue::from("active"))),
-            node_source(range),
+            node_source(node_range("age")),
         ));
 
         assert!(matches!(
             node_secondary_set(&plan),
             Some(exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, filters })
                 if driver.key.property == "age" && filters.len() == 1
+        ));
+    }
+
+    #[test]
+    fn ordered_intersection_lowering_uses_the_first_direct_range_for_nodes_and_edges() {
+        let node = ir::NodeAccessPlan::Intersect(ir::AtLeast::from_pair(
+            node_source(node_range("score")),
+            node_source(node_range("age")),
+        ));
+        let edge = ir::EdgeAccessPlan::Intersect(ir::AtLeast::from_pair(
+            edge_source(edge_range("score")),
+            edge_source(edge_range("age")),
+        ));
+
+        assert!(matches!(
+            node_secondary_set(&node),
+            Some(exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, filters })
+                if driver.key.property == "score"
+                    && matches!(&filters[0], exec::ExecNodeSecondarySetPlan::Range(range)
+                        if range.key.property == "age")
+        ));
+        assert!(matches!(
+            edge_secondary_set(&edge),
+            Some(exec::ExecEdgeSecondarySetPlan::OrderedIntersect { driver, filters })
+                if driver.key.property == "score"
+                    && matches!(&filters[0], exec::ExecEdgeSecondarySetPlan::Range(range)
+                        if range.key.property == "age")
+        ));
+    }
+
+    #[test]
+    fn ordered_intersection_lowering_never_promotes_a_nested_range() {
+        let nested = ir::NodeAccessPlan::Intersect(ir::AtLeast::from_pair(
+            node_source(node_range("score")),
+            node_source(node_equality("status", PropertyValue::from("active"))),
+        ));
+        let outer = ir::NodeAccessPlan::Intersect(ir::AtLeast::from_pair(
+            node_source(nested),
+            node_source(node_range("age")),
+        ));
+
+        assert!(matches!(
+            node_secondary_set(&outer),
+            Some(exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, filters })
+                if driver.key.property == "age"
+                    && matches!(&filters[0], exec::ExecNodeSecondarySetPlan::OrderedIntersect {
+                        driver: nested_driver,
+                        ..
+                    } if nested_driver.key.property == "score")
         ));
     }
 
