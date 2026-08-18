@@ -91,47 +91,59 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 $NormalizedVersion = Get-NormalizedVersion $Version
 $ReleaseTag = "v$NormalizedVersion"
 $InstalledVersion = Get-InstalledVersion $BinaryPath
+$InstallRequired = $Force -or $InstalledVersion -ne $NormalizedVersion
 
-if (-not $Force -and $InstalledVersion -eq $NormalizedVersion) {
+if (-not $InstallRequired) {
     Write-Host "Helix CLI $NormalizedVersion is already installed at $BinaryPath."
-    return
-}
+    $VerifiedVersion = $InstalledVersion
+} else {
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    $StagedPath = Join-Path $InstallDir ".helix-$([Guid]::NewGuid().ToString('N')).exe"
 
-New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-$StagedPath = Join-Path $InstallDir ".helix-$([Guid]::NewGuid().ToString('N')).exe"
+    try {
+        if ([string]::IsNullOrWhiteSpace($AssetPath)) {
+            $DownloadUrl = "https://github.com/$Repository/releases/download/$ReleaseTag/$AssetName"
+            Write-Host "Downloading $DownloadUrl"
+            Invoke-WebRequest `
+                -Headers @{ "User-Agent" = "Helix-CLI-Installer" } `
+                -Uri $DownloadUrl `
+                -OutFile $StagedPath `
+                -UseBasicParsing
+        } else {
+            $ResolvedAsset = (Resolve-Path -LiteralPath $AssetPath).Path
+            Copy-Item -LiteralPath $ResolvedAsset -Destination $StagedPath
+        }
 
-try {
-    if ([string]::IsNullOrWhiteSpace($AssetPath)) {
-        $DownloadUrl = "https://github.com/$Repository/releases/download/$ReleaseTag/$AssetName"
-        Write-Host "Downloading $DownloadUrl"
-        Invoke-WebRequest `
-            -Headers @{ "User-Agent" = "Helix-CLI-Installer" } `
-            -Uri $DownloadUrl `
-            -OutFile $StagedPath `
-            -UseBasicParsing
-    } else {
-        $ResolvedAsset = (Resolve-Path -LiteralPath $AssetPath).Path
-        Copy-Item -LiteralPath $ResolvedAsset -Destination $StagedPath
+        $StagedVersion = Get-InstalledVersion $StagedPath
+        if ($StagedVersion -ne $NormalizedVersion) {
+            throw "Downloaded asset verification failed. Expected $NormalizedVersion, got '$StagedVersion'."
+        }
+
+        Move-Item -LiteralPath $StagedPath -Destination $BinaryPath -Force
+    } finally {
+        if (Test-Path -LiteralPath $StagedPath) {
+            Remove-Item -LiteralPath $StagedPath -Force
+        }
     }
 
-    $StagedVersion = Get-InstalledVersion $StagedPath
-    if ($StagedVersion -ne $NormalizedVersion) {
-        throw "Downloaded asset verification failed. Expected $NormalizedVersion, got '$StagedVersion'."
-    }
-
-    Move-Item -LiteralPath $StagedPath -Destination $BinaryPath -Force
-} finally {
-    if (Test-Path -LiteralPath $StagedPath) {
-        Remove-Item -LiteralPath $StagedPath -Force
+    $VerifiedVersion = Get-InstalledVersion $BinaryPath
+    if ($VerifiedVersion -ne $NormalizedVersion) {
+        throw "Installation verification failed. Expected $NormalizedVersion, got '$VerifiedVersion'."
     }
 }
 
-$VerifiedVersion = Get-InstalledVersion $BinaryPath
-if ($VerifiedVersion -ne $NormalizedVersion) {
-    throw "Installation verification failed. Expected $NormalizedVersion, got '$VerifiedVersion'."
+$ProcessPathExists = $false
+foreach ($Entry in ($env:Path -split ';')) {
+    if ($Entry.TrimEnd('\') -ieq $InstallDir.TrimEnd('\')) {
+        $ProcessPathExists = $true
+        break
+    }
 }
 
-$env:Path = "$InstallDir;$env:Path"
+if (-not $ProcessPathExists) {
+    $env:Path = "$InstallDir;$env:Path"
+}
+
 if (-not $NoPathUpdate) {
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $PathExists = $false
@@ -153,4 +165,6 @@ if (-not $NoPathUpdate) {
     }
 }
 
-Write-Host "Installed Helix CLI $VerifiedVersion to $BinaryPath."
+if ($InstallRequired) {
+    Write-Host "Installed Helix CLI $VerifiedVersion to $BinaryPath."
+}

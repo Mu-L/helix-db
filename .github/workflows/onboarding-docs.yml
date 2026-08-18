@@ -8,6 +8,7 @@ on:
       - "README.md"
       - "crates/cli/CLAUDE.md"
       - "crates/cli/install.ps1"
+      - "crates/cli/tests/install.ps1"
       - "crates/cli/src/commands/init.rs"
       - "crates/cli/src/commands/chef.rs"
       - "docs/**"
@@ -23,6 +24,7 @@ on:
       - "README.md"
       - "crates/cli/CLAUDE.md"
       - "crates/cli/install.ps1"
+      - "crates/cli/tests/install.ps1"
       - "crates/cli/src/commands/init.rs"
       - "crates/cli/src/commands/chef.rs"
       - "docs/**"
@@ -58,54 +60,16 @@ jobs:
           node docs/scripts/generate-llms-full.mjs --check
 
   powershell-installer:
-    name: Windows PowerShell installer
+    name: Windows installer (${{ matrix.shell }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@v6
       - name: Install a fixture release asset
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $fixture = Join-Path $env:RUNNER_TEMP "helix-fixture.exe"
-          $source = @'
-          using System;
-
-          public static class Program
-          {
-              public static int Main(string[] args)
-              {
-                  if (args.Length == 1 && args[0] == "--version")
-                  {
-                      Console.WriteLine("Helix CLI 9.8.7");
-                      return 0;
-                  }
-                  return 1;
-              }
-          }
-          '@
-          $sourceFile = Join-Path $env:RUNNER_TEMP "helix-fixture.cs"
-          Set-Content -LiteralPath $sourceFile -Value $source -Encoding UTF8
-          $compiler = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          & $compiler /nologo /target:exe "/out:$fixture" $sourceFile
-          if ($LASTEXITCODE -ne 0) {
-            throw "Fixture compilation failed with exit code $LASTEXITCODE."
-          }
-
-          $installDir = Join-Path $env:RUNNER_TEMP "helix-bin"
-          & ./crates/cli/install.ps1 `
-            -InstallDir $installDir `
-            -Version "v9.8.7" `
-            -AssetPath $fixture `
-            -NoPathUpdate `
-            -Force
-
-          $actual = & (Join-Path $installDir "helix.exe") --version
-          if ($actual -ne "Helix CLI 9.8.7") {
-            throw "Expected 'Helix CLI 9.8.7', got '$actual'."
-          }
-
-          & ./crates/cli/install.ps1 `
-            -InstallDir $installDir `
-            -Version "v9.8.7" `
-            -AssetPath $fixture `
-            -NoPathUpdate
+        shell: cmd
+        env:
+          POWERSHELL_COMMAND: ${{ matrix.shell }}
+        run: "%POWERSHELL_COMMAND% -NoLogo -NoProfile -File crates\\cli\\tests\\install.ps1"
