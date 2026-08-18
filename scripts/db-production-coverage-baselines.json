@@ -1,43 +1,43 @@
 {
   "schema_version": 1,
   "uncovered_non_vector_source_lines": {
-    "count": 9959,
-    "sha256": "2dd6da31dd34153da6aa8de0b458362dd336859bbf33b723f68f41b001daec67",
+    "count": 10316,
+    "sha256": "a24a6237436e5afa67b57d27ad08b3bfcf187cc9e7c40bffd5f8db67b165158c",
     "classification": "test-required",
     "reason": "Every uncovered production source line outside vector search and its stochastic vector key/value codecs remains in the explicit production-linked test backlog. The digest makes additions, removals, and newly covered lines require a reviewed baseline update; vector code remains enforced by the whole-DB and dedicated vector thresholds plus finer named-test, architecture, invariant, and platform classifications."
   },
   "scopes": {
     "whole_db": {
-      "minimum_covered_lines": 53425,
-      "minimum_percent": 77.24
+      "minimum_covered_lines": 54198,
+      "minimum_percent": 76.94
     },
     "interpreter": {
-      "minimum_covered_lines": 7553,
-      "minimum_percent": 94.21
+      "minimum_covered_lines": 7786,
+      "minimum_percent": 93.93
     },
     "runtime_dependencies": {
       "minimum_covered_lines": 38,
       "minimum_percent": 100
     },
     "index_lifecycle": {
-      "minimum_covered_lines": 14794,
-      "minimum_percent": 77.03
+      "minimum_covered_lines": 15027,
+      "minimum_percent": 76.72
     },
     "secondary_lifecycle": {
-      "minimum_covered_lines": 1973,
-      "minimum_percent": 77.19
+      "minimum_covered_lines": 1992,
+      "minimum_percent": 77.81
     },
     "vector_lifecycle": {
-      "minimum_covered_lines": 2236,
-      "minimum_percent": 73.04
+      "minimum_covered_lines": 2245,
+      "minimum_percent": 73.34
     },
     "text_lifecycle": {
       "minimum_covered_lines": 5630,
-      "minimum_percent": 78.05
+      "minimum_percent": 77.88
     },
     "text_search": {
-      "minimum_covered_lines": 2496,
-      "minimum_percent": 53.88
+      "minimum_covered_lines": 2557,
+      "minimum_percent": 50.56
     }
   }
 }
