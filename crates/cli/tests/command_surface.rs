@@ -311,8 +311,8 @@ async fn typescript_query_inputs_execute_node_and_send_the_generated_request() {
         .cache()
         .join("ts-runtime/node_modules/@helix-db/helix-db");
     fs::create_dir_all(&sdk).unwrap();
-    fs::write(sdk.join("package.json"), r#"{"version":"3.0.3"}"#).unwrap();
-    fs::write(fixture.cache().join("ts-runtime/.sdk-version"), "3.0.3").unwrap();
+    fs::write(sdk.join("package.json"), r#"{"version":"3.0.4"}"#).unwrap();
+    fs::write(fixture.cache().join("ts-runtime/.sdk-version"), "3.0.4").unwrap();
 
     let generated = json!({
         "request_type": "read",

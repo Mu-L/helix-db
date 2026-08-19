@@ -7,7 +7,7 @@ Command-line interface for managing Helix projects, local development instances,
 - `init`: initialize a project with `helix.toml` and a query example.
 - `chef`: bootstrap a first Helix app with skills, docs MCP, local runtime, starter queries, seed data, and a launched coding agent.
 - `add`: add a local or Helix Cloud instance to an existing project.
-- `start` (alias `run`): run `ghcr.io/helixdb/helixdb:v0.0.3` in the background by default, attached with `--foreground`, with persistent local storage using `--disk`, or against a user-managed S3/S3-compatible prefix using `--storage-uri`.
+- `start` (alias `run`): run `ghcr.io/helixdb/helixdb:v0.0.4` in the background by default, attached with `--foreground`, with persistent local storage using `--disk`, or against a user-managed S3/S3-compatible prefix using `--storage-uri`.
 - `stop` / `restart` / `status`: manage local instances and inspect Helix Cloud config.
 - `logs`: view local container logs or query Helix Cloud historical logs.
 - `query`: send a query request JSON file to `POST /v2/query`.

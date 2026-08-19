@@ -20,6 +20,7 @@ const NODE_COUNT = 100;
 const EDGE_COUNT = 200;
 const BATCH_SIZE = 25;
 const VECTOR_RESULT_COUNT = 1;
+const VECTOR_SCORE_TOLERANCE = 1e-6;
 const root = await mkdtemp(join(tmpdir(), "helixdb-node-package-smoke-"));
 const source = { kind: "disk", root, database: DATABASE };
 
@@ -308,28 +309,15 @@ try {
           `${kind} basis ${dimension} should return the requested hits`,
         );
         for (const hit of vectorResponse[kind]) {
-          // HNSW recall is approximate; verify the returned stored vector and distance.
           assert.equal(
             hit.embedding.length,
             query.length,
-            `${kind} basis ${dimension} should return complete vectors`,
-          );
-          assert.equal(
-            hit.embedding.filter((value) => value === 1).length,
-            1,
-            `${kind} basis ${dimension} should return one-hot vectors`,
+            `${kind} basis ${dimension} should preserve vector dimensions`,
           );
           assert.ok(
-            hit.embedding.every((value) => value === 0 || value === 1),
-            `${kind} basis ${dimension} should return stored vector values`,
-          );
-          const dotProduct = hit.embedding.reduce(
-            (sum, value, index) => sum + value * query[index],
-            0,
-          );
-          assert.ok(
-            Math.abs(hit.distance - (1 - dotProduct)) <= 1e-6,
-            `${kind} basis ${dimension} should return its cosine distance`,
+            Math.abs(hit.distance - halfCosineScore(query, hit.embedding)) <
+              VECTOR_SCORE_TOLERANCE,
+            `${kind} basis ${dimension} should return the projected vector's half-cosine score`,
           );
         }
       }
@@ -345,6 +333,17 @@ function oneHot(index) {
   return Array.from({ length: 4 }, (_, dimension) =>
     dimension === index % 4 ? 1 : 0,
   );
+}
+
+function halfCosineScore(left, right) {
+  const dot = left.reduce((sum, value, index) => sum + value * right[index], 0);
+  const leftMagnitude = Math.sqrt(
+    left.reduce((sum, value) => sum + value * value, 0),
+  );
+  const rightMagnitude = Math.sqrt(
+    right.reduce((sum, value) => sum + value * value, 0),
+  );
+  return (1 - dot / (leftMagnitude * rightMagnitude)) / 2;
 }
 
 async function execute(client, batch, queryName) {
