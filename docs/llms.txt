@@ -50,7 +50,7 @@ Full walkthrough: https://docs.helix-db.com/cli/getting-started
 - [Architecture](https://docs.helix-db.com/database/helix-cloud/start-here/architecture) — Page type: Concept
 
 ## Connect and automate
-- [HelixDB Model Context Protocol (MCP)](https://docs.helix-db.com/database/helix-cloud/connect/mcp): Connect Codex, Cursor, VS Code, Claude Code, and other agents to Helix Cloud insights — Page type: Tutorial; Status: Preview
+- [HelixDB Model Context Protocol (MCP)](https://docs.helix-db.com/database/helix-cloud/connect/mcp): Connect Codex, Cursor, VS Code, Claude Code, and other agents to Helix Cloud insights — Page type: Tutorial
 
 ## Operate
 - [Multi-Tenancy](https://docs.helix-db.com/database/helix-cloud/operate/multi-tenancy) — Page type: Guide
