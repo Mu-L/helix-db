@@ -146,6 +146,11 @@ async fn documented_quickstart_runs_against_an_isolated_fixture() {
             "helix stop dev",
         ]
     );
+    assert!(
+        QUICKSTART.contains("- A terminal on macOS or Linux"),
+        "the Bash-only installer must not claim Windows support"
+    );
+    assert!(!QUICKSTART.contains("- A terminal on macOS, Linux, or Windows"));
     for obsolete_claim in [
         "--lang",
         "helix start local",
