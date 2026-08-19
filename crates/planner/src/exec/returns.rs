@@ -135,8 +135,9 @@ fn return_shape(steps: &[ExecStep], name: &ir::NonEmptyString) -> Option<ReturnS
 
 fn step_shape(step: &ExecStep) -> ReturnShape {
     match &step.op {
-        ExecOp::Project {
-            projection: ir::ProjectionPlan::Count | ir::ProjectionPlan::Exists,
+        ExecOp::Count { .. }
+        | ExecOp::Project {
+            projection: ir::ProjectionPlan::Exists,
         }
         | ExecOp::IndexDdl { .. } => ReturnShape::Scalar,
         ExecOp::Reserved {
@@ -208,8 +209,8 @@ mod tests {
     #[test]
     fn scalar_and_collection_terminals_override_row_cardinality() {
         let count = step(
-            ExecOp::Project {
-                projection: ir::ProjectionPlan::Count,
+            ExecOp::Count {
+                plan: Box::new(super::super::ExecCountPlan::Constant(0)),
             },
             properties::CardinalityBounds::exact(1),
         );
@@ -259,6 +260,10 @@ mod tests {
     fn executable_return_variables_reject_duplicate_names() {
         let returned = ExecutableReturn::new(name("result"), ReturnShape::List);
         assert_eq!(returned.name().as_ref(), "result");
+        assert_eq!(returned.shape(), ReturnShape::List);
+        let single = ExecutableReturnVariables::new(ir::AtLeast::from_one(returned.clone()))
+            .expect("one return name is unique");
+        assert_eq!(single.as_ref(), &[returned.clone()]);
         let duplicate = ir::AtLeast::from_one_and_rest(
             returned,
             vec![ExecutableReturn::new(name("result"), ReturnShape::Object)],
