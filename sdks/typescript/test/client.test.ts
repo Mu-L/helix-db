@@ -89,7 +89,11 @@ async function withFakeNativeModule<T>(run: (moduleUrl: string) => Promise<T>): 
 export const calls = [];
 export const queryBodies = [];
 let closed = false;
+let queryError;
 export const wasClosed = () => closed;
+export const setQueryError = (error, msg) => {
+  queryError = { error, msg };
+};
 
 export const HelixDbSource = {
   InMemory: (database) => ({ variant: "InMemory", database }),
@@ -121,6 +125,7 @@ function handle() {
   return {
     async query_json(request) {
       queryBodies.push(new TextDecoder().decode(request));
+      if (queryError !== undefined) throw Object.assign(new Error(queryError.msg), queryError);
       return new TextEncoder().encode('{"users":0}');
     },
     async close() {
@@ -230,7 +235,7 @@ assert.throws(
   assert.equal(error.serverMessage, "write conflict");
   assert.deepEqual(error.serverDetails, { retryable: true });
   assert.equal(error.rawBody, body);
-  assert.equal(error.details, body);
+  assert.equal(error.details, "write conflict");
   assert.equal(error.isConflict(), true);
   assert.equal(error.isRateLimited(), false);
 }
@@ -277,11 +282,46 @@ for (const status of [400, 401, 403, 409, 429, 503]) {
 }
 
 {
-  const error = HelixError.remote("legacy remote error");
+  const error = HelixError.remote("legacy remote error", "legacy_code");
 
   assert.equal(error.kind, "Remote");
   assert.equal(error.details, "legacy remote error");
+  assert.equal(error.code, "legacy_code");
   assert.equal(error.statusCode, undefined);
+}
+
+for (const testCase of [
+  {
+    body: '{"error":"index_not_found","msg":"missing index"}',
+    code: "index_not_found",
+    details: "missing index",
+  },
+  {
+    body: '{"error":"legacy message","code":"index_not_found"}',
+    code: "index_not_found",
+    details: "legacy message",
+  },
+  {
+    body: '{"error":"legacy message","code":"index_not_found","message":"generic message"}',
+    code: "index_not_found",
+    details: "legacy message",
+  },
+  {
+    body: '{"error":"future_code","msg":"future message"}',
+    code: "future_code",
+    details: "future message",
+  },
+  { body: '{"error":"message without code"}', code: undefined, details: "message without code" },
+  { body: "not JSON", code: undefined, details: "not JSON" },
+]) {
+  const server = await spawnCaptureServer({ status: 500, body: testCase.body });
+  const client = new Client(server.base);
+  await assert.rejects(
+    client.query(sampleRequest()).send(),
+    (error: unknown) =>
+      error instanceof HelixError && error.kind === "Remote" && error.code === testCase.code && error.details === testCase.details,
+  );
+  await server.close();
 }
 
 // ---- Unreachable server surfaces an actionable network error ----------------
@@ -316,6 +356,21 @@ await withFakeNativeModule(async (moduleUrl) => {
   assert.deepEqual(native.calls[0], ["open", { variant: "InMemory", database: "ts-sdk-embedded" }]);
   assert.equal(JSON.parse(native.queryBodies[0]).request_type, "read");
   assert.equal(native.wasClosed(), true);
+});
+
+await withFakeNativeModule(async (moduleUrl) => {
+  const client = await Client.embedded({ kind: "inMemory", database: "ts-sdk-embedded-error" });
+  const native = (await import(moduleUrl)) as { setQueryError: (error: string, msg: string) => void };
+  native.setQueryError("index_not_found", "missing text index");
+
+  await assert.rejects(
+    client.query(sampleRequest()).send(),
+    (error: unknown) =>
+      error instanceof HelixError &&
+      error.kind === "Embedded" &&
+      error.code === "index_not_found" &&
+      error.details === "missing text index",
+  );
 });
 
 await withFakeNativeModule(async (moduleUrl) => {

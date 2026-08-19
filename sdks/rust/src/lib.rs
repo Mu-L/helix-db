@@ -74,6 +74,7 @@ pub mod dsl;
 pub mod graph;
 pub mod lifecycle;
 
+pub use helix_ast::error_code::{QueryErrorCode, UnknownQueryErrorCode};
 pub use lifecycle::*;
 
 #[cfg(feature = "embedded")]
@@ -249,6 +250,8 @@ pub enum HelixError {
     #[cfg(feature = "embedded")]
     #[error("Embedded DB error: {details}")]
     EmbeddedError {
+        /// Static embedded error code.
+        code: String,
         /// Error text from the embedded DB layer.
         details: String,
     },
@@ -304,26 +307,51 @@ impl HelixError {
     pub fn is_rate_limited(&self) -> bool {
         matches!(self, Self::RemoteError(error) if error.is_rate_limited())
     }
+
+    /// Return the stable query error code when the failure has one.
+    #[must_use]
+    pub fn error_code(&self) -> Option<&str> {
+        match self {
+            Self::RemoteError(error) => error.code(),
+            Self::InvalidRequest { .. } => Some(QueryErrorCode::InvalidRequest.as_str()),
+            #[cfg(feature = "embedded")]
+            Self::EmbeddedError { code, .. } => Some(code),
+            Self::ReqwestError(_) | Self::SerializationError(_) | Self::InvalidURL(_) => None,
+        }
+    }
 }
 
 fn remote_error(status: StatusCode, raw_body: String) -> HelixError {
     let structured = serde_json::from_str::<serde_json::Value>(&raw_body).ok();
     let object = structured.as_ref().and_then(serde_json::Value::as_object);
-    let code = object
+    let error_field = object
+        .and_then(|body| body.get("error"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty());
+    let msg_field = object
+        .and_then(|body| body.get("msg"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty());
+    let code_field = object
         .and_then(|body| body.get("code"))
         .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty());
+    let message_field = object
+        .and_then(|body| body.get("message"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty());
+    let current_envelope = error_field.zip(msg_field);
+    let legacy_envelope = error_field.zip(code_field);
+    let code = current_envelope
+        .map(|(code, _)| code)
+        .or_else(|| legacy_envelope.map(|(_, code)| code))
+        .or(code_field)
         .map(str::to_string);
-    let message = object
-        .and_then(|body| {
-            body.get("message")
-                .and_then(serde_json::Value::as_str)
-                .filter(|message| !message.is_empty())
-                .or_else(|| {
-                    body.get("error")
-                        .and_then(serde_json::Value::as_str)
-                        .filter(|message| !message.is_empty())
-                })
-        })
+    let message = current_envelope
+        .map(|(_, message)| message)
+        .or_else(|| legacy_envelope.map(|(message, _)| message))
+        .or(message_field)
+        .or(error_field)
         .map(str::to_string)
         .unwrap_or_else(|| {
             if raw_body.is_empty() {
@@ -506,6 +534,7 @@ impl Client {
 #[cfg(feature = "embedded")]
 fn embedded_error(error: db::error::HelixDbError) -> HelixError {
     HelixError::EmbeddedError {
+        code: error.error_code().to_string(),
         details: error.to_string(),
     }
 }
@@ -1270,6 +1299,45 @@ mod client_tests {
         assert!(server_backend(&cleared).api_key.is_none());
     }
 
+    #[test]
+    fn remote_errors_parse_new_legacy_future_and_fallback_contracts() {
+        let cases = [
+            (
+                r#"{"error":"index_not_found","msg":"missing index"}"#,
+                Some("index_not_found"),
+                "missing index",
+            ),
+            (
+                r#"{"error":"legacy message","code":"index_not_found"}"#,
+                Some("index_not_found"),
+                "legacy message",
+            ),
+            (
+                r#"{"error":"legacy message","code":"index_not_found","message":"generic message"}"#,
+                Some("index_not_found"),
+                "legacy message",
+            ),
+            (
+                r#"{"error":"future_code","msg":"future message"}"#,
+                Some("future_code"),
+                "future message",
+            ),
+            (
+                r#"{"error":"message without a code"}"#,
+                None,
+                "message without a code",
+            ),
+            ("not JSON", None, "not JSON"),
+            ("", None, "Bad Request"),
+        ];
+
+        for (body, expected_code, expected_details) in cases {
+            let error = remote_error(StatusCode::BAD_REQUEST, body.to_string());
+            assert_eq!(error.error_code(), expected_code);
+            assert_eq!(error.remote_message(), Some(expected_details));
+        }
+    }
+
     // ---- Header assembly ----------------------------------------------------
 
     #[test]
@@ -1351,7 +1419,7 @@ mod client_tests {
         (base, handle)
     }
 
-    async fn remote_error(status: u16, body: &str) -> HelixError {
+    async fn request_remote_error(status: u16, body: &str) -> HelixError {
         let (base, handle) = spawn_capture_server(status, body).await;
         let client = Client::new(Some(&base)).unwrap();
         let error = client
@@ -1375,7 +1443,7 @@ mod client_tests {
     async fn remote_error_preserves_structured_response() {
         let body =
             r#"{"error":"write conflict","code":"write_conflict","details":{"retryable":true}}"#;
-        let error = remote_error(409, body).await;
+        let error = request_remote_error(409, body).await;
 
         assert_eq!(error.status_code(), Some(409));
         assert_eq!(error.remote_code(), Some("write_conflict"));
@@ -1393,7 +1461,7 @@ mod client_tests {
     async fn remote_error_preserves_status_matrix() {
         for status in [400, 401, 403, 409, 429, 503] {
             let body = format!(r#"{{"message":"status {status}","code":"test_error"}}"#);
-            let error = remote_error(status, &body).await;
+            let error = request_remote_error(status, &body).await;
 
             assert_eq!(error.status_code(), Some(status));
             assert_eq!(error.remote_code(), Some("test_error"));
@@ -1409,7 +1477,7 @@ mod client_tests {
 
     #[tokio::test]
     async fn remote_error_keeps_unstructured_body() {
-        let error = remote_error(500, "upstream failed").await;
+        let error = request_remote_error(500, "upstream failed").await;
 
         assert_eq!(error.status_code(), Some(500));
         assert_eq!(error.remote_code(), None);
@@ -1421,7 +1489,7 @@ mod client_tests {
     #[tokio::test]
     async fn remote_error_keeps_valid_fields_from_partially_invalid_json() {
         let body = r#"{"message":"","error":"write conflict","code":42,"details":null}"#;
-        let error = remote_error(409, body).await;
+        let error = request_remote_error(409, body).await;
 
         assert_eq!(error.remote_code(), None);
         assert_eq!(error.remote_message(), Some("write conflict"));
@@ -1431,7 +1499,7 @@ mod client_tests {
 
     #[tokio::test]
     async fn remote_error_uses_status_reason_for_empty_body() {
-        let error = remote_error(503, "").await;
+        let error = request_remote_error(503, "").await;
 
         assert_eq!(error.remote_message(), Some("Service Unavailable"));
         assert_eq!(error.raw_response_body(), Some(""));
@@ -1484,6 +1552,7 @@ mod client_tests {
             .expect_err("embedded reader should reject writes");
 
         assert!(matches!(err, HelixError::EmbeddedError { .. }));
+        assert_eq!(err.error_code(), Some("writer_mode_required"));
         assert!(err.to_string().contains("writer mode"));
     }
 
