@@ -238,6 +238,33 @@ fn transport_response_uses_empty_default_planner_diagnostics() {
 }
 
 #[test]
+fn transport_response_preserves_declared_empty_return_shapes() {
+    let response = QueryResponse::from_execution_result(ExecutionResult {
+        last: None,
+        variables: BTreeMap::new(),
+        returns: BTreeMap::from([
+            (
+                NonEmptyString::new("list").expect("return name is non-empty"),
+                ReturnedValue::EmptyList,
+            ),
+            (
+                NonEmptyString::new("object").expect("return name is non-empty"),
+                ReturnedValue::EmptyObject,
+            ),
+        ]),
+    })
+    .expect("shaped empty execution result converts");
+
+    assert_eq!(
+        response.returns(),
+        &BTreeMap::from([
+            ("list".to_string(), serde_json::json!([])),
+            ("object".to_string(), serde_json::Value::Null),
+        ])
+    );
+}
+
+#[test]
 fn transport_response_preserves_ranked_public_element_metadata() {
     let row = |current: ElementRef, property: &str, value: f64| ExecutionRow {
         current: Some(current.clone()),
