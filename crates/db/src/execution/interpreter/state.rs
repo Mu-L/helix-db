@@ -144,7 +144,7 @@ fn missing_variable(kind: &str, name: &ir::NonEmptyString) -> HelixDbError {
 mod tests {
     use std::num::NonZeroUsize;
 
-    use helix_planner::context;
+    use helix_planner::{context, properties};
 
     use super::test_support;
     use super::*;
@@ -307,30 +307,89 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finish_prefers_the_shape_of_the_executed_binding() {
-        let db = test_support::open_db("state-finish-executed-shape").await;
-        let result = name("result");
-        let mut step = test_support::step(
+    async fn finish_uses_the_executed_shape_only_for_empty_values() {
+        let db = test_support::open_db("state-finish-executed-shapes").await;
+        let empty_scalar = name("empty_scalar");
+        let present_scalar = name("present_scalar");
+        let empty_object = name("empty_object");
+        let present_object = name("present_object");
+        let empty_list = name("empty_list");
+        let present_list = name("present_list");
+        let mut empty_scalar_step = test_support::step(
             1,
             Vec::new(),
             exec::ExecOp::Count {
                 plan: Box::new(exec::ExecCountPlan::Constant(0)),
             },
         );
-        step.output = ir::BatchOutputPlan::Bind(result.clone());
+        empty_scalar_step.output = ir::BatchOutputPlan::Bind(empty_scalar.clone());
+        let mut present_scalar_step = empty_scalar_step.clone();
+        present_scalar_step.id = step_id(2);
+        present_scalar_step.output = ir::BatchOutputPlan::Bind(present_scalar.clone());
+        let mut empty_object_step = test_support::step(3, Vec::new(), exec::ExecOp::Noop);
+        empty_object_step.delivered.cardinality = properties::CardinalityBounds::zero_to(Some(1));
+        empty_object_step.output = ir::BatchOutputPlan::Bind(empty_object.clone());
+        let mut present_object_step = empty_object_step.clone();
+        present_object_step.id = step_id(4);
+        present_object_step.output = ir::BatchOutputPlan::Bind(present_object.clone());
+        let mut empty_list_step = test_support::step(5, Vec::new(), exec::ExecOp::Noop);
+        empty_list_step.output = ir::BatchOutputPlan::Bind(empty_list.clone());
+        let mut present_list_step = empty_list_step.clone();
+        present_list_step.id = step_id(6);
+        present_list_step.output = ir::BatchOutputPlan::Bind(present_list.clone());
         let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
-        ctx.record_step_value(&step, ExecutionValue::Count(0));
+        ctx.record_step_value(&empty_scalar_step, ExecutionValue::Count(0));
+        ctx.record_step_value(&present_scalar_step, ExecutionValue::Count(7));
+        ctx.record_step_value(&empty_object_step, ExecutionValue::Stream(Vec::new()));
+        ctx.record_step_value(&present_object_step, ExecutionValue::Stream(vec![row(1)]));
+        ctx.record_step_value(&empty_list_step, ExecutionValue::Stream(Vec::new()));
+        ctx.record_step_value(
+            &present_list_step,
+            ExecutionValue::Stream(vec![row(2), row(3)]),
+        );
 
         let execution = ctx
             .finish(
-                step.id,
-                &return_variables(vec![("result", exec::ReturnShape::Object)]),
+                present_list_step.id,
+                &return_variables(vec![
+                    ("empty_scalar", exec::ReturnShape::Object),
+                    ("present_scalar", exec::ReturnShape::Object),
+                    ("empty_object", exec::ReturnShape::List),
+                    ("present_object", exec::ReturnShape::List),
+                    ("empty_list", exec::ReturnShape::Object),
+                    ("present_list", exec::ReturnShape::Object),
+                ]),
             )
             .unwrap();
 
         assert_eq!(
-            execution.returns.get(&result),
+            execution.returns.get(&empty_scalar),
             Some(&ReturnedValue::Present(ExecutionValue::Count(0)))
+        );
+        assert_eq!(
+            execution.returns.get(&present_scalar),
+            Some(&ReturnedValue::Present(ExecutionValue::Count(7)))
+        );
+        assert_eq!(
+            execution.returns.get(&empty_object),
+            Some(&ReturnedValue::EmptyObject)
+        );
+        assert_eq!(
+            execution.returns.get(&present_object),
+            Some(&ReturnedValue::Present(ExecutionValue::Stream(vec![row(
+                1
+            )])))
+        );
+        assert_eq!(
+            execution.returns.get(&empty_list),
+            Some(&ReturnedValue::EmptyList)
+        );
+        assert_eq!(
+            execution.returns.get(&present_list),
+            Some(&ReturnedValue::Present(ExecutionValue::Stream(vec![
+                row(2),
+                row(3),
+            ])))
         );
     }
 

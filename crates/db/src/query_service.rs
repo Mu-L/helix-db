@@ -1905,7 +1905,23 @@ mod tests {
             .expect("writer should open"),
         );
         let service = HelixQueryService::new(db);
-        let batch = read_batch()
+        let created = service
+            .execute_query(QueryRequest::write(
+                write_batch()
+                    .var_as(
+                        "created",
+                        g().add_n("User", Vec::<(&str, PropertyInput)>::new()),
+                    )
+                    .returning(["created"]),
+            ))
+            .await
+            .expect("fixture write should execute");
+        assert_eq!(
+            created.to_json_bytes().unwrap(),
+            br#"{"created":[{"$id":0}]}"#
+        );
+
+        let empty_scalar_batch = read_batch()
             .var_as("result", g().n_with_label("Missing").count())
             .for_each_param(
                 "items",
@@ -1915,7 +1931,7 @@ mod tests {
 
         let skipped = service
             .execute_query(
-                QueryRequest::read(batch.clone())
+                QueryRequest::read(empty_scalar_batch.clone())
                     .with_parameter_value("items", QueryValue::Array(Vec::new())),
             )
             .await
@@ -1923,13 +1939,30 @@ mod tests {
         assert_eq!(skipped.to_json_bytes().unwrap(), br#"{"result":0}"#);
 
         let executed = service
-            .execute_query(QueryRequest::read(batch).with_parameter_value(
+            .execute_query(QueryRequest::read(empty_scalar_batch).with_parameter_value(
                 "items",
                 QueryValue::Array(vec![QueryValue::Object(BTreeMap::new())]),
             ))
             .await
             .expect("non-empty for_each should replace the earlier binding");
         assert_eq!(executed.to_json_bytes().unwrap(), br#"{"result":null}"#);
+
+        let present_scalar = service
+            .execute_query(
+                QueryRequest::read(
+                    read_batch()
+                        .var_as("result", g().n_with_label("User").count())
+                        .for_each_param(
+                            "items",
+                            read_batch().var_as("result", g().n(NodeRef::id(999))),
+                        )
+                        .returning(["result"]),
+                )
+                .with_parameter_value("items", QueryValue::Array(Vec::new())),
+            )
+            .await
+            .expect("empty for_each should not rewrite a non-empty scalar");
+        assert_eq!(present_scalar.to_json_bytes().unwrap(), br#"{"result":1}"#);
     }
 
     #[tokio::test]
