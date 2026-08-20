@@ -10,7 +10,7 @@ use crate::ir;
 
 use super::{ExecOp, ExecPlanError, ExecStep};
 
-/// Shape used only when a declared return has no value.
+/// Shape used to normalize an empty returned value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReturnShape {
     /// A collection return serializes an empty value as `[]`.
@@ -19,6 +19,27 @@ pub enum ReturnShape {
     Object,
     /// A scalar return has no synthetic empty representation.
     Scalar,
+}
+
+impl ExecStep {
+    /// Infer the response shape of this step's bound output.
+    pub fn inferred_return_shape(&self) -> ReturnShape {
+        match &self.op {
+            ExecOp::Count { .. }
+            | ExecOp::Project {
+                projection: ir::ProjectionPlan::Exists,
+            }
+            | ExecOp::IndexDdl { .. } => ReturnShape::Scalar,
+            ExecOp::Reserved {
+                op: ir::ReservedOp::Fold,
+            }
+            | ExecOp::Mutation { .. } => ReturnShape::List,
+            _ => match self.delivered.cardinality.upper() {
+                Some(0 | 1) => ReturnShape::Object,
+                Some(_) | None => ReturnShape::List,
+            },
+        }
+    }
 }
 
 /// One executable return with its planner-inferred shape.
@@ -124,31 +145,13 @@ impl ExecutableReturns {
 fn return_shape(steps: &[ExecStep], name: &ir::NonEmptyString) -> Option<ReturnShape> {
     steps.iter().rev().find_map(|step| {
         if matches!(&step.output, ir::BatchOutputPlan::Bind(output) if output == name) {
-            return Some(step_shape(step));
+            return Some(step.inferred_return_shape());
         }
         match &step.op {
             ExecOp::ForEach { body, .. } => return_shape(body.steps(), name),
             _ => None,
         }
     })
-}
-
-fn step_shape(step: &ExecStep) -> ReturnShape {
-    match &step.op {
-        ExecOp::Count { .. }
-        | ExecOp::Project {
-            projection: ir::ProjectionPlan::Exists,
-        }
-        | ExecOp::IndexDdl { .. } => ReturnShape::Scalar,
-        ExecOp::Reserved {
-            op: ir::ReservedOp::Fold,
-        } => ReturnShape::List,
-        ExecOp::Mutation { .. } => ReturnShape::List,
-        _ => match step.delivered.cardinality.upper() {
-            Some(0 | 1) => ReturnShape::Object,
-            Some(_) | None => ReturnShape::List,
-        },
-    }
 }
 
 #[cfg(test)]
@@ -200,10 +203,16 @@ mod tests {
         );
         let unknown_collection = step(ExecOp::Noop, properties::CardinalityBounds::unknown());
 
-        assert_eq!(step_shape(&point), ReturnShape::Object);
-        assert_eq!(step_shape(&alternative), ReturnShape::Object);
-        assert_eq!(step_shape(&bounded_collection), ReturnShape::List);
-        assert_eq!(step_shape(&unknown_collection), ReturnShape::List);
+        assert_eq!(point.inferred_return_shape(), ReturnShape::Object);
+        assert_eq!(alternative.inferred_return_shape(), ReturnShape::Object);
+        assert_eq!(
+            bounded_collection.inferred_return_shape(),
+            ReturnShape::List
+        );
+        assert_eq!(
+            unknown_collection.inferred_return_shape(),
+            ReturnShape::List
+        );
     }
 
     #[test]
@@ -238,10 +247,10 @@ mod tests {
             properties::CardinalityBounds::zero_to(Some(1)),
         );
 
-        assert_eq!(step_shape(&count), ReturnShape::Scalar);
-        assert_eq!(step_shape(&exists), ReturnShape::Scalar);
-        assert_eq!(step_shape(&index_ddl), ReturnShape::Scalar);
-        assert_eq!(step_shape(&fold), ReturnShape::List);
+        assert_eq!(count.inferred_return_shape(), ReturnShape::Scalar);
+        assert_eq!(exists.inferred_return_shape(), ReturnShape::Scalar);
+        assert_eq!(index_ddl.inferred_return_shape(), ReturnShape::Scalar);
+        assert_eq!(fold.inferred_return_shape(), ReturnShape::List);
     }
 
     #[test]
@@ -253,7 +262,7 @@ mod tests {
             properties::CardinalityBounds::zero_to(Some(1)),
         );
 
-        assert_eq!(step_shape(&mutation), ReturnShape::List);
+        assert_eq!(mutation.inferred_return_shape(), ReturnShape::List);
     }
 
     #[test]

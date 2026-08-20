@@ -5,6 +5,7 @@
 //! execution observable.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use super::*;
 
@@ -22,8 +23,13 @@ impl<'db> ExecutionContext<'db> {
                 .as_ref()
                 .iter()
                 .map(|planned| {
+                    let shape = self
+                        .variable_return_shapes
+                        .get(planned.name())
+                        .copied()
+                        .unwrap_or_else(|| planned.shape());
                     let value = match self.variables.get(planned.name()).cloned() {
-                        Some(value) if value.is_empty() => match planned.shape() {
+                        Some(value) if value.is_empty() => match shape {
                             exec::ReturnShape::List => ReturnedValue::EmptyList,
                             exec::ReturnShape::Object => ReturnedValue::EmptyObject,
                             exec::ReturnShape::Scalar => ReturnedValue::Present(value),
@@ -75,9 +81,13 @@ impl<'db> ExecutionContext<'db> {
                 self.step_outputs.insert(step.id, value);
             }
             (ir::BatchOutputPlan::Bind(name), false) => {
+                Arc::make_mut(&mut self.variable_return_shapes)
+                    .insert(name.clone(), step.inferred_return_shape());
                 self.variables.insert(name.clone(), value);
             }
             (ir::BatchOutputPlan::Bind(name), true) => {
+                Arc::make_mut(&mut self.variable_return_shapes)
+                    .insert(name.clone(), step.inferred_return_shape());
                 let (variable, step_output) = ExecutionValueSlot::from(value).fork();
                 self.variables.insert_slot(name.clone(), variable);
                 self.step_outputs.insert_slot(step.id, step_output);
@@ -293,6 +303,34 @@ mod tests {
         assert_eq!(
             result.returns.get(&missing_object),
             Some(&ReturnedValue::EmptyObject)
+        );
+    }
+
+    #[tokio::test]
+    async fn finish_prefers_the_shape_of_the_executed_binding() {
+        let db = test_support::open_db("state-finish-executed-shape").await;
+        let result = name("result");
+        let mut step = test_support::step(
+            1,
+            Vec::new(),
+            exec::ExecOp::Count {
+                plan: Box::new(exec::ExecCountPlan::Constant(0)),
+            },
+        );
+        step.output = ir::BatchOutputPlan::Bind(result.clone());
+        let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+        ctx.record_step_value(&step, ExecutionValue::Count(0));
+
+        let execution = ctx
+            .finish(
+                step.id,
+                &return_variables(vec![("result", exec::ReturnShape::Object)]),
+            )
+            .unwrap();
+
+        assert_eq!(
+            execution.returns.get(&result),
+            Some(&ReturnedValue::Present(ExecutionValue::Count(0)))
         );
     }
 

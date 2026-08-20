@@ -1896,6 +1896,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_response_uses_the_shape_of_the_binding_that_executed() {
+        let db = Arc::new(
+            HelixDB::open(HelixDbSource::InMemory {
+                database: "query-service-runtime-return-shape".to_string(),
+            })
+            .await
+            .expect("writer should open"),
+        );
+        let service = HelixQueryService::new(db);
+        let batch = read_batch()
+            .var_as("result", g().n_with_label("Missing").count())
+            .for_each_param(
+                "items",
+                read_batch().var_as("result", g().n(NodeRef::id(999))),
+            )
+            .returning(["result"]);
+
+        let skipped = service
+            .execute_query(
+                QueryRequest::read(batch.clone())
+                    .with_parameter_value("items", QueryValue::Array(Vec::new())),
+            )
+            .await
+            .expect("empty for_each should preserve the earlier binding");
+        assert_eq!(skipped.to_json_bytes().unwrap(), br#"{"result":0}"#);
+
+        let executed = service
+            .execute_query(QueryRequest::read(batch).with_parameter_value(
+                "items",
+                QueryValue::Array(vec![QueryValue::Object(BTreeMap::new())]),
+            ))
+            .await
+            .expect("non-empty for_each should replace the earlier binding");
+        assert_eq!(executed.to_json_bytes().unwrap(), br#"{"result":null}"#);
+    }
+
+    #[tokio::test]
     async fn query_service_wrappers_delegate_execute_warm_and_scoped_reads() {
         let db = Arc::new(
             HelixDB::open(HelixDbSource::InMemory {
