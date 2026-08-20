@@ -21,6 +21,7 @@ impl<'db> ExecutionContext<'db> {
                 Ok(ast_to_db_value(value.as_property_value().clone()))
             }
             ir::IndexValue::Param(param) => self.param_value(param),
+            ir::IndexValue::ParamSet(values) => self.param_value(values.param()),
         }
     }
 
@@ -79,6 +80,9 @@ impl<'db> ExecutionContext<'db> {
         key: &catalog::ScopedPropertyKey,
         values: &[DbPropertyValue],
     ) -> Result<roaring::RoaringTreemap> {
+        if values.is_empty() {
+            return Ok(roaring::RoaringTreemap::new());
+        }
         let identity = secondary_identity(
             crate::index_lifecycle::IndexIdentityFamily::SecondaryEquality,
             element_kind,
