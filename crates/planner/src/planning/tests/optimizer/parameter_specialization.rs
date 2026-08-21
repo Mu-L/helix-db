@@ -61,6 +61,111 @@ fn orbit_filter_before_label_uses_label_scoped_parameterized_equality_index() {
 }
 
 #[test]
+fn orbit_organization_raw_query_uses_label_scoped_parameterized_equality_index() {
+    let query: BatchQuery = serde_json::from_str(
+        r#"{"read":{"entries":[{"query":{"name":"organization","root":{"value_map":{"input":{"where":{"input":{"nodes_where":{"predicate":{"eq":{"left":{"property":"organization_id"},"right":{"param":"organization_id"}}}}},"predicate":{"eq":{"left":{"property":"$label"},"right":{"constant":{"string":"Organization"}}}}}},"properties":["$id","organization_id","name","organization_type"]}}}}],"returns":["organization"]}}"#,
+    )
+    .unwrap();
+    let BatchQuery::Read(query) = query else {
+        panic!("Orbit Organization raw query must remain a read batch");
+    };
+    let request = QueryRequest::read(query)
+        .with_query_name("GetOrganizationByOrganizationId")
+        .with_parameter_value(
+            "organization_id",
+            QueryValue::String("organization-1".to_owned()),
+        );
+    let (query, parameters) = request.into_query();
+
+    let mut planner_ctx = ctx(builtin_label_indexes()
+        .with_node_eq(ScopedPropertyKey::try_new("Organization", "organization_id").unwrap()));
+    planner_ctx.params =
+        parameters
+            .into_iter()
+            .fold(ParamBindings::default(), |bindings, (name, value)| {
+                bindings.with_query_value(NonEmptyString::new(name).unwrap(), value)
+            });
+
+    let output = crate::planning::plan_with_diagnostics(&query, &planner_ctx).unwrap();
+    assert!(
+        matches!(
+            unwrapped_first_exec_access(output.plan()),
+            ExecAccessPlan::Node(ExecNodeAccessPlan::Bitmap {
+                bitmap: crate::exec::ExecNodeBitmapExpr::PointRead { key, .. }
+            })
+                if key.label == "Organization" && key.property == "organization_id"
+        ),
+        "expected Organization.organization_id equality access; plan: {:#?}; diagnostics: {:#?}",
+        output.plan().steps(),
+        output.diagnostics()
+    );
+    assert_no_exec_op_family(output.plan(), ExecOpFamily::Filter);
+    assert!(output
+        .diagnostics()
+        .insights
+        .iter()
+        .all(|insight| !matches!(
+            insight,
+            crate::diagnostics::PlannerInsight::UnboundedScan(_)
+        )));
+}
+
+#[test]
+fn orbit_organization_nested_single_filter_extracts_index_and_residual() {
+    let query: BatchQuery = serde_json::from_str(
+        r#"{"read":{"entries":[{"query":{"name":"organization","root":{"value_map":{"input":{"nodes_where":{"predicate":{"and":{"predicates":[{"eq":{"left":{"property":"$label"},"right":{"constant":{"string":"Organization"}}}},{"and":{"predicates":[{"eq":{"left":{"property":"organization_id"},"right":{"param":"organization_id"}}},{"eq":{"left":{"property":"organization_type"},"right":{"constant":{"string":"company"}}}}]}}]}}}},"properties":["$id","organization_id","name","organization_type"]}}}}],"returns":["organization"]}}"#,
+    )
+    .unwrap();
+    let BatchQuery::Read(query) = query else {
+        panic!("nested Organization raw query must remain a read batch");
+    };
+    let request = QueryRequest::read(query)
+        .with_query_name("GetOrganizationByOrganizationId")
+        .with_parameter_value(
+            "organization_id",
+            QueryValue::String("organization-1".to_owned()),
+        );
+    let (query, parameters) = request.into_query();
+
+    let mut planner_ctx = ctx(builtin_label_indexes()
+        .with_node_eq(ScopedPropertyKey::try_new("Organization", "organization_id").unwrap()));
+    planner_ctx.params =
+        parameters
+            .into_iter()
+            .fold(ParamBindings::default(), |bindings, (name, value)| {
+                bindings.with_query_value(NonEmptyString::new(name).unwrap(), value)
+            });
+
+    let output = crate::planning::plan_with_diagnostics(&query, &planner_ctx).unwrap();
+    assert!(
+        matches!(
+            unwrapped_first_exec_access(output.plan()),
+            ExecAccessPlan::Node(ExecNodeAccessPlan::Bitmap {
+                bitmap: crate::exec::ExecNodeBitmapExpr::PointRead { key, .. }
+            })
+                if key.label == "Organization" && key.property == "organization_id"
+        ),
+        "expected Organization.organization_id equality access; plan: {:#?}; diagnostics: {:#?}",
+        output.plan().steps(),
+        output.diagnostics()
+    );
+    assert!(matches!(
+        first_exec_op(output.plan(), |op| matches!(op, ExecOp::Filter { .. })),
+        ExecOp::Filter { predicate }
+            if predicate
+                == &PredicatePlan::new(Predicate::eq("organization_type", "company")).unwrap()
+    ));
+    assert!(output
+        .diagnostics()
+        .insights
+        .iter()
+        .all(|insight| !matches!(
+            insight,
+            crate::diagnostics::PlannerInsight::UnboundedScan(_)
+        )));
+}
+
+#[test]
 fn terminal_label_scoped_parameterized_equality_uses_index_after_request_round_trip() {
     let request = QueryRequest::read(
         read_batch()

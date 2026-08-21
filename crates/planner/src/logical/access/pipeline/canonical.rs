@@ -109,4 +109,28 @@ mod tests {
         }]);
         assert_eq!(canonical, vec![StreamPipelineOp::Filter { predicate }]);
     }
+
+    #[test]
+    fn canonicalization_flattens_a_nested_single_filter() {
+        let canonical = canonicalize_stream_pipeline_ops(vec![StreamPipelineOp::Filter {
+            predicate: ir::PredicatePlan::new(Predicate::and(vec![
+                Predicate::eq("$label", "Organization"),
+                Predicate::and(vec![
+                    Predicate::eq_param("organization_id", "organization_id"),
+                    Predicate::eq("organization_type", "company"),
+                ]),
+            ]))
+            .unwrap(),
+        }]);
+
+        assert!(matches!(
+            canonical.as_slice(),
+            [StreamPipelineOp::Filter { predicate }]
+                if predicate.as_ref() == &Predicate::and(vec![
+                    Predicate::eq("$label", "Organization"),
+                    Predicate::eq_param("organization_id", "organization_id"),
+                    Predicate::eq("organization_type", "company"),
+                ])
+        ));
+    }
 }
