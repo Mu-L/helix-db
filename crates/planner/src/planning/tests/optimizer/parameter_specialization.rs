@@ -2,6 +2,61 @@ use crate::planning::tests::support::*;
 use helix_ast::query::QueryRequest;
 
 #[test]
+fn orbit_filter_before_label_uses_label_scoped_parameterized_equality_index() {
+    let query: BatchQuery = serde_json::from_str(
+        r#"{"read":{"entries":[{"query":{"name":"person","root":{"value_map":{"input":{"where":{"input":{"nodes_where":{"predicate":{"eq":{"left":{"property":"orbit_id"},"right":{"param":"orbit_id"}}}}},"predicate":{"eq":{"left":{"property":"$label"},"right":{"constant":{"string":"Person"}}}}}},"properties":["$id","orbit_id","name","sendit_id"]}}}}],"returns":["person"]}}"#,
+    )
+    .unwrap();
+    let BatchQuery::Read(query) = query else {
+        panic!("Orbit raw query must remain a read batch");
+    };
+    let request = QueryRequest::read(query)
+        .with_query_name("GetPersonByOrbitId")
+        .with_parameter_value("orbit_id", QueryValue::String("orbit-1".to_owned()));
+    let (query, parameters) = request.into_query();
+
+    let mut planner_ctx = ctx(builtin_label_indexes()
+        .with_node_eq(ScopedPropertyKey::try_new("Person", "orbit_id").unwrap()));
+    planner_ctx.params =
+        parameters
+            .into_iter()
+            .fold(ParamBindings::default(), |bindings, (name, value)| {
+                bindings.with_query_value(NonEmptyString::new(name).unwrap(), value)
+            });
+
+    let output = crate::planning::plan_with_diagnostics(&query, &planner_ctx).unwrap();
+    let access = output.plan().steps().iter().find_map(|step| match &step.op {
+        ExecOp::Access { plan } => Some(plan.as_ref()),
+        _ => None,
+    });
+    assert!(
+        matches!(
+            access,
+            Some(ExecAccessPlan::Node(ExecNodeAccessPlan::Bitmap {
+                bitmap: crate::exec::ExecNodeBitmapExpr::PointRead { key, .. }
+            }))
+                if key.label == "Person" && key.property == "orbit_id"
+        ),
+        "expected Person.orbit_id equality access; plan: {:#?}; diagnostics: {:#?}",
+        output.plan().steps(),
+        output.diagnostics()
+    );
+    assert_no_exec_op_family(output.plan(), ExecOpFamily::Filter);
+    assert!(
+        output
+            .diagnostics()
+            .insights
+            .iter()
+            .all(|insight| !matches!(
+                insight,
+                crate::diagnostics::PlannerInsight::UnboundedScan(_)
+            )),
+        "indexed query produced an unbounded-scan insight: {:#?}",
+        output.diagnostics()
+    );
+}
+
+#[test]
 fn terminal_label_scoped_parameterized_equality_uses_index_after_request_round_trip() {
     let request = QueryRequest::read(
         read_batch()
