@@ -1712,6 +1712,7 @@ mod text_transaction_benchmark {
             id: exec::ExecStepId::new(id).expect("benchmark step IDs are positive"),
             dependencies,
             output: ir::BatchOutputPlan::Discard,
+            semantic_return_shape: None,
             condition: exec::ExecCondition::Always,
             op,
             schedule: exec::ExecSchedule::Pipeline,

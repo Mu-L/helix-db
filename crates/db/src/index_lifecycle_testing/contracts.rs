@@ -3685,6 +3685,7 @@ fn public_step(id: usize, dependencies: Vec<exec::ExecStepId>, op: exec::ExecOp)
         id: exec::ExecStepId::new(id).expect("public lifecycle step IDs are positive"),
         dependencies,
         output: ir::BatchOutputPlan::Discard,
+        semantic_return_shape: None,
         condition: exec::ExecCondition::Always,
         op,
         schedule: exec::ExecSchedule::Pipeline,
