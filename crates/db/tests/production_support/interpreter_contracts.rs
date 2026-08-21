@@ -1859,6 +1859,7 @@ mod text_transaction_benchmark {
             schedule: exec::ExecSchedule::Pipeline,
             delivered: properties::DeliveredProperties::default(),
             cost: cost::CostVector::ZERO,
+            semantic_return_shape: None,
         }
     }
 

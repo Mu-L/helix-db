@@ -3691,6 +3691,7 @@ fn public_step(id: usize, dependencies: Vec<exec::ExecStepId>, op: exec::ExecOp)
         schedule: exec::ExecSchedule::Pipeline,
         delivered: properties::DeliveredProperties::default(),
         cost: cost::CostVector::ZERO,
+        semantic_return_shape: None,
     }
 }
 
