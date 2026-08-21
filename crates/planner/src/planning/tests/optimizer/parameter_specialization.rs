@@ -25,10 +25,14 @@ fn orbit_filter_before_label_uses_label_scoped_parameterized_equality_index() {
             });
 
     let output = crate::planning::plan_with_diagnostics(&query, &planner_ctx).unwrap();
-    let access = output.plan().steps().iter().find_map(|step| match &step.op {
-        ExecOp::Access { plan } => Some(plan.as_ref()),
-        _ => None,
-    });
+    let access = output
+        .plan()
+        .steps()
+        .iter()
+        .find_map(|step| match &step.op {
+            ExecOp::Access { plan } => Some(plan.as_ref()),
+            _ => None,
+        });
     assert!(
         matches!(
             access,
