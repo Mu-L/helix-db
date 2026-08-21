@@ -67,9 +67,11 @@ pub(crate) fn canonicalize_stream_pipeline_ops(
 fn flush_filters(ops: &mut Vec<StreamPipelineOp>, filters: &mut Vec<ir::PredicatePlan>) {
     match filters.as_slice() {
         [] => {}
-        [predicate] => ops.push(StreamPipelineOp::Filter {
-            predicate: predicate.clone(),
-        }),
+        [predicate] if !matches!(predicate.as_ref(), Predicate::And { .. }) => {
+            ops.push(StreamPipelineOp::Filter {
+                predicate: predicate.clone(),
+            })
+        }
         _ => {
             let mut predicates = Vec::new();
             for predicate in filters.iter() {
