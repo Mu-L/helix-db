@@ -1088,16 +1088,17 @@ Page type: Guide
 
 <div className="flex flex-wrap gap-2"><Badge color="blue" size="sm">Guide</Badge></div>
 
-The forthcoming v3 Go SDK builds the shared operation-tree AST and executes it through
-a typed client.
+The Go SDK builds the shared operation-tree AST and executes requests through a
+typed HTTP client.
 
-The v3 SDK packages have not been published yet. The Go SDK keeps the module path
-`github.com/helixdb/helix-db/sdks/go`; it does not add a `/v3` suffix.
+Version `v0.3.1` ships the server query builder and HTTP client. It does not
+distribute the native bindings required by embedded execution or native graph
+algorithms.
 
 ## Install
 
 ```bash
-go get github.com/helixdb/helix-db/sdks/go
+go get github.com/helixdb/helix-db/sdks/go@v0.3.1
 ```
 
 ```go
@@ -1144,11 +1145,11 @@ if err := client.Exec(ctx, FindUsers("acme", 25), &response); err != nil {
 Write requests can pass `helix.WriterOnly()` and `helix.AwaitDurability(true)` execution
 options. The client does not retry conflicts automatically.
 
-## Embedded runtime
+## Release scope
 
-Install the SDK with `go get github.com/helixdb/helix-db/sdks/go`. See
-[Embedded database](/database/helix-db/start-here/local-development/embedded-database)
-for storage, cache, and handle configuration.
+Use `v0.3.1` with a local or remote Helix server through `/v2/query`. Embedded
+constructors and `Client.Graph` return native-binding-unavailable errors in a
+standard module installation.
 
 ## Verify
 
@@ -1329,6 +1330,7 @@ Page type: Reference
 
 <div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
 
+- **[Go SDK v0.3.1](/database/helix-db/start-here/sdk-setup/go-project-setup)** — operation-tree query construction, typed parameters, `/v2/query` execution, index lifecycle requests, and traversal-scoped vector and BM25 search. Upgrade from v0.3.0: this patch keeps unreleased embedded adapters out of public module discovery. Embedded execution and native graph bindings are not distributed in this release.
 - **[Python async client](/database/helix-db/start-here/sdk-setup/python-project-setup#async-execution)** — `helix-db` 0.3.3 adds reusable HTTPX connection pooling, concurrent requests, cancellation-safe response cleanup, and asynchronous embedded writer and reader clients.
 
 - **Open-source database** — the engine moved out of `helix-hyperscale` into the public, modular `helix-db` workspace.
@@ -2093,6 +2095,20 @@ produces the shape you need — each of these replaces `valueMap` on the `friend
 | `count()` | `1` |
 | `exists()` | `true` |
 | `project(…)` | One object per row with named fields |
+
+Populated values keep these existing shapes. Only a declared return with no
+value uses an inferred empty shape:
+
+| Semantic return | Populated | Empty or skipped |
+| --- | --- | --- |
+| At most one row, such as `limit(1)` | Existing one-element array | `null` |
+| Collection, many, or unknown cardinality | Existing array | `[]` |
+| `fold` or mutation | Existing array | `[]` |
+| Scalar terminal, such as `count()` or `exists()` | Existing scalar | No synthetic empty value |
+
+The planner infers this from the semantic output type and guaranteed
+multiplicity. It does not use the observed row count or optimizer estimates. An
+empty `returns` declaration returns `{}` because it declares no response keys.
 
 ## 9. Read it back in a later request
 

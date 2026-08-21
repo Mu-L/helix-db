@@ -272,6 +272,8 @@ pub(in crate::execution::interpreter) struct ExecutionContext<'db> {
     pub(in crate::execution::interpreter) tenant_scope: crate::encoding::keys::scope::DataScope,
     pub(in crate::execution::interpreter) params: ParamBindingsOwnership,
     pub(in crate::execution::interpreter) variables: ExecutionValueStore<ir::NonEmptyString>,
+    pub(in crate::execution::interpreter) variable_return_shapes:
+        Arc<BTreeMap<ir::NonEmptyString, exec::ReturnShape>>,
     pub(in crate::execution::interpreter) step_outputs: ExecutionValueStore<exec::ExecStepId>,
     pub(in crate::execution::interpreter) step_output_uses: StepOutputUsePlan,
     pub(in crate::execution::interpreter) request_read_scope:
@@ -341,6 +343,7 @@ impl<'db> ExecutionContext<'db> {
             tenant_scope,
             params: ParamBindingsOwnership::Unique(params),
             variables: ExecutionValueStore::default(),
+            variable_return_shapes: Arc::default(),
             step_outputs: ExecutionValueStore::default(),
             step_output_uses: StepOutputUsePlan::default(),
             request_read_scope: super::read_view::RequestReadScopeState::Disabled,
