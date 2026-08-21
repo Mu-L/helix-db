@@ -1,4 +1,60 @@
 use crate::planning::tests::support::*;
+use helix_ast::query::QueryRequest;
+
+#[test]
+fn terminal_label_scoped_parameterized_equality_uses_index_after_request_round_trip() {
+    let request = QueryRequest::read(
+        read_batch()
+            .var_as(
+                "person",
+                g().n_with_label("Person")
+                    .where_(Predicate::eq_param("orbit_id", "orbit_id"))
+                    .value_map(None::<Vec<&str>>),
+            )
+            .returning(["person"]),
+    )
+    .with_query_name("GetPersonByOrbitId")
+    .with_parameter_value("orbit_id", QueryValue::String("orbit-1".to_owned()));
+    let encoded = serde_json::to_vec(&request).unwrap();
+    let request: QueryRequest = serde_json::from_slice(&encoded).unwrap();
+    let (query, parameters) = request.into_query();
+
+    let mut planner_ctx = ctx(builtin_label_indexes()
+        .with_node_eq(ScopedPropertyKey::try_new("Person", "orbit_id").unwrap()));
+    planner_ctx.params =
+        parameters
+            .into_iter()
+            .fold(ParamBindings::default(), |bindings, (name, value)| {
+                bindings.with_query_value(NonEmptyString::new(name).unwrap(), value)
+            });
+
+    let output = crate::planning::plan_with_diagnostics(&query, &planner_ctx).unwrap();
+    assert!(
+        matches!(
+            unwrapped_first_exec_access(output.plan()),
+            ExecAccessPlan::Node(ExecNodeAccessPlan::Bitmap {
+                bitmap: crate::exec::ExecNodeBitmapExpr::PointRead { key, .. }
+            })
+                if key.label == "Person" && key.property == "orbit_id"
+        ),
+        "expected Person.orbit_id equality access; plan: {:#?}; diagnostics: {:#?}",
+        output.plan().steps(),
+        output.diagnostics()
+    );
+    assert_no_exec_op_family(output.plan(), ExecOpFamily::Filter);
+    assert!(
+        output
+            .diagnostics()
+            .insights
+            .iter()
+            .all(|insight| !matches!(
+                insight,
+                crate::diagnostics::PlannerInsight::UnboundedScan(_)
+            )),
+        "indexed query produced an unbounded-scan insight: {:#?}",
+        output.diagnostics()
+    );
+}
 
 #[test]
 fn ordinary_request_membership_parameters_match_literal_index_access() {
