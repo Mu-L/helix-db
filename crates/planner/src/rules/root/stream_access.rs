@@ -114,33 +114,12 @@ fn rewrite_access_stream(
             rewrite_filter(filter, indexes, planner_limits, &[])
         }
         logical::AccessStream::Pipeline(pipeline) => {
-            let predicates = pipeline
-                .ops()
-                .iter()
-                .map_while(|op| match op {
-                    logical::StreamPipelineOp::Filter { predicate } => Some(predicate.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            let [first, ..] = predicates.as_slice() else {
+            let [logical::StreamPipelineOp::Filter { predicate }, rest @ ..] = pipeline.ops()
+            else {
                 return None;
             };
-            let filter_count = predicates.len();
-            let predicate = if predicates.len() == 1 {
-                first.clone()
-            } else {
-                ir::PredicatePlan::conjunction(
-                    &ir::AtLeast::<_, 2>::try_from_vec(predicates)
-                        .expect("multiple leading filters satisfy the conjunction contract"),
-                )
-            };
-            let filter = logical::AccessFilter::new(pipeline.access().clone(), predicate);
-            rewrite_filter(
-                &filter,
-                indexes,
-                planner_limits,
-                &pipeline.ops()[filter_count..],
-            )
+            let filter = logical::AccessFilter::new(pipeline.access().clone(), predicate.clone());
+            rewrite_filter(&filter, indexes, planner_limits, rest)
         }
         logical::AccessStream::Path(_)
         | logical::AccessStream::Window(_)

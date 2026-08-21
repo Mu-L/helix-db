@@ -6,13 +6,14 @@ use super::AccessPath;
 use crate::{ir, properties};
 
 mod candidates;
+mod canonical;
 mod op;
 mod validation;
 
+pub(crate) use canonical::canonicalize_stream_pipeline_ops;
+pub(in crate::logical) use canonical::CanonicalStreamPipelineOps;
 pub use op::{StreamPipelineOp, StreamPipelineOpKind};
-pub(in crate::logical) use validation::{
-    combine_effect, pipeline_ops_effect, validate_stream_pipeline_ops,
-};
+pub(in crate::logical) use validation::{combine_effect, pipeline_ops_effect};
 
 /// Non-empty stream pipeline over a residual-free access path.
 ///
@@ -38,7 +39,7 @@ pub(in crate::logical) use validation::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccessPipeline {
     access: AccessPath,
-    ops: ir::AtLeast<StreamPipelineOp, 1>,
+    ops: CanonicalStreamPipelineOps,
 }
 
 impl AccessPipeline {
@@ -48,7 +49,7 @@ impl AccessPipeline {
     /// physical implementation can map every logical pipeline operator to one
     /// concrete executable operator.
     pub fn new(access: AccessPath, ops: ir::AtLeast<StreamPipelineOp, 1>) -> Option<Self> {
-        validate_stream_pipeline_ops(ops.as_ref())?;
+        let ops = CanonicalStreamPipelineOps::new(ops)?;
         Some(Self { access, ops })
     }
 
@@ -59,17 +60,17 @@ impl AccessPipeline {
 
     /// Pipeline operators in execution order.
     pub fn ops(&self) -> &[StreamPipelineOp] {
-        self.ops.as_ref()
+        self.ops.as_slice()
     }
 
     /// Typed pipeline operators preserving the non-empty invariant.
     pub const fn ops_at_least(&self) -> &ir::AtLeast<StreamPipelineOp, 1> {
-        &self.ops
+        self.ops.as_at_least()
     }
 
     /// First pipeline-operator family.
     pub fn head_op_kind(&self) -> StreamPipelineOpKind {
-        self.ops.as_ref()[0].kind()
+        self.ops.as_slice()[0].kind()
     }
 
     /// True when local access-pipeline simplification should inspect this
@@ -151,9 +152,14 @@ mod tests {
         let pipeline = AccessPipeline::new(
             access(ir::NodeAccessPlan::AllScan),
             ir::AtLeast::<_, 1>::from_one_and_rest(
-                filter("first"),
+                StreamPipelineOp::Filter {
+                    predicate: ir::PredicatePlan::new(Predicate::and(vec![
+                        Predicate::eq("first", true),
+                        Predicate::eq("second", true),
+                    ]))
+                    .unwrap(),
+                },
                 vec![
-                    filter("second"),
                     filter("third"),
                     StreamPipelineOp::Limit {
                         count: ir::StreamBoundPlan::Literal(10),
@@ -204,6 +210,14 @@ mod tests {
                     Predicate::eq("second", true),
                 ])
         ));
+
+        let mut encoded = serde_json::to_value(RawAccessPipeline {
+            access: access(ir::NodeAccessPlan::AllScan),
+            ops: ir::AtLeast::<_, 1>::from_one(filter("first")),
+        })
+        .unwrap();
+        encoded["ops"] = serde_json::json!([]);
+        assert!(serde_json::from_value::<AccessPipeline>(encoded).is_err());
 
         let encoded = serde_json::to_value(RawAccessPipeline {
             access: access(ir::NodeAccessPlan::AllScan),
