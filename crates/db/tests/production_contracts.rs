@@ -46,6 +46,19 @@ fn current_layer0_neighbor_bytes_are_stable_through_the_public_codec() {
 }
 
 #[test]
+#[allow(deprecated)]
+fn root_tenant_compatibility_path_reexports_v2_scope_types() {
+    use db::encoding::keys::tenant::{DataScope, TenantId};
+
+    let tenant = TenantId::from_ulid_str("00000000000000000000000001")
+        .expect("compatibility path decodes tenant IDs");
+    let compatibility_scope = DataScope::Tenant(tenant);
+    let canonical_scope: db::encoding::v2::keys::scope::DataScope = compatibility_scope;
+
+    assert_eq!(canonical_scope, DataScope::Tenant(tenant));
+}
+
+#[test]
 fn public_vector_definition_owns_validated_configuration() {
     let definition =
         VectorIndexDefinition::new_node("Document", "embedding", 384, VectorDistanceMetric::Cosine)

@@ -10,6 +10,20 @@ mod managed_index;
 pub(crate) mod metadata;
 pub mod scope;
 
+/// Deprecated compatibility path for the former unversioned tenant module.
+///
+/// ```
+/// #![allow(deprecated)]
+/// use db::encoding::keys::tenant::{DataScope, TenantId};
+///
+/// let tenant = TenantId::from_ulid_str("00000000000000000000000001").unwrap();
+/// assert!(!DataScope::Tenant(tenant).is_unscoped());
+/// ```
+#[deprecated(note = "use encoding::v2::keys::scope")]
+pub mod tenant {
+    pub use super::scope::{DataScope, TenantId};
+}
+
 pub(crate) use data::{DataKey, DataKeyKind, GlobalKeyKind, KeyPrefix, ID_LEN, PREFIX_LEN};
 pub use data::{EdgeId, NodeId};
 pub(crate) use global::{GlobalKey, GlobalKind, TextCompactionTarget, GLOBAL_SENTINEL};
