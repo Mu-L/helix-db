@@ -66,3 +66,36 @@ impl RootPipeline {
         combine_effect(self.input.effect(), pipeline_ops_effect(self.ops()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use helix_ast::expr::Predicate;
+
+    use super::*;
+    use crate::logical::VariableSource;
+
+    #[test]
+    fn root_pipeline_uses_shared_filter_canonicalization() {
+        let first = ir::PredicatePlan::new(Predicate::eq("first", true)).unwrap();
+        let second = ir::PredicatePlan::new(Predicate::eq("second", true)).unwrap();
+        let pipeline = RootPipeline::new(
+            RootStream::VariableSource(VariableSource::new(
+                ir::NonEmptyString::new("rows").unwrap(),
+            )),
+            ir::AtLeast::<_, 1>::from_one_and_rest(
+                StreamPipelineOp::Filter { predicate: first },
+                vec![StreamPipelineOp::Filter { predicate: second }],
+            ),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            pipeline.ops(),
+            [StreamPipelineOp::Filter { predicate }]
+                if predicate.as_ref() == &Predicate::and(vec![
+                    Predicate::eq("first", true),
+                    Predicate::eq("second", true),
+                ])
+        ));
+    }
+}

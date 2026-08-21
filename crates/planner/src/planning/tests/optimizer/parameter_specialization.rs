@@ -116,6 +116,64 @@ fn terminal_label_scoped_parameterized_equality_uses_index_after_request_round_t
 }
 
 #[test]
+fn terminal_edge_filter_before_label_uses_parameterized_equality_index() {
+    let request = QueryRequest::read(
+        read_batch()
+            .var_as(
+                "edge_count",
+                g().e_where(Predicate::eq_param("orbit_id", "orbit_id"))
+                    .edge_has_label("MEMBER_OF")
+                    .count(),
+            )
+            .returning(["edge_count"]),
+    )
+    .with_query_name("GetMembershipByOrbitId")
+    .with_parameter_value("orbit_id", QueryValue::String("orbit-1".to_owned()));
+    let (query, parameters) = request.into_query();
+
+    let mut planner_ctx = ctx(builtin_label_indexes()
+        .with_edge_eq(ScopedPropertyKey::try_new("MEMBER_OF", "orbit_id").unwrap()));
+    planner_ctx.params =
+        parameters
+            .into_iter()
+            .fold(ParamBindings::default(), |bindings, (name, value)| {
+                bindings.with_query_value(NonEmptyString::new(name).unwrap(), value)
+            });
+
+    let output = crate::planning::plan_with_diagnostics(&query, &planner_ctx).unwrap();
+    let count = output
+        .plan()
+        .steps()
+        .iter()
+        .find_map(|step| match &step.op {
+            ExecOp::Count { plan } => Some(plan.as_ref()),
+            _ => None,
+        });
+    assert!(
+        matches!(
+            count,
+            Some(ExecCountPlan::EdgeBitmap(crate::exec::ExecEdgeBitmapCountPlan {
+                bitmap: crate::exec::ExecEdgeBitmapExpr::PointRead { key, .. },
+                ..
+            }))
+                if key.label == "MEMBER_OF" && key.property == "orbit_id"
+        ),
+        "expected MEMBER_OF.orbit_id equality access; plan: {:#?}; diagnostics: {:#?}",
+        output.plan().steps(),
+        output.diagnostics()
+    );
+    assert_no_exec_op_family(output.plan(), ExecOpFamily::Filter);
+    assert!(output
+        .diagnostics()
+        .insights
+        .iter()
+        .all(|insight| !matches!(
+            insight,
+            crate::diagnostics::PlannerInsight::UnboundedScan(_)
+        )));
+}
+
+#[test]
 fn ordinary_request_membership_parameters_match_literal_index_access() {
     let indexes = builtin_label_indexes()
         .with_node_eq(ScopedPropertyKey::try_new("Person", "$label").unwrap())

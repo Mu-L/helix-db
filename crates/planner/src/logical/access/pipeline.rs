@@ -111,6 +111,8 @@ impl AccessPipeline {
 
 #[cfg(test)]
 mod tests {
+    use helix_ast::expr::Predicate;
+
     use crate::ir;
     use crate::logical::{AccessPath, NodeAccessPath};
 
@@ -120,6 +122,12 @@ mod tests {
         AccessPath::Node(NodeAccessPath::new(
             ir::NodeAccessSourcePlan::from_unfiltered(source),
         ))
+    }
+
+    fn filter(property: &str) -> StreamPipelineOp {
+        StreamPipelineOp::Filter {
+            predicate: ir::PredicatePlan::new(Predicate::eq(property, true)).unwrap(),
+        }
     }
 
     #[test]
@@ -136,5 +144,74 @@ mod tests {
         assert_eq!(pipeline.ops().len(), 1);
         assert_eq!(pipeline.head_op_kind(), StreamPipelineOpKind::Limit);
         assert_eq!(pipeline.effect(), properties::EffectKind::Pure);
+    }
+
+    #[test]
+    fn access_pipeline_canonicalizes_each_adjacent_filter_run() {
+        let pipeline = AccessPipeline::new(
+            access(ir::NodeAccessPlan::AllScan),
+            ir::AtLeast::<_, 1>::from_one_and_rest(
+                filter("first"),
+                vec![
+                    filter("second"),
+                    filter("third"),
+                    StreamPipelineOp::Limit {
+                        count: ir::StreamBoundPlan::Literal(10),
+                    },
+                    filter("fourth"),
+                    filter("fifth"),
+                ],
+            ),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            pipeline.ops(),
+            [
+                StreamPipelineOp::Filter { predicate: first },
+                StreamPipelineOp::Limit { .. },
+                StreamPipelineOp::Filter { predicate: second },
+            ] if first.as_ref() == &Predicate::and(vec![
+                Predicate::eq("first", true),
+                Predicate::eq("second", true),
+                Predicate::eq("third", true),
+            ]) && second.as_ref() == &Predicate::and(vec![
+                Predicate::eq("fourth", true),
+                Predicate::eq("fifth", true),
+            ])
+        ));
+    }
+
+    #[test]
+    fn access_pipeline_deserialization_enforces_canonical_ops() {
+        #[derive(serde::Serialize)]
+        struct RawAccessPipeline {
+            access: AccessPath,
+            ops: ir::AtLeast<StreamPipelineOp, 1>,
+        }
+
+        let encoded = serde_json::to_value(RawAccessPipeline {
+            access: access(ir::NodeAccessPlan::AllScan),
+            ops: ir::AtLeast::<_, 1>::from_one_and_rest(filter("first"), vec![filter("second")]),
+        })
+        .unwrap();
+        let pipeline: AccessPipeline = serde_json::from_value(encoded).unwrap();
+        assert!(matches!(
+            pipeline.ops(),
+            [StreamPipelineOp::Filter { predicate }]
+                if predicate.as_ref() == &Predicate::and(vec![
+                    Predicate::eq("first", true),
+                    Predicate::eq("second", true),
+                ])
+        ));
+
+        let encoded = serde_json::to_value(RawAccessPipeline {
+            access: access(ir::NodeAccessPlan::AllScan),
+            ops: ir::AtLeast::<_, 1>::from_one(StreamPipelineOp::Window {
+                window: crate::logical::AccessWindowRange::identity(),
+            }),
+        })
+        .unwrap();
+        assert!(serde_json::from_value::<AccessPipeline>(encoded).is_err());
     }
 }
