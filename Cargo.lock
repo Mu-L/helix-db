@@ -4572,6 +4572,7 @@ dependencies = [
  "protoc-bin-vendored",
  "serde",
  "serde_json",
+ "slatedb",
  "sonic-rs",
  "thiserror 2.0.19",
  "tokio",
