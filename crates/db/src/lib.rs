@@ -27,13 +27,13 @@ pub mod search;
 
 pub use runtime_dependencies::{IndexRuntimeReadiness, ProcessLocalDatabaseToken};
 
-#[cfg(feature = "production-coverage")]
+#[cfg(all(feature = "production-coverage", not(test)))]
 #[path = "../tests/production_support/mod.rs"]
 pub mod production_coverage;
-#[cfg(all(test, not(feature = "production-coverage")))]
+#[cfg(test)]
 #[path = "../tests/production_support/index_lifecycle_text_rows.rs"]
 mod production_text_lifecycle_rows;
-#[cfg(all(test, not(feature = "production-coverage")))]
+#[cfg(test)]
 pub mod production_coverage {
     /// Verifies the complete durable row graph for one settled text generation.
     pub async fn index_lifecycle_text_steady_state_contracts(
