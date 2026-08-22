@@ -28,6 +28,7 @@ use crate::encoding::v2::values::{
     encode_operation_record,
 };
 use crate::error::{HelixDbError, Result};
+use crate::execution_control;
 
 use super::failpoints::{self, IndexOutboxFailpoint};
 use super::{
@@ -1285,6 +1286,7 @@ pub(crate) async fn retry_blocked_operation(
     scope: DataScope,
     operation_id: IndexOperationId,
     expected_revision: IndexOperationRevision,
+    execution_control: &execution_control::ExecutionControl,
 ) -> Result<Option<IndexOperationRecord>> {
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
     let operation_key = scoped_operation_key(scope, operation_id);
@@ -1319,6 +1321,7 @@ pub(crate) async fn retry_blocked_operation(
                 global_operation_key(operation_id),
                 encode_metadata_value(&IndexV2MetadataValue::OperationQueuePointer(pointer)),
             )?;
+            execution_control.claim_write_commit()?;
             transaction.commit().await?;
             Ok(Some(next))
         }
@@ -1381,6 +1384,17 @@ pub(crate) async fn retry_operation(
     scope: DataScope,
     operation_id: IndexOperationId,
 ) -> Result<IndexOperationRecord> {
+    let execution_control = execution_control::ExecutionControl::unlimited();
+    retry_operation_with_control(db, scope, operation_id, &execution_control).await
+}
+
+/// Requeues one request-owned blocked operation at its durable boundary.
+pub(crate) async fn retry_operation_with_control(
+    db: &Db,
+    scope: DataScope,
+    operation_id: IndexOperationId,
+    execution_control: &execution_control::ExecutionControl,
+) -> Result<IndexOperationRecord> {
     loop {
         let snapshot = db.snapshot().await?;
         let Some(current) = read_operation(snapshot.as_ref(), scope, operation_id).await? else {
@@ -1393,8 +1407,14 @@ pub(crate) async fn retry_operation(
         ) {
             return Ok(current);
         }
-        let Some(next) =
-            retry_blocked_operation(db, scope, operation_id, current.operation_revision()).await?
+        let Some(next) = retry_blocked_operation(
+            db,
+            scope,
+            operation_id,
+            current.operation_revision(),
+            execution_control,
+        )
+        .await?
         else {
             continue;
         };
@@ -1408,6 +1428,17 @@ pub(crate) async fn abort_operation(
     db: &Db,
     scope: DataScope,
     operation_id: IndexOperationId,
+) -> Result<IndexOperationRecord> {
+    let execution_control = execution_control::ExecutionControl::unlimited();
+    abort_operation_with_control(db, scope, operation_id, &execution_control).await
+}
+
+/// Aborts one request-owned constructing operation at its durable boundary.
+pub(crate) async fn abort_operation_with_control(
+    db: &Db,
+    scope: DataScope,
+    operation_id: IndexOperationId,
+    execution_control: &execution_control::ExecutionControl,
 ) -> Result<IndexOperationRecord> {
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
     let operation_key = scoped_operation_key(scope, operation_id);
@@ -1448,6 +1479,7 @@ pub(crate) async fn abort_operation(
                 pointer_key,
                 encode_metadata_value(&IndexV2MetadataValue::OperationQueuePointer(next_pointer)),
             )?;
+            execution_control.claim_write_commit()?;
             transaction.commit().await?;
             Ok(next_operation)
         }
@@ -1766,6 +1798,9 @@ mod tests {
 
     use super::*;
     use crate::config::{SearchIndexBackfillLimits, SecondaryIndexDefinition};
+    use crate::execution_control::{
+        ExecutionControl, WriteAbortClaim, WriteCommitGate, WriteCommitState,
+    };
     use crate::index_lifecycle::{
         IndexGenerationId, IndexId, NoCursorProgress, OperationCounters, PhysicalGeneration,
         SecondaryBuildProgress, SecondaryBuildStage, SecondaryCleanupProgress,
@@ -2349,9 +2384,40 @@ mod tests {
             IndexOperationExecutionState::Blocked(_)
         ));
 
-        let queued = retry_operation(&db, DataScope::LegacyUnscoped, operation.operation_id())
-            .await
-            .unwrap();
+        let abort_gate = WriteCommitGate::new();
+        assert_eq!(abort_gate.claim_abort(), WriteAbortClaim::AbortClaimed);
+        let abort_control =
+            ExecutionControl::unlimited().with_write_commit_gate(abort_gate.clone());
+        assert!(matches!(
+            retry_operation_with_control(
+                &db,
+                DataScope::LegacyUnscoped,
+                operation.operation_id(),
+                &abort_control,
+            )
+            .await,
+            Err(HelixDbError::WriteAbortedByDrain)
+        ));
+        assert_eq!(
+            read_operation(&db, DataScope::LegacyUnscoped, operation.operation_id())
+                .await
+                .unwrap()
+                .unwrap(),
+            blocked
+        );
+
+        let retry_gate = WriteCommitGate::new();
+        let retry_control =
+            ExecutionControl::unlimited().with_write_commit_gate(retry_gate.clone());
+        let queued = retry_operation_with_control(
+            &db,
+            DataScope::LegacyUnscoped,
+            operation.operation_id(),
+            &retry_control,
+        )
+        .await
+        .unwrap();
+        assert_eq!(retry_gate.state(), WriteCommitState::CommitStarted);
         assert_eq!(queued.progress(), blocked.progress());
         assert_eq!(queued.attempt(), blocked.attempt());
         assert_eq!(
@@ -2364,10 +2430,19 @@ mod tests {
                 not_before_unix_millis: None
             }
         ));
-        let duplicate = retry_operation(&db, DataScope::LegacyUnscoped, operation.operation_id())
-            .await
-            .unwrap();
+        let duplicate_gate = WriteCommitGate::new();
+        let duplicate_control =
+            ExecutionControl::unlimited().with_write_commit_gate(duplicate_gate.clone());
+        let duplicate = retry_operation_with_control(
+            &db,
+            DataScope::LegacyUnscoped,
+            operation.operation_id(),
+            &duplicate_control,
+        )
+        .await
+        .unwrap();
         assert_eq!(duplicate, queued);
+        assert_eq!(duplicate_gate.state(), WriteCommitState::PreCommit);
         db.close().await.unwrap();
     }
 
@@ -2656,9 +2731,40 @@ mod tests {
                 }
             };
 
-            let aborted = abort_operation(&db, DataScope::LegacyUnscoped, operation.operation_id())
-                .await
-                .unwrap();
+            let abort_gate = WriteCommitGate::new();
+            assert_eq!(abort_gate.claim_abort(), WriteAbortClaim::AbortClaimed);
+            let abort_control =
+                ExecutionControl::unlimited().with_write_commit_gate(abort_gate.clone());
+            assert!(matches!(
+                abort_operation_with_control(
+                    &db,
+                    DataScope::LegacyUnscoped,
+                    operation.operation_id(),
+                    &abort_control,
+                )
+                .await,
+                Err(HelixDbError::WriteAbortedByDrain)
+            ));
+            assert_eq!(
+                read_operation(&db, DataScope::LegacyUnscoped, operation.operation_id())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                before_abort
+            );
+
+            let commit_gate = WriteCommitGate::new();
+            let commit_control =
+                ExecutionControl::unlimited().with_write_commit_gate(commit_gate.clone());
+            let aborted = abort_operation_with_control(
+                &db,
+                DataScope::LegacyUnscoped,
+                operation.operation_id(),
+                &commit_control,
+            )
+            .await
+            .unwrap();
+            assert_eq!(commit_gate.state(), WriteCommitState::CommitStarted);
             assert_eq!(aborted.operation_id(), operation.operation_id());
             assert_eq!(aborted.attempt(), before_abort.attempt());
             assert_eq!(
@@ -2677,12 +2783,21 @@ mod tests {
                     SecondaryCleanupProgress::DeleteEntries(_)
                 ))
             ));
+            let duplicate_gate = WriteCommitGate::new();
+            let duplicate_control =
+                ExecutionControl::unlimited().with_write_commit_gate(duplicate_gate.clone());
             assert_eq!(
-                abort_operation(&db, DataScope::LegacyUnscoped, operation.operation_id(),)
-                    .await
-                    .unwrap(),
+                abort_operation_with_control(
+                    &db,
+                    DataScope::LegacyUnscoped,
+                    operation.operation_id(),
+                    &duplicate_control,
+                )
+                .await
+                .unwrap(),
                 aborted
             );
+            assert_eq!(duplicate_gate.state(), WriteCommitState::PreCommit);
             let canonical = decode_index_record(
                 &db.get(scoped_index_key(DataScope::LegacyUnscoped, &index))
                     .await
