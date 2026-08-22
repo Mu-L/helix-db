@@ -1364,7 +1364,11 @@ impl HelixDB {
                 actual: self.mode().as_str(),
             });
         };
-        writer.db().flush().await?;
+        writer
+            .db()
+            .flush()
+            .await
+            .map_err(HelixDbError::from_storage_commit)?;
         Ok(DatabaseSequence(writer.db().snapshot().await?.seq()))
     }
 
@@ -3361,6 +3365,10 @@ mod tests {
             old_error.kind(),
             slatedb::ErrorKind::Closed(slatedb::CloseReason::Fenced)
         );
+        assert!(matches!(
+            HelixDbError::from_storage_commit(old_error),
+            HelixDbError::WriterFencedCommitOutcomeUnknown
+        ));
 
         let Err(delayed) = HelixDB::open_managed_writer_with_config(
             source(),

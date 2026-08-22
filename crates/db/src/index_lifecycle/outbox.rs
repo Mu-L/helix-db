@@ -1322,7 +1322,10 @@ pub(crate) async fn retry_blocked_operation(
                 encode_metadata_value(&IndexV2MetadataValue::OperationQueuePointer(pointer)),
             )?;
             execution_control.claim_write_commit()?;
-            transaction.commit().await?;
+            transaction
+                .commit()
+                .await
+                .map_err(HelixDbError::from_storage_commit)?;
             Ok(Some(next))
         }
         IndexOperationExecutionState::Queued { .. } | IndexOperationExecutionState::Claimed(_) => {
@@ -1379,6 +1382,12 @@ pub(crate) async fn read_operation(
 
 /// Convergently ensures a retained operation is runnable and returns its
 /// resulting public status source record.
+#[cfg(any(
+    test,
+    feature = "production-coverage",
+    feature = "migration-parity",
+    feature = "index-lifecycle-testing"
+))]
 pub(crate) async fn retry_operation(
     db: &Db,
     scope: DataScope,
@@ -1424,6 +1433,12 @@ pub(crate) async fn retry_operation_with_control(
 
 /// Converts a constructing BUILD into abort cleanup, or converges on an
 /// already-aborting/aborted BUILD with the same operation ID.
+#[cfg(any(
+    test,
+    feature = "production-coverage",
+    feature = "migration-parity",
+    feature = "index-lifecycle-testing"
+))]
 pub(crate) async fn abort_operation(
     db: &Db,
     scope: DataScope,
@@ -1480,7 +1495,10 @@ pub(crate) async fn abort_operation_with_control(
                 encode_metadata_value(&IndexV2MetadataValue::OperationQueuePointer(next_pointer)),
             )?;
             execution_control.claim_write_commit()?;
-            transaction.commit().await?;
+            transaction
+                .commit()
+                .await
+                .map_err(HelixDbError::from_storage_commit)?;
             Ok(next_operation)
         }
         (IndexStateV2::Aborting { .. }, super::IndexOperationKind::Build, _)
