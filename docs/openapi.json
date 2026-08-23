@@ -23,16 +23,6 @@
     {
       "url": "http://localhost:6969",
       "description": "Default local HelixDB server"
-    },
-    {
-      "url": "https://{gatewayHost}",
-      "description": "Helix Cloud query gateway from the database connection details or helix sync output",
-      "variables": {
-        "gatewayHost": {
-          "default": "cluster.helix-db.com",
-          "description": "Placeholder only. Replace it with the managed gateway hostname shown in the Helix Cloud dashboard or written to helix.toml by helix sync."
-        }
-      }
     }
   ],
   "tags": [
@@ -51,6 +41,22 @@
         "operationId": "executeQuery",
         "summary": "Execute a HelixDB query",
         "description": "Executes one read or write batch. request_type must match the closed read or write variant under query. Request bodies are limited to 16 MiB.",
+        "servers": [
+          {
+            "url": "http://localhost:6969",
+            "description": "Default local HelixDB server"
+          },
+          {
+            "url": "https://{gatewayHost}",
+            "description": "Helix Cloud query gateway from the database connection details or helix sync output",
+            "variables": {
+              "gatewayHost": {
+                "default": "cluster.helix-db.com",
+                "description": "Placeholder only. Replace it with the managed gateway hostname shown in the Helix Cloud dashboard or written to helix.toml by helix sync."
+              }
+            }
+          }
+        ],
         "tags": [
           "Queries"
         ],
@@ -183,6 +189,15 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
@@ -307,7 +322,7 @@
     },
     "responses": {
       "BadRequest": {
-        "description": "Invalid JSON, query plan, vector input, or request option.",
+        "description": "Invalid JSON, query plan, vector input, request option, or Helix Cloud authentication header.",
         "content": {
           "application/json": {
             "schema": {
@@ -317,11 +332,41 @@
         }
       },
       "Unauthorized": {
-        "description": "Helix Cloud authentication is missing or invalid.",
+        "description": "The Helix Cloud API key is invalid.",
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/QueryError"
+              "$ref": "#/components/schemas/GatewayQueryError"
+            }
+          }
+        }
+      },
+      "PaymentRequired": {
+        "description": "Helix Cloud query processing is disabled because the tenant has exhausted its credit.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/GatewayQueryError"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The Helix Cloud API key does not have permission to execute the query.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/GatewayQueryError"
+            }
+          }
+        }
+      },
+      "RequestTimeout": {
+        "description": "The Helix Cloud query exceeded its wall-clock limit.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/GatewayQueryError"
             }
           }
         }
@@ -349,7 +394,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/QueryError"
+              "$ref": "#/components/schemas/GatewayQueryError"
             }
           }
         }
@@ -716,7 +761,6 @@
               "f32",
               "string",
               "date_time",
-              "bytes",
               "value",
               "object"
             ]
@@ -745,7 +789,7 @@
           ]
         }
       },
-      "QueryError": {
+      "LocalQueryError": {
         "type": "object",
         "required": [
           "error",
@@ -766,6 +810,38 @@
           "error": "invalid_query_json",
           "msg": "invalid query JSON: expected value"
         }
+      },
+      "GatewayQueryError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Human-readable gateway error message."
+          },
+          "code": {
+            "type": "string",
+            "description": "Stable gateway error code when one is available."
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "code": "QUERY_TIMEOUT",
+          "error": "query exceeded its wall-clock limit"
+        }
+      },
+      "QueryError": {
+        "description": "Local servers return LocalQueryError. Helix Cloud gateways return GatewayQueryError.",
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/LocalQueryError"
+          },
+          {
+            "$ref": "#/components/schemas/GatewayQueryError"
+          }
+        ]
       },
       "HealthResponse": {
         "type": "object",

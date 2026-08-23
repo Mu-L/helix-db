@@ -24,6 +24,12 @@ if (spec.openapi !== '3.1.0') {
 if (!spec.info?.title?.includes('HelixDB')) {
   errors.push('openapi.json: info.title must include HelixDB');
 }
+if (
+  spec.servers?.length !== 1 ||
+  spec.servers[0]?.url !== 'http://localhost:6969'
+) {
+  errors.push('openapi.json: root servers must describe only the local server');
+}
 
 const router = fs.readFileSync(ROUTER_PATH, 'utf8');
 const routerOperations = new Set(
@@ -80,11 +86,126 @@ if (!examples?.read?.value || !examples?.write?.value) {
   errors.push('openapi.json: /v2/query needs read and write request examples');
 }
 
+const queryOperation = spec.paths?.['/v2/query']?.post;
+const queryServerUrls = queryOperation?.servers?.map(({ url }) => url) ?? [];
+if (
+  queryServerUrls.length !== 2 ||
+  !queryServerUrls.includes('http://localhost:6969') ||
+  !queryServerUrls.includes('https://{gatewayHost}')
+) {
+  errors.push(
+    'openapi.json: /v2/query must advertise the local server and Helix Cloud gateway',
+  );
+}
+for (const route of ['/healthz', '/readyz']) {
+  if (spec.paths?.[route]?.get?.servers) {
+    errors.push(`openapi.json: ${route} must inherit the local root server`);
+  }
+}
+
+const documentedQueryStatuses = Object.keys(queryOperation?.responses ?? {}).sort();
+const expectedQueryStatuses = [
+  '200',
+  '204',
+  '400',
+  '401',
+  '402',
+  '403',
+  '408',
+  '409',
+  '429',
+  '500',
+  '503',
+];
+if (documentedQueryStatuses.join(',') !== expectedQueryStatuses.join(',')) {
+  errors.push(
+    `openapi.json: /v2/query response codes must be ${expectedQueryStatuses.join(', ')}`,
+  );
+}
+const expectedQueryResponseRefs = {
+  400: 'BadRequest',
+  401: 'Unauthorized',
+  402: 'PaymentRequired',
+  403: 'Forbidden',
+  408: 'RequestTimeout',
+  409: 'Conflict',
+  429: 'RateLimited',
+  500: 'InternalError',
+  503: 'Unavailable',
+};
+for (const [status, name] of Object.entries(expectedQueryResponseRefs)) {
+  if (
+    queryOperation.responses?.[status]?.$ref !==
+    `#/components/responses/${name}`
+  ) {
+    errors.push(`openapi.json: ${status} must reference ${name}`);
+  }
+}
+
+const responseSchemaRef = (name) =>
+  spec.components?.responses?.[name]?.content?.['application/json']?.schema?.$ref;
+for (const name of [
+  'Unauthorized',
+  'PaymentRequired',
+  'Forbidden',
+  'RequestTimeout',
+  'RateLimited',
+]) {
+  if (responseSchemaRef(name) !== '#/components/schemas/GatewayQueryError') {
+    errors.push(`openapi.json: ${name} must use GatewayQueryError`);
+  }
+}
+for (const name of ['BadRequest', 'Conflict', 'InternalError', 'Unavailable']) {
+  if (responseSchemaRef(name) !== '#/components/schemas/QueryError') {
+    errors.push(`openapi.json: ${name} must allow local and gateway errors`);
+  }
+}
+
+const localError = spec.components?.schemas?.LocalQueryError;
+if (
+  localError?.additionalProperties !== false ||
+  localError.required?.join(',') !== 'error,msg' ||
+  !localError.properties?.error ||
+  !localError.properties?.msg
+) {
+  errors.push('openapi.json: LocalQueryError must require only error and msg');
+}
+const gatewayError = spec.components?.schemas?.GatewayQueryError;
+if (
+  gatewayError?.additionalProperties !== false ||
+  gatewayError.required?.join(',') !== 'error' ||
+  !gatewayError.properties?.error ||
+  !gatewayError.properties?.code ||
+  gatewayError.properties?.msg
+) {
+  errors.push(
+    'openapi.json: GatewayQueryError must require error and allow optional code',
+  );
+}
+const errorVariants =
+  spec.components?.schemas?.QueryError?.oneOf?.map((variant) => variant.$ref).sort() ?? [];
+if (
+  errorVariants.join(',') !==
+  [
+    '#/components/schemas/GatewayQueryError',
+    '#/components/schemas/LocalQueryError',
+  ].join(',')
+) {
+  errors.push('openapi.json: QueryError must close over local and gateway errors');
+}
+
+const scalarParameterTypes = spec.components?.schemas?.QueryParameterType?.oneOf?.find(
+  (variant) => Array.isArray(variant.enum),
+)?.enum;
+if (!scalarParameterTypes || scalarParameterTypes.includes('bytes')) {
+  errors.push('openapi.json: the JSON query route must not advertise bytes parameters');
+}
+
 if (errors.length > 0) {
   for (const error of errors) console.error(error);
   process.exit(1);
 }
 
 console.log(
-  `openapi.json matches ${routerOperations.size} HelixDB HTTP server operations.`,
+  `openapi.json matches ${routerOperations.size} local operations and validates the Helix Cloud query contract.`,
 );
