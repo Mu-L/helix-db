@@ -217,8 +217,21 @@ if (
 const scalarParameterTypes = spec.components?.schemas?.QueryParameterType?.oneOf?.find(
   (variant) => Array.isArray(variant.enum),
 )?.enum;
-if (!scalarParameterTypes || scalarParameterTypes.includes('bytes')) {
-  errors.push('openapi.json: the JSON query route must not advertise bytes parameters');
+const expectedScalarParameterTypes = [
+  'bool',
+  'date_time',
+  'i64',
+  'object',
+  'string',
+  'value',
+];
+if (
+  !scalarParameterTypes ||
+  scalarParameterTypes.toSorted().join(',') !== expectedScalarParameterTypes.join(',')
+) {
+  errors.push(
+    'openapi.json: typed JSON parameters must omit bytes, f32, and f64',
+  );
 }
 
 if (errors.length > 0) {

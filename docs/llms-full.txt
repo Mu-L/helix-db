@@ -3977,6 +3977,11 @@ The hosted HelixDB MCP server has a separate browser OAuth flow. See the
 can be untyped, or every parameter can have a matching entry in
 `parameter_types`.
 
+For raw HTTP JSON, send floating-point values without `parameter_types`.
+The HTTP schema does not advertise typed `f32` or `f64` declarations because
+JSON Schema cannot distinguish an integral number token such as `5` from the
+integer representation that exact typed decoding rejects.
+
 ```json
 {
   "request_type": "read",
