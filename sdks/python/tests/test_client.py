@@ -178,6 +178,26 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(ctx.exception.details, "conflict")
 
+    def test_remote_error_exposes_structured_response(self) -> None:
+        request = QueryRequest.read(read_batch())
+        body = b'{"error":"query_timeout","msg":"query exceeded its wall-clock limit"}'
+
+        def fake_urlopen(req):
+            raise HTTPError(req.full_url, 408, "Request Timeout", hdrs={}, fp=BytesIO(body))
+
+        with patch("helixdb.client.urlopen", fake_urlopen):
+            with self.assertRaises(HelixError) as ctx:
+                Client("http://127.0.0.1:6969").query(request)
+
+        self.assertEqual(ctx.exception.status_code, 408)
+        self.assertEqual(ctx.exception.details, body.decode())
+        self.assertIsNotNone(ctx.exception.error_response)
+        self.assertEqual(ctx.exception.error_response.error, "query_timeout")
+        self.assertEqual(
+            ctx.exception.error_response.msg,
+            "query exceeded its wall-clock limit",
+        )
+
     def test_embedded_client_query_uses_native_handle(self) -> None:
         request = QueryRequest.read(
             read_batch().var_as("users", g().n_with_label("Missing").count()).returning(["users"])

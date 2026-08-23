@@ -683,6 +683,31 @@ func TestClientExecConflictError(t *testing.T) {
 	}
 }
 
+func TestClientExecExposesStructuredErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusRequestTimeout)
+		_, _ = w.Write([]byte(`{"error":"query_timeout","msg":"query exceeded its wall-clock limit"}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = client.Exec(context.Background(), findUsers("acme", 25), nil)
+	var helixErr *HelixError
+	if !errors.As(err, &helixErr) {
+		t.Fatalf("expected HelixError, got %T", err)
+	}
+	if helixErr.StatusCode != http.StatusRequestTimeout || helixErr.Response == nil {
+		t.Fatalf("structured response missing: %#v", helixErr)
+	}
+	if helixErr.Response.Error != "query_timeout" || helixErr.Response.Msg != "query exceeded its wall-clock limit" {
+		t.Fatalf("unexpected structured response: %#v", helixErr.Response)
+	}
+}
+
 func TestClientAPIKeyMutationIsRaceSafe(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

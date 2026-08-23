@@ -101,6 +101,15 @@ use reqwest::{Client as ReqwestClient, StatusCode};
 use serde::Deserialize;
 use thiserror::Error;
 
+/// Stable JSON envelope returned by Helix query endpoints.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ErrorResponse {
+    /// Stable lower-snake-case code suitable for programmatic branching.
+    pub error: String,
+    /// Human-readable diagnostic text. Do not branch on this value.
+    pub msg: String,
+}
+
 /// Async HTTP client for running queries against a Helix instance.
 ///
 /// A thin async wrapper over [`reqwest`] that knows how to reach a Helix
@@ -176,13 +185,17 @@ pub enum HelixError {
     /// timeout, TLS error, …), surfaced from [`reqwest`].
     #[error("Error communicating with server: {0}")]
     ReqwestError(#[from] reqwest::Error),
-    /// The server responded with a non-`200` status. `details` carries the
-    /// response body, or the status' canonical reason phrase when no body is
-    /// available.
+    /// The server responded with a non-`200` status. `details` preserves the
+    /// raw response body, while `error_response` exposes the stable JSON
+    /// envelope when the server returned one.
     #[error("Got Error from server: {details}")]
     RemoteError {
+        /// HTTP response status.
+        status_code: u16,
         /// Server-provided error text, or a fallback description of the status.
         details: String,
+        /// Parsed `{ "error": "...", "msg": "..." }` response, when present.
+        error_response: Option<ErrorResponse>,
     },
     /// Failed to (de)serialize a request body or response payload.
     #[error("Error serializing data: {0}")]
@@ -475,15 +488,21 @@ impl<'hlx, 'a, R> QueryExecutionRequest<'hlx, 'a, R> {
                         .await
                         .map(|bytes| bytes.to_vec())
                         .map_err(Into::into),
-                    code => match response.text().await {
-                        Ok(details) => Err(HelixError::RemoteError { details }),
-                        Err(_) => Err(HelixError::RemoteError {
-                            details: code.canonical_reason().map_or_else(
+                    code => {
+                        let details = match response.text().await {
+                            Ok(details) if !details.is_empty() => details,
+                            Ok(_) | Err(_) => code.canonical_reason().map_or_else(
                                 || format!("unknown error with code: {code}"),
                                 str::to_string,
                             ),
-                        }),
-                    },
+                        };
+                        let error_response = sonic_rs::from_str(&details).ok();
+                        Err(HelixError::RemoteError {
+                            status_code: code.as_u16(),
+                            details,
+                            error_response,
+                        })
+                    }
                 }
             }
             #[cfg(feature = "embedded")]
@@ -509,8 +528,8 @@ impl<'hlx, 'a, R: for<'de> Deserialize<'de>> QueryExecutionRequest<'hlx, 'a, R> 
     /// # Errors
     ///
     /// - [`HelixError::ReqwestError`] for transport failures.
-    /// - [`HelixError::RemoteError`] for any non-`200` response (carrying the
-    ///   server's body or status reason).
+    /// - [`HelixError::RemoteError`] for any non-`200` response (carrying its
+    ///   status, raw body, and parsed [`ErrorResponse`] when available).
     /// - [`HelixError::SerializationError`] if the request payload cannot be
     ///   serialized or the response body cannot be deserialized into `R`.
     ///
@@ -1182,15 +1201,20 @@ mod client_tests {
 
     // ---- Request routing (exercises the real `send()` path) -----------------
 
-    #[derive(serde::Deserialize)]
+    #[derive(Debug, serde::Deserialize)]
     struct EmptyResp {}
 
     /// Spawn a one-shot HTTP server on a random port. Returns its base URL and a
     /// handle that resolves to the request-target (path) of the first request.
-    async fn spawn_capture_server() -> (String, tokio::task::JoinHandle<String>) {
+    async fn spawn_capture_server(
+        response_status: &str,
+        response_body: &str,
+    ) -> (String, tokio::task::JoinHandle<String>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
+        let response_status = response_status.to_owned();
+        let response_body = response_body.to_owned();
         let handle = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buf = [0u8; 4096];
@@ -1202,7 +1226,10 @@ mod client_tests {
                 .to_string();
             // `METHOD <target> HTTP/1.1` -> the target.
             let target = request_line.split_whitespace().nth(1).unwrap().to_string();
-            let resp = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+            let resp = format!(
+                "HTTP/1.1 {response_status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            );
             socket.write_all(resp.as_bytes()).await.unwrap();
             target
         });
@@ -1211,10 +1238,41 @@ mod client_tests {
 
     #[tokio::test]
     async fn query_posts_to_v2_query() {
-        let (base, handle) = spawn_capture_server().await;
+        let (base, handle) = spawn_capture_server("200 OK", "{}").await;
         let client = Client::new(Some(&base)).unwrap();
         let _: EmptyResp = client.query(sample_request()).send().await.unwrap();
         assert_eq!(handle.await.unwrap(), "/v2/query");
+    }
+
+    #[tokio::test]
+    async fn remote_error_exposes_status_and_structured_response() {
+        let body = r#"{"error":"query_timeout","msg":"query exceeded its wall-clock limit"}"#;
+        let (base, handle) = spawn_capture_server("408 Request Timeout", body).await;
+        let client = Client::new(Some(&base)).unwrap();
+        let error = client
+            .query::<EmptyResp>(sample_request())
+            .send()
+            .await
+            .expect_err("query should return the remote error");
+        assert_eq!(handle.await.unwrap(), "/v2/query");
+
+        let HelixError::RemoteError {
+            status_code,
+            details,
+            error_response,
+        } = error
+        else {
+            panic!("expected a remote error");
+        };
+        assert_eq!(status_code, 408);
+        assert_eq!(details, body);
+        assert_eq!(
+            error_response,
+            Some(ErrorResponse {
+                error: "query_timeout".to_string(),
+                msg: "query exceeded its wall-clock limit".to_string(),
+            })
+        );
     }
 
     // ---- Embedded execution -------------------------------------------------

@@ -90,6 +90,9 @@ read-only. Server request options are rejected in embedded mode.
 
 `HelixError.kind` distinguishes `Network`, `Remote`, `Serialization`,
 `InvalidUrl`, `InvalidRequest`, `EmbeddedUnavailable`, and `Embedded` failures.
+Remote errors expose `statusCode`, retain the raw response in `details`, and
+populate `errorResponse` when the server returns the stable
+`{"error":"...","msg":"..."}` envelope.
 
 ## Parameter Schemas
 
