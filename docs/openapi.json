@@ -26,11 +26,11 @@
     },
     {
       "url": "https://{gatewayHost}",
-      "description": "Helix Cloud gateway shown in the database connection details",
+      "description": "Helix Cloud query gateway from the database connection details or helix sync output",
       "variables": {
         "gatewayHost": {
-          "default": "api.helix-db.com",
-          "description": "Managed gateway hostname"
+          "default": "cluster.helix-db.com",
+          "description": "Placeholder only. Replace it with the managed gateway hostname shown in the Helix Cloud dashboard or written to helix.toml by helix sync."
         }
       }
     }

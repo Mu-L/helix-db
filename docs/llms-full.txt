@@ -3939,7 +3939,10 @@ Content-Type: application/json
 ```
 
 Local development uses `http://localhost:6969/v2/query` by default. For Helix
-Cloud, use the gateway URL and database ID shown in the dashboard.
+Cloud, use the gateway URL and database ID shown in the dashboard or written to
+`helix.toml` by [`helix sync`](/cli/command-reference/sync). The
+`cluster.helix-db.com` hostname in the OpenAPI document is a placeholder, not a
+shared query endpoint.
 
 ## Authentication
 
