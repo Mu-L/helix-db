@@ -4451,26 +4451,27 @@ Helix Cloud applies a distributed token bucket to `POST /v2/query`. The bucket i
 scoped to the authenticated Cloud database, so reads and writes from every API
 key, application instance, and gateway replica draw from the same allowance.
 
-| Setting | Current managed default |
-| --- | ---: |
-| Sustained rate | 100 requests per second |
-| Burst capacity | 200 requests |
-| Token cost | 1 token per incoming query request |
-| Scope | 1 shared bucket per Cloud database |
+| Plan | Sustained rate | Burst capacity |
+| --- | ---: | ---: |
+| Idea | 5 requests per second | 10 requests |
+| Startup | 10 requests per second | 20 requests |
+| Growth | 20 requests per second | 40 requests |
 
 Database-specific overrides can change the sustained rate and burst capacity.
-The values assigned to your database take precedence over the managed default.
+The values assigned to your database take precedence over its plan limits. Each
+admitted query request costs one token from one shared bucket per Cloud database.
 
 ### Token-bucket behavior
 
-- A full default bucket can admit a burst of up to 200 requests. Tokens then
-  refill continuously at 100 per second, up to the 200-token capacity. This is
-  not a fixed one-second window.
+- A full bucket can admit requests up to its burst capacity. Tokens then refill
+  continuously at the plan's sustained rate, up to that capacity. This is not a
+  fixed one-second window.
 - One incoming request consumes one token whether it is a read, write, or cache
   warming request. Warming fanout and gateway retries do not consume additional
   tokens.
-- Requests rejected during authentication, header validation, or query parsing
-  do not consume a token.
+- Requests rejected during authentication, gateway header validation, or outer
+  request JSON decoding do not consume a token. Query AST and planner validation
+  happen after admission, so those later validation failures consume one token.
 - The bucket is shared across API keys and gateway replicas. Rotating keys or
   distributing calls across connections does not create more capacity.
 - Burst capacity controls short-term admission, not the number of queries that
@@ -4805,7 +4806,7 @@ key and application instance that uses the database. All of them share the same
 bucket.
 
 See [Helix Cloud request rate limits](/database/helix-cloud/operate/limits#helix-cloud-request-rate-limits)
-for the current default and token-bucket behavior.
+for the current plan limits and token-bucket behavior.
 
 ## Request returns `rate_limit_unavailable`
 
