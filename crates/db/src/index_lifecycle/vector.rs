@@ -259,27 +259,19 @@ async fn maintain_target(
     entity: VectorEntityMutation<'_>,
 ) -> Result<()> {
     let new_document = vector_document(&target.definition, entity.after)?;
-    let (mut old_document, force_build_delta) =
-        match vector_document(&target.definition, entity.before) {
-            Ok(document) => (document, false),
-            Err(HelixDbError::VectorComponentMagnitudeExceeded { .. }) => match &target.mode {
-                VectorMutationMode::RecordBuildDelta => (None, true),
-                VectorMutationMode::MaintainActive(_) => {
-                    // An already-invalid active physical row must remain
-                    // untouched until the index is dropped and rebuilt.
-                    return Ok(());
-                }
-            },
-            Err(error) => return Err(error),
-        };
-    if old_document.is_none() && entity.after.is_empty() {
-        old_document = vector_partition(&target.definition, entity.before)?.map(|partition| {
-            VectorIndexedDocument {
-                partition,
-                vector: Vec::new(),
+    let (old_document, force_build_delta) = match vector_document(&target.definition, entity.before)
+    {
+        Ok(document) => (document, false),
+        Err(HelixDbError::VectorComponentMagnitudeExceeded { .. }) => match &target.mode {
+            VectorMutationMode::RecordBuildDelta => (None, true),
+            VectorMutationMode::MaintainActive(_) => {
+                // An already-invalid active physical row must remain
+                // untouched until the index is dropped and rebuilt.
+                return Ok(());
             }
-        });
-    }
+        },
+        Err(error) => return Err(error),
+    };
     if !force_build_delta && old_document == new_document {
         return Ok(());
     }
@@ -1259,6 +1251,103 @@ mod tests {
 
         assert_eq!(index.get_metadata(&db).await.unwrap().unwrap().count, 2);
         assert!(index.get_item(&db, 2).await.unwrap().is_some());
+        db.close().await.unwrap();
+    }
+
+    /// Treats deletion of a label-matching tenant row without a vector as no work.
+    #[tokio::test]
+    async fn active_missing_property_delete_stages_no_partition_work() {
+        let db = test_db("vector-active-missing-property-delete").await;
+        let definition = validated_definition(Some("account_id"), VectorDistanceMetric::Euclidean);
+        let (target, _) = active_target(definition, VectorPhysicalLayout::Partitioned);
+        let properties = vec![
+            property("$label", PropertyValue::String("Document".to_string())),
+            property("account_id", PropertyValue::I64(7)),
+        ];
+        let partition = vector_partition(&target.definition, &properties)
+            .unwrap()
+            .expect("label and tenant project a partition");
+        let partition = VectorTenantPartition::try_from_partition(partition).unwrap();
+        let index_id = target.index_id;
+        let generation = target.generation;
+        let mutations = VectorMutationSet {
+            targets: vec![target],
+        };
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+
+        maintain_entity(
+            &transaction,
+            DataScope::LegacyUnscoped,
+            &mutations,
+            &VectorCacheWriteSet::default(),
+            VectorEntityMutation::new(IndexElementKind::Node, 9, &properties, &[]),
+        )
+        .await
+        .unwrap();
+        transaction.commit().await.unwrap();
+        assert!(repository::load_vector_partition_mapping(
+            &db,
+            DataScope::LegacyUnscoped,
+            index_id,
+            generation,
+            VectorPhysicalLayout::Partitioned,
+            &partition,
+        )
+        .await
+        .unwrap()
+        .is_none());
+        db.close().await.unwrap();
+    }
+
+    /// Avoids a build delta when both graph snapshots lack the indexed vector.
+    #[tokio::test]
+    async fn building_missing_property_delete_stages_no_delta() {
+        let db = test_db("vector-building-missing-property-delete").await;
+        let index_id = IndexId::new(32).unwrap();
+        let generation = IndexGenerationId::new(8).unwrap();
+        let target = VectorMutationTarget {
+            index_id,
+            generation,
+            definition: validated_definition(Some("account_id"), VectorDistanceMetric::Euclidean),
+            mode: VectorMutationMode::RecordBuildDelta,
+        };
+        let properties = vec![
+            property("$label", PropertyValue::String("Document".to_string())),
+            property("account_id", PropertyValue::I64(7)),
+        ];
+        let mutations = VectorMutationSet {
+            targets: vec![target],
+        };
+        let delta_key = scoped_index_key(
+            DataScope::LegacyUnscoped,
+            ScopedKey::BuildDelta(IndexEntityStateKey {
+                index_id,
+                generation,
+                entity: IndexEntity {
+                    kind: IndexElementKind::Node,
+                    id: IndexEntityId::new(9),
+                },
+            }),
+        );
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+
+        maintain_entity(
+            &transaction,
+            DataScope::LegacyUnscoped,
+            &mutations,
+            &VectorCacheWriteSet::default(),
+            VectorEntityMutation::new(IndexElementKind::Node, 9, &properties, &[]),
+        )
+        .await
+        .unwrap();
+        transaction.commit().await.unwrap();
+        assert!(db.get(&delta_key).await.unwrap().is_none());
         db.close().await.unwrap();
     }
 
