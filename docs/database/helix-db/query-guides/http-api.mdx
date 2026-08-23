@@ -1,0 +1,122 @@
+---
+title: "HelixDB HTTP API and OpenAPI specification"
+description: "Call the HelixDB v2 query endpoint and discover its machine-readable OpenAPI 3.1 contract"
+sidebarTitle: "HTTP API and OpenAPI"
+pageType: "Reference"
+---
+
+<div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
+
+> For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
+
+The HelixDB HTTP API accepts operation-tree queries at `POST /v2/query`. The
+same contract is available from a local server and a Helix Cloud gateway.
+
+## Machine-readable specification
+
+The canonical OpenAPI 3.1 document is published at both predictable URLs:
+
+- [https://www.helix-db.com/openapi.json](https://www.helix-db.com/openapi.json)
+- [https://docs.helix-db.com/openapi.json](https://docs.helix-db.com/openapi.json)
+
+Use the specification to discover request headers, response codes, health
+endpoints, query-envelope variants, and example read and write requests. Use the
+typed SDKs or `helix query` to build the nested operation tree.
+
+## Endpoint
+
+```http
+POST /v2/query
+Content-Type: application/json
+```
+
+Local development uses `http://localhost:6969/v2/query` by default. For Helix
+Cloud, use the gateway URL and database ID shown in the dashboard.
+
+## Authentication
+
+Local servers do not require authentication by default. Helix Cloud requires a
+cluster API key and database ID:
+
+```http
+Authorization: Bearer <cluster-api-key>
+X-Helix-Database-Id: <database-id>
+```
+
+Create or rotate the cluster key in the Helix Cloud dashboard. Do not put keys
+in source control, agent instructions, `llms.txt`, or catalog manifests.
+
+The hosted HelixDB MCP server has a separate browser OAuth flow. See the
+[HelixDB MCP guide](/database/helix-cloud/connect/mcp) and the public
+[HelixDB authentication guide](https://www.helix-db.com/auth.md).
+
+## Request envelope
+
+`request_type` and the single `query` variant must agree: `read` with `read`, or
+`write` with `write`. `query_name` is optional diagnostic metadata. Parameters
+can be untyped, or every parameter can have a matching entry in
+`parameter_types`.
+
+```json
+{
+  "request_type": "read",
+  "query_name": "node_count",
+  "query": {
+    "read": {
+      "entries": [
+        {
+          "query": {
+            "name": "node_count",
+            "root": {
+              "count": {
+                "input": {
+                  "nodes_where": {
+                    "predicate": {
+                      "eq": {
+                        "left": { "property": "$label" },
+                        "right": { "constant": { "string": "User" } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "returns": ["node_count"]
+    }
+  }
+}
+```
+
+## Execution headers
+
+| Header | Applies to | Purpose |
+| --- | --- | --- |
+| `X-Helix-Warm` | Reads | Warm eligible execution state before normal traffic. |
+| `X-Helix-Require-Writer` | Reads and writes | Reject execution when the selected server is not a writer. |
+| `X-Helix-Await-Durable` | Writes | Flush the writer before returning success. |
+| `X-Helix-Database-Id` | Helix Cloud | Select the managed database behind a gateway. |
+
+Boolean execution headers accept `true`, `false`, `1`, or `0`. Warm writes and
+durability waits on reads are rejected with `400 Bad Request`.
+
+## Responses
+
+- `200` returns a JSON object keyed by the requested return variables.
+- `400` reports invalid JSON, invalid query plans, or invalid request options.
+- `401` reports a missing or invalid Helix Cloud API key.
+- `409` reports a transaction conflict that can be retried.
+- `500` reports an internal query or storage failure.
+- `503` reports that a required writer or ready database is unavailable.
+
+All query errors use the stable `{ "error": "<code>", "msg": "<message>" }`
+envelope. See [Error handling](/database/helix-db/query-guides/error-handling)
+for the full code catalog and retry guidance.
+
+## Related resources
+
+- [`helix query`](/cli/command-reference/query) builds and sends requests from JSON or the TypeScript DSL.
+- [Build and run a query](/database/helix-db/core-concepts/overview) explains the operation tree.
+- [Parameters](/database/helix-db/query-guides/parameters) defines typed and untyped runtime values.

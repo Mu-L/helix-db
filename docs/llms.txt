@@ -24,6 +24,13 @@ helix query dev -e 'readBatch().varAs("users", g().nWithLabel("User")).returning
 
 Full walkthrough: https://docs.helix-db.com/database/helix-db/start-here/quickstart
 
+## HelixDB developer resources
+- [HelixDB HTTP API documentation](https://docs.helix-db.com/database/helix-db/query-guides/http-api): Request contract, authentication, headers, responses, and examples for `POST /v2/query`.
+- [HelixDB OpenAPI specification](https://www.helix-db.com/openapi.json): OpenAPI 3.1 JSON for the public HelixDB HTTP API.
+- [HelixDB authentication guide for agents](https://www.helix-db.com/auth.md): Supported API-key and OAuth surfaces, with links to machine-readable discovery metadata.
+- [HelixDB hosted MCP server](https://docs.helix-db.com/database/helix-cloud/connect/mcp): Connect agents to read-only Helix Cloud insights over OAuth.
+- [HelixDB AI Catalog](https://www.helix-db.com/.well-known/ai-catalog.json): ARD catalog of HelixDB agent resources.
+
 ## HelixDB — Start Here
 - [Introduction](https://docs.helix-db.com/database/helix-db/start-here/introduction) — Page type: Concept
 - [Get Started](https://docs.helix-db.com/database/helix-db/start-here/quickstart): Initialize HelixDB, start a local instance, run the generated query, and stop it — Page type: Tutorial
@@ -52,6 +59,7 @@ Full walkthrough: https://docs.helix-db.com/database/helix-db/start-here/quickst
 - [Shape query results](https://docs.helix-db.com/database/helix-db/query-guides/projections): Return properties, computed values, aggregates, and correlated binding rows — Page type: Guide
 - [Branch, repeat, and condition queries](https://docs.helix-db.com/database/helix-db/query-guides/advanced): Compose sub-traversals and gate named entries without leaving one transaction — Page type: Guide
 - [Bind typed query parameters](https://docs.helix-db.com/database/helix-db/query-guides/parameters): Keep the operation tree stable while request values change — Page type: Guide
+- [HelixDB HTTP API and OpenAPI specification](https://docs.helix-db.com/database/helix-db/query-guides/http-api): Call the HelixDB v2 query endpoint and discover its machine-readable OpenAPI 3.1 contract — Page type: Reference
 - [Handle query errors](https://docs.helix-db.com/database/helix-db/query-guides/error-handling): Branch on stable error codes while retaining diagnostic messages — Page type: Reference
 
 ## Helix Cloud — Start Here

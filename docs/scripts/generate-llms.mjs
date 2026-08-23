@@ -40,6 +40,15 @@ const QUICKSTART = [
   "Full walkthrough: https://docs.helix-db.com/database/helix-db/start-here/quickstart",
 ].join("\n");
 
+const DEVELOPER_RESOURCES = [
+  "## HelixDB developer resources",
+  "- [HelixDB HTTP API documentation](https://docs.helix-db.com/database/helix-db/query-guides/http-api): Request contract, authentication, headers, responses, and examples for `POST /v2/query`.",
+  "- [HelixDB OpenAPI specification](https://www.helix-db.com/openapi.json): OpenAPI 3.1 JSON for the public HelixDB HTTP API.",
+  "- [HelixDB authentication guide for agents](https://www.helix-db.com/auth.md): Supported API-key and OAuth surfaces, with links to machine-readable discovery metadata.",
+  "- [HelixDB hosted MCP server](https://docs.helix-db.com/database/helix-cloud/connect/mcp): Connect agents to read-only Helix Cloud insights over OAuth.",
+  "- [HelixDB AI Catalog](https://www.helix-db.com/.well-known/ai-catalog.json): ARD catalog of HelixDB agent resources.",
+].join("\n");
+
 const OPTIONAL_PREFIXES = ["change-log/", "benchmarks/"];
 
 function readFrontmatter(slug) {
@@ -148,7 +157,7 @@ function build() {
     if (optSection) sections.push(optSection);
   }
 
-  const lines = [TITLE, "", SUMMARY, "", QUICKSTART, ""];
+  const lines = [TITLE, "", SUMMARY, "", QUICKSTART, "", DEVELOPER_RESOURCES, ""];
   for (const s of sections) {
     lines.push(s, "");
   }
