@@ -401,6 +401,33 @@ async fn enterprise_query_auth_formats_bearer_and_raw_headers_without_leaking_se
         .assert()
         .success();
 
+    server.reset().await;
+    let redirect_target = MockServer::start().await;
+    write_enterprise_query_project(&project, &server.uri(), "x-api-key", None);
+    Mock::given(method("POST"))
+        .and(path("/v2/query"))
+        .and(header("x-api-key", "cluster-key"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", format!("{}/redirected", redirect_target.uri())),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    fixture
+        .command()
+        .current_dir(&project)
+        .args(["query", "production", "--json"])
+        .arg(request.to_string())
+        .env("HELIX_API_KEY", "cluster-key")
+        .assert()
+        .failure();
+    assert!(redirect_target
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
+
     let missing = stderr(
         fixture
             .command()
