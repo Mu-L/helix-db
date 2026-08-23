@@ -103,7 +103,7 @@ pub(crate) struct VectorEntityMutation<'a> {
 
 impl<'a> VectorEntityMutation<'a> {
     /// Binds one entity to its complete before/after property snapshots.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "production-coverage"))]
     pub(crate) const fn new(
         entity_kind: IndexElementKind,
         entity_id: u64,
@@ -231,7 +231,7 @@ pub(crate) async fn load_mutation_set(
 /// `before` and `after` are complete authoritative property sets. Partition
 /// moves therefore become a typed remove-plus-upsert, and hidden builds receive
 /// one coalesced reconciliation marker for any semantic document change.
-#[cfg(test)]
+#[cfg(any(test, feature = "production-coverage"))]
 pub(crate) async fn maintain_entity_with_runtime(
     transaction: &DbTransaction,
     scope: DataScope,
@@ -355,7 +355,7 @@ pub(crate) async fn maintain_routed_entity_with_runtime(
 }
 
 /// Preserves the isolated per-entity contract as a differential-test oracle.
-#[cfg(test)]
+#[cfg(any(test, feature = "production-coverage"))]
 pub(crate) async fn maintain_entity(
     transaction: &DbTransaction,
     scope: DataScope,
@@ -862,6 +862,88 @@ fn scoped_index_key(scope: DataScope, logical: ScopedKey) -> Bytes {
 
 fn corruption(reason: impl Into<String>) -> HelixDbError {
     HelixDbError::IndexCatalogCorruption(reason.into())
+}
+
+/// Proves a real tenant-indexed vector still requires its physical mapping.
+#[cfg(all(feature = "production-coverage", not(test)))]
+pub(crate) async fn run_missing_partition_mapping_delete_contract() {
+    use std::sync::Arc;
+
+    use slatedb::object_store::memory::InMemory;
+    use slatedb::{Db, IsolationLevel};
+
+    let db = Db::builder(
+        "vector-production-missing-tenant-mapping",
+        Arc::new(InMemory::new()),
+    )
+    .build()
+    .await
+    .expect("production contract database opens");
+    repository::bootstrap_writer(&db)
+        .await
+        .expect("production contract database bootstraps");
+
+    let runtime = crate::config::VectorIndexDefinition::new_node(
+        "Document",
+        "embedding",
+        3,
+        VectorDistanceMetric::Euclidean,
+    )
+    .expect("production contract vector definition")
+    .with_tenant_property("account_id")
+    .expect("production contract tenant definition");
+    let definition = ValidatedVectorIndexDefinition::try_from_runtime(&runtime)
+        .expect("production contract definition validates");
+    let record = super::IndexRecordV2::building(
+        IndexId::new(31).expect("production contract index ID is nonzero"),
+        ValidatedDynamicIndexDefinition::Vector(definition.clone()),
+        super::IndexRevision::initial(),
+        super::PhysicalGeneration::Vector {
+            generation: IndexGenerationId::new(7)
+                .expect("production contract generation ID is nonzero"),
+            layout: VectorPhysicalLayout::Partitioned,
+            descriptor: super::VectorGenerationDescriptor::for_definition(&definition),
+        },
+        super::IndexOperationId::new_v4(),
+    )
+    .expect("production contract building record validates")
+    .transition(super::IndexStateTransition::Activate)
+    .expect("production contract record activates");
+    let handle = ActiveIndexHandle::try_from_record(DataScope::LegacyUnscoped, &record)
+        .expect("production contract active handle validates");
+    let mutations = VectorMutationSet {
+        targets: vec![VectorMutationTarget {
+            index_id: record.index_id(),
+            generation: record.state().generation(),
+            definition,
+            mode: VectorMutationMode::MaintainActive(handle),
+        }],
+    };
+    let properties = vec![
+        Property::new("$label", PropertyValue::String("Document".to_string())),
+        Property::new("account_id", PropertyValue::I64(7)),
+        Property::new("embedding", PropertyValue::F32Array(vec![1.0, 2.0, 3.0])),
+    ];
+    let transaction = db
+        .begin(IsolationLevel::SerializableSnapshot)
+        .await
+        .expect("production contract transaction opens");
+
+    assert!(matches!(
+        maintain_entity(
+            &transaction,
+            DataScope::LegacyUnscoped,
+            &mutations,
+            &VectorCacheWriteSet::default(),
+            VectorEntityMutation::new(IndexElementKind::Node, 9, &properties, &[]),
+        )
+        .await,
+        Err(HelixDbError::IndexCatalogCorruption(_))
+    ));
+    drop(transaction);
+    db.close()
+        .await
+        .expect("production contract database closes");
 }
 
 #[cfg(test)]
