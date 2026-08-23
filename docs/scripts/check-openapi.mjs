@@ -113,6 +113,7 @@ const expectedQueryStatuses = [
   '403',
   '408',
   '409',
+  '413',
   '429',
   '500',
   '503',
@@ -129,6 +130,7 @@ const expectedQueryResponseRefs = {
   403: 'Forbidden',
   408: 'RequestTimeout',
   409: 'Conflict',
+  413: 'PayloadTooLarge',
   429: 'RateLimited',
   500: 'InternalError',
   503: 'Unavailable',
@@ -159,6 +161,24 @@ for (const name of ['BadRequest', 'Conflict', 'InternalError', 'Unavailable']) {
   if (responseSchemaRef(name) !== '#/components/schemas/QueryError') {
     errors.push(`openapi.json: ${name} must allow local and gateway errors`);
   }
+}
+const bodyLimits = queryOperation?.['x-helix-request-body-limits'];
+if (
+  bodyLimits?.localBytes !== 16 * 1024 * 1024 ||
+  bodyLimits?.helixCloudBytes !== 2 * 1024 * 1024
+) {
+  errors.push(
+    'openapi.json: /v2/query must distinguish the 16 MiB local and 2 MiB Cloud body limits',
+  );
+}
+const payloadTooLarge = spec.components?.responses?.PayloadTooLarge;
+if (
+  payloadTooLarge?.content?.['text/plain']?.schema?.type !== 'string' ||
+  payloadTooLarge.content['text/plain'].example !==
+    'Failed to buffer the request body: length limit exceeded' ||
+  payloadTooLarge.content?.['application/json']
+) {
+  errors.push('openapi.json: PayloadTooLarge must match the Axum text response');
 }
 
 const localError = spec.components?.schemas?.LocalQueryError;
