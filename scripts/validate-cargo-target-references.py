@@ -651,6 +651,7 @@ def validate_codec_architecture(root: Path) -> list[str]:
             relative_path == "crates/db/src/migration_parity.rs"
             or relative_path == "crates/db/src/migrations.rs"
             or relative_path.startswith("crates/db/src/migrations/")
+            or relative_path == "crates/db/tests/public_encoding_compatibility.rs"
             or relative_path == "crates/db/tests/production_support/v1_migration.rs"
             or relative_path.startswith("crates/db/tests/production_support/v1_migration/")
             or relative_path

@@ -37,7 +37,7 @@ pub(crate) mod text_index {
     #[cfg(any(test, feature = "production-coverage"))]
     #[deprecated(note = "use encoding::v2::legacy::text")]
     pub(crate) use crate::encoding::v2::legacy::text::{
-        live_state::encode_for_contract as encode_live_state,
+        live_state::encode_for_retained_api as encode_live_state,
         manifest::encode_for_contract as encode_manifest,
         version_counter::encode_for_contract as encode_version_counter,
     };

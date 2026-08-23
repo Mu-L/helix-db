@@ -1,6 +1,5 @@
 //! Retired per-entity text live-state JSON format.
 
-#[cfg(any(test, feature = "production-coverage"))]
 use bytes::Bytes;
 
 use crate::search::text::TextIndexLiveState;
@@ -9,8 +8,8 @@ use crate::search::text::TextIndexLiveState;
 #[error("legacy text live-state JSON failed: {0}")]
 pub(crate) struct LegacyTextLiveStateError(serde_json::Error);
 
-#[cfg(any(test, feature = "production-coverage"))]
-pub(crate) fn encode_for_contract(
+/// Encodes the retired row format for the retained public compatibility API.
+pub(crate) fn encode_for_retained_api(
     state: &TextIndexLiveState,
 ) -> Result<Bytes, LegacyTextLiveStateError> {
     serde_json::to_vec(state)
@@ -29,7 +28,7 @@ mod tests {
     #[test]
     fn live_state_json_is_frozen() {
         let state = TextIndexLiveState::dead(9);
-        let encoded = encode_for_contract(&state).unwrap();
+        let encoded = encode_for_retained_api(&state).unwrap();
         assert_eq!(encoded.as_ref(), br#"{"logical_version":9,"live":false}"#);
         assert_eq!(decode(&encoded).unwrap(), state);
         assert!(decode(&encoded[..encoded.len() - 1]).is_err());

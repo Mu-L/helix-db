@@ -1237,9 +1237,8 @@ pub fn manifest_blob_hashes(manifests: &[TextIndexGenerationManifest]) -> BTreeS
         .collect()
 }
 
-#[cfg(any(test, feature = "production-coverage"))]
 pub fn encode_live_state_bytes(state: &TextIndexLiveState) -> Result<Vec<u8>, HelixDbError> {
-    crate::encoding::v2::legacy::text::live_state::encode_for_contract(state)
+    crate::encoding::v2::legacy::text::live_state::encode_for_retained_api(state)
         .map(|bytes| bytes.to_vec())
         .map_err(|error| HelixDbError::Config(error.to_string()))
 }
