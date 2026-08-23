@@ -708,6 +708,39 @@ func TestClientExecExposesStructuredErrorResponse(t *testing.T) {
 	}
 }
 
+func TestClientExecPreservesUnstructuredErrorResponse(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "plain text", body: "upstream unavailable"},
+		{name: "incomplete envelope", body: `{"error":"query_timeout"}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = client.Exec(context.Background(), findUsers("acme", 25), nil)
+			var helixErr *HelixError
+			if !errors.As(err, &helixErr) {
+				t.Fatalf("expected HelixError, got %T", err)
+			}
+			if helixErr.Details != test.body || helixErr.Response != nil {
+				t.Fatalf("unexpected unstructured response: %#v", helixErr)
+			}
+		})
+	}
+}
+
 func TestClientAPIKeyMutationIsRaceSafe(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

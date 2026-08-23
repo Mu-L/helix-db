@@ -1275,6 +1275,32 @@ mod client_tests {
         );
     }
 
+    #[tokio::test]
+    async fn remote_error_preserves_unstructured_response() {
+        for body in ["upstream unavailable", r#"{"error":"query_timeout"}"#] {
+            let (base, handle) = spawn_capture_server("502 Bad Gateway", body).await;
+            let client = Client::new(Some(&base)).unwrap();
+            let error = client
+                .query::<EmptyResp>(sample_request())
+                .send()
+                .await
+                .expect_err("query should return the remote error");
+            assert_eq!(handle.await.unwrap(), "/v2/query");
+
+            let HelixError::RemoteError {
+                status_code,
+                details,
+                error_response,
+            } = error
+            else {
+                panic!("expected a remote error");
+            };
+            assert_eq!(status_code, 502);
+            assert_eq!(details, body);
+            assert_eq!(error_response, None);
+        }
+    }
+
     // ---- Embedded execution -------------------------------------------------
 
     #[cfg(feature = "embedded")]

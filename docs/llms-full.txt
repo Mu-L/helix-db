@@ -4540,11 +4540,12 @@ Helix Cloud query failures use one JSON envelope:
 | 400 | `invalid_request` | A request-specific diagnostic | A required header or request option is missing, malformed, or invalid. | Fix the request. |
 | 400 | `tenant_id_required` | `x-helix-tenant-id or x-helix-database-id is required in GA mode` | A Cloud request did not identify its database. | Use the correct database-scoped Cloud endpoint and configuration. |
 | 400 | `tenant_id_not_allowed` | `x-helix-tenant-id and x-helix-database-id are not allowed in cluster mode` | A tenant/database header was sent to an endpoint that does not accept it. | Remove the header or use the correct endpoint. |
-| 401 | `unauthorized` | `unauthorized` | The API key is missing, invalid, or no longer active. | Refresh or replace the key. |
+| 401 | `unauthorized` | `unauthorized` | The supplied API key is unknown or no longer active. | Refresh or replace the key. |
 | 402 | `tenant_disabled` | `tenant query processing is disabled because credit is exhausted` | Query processing is disabled because the tenant has exhausted its credit. | Resolve the account state before retrying. |
 | 403 | `forbidden` | `forbidden` | The key is valid but cannot perform this operation. | Use a key with the required permission. |
 | 408 | `query_timeout` | `query exceeded its wall-clock limit` | The query exceeded its wall-clock limit. | Reconcile timed-out writes before considering a retry. |
 | 409 | `transaction_conflict` | `request conflicted with a concurrent write; please retry` | A concurrent write prevented the transaction from committing. | Retry the whole idempotent transaction with bounded backoff. |
+| 413 | `payload_too_large` | `request body exceeds the maximum allowed size` | The query request exceeds the gateway body-size limit. | Reduce the request size. |
 | 429 | `rate_limited` | `rate limit exceeded` | The database's request bucket has no token available. | Honor `Retry-After`; see [Limits](/database/helix-cloud/operate/limits). |
 | 500 | `internal_error` | An internal or backend diagnostic | An unexpected gateway or backend error occurred. | Retry only if the operation is safe; contact support if persistent. |
 | 503 | `backend_unavailable` | `Backend unavailable` | No eligible database backend is currently available. | Retry with bounded exponential backoff and jitter. |

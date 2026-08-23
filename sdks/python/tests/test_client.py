@@ -198,6 +198,22 @@ class ClientTests(unittest.TestCase):
             "query exceeded its wall-clock limit",
         )
 
+    def test_remote_error_preserves_unstructured_response(self) -> None:
+        request = QueryRequest.read(read_batch())
+
+        for body in (b"upstream unavailable", b'{"error":"query_timeout"}'):
+            with self.subTest(body=body):
+
+                def fake_urlopen(req):
+                    raise HTTPError(req.full_url, 502, "Bad Gateway", hdrs={}, fp=BytesIO(body))
+
+                with patch("helixdb.client.urlopen", fake_urlopen):
+                    with self.assertRaises(HelixError) as ctx:
+                        Client("http://127.0.0.1:6969").query(request)
+
+                self.assertEqual(ctx.exception.details, body.decode())
+                self.assertIsNone(ctx.exception.error_response)
+
     def test_embedded_client_query_uses_native_handle(self) -> None:
         request = QueryRequest.read(
             read_batch().var_as("users", g().n_with_label("Missing").count()).returning(["users"])
