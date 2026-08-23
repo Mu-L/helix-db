@@ -33,8 +33,8 @@ pub(crate) mod range_value {
 }
 
 #[deprecated(note = "use encoding::v2::values::property")]
-pub use crate::encoding::v2::values::property::Property;
+pub use crate::encoding::v2::values::property::{decode_properties, Property};
 #[deprecated(note = "use encoding::v2::values::property")]
 pub(crate) use crate::encoding::v2::values::property::{
-    decode_properties, encode_index_partition_value, encode_properties,
+    encode_index_partition_value, encode_properties,
 };

@@ -59,6 +59,29 @@ fn root_tenant_compatibility_path_reexports_v2_scope_types() {
 }
 
 #[test]
+#[allow(deprecated)]
+fn public_encoding_compatibility_paths_reexport_current_codecs() {
+    let root_property_hash: db::encoding::indexes::PropertyHash = [0; 4];
+    let root_value_hash: db::encoding::indexes::ValueHash = [0; 8];
+    let v1_property_hash: db::encoding::v1::indexes::PropertyHash = root_property_hash;
+    let v1_value_hash: db::encoding::v1::indexes::ValueHash = root_value_hash;
+    let v2_property_hash: db::encoding::v2::keys::indexes::PropertyHash = v1_property_hash;
+    let v2_value_hash: db::encoding::v2::keys::indexes::ValueHash = v1_value_hash;
+
+    assert_eq!(v2_property_hash, [0; 4]);
+    assert_eq!(v2_value_hash, [0; 8]);
+    assert!(db::encoding::property::decode_properties(&[])
+        .expect("root property decoder accepts the empty row")
+        .is_empty());
+    assert!(db::encoding::v1::property::decode_properties(&[])
+        .expect("V1 compatibility decoder accepts the empty row")
+        .is_empty());
+    assert!(db::encoding::v2::values::property::decode_properties(&[])
+        .expect("V2 property decoder accepts the empty row")
+        .is_empty());
+}
+
+#[test]
 fn public_vector_definition_owns_validated_configuration() {
     let definition =
         VectorIndexDefinition::new_node("Document", "embedding", 384, VectorDistanceMetric::Cosine)

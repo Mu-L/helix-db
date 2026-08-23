@@ -36,7 +36,9 @@ pub(crate) mod scan_prefixes {
 
 #[deprecated(note = "use encoding::v2::keys::indexes")]
 pub(crate) use crate::encoding::v2::keys::indexes::{
-    hash_property_name, hash_property_value, EdgeDirection, IndexPrefix, PropertyHash,
-    PropertyIndexKey as IndexKey, ValueHash, INDEX_PREFIX_LEN, NODE_ID_MAX_LEN,
-    PROPERTY_HASH_MAX_LEN, VALUE_HASH_MAX_LEN,
+    hash_property_name, hash_property_value, EdgeDirection, IndexPrefix,
+    PropertyIndexKey as IndexKey, INDEX_PREFIX_LEN, NODE_ID_MAX_LEN, PROPERTY_HASH_MAX_LEN,
+    VALUE_HASH_MAX_LEN,
 };
+#[deprecated(note = "use encoding::v2::keys::indexes")]
+pub use crate::encoding::v2::keys::indexes::{PropertyHash, ValueHash};

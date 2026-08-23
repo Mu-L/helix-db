@@ -20,9 +20,10 @@ pub(crate) mod vector;
 pub(crate) use direction::EdgeDirection;
 pub(crate) use prefix::IndexPrefix;
 pub(crate) use property::{
-    hash_property_name, hash_property_value, PropertyHash, PropertyIndexKey, ValueHash,
-    INDEX_PREFIX_LEN, NODE_ID_MAX_LEN, PROPERTY_HASH_MAX_LEN, VALUE_HASH_MAX_LEN,
+    hash_property_name, hash_property_value, PropertyIndexKey, INDEX_PREFIX_LEN, NODE_ID_MAX_LEN,
+    PROPERTY_HASH_MAX_LEN, VALUE_HASH_MAX_LEN,
 };
+pub use property::{PropertyHash, ValueHash};
 use range::RangeIndexDirection;
 pub(crate) use secondary::{
     SecondaryEqualityBitmapKey, SecondaryEqualityEntryKey, SecondaryRangeEntryKey,

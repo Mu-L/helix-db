@@ -10,7 +10,8 @@ pub(crate) mod range_index_value;
 mod row;
 
 pub use property::Property;
+pub use row::decode_properties;
 pub(crate) use row::{
-    datetime_millis_to_rfc3339, decode_properties, encode_index_partition_value, encode_properties,
+    datetime_millis_to_rfc3339, encode_index_partition_value, encode_properties,
     sortable_i64_index_string,
 };
