@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use slatedb::Db;
 
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::v2::keys::scope::DataScope;
 use crate::{DbConfig, HelixDB, HelixWriter, Result};
 
 /// Runs every migration that must finish before the runtime is constructed.
