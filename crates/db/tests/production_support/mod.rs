@@ -93,6 +93,11 @@ pub async fn migration_disabled_secondary_worker_open_contract() {
     crate::migrations::production_contracts::run_disabled_secondary_worker_open_contract().await;
 }
 
+/// Proves manual migration steps require disabled automatic scheduling.
+pub async fn migration_worker_mode_stepping_contract() {
+    crate::migrations::production_contracts::run_migration_worker_mode_stepping_contract().await;
+}
+
 /// Proves populated legacy HNSW adoption, cold reopen, DROP, and recreate.
 pub async fn migration_vector_adoption_contract() {
     crate::migrations::production_contracts::run_vector_adoption_contract().await;

@@ -893,7 +893,7 @@ mod tests {
             .build()
             .await
             .expect("in-memory vector lifecycle database opens");
-        repository::bootstrap_writer(&db)
+        crate::migrations::startup::bootstrap_writer(&db)
             .await
             .expect("empty writer bootstraps V2 metadata");
         db
