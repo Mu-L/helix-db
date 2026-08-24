@@ -79,11 +79,13 @@ pub async fn writer_migration_requirement_contracts() {
 }
 
 /// Runs the exhaustive exact cardinality interpreter contract matrix.
+#[cfg(not(test))]
 pub async fn interpreter_cardinality_program_contracts() {
     crate::execution::interpreter::run_cardinality_production_contracts().await;
 }
 
 /// Exercises literal secondary reads and verified ranges through exact storage primitives.
+#[cfg(not(test))]
 pub async fn secondary_exact_storage_contracts() {
     crate::index_lifecycle::secondary::run_exact_production_contracts().await;
 }
@@ -272,6 +274,12 @@ pub async fn vector_write_transaction_contracts() {
 /// measured transactions without introducing a new physical representation.
 pub async fn vector_storage_contracts() {
     crate::search::vector::run_storage_contracts().await;
+}
+
+/// Requires a real tenant-indexed vector delete to fail without its mapping.
+#[cfg(not(test))]
+pub async fn vector_missing_partition_mapping_delete_contract() {
+    crate::index_lifecycle::vector::run_missing_partition_mapping_delete_contract().await;
 }
 
 /// Characterizes the independent finite-score magnitude oracle and active kernels.
