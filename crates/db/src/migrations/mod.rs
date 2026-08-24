@@ -5191,7 +5191,7 @@ pub(crate) mod production_contracts {
 
     use super::*;
     use crate::config::{
-        MigrationBatchRows, MigrationTuning, SecondaryIndexDefinition,
+        MigrationBatchRows, MigrationTuning, MigrationWorkerMode, SecondaryIndexDefinition,
         SecondaryIndexLifecycleBatchRows, SecondaryIndexLifecycleTuning, TextIndexDefinition,
         VectorIndexDefinition,
     };
@@ -7521,6 +7521,99 @@ pub(crate) mod production_contracts {
         if let Ok(Ok(db)) = opened {
             db.close().await.expect("completed writer closes");
         }
+    }
+
+    /// Proves explicit migration stepping has exclusive controller ownership.
+    pub(crate) async fn run_migration_worker_mode_stepping_contract() {
+        let _failpoint_guard = MIGRATION_FAILPOINT_CONTRACT_LOCK.lock().await;
+        let scope = DataScope::LegacyUnscoped;
+
+        let background = HelixDB::open_with_object_store_for_migration_parity(
+            database("migration-background-step-rejection"),
+            Arc::new(InMemory::new()),
+            one_row_config(),
+        )
+        .await
+        .expect("Background-mode writer opens");
+        let worker = background
+            .inner
+            .migration_worker
+            .lock()
+            .await
+            .take()
+            .expect("Background mode owns an automatic migration worker");
+        worker.stop().await;
+        let job = MigrationJob::new(MigrationId::GraphFormatV1Cleanup, MigrationMode::Background);
+        put_migration_job(background.inner_db().as_ref(), job).await;
+        let key = MigrationJobKey::new(scope, MigrationId::GraphFormatV1Cleanup);
+        let before = background
+            .inner_db()
+            .get(key.as_ref())
+            .await
+            .expect("Background-mode job reads")
+            .expect("Background-mode job exists");
+
+        assert!(matches!(
+            background.process_migration_once().await,
+            Err(HelixDbError::MigrationSteppingRequiresDisabledMode)
+        ));
+        assert_eq!(
+            background
+                .inner_db()
+                .get(key.as_ref())
+                .await
+                .expect("rejected Background-mode job reads")
+                .expect("rejected Background-mode job remains"),
+            before,
+            "rejection must happen before the migration controller mutates its job"
+        );
+        background
+            .close()
+            .await
+            .expect("Background-mode writer closes");
+
+        let disabled_config = one_row_config().with_migration_tuning(
+            MigrationTuning::default()
+                .with_batch_rows(MigrationBatchRows::new(1).expect("one row is positive"))
+                .with_worker_mode(MigrationWorkerMode::Disabled),
+        );
+        let disabled = HelixDB::open_with_object_store_for_migration_parity(
+            database("migration-disabled-manual-step"),
+            Arc::new(InMemory::new()),
+            disabled_config,
+        )
+        .await
+        .expect("Disabled-mode writer opens");
+        assert!(!migration_completed(
+            disabled.inner_db().as_ref(),
+            scope,
+            MigrationId::GraphFormatV1Cleanup,
+        )
+        .await
+        .expect("pending Disabled-mode job reads"));
+        assert!(
+            disabled
+                .process_migration_once()
+                .await
+                .expect("Disabled mode permits one deterministic step")
+        );
+        assert!(migration_completed(
+            disabled.inner_db().as_ref(),
+            scope,
+            MigrationId::GraphFormatV1Cleanup,
+        )
+        .await
+        .expect("completed Disabled-mode job reads"));
+        assert!(
+            !disabled
+                .process_migration_once()
+                .await
+                .expect("drained Disabled-mode scan succeeds")
+        );
+        disabled
+            .close()
+            .await
+            .expect("Disabled-mode writer closes");
     }
 
     async fn seed_bootstrap_tuple(

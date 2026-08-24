@@ -2365,12 +2365,21 @@ impl HelixDB {
     }
 
     #[cfg(any(test, feature = "migration-parity", feature = "production-coverage"))]
+    /// Advances at most one immediately eligible background migration step.
+    ///
+    /// This writer-only surface is available only when the migration worker is
+    /// Disabled so automatic and explicit controllers cannot race for a step.
     pub async fn process_migration_once(&self) -> Result<bool> {
         let HelixStorage::Writer(writer) = self.storage() else {
             return Err(HelixDbError::WriterModeRequired {
                 actual: self.mode().as_str(),
             });
         };
+        if self.config().db().migrations().worker_mode()
+            != config::MigrationWorkerMode::Disabled
+        {
+            return Err(HelixDbError::MigrationSteppingRequiresDisabledMode);
+        }
         migrations::process_migration_once(
             writer,
             DataScope::LegacyUnscoped,
