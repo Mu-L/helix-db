@@ -3,8 +3,8 @@
 use bytes::Bytes;
 use slatedb::{Db, IsolationLevel};
 
-use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v2::keys::{GlobalKey, Key, ScopedKey, GLOBAL_SENTINEL};
+use crate::encoding::v2::keys::scope::DataScope;
+use crate::encoding::v2::keys::{GlobalKey, ManagedIndexKey, ScopedKey, GLOBAL_SENTINEL};
 use crate::encoding::v2::values::{decode_metadata_value, encode_metadata_value};
 use crate::error::{HelixDbError, Result};
 use crate::index_lifecycle::{
@@ -150,7 +150,7 @@ async fn initialize_writer_bootstrap(db: &Db) -> Result<()> {
 }
 
 fn global_key(key: GlobalKey) -> Bytes {
-    Key::Global { kind: key }.to_bytes()
+    ManagedIndexKey::Global { kind: key }.to_bytes()
 }
 
 fn metadata_or_migration_required(

@@ -8600,5 +8600,5 @@ pub(crate) mod production_contracts {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/migrations_contracts.rs"]
+#[path = "../../tests/unit/migrations_contracts.rs"]
 mod external_contracts;
