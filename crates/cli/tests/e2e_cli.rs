@@ -146,11 +146,10 @@ async fn documented_quickstart_runs_against_an_isolated_fixture() {
             "helix stop dev",
         ]
     );
-    assert!(
-        QUICKSTART.contains("- A terminal on macOS or Linux"),
-        "the Bash-only installer must not claim Windows support"
-    );
-    assert!(!QUICKSTART.contains("- A terminal on macOS, Linux, or Windows"));
+    assert!(QUICKSTART.contains("- A terminal on macOS or Linux, or PowerShell on Windows"));
+    assert!(QUICKSTART.contains(
+        "irm https://raw.githubusercontent.com/HelixDB/helix-db/main/crates/cli/install.ps1 | iex"
+    ));
     assert!(QUICKSTART.contains("container_runtime = \"podman\""));
     for obsolete_claim in [
         "--lang",

@@ -15,13 +15,21 @@ instance.
 ## Prerequisites
 
 - Docker, or Podman configured as described below
-- A terminal on macOS or Linux
+- A terminal on macOS or Linux, or PowerShell on Windows
 
 <Steps>
   <Step title="Install the CLI">
 
+macOS and Linux:
+
 ```bash
 curl -sSL "https://install.helix-db.com" | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/HelixDB/helix-db/main/crates/cli/install.ps1 | iex
 ```
 
 If the CLI is already installed, run [`helix update`](/cli/command-reference/update).
@@ -94,8 +102,29 @@ already stopped.
 ## Use an SDK
 
 The SDKs build the same JSON operation tree that `helix query` sends to
-`POST /v2/query`. Create the language project separately with one of these
-guides:
+`POST /v2/query`. Initialize a normal language project and install one released
+SDK:
+
+{/* package-install: no JSON representation */}
+<CodeGroup>
+```bash Rust
+cargo add helix-db@3.0.0 tokio serde_json
+```
+
+```bash TypeScript
+npm install @helix-db/helix-db@3.0.4
+```
+
+```bash Go
+go get github.com/helixdb/helix-db/sdks/go@v0.3.1
+```
+
+```bash Python
+python -m pip install helix-db==0.3.4
+```
+</CodeGroup>
+
+Continue with the full setup guide for your language:
 
 <CardGroup cols={2}>
   <Card title="Rust SDK" icon="code" href="/database/helix-db/start-here/sdk-setup/rust-project-setup">
