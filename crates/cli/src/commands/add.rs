@@ -1,6 +1,5 @@
 use crate::config::{
-    EnterpriseInstanceConfig, LocalInstanceConfig, LocalStorageMode, QueryAuthScheme,
-    S3StorageConfig, DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER,
+    EnterpriseInstanceConfig, LocalInstanceConfig, LocalStorageMode, S3StorageConfig,
 };
 use crate::output::Operation;
 use crate::project::ProjectContext;
@@ -41,34 +40,24 @@ pub async fn run(path: Option<String>, target: Option<AddTarget>) -> Result<()> 
         }
         AddTarget::Enterprise {
             name,
-            cluster_id,
-            gateway_url,
+            database,
+            project: target_project,
+            workspace,
         } => {
             ensure_available(&project, &name)?;
-            let target = crate::commands::config::resolve_enterprise_target(
-                cluster_id,
-                gateway_url,
-                project.config.project.id.clone(),
-                project.config.project.workspace_id.clone(),
+            let target = crate::commands::config::resolve_cloud_target(
+                database,
+                target_project.or_else(|| project.config.project.id.clone()),
+                workspace.or_else(|| project.config.project.workspace_id.clone()),
             )
             .await?;
             let op = Operation::new("Adding", &name);
             project.config.enterprise.insert(
                 name.clone(),
                 EnterpriseInstanceConfig {
-                    cluster_id: target.cluster_id,
-                    workspace_id: target.workspace_id,
-                    project_id: target.project_id,
-                    gateway_url: target.gateway_url,
-                    query_auth_header: DEFAULT_QUERY_AUTH_HEADER.to_string(),
-                    query_auth_env: DEFAULT_QUERY_AUTH_ENV.to_string(),
-                    query_auth_scheme: Some(QueryAuthScheme::Bearer),
-                    availability_mode: None,
-                    gateway_node_type: None,
-                    db_node_type: None,
-                    min_instances: 1,
-                    max_instances: 1,
-                    db_config: Default::default(),
+                    database: target.database,
+                    workspace_id: Some(target.workspace_id),
+                    project_id: Some(target.project_id),
                 },
             );
             project.config.save_to_file(&config_path)?;

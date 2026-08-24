@@ -1,6 +1,5 @@
 use crate::config::{
-    EnterpriseInstanceConfig, HelixConfig, LocalInstanceConfig, LocalStorageMode, QueryAuthScheme,
-    S3StorageConfig, DEFAULT_QUERY_AUTH_ENV, DEFAULT_QUERY_AUTH_HEADER,
+    EnterpriseInstanceConfig, HelixConfig, LocalInstanceConfig, LocalStorageMode, S3StorageConfig,
 };
 use crate::output::Operation;
 use crate::prompts;
@@ -82,35 +81,21 @@ pub async fn run(
         }
         InitTarget::Enterprise {
             name,
-            cluster_id,
-            gateway_url,
+            database,
+            project,
+            workspace,
             ..
         } => {
             let instance_name = name.clone();
-            let target = crate::commands::config::resolve_enterprise_target(
-                cluster_id,
-                gateway_url,
-                None,
-                None,
-            )
-            .await?;
+            let target =
+                crate::commands::config::resolve_cloud_target(database, project, workspace).await?;
             config.local.clear();
             config.enterprise.insert(
                 name,
                 EnterpriseInstanceConfig {
-                    cluster_id: target.cluster_id,
-                    workspace_id: target.workspace_id,
-                    project_id: target.project_id,
-                    gateway_url: target.gateway_url,
-                    query_auth_header: DEFAULT_QUERY_AUTH_HEADER.to_string(),
-                    query_auth_env: DEFAULT_QUERY_AUTH_ENV.to_string(),
-                    query_auth_scheme: Some(QueryAuthScheme::Bearer),
-                    availability_mode: None,
-                    gateway_node_type: None,
-                    db_node_type: None,
-                    min_instances: 1,
-                    max_instances: 1,
-                    db_config: Default::default(),
+                    database: target.database,
+                    workspace_id: Some(target.workspace_id),
+                    project_id: Some(target.project_id),
                 },
             );
             enterprise_next_steps(&instance_name)
@@ -205,10 +190,9 @@ fn local_next_steps(instance_name: &str) -> Vec<String> {
 }
 
 fn enterprise_next_steps(instance_name: &str) -> Vec<String> {
-    vec![
-        format!("Run 'helix sync {instance_name}' to refresh Enterprise Cloud metadata"),
-        format!("Run 'helix query {instance_name} --file <request.json>'"),
-    ]
+    vec![format!(
+        "Run 'helix query {instance_name} --file <request.json>' through the authenticated broker"
+    )]
 }
 
 fn write_example_request(project_dir: &Path) -> Result<()> {
@@ -288,16 +272,8 @@ instance. `helix query -e` evaluates a TypeScript DSL expression and needs Node 
 
 ## If `helix` is not installed
 
-macOS and Linux:
-
 ```bash
 curl -sSL "https://install.helix-db.com" | bash
-```
-
-Windows PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/HelixDB/helix-db/main/crates/cli/install.ps1 | iex
 ```
 
 ## If the container runtime is unavailable
@@ -385,7 +361,6 @@ mod tests {
         assert!(content.contains("helix start qa"));
         assert!(content.contains("helix query qa --file examples/request.json"));
         assert!(content.contains("install.helix-db.com"));
-        assert!(content.contains("crates/cli/install.ps1"));
         assert!(content.contains("container_runtime = \"podman\""));
         assert!(content.contains("llms.txt"));
     }
@@ -424,7 +399,6 @@ mod tests {
     fn enterprise_next_steps_use_instance_name() {
         let steps = enterprise_next_steps("production");
 
-        assert!(steps[0].contains("helix sync production"));
-        assert!(steps[1].contains("helix query production"));
+        assert!(steps[0].contains("helix query production"));
     }
 }

@@ -103,12 +103,18 @@ impl CliFixture {
     }
 
     #[allow(dead_code)]
-    pub fn write_credentials(&self, user_id: &str, api_key: &str) {
+    pub fn write_credentials(&self, email: &str, access_token: &str) {
         let directory = &self.helix_home;
         fs::create_dir_all(directory).expect("create credentials directory");
         fs::write(
             directory.join("credentials"),
-            format!("helix_user_id={user_id}\nhelix_user_key={api_key}"),
+            serde_json::to_vec(&serde_json::json!({
+                "access_token": access_token,
+                "refresh_token": "refresh-token",
+                "expires_at": i64::MAX,
+                "email": email,
+            }))
+            .unwrap(),
         )
         .expect("write credentials");
     }
@@ -123,6 +129,7 @@ impl CliFixture {
         fs::read_to_string(&self.tool_log).unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -218,9 +225,6 @@ if "{tool}"=="npm" if "%1"=="install" (
   >"node_modules\@helix-db\helix-db\package.json" echo {{"name":"@helix-db/helix-db","version":"3.0.4","type":"module","exports":"./dist/index.js"}}
   >"node_modules\@helix-db\helix-db\dist\index.js" echo export const g = ^(^) =^> ({{}}^); export const readBatch = ^(^) =^> ({{}}^); export const writeBatch = ^(^) =^> ({{}}^);
 )
-if "{tool}"=="cargo" if "%1"=="run" (
-  >"queries.json" echo {{"queries":[]}}
-)
 if "{tool}"=="node" if not "%~1"=="--input-type" if defined HELIX_TEST_TOOL_FAIL_NODE_QUERY (
   if defined HELIX_TEST_TOOL_STDERR echo %HELIX_TEST_TOOL_STDERR% 1>&2
   exit /b 42
@@ -256,9 +260,6 @@ if [ '{tool}' = 'npm' ] && [ "$1" = 'install' ]; then
   mkdir -p 'node_modules/@helix-db/helix-db/dist'
   printf '%s\n' '{{"name":"@helix-db/helix-db","version":"3.0.4","type":"module","exports":"./dist/index.js"}}' > 'node_modules/@helix-db/helix-db/package.json'
   printf '%s\n' 'export const g = () => ({{}}); export const readBatch = () => ({{}}); export const writeBatch = () => ({{}});' > 'node_modules/@helix-db/helix-db/dist/index.js'
-fi
-if [ '{tool}' = 'cargo' ] && [ "$1" = 'run' ]; then
-  printf '%s\n' '{{"queries":[]}}' > 'queries.json'
 fi
 if [ '{tool}' = 'node' ] && [ "$1" != '--input-type=module' ] && [ -n "$HELIX_TEST_TOOL_FAIL_NODE_QUERY" ]; then
   printf '%s\n' "${{HELIX_TEST_TOOL_STDERR:-simulated Node failure}}" >&2

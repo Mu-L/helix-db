@@ -7,7 +7,7 @@
 use std::env;
 
 const TEST_HTTP_BASE_URL_ENV: &str = "HELIX_TEST_HTTP_BASE_URL";
-const DEFAULT_CLOUD_AUTHORITY: &str = "cloud.helix-db.com";
+const DEFAULT_CLOUD_AUTHORITY: &str = "prod.helix-db.com";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ServiceEndpoint {

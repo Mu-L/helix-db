@@ -189,10 +189,9 @@ pub fn select_init_target() -> Result<InitTarget> {
         }
         InstanceKind::Enterprise => Ok(InitTarget::Enterprise {
             name: input_project_instance_name("production")?,
-            // Leave the cluster (and gateway URL) unset so the handler lists the
-            // available clusters and lets the user pick one.
-            cluster_id: None,
-            gateway_url: None,
+            database: None,
+            project: None,
+            workspace: None,
             skills: false,
             no_skills: false,
         }),
@@ -214,10 +213,9 @@ pub fn select_add_target() -> Result<AddTarget> {
         }
         InstanceKind::Enterprise => Ok(AddTarget::Enterprise {
             name: input_instance_name("production")?,
-            // Leave the cluster (and gateway URL) unset so the handler lists the
-            // available clusters and lets the user pick one.
-            cluster_id: None,
-            gateway_url: None,
+            database: None,
+            project: None,
+            workspace: None,
         }),
     }
 }
