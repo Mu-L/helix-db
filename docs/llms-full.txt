@@ -3826,8 +3826,8 @@ fails. If every target fails, the normal deterministic error response is returne
 
 Managed clusters target database pods that are ready, running, routable, and not
 quarantined. Add `X-Helix-Require-Writer: true` to target only the authoritative
-writer. Authentication, read rate limits, retries, and the normal query timeout still
-apply before and during fanout.
+writer. Authentication, [request rate limits](/database/helix-cloud/operate/limits#helix-cloud-request-rate-limits),
+retries, and the normal query timeout still apply before and during fanout.
 
 Warming populates the storage, vector, and text caches touched by the read; it does
 not create a separate result cache. `X-Helix-Warm: true` or `1` enables warming;
@@ -4268,7 +4268,9 @@ the request's tenant value to the text-search builder. See
 ## Considerations
 
 - **Noisy neighbors.** Tenants share compute and cache, so a high-volume tenant can affect others'
-  latency. Monitor per-tenant query volume and apply rate limiting on your infrastructure to mitigate.
+  latency. The [Helix Cloud request bucket](/database/helix-cloud/operate/limits#helix-cloud-request-rate-limits)
+  is shared by the whole database. Monitor per-tenant query volume and apply a
+  separate application-side limiter when many application tenants use that database.
 - **Shared search semantics.** Secondary indexes remain shared. Tenant-scoped vector and text
   searches require an explicit tenant value for the configured tenant property, and the system
   remains shared infrastructure even when search indexes are partitioned by tenant.
@@ -4442,6 +4444,82 @@ Page type: Reference
 
 Current constraints and practical limits. These reflect the current implementation, not
 fundamental architectural boundaries.
+
+## Helix Cloud request rate limits
+
+Helix Cloud applies a distributed token bucket to `POST /v2/query`. The bucket is
+scoped to the authenticated Cloud database, so reads and writes from every API
+key, application instance, and gateway replica draw from the same allowance.
+
+| Plan | Sustained rate | Burst capacity |
+| --- | ---: | ---: |
+| Idea | 5 requests per second | 10 requests |
+| Startup | 10 requests per second | 20 requests |
+| Growth | 20 requests per second | 40 requests |
+
+Database-specific overrides can change the sustained rate and burst capacity.
+The values assigned to your database take precedence over its plan limits. Each
+admitted query request costs one token from one shared bucket per Cloud database.
+
+### Token-bucket behavior
+
+- A full bucket can admit requests up to its burst capacity. Tokens then refill
+  continuously at the plan's sustained rate, up to that capacity. This is not a
+  fixed one-second window.
+- One incoming request consumes one token whether it is a read, write, or cache
+  warming request. Warming fanout and gateway retries do not consume additional
+  tokens.
+- Requests rejected during authentication, gateway header validation, or outer
+  request JSON decoding do not consume a token. Query AST and planner validation
+  happen after admission, so those later validation failures consume one token.
+- The bucket is shared across API keys and gateway replicas. Rotating keys or
+  distributing calls across connections does not create more capacity.
+- Burst capacity controls short-term admission, not the number of queries that
+  can execute concurrently. Bound client concurrency separately.
+
+### Rate-limit responses
+
+When no token is available, the gateway rejects the request before database
+execution:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+Retry-After: 1
+
+{"error":"rate_limited","msg":"rate limit exceeded"}
+```
+
+`Retry-After` is a whole number of seconds. Wait at least that long before
+retrying, and add jitter when many workers share the same database. The response
+does not currently include `RateLimit-*` or `X-RateLimit-*` limit, remaining, or
+reset headers.
+
+If the gateway cannot make a safe distributed rate-limit decision, it fails
+closed before database execution:
+
+```http
+HTTP/1.1 503 Service Unavailable
+Content-Type: application/json
+
+{"error":"rate_limit_unavailable","msg":"tenant rate limit is unavailable"}
+```
+
+Retry `rate_limit_unavailable` with bounded exponential backoff and jitter. A
+`402` `tenant_disabled` response is an account-credit gate, and a `408`
+`query_timeout` response is an execution deadline; neither means the request
+bucket was exhausted.
+
+### Application guidance
+
+1. Coordinate admission across workers that target the same Cloud database.
+2. Honor `Retry-After` on `rate_limited` instead of retrying immediately.
+3. Use bounded exponential backoff with jitter for transient `503` responses.
+4. Bound in-flight concurrency as well as request rate to avoid local queues and
+   latency spikes.
+5. Apply a separate per-user or per-workspace limiter when multiple application
+   tenants share one Cloud database; the Helix bucket does not distinguish those
+   application tenants.
 
 ## Data Model
 
@@ -4716,6 +4794,29 @@ a multi-mutation request.
 
 For non-idempotent business actions, attach an application-level idempotency key or
 read the latest state before deciding whether to resubmit.
+
+## Request returns HTTP 429
+
+`rate_limited` means the shared request bucket for the Cloud database has no
+token available. The rejected query did not reach database execution.
+
+Wait for the response's `Retry-After` interval before retrying. Add jitter when
+many workers can wake together, and inspect aggregate traffic across every API
+key and application instance that uses the database. All of them share the same
+bucket.
+
+See [Helix Cloud request rate limits](/database/helix-cloud/operate/limits#helix-cloud-request-rate-limits)
+for the current plan limits and token-bucket behavior.
+
+## Request returns `rate_limit_unavailable`
+
+An HTTP `503` with `rate_limit_unavailable` means the gateway could not make a
+safe distributed admission decision. It fails closed, so the query did not
+reach database execution.
+
+Retry with bounded exponential backoff and jitter. If the response persists,
+check [HelixDB status](https://status.helix-db.com) and include the response code,
+timestamp, and database identifier when contacting support.
 
 ## Local server cannot reach storage
 
@@ -6455,7 +6556,8 @@ query body. A managed cluster with no eligible warming target returns
 Warm writes are rejected with `400 Bad Request` before backend execution. At the
 HTTP/SDK layer, combine `X-Helix-Warm: true` with
 `X-Helix-Require-Writer: true` when only the authoritative writer should be warmed.
-Authentication, read rate limits, retries, and normal query timeouts still apply.
+Authentication, [request rate limits](/database/helix-cloud/operate/limits#helix-cloud-request-rate-limits),
+retries, and normal query timeouts still apply.
 
 ## TypeScript DSL input
 
