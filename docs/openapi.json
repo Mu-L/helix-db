@@ -344,7 +344,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/GatewayQueryError"
+              "$ref": "#/components/schemas/QueryError"
             }
           }
         }
@@ -354,7 +354,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/GatewayQueryError"
+              "$ref": "#/components/schemas/QueryError"
             }
           }
         }
@@ -364,7 +364,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/GatewayQueryError"
+              "$ref": "#/components/schemas/QueryError"
             }
           }
         }
@@ -374,7 +374,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/GatewayQueryError"
+              "$ref": "#/components/schemas/QueryError"
             }
           }
         }
@@ -390,13 +390,16 @@
         }
       },
       "PayloadTooLarge": {
-        "description": "The Helix Cloud gateway rejected a request body larger than 2 MiB before the query handler ran.",
+        "description": "The Helix Cloud gateway rejected a request body larger than 2 MiB before query parsing.",
         "content": {
-          "text/plain": {
+          "application/json": {
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/QueryError"
             },
-            "example": "Failed to buffer the request body: length limit exceeded"
+            "example": {
+              "error": "payload_too_large",
+              "msg": "request body exceeds the maximum allowed size"
+            }
           }
         }
       },
@@ -413,7 +416,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/GatewayQueryError"
+              "$ref": "#/components/schemas/QueryError"
             }
           }
         }
@@ -806,8 +809,9 @@
           ]
         }
       },
-      "LocalQueryError": {
+      "QueryError": {
         "type": "object",
+        "description": "Stable error envelope returned by local servers and Helix Cloud gateways.",
         "required": [
           "error",
           "msg"
@@ -827,38 +831,6 @@
           "error": "invalid_query_json",
           "msg": "invalid query JSON: expected value"
         }
-      },
-      "GatewayQueryError": {
-        "type": "object",
-        "required": [
-          "error"
-        ],
-        "properties": {
-          "error": {
-            "type": "string",
-            "description": "Human-readable gateway error message."
-          },
-          "code": {
-            "type": "string",
-            "description": "Stable gateway error code when one is available."
-          }
-        },
-        "additionalProperties": false,
-        "example": {
-          "code": "QUERY_TIMEOUT",
-          "error": "query exceeded its wall-clock limit"
-        }
-      },
-      "QueryError": {
-        "description": "Local servers return LocalQueryError. Helix Cloud gateways return GatewayQueryError.",
-        "oneOf": [
-          {
-            "$ref": "#/components/schemas/LocalQueryError"
-          },
-          {
-            "$ref": "#/components/schemas/GatewayQueryError"
-          }
-        ]
       },
       "HealthResponse": {
         "type": "object",

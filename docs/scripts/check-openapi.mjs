@@ -147,19 +147,19 @@ for (const [status, name] of Object.entries(expectedQueryResponseRefs)) {
 const responseSchemaRef = (name) =>
   spec.components?.responses?.[name]?.content?.['application/json']?.schema?.$ref;
 for (const name of [
+  'BadRequest',
   'Unauthorized',
   'PaymentRequired',
   'Forbidden',
   'RequestTimeout',
+  'Conflict',
+  'PayloadTooLarge',
   'RateLimited',
+  'InternalError',
+  'Unavailable',
 ]) {
-  if (responseSchemaRef(name) !== '#/components/schemas/GatewayQueryError') {
-    errors.push(`openapi.json: ${name} must use GatewayQueryError`);
-  }
-}
-for (const name of ['BadRequest', 'Conflict', 'InternalError', 'Unavailable']) {
   if (responseSchemaRef(name) !== '#/components/schemas/QueryError') {
-    errors.push(`openapi.json: ${name} must allow local and gateway errors`);
+    errors.push(`openapi.json: ${name} must use QueryError`);
   }
 }
 const bodyLimits = queryOperation?.['x-helix-request-body-limits'];
@@ -172,46 +172,24 @@ if (
   );
 }
 const payloadTooLarge = spec.components?.responses?.PayloadTooLarge;
+const payloadTooLargeJson = payloadTooLarge?.content?.['application/json'];
 if (
-  payloadTooLarge?.content?.['text/plain']?.schema?.type !== 'string' ||
-  payloadTooLarge.content['text/plain'].example !==
-    'Failed to buffer the request body: length limit exceeded' ||
-  payloadTooLarge.content?.['application/json']
+  payloadTooLargeJson?.schema?.$ref !== '#/components/schemas/QueryError' ||
+  payloadTooLargeJson?.example?.error !== 'payload_too_large' ||
+  payloadTooLargeJson?.example?.msg !== 'request body exceeds the maximum allowed size' ||
+  payloadTooLarge?.content?.['text/plain']
 ) {
-  errors.push('openapi.json: PayloadTooLarge must match the Axum text response');
+  errors.push('openapi.json: PayloadTooLarge must match the gateway JSON envelope');
 }
 
-const localError = spec.components?.schemas?.LocalQueryError;
+const queryError = spec.components?.schemas?.QueryError;
 if (
-  localError?.additionalProperties !== false ||
-  localError.required?.join(',') !== 'error,msg' ||
-  !localError.properties?.error ||
-  !localError.properties?.msg
+  queryError?.additionalProperties !== false ||
+  queryError.required?.join(',') !== 'error,msg' ||
+  !queryError.properties?.error ||
+  !queryError.properties?.msg
 ) {
-  errors.push('openapi.json: LocalQueryError must require only error and msg');
-}
-const gatewayError = spec.components?.schemas?.GatewayQueryError;
-if (
-  gatewayError?.additionalProperties !== false ||
-  gatewayError.required?.join(',') !== 'error' ||
-  !gatewayError.properties?.error ||
-  !gatewayError.properties?.code ||
-  gatewayError.properties?.msg
-) {
-  errors.push(
-    'openapi.json: GatewayQueryError must require error and allow optional code',
-  );
-}
-const errorVariants =
-  spec.components?.schemas?.QueryError?.oneOf?.map((variant) => variant.$ref).sort() ?? [];
-if (
-  errorVariants.join(',') !==
-  [
-    '#/components/schemas/GatewayQueryError',
-    '#/components/schemas/LocalQueryError',
-  ].join(',')
-) {
-  errors.push('openapi.json: QueryError must close over local and gateway errors');
+  errors.push('openapi.json: QueryError must require only error and msg');
 }
 
 const scalarParameterTypes = spec.components?.schemas?.QueryParameterType?.oneOf?.find(
