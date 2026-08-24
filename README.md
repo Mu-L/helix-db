@@ -93,7 +93,7 @@ Queries are authored with the Rust, TypeScript, Go, or Python DSL and sent strai
 | Rust | [`helix-db`](https://crates.io/crates/helix-db) | `3.0.0` | [Rust setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/rust-project-setup) |
 | TypeScript | [`@helix-db/helix-db`](https://www.npmjs.com/package/@helix-db/helix-db) | `3.0.4` | [TypeScript setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/typescript-project-setup) |
 | Python | [`helix-db`](https://pypi.org/project/helix-db/) | `0.3.4` | [Python setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/python-project-setup) |
-| Go | [`github.com/helixdb/helix-db/sdks/go`](https://pkg.go.dev/github.com/helixdb/helix-db/sdks/go) | `v0.1.3` | [Go setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/go-project-setup) |
+| Go | [`github.com/helixdb/helix-db/sdks/go`](https://pkg.go.dev/github.com/helixdb/helix-db/sdks/go) | `v0.3.1` | [Go setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/go-project-setup) |
 
 ### Rust
 
@@ -262,7 +262,7 @@ Install the released Go module:
 
 ```bash
 go mod init example.com/my-helix-app
-go get github.com/helixdb/helix-db/sdks/go@v0.1.3
+go get github.com/helixdb/helix-db/sdks/go@v0.3.1
 ```
 
 Build a request with ordinary Go functions, then execute it with the client:
