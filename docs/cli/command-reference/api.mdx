@@ -1,0 +1,18 @@
+---
+title: "helix api"
+description: "Call a Helix Cloud WFE endpoint with the current WorkOS session"
+pageType: "Reference"
+---
+
+<div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
+
+```bash
+helix api get /v1/workspaces
+helix api post /v1/example --json '{"value":"example"}'
+helix api patch /v1/example --json '{"value":"updated"}'
+helix api delete /v1/example
+```
+
+Only absolute `/v1/...` WFE paths are accepted. Absolute URLs and direct gateway paths are rejected.
+The command uses the same rotating WorkOS session and typed pre-dispatch authentication retry rule as
+all other Cloud commands. Use resource-specific commands when one exists.

@@ -1,71 +1,31 @@
 ---
-title: "CLI Command Reference"
-description: "Complete reference for all Helix CLI 3.x commands and options"
+title: "CLI command reference"
+description: "Commands supported by the Helix CLI"
 pageType: "Reference"
 ---
 
 <div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
 
-> For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
+Cloud commands authenticate only with the WorkOS session created by `helix auth login`.
+They never accept or store application database keys or service credentials.
 
-This page lists every command in the Helix CLI 3.x release line. Click any command for full flag and example details.
+| Command | Scope | Purpose |
+| --- | --- | --- |
+| [`helix auth`](/cli/command-reference/auth) | Cloud | Login, inspect, or revoke the WorkOS session |
+| [`helix init`](/cli/command-reference/init) | Local, Cloud | Create a project and link an instance |
+| [`helix add`](/cli/command-reference/add) | Local, Cloud | Add an instance to `helix.toml` |
+| [`helix query`](/cli/command-reference/query) | Local, Cloud | Execute one v3 JSON/SDK query |
+| [`helix shell`](/cli/command-reference/shell) | Local, Cloud | Execute line-oriented v3 JSON queries |
+| [`helix status`](/cli/command-reference/status) | Local, Cloud | Inspect runtime or database status |
+| [`helix logs`](/cli/command-reference/logs) | Local, Cloud | Follow local logs or list Cloud query errors |
+| [`helix workspace`](/cli/command-reference/workspace) | Cloud | List or get workspaces; no global selection |
+| [`helix project`](/cli/command-reference/project) | Cloud | List, get, create, delete, or link a project |
+| [`helix cluster`](/cli/command-reference/cluster) | Cloud | List/get dedicated clusters and active indexes |
+| [`helix database`](/cli/command-reference/database) | Cloud | Manage tenants, indexes, and application keys |
+| [`helix service-credential`](/cli/command-reference/service-credential) | Cloud | Manage workspace-owned headless credentials |
+| [`helix api`](/cli/command-reference/api) | Cloud | Call an authenticated `/v1/...` WFE endpoint |
+| `helix start`, `stop`, `restart`, `prune`, `delete` | Local | Manage local instances and local configuration |
+| `helix chef`, `skills`, `metrics`, `feedback`, `update` | Local CLI | Scaffolding and CLI utilities |
 
-## Global Options
-
-These options are available for every command:
-
-```text
-helix --help, -h        Show help for the command
-helix --version, -V     Print the CLI version
-helix --quiet           Suppress output (errors and final result only)
-helix -v, --verbose     Show detailed output with timing information
-```
-
-## Commands
-
-| Command | Subcommands | Flags | Scope | Description |
-|:--------|:------------|:------|:------|:------------|
-| [`helix init`](/cli/command-reference/init) | `local`, `enterprise` | `-p`/`--path` | Local, Helix Cloud | Initialize a Helix project |
-| [`helix chef`](/cli/command-reference/chef) | | | Local | Bootstrap a first Helix app with skills, docs MCP, starter queries, seed data, and a launched coding agent |
-| [`helix add`](/cli/command-reference/add) | `local`, `enterprise` | | Local, Helix Cloud | Add an instance to an existing project |
-| [`helix start`](/cli/command-reference/start) | | `--foreground`, `--port`, `--disk`, `--persist` | Local | Start a local instance (background by default) |
-| [`helix stop`](/cli/command-reference/stop) | | | Local | Stop a background local instance |
-| [`helix restart`](/cli/command-reference/restart) | | | Local | Restart a background local instance |
-| [`helix status`](/cli/command-reference/status) | | | Local, Helix Cloud | Show instance status |
-| [`helix logs`](/cli/command-reference/logs) | | `-f`/`--follow`, `-r`/`--range`, `--start`, `--end` | Local, Helix Cloud | View instance logs |
-| [`helix query`](/cli/command-reference/query) | | `-f`/`--file`, `--json`, `-e`/`--ts`, `--ts-file`, `--warm`, `--host`, `--port`, `--compact` | Local, Helix Cloud | Send a dynamic query (JSON or TypeScript DSL) to `POST /v2/query` |
-| [`helix auth`](/cli/command-reference/auth) | `login`, `logout`, `create-key` | | Helix Cloud | Manage Helix Cloud authentication |
-| [`helix workspace`](/cli/command-reference/workspace) | `list`, `show`, `switch` | `--format`, `--id` | Helix Cloud | Manage active workspace selection |
-| [`helix project`](/cli/command-reference/project) | `list`, `show`, `switch` | `--format`, `--id`, `--workspace-id` | Helix Cloud | Manage linked project selection |
-| [`helix cluster`](/cli/command-reference/cluster) | `list`, `indexes` | `--format`, `--workspace-id`, `--project-id`, `--cluster-id` | Helix Cloud | List Helix Cloud clusters and their indexes |
-| [`helix push`](/cli/command-reference/push) | | | Helix Cloud | Deploy a Helix Cloud instance to Helix Cloud |
-| [`helix sync`](/cli/command-reference/sync) | | `--dry-run`, `-y`/`--yes` | Helix Cloud | Refresh Helix Cloud instance metadata in `helix.toml` |
-| [`helix prune`](/cli/command-reference/prune) | | `-a`/`--all`, `-y`/`--yes` | Local | Remove Helix-owned local containers, volumes, and workspaces |
-| [`helix delete`](/cli/command-reference/delete) | | `-y`/`--yes` | Local, Helix Cloud | Delete an instance from `helix.toml` and local state |
-| [`helix skills`](/cli/command-reference/skills) | `install`, `update`, `list` | `--project` | — | Install, update, and list the Helix agent skills |
-| [`helix metrics`](/cli/command-reference/metrics) | `full`, `basic`, `off`, `status` | | Local, Helix Cloud | Configure CLI telemetry |
-| [`helix update`](/cli/command-reference/update) | | `--force`, `--v1` | — | Update the CLI (and refresh installed skills) to the latest version |
-| [`helix feedback`](/cli/command-reference/feedback) | | | — | Send feedback to the Helix team |
-
-<Note>
-`helix config` is retained as a hidden compatibility alias. Use [`helix workspace`](/cli/command-reference/workspace), [`helix project`](/cli/command-reference/project), and [`helix cluster`](/cli/command-reference/cluster) directly — they're the canonical commands.
-</Note>
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card
-    title="Local Development"
-    icon="computer"
-    href="/cli/workflows/local"
-  >
-    The local init/run/query loop
-  </Card>
-  <Card
-    title="Helix Cloud"
-    icon="cloud"
-    href="/cli/workflows/helix_cloud"
-  >
-    Authenticate, link a project, and query a Helix Cloud cluster
-  </Card>
-</CardGroup>
+`push`, `sync`, `auth create-key`, `workspace switch`, and `project update` are not commands.
+Cloud resource lifecycle is exposed only where documented above.

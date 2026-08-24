@@ -1,79 +1,18 @@
 ---
 title: "helix project"
-sidebarTitle: "project"
+description: "Discover, manage, and link Helix Cloud projects"
 pageType: "Reference"
 ---
 
 <div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
 
-> For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
-
-Manage the Helix Cloud project that this local project is linked to. Selection is persisted in `helix.toml` (under `[project] workspace_id` and `[project] id`).
-
-## Usage
-
 ```bash
-helix project <SUBCOMMAND>
+helix project list --workspace-id <id> [--format human|json]
+helix project get [<project-id>] [--format human|json]
+helix project create --workspace <id> --slug <slug> --name <name>
+helix project delete [<project-id>] [--yes]
+helix project link <project-id> [--workspace <id>]
 ```
 
-If you run `helix project` with no subcommand in a TTY, the CLI prompts you to choose a project.
-
-## Available sub-commands
-
-| Sub-command | Description |
-|-------------|-------------|
-| `list` | List projects in the active workspace. |
-| `show` | Show the currently linked project. |
-| `switch <PROJECT>` | Link this directory to a workspace project by name or ID. |
-
-### `helix project list`
-
-| Flag | Type | Description | Default |
-|------|------|-------------|---------|
-| `--workspace-id` | String | Override the active workspace selection for this command. | Value from `~/.helix/config` |
-| `--format` | `human` \| `json` | Output format. | `human` |
-
-### `helix project show`
-
-| Flag | Type | Description | Default |
-|------|------|-------------|---------|
-| `--format` | `human` \| `json` | Output format. | `human` |
-
-### `helix project switch`
-
-| Argument | Description |
-|----------|-------------|
-| `PROJECT` | Project name or ID. |
-
-| Flag | Type | Description |
-|------|------|-------------|
-| `--id` | Boolean | Treat `PROJECT` as an ID rather than a name. |
-
-## Examples
-
-```bash
-# List projects in the active workspace
-helix project list
-
-# Show the linked project
-helix project show
-
-# Link to a project by name
-helix project switch payments-api
-
-# Link to a project by ID
-helix project switch prj_01HX... --id
-
-# List projects in a specific workspace without switching globally
-helix project list --workspace-id ws_01HX...
-```
-
-<Note>
-`helix project` requires Helix Cloud authentication. Run `helix auth login` first.
-</Note>
-
-## Related
-
-- [`helix workspace`](/cli/command-reference/workspace) — manage the active workspace
-- [`helix cluster`](/cli/command-reference/cluster) — list clusters available in the workspace/project
-- [`helix sync`](/cli/command-reference/sync) — refresh Helix Cloud instance metadata
+`link` persists the stable project/workspace IDs only in the current project's `helix.toml`.
+It does not create global selection state. `project update` is not supported.

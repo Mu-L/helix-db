@@ -1,0 +1,19 @@
+---
+title: "helix shell"
+description: "Run line-oriented Helix v3 JSON requests"
+pageType: "Reference"
+---
+
+<div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
+
+```bash
+helix shell [INSTANCE] [--compact]
+```
+
+Enter one complete v3 query request per line. Use `:quit` or `:exit` to stop. The request's
+`request_type` selects read or write execution.
+
+Local instances use the existing auth-disabled local endpoint. With no target, the CLI uses local
+`dev` or the sole linked instance; ambiguous projects must specify an instance or an explicit
+`tenant:<id>` / `cluster:<id>` reference. Cloud requests use the backend query broker and the current
+WorkOS session; the CLI never contacts the Cloud gateway directly.
