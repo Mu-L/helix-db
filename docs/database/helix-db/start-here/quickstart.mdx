@@ -14,7 +14,7 @@ instance.
 
 ## Prerequisites
 
-- Docker or Podman
+- Docker, or Podman configured as described below
 - A terminal on macOS or Linux
 
 <Steps>
@@ -47,6 +47,10 @@ helix init local
 
 It does not create a Rust, TypeScript, Go, or Python project. Choose an SDK
 after this CLI journey.
+
+If you use Podman, set `container_runtime = "podman"` under `[project]` in
+`helix.toml` before you start the generated instance. New projects otherwise
+default to Docker.
 
   </Step>
   <Step title="Start the generated instance">

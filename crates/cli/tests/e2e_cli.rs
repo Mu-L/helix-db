@@ -151,6 +151,7 @@ async fn documented_quickstart_runs_against_an_isolated_fixture() {
         "the Bash-only installer must not claim Windows support"
     );
     assert!(!QUICKSTART.contains("- A terminal on macOS, Linux, or Windows"));
+    assert!(QUICKSTART.contains("container_runtime = \"podman\""));
     for obsolete_claim in [
         "--lang",
         "helix start local",
