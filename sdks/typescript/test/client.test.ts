@@ -223,7 +223,21 @@ assert.throws(
   assert.deepEqual(result, { ok: true });
 }
 
-// ---- Non-200 response surfaces a remote error -------------------------------
+// ---- Cloud warm 204 is a successful empty response -------------------------
+
+{
+  const server = await spawnCaptureServer({ status: 204, body: "" });
+  const client = new Client(server.base);
+  const result = await client.requestBuilder<void>().warmOnly().query(sampleRequest()).send();
+
+  const req = await server.captured;
+  await server.close();
+
+  assert.equal(req.headers["x-helix-warm"], "true");
+  assert.equal(result, undefined);
+}
+
+// ---- Other non-success responses surface a remote error --------------------
 
 {
   const body = '{"error":"write conflict","code":"write_conflict","details":{"retryable":true}}';

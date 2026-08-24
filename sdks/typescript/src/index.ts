@@ -19,7 +19,8 @@ const QUERY_PATH = "/v2/query";
  *
  * Strict port of the Rust `HelixError` enum:
  * - `Network` ↔ `ReqwestError` (the request failed to reach the server)
- * - `Remote` ↔ `RemoteError` (the server returned a non-200 response)
+ * - `Remote` ↔ `RemoteError` (the server returned neither query success `200`
+ *   nor Cloud warm success `204`)
  * - `Serialization` ↔ `SerializationError` (request/response (de)serialization failed)
  * - `InvalidUrl` ↔ `InvalidURL` (the client URL could not be parsed)
  * - `InvalidRequest` ↔ `InvalidRequest` (server-only options were used in embedded mode)
@@ -403,8 +404,7 @@ export class QueryExecutionRequest<R = unknown> {
       throw HelixError.network(error instanceof Error ? error.message : String(error), url);
     }
 
-    // Mirror the Rust client: only HTTP 200 is treated as success.
-    if (response.status === 200) {
+    if (response.status === 200 || response.status === 204) {
       return new Uint8Array(await response.arrayBuffer());
     }
 
@@ -419,6 +419,7 @@ export class QueryExecutionRequest<R = unknown> {
 
   async send(): Promise<R> {
     const response = await this.sendBytes();
+    if (response.byteLength === 0) return undefined as R;
     try {
       return parseJson(new TextDecoder().decode(response)) as R;
     } catch (error) {
