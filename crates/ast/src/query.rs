@@ -709,6 +709,26 @@ mod tests {
     }
 
     #[test]
+    fn published_openapi_examples_are_valid_query_requests() {
+        let specification =
+            sonic_rs::from_str::<sonic_rs::Value>(include_str!("../../../docs/openapi.json"))
+                .expect("published OpenAPI document is valid JSON");
+        let examples = &specification["paths"]["/v2/query"]["post"]["requestBody"]["content"]
+            ["application/json"]["examples"];
+
+        for (name, expected_type) in [
+            ("read", QueryRequestType::Read),
+            ("write", QueryRequestType::Write),
+        ] {
+            let example = sonic_rs::to_string(&examples[name]["value"])
+                .expect("OpenAPI query example is serializable");
+            let request = sonic_rs::from_str::<QueryRequest>(&example)
+                .unwrap_or_else(|error| panic!("OpenAPI {name} example is invalid: {error}"));
+            assert_eq!(request.request_type(), expected_type);
+        }
+    }
+
+    #[test]
     fn typed_parameter_schema_matrix_accepts_only_valid_shapes() {
         assert!(typed(QueryParamType::Bool, QueryValue::Bool(true)).is_ok());
         assert!(typed(QueryParamType::Bool, QueryValue::I64(1)).is_err());

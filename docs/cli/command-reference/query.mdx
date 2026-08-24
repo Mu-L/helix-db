@@ -102,7 +102,8 @@ query body. A managed cluster with no eligible warming target returns
 Warm writes are rejected with `400 Bad Request` before backend execution. At the
 HTTP/SDK layer, combine `X-Helix-Warm: true` with
 `X-Helix-Require-Writer: true` when only the authoritative writer should be warmed.
-Authentication, read rate limits, retries, and normal query timeouts still apply.
+Authentication, [request rate limits](/database/helix-cloud/operate/limits#helix-cloud-request-rate-limits),
+retries, and normal query timeouts still apply.
 
 ## TypeScript DSL input
 
