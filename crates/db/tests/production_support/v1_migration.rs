@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 //! Populated V1-to-current-index migration acceptance fixtures.
 //!
 //! These fixtures persist only deployed V1 keys and values, then enter through
@@ -27,11 +29,10 @@ use crate::encoding::property::{decode_properties, encode_properties, Property};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::{VectorIndexMetadataKey, VectorKey};
 use crate::encoding::v1::keys::{
-    DataKeyKind, EdgeEndpointsKey, EdgePropertyByIdKey, EdgePropertyPairKey, Key, MetadataKey,
-    NodePropertyKey,
+    DataKeyKind, EdgeEndpointsKey, EdgePropertyByIdKey, EdgePropertyPairKey, Key, NodePropertyKey,
 };
 use crate::encoding::v1::values::edge_endpoints::EdgeEndpointsValue;
-use crate::index_v2::{
+use crate::index_lifecycle::{
     ActiveIndexHandle, IndexIdentityFamily, IndexStateV2, ValidatedDynamicIndexDefinition,
 };
 use crate::search::vector::VectorDistanceMetric;
@@ -198,7 +199,7 @@ fn edge_properties(kind: &str, rank: i64) -> Vec<Property> {
 
 async fn populate_legacy_vector<D: crate::search::vector::Distance>(
     raw: &Db,
-    definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+    definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
     entity_id: u64,
     vector: &[f32],
 ) {
@@ -375,7 +376,7 @@ async fn seed_populated_v1(
             continue;
         };
         match vector.element_kind() {
-            crate::index_v2::IndexElementKind::Node => {
+            crate::index_lifecycle::IndexElementKind::Node => {
                 populate_legacy_vector::<crate::search::vector::distance::Cosine>(
                     &raw,
                     vector,
@@ -384,7 +385,7 @@ async fn seed_populated_v1(
                 )
                 .await;
             }
-            crate::index_v2::IndexElementKind::Edge => {
+            crate::index_lifecycle::IndexElementKind::Edge => {
                 populate_legacy_vector::<crate::search::vector::distance::Euclidean>(
                     &raw,
                     vector,
@@ -416,8 +417,8 @@ fn active_observations(db: &HelixDB) -> Vec<V1ActiveIndexObservation> {
             V1ActiveIndexObservation {
                 family: family_name(identity.family()),
                 element_kind: match identity.element_kind() {
-                    crate::index_v2::IndexElementKind::Node => "node",
-                    crate::index_v2::IndexElementKind::Edge => "edge",
+                    crate::index_lifecycle::IndexElementKind::Node => "node",
+                    crate::index_lifecycle::IndexElementKind::Edge => "edge",
                 },
                 label: identity.label().as_str().to_string(),
                 property: identity.property().as_str().to_string(),
@@ -446,7 +447,7 @@ fn active_observations(db: &HelixDB) -> Vec<V1ActiveIndexObservation> {
 pub(super) async fn legacy_catalog_empty_raw(db: &Db) -> bool {
     let prefix = Key::data_prefix(
         DataScope::LegacyUnscoped,
-        MetadataKey::dynamic_index_prefix().to_bytes(),
+        crate::encoding::v2::legacy::index_catalog::catalog_scan_prefix(DataScope::LegacyUnscoped),
     );
     let mut rows = db
         .scan_prefix(prefix, ..)
@@ -559,7 +560,7 @@ async fn assert_graph_and_collect_edges(db: &HelixDB) -> Vec<u64> {
 
 async fn assert_active_records(db: &HelixDB, definitions: &[ValidatedDynamicIndexDefinition]) {
     for definition in definitions {
-        let record = crate::index_v2::repository::load_index_record(
+        let record = crate::index_lifecycle::repository::load_index_record(
             db.inner_db().as_ref(),
             DataScope::LegacyUnscoped,
             &definition.identity(),
@@ -652,4 +653,25 @@ pub async fn populated_v1_current_index_migration_contract() -> V1PopulatedMigra
         cold_reopen_identical: true,
         ..second
     }
+}
+
+#[test]
+fn v1_facade_forwards_to_identical_v2_bytes() {
+    let v1_key = Key::Data {
+        scope: DataScope::LegacyUnscoped,
+        kind: DataKeyKind::NodeProperty(NodePropertyKey::new(41)),
+    };
+    let v2_key = crate::encoding::v2::keys::DataKey::Data {
+        scope: crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
+        kind: crate::encoding::v2::keys::DataKeyKind::NodeProperty(
+            crate::encoding::v2::keys::NodePropertyKey::new(41),
+        ),
+    };
+    assert_eq!(v1_key.to_bytes(), v2_key.to_bytes());
+
+    let properties = [Property::string("name", "migration-parity")];
+    assert_eq!(
+        crate::encoding::v1::property::encode_properties(&properties),
+        crate::encoding::v2::values::property::encode_properties(&properties),
+    );
 }

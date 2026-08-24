@@ -12,8 +12,8 @@ use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::property::{decode_properties, encode_properties, Property};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{DataKeyKind, Key, NodePropertyKey};
-use crate::index_v2::secondary::lookup_active_equality_generation;
-use crate::index_v2::{
+use crate::index_lifecycle::secondary::lookup_active_equality_generation;
+use crate::index_lifecycle::{
     IndexOperationBlockerCode, IndexOperationStatus, IndexStateV2, ValidatedDynamicIndexDefinition,
 };
 use crate::{HelixDB, HelixDbError};
@@ -176,7 +176,7 @@ async fn queries(db: &HelixDB, values: &[V1OracleValue]) -> Vec<V1EqualityQueryO
 struct BlockedUnique {
     index_id: u64,
     generation: u64,
-    operation_id: crate::index_v2::IndexOperationId,
+    operation_id: crate::index_lifecycle::IndexOperationId,
     source_preserved: bool,
     readiness_absent: bool,
 }
@@ -189,7 +189,7 @@ async fn inspect_blocked(
 ) -> BlockedUnique {
     let definition = definition();
     let raw = super::raw(database, store).await;
-    let record = crate::index_v2::repository::load_index_record(
+    let record = crate::index_lifecycle::repository::load_index_record(
         &raw,
         DataScope::LegacyUnscoped,
         &definition.identity(),
@@ -204,7 +204,7 @@ async fn inspect_blocked(
     else {
         panic!("unique conflict retains a Building generation")
     };
-    let operation = crate::index_v2::outbox::read_operation(
+    let operation = crate::index_lifecycle::outbox::read_operation(
         &raw,
         DataScope::LegacyUnscoped,
         *build_operation_id,
@@ -263,7 +263,7 @@ async fn repair_and_retry(
     store: Arc<dyn ObjectStore>,
     node_id: u64,
     repaired: &V1OracleValue,
-    operation_id: crate::index_v2::IndexOperationId,
+    operation_id: crate::index_lifecycle::IndexOperationId,
 ) {
     let raw = super::raw(database, store).await;
     raw.put(
@@ -279,7 +279,7 @@ async fn repair_and_retry(
     )
     .await
     .expect("unique repair writes authoritative source");
-    crate::index_v2::outbox::retry_operation(&raw, DataScope::LegacyUnscoped, operation_id)
+    crate::index_lifecycle::outbox::retry_operation(&raw, DataScope::LegacyUnscoped, operation_id)
         .await
         .expect("unique repair requeues blocked production operation");
     raw.close().await.expect("unique repair database closes");
@@ -332,7 +332,7 @@ async fn failure_case(
     let recovered = open(database, store)
         .await
         .expect("repaired unique migration resumes");
-    let record = crate::index_v2::repository::load_index_record(
+    let record = crate::index_lifecycle::repository::load_index_record(
         recovered.inner_db().as_ref(),
         DataScope::LegacyUnscoped,
         &definition().identity(),
@@ -481,7 +481,7 @@ async fn inspect_blocked_range(
 ) -> BlockedUnique {
     let definition = range_failure_definition();
     let raw = super::raw(database, store).await;
-    let record = crate::index_v2::repository::load_index_record(
+    let record = crate::index_lifecycle::repository::load_index_record(
         &raw,
         DataScope::LegacyUnscoped,
         &definition.identity(),
@@ -496,7 +496,7 @@ async fn inspect_blocked_range(
     else {
         panic!("unsupported range source retains a Building generation")
     };
-    let operation = crate::index_v2::outbox::read_operation(
+    let operation = crate::index_lifecycle::outbox::read_operation(
         &raw,
         DataScope::LegacyUnscoped,
         *build_operation_id,
@@ -546,7 +546,7 @@ async fn repair_range_and_retry(
     database: &str,
     store: Arc<dyn ObjectStore>,
     node_id: u64,
-    operation_id: crate::index_v2::IndexOperationId,
+    operation_id: crate::index_lifecycle::IndexOperationId,
 ) {
     let raw = super::raw(database, store).await;
     raw.put(
@@ -562,7 +562,7 @@ async fn repair_range_and_retry(
     )
     .await
     .expect("range repair writes authoritative source");
-    crate::index_v2::outbox::retry_operation(&raw, DataScope::LegacyUnscoped, operation_id)
+    crate::index_lifecycle::outbox::retry_operation(&raw, DataScope::LegacyUnscoped, operation_id)
         .await
         .expect("range repair requeues blocked production operation");
     raw.close().await.expect("range repair database closes");
@@ -606,7 +606,7 @@ async fn range_failure_case(
     let recovered = open(database, store)
         .await
         .expect("repaired range migration resumes");
-    let record = crate::index_v2::repository::load_index_record(
+    let record = crate::index_lifecycle::repository::load_index_record(
         recovered.inner_db().as_ref(),
         DataScope::LegacyUnscoped,
         &range_failure_definition().identity(),
@@ -620,7 +620,7 @@ async fn range_failure_case(
         RANGE_FAILURE_PROPERTY,
         Some(false),
     );
-    let ids = crate::index_v2::secondary::scan_active_range_generation(
+    let ids = crate::index_lifecycle::secondary::scan_active_range_generation(
         recovered.inner_db().as_ref(),
         &handle,
         None,
@@ -672,7 +672,7 @@ pub async fn v1_range_failure_preservation_contract() -> V1RangeFailureMigration
         Some(false),
     );
     let missing_property_active_without_row =
-        crate::index_v2::secondary::scan_active_range_generation(
+        crate::index_lifecycle::secondary::scan_active_range_generation(
             missing.inner_db().as_ref(),
             &missing_handle,
             None,
@@ -798,7 +798,7 @@ pub async fn v1_malformed_catalog_failure_preservation_contract() -> V1Malformed
     let recovered = open(database, store)
         .await
         .expect("repaired catalog source converges");
-    let record = crate::index_v2::repository::load_index_record(
+    let record = crate::index_lifecycle::repository::load_index_record(
         recovered.inner_db().as_ref(),
         DataScope::LegacyUnscoped,
         &expected.identity(),

@@ -133,7 +133,7 @@ pub(crate) mod production_contracts {
     use std::panic::AssertUnwindSafe;
 
     use super::*;
-    use crate::encoding::keys::tenant::DataScope;
+    use crate::encoding::keys::scope::DataScope;
     use crate::search::vector::distance::Cosine;
     use crate::search::vector::{VectorDimension, VectorGenerationIdentity};
 
@@ -147,7 +147,7 @@ pub(crate) mod production_contracts {
                 80,
                 NonZeroU64::MIN,
                 1,
-                crate::index_v2::IndexElementKind::Node,
+                crate::index_lifecycle::IndexElementKind::Node,
                 VectorDimension::try_new(3).unwrap(),
             )
             .unwrap(),
@@ -167,7 +167,7 @@ mod tests {
     use std::num::NonZeroU64;
 
     use super::*;
-    use crate::encoding::keys::tenant::DataScope;
+    use crate::encoding::keys::scope::DataScope;
     use crate::search::vector::distance::Cosine;
     use crate::search::vector::{VectorDimension, VectorGenerationIdentity};
 
@@ -181,7 +181,7 @@ mod tests {
                 80,
                 NonZeroU64::new(generation).unwrap(),
                 1,
-                crate::index_v2::IndexElementKind::Node,
+                crate::index_lifecycle::IndexElementKind::Node,
                 VectorDimension::try_new(3).unwrap(),
             )
             .unwrap(),

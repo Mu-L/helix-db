@@ -616,7 +616,10 @@ func runtimeFixtures() []fixture {
 				VarAs("edge", helix.G().N(helix.NodeVar("source")).AddE("FOLLOWS", helix.NodeVar("target"), helix.Props{
 					helix.Prop("note", "dropitemedge"),
 				})).
-				Returning("source", "target", "edge"),
+				VarAs("source_values", helix.G().N(helix.NodeVar("source")).Values("externalId", "bio")).
+				VarAs("target_values", helix.G().N(helix.NodeVar("target")).Values("externalId")).
+				VarAs("edge_values", helix.G().E(helix.EdgeVar("edge")).Values("note")).
+				Returning("source_values", "target_values", "edge_values"),
 		),
 		runtime(
 			"905-read-text-drop-candidates",
@@ -1059,6 +1062,8 @@ func fixtureRemainingReadContract() fixture {
 		VarAs("vector_nodes_within", helix.G().NWithLabel("ParityUser").VectorSearchNodesWithin("ParityUser", "embedding", []float32{1, 0, 0}, 5)).
 		VarAs("vector_edges_within", helix.G().E(helix.AllEdges()).HasLabel("FOLLOWS").VectorSearchEdgesWithin("FOLLOWS", "embedding", []float32{1, 0}, 5)).
 		VarAs("text_edges", helix.G().TextSearchEdges("FOLLOWS", "note", "graph", 5).EdgeProperties()).
+		VarAs("text_nodes_within", helix.G().NWithLabel("ParityUser").TextSearchNodesWithin("ParityUser", "bio", "graph", 5)).
+		VarAs("text_edges_within", helix.G().E(helix.AllEdges()).HasLabel("FOLLOWS").TextSearchEdgesWithin("FOLLOWS", "note", "graph", 5)).
 		VarAsIf("previous", helix.PrevNotEmpty(), helix.G().N(helix.AllNodes()).Count()).
 		VarAsIf("not_empty", helix.VarNotEmpty("expressions_and_predicates"), helix.G().N(helix.AllNodes()).Count()).
 		VarAsIf("empty", helix.VarEmpty("missing"), helix.G().N(helix.AllNodes()).Count()).
@@ -1069,7 +1074,7 @@ func fixtureRemainingReadContract() fixture {
 			"direct_has_key", "has_label", "exists", "choose", "coalesce", "group", "group_count",
 			"aggregate_count", "aggregate_sum", "aggregate_min", "aggregate_max", "aggregate_mean",
 			"repeat_none", "repeat_before", "repeat_after", "repeat_all",
-			"shortest_out", "shortest_in", "vector_edges", "vector_nodes_within", "vector_edges_within", "text_edges", "previous", "not_empty", "empty", "min_size", "foreach",
+			"shortest_out", "shortest_in", "vector_edges", "vector_nodes_within", "vector_edges_within", "text_edges", "text_nodes_within", "text_edges_within", "previous", "not_empty", "empty", "min_size", "foreach",
 		)
 	return jsonOnly("913-remaining-read-contract", q)
 }

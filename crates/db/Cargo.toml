@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-slatedb = { git = "https://github.com/HelixDB/slatedb.git", rev = "aa8a76c6e933d811fd811c296e86b067665e97f5" }
+slatedb = { git = "https://github.com/HelixDB/slatedb.git", rev = "30d9f28cfeb93cf95652aac2b7724811c5c49630" }
 helix-ast = { path = "../ast" }
 helix-planner = { path = "../planner" }
+helix-value-semantics = { path = "../value-semantics" }
 helix-metrics = { path = "../metrics" }
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "fs", "time"] }
@@ -66,7 +67,7 @@ helix-db-testkit = { path = "../db-testkit" }
 [features]
 default = []
 migration-parity = []
-index-v2-lifecycle-testing = []
+index-lifecycle-testing = []
 test-util = ["tokio/test-util"]
 future-vector-codecs = []
 production-coverage = []
@@ -86,6 +87,20 @@ name = "write_path_mutations"
 harness = false
 
 [[bench]]
+name = "embedded_write_latency"
+harness = false
+
+[[bench]]
+name = "secondary_equality_hot_path"
+harness = false
+required-features = ["production-coverage"]
+
+[[bench]]
+name = "secondary_equality_read_scale"
+harness = false
+required-features = ["production-coverage"]
+
+[[bench]]
 name = "vector_batch_insert"
 harness = false
 required-features = ["production-coverage"]
@@ -95,15 +110,20 @@ name = "text_transaction_batching"
 harness = false
 required-features = [
     "production-coverage",
-    "index-v2-lifecycle-testing",
+    "index-lifecycle-testing",
 ]
+
+[[bench]]
+name = "fts_prefilter"
+harness = false
+required-features = ["production-coverage"]
 
 [[test]]
 name = "production_internal_contracts"
 required-features = ["production-coverage"]
 
 [[test]]
-name = "production_index_v2_contracts"
+name = "production_index_lifecycle_contracts"
 required-features = ["production-coverage"]
 
 [[test]]
@@ -111,7 +131,7 @@ name = "production_migration_contracts"
 required-features = [
     "production-coverage",
     "migration-parity",
-    "index-v2-lifecycle-testing",
+    "index-lifecycle-testing",
 ]
 
 [[test]]
@@ -123,13 +143,13 @@ name = "production_text_correctness_regressions"
 required-features = [
     "production-coverage",
     "migration-parity",
-    "index-v2-lifecycle-testing",
+    "index-lifecycle-testing",
 ]
 
 [[test]]
-name = "production_index_v2_scale"
+name = "production_index_lifecycle_scale"
 required-features = ["production-scale"]
 
 [[test]]
-name = "index_v2_lifecycle_contracts"
-required-features = ["index-v2-lifecycle-testing"]
+name = "index_lifecycle_contracts"
+required-features = ["index-lifecycle-testing"]

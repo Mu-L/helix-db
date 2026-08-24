@@ -9,13 +9,13 @@ use db::config::{
     DbConfig, SearchIndexBackfillLimits, SearchIndexBatchLimits, TextAnalyzerKind,
     TextIndexDefinition, VectorIndexDefinition,
 };
-use db::encoding::v1::keys::tenant::DataScope;
+use db::encoding::v2::keys::scope::DataScope;
 use db::execution::interpreter::{ElementRef, ExecutionResult, ExecutionRow, ExecutionValue};
-use db::index_v2::{
+use db::index_lifecycle::{
     IndexDdlReceipt, IndexOperationId, IndexOperationStage, IndexOperationStatus,
     ValidatedDynamicIndexDefinition,
 };
-use db::index_v2_lifecycle_testing::{
+use db::index_lifecycle_testing::{
     arm_text_search_page_barrier, LifecycleTestController, LifecycleTestScheduling,
     LifecycleWorkTarget, TextManifestValidationLane,
 };
@@ -203,6 +203,7 @@ fn step(id: usize, dependencies: Vec<exec::ExecStepId>, op: exec::ExecOp) -> exe
         id: exec::ExecStepId::new(id).expect("fixture step ID is positive"),
         dependencies,
         output: ir::BatchOutputPlan::Discard,
+        semantic_return_shape: None,
         condition: exec::ExecCondition::Always,
         op,
         schedule: exec::ExecSchedule::Pipeline,
@@ -600,7 +601,7 @@ async fn open_current_v2_text_fixture(
     database: &str,
     text: Option<&str>,
 ) -> (HelixDB, Option<u64>, TextIndexDefinition) {
-    let db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemory {
             database: database.to_string(),
         },
@@ -629,8 +630,8 @@ async fn open_current_v2_text_fixture(
             .await
             .expect("current V2 state reads")
             .storage_version,
-        Some(3),
-        "the fixture must use the current marker-3 format"
+        Some(db::production_coverage::CURRENT_INDEX_STORAGE_VERSION),
+        "the fixture must use the current storage format"
     );
     (db, entity_id, definition)
 }
@@ -639,7 +640,7 @@ async fn open_current_v2_edge_fixture(
     database: &str,
     text: Option<&str>,
 ) -> (HelixDB, u64, u64, Option<u64>, TextIndexDefinition) {
-    let db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemory {
             database: database.to_string(),
         },
@@ -684,14 +685,14 @@ async fn open_current_v2_edge_fixture(
             .await
             .expect("current V2 edge state reads")
             .storage_version,
-        Some(3),
-        "the edge fixture must use the current marker-3 format"
+        Some(db::production_coverage::CURRENT_INDEX_STORAGE_VERSION),
+        "the edge fixture must use the current storage format"
     );
     (db, from, to, entity_id, definition)
 }
 
 async fn open_active_tenant_fixture(database: &str) -> (HelixDB, u64, u64) {
-    let db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemory {
             database: database.to_string(),
         },
@@ -826,7 +827,7 @@ fn fragmented_bm25_config() -> DbConfig {
 
 #[tokio::test]
 async fn monolithic_bm25_matches_independent_live_corpus_control() {
-    let db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemory {
             database: "fts-monolithic-bm25-control".to_string(),
         },
@@ -862,7 +863,7 @@ async fn monolithic_bm25_matches_independent_live_corpus_control() {
 
 #[tokio::test]
 async fn unrelated_active_text_mutations_do_not_create_statistics_markers() {
-    let db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemory {
             database: "fts-active-absent-marker-amplification".to_string(),
         },
@@ -1158,7 +1159,10 @@ async fn obsolete_v2_nonempty_text_state_without_statistics_fails_closed() {
         .migration_parity_v2_state()
         .await
         .expect("complete populated V2 evidence reads");
-    assert_eq!(complete_state.storage_version, Some(3));
+    assert_eq!(
+        complete_state.storage_version,
+        Some(db::production_coverage::CURRENT_INDEX_STORAGE_VERSION)
+    );
     assert_eq!(complete_state.text_corpus_statistics.len(), 1);
     assert!(!complete_state.text_term_statistics.is_empty());
     assert!(complete_state
@@ -1396,7 +1400,7 @@ async fn fragmented_bm25_matches_monolithic_live_corpus_across_history() {
     .into_iter()
     .enumerate()
     {
-        let db = HelixDB::open_for_index_v2_lifecycle_testing(
+        let db = HelixDB::open_for_index_lifecycle_testing(
             HelixDbSource::InMemory {
                 database: format!("fts-fragmented-bm25-{ordinal}"),
             },
@@ -1510,7 +1514,7 @@ async fn fragmented_bm25_matches_monolithic_live_corpus_across_history() {
         db.close().await.expect("fragmented fixture closes");
     }
 
-    let edge_db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let edge_db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemory {
             database: "fts-fragmented-bm25-edge".to_string(),
         },
@@ -1676,7 +1680,7 @@ async fn fragmented_bm25_matches_monolithic_live_corpus_across_history() {
         .await
         .expect("fragmented edge fixture closes");
 
-    let tenant_db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let tenant_db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemory {
             database: "fts-fragmented-bm25-tenant-move".to_string(),
         },
@@ -1822,7 +1826,7 @@ async fn fragmented_bm25_matches_monolithic_live_corpus_across_history() {
 
 #[tokio::test]
 async fn vector_distance_virtual_property_materializes_and_serializes_control() {
-    let db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemory {
             database: "fts-public-score-vector-control".to_string(),
         },
@@ -1881,7 +1885,7 @@ async fn vector_distance_virtual_property_materializes_and_serializes_control() 
 
 #[tokio::test]
 async fn public_text_rows_expose_raw_score_for_nodes_edges_and_bindings() {
-    let db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemory {
             database: "fts-public-text-score-regression".to_string(),
         },
@@ -2696,7 +2700,7 @@ async fn drive_to_late_delta_pause(
 async fn run_late_delta_case(ordinal: usize, pause: LateDeltaPause) -> Result<(), String> {
     let token = ProcessLocalDatabaseToken::new(format!("fts-late-delta-{ordinal}"))
         .map_err(|error| error.to_string())?;
-    let db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemoryToken {
             token: token.clone(),
         },
@@ -2777,7 +2781,7 @@ async fn build_delta_before_manifest_preparation_converges_control() {
 async fn active_insert_accepts_empty_build_root_with_zero_corpus_statistics() {
     let token = ProcessLocalDatabaseToken::new("fts-empty-build-root-active-append")
         .expect("empty BUILD root token validates");
-    let db = HelixDB::open_for_index_v2_lifecycle_testing(
+    let db = HelixDB::open_for_index_lifecycle_testing(
         HelixDbSource::InMemoryToken {
             token: token.clone(),
         },
@@ -3019,7 +3023,7 @@ async fn open_drop_race_fixture_on_store(
     store: Arc<BarrierObjectStore>,
 ) -> DropRaceFixture {
     let object_store: Arc<dyn slatedb::object_store::ObjectStore> = store.clone();
-    let db = HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+    let db = HelixDB::open_with_object_store_for_index_lifecycle_testing(
         database,
         object_store,
         DbConfig::new(),
@@ -3039,7 +3043,7 @@ async fn open_drop_race_fixture_on_store(
 
     let donor_database = format!("{database}-donor");
     let donor_store: Arc<dyn slatedb::object_store::ObjectStore> = store.clone();
-    let donor = HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+    let donor = HelixDB::open_with_object_store_for_index_lifecycle_testing(
         &donor_database,
         donor_store,
         DbConfig::new(),
@@ -3188,7 +3192,7 @@ async fn disk_writer_reader_reopen_and_drop_need_no_runtime_authority() {
         root: root.path().to_path_buf(),
         database: DATABASE.to_string(),
     };
-    let writer = HelixDB::open_for_index_v2_lifecycle_testing(
+    let writer = HelixDB::open_for_index_lifecycle_testing(
         source(),
         DbConfig::new(),
         LifecycleTestScheduling::Explicit,
@@ -3226,7 +3230,7 @@ async fn disk_writer_reader_reopen_and_drop_need_no_runtime_authority() {
     );
     reader.close().await.expect("disk reader closes");
 
-    let writer = HelixDB::open_for_index_v2_lifecycle_testing(
+    let writer = HelixDB::open_for_index_lifecycle_testing(
         source(),
         DbConfig::new(),
         LifecycleTestScheduling::Explicit,
@@ -3329,7 +3333,7 @@ async fn build_restart_after_upload_preserves_the_orphan_and_completes() {
     const DATABASE: &str = "fts-build-upload-restart-regression";
     let store = Arc::new(BarrierObjectStore::default());
     let object_store: Arc<dyn ObjectStore> = store.clone();
-    let writer = HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+    let writer = HelixDB::open_with_object_store_for_index_lifecycle_testing(
         DATABASE,
         object_store,
         DbConfig::new(),
@@ -3376,7 +3380,7 @@ async fn build_restart_after_upload_preserves_the_orphan_and_completes() {
         0,
         "manifest-root initialization does not upload a split"
     );
-    db::index_v2_lifecycle_testing::inject_index_outbox_error_once("commit_before")
+    db::index_lifecycle_testing::inject_index_outbox_error_once("commit_before")
         .expect("commit failpoint installs");
     let error = controller
         .advance(&writer, target)
@@ -3392,7 +3396,7 @@ async fn build_restart_after_upload_preserves_the_orphan_and_completes() {
     writer.close().await.expect("failed worker runtime closes");
 
     let object_store: Arc<dyn ObjectStore> = store.clone();
-    let writer = HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+    let writer = HelixDB::open_with_object_store_for_index_lifecycle_testing(
         DATABASE,
         object_store,
         DbConfig::new(),

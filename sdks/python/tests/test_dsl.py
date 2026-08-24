@@ -9,23 +9,23 @@ from helixdb import (
     BatchCondition,
     BindingProjection,
     DateTime,
-    QueryError,
-    QueryValue,
+    EdgeRef,
     Expr,
     IndexSpec,
     NodeRef,
-    Order,
+    ParamSchema,
     Predicate,
     Projection,
     PropertyInput,
     PropertyProjection,
     PropertyValue,
-    ParamSchema,
+    QueryError,
     QueryParamType,
     QueryRequest,
+    QueryValue,
     RangeIndexDirection,
-    RepeatConfig,
     ReadBatch,
+    RepeatConfig,
     ShortestPathDirection,
     SourcePredicate,
     VectorDistanceMetric,
@@ -81,9 +81,7 @@ class DslAstTests(unittest.TestCase):
             .with_typed_parameter("flag", QueryParamType.bool(), True)
             .with_typed_parameter("count", QueryParamType.i64(), 3)
             .with_typed_parameter("score", QueryParamType.f32(), 1.1)
-            .with_typed_parameter(
-                "when", QueryParamType.date_time(), "2026-07-28T12:34:56Z"
-            )
+            .with_typed_parameter("when", QueryParamType.date_time(), "2026-07-28T12:34:56Z")
             .with_typed_parameter(
                 "nested",
                 QueryParamType.array(QueryParamType.object()),
@@ -107,9 +105,7 @@ class DslAstTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             request.with_typed_parameter("flag", QueryParamType.bool(), False)
         with self.assertRaises(TypeError):
-            QueryRequest.read(read_batch()).with_typed_parameter(
-                "flag", QueryParamType.bool(), 1
-            )
+            QueryRequest.read(read_batch()).with_typed_parameter("flag", QueryParamType.bool(), 1)
         with self.assertRaises(TypeError):
             QueryRequest.read(read_batch()).with_typed_parameter(
                 "score", QueryParamType.f64(), math.inf
@@ -133,105 +129,127 @@ class DslAstTests(unittest.TestCase):
 
     def test_index_lifecycle_response_decoders_are_strict_and_additive(self) -> None:
         operation_id = "018f0c58-6bc7-7c56-8d3d-9c5f18a0f001"
-        receipt = parse_index_ddl_receipt({
-            "kind": "accepted",
-            "operation_id": operation_id,
-            "index_id": "42",
-            "generation": "3",
-            "future": True,
-        })
-        self.assertEqual(receipt.kind, "accepted")
-        status = parse_index_operation_status({
-            "status": "blocked",
-            "operation_id": operation_id,
-            "index_id": "42",
-            "generation": "3",
-            "operation_kind": "build",
-            "family": "secondary",
-            "stage": "scan",
-            "attempt": 2,
-            "progress": {
-                "entities": "9",
-                "input_bytes": "10",
-                "output_operations": "11",
-                "output_bytes": "12",
+        receipt = parse_index_ddl_receipt(
+            {
+                "kind": "accepted",
+                "operation_id": operation_id,
+                "index_id": "42",
+                "generation": "3",
                 "future": True,
-            },
-            "blocker_code": "uniqueness_violation",
-            "future": True,
-        })
-        self.assertEqual(status.status, "blocked")
-        for family, stage in (
-            ("vector", "validate_legacy_physical"),
-            ("text", "validate_manifests"),
-        ):
-            status = parse_index_operation_status({
-                "status": "queued",
+            }
+        )
+        self.assertEqual(receipt.kind, "accepted")
+        status = parse_index_operation_status(
+            {
+                "status": "blocked",
                 "operation_id": operation_id,
-                "index_id": "42",
-                "generation": "3",
-                "operation_kind": "build",
-                "family": family,
-                "stage": stage,
-                "attempt": 0,
-                "progress": {
-                    "entities": "0",
-                    "input_bytes": "0",
-                    "output_operations": "0",
-                    "output_bytes": "0",
-                },
-            })
-            self.assertEqual(status.common.stage, stage)
-        with self.assertRaises(ValueError):
-            parse_index_operation_status({
-                "status": "queued",
-                "operation_id": operation_id,
-                "index_id": "42",
-                "generation": "3",
-                "operation_kind": "build",
-                "family": "text",
-                "stage": "await_upload",
-                "attempt": 0,
-                "progress": {
-                    "entities": "0",
-                    "input_bytes": "0",
-                    "output_operations": "0",
-                    "output_bytes": "0",
-                },
-            })
-        with self.assertRaises(ValueError):
-            parse_index_ddl_receipt({"kind": "future"})
-        with self.assertRaises(ValueError):
-            parse_index_operation_status({
-                "status": "queued",
-                "operation_id": operation_id.upper(),
                 "index_id": "42",
                 "generation": "3",
                 "operation_kind": "build",
                 "family": "secondary",
                 "stage": "scan",
-                "attempt": 0,
+                "attempt": 2,
                 "progress": {
-                    "entities": "0",
-                    "input_bytes": "0",
-                    "output_operations": "0",
-                    "output_bytes": "0",
+                    "entities": "9",
+                    "input_bytes": "10",
+                    "output_operations": "11",
+                    "output_bytes": "12",
+                    "future": True,
                 },
-            })
+                "blocker_code": "uniqueness_violation",
+                "future": True,
+            }
+        )
+        self.assertEqual(status.status, "blocked")
+        for family, stage in (
+            ("vector", "validate_legacy_physical"),
+            ("text", "validate_manifests"),
+        ):
+            status = parse_index_operation_status(
+                {
+                    "status": "queued",
+                    "operation_id": operation_id,
+                    "index_id": "42",
+                    "generation": "3",
+                    "operation_kind": "build",
+                    "family": family,
+                    "stage": stage,
+                    "attempt": 0,
+                    "progress": {
+                        "entities": "0",
+                        "input_bytes": "0",
+                        "output_operations": "0",
+                        "output_bytes": "0",
+                    },
+                }
+            )
+            self.assertEqual(status.common.stage, stage)
+        with self.assertRaises(ValueError):
+            parse_index_operation_status(
+                {
+                    "status": "queued",
+                    "operation_id": operation_id,
+                    "index_id": "42",
+                    "generation": "3",
+                    "operation_kind": "build",
+                    "family": "text",
+                    "stage": "await_upload",
+                    "attempt": 0,
+                    "progress": {
+                        "entities": "0",
+                        "input_bytes": "0",
+                        "output_operations": "0",
+                        "output_bytes": "0",
+                    },
+                }
+            )
+        with self.assertRaises(ValueError):
+            parse_index_ddl_receipt({"kind": "future"})
+        with self.assertRaises(ValueError):
+            parse_index_operation_status(
+                {
+                    "status": "queued",
+                    "operation_id": operation_id.upper(),
+                    "index_id": "42",
+                    "generation": "3",
+                    "operation_kind": "build",
+                    "family": "secondary",
+                    "stage": "scan",
+                    "attempt": 0,
+                    "progress": {
+                        "entities": "0",
+                        "input_bytes": "0",
+                        "output_operations": "0",
+                        "output_bytes": "0",
+                    },
+                }
+            )
 
     def test_values_exprs_and_predicates_use_ast_shape(self) -> None:
-        self.assertTrue(structural_json_equal(b'{"n":9223372036854775807}', b'{"n":9223372036854775807}'))
+        self.assertTrue(
+            structural_json_equal(b'{"n":9223372036854775807}', b'{"n":9223372036854775807}')
+        )
         self.assertEqual(parsed(PropertyValue.null()), "null")
         self.assertEqual(parsed(PropertyValue.bytes(b"\x01\x02")), {"bytes": [1, 2]})
         self.assertEqual(parsed(PropertyInput.param("limit")), {"expr": {"param": "limit"}})
         self.assertEqual(parsed(NodeRef.param("node_ids")), {"param": "node_ids"})
-        self.assertEqual(parsed(QueryParamType.array(QueryParamType.array(QueryParamType.f64()))), {"array": {"array": "f64"}})
+        self.assertEqual(
+            parsed(QueryParamType.array(QueryParamType.array(QueryParamType.f64()))),
+            {"array": {"array": "f64"}},
+        )
         self.assertEqual(PropertyValue.string("x").as_str(), "x")
-        self.assertEqual(DateTime.parse_rfc3339("1969-12-31T23:59:59.999-00:00").to_rfc3339(), "1969-12-31T23:59:59.999Z")
+        self.assertEqual(
+            DateTime.parse_rfc3339("1969-12-31T23:59:59.999-00:00").to_rfc3339(),
+            "1969-12-31T23:59:59.999Z",
+        )
 
         self.assertEqual(
             parsed(Expr.prop("a").add(Expr.val(1)).neg()),
-            {"neg": {"expr": {"add": {"left": {"property": "a"}, "right": {"constant": {"i64": 1}}}}}},
+            {
+                "neg": {
+                    "expr": {"add": {"left": {"property": "a"}, "right": {"constant": {"i64": 1}}}}
+                }
+            },
         )
         self.assertEqual(
             parsed(
@@ -257,12 +275,21 @@ class DslAstTests(unittest.TestCase):
             {"eq": {"left": {"property": "username"}, "right": {"param": "name"}}},
         )
         self.assertEqual(
-            parsed(SourcePredicate.or_([SourcePredicate.has_key("name"), SourcePredicate.starts_with("name", "A")])),
+            parsed(
+                SourcePredicate.or_(
+                    [SourcePredicate.has_key("name"), SourcePredicate.starts_with("name", "A")]
+                )
+            ),
             {
                 "or": {
                     "predicates": [
                         {"has_key": {"property": "name"}},
-                        {"starts_with": {"value": {"property": "name"}, "prefix": {"constant": {"string": "A"}}}},
+                        {
+                            "starts_with": {
+                                "value": {"property": "name"},
+                                "prefix": {"constant": {"string": "A"}},
+                            }
+                        },
                     ]
                 }
             },
@@ -295,7 +322,13 @@ class DslAstTests(unittest.TestCase):
         self.assertEqual(root["project_bindings"]["distinct"], True)
         self.assertEqual(
             root["project_bindings"]["projections"][0],
-            {"property": {"target": {"binding": "service"}, "source": "$id", "alias": "service_id"}},
+            {
+                "property": {
+                    "target": {"binding": "service"},
+                    "source": "$id",
+                    "alias": "service_id",
+                }
+            },
         )
         self.assertEqual(
             root["project_bindings"]["projections"][1],
@@ -360,7 +393,9 @@ class DslAstTests(unittest.TestCase):
                                         "dedup": {
                                             "input": {
                                                 "out": {
-                                                    "input": {"nodes": {"reference": {"var": "user"}}},
+                                                    "input": {
+                                                        "nodes": {"reference": {"var": "user"}}
+                                                    },
                                                     "label": "FOLLOWS",
                                                 }
                                             }
@@ -379,9 +414,15 @@ class DslAstTests(unittest.TestCase):
         conditional = (
             read_batch()
             .var_as("user", g().n_with_label("User"))
-            .var_as_if("posts", BatchCondition.var_not_empty("user"), g().n(NodeRef.var("user")).out("POSTED"))
+            .var_as_if(
+                "posts",
+                BatchCondition.var_not_empty("user"),
+                g().n(NodeRef.var("user")).out("POSTED"),
+            )
         )
-        self.assertEqual(parsed(conditional)["entries"][1]["query"]["condition"], {"var_not_empty": "user"})
+        self.assertEqual(
+            parsed(conditional)["entries"][1]["query"]["condition"], {"var_not_empty": "user"}
+        )
 
         shortest_path = (
             read_batch()
@@ -414,7 +455,13 @@ class DslAstTests(unittest.TestCase):
         write = (
             write_batch()
             .var_as("alice", g().add_n("User", {"name": "Alice", "tier": "pro"}))
-            .var_as("linked", g().n(NodeRef.var("alice")).add_e("FOLLOWS", NodeRef.var("bob"), {"since": "2026-01-01"}).count())
+            .var_as(
+                "linked",
+                g()
+                .n(NodeRef.var("alice"))
+                .add_e("FOLLOWS", NodeRef.var("bob"), {"since": "2026-01-01"})
+                .count(),
+            )
             .returning(["alice", "linked"])
         )
         write_json = parsed(write)
@@ -431,7 +478,9 @@ class DslAstTests(unittest.TestCase):
             .project([PropertyProjection.renamed("$id", "doc_id")]),
         )
         self.assertEqual(
-            parsed(vector)["entries"][0]["query"]["root"]["project"]["input"]["vector_search_nodes"],
+            parsed(vector)["entries"][0]["query"]["root"]["project"]["input"][
+                "vector_search_nodes"
+            ],
             {
                 "label": "Doc",
                 "property": "embedding",
@@ -464,6 +513,53 @@ class DslAstTests(unittest.TestCase):
             },
         )
 
+        restricted_text = read_batch().var_as(
+            "hits",
+            g().n_with_label("Doc").text_search("Doc", "body", "graph", 5),
+        )
+        self.assertEqual(
+            parsed(restricted_text)["entries"][0]["query"]["root"]["text_search_nodes_within"],
+            {
+                "input": {
+                    "nodes_where": {
+                        "predicate": {
+                            "eq": {
+                                "left": {"property": "$label"},
+                                "right": {"constant": {"string": "Doc"}},
+                            }
+                        }
+                    }
+                },
+                "label": "Doc",
+                "property": "body",
+                "query_text": {"value": {"string": "graph"}},
+                "k": {"literal": 5},
+            },
+        )
+
+        restricted_text_edges = read_batch().var_as(
+            "hits",
+            g()
+            .e(EdgeRef.all())
+            .text_search_with(
+                "MENTIONS",
+                "body",
+                PropertyInput.param("query"),
+                Expr.param("limit"),
+                PropertyInput.param("tenant"),
+            ),
+        )
+        restricted_text_edges_root = parsed(restricted_text_edges)["entries"][0]["query"]["root"][
+            "text_search_edges_within"
+        ]
+        self.assertEqual(restricted_text_edges_root["query_text"], {"expr": {"param": "query"}})
+        self.assertEqual(restricted_text_edges_root["k"], {"expr": {"param": "limit"}})
+        self.assertEqual(restricted_text_edges_root["tenant_value"], {"expr": {"param": "tenant"}})
+        self.assertIn("edges", restricted_text_edges_root["input"])
+
+        with self.assertRaisesRegex(TypeError, "node or edge traversal"):
+            g().n(NodeRef.all()).count().text_search("Doc", "body", "graph", 5)
+
         nested = (
             write_batch()
             .var_as(
@@ -477,7 +573,9 @@ class DslAstTests(unittest.TestCase):
         )
         root = parsed(nested)["entries"][0]["query"]["root"]
         self.assertEqual(root["value_map"]["properties"], ["metadata.externalID"])
-        self.assertEqual(root["value_map"]["input"]["set_property"]["value"], {"expr": {"param": "metadata"}})
+        self.assertEqual(
+            root["value_map"]["input"]["set_property"]["value"], {"expr": {"param": "metadata"}}
+        )
 
         index = write_batch().var_as(
             "idx",
@@ -515,7 +613,9 @@ class DslAstTests(unittest.TestCase):
             .coalesce([sub().out("LIKES")])
             .optional(sub().out("POSTED"))
         )
-        repeat_node = parsed(traversal)["root"]["optional"]["input"]["coalesce"]["input"]["union"]["input"]["repeat"]
+        repeat_node = parsed(traversal)["root"]["optional"]["input"]["coalesce"]["input"]["union"][
+            "input"
+        ]["repeat"]
         self.assertEqual(
             repeat_node,
             {
@@ -554,7 +654,11 @@ class DslAstTests(unittest.TestCase):
                 read_batch()
                 .var_as(
                     "users",
-                    g().n_with_label("User").where(Predicate.eq("tenantId", p.tenant_id)).limit(p.limit).value_map(["$id"]),
+                    g()
+                    .n_with_label("User")
+                    .where(Predicate.eq("tenantId", p.tenant_id))
+                    .limit(p.limit)
+                    .value_map(["$id"]),
                 )
                 .returning(["users"])
             )
@@ -562,7 +666,9 @@ class DslAstTests(unittest.TestCase):
         def write_query(p):
             return (
                 write_batch()
-                .for_each_param("data", write_batch().var_as("created", g().add_n("User", {"payload": p.data})))
+                .for_each_param(
+                    "data", write_batch().var_as("created", g().add_n("User", {"payload": p.data}))
+                )
                 .returning(["created"])
             )
 

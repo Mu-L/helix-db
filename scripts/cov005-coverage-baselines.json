@@ -100,7 +100,7 @@
     "db_text_driver": {
       "report": "db-production",
       "paths": [
-        "crates/db/src/index_v2/text/driver.rs"
+        "crates/db/src/index_lifecycle/text/driver.rs"
       ],
       "minimum_covered_lines": 2163,
       "maximum_uncovered_lines": 855,
@@ -118,7 +118,7 @@
     "db_text_cleanup": {
       "report": "db-production",
       "paths": [
-        "crates/db/src/index_v2/text/cleanup.rs"
+        "crates/db/src/index_lifecycle/text/cleanup.rs"
       ],
       "minimum_covered_lines": 1577,
       "maximum_uncovered_lines": 693,
@@ -127,7 +127,7 @@
     "db_vector_driver": {
       "report": "db-production",
       "paths": [
-        "crates/db/src/index_v2/vector/driver.rs"
+        "crates/db/src/index_lifecycle/vector/driver.rs"
       ],
       "minimum_covered_lines": 1797,
       "maximum_uncovered_lines": 734,

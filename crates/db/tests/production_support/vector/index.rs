@@ -4,7 +4,7 @@
 //! identity, write-once dimension proof, DDL validation, current typed row
 //! lookup, bounded operation-local caching, fail-closed corruption handling,
 //! search diagnostics, and exhaustive drop. Fixtures use only the deployed
-//! `encoding::v1` vector keys and values in isolated in-memory databases.
+//! `encoding::v2` vector keys and values in isolated in-memory databases.
 
 use std::collections::HashMap;
 use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
@@ -16,10 +16,10 @@ use slatedb::{Db, IsolationLevel};
 
 use super::*;
 use crate::config::VectorIndexDefinition;
-use crate::encoding::v1::keys::vectors::{
+use crate::encoding::v2::keys::indexes::vector::{
     VectorIndexMetadataKey, VectorKey, VectorSimHashKey, VectorStorageLane, VectorUpperNeighborsKey,
 };
-use crate::index_v2::ValidatedVectorIndexDefinition;
+use crate::index_lifecycle::ValidatedVectorIndexDefinition;
 use crate::search::vector::distance::{self, Cosine};
 use crate::search::vector::generation::{CURRENT_SIMHASH_ALGORITHM_VERSION, CURRENT_SIMHASH_SEED};
 use crate::search::vector::read_fault_production_support::{FaultingRead, ReadFault};
@@ -234,7 +234,7 @@ async fn run_ddl_contracts(db: &Db) {
                     legacy.id(),
                 ))),
             Bytes::copy_from_slice(
-                &crate::encoding::v1::values::vectors::metadata::encode_legacy_metadata_for_contract(
+                &crate::encoding::v2::legacy::vector::metadata::encode_legacy_metadata_for_contract(
                     &legacy_metadata,
                 ),
             ),

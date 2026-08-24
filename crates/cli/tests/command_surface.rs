@@ -311,8 +311,8 @@ async fn typescript_query_inputs_execute_node_and_send_the_generated_request() {
         .cache()
         .join("ts-runtime/node_modules/@helix-db/helix-db");
     fs::create_dir_all(&sdk).unwrap();
-    fs::write(sdk.join("package.json"), r#"{"version":"3.0.0"}"#).unwrap();
-    fs::write(fixture.cache().join("ts-runtime/.sdk-version"), "3.0.0").unwrap();
+    fs::write(sdk.join("package.json"), r#"{"version":"3.0.4"}"#).unwrap();
+    fs::write(fixture.cache().join("ts-runtime/.sdk-version"), "3.0.4").unwrap();
 
     let generated = json!({
         "request_type": "read",
@@ -376,9 +376,9 @@ async fn typescript_query_inputs_execute_node_and_send_the_generated_request() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_start_and_restart_use_the_runtime_and_readiness_contract() {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/v2/query"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
         .expect(2)
         .mount(&server)
         .await;

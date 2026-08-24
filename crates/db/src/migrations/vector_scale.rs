@@ -29,18 +29,20 @@ use slatedb::{Db, IsolationLevel};
 
 use crate::config;
 use crate::encoding::property::{self, Property};
-use crate::encoding::v1::keys::index_v2::{GlobalIndexV2Key, IndexV2Key};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::vectors::{
     VectorIndexMetadataKey, VectorItemKey, VectorKey, VectorSimHashKey, VectorStorageLane,
 };
-use crate::encoding::v1::keys::{DataKeyKind, GlobalKeyKind, Key, NodePropertyKey};
-use crate::encoding::v1::values::index_v2::{
+use crate::encoding::v1::keys::{DataKeyKind, Key, NodePropertyKey};
+use crate::encoding::v1::values::vectors::simhash;
+use crate::encoding::v2::keys::{GlobalKey, ManagedIndexKey as IndexKey, ScopedKey};
+use crate::encoding::v2::legacy::vector::metadata as legacy_metadata;
+use crate::encoding::v2::values::indexes::vector::metadata;
+use crate::encoding::v2::values::{
     encode_index_record, encode_metadata_value, encode_operation_record,
 };
-use crate::encoding::v1::values::vectors::{metadata, simhash};
 use crate::error::{HelixDbError, Result};
-use crate::index_v2::{
+use crate::index_lifecycle::{
     BuildOperationOutcome, IndexGenerationId, IndexId, IndexOperationExecutionState,
     IndexOperationFamily, IndexOperationId, IndexOperationKind, IndexOperationOutcome,
     IndexOperationProgress, IndexOperationRecord, IndexOperationRevision, IndexRecordV2,
@@ -292,7 +294,7 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
             .build()
             .await?,
     );
-    crate::index_v2::repository::bootstrap_writer(db.as_ref()).await?;
+    crate::index_lifecycle::repository::bootstrap_writer(db.as_ref()).await?;
     let writer = crate::HelixWriter::new(Arc::clone(&db), config::DbConfig::new().id_lease_size());
     let scope = DataScope::LegacyUnscoped;
     let definition: ValidatedDynamicIndexDefinition = config::VectorIndexDefinition::new_node(
@@ -369,17 +371,17 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
         migration_parity_legacy_catalog_row(&definition, false)?;
     metadata_txn.put(legacy_definition_key, legacy_definition_value)?;
     metadata_txn.put(
-        Key::Data {
+        IndexKey::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::index_record(active.identity().clone())),
+            kind: ScopedKey::index_record(active.identity().clone()),
         }
         .to_bytes(),
         encode_index_record(&active),
     )?;
     metadata_txn.put(
-        Key::Data {
+        IndexKey::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::operation(completed_build_operation_id)),
+            kind: ScopedKey::operation(completed_build_operation_id),
         }
         .to_bytes(),
         encode_operation_record(&completed_build),
@@ -398,15 +400,13 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
             ))),
         }
         .to_bytes(),
-        Bytes::copy_from_slice(&metadata::encode_legacy_metadata_for_contract(
+        Bytes::copy_from_slice(&legacy_metadata::encode_legacy_metadata_for_contract(
             &legacy_metadata,
         )),
     )?;
     metadata_txn.put(
-        Key::Global {
-            kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-                legacy_physical_id,
-            )),
+        IndexKey::Global {
+            kind: GlobalKey::LegacyVectorPhysicalReservation(legacy_physical_id),
         }
         .to_bytes(),
         encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(
@@ -557,10 +557,8 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
         Bytes::copy_from_slice(&metadata::encode_metadata(&current_metadata)),
     )?;
     directory_metadata_txn.put(
-        Key::Global {
-            kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-                current_physical_id,
-            )),
+        IndexKey::Global {
+            kind: GlobalKey::LegacyVectorPhysicalReservation(current_physical_id),
         }
         .to_bytes(),
         encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(
@@ -639,14 +637,15 @@ async fn run_inner(entity_count: u64) -> Result<VectorMigrationScaleReport> {
             directory.canonical_payloads, directory.marker_writes
         )));
     }
-    let published =
-        crate::index_v2::repository::load_index_record(db.as_ref(), scope, active.identity())
-            .await?
-            .ok_or_else(|| {
-                HelixDbError::InvariantViolation(
-                    "directory scale canonical record disappeared".to_string(),
-                )
-            })?;
+    let published = crate::index_lifecycle::repository::load_index_record(
+        db.as_ref(),
+        scope,
+        active.identity(),
+    )
+    .await?
+    .ok_or_else(|| {
+        HelixDbError::InvariantViolation("directory scale canonical record disappeared".to_string())
+    })?;
     let IndexStateV2::Active {
         physical:
             PhysicalGeneration::Vector {
@@ -800,10 +799,8 @@ async fn assert_retired(
             )));
         }
     }
-    let reservation = Key::Global {
-        kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-            physical_id,
-        )),
+    let reservation = IndexKey::Global {
+        kind: GlobalKey::LegacyVectorPhysicalReservation(physical_id),
     }
     .to_bytes();
     if db.get(reservation).await?.is_some() {

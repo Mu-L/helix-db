@@ -13,7 +13,7 @@ use slatedb::DbTransaction;
 use super::contracts::{decode_stored_edges, label_of};
 use super::MutationIndexContext;
 use super::*;
-use crate::index_v2::graph_mutation::{
+use crate::index_lifecycle::graph_mutation::{
     CanonicalPropertyRow, GraphEntity, GraphMutationTransition, PropertyEdit, PropertyEditOutcome,
 };
 
@@ -448,7 +448,7 @@ impl<'db> ExecutionContext<'db> {
             let Some(value) = value else {
                 continue;
             };
-            edge_ids.extend(values::secondary::SecondaryEqualityValue::decode(&value)?.into_ids());
+            edge_ids.extend(values::indexes::SecondaryEqualityValue::decode(&value)?.into_ids());
         }
         Ok(edge_ids)
     }
@@ -468,7 +468,7 @@ impl<'db> ExecutionContext<'db> {
 
     #[cfg(test)]
     pub(super) async fn ensure_node_exists(&self, node_id: u64) -> Result<()> {
-        let key = keys::Key::Data {
+        let key = keys::DataKey::Data {
             scope: self.tenant_scope,
             kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(node_id)),
         }

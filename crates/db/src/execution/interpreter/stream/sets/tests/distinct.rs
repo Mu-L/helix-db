@@ -25,10 +25,11 @@ async fn distinct_dispatch_handles_stream_scalar_and_folded_inputs() {
 async fn distinct_rejects_index_lifecycle_values() {
     let db = test_support::open_db("stream-sets-distinct-index-lifecycle").await;
     let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
-    let lifecycle =
-        ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-            operation_id: crate::index_v2::IndexOperationId::from_bytes([7; 16]).unwrap(),
-        });
+    let lifecycle = ExecutionValue::IndexDdlReceipt(
+        crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+            operation_id: crate::index_lifecycle::IndexOperationId::from_bytes([7; 16]).unwrap(),
+        },
+    );
 
     assert!(error_message(ctx.distinct(lifecycle))
         .contains("distinct cannot consume an index lifecycle value"));

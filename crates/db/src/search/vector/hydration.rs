@@ -3,7 +3,7 @@
 //! The runtime supplies canonical [`ActiveIndexHandle`] values and one stable
 //! SlateDB snapshot. This module enumerates only physical namespaces owned by
 //! those Active generations, validates every tenant-partition mapping through
-//! the V1 key/value codecs, divides the configured budget deterministically,
+//! the canonical key/value codecs, divides the configured budget deterministically,
 //! and publishes completed stores through [`VectorCacheRegistry`]. Partial
 //! budget-limited stores are safe because managed reads fall back to the same
 //! snapshot for every absent row. Corrupt or cancelled loads never publish.
@@ -18,11 +18,13 @@ use super::memory_store::{
     VectorMemoryAdmissionBudget, VectorMemoryStore, VectorMemoryStoreLoadCompletion,
 };
 use super::ValidatedVectorGenerationHandle;
-use crate::encoding::v1::keys::index_v2::{IndexV2Key, IndexV2RecordKind};
-use crate::encoding::v1::keys::{DataKeyKind, Key};
-use crate::encoding::v1::values::index_v2::{decode_work_value, IndexV2WorkValue};
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
+#[cfg(test)]
+use crate::encoding::v2::keys::{DataKey, DataKeyKind};
+use crate::encoding::v2::keys::{RecordKind, ScopedKey};
+use crate::encoding::v2::values::decode_partition_mapping;
 use crate::error::{HelixDbError, Result};
-use crate::index_v2::{ActiveIndexHandle, VectorPhysicalLayout};
+use crate::index_lifecycle::{ActiveIndexHandle, VectorPhysicalLayout};
 
 /// Runtime share assigned to one scope after the configured global budget is split.
 ///
@@ -99,32 +101,26 @@ pub(crate) async fn hydrate_active_generations(
                 );
             }
             VectorPhysicalLayout::Partitioned => {
-                let prefix = Key::data_prefix(
+                let prefix = IndexKey::data_prefix(
                     *scope,
-                    IndexV2Key::generation_prefix(
-                        IndexV2RecordKind::VectorPartitionMapping,
+                    ScopedKey::generation_prefix(
+                        RecordKind::VectorPartitionMapping,
                         *index_id,
                         *generation,
                     ),
                 );
                 let mut mappings = inventory.scan_prefix(prefix, ..).await?;
                 while let Some(row) = mappings.next().await? {
-                    let Key::Data {
-                        kind: DataKeyKind::IndexV2(IndexV2Key::VectorPartitionMapping(mapping_key)),
+                    let IndexKey::Data {
+                        kind: ScopedKey::VectorPartitionMapping(mapping_key),
                         ..
-                    } = Key::parse_from_slice(*scope, &row.key)?
+                    } = IndexKey::parse_from_slice(*scope, &row.key)?
                     else {
                         return Err(HelixDbError::IndexCatalogCorruption(
                             "vector partition prefix yielded another key kind".to_string(),
                         ));
                     };
-                    let IndexV2WorkValue::VectorPartitionMapping(mapping) =
-                        decode_work_value(&row.value)?
-                    else {
-                        return Err(HelixDbError::IndexCatalogCorruption(
-                            "vector partition mapping contains another value kind".to_string(),
-                        ));
-                    };
+                    let mapping = decode_partition_mapping(&row.value)?;
                     if mapping_key.index_id != *index_id
                         || mapping_key.generation != *generation
                         || mapping.index_id != *index_id
@@ -283,12 +279,12 @@ mod tests {
 
     use super::*;
     use crate::config::VectorIndexDefinition;
-    use crate::encoding::v1::keys::index_v2::VectorPartitionMappingKey;
-    use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
-    use crate::encoding::v1::keys::vectors::{VectorKey, VectorUpperVectorKey};
-    use crate::encoding::v1::values::index_v2::encode_work_value;
-    use crate::index_v2::work::{VectorPartitionMappingValue, VectorTenantPartition};
-    use crate::index_v2::{
+    use crate::encoding::v2::keys::indexes::vector::{VectorKey, VectorUpperVectorKey};
+    use crate::encoding::v2::keys::scope::{DataScope, TenantId};
+    use crate::encoding::v2::keys::VectorPartitionMappingKey;
+    use crate::encoding::v2::values::encode_partition_mapping;
+    use crate::index_lifecycle::work::{VectorPartitionMappingValue, VectorTenantPartition};
+    use crate::index_lifecycle::{
         IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
         IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
         VectorGenerationDescriptor, VectorPhysicalIndexId,
@@ -303,7 +299,7 @@ mod tests {
     }
 
     fn active_vector(
-        scope: crate::encoding::v1::keys::tenant::DataScope,
+        scope: crate::encoding::v2::keys::scope::DataScope,
         index_id: u64,
         physical_index_id: u64,
         partitioned: bool,
@@ -353,10 +349,10 @@ mod tests {
     #[tokio::test]
     async fn active_hydration_publishes_exact_snapshot_and_refreshes_immutably() {
         let db = raw_db("vector-cache-active-hydration").await;
-        let scope = crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped;
+        let scope = crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped;
         let physical_index_id = 71;
         let (active, handle) = active_vector(scope, 7, physical_index_id, false);
-        let first_key = Key::Data {
+        let first_key = DataKey::Data {
             scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
                 physical_index_id,
@@ -388,7 +384,7 @@ mod tests {
             Some(b"first".as_slice())
         );
 
-        let second_key = Key::Data {
+        let second_key = DataKey::Data {
             scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
                 physical_index_id,
@@ -435,31 +431,27 @@ mod tests {
     #[tokio::test]
     async fn partitioned_hydration_requires_a_cross_checked_v2_mapping() {
         let db = raw_db("vector-cache-partitioned-hydration").await;
-        let scope = crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped;
+        let scope = crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped;
         let index_id = IndexId::new(9).unwrap();
         let physical_index_id = VectorPhysicalIndexId::new(91).unwrap();
         let (active, handle) = active_vector(scope, index_id.get(), physical_index_id.get(), true);
         let partition = VectorTenantPartition::try_new(Bytes::from_static(b"tenant-a")).unwrap();
-        let mapping_key = Key::Data {
+        let mapping_key = IndexKey::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::VectorPartitionMapping(
-                VectorPartitionMappingKey {
-                    index_id,
-                    generation: IndexGenerationId::initial(),
-                    partition: partition.fingerprint(),
-                },
-            )),
-        }
-        .to_bytes();
-        let mapping = encode_work_value(&IndexV2WorkValue::VectorPartitionMapping(
-            VectorPartitionMappingValue {
+            kind: ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
                 index_id,
                 generation: IndexGenerationId::initial(),
-                partition,
-                physical_index_id,
-            },
-        ));
-        let vector_key = Key::Data {
+                partition: partition.fingerprint(),
+            }),
+        }
+        .to_bytes();
+        let mapping = encode_partition_mapping(&VectorPartitionMappingValue {
+            index_id,
+            generation: IndexGenerationId::initial(),
+            partition,
+            physical_index_id,
+        });
+        let vector_key = DataKey::Data {
             scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
                 physical_index_id.get(),
@@ -501,7 +493,7 @@ mod tests {
         let high_physical_id = 202;
         let (low_active, low_handle) = active_vector(scope, 10, low_physical_id, false);
         let (high_active, high_handle) = active_vector(scope, 20, high_physical_id, false);
-        let low_key = Key::Data {
+        let low_key = DataKey::Data {
             scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
                 low_physical_id,
@@ -509,7 +501,7 @@ mod tests {
             ))),
         }
         .to_bytes();
-        let high_key = Key::Data {
+        let high_key = DataKey::Data {
             scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
                 high_physical_id,
@@ -551,7 +543,7 @@ mod tests {
         let (first_active, first_handle) = active_vector(first_scope, 30, physical_index_id, false);
         let (second_active, second_handle) =
             active_vector(second_scope, 30, physical_index_id, false);
-        let first_key = Key::Data {
+        let first_key = DataKey::Data {
             scope: first_scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
                 physical_index_id,
@@ -559,7 +551,7 @@ mod tests {
             ))),
         }
         .to_bytes();
-        let second_key = Key::Data {
+        let second_key = DataKey::Data {
             scope: second_scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
                 physical_index_id,
@@ -633,25 +625,21 @@ mod tests {
             VectorTenantPartition::try_new(Bytes::from_static(b"tenant-key")).unwrap();
         let value_partition =
             VectorTenantPartition::try_new(Bytes::from_static(b"tenant-value")).unwrap();
-        let mapping_key = Key::Data {
+        let mapping_key = IndexKey::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::VectorPartitionMapping(
-                VectorPartitionMappingKey {
-                    index_id,
-                    generation: IndexGenerationId::initial(),
-                    partition: key_partition.fingerprint(),
-                },
-            )),
-        }
-        .to_bytes();
-        let mapping = encode_work_value(&IndexV2WorkValue::VectorPartitionMapping(
-            VectorPartitionMappingValue {
+            kind: ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
                 index_id,
                 generation: IndexGenerationId::initial(),
-                partition: value_partition,
-                physical_index_id,
-            },
-        ));
+                partition: key_partition.fingerprint(),
+            }),
+        }
+        .to_bytes();
+        let mapping = encode_partition_mapping(&VectorPartitionMappingValue {
+            index_id,
+            generation: IndexGenerationId::initial(),
+            partition: value_partition,
+            physical_index_id,
+        });
         let transaction = db.begin(IsolationLevel::Snapshot).await.unwrap();
         transaction.put(mapping_key, mapping).unwrap();
         transaction.commit().await.unwrap();

@@ -1,11 +1,12 @@
 # HelixDB Go SDK
 
-Go SDK for building and executing HelixDB queries.
+Go SDK for building and executing HelixDB server queries. Version `v0.3.1`
+ships the operation-tree query builder and HTTP client.
 
 ## Install
 
 ```sh
-go get github.com/helixdb/helix-db/sdks/go
+go get github.com/helixdb/helix-db/sdks/go@v0.3.1
 ```
 
 ```go
@@ -137,6 +138,50 @@ Always pass explicit names to `Returning(...)` for values you want back. A
 zero-arg `Returning()` is supported for intentional empty responses and
 serializes as `"returns":[]`.
 
+## Traversal-scoped text search
+
+Use `TextSearchNodesWithin` or `TextSearchEdgesWithin` after building a
+candidate traversal. These methods perform exact BM25 ranking over only the
+current IDs. Results equal an exhaustive search of the selected tenant
+partition, intersected with the unique input IDs, followed by deterministic
+top-`k` selection.
+
+BM25 statistics still come from the full tenant partition.
+
+```go
+func SearchVisibleDocuments(tenantID, queryText string, limit int64) helix.Request {
+	q := helix.ReadQuery("search_visible_documents")
+	tenant := q.ParamString("tenant_id", tenantID)
+	query := q.ParamString("query", queryText)
+	k := q.ParamI64("limit", limit)
+
+	return q.
+		VarAs("documents",
+			helix.G().
+				NWithLabel("Document").
+				Where(helix.PredEq("tenantId", tenant)).
+				TextSearchNodesWithin("Document", "body", query, k, tenant).
+				Project(
+					helix.ProjectPropAs("$id", "id"),
+					helix.ProjectPropAs("$score", "score"),
+					helix.ProjectProp("title"),
+				),
+		).
+		Returning("documents")
+}
+```
+
+The typed runtime-input forms are `TextSearchNodesWithinWith` and
+`TextSearchEdgesWithinWith`. Source-level `TextSearchNodes[With]` and
+`TextSearchEdges[With]` remain whole-partition searches.
+
+Restricted results contain unique input IDs, return at most `k`, and order by
+`$score` descending then entity ID ascending. The selected input row keeps its
+bindings, path, and sack. An empty input returns without opening the text
+index. A wrong-kind input or more than 1,000,000 unique candidates is a query
+error. For a tenant-scoped index, pass the same tenant partition used to build
+the candidate stream.
+
 ## Row Bindings
 
 Use `Bind(...)` when a multi-hop traversal needs to keep earlier elements
@@ -190,10 +235,12 @@ create a binding.
 
 `Client.Exec` does not retry HTTP 409 conflicts automatically. Callers should
 retry only when the operation is safe to replay. Remote errors are returned as
-`*helix.HelixError` with `StatusCode` populated. `Response` contains the stable
-`Error` code and diagnostic `Msg` when the server returns the structured JSON
-envelope; `Details` always retains the raw response. `helix.IsConflict(err)` or
-`errors.Is(err, helix.ErrConflict)` checks for HTTP 409:
+`*helix.HelixError` with `StatusCode` and the static `Code` populated. Use
+`helix.IsConflict(err)` or `errors.Is(err, helix.ErrConflict)` to detect HTTP
+409:
+
+The canonical [query error-code reference](../../docs/database/helix-db/query-guides/error-handling.mdx)
+documents the complete catalog and migration contract.
 
 ```go
 func ExecWithConflictRetry(ctx context.Context, client *helix.Client, build func() helix.Request, out any) error {
@@ -208,42 +255,14 @@ func ExecWithConflictRetry(ctx context.Context, client *helix.Client, build func
 }
 ```
 
-## Embedded cache profiles
+## Release scope
 
-Configured embedded constructors accept vector-memory-only, memory, or hybrid
-cache profiles. Vector-memory-only disables SlateDB and object-store caches;
-canonical data still uses the selected storage source.
-
-```go
-client, err := helix.NewEmbeddedClientWithConfig(
-	helix.DiskSource{Root: "/data/helix", Database: "app"},
-	helix.EmbeddedCacheConfig{
-		VectorMemoryBytes: 256 * 1024 * 1024,
-		Mode:              helix.VectorMemoryOnlyCache{},
-	},
-)
-```
-
-## Native graph algorithms
-
-Native graph support is included when the generated UniFFI tree is linked with
-the `helixdb_uniffi` build tag:
-
-```go
-selection := helix.GraphSelection{
-	NodeTraversal: helix.G().NWhere(helix.SourceHasKey("$id")),
-	EdgeTraversal: helix.G().EWhere(helix.SourceHasKey("$id")),
-	Direction: helix.GraphDirected,
-	AllowFullScan: true,
-}
-graph, err := client.Graph(ctx, selection)
-if err != nil { return err }
-scores, err := graph.BetweennessCentrality(helix.GraphifyBetweennessOptions())
-```
-
-The load performs one ordinary query and all later algorithms run locally.
-Without generated native bindings, `Client.Graph` returns
-`ErrNativeGraphUnavailable` before issuing the query.
+Version `v0.3.1` does not distribute the generated native bindings required by
+the embedded database or native graph algorithms. A standard module install
+returns `ErrNativeBindingsUnavailable` from embedded constructors and
+`ErrNativeGraphUnavailable` from `Client.Graph`. Do not enable the
+`helixdb_uniffi` build tag unless you separately generate and link compatible
+bindings and native libraries.
 
 ## Notes
 

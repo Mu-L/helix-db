@@ -14,14 +14,6 @@ import { GraphSelection, NativeGraph, loadGraph } from "./graph.js";
 const DEFAULT_URL = "http://localhost:6969";
 const QUERY_PATH = "/v2/query";
 
-/** Stable JSON envelope returned by Helix query endpoints. */
-export interface ErrorResponse {
-  /** Stable lower-snake-case code suitable for programmatic branching. */
-  error: string;
-  /** Human-readable diagnostic text. Do not branch on this value. */
-  msg: string;
-}
-
 /**
  * Error raised by the network {@link Client}.
  *
@@ -36,15 +28,32 @@ export class HelixError extends Error {
   readonly kind: "Network" | "Remote" | "Serialization" | "InvalidUrl" | "InvalidRequest" | "EmbeddedUnavailable" | "Embedded";
   readonly details?: string;
   readonly statusCode?: number;
-  readonly errorResponse?: ErrorResponse;
+  readonly code?: string;
+  readonly serverMessage?: string;
+  readonly serverDetails?: unknown;
+  readonly rawBody?: string;
 
-  private constructor(kind: HelixError["kind"], message: string, details?: string, statusCode?: number, errorResponse?: ErrorResponse) {
+  private constructor(
+    kind: HelixError["kind"],
+    message: string,
+    details?: string,
+    code?: string,
+    remote?: {
+      statusCode: number;
+      serverMessage: string;
+      serverDetails?: unknown;
+      rawBody: string;
+    },
+  ) {
     super(message);
     this.name = "HelixError";
     this.kind = kind;
     this.details = details;
-    this.statusCode = statusCode;
-    this.errorResponse = errorResponse;
+    this.statusCode = remote?.statusCode;
+    this.code = code;
+    this.serverMessage = remote?.serverMessage;
+    this.serverDetails = remote?.serverDetails;
+    this.rawBody = remote?.rawBody;
   }
 
   static network(message: string, url?: string): HelixError {
@@ -54,25 +63,48 @@ export class HelixError extends Error {
     return new HelixError("Network", `error communicating with server: ${message}.${hint}`, message);
   }
 
-  static remote(details: string, statusCode: number): HelixError {
-    let errorResponse: ErrorResponse | undefined;
-    try {
-      const parsed: unknown = JSON.parse(details);
-      if (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        typeof (parsed as Record<string, unknown>).error === "string" &&
-        typeof (parsed as Record<string, unknown>).msg === "string"
-      ) {
-        errorResponse = {
-          error: (parsed as Record<string, string>).error,
-          msg: (parsed as Record<string, string>).msg,
-        };
-      }
-    } catch {
-      // Older endpoints and intermediaries may return plain text.
+  static remote(details: string, code?: string): HelixError;
+  static remote(statusCode: number, rawBody: string, statusText: string): HelixError;
+  static remote(statusCodeOrDetails: number | string, rawBodyOrCode = "", statusText = ""): HelixError {
+    if (typeof statusCodeOrDetails === "string") {
+      return new HelixError("Remote", `got error from server: ${statusCodeOrDetails}`, statusCodeOrDetails, rawBodyOrCode || undefined);
     }
-    return new HelixError("Remote", `got error from server: ${details}`, details, statusCode, errorResponse);
+
+    const statusCode = statusCodeOrDetails;
+    const rawBody = rawBodyOrCode;
+    let code: string | undefined;
+    let serverMessage: string | undefined;
+    let serverDetails: unknown;
+    try {
+      const parsed: unknown = JSON.parse(rawBody);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        const body = parsed as Record<string, unknown>;
+        const errorField = typeof body.error === "string" && body.error.length > 0 ? body.error : undefined;
+        const msgField = typeof body.msg === "string" && body.msg.length > 0 ? body.msg : undefined;
+        const codeField = typeof body.code === "string" && body.code.length > 0 ? body.code : undefined;
+        const messageField = typeof body.message === "string" && body.message.length > 0 ? body.message : undefined;
+        if (errorField !== undefined && msgField !== undefined) {
+          code = errorField;
+          serverMessage = msgField;
+        } else if (errorField !== undefined && codeField !== undefined) {
+          code = codeField;
+          serverMessage = errorField;
+        } else {
+          code = codeField;
+          serverMessage = messageField ?? errorField;
+        }
+        if (Object.prototype.hasOwnProperty.call(body, "details")) serverDetails = body.details;
+      }
+    } catch {}
+
+    serverMessage = (serverMessage ?? rawBody) || statusText || `unknown error with code: ${statusCode}`;
+    const details = serverMessage;
+    return new HelixError("Remote", `got error from server: ${serverMessage}`, details, code, {
+      statusCode,
+      serverMessage,
+      serverDetails,
+      rawBody,
+    });
   }
 
   static serialization(message: string): HelixError {
@@ -84,16 +116,38 @@ export class HelixError extends Error {
   }
 
   static invalidRequest(message: string): HelixError {
-    return new HelixError("InvalidRequest", `invalid request: ${message}`, message);
+    return new HelixError("InvalidRequest", `invalid request: ${message}`, message, "invalid_request");
   }
 
   static embeddedUnavailable(message: string): HelixError {
     return new HelixError("EmbeddedUnavailable", `embedded bindings unavailable: ${message}`, message);
   }
 
-  static embedded(message: string): HelixError {
-    return new HelixError("Embedded", `embedded HelixDB error: ${message}`, message);
+  static embedded(message: string, code?: string): HelixError {
+    return new HelixError("Embedded", `embedded HelixDB error: ${message}`, message, code);
   }
+
+  isConflict(): boolean {
+    return this.kind === "Remote" && this.statusCode === 409;
+  }
+
+  isRateLimited(): boolean {
+    return this.kind === "Remote" && this.statusCode === 429;
+  }
+}
+
+function embeddedError(error: unknown): HelixError {
+  if (typeof error === "object" && error !== null) {
+    const fields = error as { error?: unknown; msg?: unknown };
+    if (typeof fields.error === "string" && typeof fields.msg === "string") {
+      return HelixError.embedded(fields.msg, fields.error);
+    }
+  }
+  return HelixError.embedded(error instanceof Error ? error.message : String(error));
+}
+
+function remoteError(body: string, fallback: string, statusCode: number): HelixError {
+  return HelixError.remote(statusCode, body, fallback);
 }
 
 type ClientBackend = { kind: "server"; url: URL; apiKey?: string } | { kind: "embedded"; native: NativeHelixDB };
@@ -163,7 +217,7 @@ type NativeModule = {
   EmbeddedCacheMode?: NativeEmbeddedCacheModeConstructor;
 };
 
-const DEFAULT_NATIVE_PACKAGE = "@helix-db/uniffi";
+const DEFAULT_NATIVE_PACKAGE = "@helix-db/helix-db-embedded";
 const dynamicImport = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<NativeModule>;
 
 /**
@@ -210,7 +264,7 @@ export class Client {
             : await native.HelixDB.open_with_config(nativeSource, toNativeCacheConfig(native.EmbeddedCacheMode, cache)),
       });
     } catch (error) {
-      throw HelixError.embedded(error instanceof Error ? error.message : String(error));
+      throw embeddedError(error);
     }
   }
 
@@ -226,7 +280,7 @@ export class Client {
             : await native.HelixDB.open_reader_with_config(nativeSource, toNativeCacheConfig(native.EmbeddedCacheMode, cache)),
       });
     } catch (error) {
-      throw HelixError.embedded(error instanceof Error ? error.message : String(error));
+      throw embeddedError(error);
     }
   }
 
@@ -262,7 +316,7 @@ export class Client {
       try {
         return (await this.backend.native.graph(request.toJsonBytes(), nativeSpec)) as Record<string, any>;
       } catch (error) {
-        throw HelixError.embedded(error instanceof Error ? error.message : String(error));
+        throw embeddedError(error);
       }
     }
     return this.requestBuilder<Uint8Array>().query(request).sendBytes();
@@ -273,7 +327,7 @@ export class Client {
       try {
         await this.backend.native.close();
       } catch (error) {
-        throw HelixError.embedded(error instanceof Error ? error.message : String(error));
+        throw embeddedError(error);
       }
     }
   }
@@ -327,7 +381,7 @@ export class QueryExecutionRequest<R = unknown> {
       try {
         response = await backend.native.query_json(query.toJsonBytes());
       } catch (error) {
-        throw HelixError.embedded(error instanceof Error ? error.message : String(error));
+        throw embeddedError(error);
       }
       return response;
     }
@@ -354,14 +408,13 @@ export class QueryExecutionRequest<R = unknown> {
       return new Uint8Array(await response.arrayBuffer());
     }
 
-    let details: string;
+    let body: string;
     try {
-      details = await response.text();
+      body = await response.text();
     } catch {
-      details = response.statusText;
+      body = "";
     }
-    if (details.length === 0) details = response.statusText || `unknown error with code: ${response.status}`;
-    throw HelixError.remote(details, response.status);
+    throw remoteError(body, response.statusText || `unknown error with code: ${response.status}`, response.status);
   }
 
   async send(): Promise<R> {
@@ -379,7 +432,7 @@ async function loadNativeHelixDB(): Promise<{
   HelixDbSource: NativeHelixDbSourceConstructor;
   EmbeddedCacheMode?: NativeEmbeddedCacheModeConstructor;
 }> {
-  const packageName = process.env.HELIXDB_UNIFFI_NODE_PACKAGE ?? DEFAULT_NATIVE_PACKAGE;
+  const packageName = process.env.HELIXDB_EMBEDDED_NODE_PACKAGE ?? process.env.HELIXDB_UNIFFI_NODE_PACKAGE ?? DEFAULT_NATIVE_PACKAGE;
   let module: NativeModule;
   try {
     module = await dynamicImport(packageName);

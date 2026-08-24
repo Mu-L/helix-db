@@ -11,29 +11,29 @@
 // exercising the real encoding sources without creating test-only DTO copies.
 pub use db::{config, error, search};
 
-#[path = "../src/index_v2/model.rs"]
-mod index_v2_model;
-pub(crate) use index_v2_model::*;
-#[path = "../src/index_v2/metadata.rs"]
-mod index_v2_metadata;
-#[path = "../src/index_v2/operation.rs"]
-mod index_v2_operation;
-pub(crate) use index_v2_operation::*;
-#[path = "../src/index_v2/work.rs"]
-mod index_v2_work;
-pub(crate) use index_v2_work::*;
+#[path = "../src/index_lifecycle/model.rs"]
+mod index_lifecycle_model;
+pub(crate) use index_lifecycle_model::*;
+#[path = "../src/index_lifecycle/metadata.rs"]
+mod index_lifecycle_metadata;
+#[path = "../src/index_lifecycle/operation.rs"]
+mod index_lifecycle_operation;
+pub(crate) use index_lifecycle_operation::*;
+#[path = "../src/index_lifecycle/work.rs"]
+mod index_lifecycle_work;
+pub(crate) use index_lifecycle_work::*;
 
 // The path-included encoding tree resolves its owning DTOs through the same
 // module shape as the production crate. Keeping the DTO sources path-included
 // preserves private codec coverage without publishing persistence internals.
-mod index_v2 {
-    pub(crate) use crate::index_v2_metadata::*;
-    pub(crate) use crate::index_v2_model::*;
-    pub(crate) use crate::index_v2_operation::*;
-    pub(crate) use crate::index_v2_work::TextPartition;
+mod index_lifecycle {
+    pub(crate) use crate::index_lifecycle_metadata::*;
+    pub(crate) use crate::index_lifecycle_model::*;
+    pub(crate) use crate::index_lifecycle_operation::*;
+    pub(crate) use crate::index_lifecycle_work::TextPartition;
 
     pub(crate) mod work {
-        pub(crate) use crate::index_v2_work::*;
+        pub(crate) use crate::index_lifecycle_work::*;
     }
 }
 

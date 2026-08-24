@@ -2,23 +2,36 @@
 //!
 //! The fuzz package cannot name private persisted DTOs, so this module exposes
 //! only byte-slice consumers and no decoded values. Each entry point dispatches
-//! into the real `encoding/v1` decoder for a closed record family. The default
+//! into the real `encoding/v2` decoder for a closed record family. The default
 //! database build omits this module entirely, and enabling it changes neither
 //! key construction nor value serialization.
 
-use crate::encoding::v1::{
+use bytes::Bytes;
+use roaring::RoaringTreemap;
+use slatedb::MergeOperator;
+
+use crate::encoding::property::property_value::PropertyValue;
+use crate::encoding::v2::legacy::{
+    text::{live_state, manifest, version_counter},
+    vector::transaction_guard,
+};
+use crate::encoding::v2::{
     keys::{
-        index_v2::GlobalIndexV2Key,
-        tenant::{DataScope, TenantId},
-        Key,
+        scope::{DataScope, TenantId},
+        GlobalKey, ManagedIndexKey, ScopedKey, SecondaryEntryLane, SecondaryEqualityBitmapKey,
     },
     values::{
-        index_v2::{
-            decode_index_record, decode_metadata_value, decode_operation_record, decode_work_value,
-        },
-        secondary, text_index, vectors,
+        decode_applied_state, decode_build_artifact, decode_build_delta, decode_corpus_statistics,
+        decode_index_record, decode_manifest_page, decode_manifest_root, decode_metadata_value,
+        decode_operation_record, decode_partition_mapping, decode_secondary_entry,
+        decode_statistics_entity, decode_term_statistics, decode_text_entity_state,
+        indexes::{equality as secondary_equality, range as secondary_range, vector as vectors},
+        property::equality_index_value::{project_equality_value, EqualityValueProjection},
+        SecondaryEqualityBitmapValue,
     },
 };
+use crate::index_lifecycle::{IndexElementKind, IndexGenerationId, IndexId};
+use crate::merge_operator::{encode_bitmap_add, HelixMergeOperator};
 
 /// Exercises the complete physical framing boundary for V2 index keys.
 ///
@@ -29,14 +42,14 @@ use crate::encoding::v1::{
 pub fn decode_current_index_v2_key(selector: u8, data: &[u8]) {
     match selector % 3 {
         0 => {
-            let _ = Key::parse_from_slice(DataScope::LegacyUnscoped, data);
+            let _ = ManagedIndexKey::parse_from_slice(DataScope::LegacyUnscoped, data);
         }
         1 => {
             let scope = DataScope::Tenant(TenantId::from_u128(u128::MAX));
-            let _ = Key::parse_from_slice(scope, data);
+            let _ = ManagedIndexKey::parse_from_slice(scope, data);
         }
         _ => {
-            let _ = GlobalIndexV2Key::parse_from_slice(data);
+            let _ = GlobalKey::parse_from_slice(data);
         }
     }
 }
@@ -62,7 +75,76 @@ pub fn decode_current_index_v2_record(selector: u8, data: &[u8]) {
 
 /// Exercises all V2 physical-work, upload, proof, reachability, and GC values.
 pub fn decode_current_index_v2_work(data: &[u8]) {
-    let _ = decode_work_value(data);
+    let _ = typed_work_value_is_valid(data);
+}
+
+/// Exercises the portable V4 bitmap value and its typed merge dispatch.
+pub fn decode_current_index_v2_bitmap(selector: u8, data: &[u8]) {
+    let _ = SecondaryEqualityBitmapValue::decode(data);
+    let EqualityValueProjection::Indexed(value) =
+        project_equality_value(&PropertyValue::String("fuzz".to_string()))
+    else {
+        unreachable!("a fixed string is always equality-indexable")
+    };
+    let scope = if selector & 1 == 0 {
+        DataScope::LegacyUnscoped
+    } else {
+        DataScope::Tenant(TenantId::from_u128(u128::MAX))
+    };
+    let key = ManagedIndexKey::Data {
+        scope,
+        kind: ScopedKey::SecondaryEqualityBitmap(
+            SecondaryEqualityBitmapKey::try_new(
+                IndexId::initial(),
+                IndexGenerationId::initial(),
+                IndexElementKind::Node,
+                value,
+            )
+            .expect("fixed fuzz bitmap key validates"),
+        ),
+    }
+    .to_bytes();
+    let valid_bitmap =
+        SecondaryEqualityBitmapValue::new(RoaringTreemap::from_iter([1, 7])).encode();
+    let operator = HelixMergeOperator::new();
+    let _ = match selector % 4 {
+        0 => operator.merge(&key, None, Bytes::copy_from_slice(data)),
+        1 => operator.merge(&key, Some(valid_bitmap), Bytes::copy_from_slice(data)),
+        2 => operator.merge(
+            &key,
+            Some(Bytes::copy_from_slice(data)),
+            encode_bitmap_add(9),
+        ),
+        _ => operator.merge_batch(
+            &key,
+            Some(valid_bitmap),
+            &[Bytes::copy_from_slice(data), encode_bitmap_add(11)],
+        ),
+    };
+}
+
+fn typed_work_value_is_valid(data: &[u8]) -> bool {
+    decode_build_delta(data).is_ok()
+        || decode_applied_state(data).is_ok()
+        || [
+            SecondaryEntryLane::NodeEquality,
+            SecondaryEntryLane::NodeUniqueEquality,
+            SecondaryEntryLane::NodeRangeAscending,
+            SecondaryEntryLane::NodeRangeDescending,
+            SecondaryEntryLane::EdgeEquality,
+            SecondaryEntryLane::EdgeRangeAscending,
+            SecondaryEntryLane::EdgeRangeDescending,
+        ]
+        .into_iter()
+        .any(|lane| decode_secondary_entry(lane, data).is_ok())
+        || decode_manifest_root(data).is_ok()
+        || decode_manifest_page(data).is_ok()
+        || decode_build_artifact(data).is_ok()
+        || decode_text_entity_state(data).is_ok()
+        || decode_partition_mapping(data).is_ok()
+        || decode_corpus_statistics(data).is_ok()
+        || decode_term_statistics(data).is_ok()
+        || decode_statistics_entity(data).is_ok()
 }
 
 /// Exercises one deployed secondary row decoder.
@@ -74,10 +156,10 @@ pub fn decode_current_index_v2_work(data: &[u8]) {
 pub fn decode_current_secondary_record(selector: u8, data: &[u8]) {
     match selector % 2 {
         0 => {
-            let _ = secondary::SecondaryRangePresence::decode(data);
+            let _ = secondary_range::SecondaryRangePresence::decode(data);
         }
         _ => {
-            let _ = secondary::SecondaryEqualityValue::decode(data);
+            let _ = secondary_equality::SecondaryEqualityValue::decode(data);
         }
     }
 }
@@ -91,16 +173,16 @@ pub fn decode_current_secondary_record(selector: u8, data: &[u8]) {
 pub fn decode_current_search_record(selector: u8, data: &[u8]) {
     match selector % 11 {
         0 => {
-            let _ = text_index::decode_manifest(data);
+            let _ = manifest::decode(data);
         }
         1 => {
-            let _ = text_index::decode_version_counter(data);
+            let _ = version_counter::decode(data);
         }
         2 => {
-            let _ = text_index::decode_live_state(data);
+            let _ = live_state::decode(data);
         }
         3 => {
-            let _ = vectors::entry::decode_entry_candidate_layer(data);
+            let _ = vectors::entry_candidate::decode_entry_candidate_layer(data);
         }
         4 => {
             let _ = vectors::neighbors::decode_flat_neighbors(data);
@@ -118,7 +200,7 @@ pub fn decode_current_search_record(selector: u8, data: &[u8]) {
             let _ = vectors::decode_layer0_neighbors_and_simhash(data);
         }
         9 => {
-            let _ = vectors::markers::decode_active_txn_guard(data);
+            let _ = transaction_guard::decode_active_txn_guard(data);
         }
         _ => {
             let header_len = data.first().copied().map_or(0, usize::from);
@@ -155,6 +237,9 @@ mod tests {
             decode_current_index_v2_record(selector, b"malformed");
         }
         decode_current_index_v2_work(b"malformed");
+        for selector in 0..4 {
+            decode_current_index_v2_bitmap(selector, b"malformed");
+        }
         for selector in 0..2 {
             decode_current_secondary_record(selector, b"malformed");
         }
@@ -174,13 +259,19 @@ mod tests {
     #[test]
     fn checked_in_corpus_seeds_are_contract_valid() {
         let manifest = include_bytes!("../fuzz/corpus/current_search_records/text-manifest.json");
-        assert!(text_index::decode_manifest(&manifest[1..manifest.len() - 1]).is_ok());
+        assert!(crate::encoding::v2::legacy::text::manifest::decode(
+            &manifest[1..manifest.len() - 1]
+        )
+        .is_ok());
         let live = include_bytes!("../fuzz/corpus/current_search_records/text-live-state.json");
-        assert!(text_index::decode_live_state(&live[1..live.len() - 1]).is_ok());
+        assert!(live_state::decode(&live[1..live.len() - 1]).is_ok());
         let version = include_bytes!("../fuzz/corpus/current_search_records/text-version.json");
-        assert!(text_index::decode_version_counter(&version[1..version.len() - 1]).is_ok());
+        assert!(version_counter::decode(&version[1..version.len() - 1]).is_ok());
         let entry = include_bytes!("../fuzz/corpus/current_search_records/vector-entry.bin");
-        assert!(vectors::entry::decode_entry_candidate_layer(&entry[1..entry.len() - 1]).is_ok());
+        assert!(
+            vectors::entry_candidate::decode_entry_candidate_layer(&entry[1..entry.len() - 1])
+                .is_ok()
+        );
         let simhash = include_bytes!("../fuzz/corpus/current_search_records/vector-simhash.bin");
         assert!(vectors::simhash::decode_simhash(&simhash[1..simhash.len() - 1]).is_ok());
         let layer0 =
@@ -193,18 +284,37 @@ mod tests {
         let unscoped = hex_seed(include_bytes!(
             "../fuzz/corpus/current_index_v2_keys/valid-unscoped-operation"
         ));
-        assert!(Key::parse_from_slice(DataScope::LegacyUnscoped, &unscoped[1..]).is_ok());
+        assert!(
+            ManagedIndexKey::parse_from_slice(DataScope::LegacyUnscoped, &unscoped[1..]).is_ok()
+        );
 
         let tenant = hex_seed(include_bytes!(
             "../fuzz/corpus/current_index_v2_keys/valid-tenant-operation"
         ));
         let tenant_scope = DataScope::Tenant(TenantId::from_u128(u128::MAX));
-        assert!(Key::parse_from_slice(tenant_scope, &tenant[1..]).is_ok());
+        assert!(ManagedIndexKey::parse_from_slice(tenant_scope, &tenant[1..]).is_ok());
+
+        let bitmap = hex_seed(include_bytes!(
+            "../fuzz/corpus/current_index_v2_keys/valid-unscoped-v4-bitmap"
+        ));
+        assert!(ManagedIndexKey::parse_from_slice(DataScope::LegacyUnscoped, &bitmap[1..]).is_ok());
+        for corrupt in [
+            include_bytes!("../fuzz/corpus/current_index_v2_keys/v4-bitmap-digest-mismatch")
+                .as_slice(),
+            include_bytes!("../fuzz/corpus/current_index_v2_keys/v4-bitmap-length-mismatch")
+                .as_slice(),
+        ] {
+            let corrupt = hex_seed(corrupt);
+            assert!(
+                ManagedIndexKey::parse_from_slice(DataScope::LegacyUnscoped, &corrupt[1..])
+                    .is_err()
+            );
+        }
 
         let global = hex_seed(include_bytes!(
             "../fuzz/corpus/current_index_v2_keys/valid-global-storage-version"
         ));
-        assert!(GlobalIndexV2Key::parse_from_slice(&global[1..]).is_ok());
+        assert!(GlobalKey::parse_from_slice(&global[1..]).is_ok());
 
         let index = hex_seed(include_bytes!(
             "../fuzz/corpus/current_index_v2_records/valid-index-record"
@@ -213,25 +323,34 @@ mod tests {
         let operation = hex_seed(include_bytes!(
             "../fuzz/corpus/current_index_v2_records/valid-operation-record"
         ));
-        assert!(decode_operation_record(&operation[1..]).is_ok());
+        decode_operation_record(&operation[1..])
+            .expect("checked-in operation record reaches the current decoder");
         let metadata = hex_seed(include_bytes!(
             "../fuzz/corpus/current_index_v2_records/valid-storage-version"
         ));
         assert!(decode_metadata_value(&metadata[1..]).is_ok());
 
+        let delta = include_bytes!("../fuzz/corpus/current_index_v2_work/valid-coalesced-delta");
+        assert!(typed_work_value_is_valid(&hex_seed(delta)));
+    }
+
+    #[test]
+    fn checked_in_v4_bitmap_corpus_replays_valid_and_corrupt_boundaries() {
+        let valid = hex_seed(include_bytes!(
+            "../fuzz/corpus/current_index_v2_bitmap/valid-portable-empty"
+        ));
+        assert!(SecondaryEqualityBitmapValue::decode(&valid[1..]).is_ok());
+        let add = hex_seed(include_bytes!(
+            "../fuzz/corpus/current_index_v2_bitmap/valid-add-operand"
+        ));
+        decode_current_index_v2_bitmap(add[0], &add[1..]);
         for seed in [
-            include_bytes!("../fuzz/corpus/current_index_v2_work/valid-coalesced-delta").as_slice(),
-            include_bytes!("../fuzz/corpus/current_index_v2_work/valid-upload-prepared").as_slice(),
-            include_bytes!("../fuzz/corpus/current_index_v2_work/valid-active-mutation-proof")
-                .as_slice(),
-            include_bytes!("../fuzz/corpus/current_index_v2_work/valid-reachability-reference")
-                .as_slice(),
-            include_bytes!("../fuzz/corpus/current_index_v2_work/valid-gc-first-pass").as_slice(),
-            include_bytes!("../fuzz/corpus/current_index_v2_work/valid-gc-second-pass").as_slice(),
-            include_bytes!("../fuzz/corpus/current_index_v2_work/valid-gc-reachability-mark")
-                .as_slice(),
+            include_bytes!("../fuzz/corpus/current_index_v2_bitmap/truncated-portable").as_slice(),
+            include_bytes!("../fuzz/corpus/current_index_v2_bitmap/corrupt-roaring").as_slice(),
+            include_bytes!("../fuzz/corpus/current_index_v2_bitmap/malformed-operand").as_slice(),
         ] {
-            assert!(decode_work_value(&hex_seed(seed)).is_ok());
+            let seed = hex_seed(seed);
+            decode_current_index_v2_bitmap(seed[0], &seed[1..]);
         }
     }
 }

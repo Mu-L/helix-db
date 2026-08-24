@@ -115,7 +115,7 @@ mod tests {
     use std::num::NonZeroU64;
 
     use super::*;
-    use crate::encoding::keys::tenant::DataScope;
+    use crate::encoding::keys::scope::DataScope;
     use crate::search::vector::distance::{Cosine, Euclidean};
     use crate::search::vector::{VectorDimension, VectorGenerationIdentity, VectorMemoryStore};
 
@@ -129,7 +129,7 @@ mod tests {
                 40,
                 NonZeroU64::MIN,
                 1,
-                crate::index_v2::IndexElementKind::Node,
+                crate::index_lifecycle::IndexElementKind::Node,
                 VectorDimension::try_new(3).unwrap(),
             )
             .unwrap(),

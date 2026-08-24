@@ -183,10 +183,57 @@ Optional header toggles can be chained before choosing the query kind:
 
 `send()` is generic over the deserialized response type `R` and returns `Result<R, HelixError>`.
 `HelixError` distinguishes transport errors, non-success responses from the server (`RemoteError`),
-serialization failures, and invalid URLs. `RemoteError` preserves the HTTP
-`status_code` and raw `details`; when the server returns the stable
-`{"error":"...","msg":"..."}` envelope, `error_response` exposes both fields
-without parsing diagnostic text.
+serialization failures, and invalid URLs. Use `error.error_code()` to branch on a
+static code without parsing the diagnostic. See the canonical
+[query error-code reference](../../docs/database/helix-db/query-guides/error-handling.mdx).
+
+Remote errors expose the HTTP status, structured server fields, and decoded
+response body. Retry idempotent reads after rate limits or temporary server
+failures with backoff:
+
+```rust
+use helix_db::{Client, HelixError, QueryRequest};
+use serde_json::Value;
+use std::time::Duration;
+
+async fn send_read_with_retry(
+    client: &Client,
+    read_request: QueryRequest,
+) -> Result<Value, HelixError> {
+    for attempt in 0..3 {
+        match client.query(read_request.clone()).send().await {
+            Ok(response) => return Ok(response),
+            Err(error)
+                if attempt < 2
+                    && (error.is_rate_limited()
+                        || error
+                            .status_code()
+                            .is_some_and(|status| (500..600).contains(&status))) =>
+            {
+                tokio::time::sleep(Duration::from_millis(100 * (attempt + 1))).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!()
+}
+```
+
+For a write conflict, reload the current state before deciding whether to
+rebuild and resubmit the mutation. Blindly retrying a write after a server error
+can duplicate a mutation whose commit outcome is unknown:
+
+```rust
+if let Err(error) = client.query::<Value>(write_request).send().await {
+    if error.is_conflict() {
+        eprintln!("write conflict: {}", error.remote_message().unwrap_or("unknown"));
+    }
+}
+```
+
+Use `remote_code()`, `remote_message()`, and `remote_details()` for structured
+server errors. `raw_response_body()` remains available for unstructured or
+unrecognized responses.
 
 A successful warm read returns `204 No Content` with no query payload after at
 least one eligible backend succeeds. Chain `.writer_only().warm_only()` to warm
@@ -440,6 +487,50 @@ Multitenant behavior in the current Helix interpreter:
 - multitenant index + missing `tenant_value` on search => query error
 - multitenant index + unknown tenant => empty result set
 - write with vector present but missing tenant property => write error
+
+## Traversal-scoped text search
+
+Use `.text_search(...)` after a node or edge traversal to rank only the IDs in
+that current stream. This is an exact BM25 prefilter: results equal an
+exhaustive search of the selected tenant partition, intersected with the unique
+input IDs, followed by deterministic top-`k` selection.
+
+BM25 statistics still come from the full tenant partition.
+
+```rust
+read_batch()
+    .var_as(
+        "documents",
+        g()
+            .n_with_label("Document")
+            .where_(Predicate::eq("tenant_id", "acme"))
+            .text_search(
+                "Document",
+                "body",
+                "graph databases",
+                10,
+                Some(PropertyValue::from("acme")),
+            )
+            .project(vec![
+                PropertyProjection::renamed("$id", "id"),
+                PropertyProjection::renamed("$score", "score"),
+                PropertyProjection::new("title"),
+            ]),
+    )
+    .returning(["documents"]);
+```
+
+Use `.text_search_with(...)` for runtime `PropertyInput` and `StreamBound`
+values. The same method names work on edge streams. Source-level
+`text_search_nodes[_with]` and `text_search_edges[_with]` remain
+whole-partition searches.
+
+Restricted results contain unique input IDs, return at most `k`, and order by
+`$score` descending then entity ID ascending. The selected input row keeps its
+bindings, path, and sack. An empty input returns without opening the text
+index. A non-node/edge stream or more than 1,000,000 unique candidates is a
+query error. For a tenant-scoped index, pass the same tenant partition used to
+build the candidate stream.
 
 ## Edge-First Reads
 

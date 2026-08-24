@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TEMP_ROOT="$(mktemp -d "${TMPDIR:-/private/tmp}/helix-proper-db-production-coverage.XXXXXX")"
+TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/helix-proper-db-production-coverage.XXXXXX")"
 REPORT_PATH="$TEMP_ROOT/coverage.json"
 EXCLUSIONS_PATH="$ROOT/scripts/db-production-coverage-exclusions.json"
 DISPOSITIONS_PATH="$ROOT/scripts/db-production-coverage-dispositions.json"
@@ -56,7 +56,7 @@ jq -e '
     and .uncovered_non_vector_source_lines.classification == "test-required"
     and (.uncovered_non_vector_source_lines.reason | type == "string" and length > 0)
     and (.scopes | keys == [
-        "index_v2",
+        "index_lifecycle",
         "interpreter",
         "runtime_dependencies",
         "secondary_lifecycle",
@@ -82,7 +82,7 @@ TARGETS_JSON="$({
     | select(.kind | index("test"))
     | select(
         (.name | startswith("production_"))
-        or .name == "index_v2_lifecycle_contracts"
+        or .name == "index_lifecycle_contracts"
     )
     | select(((."required-features" // []) | index("production-scale")) | not)
     | .name
@@ -96,16 +96,20 @@ if [[ "${#TARGETS[@]}" -eq 0 ]]; then
     echo "db has no Cargo-discovered integration-test targets" >&2
     exit 1
 fi
+if ! jq -e 'index("index_lifecycle_contracts") != null' <<<"$TARGETS_JSON" >/dev/null; then
+    echo "db production coverage omitted index_lifecycle_contracts" >&2
+    exit 1
+fi
 
 (
     cd "$ROOT"
     COVERAGE_ARGS=(
         --quiet
         -p db
-        --features production-coverage,migration-parity,index-v2-lifecycle-testing
+        --features production-coverage,migration-parity,index-lifecycle-testing
         --json
         --output-path "$REPORT_PATH"
-        --ignore-filename-regex '(^|/)(tests|benches|examples)/|/(registry|rustc)/|/crates/db/src/index_v2_lifecycle_testing(/|\.rs$)'
+        --ignore-filename-regex '(^|/)(tests|benches|examples)/|/(registry|rustc)/|/crates/db/src/index_lifecycle_testing(/|\.rs$)'
     )
     for target in "${TARGETS[@]}"; do
         COVERAGE_ARGS+=(--test "$target")
@@ -135,8 +139,9 @@ UNCOVERED_NON_VECTOR_LINES="$(jq -r '
             and (
                 (
                     (.filename | contains("/crates/db/src/search/vector/"))
-                    or (.filename | contains("/crates/db/src/encoding/v1/keys/vectors.rs"))
-                    or (.filename | contains("/crates/db/src/encoding/v1/values/vectors/"))
+                    or (.filename | contains("/crates/db/src/encoding/v2/legacy/vector/"))
+                    or (.filename | contains("/crates/db/src/encoding/v2/keys/indexes/vector/"))
+                    or (.filename | contains("/crates/db/src/encoding/v2/values/indexes/vector/"))
                 )
                 | not
             )
@@ -313,27 +318,27 @@ jq \
             $db_files[]
             | select(.filename | endswith("/crates/db/src/runtime_dependencies.rs"))
         ]),
-        index_v2: file_line_metric([
+        index_lifecycle: file_line_metric([
             $db_files[]
-            | select(.filename | contains("/crates/db/src/index_v2/"))
+            | select(.filename | contains("/crates/db/src/index_lifecycle/"))
         ]),
         secondary_lifecycle: file_line_metric([
             $db_files[]
             | select(
-                (.filename | endswith("/crates/db/src/index_v2/secondary.rs"))
+                (.filename | endswith("/crates/db/src/index_lifecycle/secondary.rs"))
                 or (.filename | endswith("/crates/db/src/execution/interpreter/ddl/secondary.rs"))
             )
         ]),
         vector_lifecycle: file_line_metric([
             $db_files[]
             | select(
-                (.filename | contains("/crates/db/src/index_v2/vector/"))
-                or (.filename | endswith("/crates/db/src/index_v2/vector.rs"))
+                (.filename | contains("/crates/db/src/index_lifecycle/vector/"))
+                or (.filename | endswith("/crates/db/src/index_lifecycle/vector.rs"))
             )
         ]),
         text_lifecycle: file_line_metric([
             $db_files[]
-            | select(.filename | contains("/crates/db/src/index_v2/text/"))
+            | select(.filename | contains("/crates/db/src/index_lifecycle/text/"))
         ]),
         text_search: file_line_metric([
             $db_files[]

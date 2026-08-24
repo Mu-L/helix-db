@@ -12,19 +12,17 @@ writer or read-only handle against memory, disk, or S3-compatible object storage
 
 ## Install
 
-Install the forthcoming v3 SDK and its embedded runtime package. These package
-commands describe the upcoming release and are not expected to resolve before the
-v3 SDKs are published.
+Install the SDK and its embedded runtime package.
 
 {/* package-install: no JSON representation */}
 <CodeGroup>
 
 ```bash Rust
-cargo add helix-db@3.0.0 --features embedded
+cargo add helix-db --features embedded
 ```
 
 ```bash TypeScript
-npm install @helix-db/helix-db@3.0.0 @helix-db/uniffi
+npm install @helix-db/helix-db @helix-db/helix-db-embedded
 ```
 
 ```bash Go
@@ -116,16 +114,22 @@ const client = await Client.embedded({
 
 ## Configure caches
 
-Cache configuration is optional and fixed when the handle opens. Omit it to use these
-defaults:
+Cache configuration is optional and fixed when the handle opens. Local defaults are
+bounded and demand-filled so a small embedded database does not reserve server-sized
+caches:
 
-| Setting | Default |
-| --- | --- |
-| Profile | Memory |
-| Vector memory | 256 MiB, hydrated and refreshed in the background |
-| SlateDB | Default in-memory block and metadata caches, warmed in the background |
-| Full-text search | 64 MiB in-memory split cache, warmed in the background |
-| Disk cache | Disabled |
+| Setting | In-memory | Disk | Object storage |
+| --- | --- | --- | --- |
+| Durable-write flush interval | 1 ms | 3 ms | 100 ms |
+| Vector memory | 64 MiB | 64 MiB | 256 MiB |
+| SlateDB block / metadata | 16 MiB / 8 MiB | 48 MiB / 16 MiB | 512 MiB / 128 MiB |
+| Full-text search | 16 MiB | 16 MiB | 64 MiB |
+| SlateDB / FTS startup warming | Off | Off | Background |
+| Disk cache | Disabled | Disabled | Disabled |
+
+The local profiles also use a 16 MiB L0 target and a 64 MiB unflushed-data ceiling.
+The flush interval is the batching delay before storage I/O; filesystem and device
+latency still apply.
 
 Pass an explicit cache configuration to change the vector-memory budget or enable
 bounded disk caches:

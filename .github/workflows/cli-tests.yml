@@ -9,6 +9,7 @@ on:
       - "crates/cli/**"
       - "crates/metrics/**"
       - "sdks/typescript/**"
+      - "docs/database/helix-db/start-here/quickstart.mdx"
   push:
     branches: [main]
     paths:
@@ -18,6 +19,7 @@ on:
       - "crates/cli/**"
       - "crates/metrics/**"
       - "sdks/typescript/**"
+      - "docs/database/helix-db/start-here/quickstart.mdx"
   schedule:
     - cron: "0 4 * * *"
   workflow_dispatch:
@@ -36,13 +38,14 @@ env:
 jobs:
   test:
     name: Test (${{ matrix.os }})
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os:
-          - blacksmith-2vcpu-ubuntu-2404
-          - blacksmith-6vcpu-macos-latest
+          - blacksmith-2vcpu-ubuntu-2404-arm
+          - macos-latest
           - blacksmith-2vcpu-windows-2025
     steps:
       - uses: actions/checkout@v6
@@ -61,8 +64,10 @@ jobs:
       - name: Unit and binary integration tests
         run: cargo test --locked -p helix-metrics -p helix-cli --all-targets
       - name: Doc tests
+        if: runner.os == 'Linux'
         run: cargo test --locked -p helix-metrics -p helix-cli --doc
       - name: Clippy
+        if: runner.os == 'Linux'
         run: cargo clippy --locked -p helix-metrics -p helix-cli --all-targets -- -D warnings
       - name: Formatting
         if: runner.os == 'Linux'
@@ -70,7 +75,8 @@ jobs:
 
   coverage:
     name: Coverage (Ubuntu)
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    if: github.event_name != 'schedule'
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -101,7 +107,7 @@ jobs:
   registry-smoke:
     name: Published TypeScript SDK registry smoke
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6

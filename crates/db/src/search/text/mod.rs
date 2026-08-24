@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use slatedb::object_store::{
     path::Path as ObjectStorePath, ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload,
 };
-use tantivy::collector::TopDocs;
+use tantivy::collector::{FilterCollector, TopDocs};
 use tantivy::directory::RamDirectory;
 use tantivy::merge_policy::NoMergePolicy;
 use tantivy::query::{BooleanQuery, Occur, TermQuery};
@@ -35,13 +35,13 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::config::{TextAnalyzerKind, TextIndexDefinition};
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::property::decode_properties;
 use crate::encoding::property::property::Property;
 use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::{keys, EdgeId, NodeId};
 use crate::error::HelixDbError;
-use crate::index_v2::work::{self, SplitPruning};
+use crate::index_lifecycle::work::{self, SplitPruning};
 use crate::search::{
     get_edge_properties_by_id, make_text_index_live_state_key_scoped,
     make_text_index_manifest_key_scoped, make_text_index_manifest_prefix_scoped,
@@ -66,6 +66,9 @@ pub(crate) mod compaction;
 mod debug_proxy_directory;
 mod hot_directory;
 mod overlay_directory;
+#[cfg(feature = "production-coverage")]
+mod prefilter_benchmark;
+mod restricted;
 mod split;
 mod storage_directory;
 mod warmup;
@@ -75,6 +78,14 @@ pub(crate) use cache::{FtsCache, FtsCacheConfig, OpenedTextSplit};
 pub use cache::{FtsCacheStateSnapshot, FtsWarmSummary};
 use caching_directory::CachingDirectory;
 use hot_directory::HotDirectory;
+#[cfg(feature = "production-coverage")]
+pub use prefilter_benchmark::{
+    FtsPrefilterBenchmarkCase, FtsPrefilterBenchmarkFixture, FtsPrefilterBenchmarkLayout,
+    FtsPrefilterBenchmarkSample, FtsPrefilterBenchmarkStrategy,
+};
+pub(crate) use restricted::{
+    RestrictedTextCandidates, RestrictedTextCandidatesBuilder, TextSearchScope,
+};
 pub(crate) use split::{
     build_split_bundle, build_split_bundle_from_directory, decode_footer_cache_entry_bytes,
     open_split_directory_from_file, read_footer_cache_entry_from_file,
@@ -136,6 +147,19 @@ impl<'a> TextSearchRuntime<'a> {
             db_path,
             cache,
         }
+    }
+}
+
+/// Immutable query inputs for one restricted or unrestricted manifest search.
+pub(crate) struct TextSearchRequest<'a> {
+    query: &'a str,
+    k: usize,
+    scope: TextSearchScope,
+}
+
+impl<'a> TextSearchRequest<'a> {
+    pub(crate) const fn new(query: &'a str, k: usize, scope: TextSearchScope) -> Self {
+        Self { query, k, scope }
     }
 }
 
@@ -372,20 +396,8 @@ pub async fn load_all_manifests_scoped(
 }
 
 fn decode_manifest_bytes(bytes: &[u8]) -> Result<TextIndexGenerationManifest, HelixDbError> {
-    let manifest = serde_json::from_slice::<TextIndexGenerationManifest>(bytes)
-        .map_err(|err| HelixDbError::Config(format!("failed to decode text manifest: {err}")))?;
-    if manifest.format_version != TEXT_INDEX_MANIFEST_FORMAT_V2 {
-        return Err(HelixDbError::Config(format!(
-            "unsupported text manifest format version {}",
-            manifest.format_version
-        )));
-    }
-    if manifest.splits.is_empty() || manifest.splits.first() != Some(&manifest.split) {
-        return Err(HelixDbError::Config(
-            "text manifest must contain its primary split as the first split".into(),
-        ));
-    }
-    Ok(manifest)
+    crate::encoding::v2::legacy::text::manifest::decode(bytes)
+        .map_err(|error| HelixDbError::Config(error.to_string()))
 }
 
 pub async fn search_manifest(
@@ -448,9 +460,8 @@ pub async fn search_manifest_with_live_state_scoped(
             scope,
             index_name: &manifest.physical_index_name,
         },
-        query,
-        k,
         None,
+        TextSearchRequest::new(query, k, TextSearchScope::Unrestricted),
     )
     .await
 }
@@ -459,23 +470,21 @@ pub async fn search_manifest_with_live_state_scoped(
 ///
 /// The caller holds the matching blob reference guards across this future,
 /// including split footer/cache/blob I/O and every candidate state point read.
-pub(crate) async fn search_manifest_with_v2_live_state_scoped(
+pub(crate) async fn search_manifest_with_v2_live_state_scoped_and_scope(
     reader: &(impl DbReadOps + Send + Sync),
     runtime: TextSearchRuntime<'_>,
-    root: &crate::index_v2::text::serving::ValidatedActiveTextManifestRoot,
+    root: &crate::index_lifecycle::text::serving::ValidatedActiveTextManifestRoot,
     manifest: &TextIndexGenerationManifest,
-    query: &str,
-    k: usize,
-    statistics: &crate::index_v2::text::statistics::TextBm25Statistics,
+    statistics: &crate::index_lifecycle::text::statistics::TextBm25Statistics,
+    request: TextSearchRequest<'_>,
 ) -> Result<Vec<TextSearchHit>, HelixDbError> {
     search_manifest_with_state_source(
         reader,
         runtime,
         manifest,
         TextLiveStateSource::V2(root),
-        query,
-        k,
         Some(statistics),
+        request,
     )
     .await
 }
@@ -489,7 +498,7 @@ enum TextLiveStateSource<'a> {
         index_name: &'a str,
     },
     /// Generation-owned state under an exact Active V2 manifest root.
-    V2(&'a crate::index_v2::text::serving::ValidatedActiveTextManifestRoot),
+    V2(&'a crate::index_lifecycle::text::serving::ValidatedActiveTextManifestRoot),
 }
 
 /// Runs the common split search while keeping live-state ownership explicit.
@@ -498,13 +507,13 @@ async fn search_manifest_with_state_source(
     runtime: TextSearchRuntime<'_>,
     manifest: &TextIndexGenerationManifest,
     state_source: TextLiveStateSource<'_>,
-    query: &str,
-    k: usize,
-    statistics: Option<&crate::index_v2::text::statistics::TextBm25Statistics>,
+    statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
+    request: TextSearchRequest<'_>,
 ) -> Result<Vec<TextSearchHit>, HelixDbError> {
     const SPLIT_READ_CONCURRENCY: usize = 8;
     const STATE_BATCH_SIZE: usize = 512;
-    if k == 0 {
+    let TextSearchRequest { query, k, scope } = request;
+    if k == 0 || scope.is_empty_restricted() {
         return Ok(Vec::new());
     }
 
@@ -572,14 +581,16 @@ async fn search_manifest_with_state_source(
         }
 
         let analyzer = manifest.analyzer;
+        let scope = scope.clone();
         let searched = futures::stream::iter(selected)
             .map(|(index, split_reader, limit)| {
                 let query = query.to_owned();
                 let statistics = statistics.cloned();
+                let scope = scope.clone();
                 async move {
                     tokio::task::spawn_blocking(move || {
                         split_reader
-                            .search_candidates(analyzer, &query, limit, statistics.as_ref())
+                            .search_candidates(analyzer, &query, limit, statistics.as_ref(), &scope)
                             .map(|candidates| (index, limit, candidates))
                     })
                     .await
@@ -717,11 +728,12 @@ impl SplitSearchReader {
         analyzer: TextAnalyzerKind,
         query: &str,
         limit: usize,
-        statistics: Option<&crate::index_v2::text::statistics::TextBm25Statistics>,
+        statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
+        scope: &TextSearchScope,
     ) -> Result<Vec<TextSearchCandidate>, HelixDbError> {
         match self {
             Self::Cached(split) => {
-                split.search_candidates_with_statistics(analyzer, query, limit, statistics)
+                split.search_candidates_with_statistics(analyzer, query, limit, statistics, scope)
             }
             Self::Direct {
                 index,
@@ -730,7 +742,7 @@ impl SplitSearchReader {
             } => {
                 register_analyzers(index, analyzer);
                 search_reader_candidates_with_statistics(
-                    reader, *fields, analyzer, query, limit, statistics,
+                    reader, *fields, analyzer, query, limit, statistics, scope,
                 )
             }
         }
@@ -759,9 +771,10 @@ async fn load_text_live_states_batch(
             }
         }
         TextLiveStateSource::V2(root) => {
-            let states =
-                crate::index_v2::text::serving::load_active_entity_states(reader, root, entity_ids)
-                    .await?;
+            let states = crate::index_lifecycle::text::serving::load_active_entity_states(
+                reader, root, entity_ids,
+            )
+            .await?;
             live_states.extend(states.into_iter().map(|(entity_id, state)| {
                 (
                     entity_id,
@@ -1225,13 +1238,14 @@ pub fn manifest_blob_hashes(manifests: &[TextIndexGenerationManifest]) -> BTreeS
 }
 
 pub fn encode_live_state_bytes(state: &TextIndexLiveState) -> Result<Vec<u8>, HelixDbError> {
-    serde_json::to_vec(state)
-        .map_err(|err| HelixDbError::Config(format!("failed to encode text live-state: {err}")))
+    crate::encoding::v2::legacy::text::live_state::encode_for_retained_api(state)
+        .map(|bytes| bytes.to_vec())
+        .map_err(|error| HelixDbError::Config(error.to_string()))
 }
 
 pub fn decode_live_state_bytes(bytes: &[u8]) -> Result<TextIndexLiveState, HelixDbError> {
-    serde_json::from_slice(bytes)
-        .map_err(|err| HelixDbError::Config(format!("failed to decode text live-state row: {err}")))
+    crate::encoding::v2::legacy::text::live_state::decode(bytes)
+        .map_err(|error| HelixDbError::Config(error.to_string()))
 }
 
 pub(crate) async fn materialize_split_ref_to_file(
@@ -1452,6 +1466,7 @@ pub(crate) async fn warm_searcher(
         && warmup_info.fast_fields.is_empty()
         && !warmup_info.field_norms
         && warmup_info.term_dict_fields.is_empty()
+        && warmup_info.postings_full_fields.is_empty()
     {
         return Ok(());
     }
@@ -1538,7 +1553,7 @@ async fn warm_up_postings_full(
 ) -> Result<(), HelixDbError> {
     let mut warmup_futures: Vec<TextWarmupFuture> = Vec::new();
     for segment_reader in searcher.segment_readers() {
-        for field in &warmup_info.term_dict_fields {
+        for field in &warmup_info.postings_full_fields {
             let inverted_index = segment_reader.inverted_index(*field).map_err(|err| {
                 HelixDbError::Config(format!(
                     "failed to open inverted index for postings-full warmup: {err}"
@@ -1716,7 +1731,15 @@ pub(crate) fn search_reader_candidates(
     query: &str,
     k: usize,
 ) -> Result<Vec<TextSearchCandidate>, HelixDbError> {
-    search_reader_candidates_with_statistics(reader, fields, analyzer, query, k, None)
+    search_reader_candidates_with_statistics(
+        reader,
+        fields,
+        analyzer,
+        query,
+        k,
+        None,
+        &TextSearchScope::Unrestricted,
+    )
 }
 
 pub(crate) fn search_reader_candidates_with_statistics(
@@ -1725,7 +1748,8 @@ pub(crate) fn search_reader_candidates_with_statistics(
     analyzer: TextAnalyzerKind,
     query: &str,
     k: usize,
-    statistics: Option<&crate::index_v2::text::statistics::TextBm25Statistics>,
+    statistics: Option<&crate::index_lifecycle::text::statistics::TextBm25Statistics>,
+    scope: &TextSearchScope,
 ) -> Result<Vec<TextSearchCandidate>, HelixDbError> {
     let terms = analyze_query_terms(analyzer, query);
     if terms.is_empty() || k == 0 {
@@ -1785,11 +1809,27 @@ pub(crate) fn search_reader_candidates_with_statistics(
             (score.to_bits(), Reverse(entity_ids.get_val(doc)))
         }
     });
-    let docs = match statistics {
-        Some(statistics) => {
-            searcher.search_with_statistics_provider(&query, &collector, statistics)
+    let docs = match scope {
+        TextSearchScope::Restricted(candidates) => {
+            let candidates = Arc::clone(candidates);
+            let collector = FilterCollector::new(
+                ENTITY_ID_FIELD_NAME.to_owned(),
+                move |entity_id: u64| candidates.contains(entity_id),
+                collector,
+            );
+            match statistics {
+                Some(statistics) => {
+                    searcher.search_with_statistics_provider(&query, &collector, statistics)
+                }
+                None => searcher.search(&query, &collector),
+            }
         }
-        None => searcher.search(&query, &collector),
+        TextSearchScope::Unrestricted => match statistics {
+            Some(statistics) => {
+                searcher.search_with_statistics_provider(&query, &collector, statistics)
+            }
+            None => searcher.search(&query, &collector),
+        },
     }
     .map_err(|err| HelixDbError::Config(format!("failed to execute Tantivy search: {err}")))?;
 
@@ -1812,6 +1852,13 @@ pub(crate) fn search_reader_candidates_with_statistics(
         if entity_id != sort_entity_id {
             return Err(HelixDbError::InvariantViolation(
                 "text deterministic collector observed inconsistent entity IDs".to_string(),
+            ));
+        }
+        if let Some(candidates) = scope.candidates()
+            && !candidates.contains(entity_id)
+        {
+            return Err(HelixDbError::InvariantViolation(
+                "restricted text search returned an ID outside its exact bitmap".to_string(),
             ));
         }
         let logical_version = logical_version_columns
@@ -2153,8 +2200,9 @@ fn sha256_hex(sha256: [u8; 32]) -> String {
 mod tests {
     use super::*;
     use crate::config::{TextAnalyzerKind, TextIndexDefinition};
-    use crate::encoding::keys::tenant::TenantId;
+    use crate::encoding::keys::scope::TenantId;
     use crate::encoding::property::encode_properties;
+    use proptest::prelude::*;
     use slatedb::object_store::memory::InMemory;
     use std::sync::Arc;
 
@@ -2301,6 +2349,111 @@ mod tests {
         let hits = search_documents(&definition, &documents, "run", 10).expect("search");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].entity_id, 1);
+    }
+
+    #[test]
+    fn restricted_collector_matches_exhaustive_filtered_bm25_and_refills_to_k() {
+        let definition = TextIndexDefinition::new_node("Doc", "body").unwrap();
+        let documents = [
+            TextDocumentInput::new(1, "needle needle needle"),
+            TextDocumentInput::new(2, "needle needle"),
+            TextDocumentInput::new(3, "needle"),
+            TextDocumentInput::new(4, "needle filler filler"),
+            TextDocumentInput::new(5, "unrelated"),
+        ];
+        let (index, fields) = create_ram_index(&definition).unwrap();
+        populate_index(&index, fields, &documents).unwrap();
+        let reader = build_reader(&index).unwrap();
+        let candidates = Arc::new(RestrictedTextCandidates::from_ids([2, 3, 4, 4]).unwrap());
+        let scope = TextSearchScope::restricted(Arc::clone(&candidates));
+
+        let exhaustive = search_reader_candidates(
+            &reader,
+            fields,
+            definition.analyzer(),
+            "needle",
+            documents.len(),
+        )
+        .unwrap();
+        let oracle = exhaustive
+            .into_iter()
+            .filter(|hit| candidates.contains(hit.entity_id))
+            .take(3)
+            .collect::<Vec<_>>();
+        let restricted = search_reader_candidates_with_statistics(
+            &reader,
+            fields,
+            definition.analyzer(),
+            "needle",
+            3,
+            None,
+            &scope,
+        )
+        .unwrap();
+
+        assert_eq!(restricted, oracle);
+        assert_eq!(
+            restricted
+                .iter()
+                .map(|hit| hit.entity_id)
+                .collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn restricted_collector_property_matches_exhaustive_intersection_top_k(
+            term_counts in prop::collection::vec(1_usize..8, 1..24),
+            candidate_ids in prop::collection::vec(0_u64..32, 0..40),
+            requested_k in 1_usize..16,
+        ) {
+            let definition = TextIndexDefinition::new_node("Doc", "body").unwrap();
+            let documents = term_counts
+                .iter()
+                .enumerate()
+                .map(|(entity_id, count)| {
+                    TextDocumentInput::new(
+                        u64::try_from(entity_id).unwrap(),
+                        std::iter::repeat_n("needle", *count).collect::<Vec<_>>().join(" "),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let (index, fields) = create_ram_index(&definition).unwrap();
+            populate_index(&index, fields, &documents).unwrap();
+            let reader = build_reader(&index).unwrap();
+            let candidates = Arc::new(
+                RestrictedTextCandidates::from_ids(candidate_ids).unwrap(),
+            );
+            let scope = TextSearchScope::restricted(Arc::clone(&candidates));
+
+            let oracle = search_reader_candidates(
+                &reader,
+                fields,
+                definition.analyzer(),
+                "needle",
+                documents.len(),
+            )
+            .unwrap()
+            .into_iter()
+            .filter(|hit| candidates.contains(hit.entity_id))
+            .take(requested_k)
+            .collect::<Vec<_>>();
+            let restricted = search_reader_candidates_with_statistics(
+                &reader,
+                fields,
+                definition.analyzer(),
+                "needle",
+                requested_k,
+                None,
+                &scope,
+            )
+            .unwrap();
+
+            prop_assert_eq!(restricted, oracle);
+        }
     }
 
     #[test]
@@ -2756,6 +2909,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restricted_live_state_search_refills_past_stale_version_in_same_split() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let db = Db::builder("restricted-text-same-split-refill", Arc::clone(&store))
+            .build()
+            .await
+            .unwrap();
+        let definition = TextIndexDefinition::new_node("Doc", "body").unwrap();
+        let index_name = resolve_physical_index_name(&definition, None).unwrap();
+        let manifest = persist_documents_as_manifest(
+            &store,
+            "restricted-text-same-split-refill",
+            &definition,
+            &index_name,
+            &[
+                TextDocumentInput::new(1, "needle").with_logical_version(1),
+                TextDocumentInput::new(1, "needle padding padding padding padding")
+                    .with_logical_version(2),
+            ],
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        let transaction = db.begin(IsolationLevel::Snapshot).await.unwrap();
+        transaction
+            .put(
+                make_text_index_live_state_key_scoped(DataScope::LegacyUnscoped, &index_name, 1),
+                Bytes::from(encode_live_state_bytes(&TextIndexLiveState::live(2)).unwrap()),
+            )
+            .unwrap();
+        transaction.commit().await.unwrap();
+
+        let candidates = Arc::new(RestrictedTextCandidates::from_ids([1]).unwrap());
+        let hits = search_manifest_with_state_source(
+            &db,
+            TextSearchRuntime::new(&store, "restricted-text-same-split-refill", None),
+            &manifest,
+            TextLiveStateSource::Legacy {
+                scope: DataScope::LegacyUnscoped,
+                index_name: &index_name,
+            },
+            None,
+            TextSearchRequest::new(
+                "needle",
+                1,
+                TextSearchScope::restricted(Arc::clone(&candidates)),
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            hits.into_iter()
+                .map(|hit| hit.entity_id)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+    }
+
+    #[tokio::test]
     async fn blob_uploads_are_idempotent_and_copy_content_addressed_objects() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let referenced = upload_blob(&store, "/source/", b"referenced")
@@ -2795,7 +3008,7 @@ mod tests {
         let tx = db.begin(IsolationLevel::Snapshot).await.unwrap();
         tx.put(Bytes::from_static(&[0x02]), Bytes::new()).unwrap();
         tx.put(
-            keys::Key::Data {
+            keys::DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(1)),
             }
@@ -2807,7 +3020,7 @@ mod tests {
         )
         .unwrap();
         tx.put(
-            keys::Key::Data {
+            keys::DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(2)),
             }
@@ -2855,7 +3068,7 @@ mod tests {
 
         let tx = db.begin(IsolationLevel::Snapshot).await.unwrap();
         tx.put(
-            keys::Key::Data {
+            keys::DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(3)),
             }

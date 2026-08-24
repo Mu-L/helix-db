@@ -181,7 +181,7 @@ async fn ready_vector_dispatch_covers_all_metrics_and_typed_element_results() {
                 .await;
             }
         }
-        db.refresh_runtime_catalog(crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped)
+        db.refresh_runtime_catalog(crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped)
             .await
             .unwrap();
         let index_name =
@@ -231,7 +231,7 @@ async fn ready_vector_dispatch_covers_all_metrics_and_typed_element_results() {
     )
     .await;
     edge_db
-        .refresh_runtime_catalog(crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped)
+        .refresh_runtime_catalog(crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped)
         .await
         .unwrap();
     let edge_index_name =
@@ -458,7 +458,7 @@ async fn ready_text_dispatch_returns_managed_node_and_edge_hits() {
     )
     .await;
     node_db
-        .refresh_runtime_catalog(crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped)
+        .refresh_runtime_catalog(crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped)
         .await
         .unwrap();
     let node_index_name = search::text_index_name(config::TextElementType::Node, "Doc", "body");
@@ -508,7 +508,7 @@ async fn ready_text_dispatch_returns_managed_node_and_edge_hits() {
     )
     .await;
     edge_db
-        .refresh_runtime_catalog(crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped)
+        .refresh_runtime_catalog(crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped)
         .await
         .unwrap();
     let edge_index_name =
@@ -596,22 +596,18 @@ async fn text_dispatch_reports_missing_definition_and_manifest_corruption() {
         )],
     )
     .await;
-    db.refresh_runtime_catalog(crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped)
+    db.refresh_runtime_catalog(crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped)
         .await
         .unwrap();
-    let root_key = crate::encoding::v1::keys::Key::Data {
-        scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-        kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-            crate::encoding::v1::keys::index_v2::IndexV2Key::TextManifestRoot(root),
-        ),
+    let root_key = crate::encoding::v2::keys::ManagedIndexKey::Data {
+        scope: crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
+        kind: crate::encoding::v2::keys::ScopedKey::TextManifestRoot(root),
     }
     .to_bytes();
-    let page_key = crate::encoding::v1::keys::Key::Data {
-        scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-        kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-            crate::encoding::v1::keys::index_v2::IndexV2Key::TextManifestPage(
-                crate::encoding::v1::keys::index_v2::TextManifestPageKey { root, page: 0 },
-            ),
+    let page_key = crate::encoding::v2::keys::ManagedIndexKey::Data {
+        scope: crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
+        kind: crate::encoding::v2::keys::ScopedKey::TextManifestPage(
+            crate::encoding::v2::keys::TextManifestPageKey { root, page: 0 },
         ),
     }
     .to_bytes();
@@ -674,12 +670,12 @@ async fn text_dispatch_reports_missing_definition_and_manifest_corruption() {
         .put(&page_key, original_page)
         .await
         .expect("valid manifest page restores");
-    let partition = crate::index_v2::work::TextPartition::Unpartitioned;
-    let mismatched_root = crate::index_v2::work::TextManifestRootValue::try_new(
+    let partition = crate::index_lifecycle::work::TextPartition::Unpartitioned;
+    let mismatched_root = crate::index_lifecycle::work::TextManifestRootValue::try_new(
         root.index_id,
         root.generation,
         partition,
-        crate::index_v2::TextManifestRevision::new(2)
+        crate::index_lifecycle::TextManifestRevision::new(2)
             .expect("one prepared page advances the root revision"),
         1,
         2,
@@ -688,11 +684,7 @@ async fn text_dispatch_reports_missing_definition_and_manifest_corruption() {
     db.inner_db()
         .put(
             &root_key,
-            crate::encoding::v1::values::index_v2::encode_work_value(
-                &crate::encoding::v1::values::index_v2::IndexV2WorkValue::TextManifestRoot(
-                    mismatched_root,
-                ),
-            ),
+            crate::encoding::v2::values::encode_manifest_root(&mismatched_root),
         )
         .await
         .expect("mismatched manifest root writes");
@@ -717,36 +709,33 @@ async fn text_dispatch_returns_empty_for_an_absent_managed_tenant_partition() {
     let db = HelixDB::open_with_process_local_token_for_tests(token)
         .await
         .unwrap();
-    let index_id = crate::index_v2::IndexId::initial();
-    let generation = crate::index_v2::IndexGenerationId::initial();
-    let validated = crate::index_v2::ValidatedTextIndexDefinition::try_from_runtime(&definition)
-        .expect("tenant text definition validates");
-    let record = crate::index_v2::IndexRecordV2::building(
+    let index_id = crate::index_lifecycle::IndexId::initial();
+    let generation = crate::index_lifecycle::IndexGenerationId::initial();
+    let validated =
+        crate::index_lifecycle::ValidatedTextIndexDefinition::try_from_runtime(&definition)
+            .expect("tenant text definition validates");
+    let record = crate::index_lifecycle::IndexRecordV2::building(
         index_id,
-        crate::index_v2::ValidatedDynamicIndexDefinition::Text(validated),
-        crate::index_v2::IndexRevision::initial(),
-        crate::index_v2::PhysicalGeneration::Text { generation },
-        crate::index_v2::IndexOperationId::new_v4(),
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Text(validated),
+        crate::index_lifecycle::IndexRevision::initial(),
+        crate::index_lifecycle::PhysicalGeneration::Text { generation },
+        crate::index_lifecycle::IndexOperationId::new_v4(),
     )
     .expect("tenant text record starts building")
-    .transition(crate::index_v2::IndexStateTransition::Activate)
+    .transition(crate::index_lifecycle::IndexStateTransition::Activate)
     .expect("tenant text record activates");
     db.inner_db()
         .put(
-            crate::encoding::v1::keys::Key::Data {
-                scope: crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
-                kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-                    crate::encoding::v1::keys::index_v2::IndexV2Key::index_record(
-                        record.identity().clone(),
-                    ),
-                ),
+            crate::encoding::v2::keys::ManagedIndexKey::Data {
+                scope: crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
+                kind: crate::encoding::v2::keys::ScopedKey::index_record(record.identity().clone()),
             }
             .to_bytes(),
-            crate::encoding::v1::values::index_v2::encode_index_record(&record),
+            crate::encoding::v2::values::encode_index_record(&record),
         )
         .await
         .expect("active tenant text record writes");
-    db.refresh_runtime_catalog(crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped)
+    db.refresh_runtime_catalog(crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped)
         .await
         .expect("active tenant text definition refreshes");
     let index_name = search::text_index_name(config::TextElementType::Node, "Doc", "body");

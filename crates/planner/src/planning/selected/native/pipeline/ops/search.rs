@@ -1,4 +1,4 @@
-//! Downstream vector-search pipeline recognition.
+//! Downstream search pipeline recognition.
 
 use helix_ast::traversal::AstNode;
 
@@ -10,6 +10,80 @@ pub(super) fn pipeline_op_from_ast<'a>(
     root: &'a AstNode,
 ) -> Result<NativePipelineOpMatch<'a>, error::PlannerError> {
     Ok(match root {
+        AstNode::TextSearchNodesWithin {
+            input,
+            label,
+            property,
+            tenant_value,
+            query_text,
+            k,
+        } => {
+            let search = planning::search::node_text_search(
+                &ctx.indexes,
+                label,
+                property,
+                tenant_value.as_ref(),
+                query_text,
+                k,
+            )?;
+            let ir::NodeAccessPlan::TextSearch {
+                key,
+                index,
+                query_text,
+                k,
+            } = search.plan
+            else {
+                unreachable!("node text-search builder returned another access family")
+            };
+            NativePipelineOpMatch::Op(NativePipelineOp::new(
+                input,
+                logical::StreamPipelineOp::TextSearch {
+                    plan: Box::new(ir::RestrictedTextSearchPlan::Nodes {
+                        key,
+                        index,
+                        query_text,
+                        k,
+                    }),
+                },
+            ))
+        }
+        AstNode::TextSearchEdgesWithin {
+            input,
+            label,
+            property,
+            tenant_value,
+            query_text,
+            k,
+        } => {
+            let search = planning::search::edge_text_search(
+                &ctx.indexes,
+                label,
+                property,
+                tenant_value.as_ref(),
+                query_text,
+                k,
+            )?;
+            let ir::EdgeAccessPlan::TextSearch {
+                key,
+                index,
+                query_text,
+                k,
+            } = search.plan
+            else {
+                unreachable!("edge text-search builder returned another access family")
+            };
+            NativePipelineOpMatch::Op(NativePipelineOp::new(
+                input,
+                logical::StreamPipelineOp::TextSearch {
+                    plan: Box::new(ir::RestrictedTextSearchPlan::Edges {
+                        key,
+                        index,
+                        query_text,
+                        k,
+                    }),
+                },
+            ))
+        }
         AstNode::VectorSearchNodesWithin {
             input,
             label,

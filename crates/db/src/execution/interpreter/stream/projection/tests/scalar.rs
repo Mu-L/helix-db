@@ -29,17 +29,13 @@ fn scalar_projection_contract_preserves_terminal_only_shapes() {
 }
 
 #[test]
-fn scalar_projection_count_exists_and_ids_are_terminal_item_aware() {
+fn scalar_projection_exists_and_ids_are_terminal_item_aware() {
     let scalar_ids = ExecutionValue::Scalars(vec![
         ExecutionScalar::NodeId(1),
         ExecutionScalar::Value(DbPropertyValue::I64(9)),
         ExecutionScalar::EdgeId(2),
     ]);
 
-    assert_eq!(
-        project_scalar_items(scalar_ids.clone(), &ir::ProjectionPlan::Count).unwrap(),
-        ExecutionValue::Count(3)
-    );
     assert_eq!(
         project_scalar_items(scalar_ids.clone(), &ir::ProjectionPlan::Exists).unwrap(),
         ExecutionValue::Bool(true)
@@ -78,10 +74,11 @@ async fn project_dispatches_scalar_inputs_to_terminal_projection() {
 async fn project_rejects_index_lifecycle_values() {
     let db = test_support::open_db("projection-index-lifecycle").await;
     let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
-    let lifecycle =
-        ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-            operation_id: crate::index_v2::IndexOperationId::from_bytes([7; 16]).unwrap(),
-        });
+    let lifecycle = ExecutionValue::IndexDdlReceipt(
+        crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+            operation_id: crate::index_lifecycle::IndexOperationId::from_bytes([7; 16]).unwrap(),
+        },
+    );
 
     let error = ctx
         .project(lifecycle, &ir::ProjectionPlan::Id)

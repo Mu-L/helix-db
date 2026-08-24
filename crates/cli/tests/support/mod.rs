@@ -92,6 +92,17 @@ impl CliFixture {
     }
 
     #[allow(dead_code)]
+    pub fn with_fake_tools_named(mut self, tools: &[&str]) -> Self {
+        let directory = self.root.join("tools");
+        fs::create_dir_all(&directory).expect("create fake tool directory");
+        for tool in tools {
+            install_fake_tool(&directory, tool);
+        }
+        self.test_tool_dir = Some(directory);
+        self
+    }
+
+    #[allow(dead_code)]
     pub fn write_credentials(&self, user_id: &str, api_key: &str) {
         let directory = &self.helix_home;
         fs::create_dir_all(directory).expect("create credentials directory");
@@ -204,7 +215,7 @@ if defined HELIX_TEST_TOOL_FAIL_COMMAND if "%HELIX_TEST_TOOL_FIRST_ARGUMENT%"=="
 )
 if "{tool}"=="npm" if "%1"=="install" (
   mkdir "node_modules\@helix-db\helix-db\dist" 2>nul
-  >"node_modules\@helix-db\helix-db\package.json" echo {{"name":"@helix-db/helix-db","version":"3.0.0","type":"module","exports":"./dist/index.js"}}
+  >"node_modules\@helix-db\helix-db\package.json" echo {{"name":"@helix-db/helix-db","version":"3.0.4","type":"module","exports":"./dist/index.js"}}
   >"node_modules\@helix-db\helix-db\dist\index.js" echo export const g = ^(^) =^> ({{}}^); export const readBatch = ^(^) =^> ({{}}^); export const writeBatch = ^(^) =^> ({{}}^);
 )
 if "{tool}"=="cargo" if "%1"=="run" (
@@ -243,7 +254,7 @@ if [ "$1" = "$HELIX_TEST_TOOL_FAIL_COMMAND" ]; then
 fi
 if [ '{tool}' = 'npm' ] && [ "$1" = 'install' ]; then
   mkdir -p 'node_modules/@helix-db/helix-db/dist'
-  printf '%s\n' '{{"name":"@helix-db/helix-db","version":"3.0.0","type":"module","exports":"./dist/index.js"}}' > 'node_modules/@helix-db/helix-db/package.json'
+  printf '%s\n' '{{"name":"@helix-db/helix-db","version":"3.0.4","type":"module","exports":"./dist/index.js"}}' > 'node_modules/@helix-db/helix-db/package.json'
   printf '%s\n' 'export const g = () => ({{}}); export const readBatch = () => ({{}}); export const writeBatch = () => ({{}});' > 'node_modules/@helix-db/helix-db/dist/index.js'
 fi
 if [ '{tool}' = 'cargo' ] && [ "$1" = 'run' ]; then
@@ -304,6 +315,23 @@ if "%1"=="network" (
   exit /b 1
 )
 if "%1"=="volume" (
+  if "%HELIX_TEST_RUNTIME_VOLUME_MODE%"=="existing" exit /b 0
+  if "%HELIX_TEST_RUNTIME_VOLUME_MODE%"=="raced" (
+    if "%2"=="create" (
+      echo volume already exists 1>&2
+      exit /b 1
+    )
+    echo not found 1>&2
+    exit /b 1
+  )
+  if "%HELIX_TEST_RUNTIME_VOLUME_MODE%"=="denied" (
+    if "%2"=="create" (
+      echo permission denied 1>&2
+      exit /b 1
+    )
+    echo not found 1>&2
+    exit /b 1
+  )
   if "%2"=="create" exit /b 0
   if "%HELIX_TEST_RUNTIME_RESOURCES_EXIST%"=="1" exit /b 0
   echo not found 1>&2
@@ -345,12 +373,46 @@ case "$1" in
     echo "No such container" >&2
     exit 1
     ;;
-  network|volume)
+  network)
     if [ "$2" = "create" ] || [ "$HELIX_TEST_RUNTIME_RESOURCES_EXIST" = "1" ]; then
       exit 0
     fi
     echo "not found" >&2
     exit 1
+    ;;
+  volume)
+    case "${HELIX_TEST_RUNTIME_VOLUME_MODE:-fresh}" in
+      existing)
+        # inspect succeeds, so ensure_volume returns before ever creating
+        exit 0
+        ;;
+      raced)
+        # inspect misses, create loses the race to another process
+        if [ "$2" = "create" ]; then
+          echo "volume already exists" >&2
+          exit 1
+        fi
+        echo "not found" >&2
+        exit 1
+        ;;
+      denied)
+        # inspect misses, create fails for an unrelated reason
+        if [ "$2" = "create" ]; then
+          echo "permission denied" >&2
+          exit 1
+        fi
+        echo "not found" >&2
+        exit 1
+        ;;
+      *)
+        # fresh: inspect misses, create succeeds
+        if [ "$2" = "create" ] || [ "$HELIX_TEST_RUNTIME_RESOURCES_EXIST" = "1" ]; then
+          exit 0
+        fi
+        echo "not found" >&2
+        exit 1
+        ;;
+    esac
     ;;
   *) exit 0 ;;
 esac

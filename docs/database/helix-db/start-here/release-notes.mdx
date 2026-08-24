@@ -11,6 +11,30 @@ pageType: "Reference"
 > For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
 
 <Update
+  label="August 2026"
+  rss={{
+    title: "Go SDK v0.3.1 and asynchronous Python SDK client",
+    description: "The Go server SDK and reusable asynchronous Python clients"
+  }}
+>
+- **[Go SDK v0.3.1](/database/helix-db/start-here/sdk-setup/go-project-setup)** — operation-tree query construction, typed parameters, `/v2/query` execution, index lifecycle requests, and traversal-scoped vector and BM25 search. Upgrade from v0.3.0: this patch keeps unreleased embedded adapters out of public module discovery. Embedded execution and native graph bindings are not distributed in this release.
+- **[Python async client](/database/helix-db/start-here/sdk-setup/python-project-setup#async-execution)** — `helix-db` 0.3.3 adds reusable HTTPX connection pooling, concurrent requests, cancellation-safe response cleanup, and asynchronous embedded writer and reader clients.
+</Update>
+
+<Update
+  label="July 2026"
+  rss={{
+    title: "HelixDB is now open source",
+    description: "Open-source HelixDB, a new query planner, embedded execution, and vector prefiltering"
+  }}
+>
+- **Open-source database** — the engine moved out of `helix-hyperscale` into the public, modular `helix-db` workspace.
+- **New query planner** — a dedicated logical and physical planning layer optimizes the typed operation-tree AST before execution.
+- **[Embedded database](/database/helix-db/start-here/local-development/embedded-database)** — run the same engine and queries in process with memory, disk, or object storage.
+- **[Vector prefiltering](/database/helix-db/query-guides/filtering#vector-prefiltering)** — traverse and filter an exact candidate set before vector ranking, so results cannot escape graph or permission boundaries.
+</Update>
+
+<Update
   label="June 2026"
   rss={{
     title: "Row bindings, Python SDK, and CLI improvements",

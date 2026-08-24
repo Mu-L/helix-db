@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
+use std::sync::Arc;
 
 use futures::future;
 
@@ -128,15 +129,18 @@ impl<'db> ExecutionContext<'db> {
             tenant_scope: self.tenant_scope,
             params: self.params.shallow_snapshot(),
             variables: self.variables.shallow_snapshot(),
+            variable_return_shapes: Arc::clone(&self.variable_return_shapes),
             step_outputs,
             step_output_uses,
-            request_read_view: self.clone_parallel_request_read_view(),
+            request_read_scope: self.clone_parallel_request_read_scope(),
             request_write_scope: runtime_context::RequestWriteScopeState::Disabled,
             pending_catalog_freshness: runtime_context::PendingCatalogFreshness::Consumed,
             row_mode_max_rows: self.row_mode_max_rows,
             execution_control: self.execution_control,
             #[cfg(test)]
             projection_reads: std::sync::Arc::clone(&self.projection_reads),
+            #[cfg(test)]
+            deadline_checks_remaining: std::sync::atomic::AtomicUsize::new(usize::MAX),
         })
     }
 
@@ -260,6 +264,7 @@ fn is_parallel_isolated_step(step: &exec::ExecStep) -> bool {
                 | exec::ExecOp::KvRead(_)
                 | exec::ExecOp::Expand { .. }
                 | exec::ExecOp::VectorSearch { .. }
+                | exec::ExecOp::TextSearch { .. }
                 | exec::ExecOp::Filter { .. }
                 | exec::ExecOp::Limit { .. }
                 | exec::ExecOp::Skip { .. }

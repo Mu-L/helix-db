@@ -11,11 +11,11 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::time::Duration;
 
 use db::config::{DbConfig, SearchIndexBackfillLimits, SearchIndexBatchLimits, VectorElementType};
-use db::encoding::v1::keys::tenant::DataScope;
+use db::encoding::v2::keys::scope::DataScope;
 use db::execution::interpreter::{
     ElementRef, ExecutionResult, ExecutionRow, ExecutionScalar, ExecutionValue,
 };
-use db::index_v2::{IndexDdlReceipt, IndexOperationBlockerCode, IndexOperationStatus};
+use db::index_lifecycle::{IndexDdlReceipt, IndexOperationBlockerCode, IndexOperationStatus};
 use db::search::{vector::VectorDistanceMetric, vector_index_name};
 use db::{HelixDB, HelixDbSource, ProcessLocalDatabaseToken};
 use helix_ast::batch;
@@ -36,6 +36,7 @@ fn step(id: usize, dependencies: Vec<exec::ExecStepId>, op: exec::ExecOp) -> exe
         id: exec::ExecStepId::new(id).expect("fixture step ids are positive"),
         dependencies,
         output: ir::BatchOutputPlan::Discard,
+        semantic_return_shape: None,
         condition: exec::ExecCondition::Always,
         op,
         schedule: exec::ExecSchedule::Pipeline,
@@ -534,7 +535,7 @@ async fn execute_ddl_to_success(db: &HelixDB, plan: &exec::ExecutablePlan) {
         loop {
             match db
                 .get_index_operation(
-                    db::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
+                    db::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
                     operation_id,
                 )
                 .await
@@ -554,7 +555,7 @@ async fn execute_ddl_to_success(db: &HelixDB, plan: &exec::ExecutablePlan) {
     .expect("fixture DDL worker should converge");
     db.planner_context_scoped(
         context::ParamBindings::default(),
-        db::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
+        db::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
     )
     .await
     .expect("terminal DDL is visible through a refreshed planner catalog");
@@ -1018,7 +1019,7 @@ fn record_public_rejection<T>(
 /// Waits for a public DDL operation to reach any terminal state.
 async fn wait_for_terminal(
     db: &HelixDB,
-    operation_id: db::index_v2::IndexOperationId,
+    operation_id: db::index_lifecycle::IndexOperationId,
 ) -> IndexOperationStatus {
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
@@ -1041,7 +1042,7 @@ async fn wait_for_terminal(
 }
 
 /// Extracts one accepted or resumed DDL operation ID.
-fn accepted_operation_id(result: ExecutionResult) -> db::index_v2::IndexOperationId {
+fn accepted_operation_id(result: ExecutionResult) -> db::index_lifecycle::IndexOperationId {
     let Some(ExecutionValue::IndexDdlReceipt(receipt)) = result.last else {
         panic!("vector lifecycle DDL returns one receipt");
     };
@@ -1065,7 +1066,7 @@ enum ExpectedVectorTerminal {
 /// Waits for one exact public vector operation state.
 async fn wait_for_expected(
     db: &HelixDB,
-    operation_id: db::index_v2::IndexOperationId,
+    operation_id: db::index_lifecycle::IndexOperationId,
     expected: ExpectedVectorTerminal,
 ) -> IndexOperationStatus {
     tokio::time::timeout(Duration::from_secs(30), async {

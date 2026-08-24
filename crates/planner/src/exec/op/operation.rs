@@ -13,6 +13,11 @@ pub enum ExecOp {
         /// Access plan.
         plan: Box<ExecAccessPlan>,
     },
+    /// Exact physical cardinality program.
+    Count {
+        /// Planner-selected count algorithm.
+        plan: Box<super::super::ExecCountPlan>,
+    },
     /// KV read.
     KvRead(KvReadPlan),
     /// Graph expansion.
@@ -21,6 +26,11 @@ pub enum ExecOp {
     VectorSearch {
         /// Node- or edge-bound vector search plan.
         plan: Box<ir::RestrictedVectorSearchPlan>,
+    },
+    /// BM25 ranking restricted to the input rows.
+    TextSearch {
+        /// Node- or edge-bound text search plan.
+        plan: Box<ir::RestrictedTextSearchPlan>,
     },
     /// Residual predicate filter.
     Filter { predicate: ir::PredicatePlan },

@@ -335,9 +335,23 @@ pub enum ExecutionValue {
     /// Scalar terminal rows.
     Scalars(Vec<ExecutionScalar>),
     /// One bindable CREATE/DROP receipt.
-    IndexDdlReceipt(crate::index_v2::IndexDdlReceipt),
+    IndexDdlReceipt(crate::index_lifecycle::IndexDdlReceipt),
     /// One bindable lifecycle operation status.
-    IndexOperationStatus(crate::index_v2::IndexOperationStatus),
+    IndexOperationStatus(crate::index_lifecycle::IndexOperationStatus),
+}
+
+/// Normalized value for one declared query return.
+///
+/// Empty collection and object results are distinct variants so response
+/// serialization cannot lose the planner-inferred shape.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReturnedValue {
+    /// Preserve the existing serialization for a present value.
+    Present(ExecutionValue),
+    /// Serialize an empty collection as `[]`.
+    EmptyList,
+    /// Serialize an absent at-most-one value as `null`.
+    EmptyObject,
 }
 
 /// Runtime ownership for a value retained by interpreter state.
@@ -539,7 +553,7 @@ pub struct ExecutionResult {
     /// Values bound by batch outputs and variable operations.
     pub variables: BTreeMap<ir::NonEmptyString, ExecutionValue>,
     /// Requested return values, keyed by the planner return list.
-    pub returns: BTreeMap<ir::NonEmptyString, ExecutionValue>,
+    pub returns: BTreeMap<ir::NonEmptyString, ReturnedValue>,
 }
 
 #[cfg(test)]
@@ -571,9 +585,12 @@ mod tests {
             2
         );
         assert_eq!(
-            ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-                operation_id: crate::index_v2::IndexOperationId::from_bytes([7; 16]).unwrap(),
-            })
+            ExecutionValue::IndexDdlReceipt(
+                crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+                    operation_id: crate::index_lifecycle::IndexOperationId::from_bytes([7; 16])
+                        .unwrap(),
+                }
+            )
             .len(),
             1
         );

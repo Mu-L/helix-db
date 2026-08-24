@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from io import BytesIO
 import sys
 import types
 import unittest
+from io import BytesIO
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -16,11 +17,24 @@ from helixdb import (
     HybridCache,
     InMemory,
     MemoryCache,
+    QueryBuilder,
+    QueryExecutionRequest,
     QueryRequest,
     g,
     read_batch,
     write_batch,
 )
+
+
+def public_api_members(type_: type) -> set[str]:
+    """Return methods and properties that form a class's named public API."""
+
+    return {
+        name
+        for name, member in vars(type_).items()
+        if not name.startswith("_")
+        and (callable(member) or isinstance(member, (classmethod, staticmethod, property)))
+    }
 
 
 class FakeResponse:
@@ -46,13 +60,33 @@ class FakeNativeHandle:
     def __init__(self) -> None:
         self.requests: list[bytes] = []
         self.closed = False
+        self.gate: asyncio.Event | None = None
+        self.active = 0
+        self.max_active = 0
+        self.error: Exception | None = None
 
     async def query_json(self, body: bytes) -> bytes:
         self.requests.append(bytes(body))
-        return b'{"users":0}'
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            if self.gate is not None:
+                await self.gate.wait()
+            if self.error is not None:
+                raise self.error
+            return b'{"users":0}'
+        finally:
+            self.active -= 1
 
     async def close(self) -> None:
         self.closed = True
+
+
+class FakeNativeError(Exception):
+    def __init__(self, error: str, msg: str) -> None:
+        super().__init__(msg)
+        self.error = error
+        self.msg = msg
 
 
 class FakeNativeDB:
@@ -133,6 +167,71 @@ def fake_native_module() -> types.SimpleNamespace:
 
 
 class ClientTests(unittest.TestCase):
+    def test_public_client_api_is_explicitly_accounted_for(self) -> None:
+        self.assertEqual(
+            public_api_members(Client),
+            {
+                "server",
+                "embedded",
+                "embedded_reader",
+                "with_api_key",
+                "request_builder",
+                "query",
+                "base_url",
+                "execute",
+                "graph",
+                "close",
+            },
+        )
+        self.assertEqual(
+            public_api_members(QueryBuilder),
+            {"writer_only", "warm_only", "should_await_durability", "query"},
+        )
+        self.assertEqual(public_api_members(QueryExecutionRequest), {"send_bytes", "send"})
+
+    def test_server_convenience_methods_and_raw_response(self) -> None:
+        request = QueryRequest.read(read_batch())
+        calls = []
+
+        def fake_urlopen(req):
+            calls.append(req)
+            return FakeResponse()
+
+        client = Client.server("http://127.0.0.1:6969/base", api_key="first")
+        self.assertEqual(client.base_url, "http://127.0.0.1:6969/base")
+        first_request = client.query().query(request)
+        self.assertIs(client.with_api_key("second"), client)
+
+        with patch("helixdb.client.urlopen", fake_urlopen):
+            self.assertEqual(first_request.send_bytes(), b'{"ok":true}')
+            self.assertEqual(
+                client.execute(
+                    request,
+                    writer_only=True,
+                    warm_only=True,
+                    await_durability=True,
+                ),
+                {"ok": True},
+            )
+        client.close()
+
+        self.assertEqual(calls[0].headers["Authorization"], "Bearer first")
+        self.assertEqual(calls[0].full_url, "http://127.0.0.1:6969/v2/query")
+        self.assertEqual(calls[1].headers["Authorization"], "Bearer second")
+        self.assertEqual(calls[1].headers["X-helix-require-writer"], "true")
+        self.assertEqual(calls[1].headers["X-helix-warm"], "true")
+        self.assertEqual(calls[1].headers["X-helix-await-durable"], "true")
+
+    def test_graph_delegates_to_graph_loader(self) -> None:
+        client = Client.server()
+        selection = object()
+        loaded = object()
+
+        with patch("helixdb.graph.load_graph", return_value=loaded) as load_graph:
+            self.assertIs(client.graph(selection), loaded)
+
+        load_graph.assert_called_once_with(client, selection)
+
     def test_query_posts_query_with_headers(self) -> None:
         request = QueryRequest.read(
             read_batch().var_as("count", g().n_with_label("User").count()).returning(["count"])
@@ -177,42 +276,60 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(ctx.exception.kind, "Remote")
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(ctx.exception.details, "conflict")
+        self.assertIsNone(ctx.exception.code)
 
-    def test_remote_error_exposes_structured_response(self) -> None:
+    def test_remote_error_parses_new_legacy_future_missing_and_malformed_bodies(self) -> None:
         request = QueryRequest.read(read_batch())
-        body = b'{"error":"query_timeout","msg":"query exceeded its wall-clock limit"}'
+        cases = [
+            (
+                b'{"error":"index_not_found","msg":"missing index"}',
+                "index_not_found",
+                "missing index",
+            ),
+            (
+                b'{"error":"legacy message","code":"index_not_found"}',
+                "index_not_found",
+                "legacy message",
+            ),
+            (b'{"error":"future_code","msg":"future message"}', "future_code", "future message"),
+            (b'{"error":"message without code"}', None, "message without code"),
+            (b"not JSON", None, "not JSON"),
+        ]
 
-        def fake_urlopen(req):
-            raise HTTPError(req.full_url, 408, "Request Timeout", hdrs={}, fp=BytesIO(body))
-
-        with patch("helixdb.client.urlopen", fake_urlopen):
-            with self.assertRaises(HelixError) as ctx:
-                Client("http://127.0.0.1:6969").query(request)
-
-        self.assertEqual(ctx.exception.status_code, 408)
-        self.assertEqual(ctx.exception.details, body.decode())
-        self.assertIsNotNone(ctx.exception.error_response)
-        self.assertEqual(ctx.exception.error_response.error, "query_timeout")
-        self.assertEqual(
-            ctx.exception.error_response.msg,
-            "query exceeded its wall-clock limit",
-        )
-
-    def test_remote_error_preserves_unstructured_response(self) -> None:
-        request = QueryRequest.read(read_batch())
-
-        for body in (b"upstream unavailable", b'{"error":"query_timeout"}'):
+        for body, expected_code, expected_details in cases:
             with self.subTest(body=body):
 
-                def fake_urlopen(req):
-                    raise HTTPError(req.full_url, 502, "Bad Gateway", hdrs={}, fp=BytesIO(body))
+                def fake_urlopen(req, response_body=body):
+                    raise HTTPError(
+                        req.full_url,
+                        500,
+                        "Internal Server Error",
+                        hdrs={},
+                        fp=BytesIO(response_body),
+                    )
 
                 with patch("helixdb.client.urlopen", fake_urlopen):
                     with self.assertRaises(HelixError) as ctx:
                         Client("http://127.0.0.1:6969").query(request)
 
-                self.assertEqual(ctx.exception.details, body.decode())
-                self.assertIsNone(ctx.exception.error_response)
+                self.assertEqual(ctx.exception.code, expected_code)
+                self.assertEqual(ctx.exception.details, expected_details)
+
+    def test_embedded_error_preserves_uniffi_code_and_message_fields(self) -> None:
+        request = QueryRequest.read(read_batch())
+
+        with patch.dict(sys.modules, {"helixdb_uniffi": fake_native_module()}):
+            client = Client.embedded(InMemory("py-sdk-embedded-error"))
+            FakeNativeDB.handle.error = FakeNativeError(
+                "index_not_found",
+                "missing text index",
+            )
+            with self.assertRaises(HelixError) as ctx:
+                client.query(request)
+
+        self.assertEqual(ctx.exception.kind, "Embedded")
+        self.assertEqual(ctx.exception.code, "index_not_found")
+        self.assertEqual(ctx.exception.details, "missing text index")
 
     def test_embedded_client_query_uses_native_handle(self) -> None:
         request = QueryRequest.read(
@@ -226,7 +343,10 @@ class ClientTests(unittest.TestCase):
 
         self.assertEqual(result, {"users": 0})
         self.assertEqual(FakeNativeDB.opened, [("IN_MEMORY", {"database": "py-sdk-embedded"})])
-        self.assertEqual(json.loads(FakeNativeDB.handle.requests[0].decode("utf-8"))["request_type"], "read")
+        self.assertEqual(
+            json.loads(FakeNativeDB.handle.requests[0].decode("utf-8"))["request_type"],
+            "read",
+        )
         self.assertTrue(FakeNativeDB.handle.closed)
 
     def test_embedded_reader_uses_native_open_reader(self) -> None:
@@ -288,7 +408,9 @@ class ClientTests(unittest.TestCase):
 
     def test_embedded_execute_rejects_server_options(self) -> None:
         request = QueryRequest.write(
-            write_batch().var_as("created", g().add_n("User", {"name": "Ada"})).returning(["created"])
+            write_batch()
+            .var_as("created", g().add_n("User", {"name": "Ada"}))
+            .returning(["created"])
         )
 
         with patch.dict(sys.modules, {"helixdb_uniffi": fake_native_module()}):
@@ -297,7 +419,10 @@ class ClientTests(unittest.TestCase):
                 client.execute(request, writer_only=True)
 
         self.assertEqual(ctx.exception.kind, "InvalidRequest")
-        self.assertIn("embedded mode does not support execute option(s): writer_only", str(ctx.exception))
+        self.assertIn(
+            "embedded mode does not support execute option(s): writer_only",
+            str(ctx.exception),
+        )
 
 
 if __name__ == "__main__":

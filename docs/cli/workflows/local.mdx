@@ -1,6 +1,6 @@
 ---
 title: "Local Development"
-description: "Run a local v2 instance and iterate on dynamic JSON queries"
+description: "Run a local instance and iterate on dynamic JSON queries"
 icon: "computer"
 pageType: "Guide"
 ---
@@ -9,12 +9,14 @@ pageType: "Guide"
 
 > For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
 
-Local development runs the prebuilt `ghcr.io/helixdb/helixdb:v0.0.3` container and exposes the standalone server at `POST /v2/query`. By default, storage is in-memory. Use `--disk` when you want persistent local data backed by a CLI-managed MinIO volume.
+Local development runs the prebuilt `ghcr.io/helixdb/helixdb:v0.0.4` container and exposes the standalone server at `POST /v2/query`. By default, storage is in-memory. Use `--disk` when you want persistent local data backed by a CLI-managed MinIO volume.
 
 ## Prerequisites
 
 - **Docker** or **Podman** on `PATH`.
-- The Helix CLI: `curl -sSL "https://install.helix-db.com" | bash`.
+- The Helix CLI:
+  - macOS and Linux: `curl -sSL "https://install.helix-db.com" | bash`.
+  - Windows PowerShell: `irm https://raw.githubusercontent.com/HelixDB/helix-db/main/crates/cli/install.ps1 | iex`.
 
 ## Initial setup
 
@@ -42,7 +44,7 @@ Use the manual flow below when you want to scaffold and run each step yourself.
     helix start dev
     ```
 
-    Starts a background container named `helix-my-helix-app-dev` on port `6969`. The CLI waits until the gateway accepts `POST /v2/query` before returning.
+    Starts a background container named `helix-my-helix-app-dev` on port `6969`. The CLI waits for `GET /healthz` to report ready before returning.
 
     For attached log streaming use `helix start dev --foreground` and stop with Ctrl-C.
 

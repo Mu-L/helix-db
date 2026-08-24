@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::config::{TextBackfillCompactionLimits, TextIndexDefinition};
 use crate::error::HelixDbError;
-use crate::index_v2::work::SplitPruning;
+use crate::index_lifecycle::work::SplitPruning;
 
 use super::materialize_split_ref_to_file;
 use super::overlay_directory::OverlayDirectory;

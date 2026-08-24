@@ -9,11 +9,11 @@ use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
 use db::config::{DbConfig, SearchIndexBackfillLimits, SearchIndexBatchLimits, TextElementType};
-use db::encoding::v1::keys::tenant::DataScope;
+use db::encoding::v2::keys::scope::DataScope;
 use db::execution::interpreter::{
     ElementRef, ExecutionResult, ExecutionRow, ExecutionScalar, ExecutionValue,
 };
-use db::index_v2::{IndexDdlReceipt, IndexOperationId, IndexOperationStatus};
+use db::index_lifecycle::{IndexDdlReceipt, IndexOperationId, IndexOperationStatus};
 use db::search::text_index_name;
 use db::{HelixDB, HelixDbSource, ProcessLocalDatabaseToken};
 use helix_ast::expr::Expr;
@@ -241,7 +241,7 @@ impl TextMachine {
                 execute_ddl_to_success(&self.db, &text_drop_plan(LABEL, PROPERTY)).await;
                 self.model.active = false;
                 assert!(self.search("textmodelalpha").await.is_err());
-                db::production_coverage::index_v2_text_dropped_row_contracts(&self.db).await;
+                db::production_coverage::index_lifecycle_text_dropped_row_contracts(&self.db).await;
             }
             TextAction::Recreate => {
                 assert!(!self.model.active, "model recreate starts from Dropped");
@@ -290,7 +290,7 @@ impl TextMachine {
 
     /// Cross-checks all settled text rows against the current model membership.
     async fn assert_steady_rows(&self) {
-        db::production_coverage::index_v2_text_steady_state_contracts(
+        db::production_coverage::index_lifecycle_text_steady_state_contracts(
             &self.db,
             self.model.entities.len(),
         )
@@ -325,7 +325,7 @@ impl TextMachine {
         assert_eq!(retried.common().progress, blocked_progress);
         wait_for_terminal(&self.db, operation_id, ExpectedTerminal::Succeeded).await;
         execute_ddl_to_success(&self.db, &text_drop_plan(limited_label, PROPERTY)).await;
-        db::production_coverage::index_v2_text_dropped_row_contracts(&self.db).await;
+        db::production_coverage::index_lifecycle_text_dropped_row_contracts(&self.db).await;
     }
 
     /// Proves abort reuses one blocked build and removes its complete row graph.
@@ -340,7 +340,7 @@ impl TextMachine {
             .await
             .expect("blocked text build enters abort cleanup");
         wait_for_terminal(&self.db, operation_id, ExpectedTerminal::Aborted).await;
-        db::production_coverage::index_v2_text_dropped_row_contracts(&self.db).await;
+        db::production_coverage::index_lifecycle_text_dropped_row_contracts(&self.db).await;
     }
 }
 
@@ -355,6 +355,7 @@ fn step(id: usize, dependencies: Vec<exec::ExecStepId>, op: exec::ExecOp) -> exe
         id: exec::ExecStepId::new(id).expect("fixture step IDs are positive"),
         dependencies,
         output: ir::BatchOutputPlan::Discard,
+        semantic_return_shape: None,
         condition: exec::ExecCondition::Always,
         op,
         schedule: exec::ExecSchedule::Pipeline,

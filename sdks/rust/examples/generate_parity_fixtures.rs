@@ -126,7 +126,7 @@ async fn execute_embedded_fixtures(
                 Ok(response) => break response,
                 // Embedded errors preserve retry classification in their DB
                 // details even though the SDK error surface is transport-neutral.
-                Err(HelixError::EmbeddedError { details })
+                Err(HelixError::EmbeddedError { details, .. })
                     if details.contains("Transaction error: transaction conflict")
                         && attempt + 1 < TRANSACTION_CONFLICT_ATTEMPTS =>
                 {
@@ -334,9 +334,11 @@ fn assert_complete_fixture_coverage(coverage: &FixtureCoverage) {
             "VectorSearchNodes",
             "VectorSearchNodesWithin",
             "TextSearchNodes",
+            "TextSearchNodesWithin",
             "VectorSearchEdges",
             "VectorSearchEdgesWithin",
             "TextSearchEdges",
+            "TextSearchEdgesWithin",
             "Out",
             "In",
             "Both",
@@ -681,6 +683,21 @@ fn visit_ast_node(node: &AstNode, coverage: &mut FixtureCoverage) {
             visit_property_input(query_text, coverage);
             visit_stream_bound(k, coverage);
         }
+        AstNode::TextSearchNodesWithin {
+            input,
+            tenant_value,
+            query_text,
+            k,
+            ..
+        } => {
+            coverage.ast_nodes.insert("TextSearchNodesWithin");
+            visit_ast_node(input, coverage);
+            if let Some(value) = tenant_value {
+                visit_property_input(value, coverage);
+            }
+            visit_property_input(query_text, coverage);
+            visit_stream_bound(k, coverage);
+        }
         AstNode::VectorSearchEdges {
             tenant_value,
             query_vector,
@@ -716,6 +733,21 @@ fn visit_ast_node(node: &AstNode, coverage: &mut FixtureCoverage) {
             ..
         } => {
             coverage.ast_nodes.insert("TextSearchEdges");
+            if let Some(value) = tenant_value {
+                visit_property_input(value, coverage);
+            }
+            visit_property_input(query_text, coverage);
+            visit_stream_bound(k, coverage);
+        }
+        AstNode::TextSearchEdgesWithin {
+            input,
+            tenant_value,
+            query_text,
+            k,
+            ..
+        } => {
+            coverage.ast_nodes.insert("TextSearchEdgesWithin");
+            visit_ast_node(input, coverage);
             if let Some(value) = tenant_value {
                 visit_property_input(value, coverage);
             }
@@ -2345,7 +2377,20 @@ fn runtime_fixtures() -> Vec<Fixture> {
                             vec![("note", PropertyInput::from("dropitemedge"))],
                         ),
                     )
-                    .returning(["source", "target", "edge"]),
+                    .var_as(
+                        "source_values",
+                        g().n(NodeRef::var("source"))
+                            .values(vec!["externalId", "bio"]),
+                    )
+                    .var_as(
+                        "target_values",
+                        g().n(NodeRef::var("target")).values(vec!["externalId"]),
+                    )
+                    .var_as(
+                        "edge_values",
+                        g().e(EdgeRef::var("edge")).values(vec!["note"]),
+                    )
+                    .returning(["source_values", "target_values", "edge_values"]),
             ),
         ),
         runtime(
@@ -3251,6 +3296,17 @@ fn remaining_read_contract_fixture() -> Fixture {
                 g().text_search_edges("FOLLOWS", "note", "graph", 5usize, None)
                     .edge_properties(),
             )
+            .var_as(
+                "text_nodes_within",
+                g().n_with_label("ParityUser")
+                    .text_search("ParityUser", "bio", "graph", 5, None),
+            )
+            .var_as(
+                "text_edges_within",
+                g().e(EdgeRef::all())
+                    .has_label("FOLLOWS")
+                    .text_search("FOLLOWS", "note", "graph", 5, None),
+            )
             .var_as_if(
                 "previous",
                 BatchCondition::PrevNotEmpty,
@@ -3306,6 +3362,8 @@ fn remaining_read_contract_fixture() -> Fixture {
                 "vector_nodes_within",
                 "vector_edges_within",
                 "text_edges",
+                "text_nodes_within",
+                "text_edges_within",
                 "previous",
                 "not_empty",
                 "empty",

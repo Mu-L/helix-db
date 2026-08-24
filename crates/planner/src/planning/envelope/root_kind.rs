@@ -22,6 +22,8 @@ pub(super) fn ast_root_kind(root: &AstNode) -> &'static str {
         AstNode::TextSearchEdges { .. } => "text_search_edges",
         AstNode::VectorSearchNodesWithin { .. } => "vector_search_nodes_within",
         AstNode::VectorSearchEdgesWithin { .. } => "vector_search_edges_within",
+        AstNode::TextSearchNodesWithin { .. } => "text_search_nodes_within",
+        AstNode::TextSearchEdgesWithin { .. } => "text_search_edges_within",
         AstNode::Out { .. } => "out",
         AstNode::In { .. } => "in",
         AstNode::Both { .. } => "both",

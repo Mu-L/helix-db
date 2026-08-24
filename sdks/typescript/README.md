@@ -63,7 +63,11 @@ succeeds. Chain `writerOnly()` before `warmOnly()` to warm only the
 authoritative writer. Warm writes return `400 Bad Request` before execution.
 A standalone local warm read can return its normal query payload instead.
 
-Embedded mode uses the generated `@helix-db/uniffi` package:
+Embedded mode uses `@helix-db/helix-db-embedded`:
+
+```sh
+npm install @helix-db/helix-db @helix-db/helix-db-embedded
+```
 
 ```ts
 const client = await Client.embedded({ kind: "inMemory", database: "app" });
@@ -88,11 +92,58 @@ const client = await Client.embedded(
 `Client.embeddedReader(...)` opens an existing disk or object-storage database
 read-only. Server request options are rejected in embedded mode.
 
+Set `HELIXDB_EMBEDDED_NODE_PACKAGE` to load a compatible native package from a
+different module specifier. The former `HELIXDB_UNIFFI_NODE_PACKAGE` name
+remains supported as a deprecated compatibility alias.
+
 `HelixError.kind` distinguishes `Network`, `Remote`, `Serialization`,
 `InvalidUrl`, `InvalidRequest`, `EmbeddedUnavailable`, and `Embedded` failures.
-Remote errors expose `statusCode`, retain the raw response in `details`, and
-populate `errorResponse` when the server returns the stable
-`{"error":"...","msg":"..."}` envelope.
+`HelixError.code` preserves the static server or embedded code separately from
+`details`. See the canonical
+[query error-code reference](../../docs/database/helix-db/query-guides/error-handling.mdx).
+
+Remote errors expose `statusCode`, `code`, `serverMessage`, `serverDetails`, and
+the decoded response `rawBody`. Retry idempotent reads after rate limits or
+temporary server failures with backoff:
+
+```ts
+import { Client, HelixError, QueryRequest } from "@helix-db/helix-db";
+
+const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function sendReadWithRetry<T>(client: Client, readRequest: QueryRequest): Promise<T> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await client.query<T>(readRequest).send();
+    } catch (error) {
+      const retryable =
+        error instanceof HelixError &&
+        (error.isRateLimited() || (error.statusCode !== undefined && error.statusCode >= 500 && error.statusCode < 600));
+      if (!retryable || attempt === 2) throw error;
+      await sleep(100 * (attempt + 1));
+    }
+  }
+  throw new Error("unreachable");
+}
+```
+
+For write conflicts, reload the current state before rebuilding the mutation.
+Do not blindly retry writes after server errors because the commit may have
+succeeded before the response failed:
+
+```ts
+try {
+  await client.query(writeRequest).send();
+} catch (error) {
+  if (error instanceof HelixError && error.isConflict()) {
+    console.error("write conflict", error.serverMessage);
+  }
+}
+```
+
+Validation and authentication failures should be handled directly rather than
+retried. `rawBody` retains the decoded response text before message fallbacks;
+`details` preserves the previous fallback behavior.
 
 ## Parameter Schemas
 
@@ -125,6 +176,51 @@ g()
   .nWithLabel("User")
   .where(Predicate.eq("email", Expr.param("email")));
 ```
+
+## Traversal-scoped text search
+
+Use `textSearch(...)` after a node or edge traversal to rank only the IDs in
+that current stream. This is an exact BM25 prefilter, not a post-search limit:
+the result is the same as searching the selected tenant partition exhaustively,
+intersecting with the unique input IDs, and taking the deterministic top `k`.
+
+BM25 statistics still come from the full tenant partition.
+
+```ts
+import { Expr, Predicate, PropertyInput, PropertyProjection, defineParams, g, param, readBatch } from "@helix-db/helix-db";
+
+const searchParams = defineParams({
+  tenantId: param.string(),
+  query: param.string(),
+  limit: param.i64(),
+});
+
+function searchVisibleDocuments(p = searchParams) {
+  return readBatch()
+    .varAs(
+      "documents",
+      g()
+        .nWithLabel("Document")
+        .where(Predicate.eq("tenantId", p.tenantId))
+        .textSearchWith("Document", "body", PropertyInput.param("query"), Expr.param("limit"), PropertyInput.param("tenantId"))
+        .project([PropertyProjection.renamed("$id", "id"), PropertyProjection.renamed("$score", "score"), PropertyProjection.new("title")]),
+    )
+    .returning(["documents"]);
+}
+```
+
+Use the literal form as
+`.textSearch("Document", "body", "graph databases", 10, "acme")`.
+The same `textSearch` and `textSearchWith` methods work on edge streams and
+emit `TextSearchEdgesWithin`. Source-level `textSearchNodes[With]` and
+`textSearchEdges[With]` remain whole-partition searches.
+
+Restricted results contain unique input IDs, return at most `k`, and order by
+`$score` descending then entity ID ascending. The selected input row keeps its
+bindings, path, and sack. An empty input returns without opening the text
+index. More than 1,000,000 unique candidates is a query error. For a
+tenant-scoped index, pass the same tenant partition used to build the candidate
+stream.
 
 ## Row Bindings
 

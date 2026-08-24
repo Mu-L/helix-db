@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use crate::index_v2::{
+use crate::index_lifecycle::{
     ValidatedDynamicIndexDefinition, ValidatedSecondaryIndexDefinition,
     ValidatedTextIndexDefinition, ValidatedVectorIndexDefinition,
 };

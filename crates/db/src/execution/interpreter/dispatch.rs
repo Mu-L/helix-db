@@ -41,11 +41,19 @@ impl<'db> ExecutionContext<'db> {
         let execution_control = self.execution_control;
         let value = match op {
             exec::ExecOp::Access { plan } => execution_control.run(self.execute_access(plan)).await,
+            exec::ExecOp::Count { plan } => {
+                execution_control.run(self.execute_count(input, plan)).await
+            }
             exec::ExecOp::KvRead(read) => execution_control.run(self.execute_kv_read(read)).await,
             exec::ExecOp::Expand { plan } => execution_control.run(self.expand(input, plan)).await,
             exec::ExecOp::VectorSearch { plan } => {
                 execution_control
                     .run(self.restricted_vector_search(input, plan))
+                    .await
+            }
+            exec::ExecOp::TextSearch { plan } => {
+                execution_control
+                    .run(self.restricted_text_search(input, plan))
                     .await
             }
             exec::ExecOp::Filter { predicate } => {
@@ -423,13 +431,13 @@ mod tests {
             crate::search::vector::distance::Cosine,
         >(
             crate::search::vector::VectorGenerationIdentity::try_new(
-                crate::encoding::v1::keys::tenant::DataScope::LegacyUnscoped,
+                crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
                 901,
                 "dispatch-active-vector-flush-barrier".to_string(),
                 902,
                 std::num::NonZeroU64::MIN,
                 1,
-                crate::index_v2::IndexElementKind::Node,
+                crate::index_lifecycle::IndexElementKind::Node,
                 crate::search::vector::VectorDimension::try_new(4).unwrap(),
             )
             .unwrap(),

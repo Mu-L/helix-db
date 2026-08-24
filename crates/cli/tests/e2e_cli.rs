@@ -6,6 +6,8 @@ use std::fs;
 use toml::Value as TomlValue;
 
 use support::{free_port, CliFixture};
+use wiremock::matchers::{body_json, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn stdout(assert: Assert) -> String {
     String::from_utf8(assert.get_output().stdout.clone()).expect("stdout should be utf8")
@@ -93,9 +95,9 @@ fn init_and_add_generate_expected_project_files() {
     );
     assert_eq!(
         config["local"]["dev"]["image"].as_str(),
-        Some("ghcr.io/helixdb/enterprise-dev")
+        Some("ghcr.io/helixdb/helixdb")
     );
-    assert_eq!(config["local"]["dev"]["tag"].as_str(), Some("latest"));
+    assert_eq!(config["local"]["dev"]["tag"].as_str(), Some("v0.0.4"));
 
     let gitignore = fs::read_to_string(project.join(".gitignore")).unwrap();
     assert!(gitignore.lines().any(|line| line == ".helix/"));
@@ -125,6 +127,118 @@ fn init_and_add_generate_expected_project_files() {
         Some(qa_port.into())
     );
     assert_eq!(config["local"]["qa"]["storage"].as_str(), Some("disk"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn documented_quickstart_runs_against_an_isolated_fixture() {
+    const QUICKSTART: &str =
+        include_str!("../../../docs/database/helix-db/start-here/quickstart.mdx");
+    let documented_commands: Vec<&str> = QUICKSTART
+        .lines()
+        .filter(|line| line.starts_with("helix "))
+        .collect();
+    assert_eq!(
+        documented_commands,
+        [
+            "helix init local",
+            "helix start dev",
+            "helix query dev --file examples/request.json",
+            "helix stop dev",
+        ]
+    );
+    assert!(QUICKSTART.contains("- A terminal on macOS or Linux, or PowerShell on Windows"));
+    assert!(QUICKSTART.contains(
+        "irm https://raw.githubusercontent.com/HelixDB/helix-db/main/crates/cli/install.ps1 | iex"
+    ));
+    assert!(QUICKSTART.contains("container_runtime = \"podman\""));
+    for obsolete_claim in [
+        "--lang",
+        "helix start local",
+        "queries.rs",
+        "helix dashboard",
+    ] {
+        assert!(!QUICKSTART.contains(obsolete_claim), "{obsolete_claim}");
+    }
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let fixture = CliFixture::new_with_fake_runtime();
+    let project = fixture.root().join("quickstart-project");
+    fs::create_dir_all(&project).unwrap();
+
+    fixture
+        .command()
+        .current_dir(&project)
+        .args(["init", "local"])
+        .assert()
+        .success();
+
+    for generated_path in [
+        "helix.toml",
+        ".helix",
+        ".gitignore",
+        "AGENTS.md",
+        "examples/request.json",
+    ] {
+        assert!(project.join(generated_path).exists(), "{generated_path}");
+    }
+
+    let config_path = project.join("helix.toml");
+    let config = fs::read_to_string(&config_path).unwrap();
+    assert!(config.contains("[local.dev]"));
+    assert!(config.contains("port = 6969"));
+    fs::write(
+        &config_path,
+        config.replacen(
+            "port = 6969",
+            &format!("port = {}", server.address().port()),
+            1,
+        ),
+    )
+    .unwrap();
+
+    let request: JsonValue =
+        serde_json::from_str(&fs::read_to_string(project.join("examples/request.json")).unwrap())
+            .unwrap();
+    Mock::given(method("POST"))
+        .and(path("/v2/query"))
+        .and(body_json(&request))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "node_count": 0
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    fixture
+        .command()
+        .current_dir(&project)
+        .args(["start", "dev"])
+        .assert()
+        .success();
+
+    let query = stdout(
+        fixture
+            .command()
+            .current_dir(&project)
+            .args(["query", "dev", "--file", "examples/request.json"])
+            .assert()
+            .success(),
+    );
+    assert!(query.contains("\"node_count\": 0"), "{query}");
+
+    fixture
+        .command()
+        .current_dir(&project)
+        .args(["stop", "dev"])
+        .env("HELIX_TEST_RUNTIME_RESOURCES_EXIST", "1")
+        .assert()
+        .success();
 }
 
 #[test]
@@ -560,4 +674,92 @@ gateway_url = "https://staging.example.com"
         );
         assert!(error.contains("No local instance specified"), "{error}");
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disk_start_reuses_an_existing_volume_without_creating_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let fixture = CliFixture::new_with_fake_runtime();
+    let project = fixture.root().join("existing-volume-project");
+    fixture
+        .command()
+        .args(["init", "--path"])
+        .arg(&project)
+        .args(["local", "--port"])
+        .arg(server.address().port().to_string())
+        .args(["--disk", "--no-skills"])
+        .assert()
+        .success();
+
+    fixture
+        .command()
+        .current_dir(&project)
+        .args(["start", "dev"])
+        .env("HELIX_TEST_RUNTIME_VOLUME_MODE", "existing")
+        .assert()
+        .success();
+
+    // an existing volume is inspected and reused, never re-created.
+    let log = fixture.runtime_log();
+    assert!(log.contains("volume inspect"), "{log}");
+    assert!(!log.contains("volume create"), "{log}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disk_start_tolerates_the_volume_create_race_but_surfaces_real_errors() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    // raced: inspect misses, create loses to another process, start still succeeds.
+    let raced = CliFixture::new_with_fake_runtime();
+    let raced_project = raced.root().join("raced-volume-project");
+    raced
+        .command()
+        .args(["init", "--path"])
+        .arg(&raced_project)
+        .args(["local", "--port"])
+        .arg(server.address().port().to_string())
+        .args(["--disk", "--no-skills"])
+        .assert()
+        .success();
+    raced
+        .command()
+        .current_dir(&raced_project)
+        .args(["start", "dev"])
+        .env("HELIX_TEST_RUNTIME_VOLUME_MODE", "raced")
+        .assert()
+        .success();
+
+    // denied: an unrelated create failure must fail the start with the real error.
+    let denied = CliFixture::new_with_fake_runtime();
+    let denied_project = denied.root().join("denied-volume-project");
+    denied
+        .command()
+        .args(["init", "--path"])
+        .arg(&denied_project)
+        .args(["local", "--port"])
+        .arg(server.address().port().to_string())
+        .args(["--disk", "--no-skills"])
+        .assert()
+        .success();
+    let error = stderr(
+        denied
+            .command()
+            .current_dir(&denied_project)
+            .args(["start", "dev"])
+            .env("HELIX_TEST_RUNTIME_VOLUME_MODE", "denied")
+            .assert()
+            .failure(),
+    );
+    assert!(error.contains("permission denied"), "{error}");
 }

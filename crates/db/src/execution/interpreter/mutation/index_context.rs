@@ -13,15 +13,15 @@ use crate::search::vector;
 /// Index state that is valid for exactly one graph mutation transaction.
 #[derive(Debug)]
 pub(crate) struct MutationIndexContext {
-    _scope_permit: Option<crate::index_v2::IndexScopeMutationPermit>,
-    active_generations: Vec<crate::index_v2::ActiveIndexHandle>,
-    secondary: crate::index_v2::secondary::SecondaryMutationSet,
-    secondary_runtime: crate::index_v2::secondary::SecondaryMutationRuntime,
-    vector: crate::index_v2::vector::VectorMutationSet,
-    text: crate::index_v2::text::mutation::TextMutationSet,
-    routes: crate::index_v2::mutation_catalog::MutationRouteCatalog,
+    _scope_permit: Option<crate::index_lifecycle::IndexScopeMutationPermit>,
+    active: crate::index_lifecycle::mutation_catalog::ActiveMutationCatalog,
+    secondary: crate::index_lifecycle::secondary::SecondaryMutationSet,
+    secondary_runtime: crate::index_lifecycle::secondary::SecondaryMutationRuntime,
+    vector: crate::index_lifecycle::vector::VectorMutationSet,
+    text: crate::index_lifecycle::text::mutation::TextMutationSet,
+    routes: crate::index_lifecycle::mutation_catalog::MutationRouteCatalog,
     topology_runtime: super::topology::TopologyMutationRuntime,
-    active_text_runtime: crate::index_v2::text::active_runtime::ActiveTextMutationRuntime,
+    active_text_runtime: crate::index_lifecycle::text::active_runtime::ActiveTextMutationRuntime,
     active_vector_runtime: vector::ActiveVectorMutationRuntime,
     vector_cache_writes: vector::VectorCacheWriteSet,
     text_compaction_staged: bool,
@@ -29,11 +29,11 @@ pub(crate) struct MutationIndexContext {
 
 /// Commit-owned index state after every transaction-local runtime is sealed.
 pub(crate) struct PreparedMutationIndexContext {
-    _scope_permit: Option<crate::index_v2::IndexScopeMutationPermit>,
-    active_generations: Vec<crate::index_v2::ActiveIndexHandle>,
-    _secondary: crate::index_v2::secondary::SecondaryMutationSet,
-    _vector: crate::index_v2::vector::VectorMutationSet,
-    _text: crate::index_v2::text::mutation::TextMutationSet,
+    _scope_permit: Option<crate::index_lifecycle::IndexScopeMutationPermit>,
+    active_generations: Vec<crate::index_lifecycle::ActiveIndexHandle>,
+    _secondary: crate::index_lifecycle::secondary::SecondaryMutationSet,
+    _vector: crate::index_lifecycle::vector::VectorMutationSet,
+    _text: crate::index_lifecycle::text::mutation::TextMutationSet,
     vector_cache_writes: vector::VectorCacheWriteSet,
     text_compaction_staged: bool,
 }
@@ -41,23 +41,24 @@ pub(crate) struct PreparedMutationIndexContext {
 impl MutationIndexContext {
     /// Creates transaction-local generation and cache tracking.
     pub(crate) fn new(
-        scope_permit: crate::index_v2::IndexScopeMutationPermit,
-        loaded: crate::index_v2::mutation_catalog::MutationIndexCatalog,
+        scope_permit: crate::index_lifecycle::IndexScopeMutationPermit,
+        loaded: crate::index_lifecycle::mutation_catalog::MutationIndexCatalog,
         simhasher_registry: Arc<vector::SimHasherRegistry>,
         vector_retained_payload_limit: std::num::NonZeroU64,
     ) -> Self {
-        let (active_generations, secondary, vector, text, routes) = loaded.into_components();
+        let (active, secondary, vector, text, routes) = loaded.into_components();
         Self {
             _scope_permit: Some(scope_permit),
-            active_generations,
+            active,
             secondary,
-            secondary_runtime: crate::index_v2::secondary::SecondaryMutationRuntime::default(),
+            secondary_runtime: crate::index_lifecycle::secondary::SecondaryMutationRuntime::default(
+            ),
             vector,
             text,
             routes,
             topology_runtime: super::topology::TopologyMutationRuntime::default(),
             active_text_runtime:
-                crate::index_v2::text::active_runtime::ActiveTextMutationRuntime::new(),
+                crate::index_lifecycle::text::active_runtime::ActiveTextMutationRuntime::new(),
             active_vector_runtime: vector::ActiveVectorMutationRuntime::new(
                 vector_retained_payload_limit,
             ),
@@ -73,15 +74,16 @@ impl MutationIndexContext {
     ) -> Self {
         Self {
             _scope_permit: None,
-            active_generations: Vec::new(),
-            secondary: crate::index_v2::secondary::SecondaryMutationSet::empty(),
-            secondary_runtime: crate::index_v2::secondary::SecondaryMutationRuntime::default(),
-            vector: crate::index_v2::vector::VectorMutationSet::empty(),
-            text: crate::index_v2::text::mutation::TextMutationSet::empty(),
-            routes: crate::index_v2::mutation_catalog::MutationRouteCatalog::default(),
+            active: crate::index_lifecycle::mutation_catalog::ActiveMutationCatalog::default(),
+            secondary: crate::index_lifecycle::secondary::SecondaryMutationSet::empty(),
+            secondary_runtime: crate::index_lifecycle::secondary::SecondaryMutationRuntime::default(
+            ),
+            vector: crate::index_lifecycle::vector::VectorMutationSet::empty(),
+            text: crate::index_lifecycle::text::mutation::TextMutationSet::empty(),
+            routes: crate::index_lifecycle::mutation_catalog::MutationRouteCatalog::default(),
             topology_runtime: super::topology::TopologyMutationRuntime::default(),
             active_text_runtime:
-                crate::index_v2::text::active_runtime::ActiveTextMutationRuntime::new(),
+                crate::index_lifecycle::text::active_runtime::ActiveTextMutationRuntime::new(),
             active_vector_runtime: vector::ActiveVectorMutationRuntime::new(
                 std::num::NonZeroU64::new(8 * 1024 * 1024)
                     .expect("the focused-test vector payload limit is non-zero"),
@@ -99,8 +101,16 @@ impl MutationIndexContext {
 
     /// Returns exact Active capabilities loaded with the graph transaction.
     #[cfg(test)]
-    pub(crate) fn active_generations(&self) -> &[crate::index_v2::ActiveIndexHandle] {
-        &self.active_generations
+    pub(crate) fn active_generations(&self) -> &[crate::index_lifecycle::ActiveIndexHandle] {
+        self.active.generations()
+    }
+
+    /// Resolves one Active generation from this transaction's canonical catalog scan.
+    pub(crate) fn active_handle(
+        &self,
+        identity: &crate::index_lifecycle::IndexIdentity,
+    ) -> Option<&crate::index_lifecycle::ActiveIndexHandle> {
+        self.active.handle(identity)
     }
 
     /// Counts graph entities retained by the current Active text epoch.
@@ -113,13 +123,13 @@ impl MutationIndexContext {
     pub(crate) async fn maintain_graph_indexes(
         &mut self,
         transaction: &slatedb::DbTransaction,
-        graph: crate::index_v2::graph_mutation::GraphMutationTransition,
+        graph: crate::index_lifecycle::graph_mutation::GraphMutationTransition,
         text_limits: crate::config::ActiveTextMutationLimits,
     ) -> Result<(), crate::HelixDbError> {
         let routes = self.routes.targets_for(&graph);
         self.secondary_runtime
             .collect(graph.scope(), &self.secondary, &routes, &graph)?;
-        crate::index_v2::vector::maintain_routed_entity_with_runtime(
+        crate::index_lifecycle::vector::maintain_routed_entity_with_runtime(
             transaction,
             graph.scope(),
             &self.vector,
@@ -132,8 +142,8 @@ impl MutationIndexContext {
         let text_relevant = routes.iter().any(|target| {
             matches!(
                 target,
-                crate::index_v2::mutation_catalog::MutationRouteTarget::TextBuilding(_)
-                    | crate::index_v2::mutation_catalog::MutationRouteTarget::TextActive(_)
+                crate::index_lifecycle::mutation_catalog::MutationRouteTarget::TextBuilding(_)
+                    | crate::index_lifecycle::mutation_catalog::MutationRouteTarget::TextActive(_)
             )
         });
         self.active_text_runtime
@@ -280,7 +290,7 @@ impl MutationIndexContext {
     pub(crate) fn into_prepared(self) -> Result<PreparedMutationIndexContext, crate::HelixDbError> {
         let Self {
             _scope_permit,
-            active_generations,
+            active,
             secondary,
             secondary_runtime,
             vector,
@@ -298,7 +308,7 @@ impl MutationIndexContext {
         secondary_runtime.consume_prepared()?;
         Ok(PreparedMutationIndexContext {
             _scope_permit,
-            active_generations,
+            active_generations: active.into_generations(),
             _secondary: secondary,
             _vector: vector,
             _text: text,
@@ -320,7 +330,7 @@ impl MutationIndexContext {
         reader: &(impl slatedb::DbReadOps + Sync),
         error: slatedb::Error,
     ) -> crate::HelixDbError {
-        classify_commit_error(&self.active_generations, reader, error).await
+        classify_commit_error(self.active.generations(), reader, error).await
     }
 }
 
@@ -346,7 +356,7 @@ impl PreparedMutationIndexContext {
 }
 
 async fn classify_commit_error(
-    active_generations: &[crate::index_v2::ActiveIndexHandle],
+    active_generations: &[crate::index_lifecycle::ActiveIndexHandle],
     reader: &(impl slatedb::DbReadOps + Sync),
     error: slatedb::Error,
 ) -> crate::HelixDbError {
@@ -355,7 +365,7 @@ async fn classify_commit_error(
     }
     for handle in active_generations {
         let Err(error) =
-            crate::index_v2::repository::revalidate_active_handle(reader, handle).await
+            crate::index_lifecycle::repository::revalidate_active_handle(reader, handle).await
         else {
             continue;
         };
@@ -368,8 +378,8 @@ async fn classify_commit_error(
 mod tests {
     use super::super::super::test_support;
     use super::*;
-    use crate::encoding::v1::{keys, values};
-    use crate::{config, index_v2};
+    use crate::encoding::v2::keys;
+    use crate::{config, index_lifecycle};
 
     #[tokio::test]
     async fn backend_commit_errors_are_preserved_when_generations_are_current() {
@@ -391,40 +401,40 @@ mod tests {
                 if error.kind() == slatedb::ErrorKind::Invalid
         ));
 
-        let scope = keys::tenant::DataScope::LegacyUnscoped;
-        let definition = index_v2::ValidatedDynamicIndexDefinition::try_from(
+        let scope = keys::scope::DataScope::LegacyUnscoped;
+        let definition = index_lifecycle::ValidatedDynamicIndexDefinition::try_from(
             config::SecondaryIndexDefinition::node_equality("User", "email")
                 .expect("secondary definition validates"),
         )
         .expect("secondary definition has a canonical identity");
-        let record = index_v2::IndexRecordV2::building(
-            index_v2::IndexId::initial(),
+        let record = index_lifecycle::IndexRecordV2::building(
+            index_lifecycle::IndexId::initial(),
             definition,
-            index_v2::IndexRevision::initial(),
-            index_v2::PhysicalGeneration::Secondary {
-                generation: index_v2::IndexGenerationId::initial(),
+            index_lifecycle::IndexRevision::initial(),
+            index_lifecycle::PhysicalGeneration::Secondary {
+                generation: index_lifecycle::IndexGenerationId::initial(),
             },
-            index_v2::IndexOperationId::new_v4(),
+            index_lifecycle::IndexOperationId::new_v4(),
         )
         .expect("secondary record starts building")
-        .transition(index_v2::IndexStateTransition::Activate)
+        .transition(index_lifecycle::IndexStateTransition::Activate)
         .expect("secondary record activates");
-        let handle = index_v2::ActiveIndexHandle::try_from_record(scope, &record)
+        let handle = index_lifecycle::ActiveIndexHandle::try_from_record(scope, &record)
             .expect("active record projects an active handle");
         inner
             .put(
-                keys::Key::Data {
+                crate::encoding::v2::keys::ManagedIndexKey::Data {
                     scope,
-                    kind: keys::DataKeyKind::IndexV2(keys::index_v2::IndexV2Key::index_record(
+                    kind: crate::encoding::v2::keys::ScopedKey::index_record(
                         record.identity().clone(),
-                    )),
+                    ),
                 }
                 .to_bytes(),
-                values::index_v2::encode_index_record(&record),
+                crate::encoding::v2::values::encode_index_record(&record),
             )
             .await
             .expect("active record persists");
-        context.active_generations.push(handle);
+        context.active.insert_for_test(handle);
 
         let error = context
             .classify_commit_error(

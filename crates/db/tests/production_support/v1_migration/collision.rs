@@ -15,8 +15,10 @@ use crate::encoding::v1::keys::{
     DataKeyKind, EdgeEndpointsKey, EdgePropertyByIdKey, Key, NodePropertyKey,
 };
 use crate::encoding::v1::values::edge_endpoints::EdgeEndpointsValue;
-use crate::index_v2::secondary::{lookup_active_equality_generation, scan_active_range_generation};
-use crate::index_v2::ValidatedDynamicIndexDefinition;
+use crate::index_lifecycle::secondary::{
+    lookup_active_equality_generation, scan_active_range_generation,
+};
+use crate::index_lifecycle::ValidatedDynamicIndexDefinition;
 
 const FIRST_PROPERTY: &str = "property_16755";
 const SECOND_PROPERTY: &str = "property_36911";

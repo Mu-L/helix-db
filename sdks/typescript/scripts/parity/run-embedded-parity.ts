@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { structuralJsonEqual } from "../../src/index.js";
+import { canonicalizeJson, parseJsonStructural, structuralJsonEqual } from "../../src/index.js";
 import { workspaceRoot } from "./paths.js";
 
 const EXPECTED_RUNTIME = 233;
 const typescriptRoot = join(workspaceRoot, "sdks", "typescript");
 const pythonRoot = join(workspaceRoot, "sdks", "python");
 const goRoot = join(workspaceRoot, "sdks", "go");
+const goEmbeddedTemplates = join(goRoot, "internal", "embedded_templates");
 const rustManifest = join(workspaceRoot, "sdks", "rust", "Cargo.toml");
 const bindingManifest = join(workspaceRoot, "bindings", "uniffi", "Cargo.toml");
 const bindingConfig = join(workspaceRoot, "bindings", "uniffi", "uniffi.toml");
@@ -17,7 +18,7 @@ const generatorManifest = join(workspaceRoot, "bindings", "uniffi-bindgen", "Car
 const cargoTarget = process.env.CARGO_TARGET_DIR ?? join(workspaceRoot, "target");
 const nativeLibrary = join(cargoTarget, "debug", nativeLibraryName());
 const temp = await mkdtemp(join(tmpdir(), "helixdb-embedded-parity-"));
-const sdks = ["rust", "typescript", "go", "python"] as const;
+const sdks = ["rust", "typescript", "go", "python", "python-async"] as const;
 const storageModes = ["memory", "disk"] as const;
 type Sdk = (typeof sdks)[number];
 type StorageMode = (typeof storageModes)[number];
@@ -40,6 +41,11 @@ try {
     cp(goRoot, goSdk, { recursive: true }),
     ...Object.values(disks).map((root) => mkdir(root, { recursive: true })),
   ]);
+  await Promise.all(
+    ["embedded_uniffi.go", "native_graph_uniffi.go", "embedded_generated_test.go", "graph_generated_test.go"].map((file) =>
+      copyFile(join(goEmbeddedTemplates, `${file}.tmpl`), join(goSdk, file)),
+    ),
+  );
   run("cargo", ["build", "--locked", "-p", "helixdb-uniffi"], workspaceRoot, 900_000);
 
   run(
@@ -89,7 +95,7 @@ try {
       "--out-dir",
       nodeBindings,
       "--package-name",
-      "@helix-db/uniffi-test",
+      "@helix-db/helix-db-embedded-test",
     ],
     workspaceRoot,
     900_000,
@@ -128,6 +134,17 @@ try {
   }
   const goPackage = join(goBindings, "helixdb");
   await copyFile(nativeLibrary, join(goPackage, basename(nativeLibrary)));
+  run(
+    "go",
+    ["test", "-tags", "helixdb_uniffi", "./..."],
+    goSdk,
+    900_000,
+    embeddedEnv(join(temp, "go-test-results"), "go-sdk-binding-tests", goPackage, "memory", disks.go, {
+      CGO_ENABLED: "1",
+      CGO_LDFLAGS: `-L${goPackage} -lhelixdb_uniffi`,
+      GOCACHE: join(temp, "go-build-cache"),
+    }),
+  );
 
   for (const storage of storageModes) {
     run(
@@ -159,12 +176,23 @@ try {
       }),
     );
     run(
+      pythonCommand(),
+      [join(pythonRoot, "scripts", "run_embedded_parity.py")],
+      pythonRoot,
+      900_000,
+      embeddedEnv(results[storage]["python-async"], `python-async-sdk-${storage}-parity`, pythonBindings, storage, disks["python-async"], {
+        HELIX_PYTHON_PARITY_MODE: "async",
+        PYTHONPATH: appendPath(pythonBindings, process.env.PYTHONPATH),
+        PYTHONDONTWRITEBYTECODE: "1",
+      }),
+    );
+    run(
       process.execPath,
       [join(typescriptRoot, "dist-dev", "scripts", "parity", "run-embedded-client.js")],
       typescriptRoot,
       900_000,
       embeddedEnv(results[storage].typescript, `typescript-sdk-${storage}-parity`, nodeBindings, storage, disks.typescript, {
-        HELIXDB_UNIFFI_NODE_PACKAGE: pathToFileURL(join(nodeBindings, "index.js")).href,
+        HELIXDB_EMBEDDED_NODE_PACKAGE: pathToFileURL(join(nodeBindings, "index.js")).href,
       }),
     );
     run(
@@ -183,12 +211,12 @@ try {
   for (const storage of storageModes) {
     const baseline = await jsonFiles(results[storage].rust);
     assertFixtureCount(`Rust ${storage}`, baseline);
-    for (const candidate of ["typescript", "go", "python"] as const) {
+    for (const candidate of ["typescript", "go", "python", "python-async"] as const) {
       await compareResults(results[storage].rust, results[storage][candidate], baseline, `${candidate} ${storage}`);
     }
   }
   console.log(
-    `embedded memory and disk runtime parity passed for ${EXPECTED_RUNTIME} fixtures across Rust, TypeScript, Go, and Python`,
+    `embedded memory and disk runtime parity passed for ${EXPECTED_RUNTIME} fixtures across Rust, TypeScript, Go, synchronous Python, and asynchronous Python`,
   );
 } finally {
   await rm(temp, { recursive: true, force: true });
@@ -201,7 +229,7 @@ function nativeLibraryName(): string {
 }
 
 function pythonCommand(): string {
-  return process.platform === "win32" ? "python" : "python3";
+  return process.env.HELIX_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
 }
 
 function embeddedEnv(
@@ -238,9 +266,13 @@ async function compareResults(baselineRoot: string, candidateRoot: string, basel
   const mismatches: string[] = [];
   for (const file of baselineFiles) {
     const [baseline, value] = await Promise.all([readFile(join(baselineRoot, file), "utf8"), readFile(join(candidateRoot, file), "utf8")]);
-    if (!structuralJsonEqual(baseline, value)) mismatches.push(file);
+    if (!structuralJsonEqual(baseline, value)) {
+      mismatches.push(
+        `${file}\nRust: ${JSON.stringify(canonicalizeJson(parseJsonStructural(baseline)))}\n${candidate}: ${JSON.stringify(canonicalizeJson(parseJsonStructural(value)))}`,
+      );
+    }
   }
-  if (mismatches.length > 0) throw new Error(`${candidate} embedded result mismatches:\n${mismatches.join("\n")}`);
+  if (mismatches.length > 0) throw new Error(`${candidate} embedded result mismatches:\n\n${mismatches.join("\n\n")}`);
 }
 
 function assertFixtureCount(label: string, files: string[]) {

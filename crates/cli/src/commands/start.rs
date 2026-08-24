@@ -103,13 +103,13 @@ fn apply_s3_overrides(config: &mut LocalInstanceConfig, s3: &crate::S3StorageArg
 fn warn_about_storage(project: &ProjectContext, instance: &str, config: &LocalInstanceConfig) {
     if config.storage.is_disk() {
         crate::output::info(
-            "Local enterprise-dev is using on-disk storage. 'helix stop' preserves data; 'helix prune' deletes it.",
+            "Local HelixDB is using on-disk storage. 'helix stop' preserves data; 'helix prune' deletes it.",
         );
         return;
     }
     if config.storage.is_s3() {
         crate::output::info(
-            "Local enterprise-dev is using remote S3 storage. 'helix stop', 'helix restart', and 'helix prune' do not delete remote data.",
+            "Local HelixDB is using remote S3 storage. 'helix stop', 'helix restart', and 'helix prune' do not delete remote data.",
         );
         return;
     }
@@ -119,7 +119,7 @@ fn warn_about_storage(project: &ProjectContext, instance: &str, config: &LocalIn
         return;
     }
     crate::output::warning(
-        "Local enterprise-dev uses in-memory storage. Stopping or restarting wipes local data.",
+        "Local HelixDB uses in-memory storage. Stopping or restarting wipes local data.",
     );
     let _ = std::fs::write(&marker, b"");
 }

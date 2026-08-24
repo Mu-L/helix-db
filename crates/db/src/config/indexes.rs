@@ -10,7 +10,7 @@ use helix_planner::{catalog, ir};
 use serde::{Deserialize, Serialize};
 
 use super::utils::{ConfigError, ConfigResult};
-use crate::index_v2::ValidatedDynamicIndexDefinition;
+use crate::index_lifecycle::ValidatedDynamicIndexDefinition;
 use crate::search::vector::{
     CollisionThreshold, Connections, ConstructionBeamWidth, FailureProbability, Layer0Connections,
     LayerMultiplier, UnitInterval, VectorDistanceMetric, DEFAULT_SIMHASH_COLLISION_THRESHOLD,

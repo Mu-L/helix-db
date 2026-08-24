@@ -22,18 +22,20 @@ use slatedb::{Db, DbReadOps, IsolationLevel};
 use super::*;
 use crate::config::{DbConfig, TextIndexDefinition};
 use crate::encoding::indexes::label::{EdgeLabelKey, EdgeLabelNeighborKey};
-use crate::encoding::indexes::{hash_property_name, hash_property_value, EdgeDirection, IndexKey};
+use crate::encoding::indexes::{
+    hash_property_name, hash_property_value, EdgeDirection, PropertyIndexKey,
+};
 use crate::encoding::property::property_value::PropertyValue as DbPropertyValue;
 use crate::encoding::property::Property;
-use crate::encoding::v1::keys::index_v2 as index_keys;
-use crate::encoding::v1::keys::tenant::DataScope;
-use crate::encoding::v1::keys::{
-    AdjacencyKey, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey, Key, NodePropertyKey,
+use crate::encoding::v2::keys as index_keys;
+use crate::encoding::v2::keys::scope::DataScope;
+use crate::encoding::v2::keys::{
+    AdjacencyKey, DataKey, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey, NodePropertyKey,
 };
-use crate::encoding::v1::values::index_v2 as index_values;
-use crate::encoding::v1::values::vector_generation::{ActiveScoreSemantic, VectorEntityKind};
-use crate::encoding::v1::values::{edges, secondary};
-use crate::index_v2::{
+use crate::encoding::v2::values as index_values;
+use crate::encoding::v2::values::indexes::vector::{ActiveScoreSemantic, VectorEntityKind};
+use crate::encoding::v2::values::{adjacency as edges, indexes as secondary};
+use crate::index_lifecycle::{
     IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
     IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
 };
@@ -193,7 +195,7 @@ pub async fn run_request_mode_and_isolated_mutation_contracts() {
         created,
         ExecutionValue::Stream(vec![ExecutionRow::current(ElementRef::Node(0))])
     );
-    let node_key = Key::Data {
+    let node_key = DataKey::Data {
         scope: DataScope::LegacyUnscoped,
         kind: DataKeyKind::NodeProperty(NodePropertyKey::new(0)),
     }
@@ -204,7 +206,7 @@ pub async fn run_request_mode_and_isolated_mutation_contracts() {
         .expect("isolated node reads")
         .expect("isolated node is durable before the context closes");
     assert_eq!(
-        crate::encoding::v1::property::decode_properties(&stored)
+        crate::encoding::v2::values::property::decode_properties(&stored)
             .expect("isolated node properties decode"),
         vec![Property::string("$label", "Isolated")]
     );
@@ -213,19 +215,19 @@ pub async fn run_request_mode_and_isolated_mutation_contracts() {
 }
 
 /// Encodes one unscoped V2 logical key through the canonical V1 boundary.
-fn scoped_key(logical: index_keys::IndexV2Key) -> Bytes {
-    Key::Data {
+fn scoped_key(logical: index_keys::ScopedKey) -> Bytes {
+    index_keys::ManagedIndexKey::Data {
         scope: DataScope::LegacyUnscoped,
-        kind: DataKeyKind::IndexV2(logical),
+        kind: logical,
     }
     .to_bytes()
 }
 
 /// Captures every scoped V2 key/value so conflicts cannot hide lane-specific writes.
 async fn scoped_v2_snapshot(db: &Db) -> Vec<(Bytes, Bytes)> {
-    let prefix = Key::data_prefix(
+    let prefix = index_keys::ManagedIndexKey::data_prefix(
         DataScope::LegacyUnscoped,
-        Bytes::copy_from_slice(index_keys::IndexV2Key::key_prefix().as_slice()),
+        Bytes::from(vec![index_keys::ScopedKey::key_prefix()]),
     );
     let mut rows = db
         .scan_prefix(&prefix, ..)
@@ -353,19 +355,19 @@ async fn run_value_dependency_and_row_contracts() {
     let transaction = raw.begin(IsolationLevel::Snapshot).await.unwrap();
     transaction
         .put(
-            Key::Data {
+            DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: DataKeyKind::NodeProperty(NodePropertyKey::new(7)),
             }
             .to_bytes(),
-            crate::encoding::v1::property::encode_properties(&[Property::string(
+            crate::encoding::v2::values::property::encode_properties(&[Property::string(
                 "$label", "Document",
             )]),
         )
         .unwrap();
     transaction
         .put(
-            Key::Data {
+            DataKey::Data {
                 scope: DataScope::LegacyUnscoped,
                 kind: DataKeyKind::EdgeEndpoints(EdgeEndpointsKey::new(9)),
             }
@@ -381,6 +383,19 @@ async fn run_value_dependency_and_row_contracts() {
         DataScope::LegacyUnscoped,
     );
     context.enable_request_read_view().await.unwrap();
+
+    assert_eq!(
+        interpreter_vector_result(VectorEntityKind::Node, 7)
+            .entity_id()
+            .local_id(),
+        7
+    );
+    assert_eq!(
+        interpreter_vector_result(VectorEntityKind::Edge, 9)
+            .entity_id()
+            .local_id(),
+        9
+    );
 
     let step = |id| exec::ExecStepId::new(id).unwrap();
     let missing = context.dependency_values(&[step(7)]).unwrap_err();
@@ -432,9 +447,11 @@ async fn run_value_dependency_and_row_contracts() {
         .contains("folded stream"));
     context.step_outputs.insert(
         step(8),
-        ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-            operation_id: IndexOperationId::from_bytes([8; 16]).unwrap(),
-        }),
+        ExecutionValue::IndexDdlReceipt(
+            crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+                operation_id: IndexOperationId::from_bytes([8; 16]).unwrap(),
+            },
+        ),
     );
     assert!(context
         .dependency_input(&[step(8), step(8)])
@@ -451,9 +468,11 @@ async fn run_value_dependency_and_row_contracts() {
         2
     );
     assert_eq!(
-        ExecutionValue::IndexDdlReceipt(crate::index_v2::IndexDdlReceipt::ExistingOperation {
-            operation_id: IndexOperationId::from_bytes([9; 16]).unwrap(),
-        })
+        ExecutionValue::IndexDdlReceipt(
+            crate::index_lifecycle::IndexDdlReceipt::ExistingOperation {
+                operation_id: IndexOperationId::from_bytes([9; 16]).unwrap(),
+            }
+        )
         .len(),
         1
     );
@@ -579,6 +598,154 @@ async fn run_value_dependency_and_row_contracts() {
     db.close().await.expect("interpreter value fixture closes");
 }
 
+/// Exercises scheduler fan-out/fan-in transfer and row projection through the
+/// unchanged production interpreter. This lives outside the measured source
+/// tree so the contract adds no test-harness lines to the production metric.
+pub(crate) async fn run_scheduler_and_projection_contracts() {
+    let db = test_support::open_db("production-scheduler-transfer-contracts").await;
+    let id = |value| exec::ExecStepId::new(value).expect("positive step ID");
+    let first = test_support::step(1, Vec::new(), exec::ExecOp::Noop);
+    let second = test_support::step(2, vec![id(1)], exec::ExecOp::Noop);
+    let third = test_support::step(3, vec![id(1)], exec::ExecOp::Noop);
+    let root = test_support::step(4, vec![id(2), id(3)], exec::ExecOp::Noop);
+    let plan = exec::ExecutablePlan::new(
+        ir::PlanKind::Read,
+        ir::ReturnPlan::None,
+        ir::AtLeast::<_, 1>::from_one_and_rest(first, vec![second, third, root]),
+        id(4),
+        helix_planner::trace::PlanningTrace::default(),
+        exec::PlannerMetrics::default(),
+    )
+    .expect("fan-out/fan-in plan validates");
+    assert!(matches!(
+        &plan.execution_order().stages()[1],
+        exec::ExecExecutionStage::Parallel(_)
+    ));
+    let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
+    context
+        .execute_steps(plan.steps(), plan.execution_order(), plan.root())
+        .await
+        .expect("fan-out/fan-in plan executes");
+    assert!(context.step_outputs.get(&id(4)).is_some());
+
+    let ready = (1..=5)
+        .map(|step_id| test_support::step(step_id, Vec::new(), exec::ExecOp::Noop))
+        .collect::<Vec<_>>();
+    let root = test_support::step(6, (1..=5).map(id).collect(), exec::ExecOp::Noop);
+    let mut steps = ready;
+    steps.push(root);
+    let plan = exec::ExecutablePlan::new(
+        ir::PlanKind::Read,
+        ir::ReturnPlan::None,
+        ir::AtLeast::<_, 1>::try_from_vec(steps).expect("six scheduler steps are non-empty"),
+        id(6),
+        helix_planner::trace::PlanningTrace::default(),
+        exec::PlannerMetrics::default(),
+    )
+    .expect("wide scheduler plan validates");
+    let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
+    context
+        .execute_steps(plan.steps(), plan.execution_order(), plan.root())
+        .await
+        .expect("wide scheduler plan executes");
+    assert!(context.step_outputs.get(&id(6)).is_some());
+    db.close().await.expect("scheduler fixture closes");
+
+    let db = test_support::open_db("production-row-projection-contracts").await;
+    let ada = test_support::add_node_with_properties(
+        &db,
+        "User",
+        vec![("name", AstPropertyValue::from("ada"))],
+    )
+    .await;
+    let bob = test_support::add_user(&db, "bob").await;
+    let edge = test_support::add_edge(&db, ada, bob, "KNOWS").await;
+    let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
+    context
+        .enable_request_read_view()
+        .await
+        .expect("projection request view opens");
+
+    let rows = || {
+        vec![
+            ExecutionRow::current(ElementRef::Node(ada)),
+            ExecutionRow::empty(),
+            ExecutionRow::current(ElementRef::Edge(edge)),
+        ]
+    };
+    assert_eq!(
+        context
+            .project(ExecutionValue::Stream(rows()), &ir::ProjectionPlan::Id)
+            .await
+            .expect("ID projection executes")
+            .len(),
+        2
+    );
+    let missing = ir::PropertyNames::new(ir::AtLeast::<_, 1>::from_one(
+        ir::NonEmptyString::new("missing").expect("property is non-empty"),
+    ))
+    .expect("one property is unique");
+    assert!(context
+        .project(
+            ExecutionValue::Stream(rows()),
+            &ir::ProjectionPlan::Values(missing),
+        )
+        .await
+        .expect("missing-value projection executes")
+        .is_empty());
+    assert_eq!(
+        context
+            .project(
+                ExecutionValue::Stream(vec![ExecutionRow::current(ElementRef::Node(ada))]),
+                &ir::ProjectionPlan::ValueMap(ir::PropertySelection::All),
+            )
+            .await
+            .expect("value-map projection executes")
+            .len(),
+        1
+    );
+    let virtual_label = ExecutionRow::current_with_virtual_properties(
+        ElementRef::Node(u64::MAX),
+        RowVirtualProperties::from_one(
+            ir::NonEmptyString::new("$label").expect("label key is non-empty"),
+            DbPropertyValue::String("Virtual".to_string()),
+        ),
+    );
+    assert_eq!(
+        context
+            .project(
+                ExecutionValue::Stream(vec![
+                    ExecutionRow::current(ElementRef::Node(ada)),
+                    virtual_label,
+                ]),
+                &ir::ProjectionPlan::Label,
+            )
+            .await
+            .expect("label projection executes")
+            .len(),
+        2
+    );
+    assert_eq!(
+        context
+            .project(
+                ExecutionValue::Stream(vec![
+                    ExecutionRow::current(ElementRef::Node(ada)),
+                    ExecutionRow::current(ElementRef::Edge(u64::MAX)),
+                    ExecutionRow::current(ElementRef::Edge(edge)),
+                ]),
+                &ir::ProjectionPlan::EdgeProperties,
+            )
+            .await
+            .expect("edge-property projection executes")
+            .len(),
+        1
+    );
+    context
+        .close_request_read_view()
+        .expect("projection request view closes");
+    db.close().await.expect("projection fixture closes");
+}
+
 /// Seeds one canonical Active text generation before the runtime opens.
 async fn seed_active_text_generation(
     database: &str,
@@ -590,7 +757,7 @@ async fn seed_active_text_generation(
         object_store,
         definition,
         IndexId::initial(),
-        crate::index_v2::TextManifestRevision::initial(),
+        crate::index_lifecycle::TextManifestRevision::initial(),
         true,
     )
     .await
@@ -602,14 +769,14 @@ async fn seed_active_text_generation_with(
     object_store: Arc<dyn ObjectStore>,
     definition: &TextIndexDefinition,
     index_id: IndexId,
-    revision: crate::index_v2::TextManifestRevision,
+    revision: crate::index_lifecycle::TextManifestRevision,
     seed_unpartitioned_root: bool,
 ) -> Option<index_keys::TextManifestRootKey> {
     let raw = Db::builder(database, object_store)
         .build()
         .await
         .expect("raw Active-text fixture opens");
-    crate::index_v2::repository::bootstrap_writer(&raw)
+    crate::index_lifecycle::repository::bootstrap_writer(&raw)
         .await
         .expect("raw Active-text fixture bootstraps");
     let active = IndexRecordV2::building(
@@ -628,7 +795,7 @@ async fn seed_active_text_generation_with(
     let root = seed_unpartitioned_root.then_some(index_keys::TextManifestRootKey {
         index_id,
         generation: IndexGenerationId::initial(),
-        partition: crate::index_v2::work::TextPartition::Unpartitioned.fingerprint(),
+        partition: crate::index_lifecycle::work::TextPartition::Unpartitioned.fingerprint(),
     });
     let transaction = raw
         .begin(IsolationLevel::SerializableSnapshot)
@@ -636,7 +803,7 @@ async fn seed_active_text_generation_with(
         .expect("Active-text seed transaction opens");
     transaction
         .put(
-            scoped_key(index_keys::IndexV2Key::index_record(
+            scoped_key(index_keys::ScopedKey::index_record(
                 active.identity().clone(),
             )),
             index_values::encode_index_record(&active),
@@ -645,18 +812,18 @@ async fn seed_active_text_generation_with(
     if let Some(root) = root {
         transaction
             .put(
-                scoped_key(index_keys::IndexV2Key::TextManifestRoot(root)),
-                index_values::encode_work_value(&index_values::IndexV2WorkValue::TextManifestRoot(
-                    crate::index_v2::work::TextManifestRootValue::try_new(
+                scoped_key(index_keys::ScopedKey::TextManifestRoot(root)),
+                index_values::encode_manifest_root(
+                    &crate::index_lifecycle::work::TextManifestRootValue::try_new(
                         index_id,
                         IndexGenerationId::initial(),
-                        crate::index_v2::work::TextPartition::Unpartitioned,
+                        crate::index_lifecycle::work::TextPartition::Unpartitioned,
                         revision,
                         0,
                         0,
                     )
                     .expect("an empty manifest accepts any live revision"),
-                )),
+                ),
             )
             .expect("empty Active manifest stages");
     }
@@ -726,13 +893,13 @@ pub(crate) async fn run_active_text_graph_conflict() {
         "the prepared Active mutation uploads exactly one immutable blob"
     );
 
-    let graph_key = Key::Data {
+    let graph_key = DataKey::Data {
         scope: DataScope::LegacyUnscoped,
         kind: DataKeyKind::NodeProperty(NodePropertyKey::new(0)),
     }
     .to_bytes();
     let competing_properties =
-        crate::encoding::v1::property::encode_properties(&[Property::string(
+        crate::encoding::v2::values::property::encode_properties(&[Property::string(
             "$label",
             "Competing",
         )]);
@@ -761,15 +928,13 @@ pub(crate) async fn run_active_text_graph_conflict() {
         Some(competing_properties)
     );
     let root_value = writer_db(&db)
-        .get(scoped_key(index_keys::IndexV2Key::TextManifestRoot(root)))
+        .get(scoped_key(index_keys::ScopedKey::TextManifestRoot(root)))
         .await
         .expect("Active manifest root reads")
         .expect("Active manifest root remains present");
-    assert!(matches!(
-        index_values::decode_work_value(&root_value).expect("Active manifest root decodes"),
-        index_values::IndexV2WorkValue::TextManifestRoot(root)
-            if root.page_count() == 0 && root.split_count() == 0
-    ));
+    let root =
+        index_values::decode_manifest_root(&root_value).expect("Active manifest root decodes");
+    assert!(root.page_count() == 0 && root.split_count() == 0);
     assert_eq!(
         scoped_v2_snapshot(writer_db(&db)).await,
         v2_before,
@@ -859,14 +1024,15 @@ pub(crate) async fn run_request_read_view_guards() {
             .expect("range key validates");
     for (plan, expected) in [
         (
-            exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::EqualityIndex {
-                index: catalog::NodeEqualityIndexMeta::new(
-                    ir::NonEmptyString::new("guard-node-equality").expect("index ID is non-empty"),
+            exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::exact_equality(
+                catalog::NodeEqualityIndexMeta::new(
+                    ir::NonEmptyString::new("node_eq:Document:rank")
+                        .expect("index ID is non-empty"),
                 ),
-                key: property_key.clone(),
-                value: property_value.clone(),
-            }),
-            "secondary equality lookup escaped its request read view",
+                property_key.clone(),
+                property_value.clone(),
+            )),
+            "exact secondary equality point read escaped its request read view",
         ),
         (
             exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::LabelScan {
@@ -875,14 +1041,15 @@ pub(crate) async fn run_request_read_view_guards() {
             "global edge label lookup escaped its request read view",
         ),
         (
-            exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::EqualityIndex {
-                index: catalog::EdgeEqualityIndexMeta::new(
-                    ir::NonEmptyString::new("guard-edge-equality").expect("index ID is non-empty"),
+            exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::exact_equality(
+                catalog::EdgeEqualityIndexMeta::new(
+                    ir::NonEmptyString::new("edge_eq:Document:rank")
+                        .expect("index ID is non-empty"),
                 ),
-                key: property_key,
-                value: property_value,
-            }),
-            "edge secondary equality lookup escaped its request read view",
+                property_key,
+                property_value,
+            )),
+            "exact secondary equality point read escaped its request read view",
         ),
         (
             exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::RangeIndex {
@@ -951,9 +1118,9 @@ pub(crate) async fn run_request_read_view_guards() {
 }
 
 fn topology_node_label_key(scope: DataScope, label: &str) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::Equality(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(
             crate::encoding::indexes::equality::EqualityIndexKey::new(
                 hash_property_name("$label"),
                 hash_property_value(label),
@@ -964,7 +1131,7 @@ fn topology_node_label_key(scope: DataScope, label: &str) -> Bytes {
 }
 
 fn topology_edge_pair_key(scope: DataScope, from: u64, to: u64) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::EdgePairIndex(EdgePairIndexKey::new(from, to)),
     }
@@ -972,7 +1139,7 @@ fn topology_edge_pair_key(scope: DataScope, from: u64, to: u64) -> Bytes {
 }
 
 fn topology_adjacency_key(scope: DataScope, node: u64) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
         kind: DataKeyKind::Adjacency(AdjacencyKey::new(node)),
     }
@@ -985,21 +1152,19 @@ fn topology_edge_label_neighbor_key(
     node: u64,
     label: &str,
 ) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabelNeighbor(EdgeLabelNeighborKey::new(
-            direction,
-            node,
-            hash_property_value(label),
-        ))),
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
+            EdgeLabelNeighborKey::new(direction, node, hash_property_value(label)),
+        )),
     }
     .to_bytes()
 }
 
 fn topology_global_edge_label_key(scope: DataScope, label: &str) -> Bytes {
-    Key::Data {
+    DataKey::Data {
         scope,
-        kind: DataKeyKind::PropertyIndex(IndexKey::EdgeLabel(EdgeLabelKey::new(
+        kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(
             hash_property_value(label),
         ))),
     }
@@ -1351,7 +1516,7 @@ pub(crate) async fn run_topology_mutation_contracts() {
     db.close().await.unwrap();
 }
 
-#[cfg(feature = "index-v2-lifecycle-testing")]
+#[cfg(feature = "index-lifecycle-testing")]
 mod text_transaction_benchmark {
     use std::fmt;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1368,8 +1533,7 @@ mod text_transaction_benchmark {
 
     use super::*;
     use crate::config::{CacheConfig, CacheMode, TextElementType, VectorMemorySettings};
-    use crate::encoding::v1::keys::GlobalKeyKind;
-    use crate::index_v2_lifecycle_testing::LifecycleTestScheduling;
+    use crate::index_lifecycle_testing::LifecycleTestScheduling;
     use crate::search::text_index_name;
 
     const LABEL: &str = "TextTransactionBenchmarkDocument";
@@ -1548,6 +1712,7 @@ mod text_transaction_benchmark {
             id: exec::ExecStepId::new(id).expect("benchmark step IDs are positive"),
             dependencies,
             output: ir::BatchOutputPlan::Discard,
+            semantic_return_shape: None,
             condition: exec::ExecCondition::Always,
             op,
             schedule: exec::ExecSchedule::Pipeline,
@@ -1872,42 +2037,30 @@ mod text_transaction_benchmark {
 
     async fn manifest_split_count(db: &Db, root: index_keys::TextManifestRootKey) -> Result<u64> {
         let bytes = db
-            .get(scoped_key(index_keys::IndexV2Key::TextManifestRoot(root)))
+            .get(scoped_key(index_keys::ScopedKey::TextManifestRoot(root)))
             .await?
             .ok_or_else(|| {
                 HelixDbError::InvariantViolation(
                     "text transaction benchmark manifest root disappeared".to_string(),
                 )
             })?;
-        let index_values::IndexV2WorkValue::TextManifestRoot(value) =
-            index_values::decode_work_value(&bytes)?
-        else {
-            return Err(HelixDbError::InvariantViolation(
-                "text transaction benchmark root key contains another value kind".to_string(),
-            ));
-        };
+        let value = index_values::decode_manifest_root(&bytes)?;
         Ok(value.split_count())
     }
 
     async fn manifest_root(
         db: &Db,
         root: index_keys::TextManifestRootKey,
-    ) -> Result<crate::index_v2::work::TextManifestRootValue> {
+    ) -> Result<crate::index_lifecycle::work::TextManifestRootValue> {
         let bytes = db
-            .get(scoped_key(index_keys::IndexV2Key::TextManifestRoot(root)))
+            .get(scoped_key(index_keys::ScopedKey::TextManifestRoot(root)))
             .await?
             .ok_or_else(|| {
                 HelixDbError::InvariantViolation(
                     "text transaction contract manifest root disappeared".to_string(),
                 )
             })?;
-        let index_values::IndexV2WorkValue::TextManifestRoot(value) =
-            index_values::decode_work_value(&bytes)?
-        else {
-            return Err(HelixDbError::InvariantViolation(
-                "text transaction contract root key contains another value kind".to_string(),
-            ));
-        };
+        let value = index_values::decode_manifest_root(&bytes)?;
         Ok(value)
     }
 
@@ -1915,13 +2068,13 @@ mod text_transaction_benchmark {
         db: &Db,
         root: index_keys::TextManifestRootKey,
         entity_id: u64,
-    ) -> Result<crate::index_v2::work::TextEntityStateValue> {
-        let key = scoped_key(index_keys::IndexV2Key::TextEntityState(
+    ) -> Result<crate::index_lifecycle::work::TextEntityStateValue> {
+        let key = scoped_key(index_keys::ScopedKey::TextEntityState(
             index_keys::TextEntityStateKey {
                 root,
                 entity: index_keys::IndexEntity {
-                    kind: crate::index_v2::IndexElementKind::Node,
-                    id: crate::index_v2::IndexEntityId::new(entity_id),
+                    kind: crate::index_lifecycle::IndexElementKind::Node,
+                    id: crate::index_lifecycle::IndexEntityId::new(entity_id),
                 },
             },
         ));
@@ -1930,13 +2083,7 @@ mod text_transaction_benchmark {
                 "text transaction contract entity state disappeared".to_string(),
             )
         })?;
-        let index_values::IndexV2WorkValue::TextEntityState(state) =
-            index_values::decode_work_value(&bytes)?
-        else {
-            return Err(HelixDbError::InvariantViolation(
-                "text transaction contract state key contains another value kind".to_string(),
-            ));
-        };
+        let state = index_values::decode_text_entity_state(&bytes)?;
         Ok(state)
     }
 
@@ -1957,10 +2104,8 @@ mod text_transaction_benchmark {
             root.partition,
             page,
         )?;
-        let key = Key::Global {
-            kind: GlobalKeyKind::IndexV2(index_keys::GlobalIndexV2Key::TextCompactionPointer(
-                target,
-            )),
+        let key = index_keys::ManagedIndexKey::Global {
+            kind: index_keys::GlobalKey::TextCompactionPointer(target),
         }
         .to_bytes();
         let bytes = db.get(key).await?.ok_or_else(|| {
@@ -1968,7 +2113,7 @@ mod text_transaction_benchmark {
                 "text transaction contract compaction pointer disappeared".to_string(),
             )
         })?;
-        let crate::index_v2::IndexV2MetadataValue::TextCompactionPointer(pointer) =
+        let crate::index_lifecycle::IndexV2MetadataValue::TextCompactionPointer(pointer) =
             index_values::decode_metadata_value(&bytes)?
         else {
             return Err(HelixDbError::InvariantViolation(
@@ -1980,8 +2125,8 @@ mod text_transaction_benchmark {
 
     fn tenant_root(tenant: &str) -> index_keys::TextManifestRootKey {
         let tenant_value = Property::string("tenant", tenant).value;
-        let partition = crate::index_v2::work::TextPartition::try_tenant_value(
-            crate::encoding::v1::property::encode_index_partition_value(&tenant_value),
+        let partition = crate::index_lifecycle::work::TextPartition::try_tenant_value(
+            crate::encoding::v2::values::property::encode_index_partition_value(&tenant_value),
         )
         .expect("tenant partition validates");
         index_keys::TextManifestRootKey {
@@ -2086,7 +2231,7 @@ mod text_transaction_benchmark {
             .expect("batching text definition validates");
         let root =
             seed_active_text_generation(database, Arc::clone(&object_store), &definition).await;
-        let db = crate::HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+        let db = crate::HelixDB::open_with_object_store_for_index_lifecycle_testing(
             database,
             Arc::clone(&object_store),
             benchmark_config(),
@@ -2111,7 +2256,7 @@ mod text_transaction_benchmark {
             assert!(state.live);
             assert_eq!(state.logical_version.get(), inserted_root.revision().get());
         }
-        let page_key = scoped_key(index_keys::IndexV2Key::TextManifestPage(
+        let page_key = scoped_key(index_keys::ScopedKey::TextManifestPage(
             index_keys::TextManifestPageKey { root, page: 0 },
         ));
         let page_bytes = writer_db(&db)
@@ -2119,11 +2264,7 @@ mod text_transaction_benchmark {
             .await
             .expect("batched manifest page reads")
             .expect("batched manifest page exists");
-        let index_values::IndexV2WorkValue::TextManifestPage(page) =
-            index_values::decode_work_value(&page_bytes).expect("batched page decodes")
-        else {
-            panic!("batched page key retains its value kind");
-        };
+        let page = index_values::decode_manifest_page(&page_bytes).expect("batched page decodes");
         assert_eq!(page.entries().len(), 1);
         assert!(page.entries()[0]
             .pruning()
@@ -2290,7 +2431,8 @@ mod text_transaction_benchmark {
             Arc::clone(&object_store),
             &body,
             IndexId::new(1).expect("body index ID is non-zero"),
-            crate::index_v2::TextManifestRevision::new(3).expect("body revision is non-zero"),
+            crate::index_lifecycle::TextManifestRevision::new(3)
+                .expect("body revision is non-zero"),
             true,
         )
         .await
@@ -2300,12 +2442,13 @@ mod text_transaction_benchmark {
             Arc::clone(&object_store),
             &title,
             IndexId::new(2).expect("title index ID is non-zero"),
-            crate::index_v2::TextManifestRevision::new(9).expect("title revision is non-zero"),
+            crate::index_lifecycle::TextManifestRevision::new(9)
+                .expect("title revision is non-zero"),
             true,
         )
         .await
         .expect("title root seeds");
-        let db = crate::HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+        let db = crate::HelixDB::open_with_object_store_for_index_lifecycle_testing(
             database,
             Arc::clone(&object_store),
             benchmark_config(),
@@ -2379,12 +2522,12 @@ mod text_transaction_benchmark {
             Arc::clone(&object_store),
             &definition,
             IndexId::initial(),
-            crate::index_v2::TextManifestRevision::initial(),
+            crate::index_lifecycle::TextManifestRevision::initial(),
             false,
         )
         .await
         .is_none());
-        let db = crate::HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+        let db = crate::HelixDB::open_with_object_store_for_index_lifecycle_testing(
             database,
             Arc::clone(&object_store),
             benchmark_config(),
@@ -2459,7 +2602,7 @@ mod text_transaction_benchmark {
             final_value.revision().get()
         );
 
-        let intermediate_key = scoped_key(index_keys::IndexV2Key::TextManifestRoot(tenant_root(
+        let intermediate_key = scoped_key(index_keys::ScopedKey::TextManifestRoot(tenant_root(
             "temporary-partition",
         )));
         assert!(writer_db(&db)
@@ -2495,7 +2638,7 @@ mod text_transaction_benchmark {
         let root =
             seed_active_text_generation(database, Arc::clone(&object_store), &definition).await;
         let config = benchmark_config();
-        let db = crate::HelixDB::open_with_object_store_for_index_v2_lifecycle_testing(
+        let db = crate::HelixDB::open_with_object_store_for_index_lifecycle_testing(
             database,
             Arc::clone(&object_store),
             config.clone(),
@@ -2560,7 +2703,7 @@ mod text_transaction_benchmark {
     }
 }
 
-#[cfg(feature = "index-v2-lifecycle-testing")]
+#[cfg(feature = "index-lifecycle-testing")]
 pub use text_transaction_benchmark::{
     run_text_transaction_batch_benchmark_sample, run_text_transaction_batching_contracts,
     TextTransactionBatchBenchmarkCase, TextTransactionBatchBenchmarkSample,

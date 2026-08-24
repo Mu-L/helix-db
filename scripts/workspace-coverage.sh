@@ -25,8 +25,8 @@ case "$SHARD" in
                 "needle": "/crates/db/src/execution/interpreter/",
                 "minimum_percent": 98
             },
-            "index_v2": {
-                "needle": "/crates/db/src/index_v2/",
+            "index_lifecycle": {
+                "needle": "/crates/db/src/index_lifecycle/",
                 "minimum_percent": 93
             },
             "search": {
@@ -40,7 +40,7 @@ case "$SHARD" in
         exit 2
         ;;
 esac
-TEMP_ROOT="$(mktemp -d "${TMPDIR:-/private/tmp}/helix-proper-${SHARD}-coverage.XXXXXX")"
+TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/helix-proper-${SHARD}-coverage.XXXXXX")"
 REPORT_PATH="$TEMP_ROOT/coverage.json"
 SUMMARY_PATH="$TEMP_ROOT/summary.json"
 FULL_REPORT_PATH="${WORKSPACE_COVERAGE_FULL_REPORT_PATH:-}"

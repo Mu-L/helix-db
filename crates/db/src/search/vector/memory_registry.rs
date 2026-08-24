@@ -27,7 +27,7 @@ use super::memory_store::{
     VectorMemoryStore,
 };
 use super::{ValidatedVectorCleanupAuthority, ValidatedVectorGenerationHandle};
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 
 /// Complete canonical-record identity for one vector cache generation.
 ///
@@ -37,10 +37,10 @@ use crate::encoding::keys::tenant::DataScope;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct VectorCacheIdentity {
     scope: DataScope,
-    index_id: crate::index_v2::IndexId,
-    generation: crate::index_v2::IndexGenerationId,
-    physical_index_id: crate::index_v2::VectorPhysicalIndexId,
-    record_revision: crate::index_v2::IndexRevision,
+    index_id: crate::index_lifecycle::IndexId,
+    generation: crate::index_lifecycle::IndexGenerationId,
+    physical_index_id: crate::index_lifecycle::VectorPhysicalIndexId,
+    record_revision: crate::index_lifecycle::IndexRevision,
 }
 
 impl VectorCacheIdentity {
@@ -68,19 +68,19 @@ impl VectorCacheIdentity {
 
     /// Returns the non-zero lifecycle generation in this complete identity.
     #[cfg(any(test, feature = "production-coverage"))]
-    pub(crate) const fn generation(&self) -> crate::index_v2::IndexGenerationId {
+    pub(crate) const fn generation(&self) -> crate::index_lifecycle::IndexGenerationId {
         self.generation
     }
 
     /// Returns the stable logical index owning this cache entry.
     #[cfg(any(test, feature = "production-coverage"))]
-    pub(crate) const fn index_id(&self) -> crate::index_v2::IndexId {
+    pub(crate) const fn index_id(&self) -> crate::index_lifecycle::IndexId {
         self.index_id
     }
 
     /// Returns the exact canonical revision that authorized admission.
     #[cfg(any(test, feature = "production-coverage"))]
-    pub(crate) const fn record_revision(&self) -> crate::index_v2::IndexRevision {
+    pub(crate) const fn record_revision(&self) -> crate::index_lifecycle::IndexRevision {
         self.record_revision
     }
 }
@@ -89,8 +89,8 @@ impl VectorCacheIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct VectorCacheGenerationFence {
     scope: DataScope,
-    index_id: crate::index_v2::IndexId,
-    generation: crate::index_v2::IndexGenerationId,
+    index_id: crate::index_lifecycle::IndexId,
+    generation: crate::index_lifecycle::IndexGenerationId,
 }
 
 impl VectorCacheGenerationFence {
@@ -897,7 +897,7 @@ mod tests {
             physical_index_id,
             NonZeroU64::new(generation).unwrap(),
             record_revision,
-            crate::index_v2::IndexElementKind::Node,
+            crate::index_lifecycle::IndexElementKind::Node,
             VectorDimension::try_new(3).unwrap(),
         )
         .unwrap();
@@ -920,37 +920,41 @@ mod tests {
         )
         .unwrap();
         let definition =
-            crate::index_v2::ValidatedVectorIndexDefinition::try_from_runtime(&definition).unwrap();
-        let build_operation = crate::index_v2::IndexOperationId::new_v4();
-        let active = crate::index_v2::IndexRecordV2::building(
-            crate::index_v2::IndexId::new(7).unwrap(),
-            crate::index_v2::ValidatedDynamicIndexDefinition::Vector(definition.clone()),
-            crate::index_v2::IndexRevision::initial(),
-            crate::index_v2::PhysicalGeneration::Vector {
-                generation: crate::index_v2::IndexGenerationId::initial(),
-                layout: crate::index_v2::VectorPhysicalLayout::Unpartitioned {
-                    physical_index_id: crate::index_v2::VectorPhysicalIndexId::new(70).unwrap(),
+            crate::index_lifecycle::ValidatedVectorIndexDefinition::try_from_runtime(&definition)
+                .unwrap();
+        let build_operation = crate::index_lifecycle::IndexOperationId::new_v4();
+        let active = crate::index_lifecycle::IndexRecordV2::building(
+            crate::index_lifecycle::IndexId::new(7).unwrap(),
+            crate::index_lifecycle::ValidatedDynamicIndexDefinition::Vector(definition.clone()),
+            crate::index_lifecycle::IndexRevision::initial(),
+            crate::index_lifecycle::PhysicalGeneration::Vector {
+                generation: crate::index_lifecycle::IndexGenerationId::initial(),
+                layout: crate::index_lifecycle::VectorPhysicalLayout::Unpartitioned {
+                    physical_index_id: crate::index_lifecycle::VectorPhysicalIndexId::new(70)
+                        .unwrap(),
                 },
-                descriptor: crate::index_v2::VectorGenerationDescriptor::for_definition(
+                descriptor: crate::index_lifecycle::VectorGenerationDescriptor::for_definition(
                     &definition,
                 ),
             },
             build_operation,
         )
         .unwrap()
-        .transition(crate::index_v2::IndexStateTransition::Activate)
+        .transition(crate::index_lifecycle::IndexStateTransition::Activate)
         .unwrap();
-        let active_handle =
-            crate::index_v2::ActiveIndexHandle::try_from_record(DataScope::LegacyUnscoped, &active)
-                .unwrap();
-        let generation = ValidatedVectorGenerationHandle::try_from_active::<Cosine>(
-            &active_handle,
-            crate::index_v2::VectorPhysicalIndexId::new(70).unwrap(),
+        let active_handle = crate::index_lifecycle::ActiveIndexHandle::try_from_record(
+            DataScope::LegacyUnscoped,
+            &active,
         )
         .unwrap();
-        let drop_operation = crate::index_v2::IndexOperationId::new_v4();
+        let generation = ValidatedVectorGenerationHandle::try_from_active::<Cosine>(
+            &active_handle,
+            crate::index_lifecycle::VectorPhysicalIndexId::new(70).unwrap(),
+        )
+        .unwrap();
+        let drop_operation = crate::index_lifecycle::IndexOperationId::new_v4();
         let dropping = active
-            .transition(crate::index_v2::IndexStateTransition::BeginDrop {
+            .transition(crate::index_lifecycle::IndexStateTransition::BeginDrop {
                 drop_operation_id: drop_operation,
             })
             .unwrap();
@@ -977,7 +981,7 @@ mod tests {
         let same = VectorCacheIdentity::from_validated(&validated(1));
         let successor = VectorCacheIdentity::from_validated(&validated(2));
         let another_scope = VectorCacheIdentity::from_validated(&validated_exact(
-            DataScope::Tenant(crate::encoding::keys::tenant::TenantId::from_u128(1)),
+            DataScope::Tenant(crate::encoding::keys::scope::TenantId::from_u128(1)),
             7,
             1,
             70,
@@ -1013,13 +1017,16 @@ mod tests {
         assert_ne!(first, another_revision);
         assert_eq!(
             first.generation(),
-            crate::index_v2::IndexGenerationId::initial()
+            crate::index_lifecycle::IndexGenerationId::initial()
         );
-        assert_eq!(first.index_id(), crate::index_v2::IndexId::new(7).unwrap());
+        assert_eq!(
+            first.index_id(),
+            crate::index_lifecycle::IndexId::new(7).unwrap()
+        );
         assert_eq!(first.physical_index_id(), 70);
         assert_eq!(
             first.record_revision(),
-            crate::index_v2::IndexRevision::initial()
+            crate::index_lifecycle::IndexRevision::initial()
         );
     }
 

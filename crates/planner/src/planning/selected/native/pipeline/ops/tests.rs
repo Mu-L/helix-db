@@ -1,6 +1,6 @@
 use super::*;
 use crate::{catalog, error, ir, logical};
-use helix_ast::expr::{Expr, StreamBound};
+use helix_ast::expr::{Expr, Predicate, StreamBound};
 use helix_ast::traversal::{AstNode, Order};
 use helix_ast::value::{PropertyInput, PropertyValue};
 
@@ -33,10 +33,13 @@ fn pipeline_op_family_probes_return_typed_matches_and_misses() {
         input: input(),
         label: None,
     })));
-    assert!(family_op(filter::pipeline_op_from_ast(&AstNode::HasKey {
-        input: input(),
-        property: "email".to_owned(),
-    })));
+    assert!(family_op(filter::pipeline_op_from_ast(
+        &crate::context::PlannerContext::default(),
+        &AstNode::HasKey {
+            input: input(),
+            property: "email".to_owned(),
+        }
+    )));
     assert!(family_op(bounds::pipeline_op_from_ast(&AstNode::Dedup {
         input: input(),
     })));
@@ -48,7 +51,10 @@ fn pipeline_op_family_probes_return_typed_matches_and_misses() {
     assert!(family_miss(expansion::pipeline_op_from_ast(
         &AstNode::Context
     )));
-    assert!(family_miss(filter::pipeline_op_from_ast(&AstNode::Context)));
+    assert!(family_miss(filter::pipeline_op_from_ast(
+        &crate::context::PlannerContext::default(),
+        &AstNode::Context
+    )));
     assert!(family_miss(bounds::pipeline_op_from_ast(&AstNode::Context)));
     assert!(family_miss(variable::pipeline_op_from_ast(
         &AstNode::Inject {
@@ -190,6 +196,51 @@ fn pipeline_op_contract_rejects_non_pipeline_roots_and_invalid_payloads() {
 }
 
 #[test]
+fn filter_wrappers_validate_payloads_and_defer_missing_bindings() {
+    let ctx = crate::context::PlannerContext::default();
+    let cases = [
+        AstNode::Has {
+            input: input(),
+            property: String::new(),
+            value: PropertyValue::Bool(true),
+        },
+        AstNode::EdgeHas {
+            input: input(),
+            property: String::new(),
+            value: PropertyInput::from(true),
+        },
+        AstNode::HasLabel {
+            input: input(),
+            label: String::new(),
+        },
+        AstNode::HasKey {
+            input: input(),
+            property: String::new(),
+        },
+    ];
+
+    for root in cases {
+        assert!(filter::pipeline_op_from_ast(&ctx, &root).is_err());
+    }
+
+    let predicate = Predicate::and(vec![
+        Predicate::eq_param("status", "missing_status"),
+        Predicate::is_in_param("group", "missing_groups"),
+    ]);
+    let root = AstNode::Where {
+        input: input(),
+        predicate: predicate.clone(),
+    };
+    let parsed = pipeline_op(&root);
+    assert!(matches!(
+        parsed.into_parts().1,
+        logical::StreamPipelineOp::Filter {
+            predicate: predicate_plan
+        } if predicate_plan == ir::PredicatePlan::new(predicate).unwrap()
+    ));
+}
+
+#[test]
 fn traversal_scoped_vector_search_preserves_input_and_resolves_the_index() {
     let key =
         catalog::SearchIndexKey::try_new(catalog::ElementKind::Node, "Doc", "embedding").unwrap();
@@ -222,5 +273,70 @@ fn traversal_scoped_vector_search_preserves_input_and_resolves_the_index() {
                         && key.property.as_ref() == "embedding"
                         && matches!(k, ir::SearchLimitPlan::Literal(value) if value.get() == 10)
             )
+    ));
+}
+
+#[test]
+fn traversal_scoped_text_search_preserves_input_and_resolves_the_index() {
+    let key = catalog::SearchIndexKey::try_new(catalog::ElementKind::Node, "Doc", "body").unwrap();
+    let ctx = crate::context::PlannerContext {
+        indexes: catalog::IndexCatalogSnapshot::default()
+            .with_text(key, catalog::SearchIndexScope::Unscoped),
+        ..crate::context::PlannerContext::default()
+    };
+    let root = AstNode::TextSearchNodesWithin {
+        input: input(),
+        label: "Doc".to_owned(),
+        property: "body".to_owned(),
+        tenant_value: None,
+        query_text: PropertyInput::from("needle"),
+        k: StreamBound::Literal(10),
+    };
+
+    let parsed = search::pipeline_op_from_ast(&ctx, &root).unwrap();
+    let contract::NativePipelineOpMatch::Op(parsed) = parsed else {
+        panic!("expected traversal-scoped text pipeline op");
+    };
+    let (input, op) = parsed.into_parts();
+    assert!(matches!(input, AstNode::Context));
+    assert!(matches!(
+        op,
+        logical::StreamPipelineOp::TextSearch { plan }
+            if matches!(plan.as_ref(),
+                ir::RestrictedTextSearchPlan::Nodes { key, query_text, k, .. }
+                    if key.label.as_ref() == "Doc"
+                        && key.property.as_ref() == "body"
+                        && matches!(query_text, ir::TextQueryInputPlan::Text(text) if text.as_ref() == "needle")
+                        && matches!(k, ir::SearchLimitPlan::Literal(value) if value.get() == 10)
+            )
+    ));
+}
+
+#[test]
+fn traversal_scoped_edge_text_search_uses_the_edge_plan_variant() {
+    let key =
+        catalog::SearchIndexKey::try_new(catalog::ElementKind::Edge, "ABOUT", "body").unwrap();
+    let ctx = crate::context::PlannerContext {
+        indexes: catalog::IndexCatalogSnapshot::default()
+            .with_text(key, catalog::SearchIndexScope::Unscoped),
+        ..crate::context::PlannerContext::default()
+    };
+    let root = AstNode::TextSearchEdgesWithin {
+        input: input(),
+        label: "ABOUT".to_owned(),
+        property: "body".to_owned(),
+        tenant_value: None,
+        query_text: PropertyInput::from("needle"),
+        k: StreamBound::Literal(3),
+    };
+
+    let parsed = search::pipeline_op_from_ast(&ctx, &root).unwrap();
+    let contract::NativePipelineOpMatch::Op(parsed) = parsed else {
+        panic!("expected traversal-scoped edge text pipeline op");
+    };
+    assert!(matches!(
+        parsed.into_parts().1,
+        logical::StreamPipelineOp::TextSearch { plan }
+            if matches!(plan.as_ref(), ir::RestrictedTextSearchPlan::Edges { .. })
     ));
 }

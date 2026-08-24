@@ -29,17 +29,19 @@ use slatedb::DbTransaction;
 #[cfg(test)]
 use slatedb::IsolationLevel;
 
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 #[cfg(test)]
-use crate::encoding::v1::keys::vectors::VectorKey;
+use crate::encoding::v2::keys::indexes::vector::VectorKey;
 #[cfg(test)]
-use crate::encoding::v1::keys::vectors::{
+use crate::encoding::v2::keys::indexes::vector::{
     VectorEntryCandidateKey, VectorEntryCandidateNodeKey, VectorIndexMetadataKey, VectorItemKey,
     VectorL0PrefixKey, VectorLayer0NeighborsKey, VectorMemoryPrefixKey, VectorReverseEdgeKey,
-    VectorReverseEdgePrefixKey, VectorSimHashKey, VectorTxnGuardKey, VectorUpperVectorKey,
+    VectorReverseEdgePrefixKey, VectorSimHashKey, VectorUpperVectorKey,
 };
 #[cfg(test)]
-use crate::encoding::v1::values::vectors::simhash::encode_simhash;
+use crate::encoding::v2::legacy::vector::transaction_guard::LegacyVectorTxnGuardKey as VectorTxnGuardKey;
+#[cfg(test)]
+use crate::encoding::v2::values::indexes::vector::simhash::encode_simhash;
 use crate::encoding::NodeId;
 use crate::error::HelixDbError;
 #[cfg(test)]
@@ -247,7 +249,7 @@ impl<D: Distance> VectorIndex<D> {
         reader: &(impl DbReadOps + Send + Sync),
         pass: LegacyVectorValidationPass,
         cursor: Option<&[u8]>,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         max_entities: usize,
         max_input_bytes: u64,
     ) -> Result<LegacyVectorValidationOutcome, HelixDbError> {
@@ -268,7 +270,7 @@ impl<D: Distance> VectorIndex<D> {
         &self,
         reader: &(impl DbReadOps + Send + Sync),
         cursor: Option<&[u8]>,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         mode: SimHashDirectoryValidationMode,
         max_entities: usize,
         max_input_bytes: u64,
@@ -289,7 +291,7 @@ impl<D: Distance> VectorIndex<D> {
         &self,
         reader: &(impl DbReadOps + Send + Sync),
         cursor: Option<&[u8]>,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         limits: crate::config::SearchIndexBatchLimits,
     ) -> Result<CanonicalVectorDirectoryBackfillOutcome, HelixDbError> {
         VectorRows::new(reader, &self.rows)
@@ -317,7 +319,7 @@ impl<D: Distance> VectorIndex<D> {
     pub(crate) async fn transcode_legacy_metadata(
         &self,
         transaction: &DbTransaction,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         canonical_physical_name: &str,
     ) -> Result<VectorWriteMeasurement, HelixDbError> {
         let Some(mut metadata) = VectorRows::new(transaction, &self.rows)
@@ -361,7 +363,7 @@ impl<D: Distance> VectorIndex<D> {
     pub(crate) async fn validate_legacy_metadata_contract(
         &self,
         reader: &(impl DbReadOps + Send + Sync),
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
     ) -> Result<(), HelixDbError> {
         let Some(metadata) = VectorRows::new(reader, &self.rows)
             .legacy_metadata()
@@ -752,7 +754,7 @@ impl<D: Distance> VectorIndex<D> {
         &self,
         transaction: &(impl DbReadOps + Send + Sync),
         entity_id: NodeId,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
     ) -> Result<LegacyVectorMigrationRead, HelixDbError> {
         let read = VectorRows::new(transaction, &self.rows)
             .legacy_vector_for_migration::<D>(entity_id, definition)
@@ -1626,7 +1628,9 @@ mod tests {
     use slatedb::object_store::memory::InMemory;
 
     use super::*;
-    use crate::encoding::v1::values::vectors::{decode_layer0_neighbors, encode_layer0_neighbors};
+    use crate::encoding::v2::values::indexes::vector::{
+        decode_layer0_neighbors, encode_layer0_neighbors,
+    };
     use crate::search::vector::distance::{Cosine, Euclidean};
     use crate::search::vector::{SimHash, VectorConfigError, VectorDimensionError};
 
@@ -2071,7 +2075,7 @@ mod tests {
     #[test]
     fn test_handle_modes_scopes_and_candidate_ordering_contracts() {
         let scope = DataScope::Tenant(
-            crate::encoding::keys::tenant::TenantId::from_ulid_str("0000000000000000000000000A")
+            crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000A")
                 .unwrap(),
         );
         let scoped = VectorIndex::<Cosine>::new_scoped("scoped", scope);
@@ -2151,7 +2155,7 @@ mod tests {
         let txn = db.begin(IsolationLevel::Snapshot).await.unwrap();
         txn.put(
             &guard_key,
-            crate::encoding::v1::values::vectors::markers::encode_active_txn_guard(),
+            crate::encoding::v2::legacy::vector::transaction_guard::encode_active_txn_guard(),
         )
         .unwrap();
         txn.commit().await.unwrap();

@@ -122,6 +122,20 @@ fn stream_op(kind: logical::StreamPipelineOpKind) -> logical::StreamPipelineOp {
                 k: ir::SearchLimitPlan::Literal(std::num::NonZeroUsize::MIN),
             }),
         },
+        logical::StreamPipelineOpKind::TextSearch => logical::StreamPipelineOp::TextSearch {
+            plan: Box::new(ir::RestrictedTextSearchPlan::Nodes {
+                key: catalog::NodeSearchIndexKey::try_new("Doc", "body").unwrap(),
+                index: ir::SearchIndexPlan {
+                    index_id: ir::NonEmptyString::new("idx").unwrap(),
+                    tenant: ir::SearchTenantPlan::Unscoped,
+                },
+                query_text: ir::TextQueryInputPlan::new(helix_ast::value::PropertyInput::from(
+                    "needle",
+                ))
+                .unwrap(),
+                k: ir::SearchLimitPlan::Literal(std::num::NonZeroUsize::MIN),
+            }),
+        },
         logical::StreamPipelineOpKind::Variable => logical::StreamPipelineOp::Variable {
             op: logical::PureStreamVariableOp::Within(ir::NonEmptyString::new("allowed").unwrap()),
         },
@@ -152,7 +166,7 @@ fn empty_access_pipeline_expr(kind: logical::StreamPipelineOpKind) -> logical::L
     )
 }
 
-fn adjacent_filter_pipeline_expr() -> logical::LogicalExpr {
+fn canonical_filter_pipeline_expr() -> logical::LogicalExpr {
     let access = logical::AccessPath::Node(logical::NodeAccessPath::new(
         ir::NodeAccessSourcePlan::from_unfiltered(ir::NodeAccessPlan::AllScan),
     ));
@@ -978,8 +992,8 @@ fn rule_schedule_routes_access_pipeline_local_simplification_candidates() {
         ["any", "local_simplification", "pipeline_broad"]
     );
     assert_eq!(
-        rule_ids(schedule.rules_for_expr(&adjacent_filter_pipeline_expr())),
-        ["any", "local_simplification", "pipeline_broad"]
+        rule_ids(schedule.rules_for_expr(&canonical_filter_pipeline_expr())),
+        ["any", "pipeline_broad"]
     );
     assert_eq!(
         rule_ids(schedule.rules_for_expr(&access_pipeline_expr(

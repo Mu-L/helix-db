@@ -175,7 +175,8 @@
               "database/helix-db/query-guides/filtering",
               "database/helix-db/query-guides/projections",
               "database/helix-db/query-guides/advanced",
-              "database/helix-db/query-guides/parameters"
+              "database/helix-db/query-guides/parameters",
+              "database/helix-db/query-guides/error-handling"
             ]
           }
         ]
@@ -187,8 +188,14 @@
             "group": "Start Here",
             "pages": [
               "database/helix-cloud/start-here/working-with-enterprise",
-              "database/helix-cloud/start-here/using-the-dashboard",
+              "database/helix-cloud/start-here/using-the-cloud",
               "database/helix-cloud/start-here/architecture"
+            ]
+          },
+          {
+            "group": "Connect and automate",
+            "pages": [
+              "database/helix-cloud/connect/mcp"
             ]
           },
           {

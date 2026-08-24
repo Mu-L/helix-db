@@ -5,8 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_LOCAL_PORT: u16 = 6969;
-pub const DEFAULT_ENTERPRISE_DEV_IMAGE: &str = "ghcr.io/helixdb/enterprise-dev";
-pub const DEFAULT_ENTERPRISE_DEV_TAG: &str = "latest";
+pub const DEFAULT_LOCAL_IMAGE: &str = "ghcr.io/helixdb/helixdb";
+pub const DEFAULT_LOCAL_IMAGE_TAG: &str = "v0.0.4";
 pub const DEFAULT_QUERY_AUTH_HEADER: &str = "Authorization";
 pub const DEFAULT_QUERY_AUTH_ENV: &str = "HELIX_API_KEY";
 pub const DEFAULT_S3_REGION: &str = "us-east-1";
@@ -115,9 +115,9 @@ fn default_container_runtime() -> ContainerRuntime {
 pub struct LocalInstanceConfig {
     #[serde(default = "default_local_port")]
     pub port: u16,
-    #[serde(default = "default_enterprise_dev_image")]
+    #[serde(default = "default_local_image")]
     pub image: String,
-    #[serde(default = "default_enterprise_dev_tag")]
+    #[serde(default = "default_local_image_tag")]
     pub tag: String,
     #[serde(default, skip_serializing_if = "is_default_local_storage")]
     pub storage: LocalStorageMode,
@@ -338,12 +338,12 @@ fn default_local_port() -> u16 {
     DEFAULT_LOCAL_PORT
 }
 
-fn default_enterprise_dev_image() -> String {
-    DEFAULT_ENTERPRISE_DEV_IMAGE.to_string()
+fn default_local_image() -> String {
+    DEFAULT_LOCAL_IMAGE.to_string()
 }
 
-fn default_enterprise_dev_tag() -> String {
-    DEFAULT_ENTERPRISE_DEV_TAG.to_string()
+fn default_local_image_tag() -> String {
+    DEFAULT_LOCAL_IMAGE_TAG.to_string()
 }
 
 fn default_s3_region() -> String {
@@ -385,8 +385,8 @@ impl Default for LocalInstanceConfig {
     fn default() -> Self {
         Self {
             port: DEFAULT_LOCAL_PORT,
-            image: DEFAULT_ENTERPRISE_DEV_IMAGE.to_string(),
-            tag: DEFAULT_ENTERPRISE_DEV_TAG.to_string(),
+            image: DEFAULT_LOCAL_IMAGE.to_string(),
+            tag: DEFAULT_LOCAL_IMAGE_TAG.to_string(),
             storage: LocalStorageMode::Memory,
             s3: None,
         }
@@ -396,6 +396,46 @@ impl Default for LocalInstanceConfig {
 impl LocalInstanceConfig {
     pub fn image_ref(&self) -> String {
         format!("{}:{}", self.image, self.tag)
+    }
+}
+
+/// How the CLI turns an environment value into a query authentication header.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum QueryAuthScheme {
+    /// Add the `Bearer` authorization scheme to the configured key.
+    Bearer,
+    /// Send the configured value without adding a scheme.
+    Raw,
+}
+
+impl QueryAuthScheme {
+    pub(crate) fn inferred_from_header(header: &str) -> Self {
+        if header.eq_ignore_ascii_case(DEFAULT_QUERY_AUTH_HEADER) {
+            Self::Bearer
+        } else {
+            Self::Raw
+        }
+    }
+
+    pub(crate) fn format_header_value(self, value: &str) -> Option<String> {
+        if value.trim().is_empty() || value.chars().any(char::is_control) {
+            return None;
+        }
+        match self {
+            Self::Raw => Some(value.to_string()),
+            Self::Bearer => {
+                let trimmed = value.trim();
+                let mut parts = trimmed.splitn(2, char::is_whitespace);
+                let prefix = parts.next().unwrap_or_default();
+                if prefix.eq_ignore_ascii_case("bearer") {
+                    let token = parts.next().unwrap_or_default().trim();
+                    (!token.is_empty()).then(|| format!("Bearer {token}"))
+                } else {
+                    Some(format!("Bearer {trimmed}"))
+                }
+            }
+        }
     }
 }
 
@@ -412,6 +452,9 @@ pub struct EnterpriseInstanceConfig {
     pub query_auth_header: String,
     #[serde(default = "default_query_auth_env")]
     pub query_auth_env: String,
+    /// Explicit query authentication scheme. Legacy configs infer it from the header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_auth_scheme: Option<QueryAuthScheme>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub availability_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -424,6 +467,13 @@ pub struct EnterpriseInstanceConfig {
     pub max_instances: u64,
     #[serde(flatten)]
     pub db_config: DbConfig,
+}
+
+impl EnterpriseInstanceConfig {
+    pub(crate) fn resolved_query_auth_scheme(&self) -> QueryAuthScheme {
+        self.query_auth_scheme
+            .unwrap_or_else(|| QueryAuthScheme::inferred_from_header(&self.query_auth_header))
+    }
 }
 
 fn default_min_instances() -> u64 {
@@ -663,6 +713,87 @@ max_instances = 4
         assert_eq!(enterprise.min_instances, 2);
         assert_eq!(enterprise.max_instances, 4);
         assert_eq!(enterprise.db_config.vector_config.db_max_size_gb, 20);
+        assert_eq!(
+            enterprise.resolved_query_auth_scheme(),
+            QueryAuthScheme::Bearer
+        );
+    }
+
+    #[test]
+    fn query_auth_scheme_supports_legacy_and_explicit_configs() {
+        let legacy_raw: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "demo"
+
+[enterprise.production]
+cluster_id = "cluster-123"
+query_auth_header = "x-api-key"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            legacy_raw
+                .enterprise
+                .get("production")
+                .unwrap()
+                .resolved_query_auth_scheme(),
+            QueryAuthScheme::Raw
+        );
+
+        let explicit: HelixConfig = toml::from_str(
+            r#"
+[project]
+name = "demo"
+
+[enterprise.production]
+cluster_id = "cluster-123"
+query_auth_header = "Authorization"
+query_auth_scheme = "bearer"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            explicit
+                .enterprise
+                .get("production")
+                .unwrap()
+                .query_auth_scheme,
+            Some(QueryAuthScheme::Bearer)
+        );
+
+        let invalid = toml::from_str::<HelixConfig>(
+            r#"
+[project]
+name = "demo"
+
+[enterprise.production]
+cluster_id = "cluster-123"
+query_auth_scheme = "token"
+"#,
+        );
+        assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn query_auth_scheme_formats_header_values() {
+        assert_eq!(
+            QueryAuthScheme::Bearer.format_header_value("secret"),
+            Some("Bearer secret".to_string())
+        );
+        assert_eq!(
+            QueryAuthScheme::Bearer.format_header_value("bearer secret"),
+            Some("Bearer secret".to_string())
+        );
+        assert_eq!(
+            QueryAuthScheme::Raw.format_header_value("secret"),
+            Some("secret".to_string())
+        );
+        assert_eq!(QueryAuthScheme::Bearer.format_header_value("  "), None);
+        assert_eq!(
+            QueryAuthScheme::Bearer.format_header_value("Bearer\r\nsecret"),
+            None
+        );
     }
 
     #[test]
@@ -682,6 +813,13 @@ tag = "latest"
 
         let local = config.local.get("dev").unwrap();
         assert_eq!(local.storage, LocalStorageMode::Memory);
+    }
+
+    #[test]
+    fn local_config_defaults_to_published_standalone_image() {
+        let config = LocalInstanceConfig::default();
+
+        assert_eq!(config.image_ref(), "ghcr.io/helixdb/helixdb:v0.0.4");
     }
 
     #[test]

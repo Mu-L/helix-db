@@ -10,8 +10,8 @@
 use std::num::NonZeroU64;
 use std::num::{NonZeroU16, NonZeroUsize};
 
-use crate::encoding::keys::tenant::DataScope;
-use crate::index_v2::{
+use crate::encoding::keys::scope::DataScope;
+use crate::index_lifecycle::{
     ActiveIndexHandle, IndexElementKind, IndexGenerationId, IndexId, IndexOperationId,
     IndexRecordV2, IndexRevision, IndexStateV2, PhysicalGeneration,
     ValidatedDynamicIndexDefinition, ValidatedVectorIndexDefinition, VectorPhysicalIndexId,
@@ -150,7 +150,7 @@ pub(crate) struct ValidatedVectorCleanupAuthority {
     generation: IndexGenerationId,
     record_revision: IndexRevision,
     layout: VectorPhysicalLayout,
-    descriptor: crate::index_v2::VectorGenerationDescriptor,
+    descriptor: crate::index_lifecycle::VectorGenerationDescriptor,
     definition: ValidatedVectorIndexDefinition,
 }
 
@@ -381,7 +381,7 @@ impl ValidatedVectorGenerationHandle {
         generation: IndexGenerationId,
         record_revision: IndexRevision,
         layout: VectorPhysicalLayout,
-        descriptor: crate::index_v2::VectorGenerationDescriptor,
+        descriptor: crate::index_lifecycle::VectorGenerationDescriptor,
         definition: &ValidatedVectorIndexDefinition,
         physical_index_id: VectorPhysicalIndexId,
     ) -> Result<Self, VectorGenerationValidationError> {
@@ -399,37 +399,37 @@ impl ValidatedVectorGenerationHandle {
             return Err(VectorGenerationValidationError::UnboundDistance(D::name()));
         };
         let metric = match semantics.metric() {
-            crate::encoding::v1::values::vector_generation::ActiveMetricKind::Cosine => {
+            crate::encoding::v2::values::indexes::vector::ActiveMetricKind::Cosine => {
                 VectorDistanceMetric::Cosine
             }
-            crate::encoding::v1::values::vector_generation::ActiveMetricKind::Euclidean => {
+            crate::encoding::v2::values::indexes::vector::ActiveMetricKind::Euclidean => {
                 VectorDistanceMetric::Euclidean
             }
-            crate::encoding::v1::values::vector_generation::ActiveMetricKind::Manhattan => {
+            crate::encoding::v2::values::indexes::vector::ActiveMetricKind::Manhattan => {
                 VectorDistanceMetric::Manhattan
             }
         };
         let codec = match semantics.codec() {
-            crate::encoding::v1::values::vector_generation::ActiveVectorCodec::F32V1 => {
-                crate::index_v2::ActiveVectorCodecV2::F32V1
+            crate::encoding::v2::values::indexes::vector::ActiveVectorCodec::F32V1 => {
+                crate::index_lifecycle::ActiveVectorCodecV2::F32V1
             }
         };
         let score_semantic = match semantics.score() {
-            crate::encoding::v1::values::vector_generation::ActiveScoreSemantic::CosineHalfF32V1 => {
-                crate::index_v2::VectorScoreSemanticV2::CosineHalfF32V1
+            crate::encoding::v2::values::indexes::vector::ActiveScoreSemantic::CosineHalfF32V1 => {
+                crate::index_lifecycle::VectorScoreSemanticV2::CosineHalfF32V1
             }
-            crate::encoding::v1::values::vector_generation::ActiveScoreSemantic::SquaredEuclideanF32V1 => {
-                crate::index_v2::VectorScoreSemanticV2::SquaredEuclideanF32V1
+            crate::encoding::v2::values::indexes::vector::ActiveScoreSemantic::SquaredEuclideanF32V1 => {
+                crate::index_lifecycle::VectorScoreSemanticV2::SquaredEuclideanF32V1
             }
-            crate::encoding::v1::values::vector_generation::ActiveScoreSemantic::ManhattanF32V1 => {
-                crate::index_v2::VectorScoreSemanticV2::ManhattanF32V1
+            crate::encoding::v2::values::indexes::vector::ActiveScoreSemantic::ManhattanF32V1 => {
+                crate::index_lifecycle::VectorScoreSemanticV2::ManhattanF32V1
             }
         };
         let cosine_norm_policy = match semantics.cosine_norm() {
             Some(
-                crate::encoding::v1::values::vector_generation::CosineNormPolicyId::RejectZeroScaledL2V1,
-            ) => crate::index_v2::CosineNormPolicyV2::RejectZeroScaledL2V1,
-            None => crate::index_v2::CosineNormPolicyV2::NotApplicable,
+                crate::encoding::v2::values::indexes::vector::CosineNormPolicyId::RejectZeroScaledL2V1,
+            ) => crate::index_lifecycle::CosineNormPolicyV2::RejectZeroScaledL2V1,
+            None => crate::index_lifecycle::CosineNormPolicyV2::NotApplicable,
         };
         if metric != descriptor.metric()
             || codec != descriptor.codec()
@@ -470,13 +470,13 @@ impl ValidatedVectorGenerationHandle {
             return Err(VectorGenerationValidationError::UnboundDistance(D::name()));
         };
         let metric = match semantics.metric() {
-            crate::encoding::v1::values::vector_generation::ActiveMetricKind::Cosine => {
+            crate::encoding::v2::values::indexes::vector::ActiveMetricKind::Cosine => {
                 VectorDistanceMetric::Cosine
             }
-            crate::encoding::v1::values::vector_generation::ActiveMetricKind::Euclidean => {
+            crate::encoding::v2::values::indexes::vector::ActiveMetricKind::Euclidean => {
                 VectorDistanceMetric::Euclidean
             }
-            crate::encoding::v1::values::vector_generation::ActiveMetricKind::Manhattan => {
+            crate::encoding::v2::values::indexes::vector::ActiveMetricKind::Manhattan => {
                 VectorDistanceMetric::Manhattan
             }
         };
@@ -513,13 +513,13 @@ impl ValidatedVectorGenerationHandle {
             return Err(VectorGenerationValidationError::UnboundDistance(D::name()));
         };
         let metric = match semantics.metric() {
-            crate::encoding::v1::values::vector_generation::ActiveMetricKind::Cosine => {
+            crate::encoding::v2::values::indexes::vector::ActiveMetricKind::Cosine => {
                 VectorDistanceMetric::Cosine
             }
-            crate::encoding::v1::values::vector_generation::ActiveMetricKind::Euclidean => {
+            crate::encoding::v2::values::indexes::vector::ActiveMetricKind::Euclidean => {
                 VectorDistanceMetric::Euclidean
             }
-            crate::encoding::v1::values::vector_generation::ActiveMetricKind::Manhattan => {
+            crate::encoding::v2::values::indexes::vector::ActiveMetricKind::Manhattan => {
                 VectorDistanceMetric::Manhattan
             }
         };
@@ -623,7 +623,7 @@ pub(crate) enum VectorGenerationValidationError {
     UnboundDistance(&'static str),
     /// A test identity contained a zero or exhausted V2 identifier.
     #[error(transparent)]
-    InvalidIdentity(#[from] crate::index_v2::IndexV2ModelError),
+    InvalidIdentity(#[from] crate::index_lifecycle::IndexV2ModelError),
     /// A canonical descriptor dimension could not enter the vector core.
     #[error(transparent)]
     InvalidDimension(#[from] VectorDimensionError),
@@ -637,7 +637,7 @@ pub(crate) mod production_contracts;
 mod tests {
     use super::*;
     use crate::config::VectorIndexDefinition;
-    use crate::index_v2::{
+    use crate::index_lifecycle::{
         IndexOperationId, IndexRecordV2, IndexStateTransition, PhysicalGeneration,
         ValidatedDynamicIndexDefinition, VectorGenerationDescriptor,
     };

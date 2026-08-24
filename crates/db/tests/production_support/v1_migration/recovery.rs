@@ -14,8 +14,8 @@ use crate::encoding::property::property_value::PropertyValue;
 use crate::encoding::property::{encode_properties, Property};
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{DataKeyKind, EdgePropertyPairKey, Key, NodePropertyKey};
-use crate::index_v2::secondary::lookup_active_equality_generation;
-use crate::index_v2::{IndexStateV2, ValidatedDynamicIndexDefinition};
+use crate::index_lifecycle::secondary::lookup_active_equality_generation;
+use crate::index_lifecycle::{IndexStateV2, ValidatedDynamicIndexDefinition};
 use crate::migrations::MigrationFailpoint;
 use crate::{DbConfig, HelixDB};
 
@@ -168,7 +168,7 @@ async fn ownership(
     raw: &slatedb::Db,
     definition: &ValidatedDynamicIndexDefinition,
 ) -> Option<(u64, u64)> {
-    let record = crate::index_v2::repository::load_index_record(
+    let record = crate::index_lifecycle::repository::load_index_record(
         raw,
         DataScope::LegacyUnscoped,
         &definition.identity(),
@@ -282,7 +282,7 @@ async fn run_case(
     .expect("crash-recovery cold open converges");
     drive_cleanup(&recovered).await;
     let final_ownership = ownership(recovered.inner_db().as_ref(), &definition).await;
-    let record = crate::index_v2::repository::load_index_record(
+    let record = crate::index_lifecycle::repository::load_index_record(
         recovered.inner_db().as_ref(),
         DataScope::LegacyUnscoped,
         &definition.identity(),

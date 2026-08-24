@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 //! Durable KV migration jobs.
 //!
 //! Migration progress is stored in the same scoped data-metadata namespace as
@@ -25,12 +27,20 @@ use serde::{Deserialize, Serialize};
 use slatedb::{Db, DbReadOps, DbTransaction, IsolationLevel};
 
 use crate::config;
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 use crate::encoding::property::{decode_properties, Property};
 use crate::encoding::v1::keys::vectors::VectorKey;
 use crate::encoding::v1::keys::{
     AdjacencyKey, DataKeyKind, EdgeEndpointsKey, EdgePairIndexKey, EdgePropertyByIdKey, Key,
     KeyPrefix, MetadataKey,
+};
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
+use crate::encoding::v2::legacy::index_catalog::{
+    self as legacy_index_catalog, LegacyDefinitionRow, LegacyDynamicIndexCatalogEntry,
+    LegacyDynamicIndexDefinition, LegacyDynamicIndexKey, LegacyRangeDirection,
+    LegacySecondaryElementType, LegacySecondaryIndexDefinition, LegacySecondaryKind,
+    LegacyTextAnalyzer, LegacyTextElementType, LegacyTextIndexDefinition, LegacyVectorElementType,
+    LegacyVectorIndexDefinition, LegacyVectorMetric,
 };
 use crate::encoding::{EdgeId, NodeId};
 use crate::error::{HelixDbError, Result};
@@ -40,6 +50,8 @@ use crate::HelixWriter;
 const MIGRATION_JOB_PREFIX: &[u8] = b"kv_migration_job:";
 const GRAPH_FORMAT_V1_READY: &[u8] = b"kv_migration_ready:graph_format_v1";
 const INDEX_V2_MIGRATION_READY: &[u8] = b"kv_migration_ready:index_v2_catalog_v1";
+const TENANT_KEY_ENVELOPE_READY: &[u8] = b"kv_migration_ready:tenant_key_envelope_v1";
+const INDEX_STORAGE_V4_CLEANUP_READY: &[u8] = b"kv_migration_ready:index_storage_v4_cleanup";
 const STORAGE_SCHEMA_VERSION: u64 = 1;
 const STORAGE_SCHEMA_COMPLETE: &[u8] = b"storage_schema_complete:v1";
 const LEGACY_DYNAMIC_INDEX_CATALOG_METADATA: [&[u8]; 3] = [
@@ -47,6 +59,20 @@ const LEGACY_DYNAMIC_INDEX_CATALOG_METADATA: [&[u8]; 3] = [
     b"dynamic_index_catalog_token",
     b"dynamic_index_manifest_ack_token",
 ];
+
+fn legacy_vector_metric_into_runtime(
+    metric: LegacyVectorMetric,
+) -> search::vector::VectorDistanceMetric {
+    match metric {
+        LegacyVectorMetric::Cosine => search::vector::VectorDistanceMetric::Cosine,
+        LegacyVectorMetric::Euclidean => search::vector::VectorDistanceMetric::Euclidean,
+        LegacyVectorMetric::Manhattan => search::vector::VectorDistanceMetric::Manhattan,
+    }
+}
+
+fn legacy_catalog_corruption(error: legacy_index_catalog::LegacyIndexCatalogError) -> HelixDbError {
+    HelixDbError::IndexCatalogCorruption(error.to_string())
+}
 
 /// Runs one fixed-size vector migration scale and resource-boundedness contract.
 ///
@@ -58,128 +84,63 @@ pub(crate) async fn run_vector_migration_scale_contract(entity_count: u64) {
     vector_scale::run(entity_count).await;
 }
 
-/// Exact pre-V2 secondary definition JSON shape.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct LegacySecondaryIndexDefinition {
-    element_type: config::SecondaryIndexElementType,
-    kind: config::SecondaryIndexKind,
-    label: String,
-    property: String,
-    #[serde(default)]
-    unique: bool,
-    #[serde(default)]
-    direction: config::RangeIndexDirection,
-}
-
-/// Exact pre-V2 vector definition JSON shape.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct LegacyVectorIndexDefinition {
-    element_type: config::VectorElementType,
-    label: String,
-    property: String,
-    tenant_property: Option<String>,
-    dimension: usize,
-    metric: crate::search::vector::VectorDistanceMetric,
-    m: usize,
-    m0: usize,
-    ef_construction: usize,
-    ml: f32,
-    simhash_threshold: usize,
-    sampling_ratio: f32,
-    adaptive_enabled: bool,
-    adaptive_failure_prob: f32,
-}
-
-/// Exact pre-V2 text definition JSON shape.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct LegacyTextIndexDefinition {
-    element_type: config::TextElementType,
-    label: String,
-    property: String,
-    tenant_property: Option<String>,
-    analyzer: config::TextAnalyzerKind,
-    positions_enabled: bool,
-}
-
-/// Exact externally tagged pre-V2 definition value.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-enum LegacyDynamicIndexDefinition {
-    Secondary(LegacySecondaryIndexDefinition),
-    Vector(LegacyVectorIndexDefinition),
-    Text(LegacyTextIndexDefinition),
-}
-
-/// Exact untagged pre-V2 catalog row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-enum LegacyDynamicIndexCatalogEntry {
-    Definition(LegacyDynamicIndexDefinition),
-    Tombstone { tombstone: bool },
-}
-
-/// Exact externally tagged identity encoded as hex in a legacy metadata key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum LegacyDynamicIndexKey {
-    Secondary(LegacySecondaryIndexDefinition),
-    Vector {
-        element_type: config::VectorElementType,
-        label: String,
-        property: String,
-    },
-    Text {
-        element_type: config::TextElementType,
-        label: String,
-        property: String,
-    },
-}
-
 impl LegacySecondaryIndexDefinition {
     fn into_runtime(self) -> Result<config::SecondaryIndexDefinition> {
-        use config::{RangeIndexDirection, SecondaryIndexElementType, SecondaryIndexKind};
-
         Ok(
             match (self.element_type, self.kind, self.unique, self.direction) {
                 (
-                    SecondaryIndexElementType::Node,
-                    SecondaryIndexKind::Equality,
+                    LegacySecondaryElementType::Node,
+                    LegacySecondaryKind::Equality,
                     false,
-                    RangeIndexDirection::Asc,
+                    LegacyRangeDirection::Asc,
                 ) => config::SecondaryIndexDefinition::node_equality(self.label, self.property)?,
                 (
-                    SecondaryIndexElementType::Node,
-                    SecondaryIndexKind::Equality,
+                    LegacySecondaryElementType::Node,
+                    LegacySecondaryKind::Equality,
                     true,
-                    RangeIndexDirection::Asc,
+                    LegacyRangeDirection::Asc,
                 ) => config::SecondaryIndexDefinition::node_unique_equality(
                     self.label,
                     self.property,
                 )?,
-                (SecondaryIndexElementType::Node, SecondaryIndexKind::Range, false, direction) => {
-                    config::SecondaryIndexDefinition::node_range_with_direction(
-                        self.label,
-                        self.property,
-                        direction,
-                    )?
-                }
                 (
-                    SecondaryIndexElementType::Edge,
-                    SecondaryIndexKind::Equality,
+                    LegacySecondaryElementType::Node,
+                    LegacySecondaryKind::Range,
                     false,
-                    RangeIndexDirection::Asc,
+                    direction,
+                ) => config::SecondaryIndexDefinition::node_range_with_direction(
+                    self.label,
+                    self.property,
+                    match direction {
+                        LegacyRangeDirection::Asc => config::RangeIndexDirection::Asc,
+                        LegacyRangeDirection::Desc => config::RangeIndexDirection::Desc,
+                    },
+                )?,
+                (
+                    LegacySecondaryElementType::Edge,
+                    LegacySecondaryKind::Equality,
+                    false,
+                    LegacyRangeDirection::Asc,
                 ) => config::SecondaryIndexDefinition::edge_equality(self.label, self.property)?,
-                (SecondaryIndexElementType::Edge, SecondaryIndexKind::Range, false, direction) => {
-                    config::SecondaryIndexDefinition::edge_range_with_direction(
-                        self.label,
-                        self.property,
-                        direction,
-                    )?
-                }
+                (
+                    LegacySecondaryElementType::Edge,
+                    LegacySecondaryKind::Range,
+                    false,
+                    direction,
+                ) => config::SecondaryIndexDefinition::edge_range_with_direction(
+                    self.label,
+                    self.property,
+                    match direction {
+                        LegacyRangeDirection::Asc => config::RangeIndexDirection::Asc,
+                        LegacyRangeDirection::Desc => config::RangeIndexDirection::Desc,
+                    },
+                )?,
                 (element_type, kind, true, _) => {
                     return Err(HelixDbError::Config(format!(
                         "invalid legacy unique secondary definition: {element_type:?} {kind:?}"
                     )))
                 }
-                (_, SecondaryIndexKind::Equality, false, RangeIndexDirection::Desc) => {
+                (_, LegacySecondaryKind::Equality, false, LegacyRangeDirection::Desc) => {
                     return Err(HelixDbError::Config(
                         "legacy equality definition has descending direction".to_string(),
                     ))
@@ -192,17 +153,17 @@ impl LegacySecondaryIndexDefinition {
 impl LegacyVectorIndexDefinition {
     fn into_runtime(self) -> Result<config::VectorIndexDefinition> {
         let definition = match self.element_type {
-            config::VectorElementType::Node => config::VectorIndexDefinition::new_node(
+            LegacyVectorElementType::Node => config::VectorIndexDefinition::new_node(
                 self.label,
                 self.property,
                 self.dimension,
-                self.metric,
+                legacy_vector_metric_into_runtime(self.metric),
             )?,
-            config::VectorElementType::Edge => config::VectorIndexDefinition::new_edge(
+            LegacyVectorElementType::Edge => config::VectorIndexDefinition::new_edge(
                 self.label,
                 self.property,
                 self.dimension,
-                self.metric,
+                legacy_vector_metric_into_runtime(self.metric),
             )?,
         }
         .with_tenant_property_option(self.tenant_property)?
@@ -221,15 +182,21 @@ impl LegacyVectorIndexDefinition {
 impl LegacyTextIndexDefinition {
     fn into_runtime(self) -> Result<config::TextIndexDefinition> {
         let definition = match self.element_type {
-            config::TextElementType::Node => {
+            LegacyTextElementType::Node => {
                 config::TextIndexDefinition::new_node(self.label, self.property)?
             }
-            config::TextElementType::Edge => {
+            LegacyTextElementType::Edge => {
                 config::TextIndexDefinition::new_edge(self.label, self.property)?
             }
         }
         .with_tenant_property_option(self.tenant_property)?
-        .with_analyzer(self.analyzer)
+        .with_analyzer(match self.analyzer {
+            LegacyTextAnalyzer::Standard => config::TextAnalyzerKind::Standard,
+            LegacyTextAnalyzer::StandardStemEn => config::TextAnalyzerKind::StandardStemEn,
+            LegacyTextAnalyzer::WhitespaceLowercase => {
+                config::TextAnalyzerKind::WhitespaceLowercase
+            }
+        })
         .with_positions_enabled(self.positions_enabled);
         Ok(definition)
     }
@@ -252,7 +219,7 @@ impl LegacyDynamicIndexDefinition {
         }
     }
 
-    fn into_validated(self) -> Result<crate::index_v2::ValidatedDynamicIndexDefinition> {
+    fn into_validated(self) -> Result<crate::index_lifecycle::ValidatedDynamicIndexDefinition> {
         Ok(match self {
             Self::Secondary(definition) => definition.into_runtime()?.try_into()?,
             Self::Vector(definition) => definition.into_runtime()?.try_into()?,
@@ -262,23 +229,25 @@ impl LegacyDynamicIndexDefinition {
 }
 
 impl LegacyDynamicIndexKey {
-    fn identity(&self) -> Result<crate::index_v2::IndexIdentity> {
+    fn identity(&self) -> Result<crate::index_lifecycle::IndexIdentity> {
         let (family, element_kind, label, property) = match self {
             Self::Secondary(definition) => {
-                return Ok(crate::index_v2::ValidatedDynamicIndexDefinition::try_from(
-                    definition.clone().into_runtime()?,
-                )?
-                .identity())
+                return Ok(
+                    crate::index_lifecycle::ValidatedDynamicIndexDefinition::try_from(
+                        definition.clone().into_runtime()?,
+                    )?
+                    .identity(),
+                )
             }
             Self::Vector {
                 element_type,
                 label,
                 property,
             } => (
-                crate::index_v2::IndexIdentityFamily::Vector,
+                crate::index_lifecycle::IndexIdentityFamily::Vector,
                 match element_type {
-                    config::VectorElementType::Node => crate::index_v2::IndexElementKind::Node,
-                    config::VectorElementType::Edge => crate::index_v2::IndexElementKind::Edge,
+                    LegacyVectorElementType::Node => crate::index_lifecycle::IndexElementKind::Node,
+                    LegacyVectorElementType::Edge => crate::index_lifecycle::IndexElementKind::Edge,
                 },
                 label,
                 property,
@@ -288,48 +257,57 @@ impl LegacyDynamicIndexKey {
                 label,
                 property,
             } => (
-                crate::index_v2::IndexIdentityFamily::Text,
+                crate::index_lifecycle::IndexIdentityFamily::Text,
                 match element_type {
-                    config::TextElementType::Node => crate::index_v2::IndexElementKind::Node,
-                    config::TextElementType::Edge => crate::index_v2::IndexElementKind::Edge,
+                    LegacyTextElementType::Node => crate::index_lifecycle::IndexElementKind::Node,
+                    LegacyTextElementType::Edge => crate::index_lifecycle::IndexElementKind::Edge,
                 },
                 label,
                 property,
             ),
         };
-        Ok(crate::index_v2::IndexIdentity::new(
+        Ok(crate::index_lifecycle::IndexIdentity::new(
             family,
             element_kind,
-            crate::index_v2::IndexComponent::try_new("label", label)?,
-            crate::index_v2::IndexComponent::try_new("property", property)?,
+            crate::index_lifecycle::IndexComponent::try_new("label", label)?,
+            crate::index_lifecycle::IndexComponent::try_new("property", property)?,
         ))
     }
 }
 
 #[cfg(any(test, feature = "migration-parity", feature = "production-coverage"))]
 pub fn migration_parity_legacy_catalog_row(
-    definition: &crate::index_v2::ValidatedDynamicIndexDefinition,
+    definition: &crate::index_lifecycle::ValidatedDynamicIndexDefinition,
     tombstone: bool,
 ) -> Result<(Bytes, Bytes)> {
-    use crate::index_v2::{IndexElementKind, ValidatedDynamicIndexDefinition};
+    use crate::index_lifecycle::{IndexElementKind, ValidatedDynamicIndexDefinition};
 
     let legacy = match definition {
         ValidatedDynamicIndexDefinition::Secondary(definition) => {
             let runtime = definition.to_runtime();
             LegacyDynamicIndexDefinition::Secondary(LegacySecondaryIndexDefinition {
-                element_type: runtime.element_type(),
-                kind: runtime.kind(),
+                element_type: match runtime.element_type() {
+                    config::SecondaryIndexElementType::Node => LegacySecondaryElementType::Node,
+                    config::SecondaryIndexElementType::Edge => LegacySecondaryElementType::Edge,
+                },
+                kind: match runtime.kind() {
+                    config::SecondaryIndexKind::Equality => LegacySecondaryKind::Equality,
+                    config::SecondaryIndexKind::Range => LegacySecondaryKind::Range,
+                },
                 label: runtime.label().to_string(),
                 property: runtime.property().to_string(),
                 unique: runtime.unique(),
-                direction: runtime.direction(),
+                direction: match runtime.direction() {
+                    config::RangeIndexDirection::Asc => LegacyRangeDirection::Asc,
+                    config::RangeIndexDirection::Desc => LegacyRangeDirection::Desc,
+                },
             })
         }
         ValidatedDynamicIndexDefinition::Vector(definition) => {
             LegacyDynamicIndexDefinition::Vector(LegacyVectorIndexDefinition {
                 element_type: match definition.element_kind() {
-                    IndexElementKind::Node => config::VectorElementType::Node,
-                    IndexElementKind::Edge => config::VectorElementType::Edge,
+                    IndexElementKind::Node => LegacyVectorElementType::Node,
+                    IndexElementKind::Edge => LegacyVectorElementType::Edge,
                 },
                 label: definition.label().as_str().to_string(),
                 property: definition.property().as_str().to_string(),
@@ -341,7 +319,15 @@ pub fn migration_parity_legacy_catalog_row(
                         "validated vector dimension does not fit usize".to_string(),
                     )
                 })?,
-                metric: definition.metric(),
+                metric: match definition.metric() {
+                    search::vector::VectorDistanceMetric::Cosine => LegacyVectorMetric::Cosine,
+                    search::vector::VectorDistanceMetric::Euclidean => {
+                        LegacyVectorMetric::Euclidean
+                    }
+                    search::vector::VectorDistanceMetric::Manhattan => {
+                        LegacyVectorMetric::Manhattan
+                    }
+                },
                 m: usize::try_from(definition.m()).map_err(|_| {
                     HelixDbError::InvariantViolation(
                         "validated vector m does not fit usize".to_string(),
@@ -373,39 +359,33 @@ pub fn migration_parity_legacy_catalog_row(
         ValidatedDynamicIndexDefinition::Text(definition) => {
             LegacyDynamicIndexDefinition::Text(LegacyTextIndexDefinition {
                 element_type: match definition.element_kind() {
-                    IndexElementKind::Node => config::TextElementType::Node,
-                    IndexElementKind::Edge => config::TextElementType::Edge,
+                    IndexElementKind::Node => LegacyTextElementType::Node,
+                    IndexElementKind::Edge => LegacyTextElementType::Edge,
                 },
                 label: definition.label().as_str().to_string(),
                 property: definition.property().as_str().to_string(),
                 tenant_property: definition
                     .tenant_property()
                     .map(|property| property.as_str().to_string()),
-                analyzer: definition.analyzer(),
+                analyzer: match definition.analyzer() {
+                    config::TextAnalyzerKind::Standard => LegacyTextAnalyzer::Standard,
+                    config::TextAnalyzerKind::StandardStemEn => LegacyTextAnalyzer::StandardStemEn,
+                    config::TextAnalyzerKind::WhitespaceLowercase => {
+                        LegacyTextAnalyzer::WhitespaceLowercase
+                    }
+                },
                 positions_enabled: definition.positions_enabled(),
             })
         }
     };
-    let identity = serde_json::to_vec(&legacy.key()).map_err(|error| {
-        HelixDbError::Config(format!(
-            "failed to encode legacy dynamic index identity: {error}"
-        ))
-    })?;
-    let key = crate::encoding::v1::keys::metadata::dynamic_index_storage_key_scoped(
-        DataScope::LegacyUnscoped,
-        &identity,
-    );
+    let identity = legacy.key();
     let entry = if tombstone {
         LegacyDynamicIndexCatalogEntry::Tombstone { tombstone: true }
     } else {
         LegacyDynamicIndexCatalogEntry::Definition(legacy)
     };
-    let value = Bytes::from(serde_json::to_vec(&entry).map_err(|error| {
-        HelixDbError::Config(format!(
-            "failed to encode legacy dynamic index catalog entry: {error}"
-        ))
-    })?);
-    Ok((key, value))
+    legacy_index_catalog::encode_row_for_contract(DataScope::LegacyUnscoped, &identity, &entry)
+        .map_err(|error| HelixDbError::Config(error.to_string()))
 }
 
 /// Stable crash-injection boundaries used by the release recovery harness.
@@ -562,9 +542,9 @@ fn check_legacy_text_migration_interruption() -> Result<()> {
 /// Observes an exact queued text-build stage before a worker acquires it.
 #[cfg(any(feature = "migration-parity", feature = "production-coverage"))]
 pub(crate) fn observe_legacy_text_migration_operation(
-    operation: &crate::index_v2::IndexOperationRecord,
+    operation: &crate::index_lifecycle::IndexOperationRecord,
 ) -> Result<()> {
-    use crate::index_v2::{
+    use crate::index_lifecycle::{
         IndexOperationProgress, TextBuildProgress, TextBuildStage, TextManifestValidationProgress,
     };
 
@@ -865,8 +845,8 @@ impl MigrationStage {
             Self::LegacyEdgePairs => KeyPrefix::EdgePropertyPair.as_slice(),
             Self::EdgeEndpoints => KeyPrefix::EdgeEndpoints.as_slice(),
             Self::FenceLegacyVectorSources | Self::ReleaseLegacyVectorReservations => {
-                return crate::encoding::v1::keys::index_v2::GlobalIndexV2Key::logical_prefix(
-                    crate::encoding::v1::keys::index_v2::GlobalIndexV2Kind::LegacyVectorPhysicalReservation,
+                return crate::encoding::v2::keys::GlobalKey::logical_prefix(
+                    crate::encoding::v2::keys::GlobalKind::LegacyVectorPhysicalReservation,
                 );
             }
             Self::LegacyVectorHotRows => {
@@ -882,16 +862,12 @@ impl MigrationStage {
                 );
             }
             Self::LegacyVectorCoreRows => {
-                return crate::encoding::v1::keys::index_v2::GlobalIndexV2Key::logical_prefix(
-                    crate::encoding::v1::keys::index_v2::GlobalIndexV2Kind::LegacyVectorPhysicalReservation,
+                return crate::encoding::v2::keys::GlobalKey::logical_prefix(
+                    crate::encoding::v2::keys::GlobalKind::LegacyVectorPhysicalReservation,
                 );
             }
             Self::LegacyVectorDefinitions => {
-                return Key::Data {
-                    scope,
-                    kind: DataKeyKind::IndexMetadata(MetadataKey::dynamic_index_prefix()),
-                }
-                .to_bytes();
+                return legacy_index_catalog::catalog_scan_prefix(scope);
             }
         };
         Key::data_prefix(scope, Bytes::copy_from_slice(logical))
@@ -1095,17 +1071,14 @@ impl MigrationJob {
             resume_after_key,
             processed_rows,
             ..
-        } = std::mem::replace(
-            &mut self.state,
-            MigrationJobState::Completed { processed_rows: 0 },
-        )
+        } = &self.state
         else {
             return;
         };
         self.state = MigrationJobState::Running {
-            stage,
-            resume_after_key,
-            processed_rows,
+            stage: *stage,
+            resume_after_key: resume_after_key.clone(),
+            processed_rows: *processed_rows,
         };
     }
 }
@@ -1229,13 +1202,74 @@ pub(crate) async fn index_v2_migration_ready(
         == Some(b"1"))
 }
 
+/// Returns whether obsolete V3 managed-index rows were durably removed.
+pub(crate) async fn index_storage_v4_cleanup_ready(
+    read: &(impl DbReadOps + Send + Sync),
+) -> Result<bool> {
+    match read
+        .get(scoped_metadata_key(
+            DataScope::LegacyUnscoped,
+            INDEX_STORAGE_V4_CLEANUP_READY,
+        ))
+        .await?
+        .as_deref()
+    {
+        None => Ok(false),
+        Some(b"1") => Ok(true),
+        Some(_) => Err(HelixDbError::MigrationRequired {
+            reason: "index storage V4 cleanup readiness marker is malformed".to_string(),
+        }),
+    }
+}
+
+/// Returns whether every tenant-owned physical key uses the one-byte envelope.
+pub(crate) async fn tenant_key_envelope_ready(
+    read: &(impl DbReadOps + Send + Sync),
+) -> Result<bool> {
+    match read
+        .get(scoped_metadata_key(
+            DataScope::LegacyUnscoped,
+            TENANT_KEY_ENVELOPE_READY,
+        ))
+        .await?
+        .as_deref()
+    {
+        None => Ok(false),
+        Some(b"1") => Ok(true),
+        Some(_) => Err(HelixDbError::MigrationRequired {
+            reason: "tenant key envelope readiness marker is malformed".to_string(),
+        }),
+    }
+}
+
+/// Stages tenant-envelope completion in the caller's migration transaction.
+pub(crate) fn stage_tenant_key_envelope_ready(transaction: &DbTransaction) -> Result<()> {
+    transaction.put(
+        scoped_metadata_key(DataScope::LegacyUnscoped, TENANT_KEY_ENVELOPE_READY),
+        Bytes::from_static(b"1"),
+    )?;
+    Ok(())
+}
+
+/// Stages V4 cleanup completion in the caller's existing transaction.
+pub(crate) fn stage_index_storage_v4_cleanup_ready(transaction: &DbTransaction) -> Result<()> {
+    transaction.put(
+        scoped_metadata_key(DataScope::LegacyUnscoped, INDEX_STORAGE_V4_CLEANUP_READY),
+        Bytes::from_static(b"1"),
+    )?;
+    Ok(())
+}
+
 /// Reopens legacy-definition migration for a production-coverage fixture.
 ///
 /// The caller must atomically stage a valid legacy catalog source in the same
 /// transaction. Writer restart will then exercise the ordinary migration and
 /// lifecycle recovery path instead of observing a completed schema beside
 /// newly injected legacy state.
-#[cfg(feature = "index-v2-lifecycle-testing")]
+#[cfg(all(
+    feature = "index-lifecycle-testing",
+    any(test, feature = "production-coverage")
+))]
 pub(crate) fn stage_index_v2_migration_reopen_for_fixture(
     transaction: &DbTransaction,
     scope: DataScope,
@@ -1549,7 +1583,7 @@ pub(crate) async fn migrate_legacy_definitions(db: &crate::HelixDB) -> Result<()
                 let definition = legacy.into_validated()?;
                 if matches!(
                     definition,
-                    crate::index_v2::ValidatedDynamicIndexDefinition::Vector(_)
+                    crate::index_lifecycle::ValidatedDynamicIndexDefinition::Vector(_)
                 ) {
                     continue;
                 }
@@ -1660,49 +1694,6 @@ pub(crate) async fn migrate_active_vector_simhash_directories(db: &crate::HelixD
     .await
 }
 
-struct LegacyDefinitionRow {
-    storage_key: Bytes,
-    identity: LegacyDynamicIndexKey,
-    entry: LegacyDynamicIndexCatalogEntry,
-}
-
-impl LegacyDefinitionRow {
-    /// Decodes one row already proven to be inside the typed legacy catalog prefix.
-    fn decode(scope: DataScope, storage_key: Bytes, value: &[u8]) -> Result<Self> {
-        let Key::Data {
-            kind: DataKeyKind::IndexMetadata(metadata),
-            ..
-        } = Key::parse_from_slice(scope, &storage_key)?
-        else {
-            return Err(HelixDbError::IndexCatalogCorruption(
-                "legacy dynamic catalog prefix yielded another key kind".to_string(),
-            ));
-        };
-        let Some(encoded_identity) = metadata.dynamic_index_encoded_identity() else {
-            return Err(HelixDbError::IndexCatalogCorruption(
-                "legacy dynamic catalog row has no encoded identity".to_string(),
-            ));
-        };
-        let identity =
-            serde_json::from_slice::<LegacyDynamicIndexKey>(encoded_identity).map_err(|error| {
-                HelixDbError::IndexCatalogCorruption(format!(
-                    "failed to decode legacy dynamic catalog identity: {error}"
-                ))
-            })?;
-        let entry =
-            serde_json::from_slice::<LegacyDynamicIndexCatalogEntry>(value).map_err(|error| {
-                HelixDbError::IndexCatalogCorruption(format!(
-                    "failed to decode legacy dynamic catalog row: {error}"
-                ))
-            })?;
-        Ok(Self {
-            storage_key,
-            identity,
-            entry,
-        })
-    }
-}
-
 /// Exact persisted source row retained until one vector adoption activates.
 pub(crate) struct LegacyVectorAdoptionSource {
     storage_key: Bytes,
@@ -1723,15 +1714,14 @@ async fn load_legacy_definition_rows(
     read: &(impl DbReadOps + Send + Sync),
     scope: DataScope,
 ) -> Result<Vec<LegacyDefinitionRow>> {
-    let prefix = Key::Data {
-        scope,
-        kind: DataKeyKind::IndexMetadata(MetadataKey::dynamic_index_prefix()),
-    }
-    .to_bytes();
+    let prefix = legacy_index_catalog::catalog_scan_prefix(scope);
     let mut rows = read.scan_prefix(prefix, ..).await?;
     let mut definitions = Vec::new();
     while let Some(row) = rows.next().await? {
-        definitions.push(LegacyDefinitionRow::decode(scope, row.key, &row.value)?);
+        definitions.push(
+            LegacyDefinitionRow::decode(scope, row.key, &row.value)
+                .map_err(legacy_catalog_corruption)?,
+        );
     }
     Ok(definitions)
 }
@@ -1740,10 +1730,10 @@ async fn load_legacy_definition_rows(
 pub(crate) async fn legacy_vector_adoption_source(
     read: &(impl DbReadOps + Send + Sync),
     scope: DataScope,
-    expected: &crate::index_v2::ValidatedVectorIndexDefinition,
+    expected: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
 ) -> Result<LegacyVectorAdoptionSource> {
     let expected_definition =
-        crate::index_v2::ValidatedDynamicIndexDefinition::Vector(expected.clone());
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Vector(expected.clone());
     let expected_identity = expected_definition.identity();
     let mut source = None;
     for row in load_legacy_definition_rows(read, scope).await? {
@@ -1787,22 +1777,22 @@ pub(crate) async fn legacy_vector_adoption_source(
 
 #[derive(Clone)]
 struct LegacyVectorPreflightSource {
-    definition: crate::index_v2::ValidatedVectorIndexDefinition,
+    definition: crate::index_lifecycle::ValidatedVectorIndexDefinition,
     physical_name: String,
 }
 
 #[derive(Clone, Copy)]
 enum V2VectorOwnerState {
-    Building(crate::index_v2::IndexOperationId),
-    Aborting(crate::index_v2::IndexOperationId),
+    Building(crate::index_lifecycle::IndexOperationId),
+    Aborting(crate::index_lifecycle::IndexOperationId),
     Active,
     Dropping,
 }
 
 struct V2VectorPhysicalOwner {
-    index_id: crate::index_v2::IndexId,
-    generation: crate::index_v2::IndexGenerationId,
-    definition: crate::index_v2::ValidatedVectorIndexDefinition,
+    index_id: crate::index_lifecycle::IndexId,
+    generation: crate::index_lifecycle::IndexGenerationId,
+    definition: crate::index_lifecycle::ValidatedVectorIndexDefinition,
     state: V2VectorOwnerState,
 }
 
@@ -1812,17 +1802,13 @@ struct V2VectorPhysicalOwner {
 /// The serializable transaction either installs the complete reservation set or
 /// leaves every legacy catalog and physical row unchanged.
 pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> {
-    use crate::encoding::v1::keys::index_v2::{
-        GlobalIndexV2Key, GlobalIndexV2Kind, IndexV2Key, IndexV2RecordKind,
-    };
     use crate::encoding::v1::keys::vectors::{VectorMetadataScanPrefix, VectorMetadataScanRow};
-    use crate::encoding::v1::keys::GlobalKeyKind;
-    use crate::encoding::v1::values::index_v2::{
-        decode_index_record, decode_metadata_value, decode_work_value, encode_metadata_value,
-        IndexV2WorkValue,
-    };
     use crate::encoding::v1::values::vectors::metadata::{decode_legacy_metadata, decode_metadata};
-    use crate::index_v2::{
+    use crate::encoding::v2::keys::{GlobalKey, GlobalKind, RecordKind, ScopedKey};
+    use crate::encoding::v2::values::{
+        decode_index_record, decode_metadata_value, decode_partition_mapping, encode_metadata_value,
+    };
+    use crate::index_lifecycle::{
         IndexStateV2, IndexV2MetadataValue, LegacyVectorPhysicalReservation, PhysicalGeneration,
         ValidatedDynamicIndexDefinition, VectorPhysicalIndexId, VectorPhysicalLayout,
     };
@@ -1830,15 +1816,14 @@ pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> 
 
     let scope = DataScope::LegacyUnscoped;
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
-    let reservation_prefix =
-        GlobalIndexV2Key::logical_prefix(GlobalIndexV2Kind::LegacyVectorPhysicalReservation);
+    let reservation_prefix = GlobalKey::logical_prefix(GlobalKind::LegacyVectorPhysicalReservation);
     let mut retiring_owners = BTreeMap::new();
     let mut retiring_rows = transaction
         .scan_prefix(reservation_prefix.clone(), ..)
         .await?;
     while let Some(row) = retiring_rows.next().await? {
-        let GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_id) =
-            GlobalIndexV2Key::parse_from_slice(&row.key)?
+        let GlobalKey::LegacyVectorPhysicalReservation(physical_id) =
+            GlobalKey::parse_from_slice(&row.key)?
         else {
             return Err(HelixDbError::IndexCatalogCorruption(
                 "legacy vector reservation prefix yielded another key".to_string(),
@@ -2005,10 +1990,7 @@ pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> 
 
     let mut owners = BTreeMap::<VectorPhysicalIndexId, V2VectorPhysicalOwner>::new();
     let mut active_generations = BTreeMap::new();
-    let index_prefix = Key::data_prefix(
-        scope,
-        IndexV2Key::logical_prefix(IndexV2RecordKind::IndexRecord),
-    );
+    let index_prefix = Key::data_prefix(scope, ScopedKey::logical_prefix(RecordKind::IndexRecord));
     let mut index_rows = transaction.scan_prefix(index_prefix, ..).await?;
     while let Some(row) = index_rows.next().await? {
         let record = decode_index_record(&row.value)?;
@@ -2066,25 +2048,20 @@ pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> 
 
     let mapping_prefix = Key::data_prefix(
         scope,
-        IndexV2Key::logical_prefix(IndexV2RecordKind::VectorPartitionMapping),
+        ScopedKey::logical_prefix(RecordKind::VectorPartitionMapping),
     );
     let mut partitioned_ids = BTreeSet::new();
     let mut mapping_rows = transaction.scan_prefix(mapping_prefix, ..).await?;
     while let Some(row) = mapping_rows.next().await? {
-        let IndexV2WorkValue::VectorPartitionMapping(mapping) = decode_work_value(&row.value)?
-        else {
-            return Err(HelixDbError::IndexCatalogCorruption(
-                "vector mapping key contains another work value".to_string(),
-            ));
-        };
+        let mapping = decode_partition_mapping(&row.value)?;
         partitioned_ids.insert(mapping.physical_index_id);
     }
 
     let mut reservations = BTreeMap::new();
     let mut reservation_rows = transaction.scan_prefix(reservation_prefix, ..).await?;
     while let Some(row) = reservation_rows.next().await? {
-        let GlobalIndexV2Key::LegacyVectorPhysicalReservation(physical_id) =
-            GlobalIndexV2Key::parse_from_slice(&row.key)?
+        let GlobalKey::LegacyVectorPhysicalReservation(physical_id) =
+            GlobalKey::parse_from_slice(&row.key)?
         else {
             return Err(HelixDbError::IndexCatalogCorruption(
                 "legacy vector reservation prefix yielded another key".to_string(),
@@ -2179,10 +2156,8 @@ pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> 
         #[cfg(any(feature = "migration-parity", feature = "production-coverage"))]
         trip_migration_failpoint(MigrationFailpoint::LegacyVectorReservationBefore)?;
         transaction.put(
-            Key::Global {
-                kind: GlobalKeyKind::IndexV2(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-                    physical_id,
-                )),
+            IndexKey::Global {
+                kind: GlobalKey::LegacyVectorPhysicalReservation(physical_id),
             }
             .to_bytes(),
             encode_metadata_value(&IndexV2MetadataValue::LegacyVectorPhysicalReservation(
@@ -2199,13 +2174,13 @@ pub(crate) async fn preflight_legacy_vector_reservations(db: &Db) -> Result<()> 
 async fn converge_legacy_definition(
     db: &crate::HelixDB,
     scope: DataScope,
-    definition: &crate::index_v2::ValidatedDynamicIndexDefinition,
+    definition: &crate::index_lifecycle::ValidatedDynamicIndexDefinition,
 ) -> Result<()> {
     let crate::HelixStorage::Writer(writer) = db.storage() else {
         unreachable!("legacy definition migration requires writer storage")
     };
     loop {
-        let current = crate::index_v2::repository::load_index_record(
+        let current = crate::index_lifecycle::repository::load_index_record(
             writer.db(),
             scope,
             &definition.identity(),
@@ -2227,20 +2202,21 @@ async fn converge_legacy_definition(
             });
         }
         match current.state() {
-            crate::index_v2::IndexStateV2::Active { .. } => return Ok(()),
-            crate::index_v2::IndexStateV2::Dropped { .. } => {
+            crate::index_lifecycle::IndexStateV2::Active { .. } => return Ok(()),
+            crate::index_lifecycle::IndexStateV2::Dropped { .. } => {
                 enqueue_legacy_definition(db, scope, definition.clone()).await?;
             }
-            crate::index_v2::IndexStateV2::Building {
+            crate::index_lifecycle::IndexStateV2::Building {
                 build_operation_id, ..
             } => {
                 if matches!(
                     definition,
-                    crate::index_v2::ValidatedDynamicIndexDefinition::Text(_)
+                    crate::index_lifecycle::ValidatedDynamicIndexDefinition::Text(_)
                 ) && matches!(
                     db.get_index_operation(scope, *build_operation_id).await?,
-                    crate::index_v2::IndexOperationStatus::Blocked {
-                        blocker_code: crate::index_v2::IndexOperationBlockerCode::InvalidSourceData,
+                    crate::index_lifecycle::IndexOperationStatus::Blocked {
+                        blocker_code:
+                            crate::index_lifecycle::IndexOperationBlockerCode::InvalidSourceData,
                         ..
                     }
                 ) {
@@ -2252,12 +2228,12 @@ async fn converge_legacy_definition(
                     *build_operation_id,
                     matches!(
                         definition,
-                        crate::index_v2::ValidatedDynamicIndexDefinition::Secondary(_)
+                        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Secondary(_)
                     ),
                 )
                 .await?;
             }
-            crate::index_v2::IndexStateV2::Aborting {
+            crate::index_lifecycle::IndexStateV2::Aborting {
                 build_operation_id, ..
             } => {
                 wait_for_index_operation(
@@ -2266,12 +2242,12 @@ async fn converge_legacy_definition(
                     *build_operation_id,
                     matches!(
                         definition,
-                        crate::index_v2::ValidatedDynamicIndexDefinition::Secondary(_)
+                        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Secondary(_)
                     ),
                 )
                 .await?
             }
-            crate::index_v2::IndexStateV2::Dropping {
+            crate::index_lifecycle::IndexStateV2::Dropping {
                 drop_operation_id, ..
             } => {
                 wait_for_index_operation(
@@ -2280,7 +2256,7 @@ async fn converge_legacy_definition(
                     *drop_operation_id,
                     matches!(
                         definition,
-                        crate::index_v2::ValidatedDynamicIndexDefinition::Secondary(_)
+                        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Secondary(_)
                     ),
                 )
                 .await?
@@ -2292,24 +2268,26 @@ async fn converge_legacy_definition(
 async fn enqueue_legacy_definition(
     db: &crate::HelixDB,
     scope: DataScope,
-    definition: crate::index_v2::ValidatedDynamicIndexDefinition,
+    definition: crate::index_lifecycle::ValidatedDynamicIndexDefinition,
 ) -> Result<()> {
     let crate::HelixStorage::Writer(writer) = db.storage() else {
         unreachable!("legacy definition migration requires writer storage")
     };
     let family = match definition.family() {
-        crate::index_v2::IndexDefinitionFamily::Secondary => crate::error::IndexFamily::Secondary,
-        crate::index_v2::IndexDefinitionFamily::Vector => crate::error::IndexFamily::Vector,
-        crate::index_v2::IndexDefinitionFamily::Text => crate::error::IndexFamily::Text,
+        crate::index_lifecycle::IndexDefinitionFamily::Secondary => {
+            crate::error::IndexFamily::Secondary
+        }
+        crate::index_lifecycle::IndexDefinitionFamily::Vector => crate::error::IndexFamily::Vector,
+        crate::index_lifecycle::IndexDefinitionFamily::Text => crate::error::IndexFamily::Text,
     };
     let is_secondary = matches!(
         &definition,
-        crate::index_v2::ValidatedDynamicIndexDefinition::Secondary(_)
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Secondary(_)
     );
     #[cfg(any(feature = "migration-parity", feature = "production-coverage"))]
     if matches!(
         &definition,
-        crate::index_v2::ValidatedDynamicIndexDefinition::Text(_)
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Text(_)
     ) {
         trip_legacy_text_migration_checkpoint(LegacyTextMigrationCheckpoint::BeforeEnqueue)?;
     }
@@ -2319,7 +2297,7 @@ async fn enqueue_legacy_definition(
     #[cfg(any(feature = "migration-parity", feature = "production-coverage"))]
     trip_migration_failpoint(MigrationFailpoint::LegacyDefinitionEnqueueBefore)?;
     let adoption_physical_id = match &definition {
-        crate::index_v2::ValidatedDynamicIndexDefinition::Vector(vector)
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Vector(vector)
             if vector.tenant_property().is_none() =>
         {
             let runtime = vector.to_runtime();
@@ -2330,17 +2308,18 @@ async fn enqueue_legacy_definition(
             );
             let raw_physical_id = crate::search::vector::index_id_from_name(&physical_name);
             let watermark =
-                crate::index_v2::repository::load_vector_physical_watermark(writer.db()).await?;
+                crate::index_lifecycle::repository::load_vector_physical_watermark(writer.db())
+                    .await?;
             match watermark.eligible_legacy_source(raw_physical_id) {
                 None => None,
                 Some(physical_id) => {
-                    match crate::index_v2::repository::load_legacy_vector_physical_reservation(
+                    match crate::index_lifecycle::repository::load_legacy_vector_physical_reservation(
                         writer.db(),
                         physical_id,
                     )
                     .await?
                     {
-                        Some(crate::index_v2::LegacyVectorPhysicalReservation::LegacySource) => {
+                        Some(crate::index_lifecycle::LegacyVectorPhysicalReservation::LegacySource) => {
                             Some(physical_id)
                         }
                         Some(_) => {
@@ -2359,9 +2338,9 @@ async fn enqueue_legacy_definition(
                 }
             }
         }
-        crate::index_v2::ValidatedDynamicIndexDefinition::Secondary(_)
-        | crate::index_v2::ValidatedDynamicIndexDefinition::Vector(_)
-        | crate::index_v2::ValidatedDynamicIndexDefinition::Text(_) => None,
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Secondary(_)
+        | crate::index_lifecycle::ValidatedDynamicIndexDefinition::Vector(_)
+        | crate::index_lifecycle::ValidatedDynamicIndexDefinition::Text(_) => None,
     };
     let receipt = match adoption_physical_id {
         Some(physical_id) => {
@@ -2369,7 +2348,7 @@ async fn enqueue_legacy_definition(
                 physical_index_id = physical_id.get(),
                 "enqueuing in-place legacy vector adoption"
             );
-            crate::index_v2::lifecycle::create_legacy_vector_adoption_operation(
+            crate::index_lifecycle::lifecycle::create_legacy_vector_adoption_operation(
                 writer.db(),
                 scope,
                 definition,
@@ -2391,10 +2370,10 @@ async fn enqueue_legacy_definition(
 async fn enqueue_rebuild(
     db: &Db,
     scope: DataScope,
-    definition: crate::index_v2::ValidatedDynamicIndexDefinition,
-) -> Result<crate::index_v2::IndexDdlReceipt> {
+    definition: crate::index_lifecycle::ValidatedDynamicIndexDefinition,
+) -> Result<crate::index_lifecycle::IndexDdlReceipt> {
     tracing::info!(family = ?definition.family(), "enqueuing legacy definition rebuild");
-    crate::index_v2::lifecycle::create_index_operation_from_current_source(
+    crate::index_lifecycle::lifecycle::create_index_operation_from_current_source(
         db,
         scope,
         definition,
@@ -2418,7 +2397,7 @@ async fn converge_legacy_tombstone(
                 .index_scope_gates
                 .catalog_change_permit(scope)
                 .await;
-            let Some(current) = crate::index_v2::repository::load_index_record(
+            let Some(current) = crate::index_lifecycle::repository::load_index_record(
                 writer.db(),
                 scope,
                 &identity.identity()?,
@@ -2429,15 +2408,15 @@ async fn converge_legacy_tombstone(
             };
             if matches!(
                 current.state(),
-                crate::index_v2::IndexStateV2::Dropped { .. }
+                crate::index_lifecycle::IndexStateV2::Dropped { .. }
             ) {
                 return Ok(());
             }
             let is_secondary = matches!(
                 current.definition(),
-                crate::index_v2::ValidatedDynamicIndexDefinition::Secondary(_)
+                crate::index_lifecycle::ValidatedDynamicIndexDefinition::Secondary(_)
             );
-            let receipt = crate::index_v2::lifecycle::drop_index_operation(
+            let receipt = crate::index_lifecycle::lifecycle::drop_index_operation(
                 writer.db(),
                 scope,
                 current.definition(),
@@ -2453,21 +2432,21 @@ async fn converge_legacy_tombstone(
 }
 
 fn receipt_operation_id(
-    receipt: crate::index_v2::IndexDdlReceipt,
-) -> Option<crate::index_v2::IndexOperationId> {
+    receipt: crate::index_lifecycle::IndexDdlReceipt,
+) -> Option<crate::index_lifecycle::IndexOperationId> {
     match receipt {
-        crate::index_v2::IndexDdlReceipt::Accepted { operation_id, .. }
-        | crate::index_v2::IndexDdlReceipt::ExistingOperation { operation_id } => {
+        crate::index_lifecycle::IndexDdlReceipt::Accepted { operation_id, .. }
+        | crate::index_lifecycle::IndexDdlReceipt::ExistingOperation { operation_id } => {
             Some(operation_id)
         }
-        crate::index_v2::IndexDdlReceipt::AlreadyActive { .. } => None,
+        crate::index_lifecycle::IndexDdlReceipt::AlreadyActive { .. } => None,
     }
 }
 
 async fn wait_for_index_operation(
     db: &crate::HelixDB,
     scope: DataScope,
-    operation_id: crate::index_v2::IndexOperationId,
+    operation_id: crate::index_lifecycle::IndexOperationId,
     drive_disabled_secondary: bool,
 ) -> Result<()> {
     let crate::HelixStorage::Writer(writer) = db.storage() else {
@@ -2479,7 +2458,8 @@ async fn wait_for_index_operation(
         check_legacy_text_migration_interruption()?;
         let snapshot = writer.db().snapshot().await?;
         let Some(operation) =
-            crate::index_v2::outbox::read_operation(snapshot.as_ref(), scope, operation_id).await?
+            crate::index_lifecycle::outbox::read_operation(snapshot.as_ref(), scope, operation_id)
+                .await?
         else {
             return Err(HelixDbError::IndexOperationNotFound {
                 operation_id: operation_id.as_uuid().to_string(),
@@ -2489,7 +2469,7 @@ async fn wait_for_index_operation(
             .queue_schedule()
             .is_some_and(|schedule| schedule.transient_failure_from(writer_epoch))
         {
-            let status = crate::index_v2::IndexOperationStatus::from_record(&operation);
+            let status = crate::index_lifecycle::IndexOperationStatus::from_record(&operation);
             return Err(HelixDbError::MigrationRequired {
                 reason: format!(
                     "legacy definition operation {operation_id:?} encountered a transient lifecycle failure at {:?} for {:?} in the current writer epoch after attempt {}",
@@ -2499,10 +2479,10 @@ async fn wait_for_index_operation(
                 ),
             });
         }
-        match crate::index_v2::IndexOperationStatus::from_record(&operation) {
-            crate::index_v2::IndexOperationStatus::Succeeded { .. }
-            | crate::index_v2::IndexOperationStatus::Aborted { .. } => return Ok(()),
-            crate::index_v2::IndexOperationStatus::Blocked {
+        match crate::index_lifecycle::IndexOperationStatus::from_record(&operation) {
+            crate::index_lifecycle::IndexOperationStatus::Succeeded { .. }
+            | crate::index_lifecycle::IndexOperationStatus::Aborted { .. } => return Ok(()),
+            crate::index_lifecycle::IndexOperationStatus::Blocked {
                 common,
                 blocker_code,
                 ..
@@ -2514,8 +2494,8 @@ async fn wait_for_index_operation(
                     ),
                 })
             }
-            crate::index_v2::IndexOperationStatus::Queued { .. }
-            | crate::index_v2::IndexOperationStatus::Running { .. } => {
+            crate::index_lifecycle::IndexOperationStatus::Queued { .. }
+            | crate::index_lifecycle::IndexOperationStatus::Running { .. } => {
                 if drive_disabled_secondary
                     && db
                         .config()
@@ -2529,9 +2509,9 @@ async fn wait_for_index_operation(
                     }
                     let status = db.get_index_operation(scope, operation_id).await?;
                     match status {
-                        crate::index_v2::IndexOperationStatus::Succeeded { .. }
-                        | crate::index_v2::IndexOperationStatus::Aborted { .. } => return Ok(()),
-                        crate::index_v2::IndexOperationStatus::Blocked {
+                        crate::index_lifecycle::IndexOperationStatus::Succeeded { .. }
+                        | crate::index_lifecycle::IndexOperationStatus::Aborted { .. } => return Ok(()),
+                        crate::index_lifecycle::IndexOperationStatus::Blocked {
                             common,
                             blocker_code,
                             ..
@@ -2543,8 +2523,8 @@ async fn wait_for_index_operation(
                                 ),
                             })
                         }
-                        crate::index_v2::IndexOperationStatus::Queued { common }
-                        | crate::index_v2::IndexOperationStatus::Running { common } => {
+                        crate::index_lifecycle::IndexOperationStatus::Queued { common }
+                        | crate::index_lifecycle::IndexOperationStatus::Running { common } => {
                             return Err(HelixDbError::MigrationRequired {
                                 reason: format!(
                                     "legacy definition operation {operation_id:?} remains nonterminal after a complete Disabled-mode queue scan at {:?} for {:?}",
@@ -2565,31 +2545,36 @@ async fn retire_legacy_definition_row(
     db: &Db,
     scope: DataScope,
     storage_key: Bytes,
-    definition: Option<&crate::index_v2::ValidatedDynamicIndexDefinition>,
+    definition: Option<&crate::index_lifecycle::ValidatedDynamicIndexDefinition>,
     identity: &LegacyDynamicIndexKey,
 ) -> Result<()> {
     #[cfg(any(feature = "migration-parity", feature = "production-coverage"))]
     trip_migration_failpoint(MigrationFailpoint::LegacyDefinitionRetirementBefore)?;
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
     let legacy_row_present = transaction.get(&storage_key).await?.is_some();
-    let current =
-        crate::index_v2::repository::load_index_record(&transaction, scope, &identity.identity()?)
-            .await?;
+    let current = crate::index_lifecycle::repository::load_index_record(
+        &transaction,
+        scope,
+        &identity.identity()?,
+    )
+    .await?;
     match (definition, current.as_ref()) {
         (Some(expected), Some(current))
             if current.definition() == expected
                 && matches!(
                     current.state(),
-                    crate::index_v2::IndexStateV2::Active { .. }
+                    crate::index_lifecycle::IndexStateV2::Active { .. }
                 ) =>
         {
             if legacy_row_present {
                 retire_legacy_physical_rows(&transaction, scope, expected).await?;
             } else {
-                let Some(crate::index_v2::PhysicalGeneration::Vector {
+                let Some(crate::index_lifecycle::PhysicalGeneration::Vector {
                     generation,
                     layout:
-                        crate::index_v2::VectorPhysicalLayout::Unpartitioned { physical_index_id },
+                        crate::index_lifecycle::VectorPhysicalLayout::Unpartitioned {
+                            physical_index_id,
+                        },
                     ..
                 }) = current.state().physical()
                 else {
@@ -2600,15 +2585,15 @@ async fn retire_legacy_definition_row(
                 };
                 if !matches!(
                     expected,
-                    crate::index_v2::ValidatedDynamicIndexDefinition::Vector(definition)
+                    crate::index_lifecycle::ValidatedDynamicIndexDefinition::Vector(definition)
                         if definition.tenant_property().is_none()
-                ) || crate::index_v2::repository::load_legacy_vector_physical_reservation(
+                ) || crate::index_lifecycle::repository::load_legacy_vector_physical_reservation(
                     &transaction,
                     *physical_index_id,
                 )
                 .await?
                     != Some(
-                        crate::index_v2::LegacyVectorPhysicalReservation::AdoptedActive {
+                        crate::index_lifecycle::LegacyVectorPhysicalReservation::AdoptedActive {
                             index_id: current.index_id(),
                             generation: *generation,
                         },
@@ -2627,7 +2612,7 @@ async fn retire_legacy_definition_row(
             if legacy_row_present
                 && matches!(
                     current.state(),
-                    crate::index_v2::IndexStateV2::Dropped { .. }
+                    crate::index_lifecycle::IndexStateV2::Dropped { .. }
                 ) => {}
         _ => {
             return Err(HelixDbError::MigrationRequired {
@@ -2647,10 +2632,10 @@ async fn retire_legacy_definition_row(
 async fn retire_legacy_physical_rows(
     transaction: &DbTransaction,
     scope: DataScope,
-    definition: &crate::index_v2::ValidatedDynamicIndexDefinition,
+    definition: &crate::index_lifecycle::ValidatedDynamicIndexDefinition,
 ) -> Result<()> {
     match definition {
-        crate::index_v2::ValidatedDynamicIndexDefinition::Secondary(definition) => {
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Secondary(definition) => {
             let runtime = definition.to_runtime();
             let property = runtime.scoped_property();
             match (runtime.element_type(), runtime.kind()) {
@@ -2698,13 +2683,13 @@ async fn retire_legacy_physical_rows(
                 }
             }
         }
-        crate::index_v2::ValidatedDynamicIndexDefinition::Vector(_) => {
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Vector(_) => {
             return Err(HelixDbError::InvariantViolation(
                 "vector definitions must retire through the bounded physical cleanup job"
                     .to_string(),
             ));
         }
-        crate::index_v2::ValidatedDynamicIndexDefinition::Text(definition) => {
+        crate::index_lifecycle::ValidatedDynamicIndexDefinition::Text(definition) => {
             retire_legacy_text_rows(transaction, scope, &definition.to_runtime()).await?;
         }
     }
@@ -2722,15 +2707,15 @@ async fn retire_legacy_text_rows(
     {
         transaction.delete(manifest_key)?;
         for prefix in [
-            crate::encoding::v1::keys::metadata::text_index_live_state_prefix_scoped(
+            crate::encoding::v2::legacy::text::storage_keys::live_state_prefix(
                 scope,
                 &manifest.physical_index_name,
             ),
-            crate::encoding::v1::keys::metadata::text_index_txn_guard_key_scoped(
+            crate::encoding::v2::legacy::text::storage_keys::transaction_guard_key(
                 scope,
                 &manifest.physical_index_name,
             ),
-            crate::encoding::v1::keys::metadata::text_index_version_counter_key_scoped(
+            crate::encoding::v2::legacy::text::storage_keys::version_counter_key(
                 scope,
                 &manifest.physical_index_name,
             ),
@@ -4162,12 +4147,13 @@ mod tests {
     use slatedb::object_store::memory::InMemory;
 
     use super::*;
-    use crate::encoding::keys::tenant::TenantId;
+    use crate::encoding::keys::scope::TenantId;
     use crate::encoding::keys::{
-        AdjacencyKey, EdgeEndpointsKey, EdgePairIndexKey, EdgePropertyByIdKey, EdgePropertyPairKey,
+        AdjacencyKey, EdgeEndpointsKey, EdgePairIndexKey, EdgePropertyByIdKey,
     };
     use crate::encoding::property;
     use crate::encoding::v1::values;
+    use crate::encoding::v2::legacy::edge_property_pair::LegacyEdgePropertyPairKey as EdgePropertyPairKey;
     use crate::{DbConfig, HelixDB};
 
     fn migration_test_config() -> DbConfig {
@@ -4194,6 +4180,79 @@ mod tests {
         let mut bytes = vec![op];
         bytes.extend_from_slice(&node_id.to_be_bytes());
         Bytes::from(bytes)
+    }
+
+    #[tokio::test]
+    async fn index_storage_v4_cleanup_readiness_is_byte_frozen_and_strict() {
+        let key = scoped_metadata_key(DataScope::LegacyUnscoped, INDEX_STORAGE_V4_CLEANUP_READY);
+        assert_eq!(
+            key.as_ref(),
+            b"\xFFkv_migration_ready:index_storage_v4_cleanup"
+        );
+
+        let db = Db::builder(
+            "index-storage-v4-cleanup-readiness",
+            Arc::new(InMemory::new()),
+        )
+        .build()
+        .await
+        .unwrap();
+        assert!(!index_storage_v4_cleanup_ready(&db).await.unwrap());
+
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        stage_index_storage_v4_cleanup_ready(&transaction).unwrap();
+        transaction.commit().await.unwrap();
+        assert_eq!(
+            db.get(&key).await.unwrap().as_deref(),
+            Some(b"1".as_slice())
+        );
+        assert!(index_storage_v4_cleanup_ready(&db).await.unwrap());
+
+        db.put(key, Bytes::from_static(b"invalid")).await.unwrap();
+        assert!(matches!(
+            index_storage_v4_cleanup_ready(&db).await,
+            Err(HelixDbError::MigrationRequired { reason })
+                if reason == "index storage V4 cleanup readiness marker is malformed"
+        ));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tenant_key_envelope_readiness_is_byte_frozen_and_strict() {
+        let key = scoped_metadata_key(DataScope::LegacyUnscoped, TENANT_KEY_ENVELOPE_READY);
+        assert_eq!(
+            key.as_ref(),
+            b"\xFFkv_migration_ready:tenant_key_envelope_v1"
+        );
+
+        let db = Db::builder("tenant-key-envelope-readiness", Arc::new(InMemory::new()))
+            .build()
+            .await
+            .unwrap();
+        assert!(!tenant_key_envelope_ready(&db).await.unwrap());
+
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        stage_tenant_key_envelope_ready(&transaction).unwrap();
+        transaction.commit().await.unwrap();
+        assert_eq!(
+            db.get(&key).await.unwrap().as_deref(),
+            Some(b"1".as_slice())
+        );
+        assert!(tenant_key_envelope_ready(&db).await.unwrap());
+
+        db.put(key, Bytes::from_static(b"invalid")).await.unwrap();
+        assert!(matches!(
+            tenant_key_envelope_ready(&db).await,
+            Err(HelixDbError::MigrationRequired { reason })
+                if reason == "tenant key envelope readiness marker is malformed"
+        ));
+        db.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -4753,7 +4812,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reader_opens_legacy_storage_without_mutating_bootstrap_metadata() {
+    async fn reader_requires_tenant_migration_without_mutating_bootstrap_metadata() {
         let root = tempfile::tempdir().expect("temporary object-store root");
         let database = "reader-requires-migration";
         let object_store = Arc::new(
@@ -4764,31 +4823,33 @@ mod tests {
             .build()
             .await
             .expect("raw pre-migration db opens");
+        let tenant = TenantId::from_ulid_str("01KZ6WZ9QREKZZ87492YXBTFJ3")
+            .expect("production tenant ID is valid");
+        let mut legacy_tenant_key = Vec::new();
+        legacy_tenant_key.extend_from_slice(&tenant.as_u128().to_be_bytes());
+        DataKeyKind::IndexMetadata(MetadataKey::next_node_id_key())
+            .encode_into(&mut legacy_tenant_key);
+        raw.put(
+            &legacy_tenant_key,
+            Bytes::copy_from_slice(&1_u64.to_be_bytes()),
+        )
+        .await
+        .expect("legacy tenant row writes");
         raw.close().await.expect("raw pre-migration db closes");
         let source = crate::HelixDbSource::Disk {
             root: root.path().to_path_buf(),
             database: database.to_string(),
         };
 
-        let reader = HelixDB::open_reader(source.clone())
-            .await
-            .expect("pre-migration reader opens without mutating storage");
-        let crate::HelixStorage::Reader(storage) = reader.storage() else {
-            panic!("expected reader storage");
+        let Err(error) = HelixDB::open_reader(source.clone()).await else {
+            panic!("pre-migration reader requires blocking writer startup");
         };
-        assert!(
-            !index_v2_migration_ready(storage.as_ref(), DataScope::LegacyUnscoped)
-                .await
-                .expect("migration completion marker reads"),
-            "reader must not create the migration completion marker"
-        );
-        assert!(
-            !storage_schema_complete(storage.as_ref(), DataScope::LegacyUnscoped)
-                .await
-                .expect("storage schema completion marker reads"),
-            "reader must not create the storage schema completion marker"
-        );
-        reader.close().await.expect("legacy reader closes");
+        assert!(matches!(
+            error,
+            HelixDbError::WriterMigrationRequired {
+                requirement: crate::error::WriterMigrationRequirement::IncompleteStorageSchema,
+            }
+        ));
 
         let object_store = Arc::new(
             slatedb::object_store::local::LocalFileSystem::new_with_prefix(root.path())
@@ -4797,8 +4858,26 @@ mod tests {
         let raw = Db::builder(database, object_store)
             .build()
             .await
-            .expect("raw tuple-only db opens");
-        crate::index_v2::repository::bootstrap_writer(&raw)
+            .expect("raw pre-migration db reopens");
+        assert!(
+            !tenant_key_envelope_ready(&raw)
+                .await
+                .expect("tenant migration marker reads"),
+            "reader must not create the tenant migration marker"
+        );
+        assert!(
+            !index_v2_migration_ready(&raw, DataScope::LegacyUnscoped)
+                .await
+                .expect("migration completion marker reads"),
+            "reader must not create the migration completion marker"
+        );
+        assert!(
+            !storage_schema_complete(&raw, DataScope::LegacyUnscoped)
+                .await
+                .expect("storage schema completion marker reads"),
+            "reader must not create the storage schema completion marker"
+        );
+        crate::index_lifecycle::repository::bootstrap_writer(&raw)
             .await
             .expect("writer bootstrap tuple commits");
         raw.flush().await.expect("bootstrap tuple flushes");
@@ -5068,15 +5147,14 @@ pub(crate) mod production_contracts {
         VectorIndexDefinition,
     };
     use crate::encoding::property;
-    use crate::encoding::v1::keys::index_v2::{GlobalIndexV2Key, IndexV2Key};
     use crate::encoding::v1::keys::vectors::{
         VectorIndexMetadataKey, VectorItemKey, VectorKey, VectorSimHashKey,
     };
-    use crate::encoding::v1::keys::{GlobalKeyKind, Key};
-    use crate::encoding::v1::values::index_v2::{
+    use crate::encoding::v2::keys::{GlobalKey, ScopedKey};
+    use crate::encoding::v2::values::{
         decode_metadata_value, encode_index_record, encode_metadata_value,
     };
-    use crate::index_v2::{
+    use crate::index_lifecycle::{
         IndexId, IndexStateV2, IndexStorageVersion, IndexV2MetadataValue, LogicalIndexIdWatermark,
         PhysicalGeneration, ValidatedDynamicIndexDefinition, VectorPhysicalIdWatermark,
         VectorPhysicalIndexId, VectorPhysicalLayout,
@@ -5101,7 +5179,7 @@ pub(crate) mod production_contracts {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let database = database("writer-migration-requirements");
         let fixture = raw(&database, store).await;
-        crate::index_v2::repository::bootstrap_writer(&fixture)
+        crate::index_lifecycle::repository::bootstrap_writer(&fixture)
             .await
             .expect("current bootstrap tuple commits");
 
@@ -5110,9 +5188,10 @@ pub(crate) mod production_contracts {
             INDEX_V2_MIGRATION_READY,
             STORAGE_SCHEMA_COMPLETE,
         ] {
-            let error = crate::index_v2::repository::require_reader_bootstrap_or_legacy(&fixture)
-                .await
-                .expect_err("every incomplete current schema requires a writer");
+            let error =
+                crate::index_lifecycle::repository::require_reader_bootstrap_or_legacy(&fixture)
+                    .await
+                    .expect_err("every incomplete current schema requires a writer");
             let HelixDbError::WriterMigrationRequired { requirement } = error else {
                 panic!("incomplete current schema must remain typed: {error}")
             };
@@ -5132,22 +5211,23 @@ pub(crate) mod production_contracts {
                 .await
                 .expect("ordered readiness marker writes");
         }
-        crate::index_v2::repository::require_reader_bootstrap_or_legacy(&fixture)
+        crate::index_lifecycle::repository::require_reader_bootstrap_or_legacy(&fixture)
             .await
             .expect("complete current schema is reader-ready");
 
         fixture
             .put(
-                global(GlobalIndexV2Key::StorageVersion),
+                global(GlobalKey::StorageVersion),
                 encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
                     IndexStorageVersion::new(0x0002).expect("version two is nonzero"),
                 )),
             )
             .await
             .expect("version-two marker writes");
-        let error = crate::index_v2::repository::require_reader_bootstrap_or_legacy(&fixture)
-            .await
-            .expect_err("complete version-two storage requires a writer");
+        let error =
+            crate::index_lifecycle::repository::require_reader_bootstrap_or_legacy(&fixture)
+                .await
+                .expect_err("complete version-two storage requires a writer");
         let HelixDbError::WriterMigrationRequired { requirement } = error else {
             panic!("complete version-two storage must remain typed: {error}")
         };
@@ -5155,12 +5235,12 @@ pub(crate) mod production_contracts {
             requirement,
             crate::error::WriterMigrationRequirement::StorageVersion {
                 found: 2,
-                target: 3,
+                target: 4,
             }
         );
         assert_eq!(
             requirement.to_string(),
-            "storage version 2 must be upgraded to 3"
+            "storage version 2 must be upgraded to 4"
         );
         fixture.close().await.expect("fixture closes");
     }
@@ -5177,24 +5257,19 @@ pub(crate) mod production_contracts {
             .expect("migration contract raw database opens")
     }
 
-    fn global(key: GlobalIndexV2Key) -> Bytes {
-        Key::Global {
-            kind: GlobalKeyKind::IndexV2(key),
-        }
-        .to_bytes()
+    fn global(key: GlobalKey) -> Bytes {
+        IndexKey::Global { kind: key }.to_bytes()
     }
 
-    async fn assert_storage_version_three(reader: &(impl DbReadOps + Sync)) {
+    async fn assert_current_storage_version(reader: &(impl DbReadOps + Sync)) {
         let marker = reader
-            .get(global(GlobalIndexV2Key::StorageVersion))
+            .get(global(GlobalKey::StorageVersion))
             .await
             .expect("storage marker reads")
             .expect("storage marker exists");
         assert_eq!(
             decode_metadata_value(&marker).expect("storage marker decodes"),
-            IndexV2MetadataValue::StorageVersion(
-                IndexStorageVersion::new(0x0003).expect("storage version 3 is nonzero")
-            )
+            IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
         );
     }
 
@@ -5445,7 +5520,8 @@ pub(crate) mod production_contracts {
             .build()
             .await
             .expect("migration-gate reader storage opens");
-        let result = crate::index_v2::repository::require_reader_bootstrap_or_legacy(&reader).await;
+        let result =
+            crate::index_lifecycle::repository::require_reader_bootstrap_or_legacy(&reader).await;
         assert_eq!(
             result.is_ok(),
             expected_ready,
@@ -5522,7 +5598,7 @@ pub(crate) mod production_contracts {
 
     async fn populate_legacy_vector<D: crate::search::vector::Distance>(
         raw: &Db,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         entity_id: u64,
         vector: &[f32],
     ) {
@@ -5537,7 +5613,7 @@ pub(crate) mod production_contracts {
 
     async fn populate_named_legacy_vector<D: crate::search::vector::Distance>(
         raw: &Db,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         physical_name: String,
         entity_id: u64,
         vector: &[f32],
@@ -5771,7 +5847,7 @@ pub(crate) mod production_contracts {
 
     async fn assert_vector_search<D: crate::search::vector::Distance>(
         db: &HelixDB,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         query: &[f32],
         expected_entity_id: u64,
     ) {
@@ -5781,14 +5857,14 @@ pub(crate) mod production_contracts {
             .find(|handle| {
                 matches!(
                     handle,
-                    crate::index_v2::ActiveIndexHandle::Vector {
+                    crate::index_lifecycle::ActiveIndexHandle::Vector {
                         definition: active,
                         ..
                     } if active.as_ref() == definition
                 )
             })
             .expect("adopted vector is runtime-active");
-        let crate::index_v2::ActiveIndexHandle::Vector { layout, .. } = &active else {
+        let crate::index_lifecycle::ActiveIndexHandle::Vector { layout, .. } = &active else {
             panic!("adopted definition projected another family")
         };
         let physical_id = layout
@@ -5877,7 +5953,7 @@ pub(crate) mod production_contracts {
 
     async fn exercise_adopted_vector_runtime(
         db: &HelixDB,
-        definition: &crate::index_v2::ValidatedVectorIndexDefinition,
+        definition: &crate::index_lifecycle::ValidatedVectorIndexDefinition,
         physical_id: VectorPhysicalIndexId,
     ) {
         let active = db
@@ -5886,7 +5962,7 @@ pub(crate) mod production_contracts {
             .find(|handle| {
                 matches!(
                     handle,
-                    crate::index_v2::ActiveIndexHandle::Vector {
+                    crate::index_lifecycle::ActiveIndexHandle::Vector {
                         definition: active,
                         ..
                     } if active.as_ref() == definition
@@ -6116,7 +6192,7 @@ pub(crate) mod production_contracts {
                 .collect::<Vec<_>>(),
             vec![1.0, 0.0, 0.0]
         );
-        let record = crate::index_v2::repository::load_index_record(
+        let record = crate::index_lifecycle::repository::load_index_record(
             migrated.inner_db().as_ref(),
             DataScope::LegacyUnscoped,
             &definition.identity(),
@@ -6124,12 +6200,14 @@ pub(crate) mod production_contracts {
         .await
         .expect("adopted record reads")
         .expect("adopted record exists");
-        let crate::index_v2::IndexStateV2::Active {
+        let crate::index_lifecycle::IndexStateV2::Active {
             physical:
-                crate::index_v2::PhysicalGeneration::Vector {
+                crate::index_lifecycle::PhysicalGeneration::Vector {
                     generation,
                     layout:
-                        crate::index_v2::VectorPhysicalLayout::Unpartitioned { physical_index_id },
+                        crate::index_lifecycle::VectorPhysicalLayout::Unpartitioned {
+                            physical_index_id,
+                        },
                     ..
                 },
             ..
@@ -6139,14 +6217,14 @@ pub(crate) mod production_contracts {
         };
         assert_eq!(physical_index_id.get(), physical_id);
         assert_eq!(
-            crate::index_v2::repository::load_legacy_vector_physical_reservation(
+            crate::index_lifecycle::repository::load_legacy_vector_physical_reservation(
                 migrated.inner_db().as_ref(),
                 *physical_index_id,
             )
             .await
             .expect("active reservation reads"),
             Some(
-                crate::index_v2::LegacyVectorPhysicalReservation::AdoptedActive {
+                crate::index_lifecycle::LegacyVectorPhysicalReservation::AdoptedActive {
                     index_id: record.index_id(),
                     generation: *generation,
                 }
@@ -6232,7 +6310,7 @@ pub(crate) mod production_contracts {
             77,
         )
         .await;
-        let receipt = crate::index_v2::lifecycle::drop_index_operation(
+        let receipt = crate::index_lifecycle::lifecycle::drop_index_operation(
             reopened.inner_db().as_ref(),
             DataScope::LegacyUnscoped,
             &definition,
@@ -6245,7 +6323,7 @@ pub(crate) mod production_contracts {
             .await
             .expect("adopted vector drop completes");
         assert!(
-            crate::index_v2::repository::load_legacy_vector_physical_reservation(
+            crate::index_lifecycle::repository::load_legacy_vector_physical_reservation(
                 reopened.inner_db().as_ref(),
                 *physical_index_id,
             )
@@ -6262,7 +6340,7 @@ pub(crate) mod production_contracts {
             .install_index_for_tests(definition.clone())
             .await
             .expect("dropped vector recreates");
-        let recreated = crate::index_v2::repository::load_index_record(
+        let recreated = crate::index_lifecycle::repository::load_index_record(
             reopened.inner_db().as_ref(),
             DataScope::LegacyUnscoped,
             &definition.identity(),
@@ -6270,9 +6348,9 @@ pub(crate) mod production_contracts {
         .await
         .expect("recreated record reads")
         .expect("recreated record exists");
-        let Some(crate::index_v2::PhysicalGeneration::Vector {
+        let Some(crate::index_lifecycle::PhysicalGeneration::Vector {
             layout:
-                crate::index_v2::VectorPhysicalLayout::Unpartitioned {
+                crate::index_lifecycle::VectorPhysicalLayout::Unpartitioned {
                     physical_index_id: recreated_physical_id,
                 },
             ..
@@ -6404,7 +6482,7 @@ pub(crate) mod production_contracts {
                 "{} must not publish readiness",
                 failpoint.as_str()
             );
-            let current_before = crate::index_v2::repository::load_index_record(
+            let current_before = crate::index_lifecycle::repository::load_index_record(
                 &inspection,
                 DataScope::LegacyUnscoped,
                 &definition.identity(),
@@ -6418,7 +6496,7 @@ pub(crate) mod production_contracts {
             else {
                 panic!("failed adoption remains Building");
             };
-            let failed_operation = crate::index_v2::outbox::read_operation(
+            let failed_operation = crate::index_lifecycle::outbox::read_operation(
                 &inspection,
                 DataScope::LegacyUnscoped,
                 *build_operation_id,
@@ -6430,7 +6508,7 @@ pub(crate) mod production_contracts {
                 matches!(
                     failed_operation.queue_schedule(),
                     Some(
-                        crate::index_v2::IndexOperationQueueSchedule::DelayedAfterTransientFailure {
+                        crate::index_lifecycle::IndexOperationQueueSchedule::DelayedAfterTransientFailure {
                             ..
                         }
                     )
@@ -6463,7 +6541,7 @@ pub(crate) mod production_contracts {
                 )
             })
             .expect("adoption recovery cold open converges");
-            let record = crate::index_v2::repository::load_index_record(
+            let record = crate::index_lifecycle::repository::load_index_record(
                 recovered.inner_db().as_ref(),
                 DataScope::LegacyUnscoped,
                 &definition.identity(),
@@ -6716,7 +6794,7 @@ pub(crate) mod production_contracts {
             .expect("consumed watermark transaction opens");
         transaction
             .put(
-                global(GlobalIndexV2Key::VectorPhysicalIdWatermark),
+                global(GlobalKey::VectorPhysicalIdWatermark),
                 encode_metadata_value(&IndexV2MetadataValue::VectorPhysicalIdWatermark(
                     VectorPhysicalIdWatermark {
                         next_id: consumed_next,
@@ -6741,7 +6819,7 @@ pub(crate) mod production_contracts {
         .await
         .expect("consumed legacy namespace rebuilds");
         assert_legacy_catalog_empty(&rebuilt).await;
-        let record = crate::index_v2::repository::load_index_record(
+        let record = crate::index_lifecycle::repository::load_index_record(
             rebuilt.inner_db().as_ref(),
             DataScope::LegacyUnscoped,
             &definition.identity(),
@@ -6749,9 +6827,9 @@ pub(crate) mod production_contracts {
         .await
         .expect("rebuilt record reads")
         .expect("rebuilt record exists");
-        let Some(crate::index_v2::PhysicalGeneration::Vector {
+        let Some(crate::index_lifecycle::PhysicalGeneration::Vector {
             layout:
-                crate::index_v2::VectorPhysicalLayout::Unpartitioned {
+                crate::index_lifecycle::VectorPhysicalLayout::Unpartitioned {
                     physical_index_id: rebuilt_physical_id,
                 },
             ..
@@ -6775,7 +6853,7 @@ pub(crate) mod production_contracts {
             "normal rebuild retires its legacy physical namespace"
         );
         assert!(
-            crate::index_v2::repository::load_legacy_vector_physical_reservation(
+            crate::index_lifecycle::repository::load_legacy_vector_physical_reservation(
                 rebuilt.inner_db().as_ref(),
                 VectorPhysicalIndexId::new(legacy_physical_id)
                     .expect("legacy fixture physical ID is nonzero"),
@@ -6860,7 +6938,7 @@ pub(crate) mod production_contracts {
         )
         .await
         .expect("tenant-partitioned legacy definition rebuilds");
-        let tenant_record = crate::index_v2::repository::load_index_record(
+        let tenant_record = crate::index_lifecycle::repository::load_index_record(
             tenant.inner_db().as_ref(),
             DataScope::LegacyUnscoped,
             &tenant_definition.identity(),
@@ -6870,8 +6948,8 @@ pub(crate) mod production_contracts {
         .expect("tenant record exists");
         assert!(matches!(
             tenant_record.state().physical(),
-            Some(crate::index_v2::PhysicalGeneration::Vector {
-                layout: crate::index_v2::VectorPhysicalLayout::Partitioned,
+            Some(crate::index_lifecycle::PhysicalGeneration::Vector {
+                layout: crate::index_lifecycle::VectorPhysicalLayout::Partitioned,
                 ..
             })
         ));
@@ -7006,9 +7084,7 @@ pub(crate) mod production_contracts {
                 Conflict::MalformedReservation => {
                     transaction
                         .put(
-                            global(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-                                physical_id,
-                            )),
+                            global(GlobalKey::LegacyVectorPhysicalReservation(physical_id)),
                             Bytes::from_static(b"malformed"),
                         )
                         .expect("malformed reservation stages");
@@ -7016,14 +7092,14 @@ pub(crate) mod production_contracts {
                 Conflict::ReservationWithoutOwner => {
                     transaction
                         .put(
-                            global(GlobalIndexV2Key::LegacyVectorPhysicalReservation(
+                            global(GlobalKey::LegacyVectorPhysicalReservation(
                                 physical_id,
                             )),
                             encode_metadata_value(
                                 &IndexV2MetadataValue::LegacyVectorPhysicalReservation(
-                                    crate::index_v2::LegacyVectorPhysicalReservation::AdoptedActive {
+                                    crate::index_lifecycle::LegacyVectorPhysicalReservation::AdoptedActive {
                                         index_id: IndexId::initial(),
-                                        generation: crate::index_v2::IndexGenerationId::initial(),
+                                        generation: crate::index_lifecycle::IndexGenerationId::initial(),
                                     },
                                 ),
                             ),
@@ -7046,30 +7122,30 @@ pub(crate) mod production_contracts {
                         unreachable!("existing V2 owner validates as vector")
                     };
                     let owner_descriptor =
-                        crate::index_v2::VectorGenerationDescriptor::for_definition(owner_vector);
-                    let record = crate::index_v2::IndexRecordV2::building(
+                        crate::index_lifecycle::VectorGenerationDescriptor::for_definition(
+                            owner_vector,
+                        );
+                    let record = crate::index_lifecycle::IndexRecordV2::building(
                         IndexId::initial(),
                         owner_definition,
-                        crate::index_v2::IndexRevision::initial(),
-                        crate::index_v2::PhysicalGeneration::Vector {
-                            generation: crate::index_v2::IndexGenerationId::initial(),
-                            layout: crate::index_v2::VectorPhysicalLayout::Unpartitioned {
+                        crate::index_lifecycle::IndexRevision::initial(),
+                        crate::index_lifecycle::PhysicalGeneration::Vector {
+                            generation: crate::index_lifecycle::IndexGenerationId::initial(),
+                            layout: crate::index_lifecycle::VectorPhysicalLayout::Unpartitioned {
                                 physical_index_id: physical_id,
                             },
                             descriptor: owner_descriptor,
                         },
-                        crate::index_v2::IndexOperationId::new_v4(),
+                        crate::index_lifecycle::IndexOperationId::new_v4(),
                     )
                     .expect("existing owner record builds")
-                    .transition(crate::index_v2::IndexStateTransition::Activate)
+                    .transition(crate::index_lifecycle::IndexStateTransition::Activate)
                     .expect("existing owner record activates");
                     transaction
                         .put(
-                            Key::Data {
+                            IndexKey::Data {
                                 scope: DataScope::LegacyUnscoped,
-                                kind: crate::encoding::v1::keys::DataKeyKind::IndexV2(
-                                    IndexV2Key::index_record(record.identity().clone()),
-                                ),
+                                kind: ScopedKey::index_record(record.identity().clone()),
                             }
                             .to_bytes(),
                             encode_index_record(&record),
@@ -7077,7 +7153,7 @@ pub(crate) mod production_contracts {
                         .expect("existing V2 owner stages");
                     transaction
                         .put(
-                            global(GlobalIndexV2Key::LogicalIndexIdWatermark),
+                            global(GlobalKey::LogicalIndexIdWatermark),
                             encode_metadata_value(&IndexV2MetadataValue::LogicalIndexIdWatermark(
                                 LogicalIndexIdWatermark {
                                     next_id: IndexId::new(2).expect("second logical ID is valid"),
@@ -7144,10 +7220,10 @@ pub(crate) mod production_contracts {
         let tuple_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let tuple_database = database("reader-gate-tuple-only");
         let tuple = raw(&tuple_database, Arc::clone(&tuple_store)).await;
-        crate::index_v2::repository::bootstrap_writer(&tuple)
+        crate::index_lifecycle::repository::bootstrap_writer(&tuple)
             .await
             .expect("tuple-only writer bootstrap commits");
-        assert_storage_version_three(&tuple).await;
+        assert_current_storage_version(&tuple).await;
         tuple.close().await.expect("tuple-only database closes");
         assert_reader_migration_gate(&tuple_database, Arc::clone(&tuple_store), false).await;
         let tuple_recovered = HelixDB::open_with_object_store_for_migration_parity(
@@ -7186,7 +7262,7 @@ pub(crate) mod production_contracts {
             let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
             let database = database(&format!("reader-gate-{name}"));
             let fixture = raw(&database, Arc::clone(&store)).await;
-            crate::index_v2::repository::bootstrap_writer(&fixture)
+            crate::index_lifecycle::repository::bootstrap_writer(&fixture)
                 .await
                 .expect("malformed-readiness bootstrap commits");
             fixture
@@ -7260,7 +7336,7 @@ pub(crate) mod production_contracts {
             .build()
             .await
             .expect("pre-migration reader storage opens");
-        crate::index_v2::repository::require_reader_bootstrap_or_legacy(&reader)
+        crate::index_lifecycle::repository::require_reader_bootstrap_or_legacy(&reader)
             .await
             .expect("pristine legacy rows remain readable before writer bootstrap");
         reader.close().await.expect("pre-migration reader closes");
@@ -7272,9 +7348,9 @@ pub(crate) mod production_contracts {
         )
         .await
         .expect("all persisted legacy definitions migrate");
-        assert_storage_version_three(migrated.inner_db().as_ref()).await;
+        assert_current_storage_version(migrated.inner_db().as_ref()).await;
         assert_legacy_catalog_empty(&migrated).await;
-        crate::index_v2::repository::require_reader_bootstrap_or_legacy(
+        crate::index_lifecycle::repository::require_reader_bootstrap_or_legacy(
             migrated.inner_db().as_ref(),
         )
         .await
@@ -7297,7 +7373,7 @@ pub(crate) mod production_contracts {
                     runtime.label(),
                     runtime.property(),
                 ));
-            let record = crate::index_v2::repository::load_index_record(
+            let record = crate::index_lifecycle::repository::load_index_record(
                 migrated.inner_db().as_ref(),
                 DataScope::LegacyUnscoped,
                 &definition.identity(),
@@ -7305,12 +7381,14 @@ pub(crate) mod production_contracts {
             .await
             .expect("migrated vector record reads")
             .expect("migrated vector record exists");
-            let crate::index_v2::IndexStateV2::Active {
+            let crate::index_lifecycle::IndexStateV2::Active {
                 physical:
-                    crate::index_v2::PhysicalGeneration::Vector {
+                    crate::index_lifecycle::PhysicalGeneration::Vector {
                         generation,
                         layout:
-                            crate::index_v2::VectorPhysicalLayout::Unpartitioned { physical_index_id },
+                            crate::index_lifecycle::VectorPhysicalLayout::Unpartitioned {
+                                physical_index_id,
+                            },
                         ..
                     },
                 ..
@@ -7320,14 +7398,14 @@ pub(crate) mod production_contracts {
             };
             assert_eq!(physical_index_id.get(), legacy_physical_id);
             assert_eq!(
-                crate::index_v2::repository::load_legacy_vector_physical_reservation(
+                crate::index_lifecycle::repository::load_legacy_vector_physical_reservation(
                     migrated.inner_db().as_ref(),
                     *physical_index_id,
                 )
                 .await
                 .expect("empty adopted vector reservation reads"),
                 Some(
-                    crate::index_v2::LegacyVectorPhysicalReservation::AdoptedActive {
+                    crate::index_lifecycle::LegacyVectorPhysicalReservation::AdoptedActive {
                         index_id: record.index_id(),
                         generation: *generation,
                     }
@@ -7407,12 +7485,12 @@ pub(crate) mod production_contracts {
             .await
             .expect("bootstrap seed transaction opens");
         transaction
-            .put(global(GlobalIndexV2Key::StorageVersion), marker)
+            .put(global(GlobalKey::StorageVersion), marker)
             .expect("marker stages");
         if include_logical {
             transaction
                 .put(
-                    global(GlobalIndexV2Key::LogicalIndexIdWatermark),
+                    global(GlobalKey::LogicalIndexIdWatermark),
                     encode_metadata_value(&IndexV2MetadataValue::LogicalIndexIdWatermark(
                         LogicalIndexIdWatermark {
                             next_id: IndexId::initial(),
@@ -7424,7 +7502,7 @@ pub(crate) mod production_contracts {
         if include_vector {
             transaction
                 .put(
-                    global(GlobalIndexV2Key::VectorPhysicalIdWatermark),
+                    global(GlobalKey::VectorPhysicalIdWatermark),
                     encode_metadata_value(&IndexV2MetadataValue::VectorPhysicalIdWatermark(
                         VectorPhysicalIdWatermark {
                             next_id: VectorPhysicalIndexId::initial(),
@@ -7471,7 +7549,7 @@ pub(crate) mod production_contracts {
             let database = database(name);
             let raw = raw(&database, Arc::clone(&store)).await;
             seed_bootstrap_tuple(&raw, marker, include_logical, include_vector).await;
-            let error = crate::index_v2::repository::bootstrap_writer(&raw)
+            let error = crate::index_lifecycle::repository::bootstrap_writer(&raw)
                 .await
                 .expect_err("invalid bootstrap tuple must fail closed");
             assert!(
@@ -7905,14 +7983,15 @@ pub(crate) mod production_contracts {
                     .find(|handle| {
                         matches!(
                             handle,
-                            crate::index_v2::ActiveIndexHandle::Vector {
+                            crate::index_lifecycle::ActiveIndexHandle::Vector {
                                 definition: active_definition,
                                 ..
                             } if active_definition.as_ref() == vector_definition
                         )
                     })
                     .expect("retained current vector handle is active");
-                let crate::index_v2::ActiveIndexHandle::Vector { layout, .. } = &current_handle
+                let crate::index_lifecycle::ActiveIndexHandle::Vector { layout, .. } =
+                    &current_handle
                 else {
                     unreachable!("matched current handle remains vector")
                 };
@@ -7939,7 +8018,7 @@ pub(crate) mod production_contracts {
                     .commit()
                     .await
                     .expect("retained current vector commits");
-                let active_record = crate::index_v2::repository::load_index_record(
+                let active_record = crate::index_lifecycle::repository::load_index_record(
                     active.inner_db().as_ref(),
                     DataScope::LegacyUnscoped,
                     &definition.identity(),
@@ -7947,7 +8026,7 @@ pub(crate) mod production_contracts {
                 .await
                 .expect("current vector record reads")
                 .expect("current vector record exists");
-                let crate::index_v2::IndexStateV2::Active {
+                let crate::index_lifecycle::IndexStateV2::Active {
                     physical:
                         PhysicalGeneration::Vector {
                             layout: VectorPhysicalLayout::Unpartitioned { physical_index_id },
@@ -8003,17 +8082,15 @@ pub(crate) mod production_contracts {
                     .expect("legacy physical id is positive");
                 source
                     .put(
-                        Key::Global {
-                            kind: GlobalKeyKind::IndexV2(
-                                GlobalIndexV2Key::LegacyVectorPhysicalReservation(
-                                    retired_physical_id_typed,
-                                ),
+                        IndexKey::Global {
+                            kind: GlobalKey::LegacyVectorPhysicalReservation(
+                                retired_physical_id_typed,
                             ),
                         }
                         .to_bytes(),
                         encode_metadata_value(
                             &IndexV2MetadataValue::LegacyVectorPhysicalReservation(
-                                crate::index_v2::LegacyVectorPhysicalReservation::LegacySource,
+                                crate::index_lifecycle::LegacyVectorPhysicalReservation::LegacySource,
                             ),
                         ),
                     )
@@ -8286,7 +8363,7 @@ pub(crate) mod production_contracts {
         assert!(matches!(
             error,
             HelixDbError::LegacyZeroNormCosineVector {
-                element_kind: crate::index_v2::IndexElementKind::Node,
+                element_kind: crate::index_lifecycle::IndexElementKind::Node,
                 entity_id: 77,
                 ..
             }
@@ -8461,7 +8538,7 @@ pub(crate) mod production_contracts {
             "conflict must not delete legacy source data"
         );
         assert_eq!(
-            crate::index_v2::repository::load_scope_catalog(&raw, DataScope::LegacyUnscoped)
+            crate::index_lifecycle::repository::load_scope_catalog(&raw, DataScope::LegacyUnscoped)
                 .await
                 .expect("canonical Active catalog remains valid")
                 .active_handles()
@@ -8472,3 +8549,7 @@ pub(crate) mod production_contracts {
         raw.close().await.expect("conflict inspection closes");
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/migrations_contracts.rs"]
+mod external_contracts;

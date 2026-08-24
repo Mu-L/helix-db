@@ -13,8 +13,10 @@ use crate::encoding::v1::indexes::range::RangeIndexDirection;
 use crate::encoding::v1::keys::tenant::DataScope;
 use crate::encoding::v1::keys::{DataKeyKind, EdgeEndpointsKey, EdgePropertyByIdKey, Key};
 use crate::encoding::v1::values::edge_endpoints::EdgeEndpointsValue;
-use crate::index_v2::secondary::{lookup_active_equality_generation, scan_active_range_generation};
-use crate::index_v2::{IndexStateV2, ValidatedDynamicIndexDefinition};
+use crate::index_lifecycle::secondary::{
+    lookup_active_equality_generation, scan_active_range_generation,
+};
+use crate::index_lifecycle::{IndexStateV2, ValidatedDynamicIndexDefinition};
 use crate::migrations::MigrationFailpoint;
 
 const LABEL: &str = "User";
@@ -246,7 +248,7 @@ async fn active_ownership(
     raw: &slatedb::Db,
     definition: &ValidatedDynamicIndexDefinition,
 ) -> (bool, u64, u64) {
-    let record = crate::index_v2::repository::load_index_record(
+    let record = crate::index_lifecycle::repository::load_index_record(
         raw,
         DataScope::LegacyUnscoped,
         &definition.identity(),

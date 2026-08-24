@@ -2,6 +2,9 @@
 
 //! Helix database runtime, storage, query execution, and index lifecycle API.
 
+#[cfg(test)]
+extern crate self as db;
+
 pub mod config;
 pub mod encoding;
 pub mod error;
@@ -11,9 +14,9 @@ pub mod execution_control;
 #[doc(hidden)]
 pub mod fuzzing;
 pub mod id_allocator;
-pub mod index_v2;
-#[cfg(feature = "index-v2-lifecycle-testing")]
-pub mod index_v2_lifecycle_testing;
+pub mod index_lifecycle;
+#[cfg(feature = "index-lifecycle-testing")]
+pub mod index_lifecycle_testing;
 mod merge_operator;
 #[cfg(feature = "migration-parity")]
 pub mod migration_parity;
@@ -24,9 +27,31 @@ pub mod search;
 
 pub use runtime_dependencies::{IndexRuntimeReadiness, ProcessLocalDatabaseToken};
 
-#[cfg(feature = "production-coverage")]
+#[cfg(all(feature = "production-coverage", not(test)))]
 #[path = "../tests/production_support/mod.rs"]
 pub mod production_coverage;
+#[cfg(test)]
+#[path = "../tests/production_support/index_lifecycle_text_rows.rs"]
+mod production_text_lifecycle_rows;
+#[cfg(test)]
+pub mod production_coverage {
+    /// Verifies the complete durable row graph for one settled text generation.
+    pub async fn index_lifecycle_text_steady_state_contracts(
+        db: &crate::HelixDB,
+        expected_live_entities: usize,
+    ) {
+        crate::production_text_lifecycle_rows::verify_steady_state(db, expected_live_entities)
+            .await;
+    }
+
+    /// Verifies that terminal cleanup removed every generation-owned text row.
+    pub async fn index_lifecycle_text_dropped_row_contracts(db: &crate::HelixDB) {
+        crate::production_text_lifecycle_rows::verify_dropped(db).await;
+    }
+}
+#[cfg(test)]
+#[path = "../tests/production_text_lifecycle.rs"]
+mod production_text_lifecycle_workspace_tests;
 
 use std::collections::HashMap;
 use std::num::{NonZeroU64, NonZeroUsize};
@@ -38,7 +63,7 @@ pub use config::{DbConfig, HelixConfig};
 
 #[cfg(any(test, feature = "production-coverage"))]
 use config::ValidatedDynamicIndexDefinition;
-use config::{runtime_catalog, CacheMode, RuntimeIndexCatalog};
+use config::{db::EmbeddedStorageProfile, runtime_catalog, CacheMode, RuntimeIndexCatalog};
 use error::{HelixDbError, Result};
 use execution::interpreter::{ExecutionResult, Interpreter};
 use foyer::{
@@ -56,8 +81,9 @@ use helix_planner::{
 use id_allocator::{EdgeIdAllocator, NodeIdAllocator};
 use serde_json::Value as JsonValue;
 use slatedb::db_cache::{
+    foyer::{FoyerCache, FoyerCacheOptions},
     foyer_hybrid::{FoyerHybridCache, FoyerHybridCacheMetrics},
-    CacheUsageSnapshot, CachedEntry, DbCache,
+    CacheUsageSnapshot, CachedEntry, DbCache, SplitCache,
 };
 #[cfg(test)]
 use slatedb::object_store::memory::InMemory;
@@ -66,7 +92,7 @@ use slatedb::{CacheTarget, Db, DbCacheManagerOps, DbMetadataOps, DbReader};
 use tokio::sync::{oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::encoding::keys::tenant::DataScope;
+use crate::encoding::keys::scope::DataScope;
 
 /// Open mode for a [`HelixDB`] handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,6 +286,21 @@ pub enum HelixDbSource {
 }
 
 impl HelixDbSource {
+    /// Build the bounded defaults used by an embedded handle for this source.
+    ///
+    /// Local storage uses a shorter durability cadence and smaller cache/write-buffer
+    /// bounds than remote object storage. Object storage retains the general runtime
+    /// defaults because its latency and request-cost tradeoffs are different.
+    pub fn embedded_default_config(&self) -> DbConfig {
+        match self {
+            Self::InMemory { .. } | Self::InMemoryToken { .. } => {
+                DbConfig::embedded_default(EmbeddedStorageProfile::InMemory)
+            }
+            Self::Disk { .. } => DbConfig::embedded_default(EmbeddedStorageProfile::Disk),
+            Self::ObjectStorage { .. } => DbConfig::new(),
+        }
+    }
+
     fn into_parts(self) -> Result<(String, Arc<dyn ObjectStore>)> {
         match self {
             Self::InMemory { database } => {
@@ -374,6 +415,7 @@ impl std::ops::Deref for HelixWriter {
 
 struct VectorMemoryRefreshTask {
     shutdown: watch::Sender<bool>,
+    initial_refresh: watch::Receiver<bool>,
     handle: JoinHandle<()>,
 }
 
@@ -485,7 +527,7 @@ impl CatalogGeneration {
 }
 
 struct LoadedRuntimeCatalog {
-    catalog: Box<index_v2::LoadedV2ScopeCatalog>,
+    catalog: Arc<index_lifecycle::LoadedV2ScopeCatalog>,
     generation: CatalogGeneration,
 }
 
@@ -494,7 +536,7 @@ struct HelixRuntimeState {
 }
 
 impl HelixRuntimeState {
-    fn new(scope: DataScope, catalog: index_v2::LoadedV2ScopeCatalog) -> Self {
+    fn new(scope: DataScope, catalog: index_lifecycle::LoadedV2ScopeCatalog) -> Self {
         assert_eq!(
             scope,
             catalog.scope(),
@@ -504,7 +546,7 @@ impl HelixRuntimeState {
         catalogs.insert(
             scope,
             LoadedRuntimeCatalog {
-                catalog: Box::new(catalog),
+                catalog: Arc::new(catalog),
                 generation: CatalogGeneration::INITIAL,
             },
         );
@@ -512,7 +554,11 @@ impl HelixRuntimeState {
     }
 
     /// Replaces one scope with a fresh configured-plus-canonical projection.
-    fn replace_catalog(&mut self, scope: DataScope, catalog: index_v2::LoadedV2ScopeCatalog) {
+    fn replace_catalog(
+        &mut self,
+        scope: DataScope,
+        catalog: index_lifecycle::LoadedV2ScopeCatalog,
+    ) {
         assert_eq!(
             scope,
             catalog.scope(),
@@ -527,7 +573,7 @@ impl HelixRuntimeState {
         self.catalogs.insert(
             scope,
             LoadedRuntimeCatalog {
-                catalog: Box::new(catalog),
+                catalog: Arc::new(catalog),
                 generation,
             },
         );
@@ -545,20 +591,24 @@ impl HelixRuntimeState {
         self.catalog(scope).planner_snapshot()
     }
 
-    fn planner_snapshot_with_generation(
+    fn planner_snapshot_with_catalog(
         &self,
         scope: DataScope,
-    ) -> (IndexCatalogSnapshot, CatalogGeneration) {
+    ) -> (
+        IndexCatalogSnapshot,
+        Arc<index_lifecycle::LoadedV2ScopeCatalog>,
+    ) {
         let loaded = self
             .catalogs
             .get(&scope)
             .expect("scoped catalog must be loaded before planner access");
         (
             loaded.catalog.runtime().planner_snapshot(),
-            loaded.generation,
+            Arc::clone(&loaded.catalog),
         )
     }
 
+    #[cfg(test)]
     fn generation(&self, scope: DataScope) -> CatalogGeneration {
         self.catalogs
             .get(&scope)
@@ -566,7 +616,7 @@ impl HelixRuntimeState {
             .expect("scoped catalog must be loaded before generation access")
     }
 
-    fn active_handles(&self, scope: DataScope) -> Vec<index_v2::ActiveIndexHandle> {
+    fn active_handles(&self, scope: DataScope) -> Vec<index_lifecycle::ActiveIndexHandle> {
         let Some(catalog) = self.catalogs.get(&scope) else {
             return Vec::new();
         };
@@ -634,18 +684,18 @@ pub struct HelixDB {
 struct HelixDBInner {
     storage: HelixStorageParts,
     caches: HelixCaches,
-    index_scope_gates: Arc<index_v2::IndexScopeGates>,
+    index_scope_gates: Arc<index_lifecycle::IndexScopeGates>,
     config: HelixConfig,
     runtime_state: RwLock<HelixRuntimeState>,
-    index_capabilities: index_v2::worker::IndexFamilyCapabilities,
-    index_worker_wake: Option<index_v2::worker::IndexWorkerWakeHandle>,
-    index_worker: Mutex<Option<index_v2::worker::IndexWorkerSupervisor>>,
-    index_claim_sequences: Arc<index_v2::worker::ClaimSequenceAllocator>,
+    index_capabilities: index_lifecycle::worker::IndexFamilyCapabilities,
+    index_worker_wake: Option<index_lifecycle::worker::IndexWorkerWakeHandle>,
+    index_worker: Mutex<Option<index_lifecycle::worker::IndexWorkerSupervisor>>,
+    index_claim_sequences: Arc<index_lifecycle::worker::ClaimSequenceAllocator>,
     secondary_lifecycle_step: Mutex<()>,
-    #[cfg(feature = "index-v2-lifecycle-testing")]
+    #[cfg(feature = "index-lifecycle-testing")]
     lifecycle_test_scheduling: IndexLifecycleScheduling,
-    #[cfg(feature = "index-v2-lifecycle-testing")]
-    lifecycle_metrics: Arc<index_v2_lifecycle_testing::AutomaticLifecycleMetrics>,
+    #[cfg(feature = "index-lifecycle-testing")]
+    lifecycle_metrics: Arc<index_lifecycle_testing::AutomaticLifecycleMetrics>,
     query_metrics: RwLock<Option<OssQueryMetrics>>,
     query_metrics_runtime: Mutex<Option<telemetry::Runtime>>,
     close_state: Mutex<CloseState>,
@@ -654,15 +704,32 @@ struct HelixDBInner {
 /// Non-forgeable evidence that planning observed one exact runtime catalog.
 ///
 /// The weak runtime identity prevents a proof from keeping a database alive or
-/// being reused against a different handle. The scope and generation prevent a
-/// tenant mismatch or intervening catalog publication from skipping refresh.
-/// The permit prevents canonical Active/drop publication until a write opens
-/// its serializable snapshot and loads the mutation catalog.
+/// being reused against a different handle. The scope prevents tenant mismatch.
+/// The permit keeps the exact read snapshot and catalog authoritative until a
+/// write opens its serializable snapshot and loads the mutation catalog.
 pub(crate) struct CatalogRefreshProof {
     runtime: Weak<HelixDBInner>,
     scope: DataScope,
-    generation: CatalogGeneration,
-    catalog_permit: index_v2::IndexScopeCatalogPermit,
+    catalog_permit: index_lifecycle::IndexScopeCatalogPermit,
+    catalog: Arc<index_lifecycle::LoadedV2ScopeCatalog>,
+    read_view: Box<execution::interpreter::read_view::StableRequestReadView>,
+}
+
+impl CatalogRefreshProof {
+    fn into_read_parts(
+        self,
+    ) -> (
+        Box<execution::interpreter::read_view::StableRequestReadView>,
+        Arc<index_lifecycle::LoadedV2ScopeCatalog>,
+        index_lifecycle::IndexScopeCatalogPermit,
+    ) {
+        (self.read_view, self.catalog, self.catalog_permit)
+    }
+
+    fn into_write_permit(self) -> index_lifecycle::IndexScopeCatalogPermit {
+        (*self.read_view).close();
+        self.catalog_permit
+    }
 }
 
 /// Planner context coupled to the catalog observation that produced it.
@@ -687,19 +754,19 @@ enum IndexLifecycleScheduling {
     /// Preserve the configured secondary mode and automatic vector/text scheduling.
     Configured,
     /// Install every driver while excluding every lane from background discovery.
-    #[cfg(feature = "index-v2-lifecycle-testing")]
+    #[cfg(feature = "index-lifecycle-testing")]
     ExplicitOnly,
 }
 
 impl IndexLifecycleScheduling {
     const fn resolve(
         self,
-        configured: index_v2::worker::IndexDriverScheduling,
-    ) -> index_v2::worker::IndexDriverScheduling {
+        configured: index_lifecycle::worker::IndexDriverScheduling,
+    ) -> index_lifecycle::worker::IndexDriverScheduling {
         match self {
             Self::Configured => configured,
-            #[cfg(feature = "index-v2-lifecycle-testing")]
-            Self::ExplicitOnly => index_v2::worker::IndexDriverScheduling::ExplicitOnly,
+            #[cfg(feature = "index-lifecycle-testing")]
+            Self::ExplicitOnly => index_lifecycle::worker::IndexDriverScheduling::ExplicitOnly,
         }
     }
 }
@@ -714,7 +781,8 @@ enum CloseState {
 impl HelixDB {
     /// Open a read/write database handle.
     pub async fn open(source: HelixDbSource) -> Result<Self> {
-        Self::open_with_config(source, DbConfig::new()).await
+        let config = source.embedded_default_config();
+        Self::open_with_config(source, config).await
     }
 
     /// Open a read/write database handle backed by a caller-provided object store.
@@ -780,7 +848,7 @@ impl HelixDB {
         .await
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "production-coverage"))]
     async fn open_with_object_store_for_tests_inner(
         database: impl Into<String>,
         object_store: Arc<dyn ObjectStore>,
@@ -798,18 +866,18 @@ impl HelixDB {
                 .build()
                 .await?,
         );
-        index_v2::repository::bootstrap_writer(&db).await?;
+        index_lifecycle::repository::bootstrap_writer(&db).await?;
         migrations::preflight_legacy_vector_reservations(&db).await?;
         let writer = HelixWriter::new(Arc::clone(&db), config.id_lease_size());
         migrations::run_blocking_startup_migration(&writer, config.migrations()).await?;
-        index_v2::outbox::reconcile_legacy_reader_coordination_operations(
+        index_lifecycle::outbox::reconcile_legacy_reader_coordination_operations(
             &db,
             DataScope::LegacyUnscoped,
         )
         .await?;
-        index_v2::outbox::reconcile_operation_queue(&db).await?;
+        index_lifecycle::outbox::reconcile_operation_queue(&db).await?;
         let loaded_catalog =
-            index_v2::repository::load_scope_catalog(db.as_ref(), DataScope::LegacyUnscoped)
+            index_lifecycle::repository::load_scope_catalog(db.as_ref(), DataScope::LegacyUnscoped)
                 .await?;
         let storage = HelixStorage::Writer(Arc::new(writer));
         let fts_cache = build_fts_cache(&path, &object_store, &config)?;
@@ -859,29 +927,28 @@ impl HelixDB {
 
         match config.cache().mode() {
             CacheMode::VectorMemoryOnly => builder = builder.with_db_cache_disabled(),
-            CacheMode::Memory { .. } => {}
-            CacheMode::Hybrid { .. } => {
+            CacheMode::Memory { .. } | CacheMode::Hybrid { .. } => {
                 let Some(cache) = &slate_db_cache else {
                     return Err(HelixDbError::Config(
-                        "hybrid cache mode must build a SlateDB cache".into(),
+                        "configured SlateDB cache mode must build a cache".into(),
                     ));
                 };
                 builder = builder.with_db_cache(Arc::clone(cache));
             }
         }
         let db = Arc::new(builder.build().await?);
-        index_v2::repository::bootstrap_writer(&db).await?;
+        index_lifecycle::repository::bootstrap_writer(&db).await?;
         migrations::preflight_legacy_vector_reservations(&db).await?;
         let writer = HelixWriter::new(Arc::clone(&db), config.id_lease_size());
         migrations::run_blocking_startup_migration(&writer, config.migrations()).await?;
-        index_v2::outbox::reconcile_legacy_reader_coordination_operations(
+        index_lifecycle::outbox::reconcile_legacy_reader_coordination_operations(
             &db,
             DataScope::LegacyUnscoped,
         )
         .await?;
-        index_v2::outbox::reconcile_operation_queue(&db).await?;
+        index_lifecycle::outbox::reconcile_operation_queue(&db).await?;
         let loaded_catalog =
-            index_v2::repository::load_scope_catalog(db.as_ref(), DataScope::LegacyUnscoped)
+            index_lifecycle::repository::load_scope_catalog(db.as_ref(), DataScope::LegacyUnscoped)
                 .await?;
         let storage = HelixStorage::Writer(Arc::new(writer));
         let fts_cache = build_fts_cache(&path, &object_store, &config)?;
@@ -911,7 +978,8 @@ impl HelixDB {
 
     /// Open a read-only database handle.
     pub async fn open_reader(source: HelixDbSource) -> Result<Self> {
-        Self::open_reader_with_config(source, DbConfig::new()).await
+        let config = source.embedded_default_config();
+        Self::open_reader_with_config(source, config).await
     }
 
     /// Open a read-only database handle with explicit tuning config.
@@ -964,9 +1032,10 @@ impl HelixDB {
             )
             .build()
             .await?;
-        index_v2::repository::require_reader_bootstrap_or_legacy(&reader).await?;
+        index_lifecycle::repository::require_reader_bootstrap_or_legacy(&reader).await?;
         let loaded_catalog =
-            index_v2::repository::load_scope_catalog(&reader, DataScope::LegacyUnscoped).await?;
+            index_lifecycle::repository::load_scope_catalog(&reader, DataScope::LegacyUnscoped)
+                .await?;
         let storage = HelixStorage::Reader(Arc::new(reader));
         let fts_cache = build_fts_cache(&path, &object_store, &config)?;
         Ok(Self::from_storage(
@@ -994,20 +1063,20 @@ impl HelixDB {
             );
         match config.cache().mode() {
             CacheMode::VectorMemoryOnly => builder = builder.with_db_cache_disabled(),
-            CacheMode::Memory { .. } => {}
-            CacheMode::Hybrid { .. } => {
+            CacheMode::Memory { .. } | CacheMode::Hybrid { .. } => {
                 let Some(cache) = &slate_db_cache else {
                     return Err(HelixDbError::Config(
-                        "hybrid cache mode must build a SlateDB cache".into(),
+                        "configured SlateDB cache mode must build a cache".into(),
                     ));
                 };
                 builder = builder.with_db_cache(Arc::clone(cache));
             }
         }
         let reader = builder.build().await?;
-        index_v2::repository::require_reader_bootstrap_or_legacy(&reader).await?;
+        index_lifecycle::repository::require_reader_bootstrap_or_legacy(&reader).await?;
         let loaded_catalog =
-            index_v2::repository::load_scope_catalog(&reader, DataScope::LegacyUnscoped).await?;
+            index_lifecycle::repository::load_scope_catalog(&reader, DataScope::LegacyUnscoped)
+                .await?;
         let storage = HelixStorage::Reader(Arc::new(reader));
         let fts_cache = build_fts_cache(&path, &object_store, &config)?;
         let db = Self::from_storage(
@@ -1026,7 +1095,7 @@ impl HelixDB {
     fn from_storage(
         storage: HelixStorageParts,
         config: HelixConfig,
-        indexes: index_v2::LoadedV2ScopeCatalog,
+        indexes: index_lifecycle::LoadedV2ScopeCatalog,
         slate_db_cache: Option<Arc<dyn DbCache>>,
         fts_cache: Option<Arc<search::text::FtsCache>>,
     ) -> Self {
@@ -1043,13 +1112,13 @@ impl HelixDB {
     fn from_storage_with_index_scheduling(
         storage: HelixStorageParts,
         config: HelixConfig,
-        indexes: index_v2::LoadedV2ScopeCatalog,
+        indexes: index_lifecycle::LoadedV2ScopeCatalog,
         slate_db_cache: Option<Arc<dyn DbCache>>,
         fts_cache: Option<Arc<search::text::FtsCache>>,
         index_scheduling: IndexLifecycleScheduling,
     ) -> Self {
         let vector_memory = VectorMemoryCache::new(*config.db().cache().vector_memory());
-        let index_scope_gates = Arc::new(index_v2::IndexScopeGates::default());
+        let index_scope_gates = Arc::new(index_lifecycle::IndexScopeGates::default());
         let secondary_tuning = config.db().secondary_index_lifecycle();
         let lifecycle_throughput = config.db().index_lifecycle_throughput();
         let secondary_limits = config::SearchIndexBatchLimits::try_new(
@@ -1062,15 +1131,15 @@ impl HelixDB {
                 .expect("secondary output bytes are positive"),
         )
         .expect("secondary output ceiling is a valid family batch limit");
-        let secondary_driver: Arc<dyn index_v2::outbox::IndexOperationDriver> = Arc::new(
-            index_v2::secondary::SecondaryIndexDriver::with_catch_up_delay(
+        let secondary_driver: Arc<dyn index_lifecycle::outbox::IndexOperationDriver> = Arc::new(
+            index_lifecycle::secondary::SecondaryIndexDriver::with_catch_up_delay(
                 Arc::clone(&index_scope_gates),
                 secondary_tuning.catch_up_tail_delay_millis(),
             )
             .with_scan_tuning(lifecycle_throughput.scan()),
         );
-        let vector_driver: Arc<dyn index_v2::outbox::IndexOperationDriver> = Arc::new(
-            index_v2::vector::VectorIndexDriver::new(
+        let vector_driver: Arc<dyn index_lifecycle::outbox::IndexOperationDriver> = Arc::new(
+            index_lifecycle::vector::VectorIndexDriver::new(
                 Arc::clone(&index_scope_gates),
                 Arc::clone(&vector_memory.registry),
                 Arc::clone(&vector_memory.simhasher_registry),
@@ -1079,16 +1148,16 @@ impl HelixDB {
         );
         let secondary_scheduling = index_scheduling.resolve(match secondary_tuning.worker_mode() {
             config::SecondaryIndexLifecycleWorkerMode::Enabled => {
-                index_v2::worker::IndexDriverScheduling::Automatic
+                index_lifecycle::worker::IndexDriverScheduling::Automatic
             }
             config::SecondaryIndexLifecycleWorkerMode::Disabled => {
-                index_v2::worker::IndexDriverScheduling::ExplicitOnly
+                index_lifecycle::worker::IndexDriverScheduling::ExplicitOnly
             }
         });
         let automatic_scheduling =
-            index_scheduling.resolve(index_v2::worker::IndexDriverScheduling::Automatic);
+            index_scheduling.resolve(index_lifecycle::worker::IndexDriverScheduling::Automatic);
         let text_driver = Arc::new(
-            index_v2::text::driver::TextIndexDriver::with_storage(
+            index_lifecycle::text::driver::TextIndexDriver::with_storage(
                 Arc::clone(&index_scope_gates),
                 Arc::clone(storage.object_store()),
                 storage.path().to_string(),
@@ -1096,48 +1165,51 @@ impl HelixDB {
             )
             .with_scan_tuning(lifecycle_throughput.scan()),
         );
-        let text_operation_driver: Arc<dyn index_v2::outbox::IndexOperationDriver> =
+        let text_operation_driver: Arc<dyn index_lifecycle::outbox::IndexOperationDriver> =
             text_driver.clone();
-        let text_compactor: Arc<dyn index_v2::worker::ActiveTextCompactionDriver> = text_driver;
-        let text_capability = index_v2::worker::IndexFamilyCapability::new(
+        let text_compactor: Arc<dyn index_lifecycle::worker::ActiveTextCompactionDriver> =
+            text_driver;
+        let text_capability = index_lifecycle::worker::IndexFamilyCapability::new(
             text_operation_driver,
             config.db().search_index_backfill().batch(),
             automatic_scheduling,
         );
-        let secondary_capability = index_v2::worker::IndexFamilyCapability::new(
+        let secondary_capability = index_lifecycle::worker::IndexFamilyCapability::new(
             secondary_driver,
             secondary_limits,
             secondary_scheduling,
         );
-        let vector_capability = index_v2::worker::IndexFamilyCapability::new(
+        let vector_capability = index_lifecycle::worker::IndexFamilyCapability::new(
             vector_driver,
             config.db().search_index_backfill().batch(),
             automatic_scheduling,
         );
-        let index_capabilities = index_v2::worker::IndexFamilyCapabilities::new(
+        let index_capabilities = index_lifecycle::worker::IndexFamilyCapabilities::new(
             secondary_capability,
             vector_capability,
             text_capability,
             text_compactor,
         );
-        #[cfg(feature = "index-v2-lifecycle-testing")]
-        let lifecycle_metrics =
-            Arc::new(index_v2_lifecycle_testing::AutomaticLifecycleMetrics::new());
-        let index_claim_sequences = Arc::new(index_v2::worker::ClaimSequenceAllocator::new());
+        #[cfg(feature = "index-lifecycle-testing")]
+        let lifecycle_metrics = Arc::new(index_lifecycle_testing::AutomaticLifecycleMetrics::new());
+        let index_claim_sequences =
+            Arc::new(index_lifecycle::worker::ClaimSequenceAllocator::new());
         let index_worker = match storage.handle() {
-            HelixStorage::Writer(writer) => Some(index_v2::worker::IndexWorkerSupervisor::start(
-                Arc::clone(&writer.db),
-                index_capabilities.clone(),
-                config.db().index_lifecycle_throughput().concurrency(),
-                Arc::clone(&index_claim_sequences),
-                #[cfg(feature = "index-v2-lifecycle-testing")]
-                Arc::clone(&lifecycle_metrics),
-            )),
+            HelixStorage::Writer(writer) => {
+                Some(index_lifecycle::worker::IndexWorkerSupervisor::start(
+                    Arc::clone(&writer.db),
+                    index_capabilities.clone(),
+                    config.db().index_lifecycle_throughput().concurrency(),
+                    Arc::clone(&index_claim_sequences),
+                    #[cfg(feature = "index-lifecycle-testing")]
+                    Arc::clone(&lifecycle_metrics),
+                ))
+            }
             HelixStorage::Reader(_) => None,
         };
         let index_worker_wake = index_worker
             .as_ref()
-            .map(index_v2::worker::IndexWorkerSupervisor::wake_handle);
+            .map(index_lifecycle::worker::IndexWorkerSupervisor::wake_handle);
         Self {
             inner: Arc::new(HelixDBInner {
                 storage,
@@ -1158,9 +1230,9 @@ impl HelixDB {
                 index_worker: Mutex::new(index_worker),
                 index_claim_sequences,
                 secondary_lifecycle_step: Mutex::new(()),
-                #[cfg(feature = "index-v2-lifecycle-testing")]
+                #[cfg(feature = "index-lifecycle-testing")]
                 lifecycle_test_scheduling: index_scheduling,
-                #[cfg(feature = "index-v2-lifecycle-testing")]
+                #[cfg(feature = "index-lifecycle-testing")]
                 lifecycle_metrics,
                 query_metrics: RwLock::new(None),
                 query_metrics_runtime: Mutex::new(None),
@@ -1228,15 +1300,17 @@ impl HelixDB {
     pub async fn get_index_operation(
         &self,
         scope: DataScope,
-        operation_id: index_v2::IndexOperationId,
-    ) -> Result<index_v2::IndexOperationStatus> {
+        operation_id: index_lifecycle::IndexOperationId,
+    ) -> Result<index_lifecycle::IndexOperationStatus> {
         let operation = match self.storage() {
             HelixStorage::Reader(reader) => {
-                index_v2::outbox::read_operation(reader.as_ref(), scope, operation_id).await?
+                index_lifecycle::outbox::read_operation(reader.as_ref(), scope, operation_id)
+                    .await?
             }
             HelixStorage::Writer(writer) => {
                 let snapshot = writer.db().snapshot().await?;
-                index_v2::outbox::read_operation(snapshot.as_ref(), scope, operation_id).await?
+                index_lifecycle::outbox::read_operation(snapshot.as_ref(), scope, operation_id)
+                    .await?
             }
         };
         let Some(operation) = operation else {
@@ -1244,7 +1318,9 @@ impl HelixDB {
                 operation_id: operation_id.as_uuid().to_string(),
             });
         };
-        Ok(index_v2::IndexOperationStatus::from_record(&operation))
+        Ok(index_lifecycle::IndexOperationStatus::from_record(
+            &operation,
+        ))
     }
 
     /// Advances at most one immediately eligible secondary lifecycle step.
@@ -1275,9 +1351,9 @@ impl HelixDB {
             .lock()
             .await
             .as_ref()
-            .map(index_v2::worker::IndexWorkerSupervisor::writer_epoch)
+            .map(index_lifecycle::worker::IndexWorkerSupervisor::writer_epoch)
             .ok_or(HelixDbError::DatabaseClosed)?;
-        index_v2::worker::process_secondary_once(
+        index_lifecycle::worker::process_secondary_once(
             writer.db(),
             &self.inner.index_capabilities,
             writer_epoch,
@@ -1292,12 +1368,12 @@ impl HelixDB {
         scope: DataScope,
         spec: &ir::IndexDdlCreateSpec,
         mode: ir::IndexCreateMode,
-    ) -> Result<index_v2::IndexDdlReceipt> {
+    ) -> Result<index_lifecycle::IndexDdlReceipt> {
         let definition = runtime_catalog::dynamic_index_definition_from_create_spec(spec)?;
         let family = match definition.family() {
-            index_v2::IndexDefinitionFamily::Secondary => error::IndexFamily::Secondary,
-            index_v2::IndexDefinitionFamily::Vector => error::IndexFamily::Vector,
-            index_v2::IndexDefinitionFamily::Text => error::IndexFamily::Text,
+            index_lifecycle::IndexDefinitionFamily::Secondary => error::IndexFamily::Secondary,
+            index_lifecycle::IndexDefinitionFamily::Vector => error::IndexFamily::Vector,
+            index_lifecycle::IndexDefinitionFamily::Text => error::IndexFamily::Text,
         };
         if let Some(reason) = self.index_lifecycle_unavailable_reason(family) {
             return Err(HelixDbError::IndexLifecycleUnavailable { family, reason });
@@ -1307,7 +1383,7 @@ impl HelixDB {
                 actual: self.mode().as_str(),
             });
         };
-        let receipt = index_v2::lifecycle::create_index_operation_from_current_source(
+        let receipt = index_lifecycle::lifecycle::create_index_operation_from_current_source(
             writer.db(),
             scope,
             definition,
@@ -1323,13 +1399,13 @@ impl HelixDB {
         &self,
         scope: DataScope,
         spec: &ir::IndexDdlDropSpec,
-    ) -> Result<index_v2::IndexDdlReceipt> {
+    ) -> Result<index_lifecycle::IndexDdlReceipt> {
         let identity = runtime_catalog::dynamic_index_identity_from_drop_spec(spec)?;
         let family = match identity.family() {
-            index_v2::IndexIdentityFamily::SecondaryEquality
-            | index_v2::IndexIdentityFamily::SecondaryRange => error::IndexFamily::Secondary,
-            index_v2::IndexIdentityFamily::Vector => error::IndexFamily::Vector,
-            index_v2::IndexIdentityFamily::Text => error::IndexFamily::Text,
+            index_lifecycle::IndexIdentityFamily::SecondaryEquality
+            | index_lifecycle::IndexIdentityFamily::SecondaryRange => error::IndexFamily::Secondary,
+            index_lifecycle::IndexIdentityFamily::Vector => error::IndexFamily::Vector,
+            index_lifecycle::IndexIdentityFamily::Text => error::IndexFamily::Text,
         };
         if let Some(reason) = self.index_lifecycle_unavailable_reason(family) {
             return Err(HelixDbError::IndexLifecycleUnavailable { family, reason });
@@ -1345,7 +1421,7 @@ impl HelixDB {
             .catalog_change_permit(scope)
             .await;
         let Some(record) =
-            index_v2::repository::load_index_record(writer.db(), scope, &identity).await?
+            index_lifecycle::repository::load_index_record(writer.db(), scope, &identity).await?
         else {
             return Err(HelixDbError::IndexNotFound(format!("{identity:?}")));
         };
@@ -1354,7 +1430,8 @@ impl HelixDB {
             record.definition(),
         )?;
         let receipt =
-            index_v2::lifecycle::drop_index_operation(writer.db(), scope, &definition).await?;
+            index_lifecycle::lifecycle::drop_index_operation(writer.db(), scope, &definition)
+                .await?;
         self.notify_index_worker();
         Ok(receipt)
     }
@@ -1363,21 +1440,24 @@ impl HelixDB {
     pub async fn retry_index_operation(
         &self,
         scope: DataScope,
-        operation_id: index_v2::IndexOperationId,
-    ) -> Result<index_v2::IndexOperationStatus> {
+        operation_id: index_lifecycle::IndexOperationId,
+    ) -> Result<index_lifecycle::IndexOperationStatus> {
         let HelixStorage::Writer(writer) = self.storage() else {
             return Err(HelixDbError::WriterModeRequired {
                 actual: self.mode().as_str(),
             });
         };
-        let operation = index_v2::outbox::retry_operation(writer.db(), scope, operation_id).await?;
+        let operation =
+            index_lifecycle::outbox::retry_operation(writer.db(), scope, operation_id).await?;
         if matches!(
             operation.execution_state(),
-            index_v2::IndexOperationExecutionState::Queued { .. }
+            index_lifecycle::IndexOperationExecutionState::Queued { .. }
         ) {
             self.notify_index_worker();
         }
-        Ok(index_v2::IndexOperationStatus::from_record(&operation))
+        Ok(index_lifecycle::IndexOperationStatus::from_record(
+            &operation,
+        ))
     }
 
     /// Converts a constructing BUILD into cleanup, while converging on the
@@ -1385,21 +1465,24 @@ impl HelixDB {
     pub async fn abort_index_operation(
         &self,
         scope: DataScope,
-        operation_id: index_v2::IndexOperationId,
-    ) -> Result<index_v2::IndexOperationStatus> {
+        operation_id: index_lifecycle::IndexOperationId,
+    ) -> Result<index_lifecycle::IndexOperationStatus> {
         let HelixStorage::Writer(writer) = self.storage() else {
             return Err(HelixDbError::WriterModeRequired {
                 actual: self.mode().as_str(),
             });
         };
-        let operation = index_v2::outbox::abort_operation(writer.db(), scope, operation_id).await?;
+        let operation =
+            index_lifecycle::outbox::abort_operation(writer.db(), scope, operation_id).await?;
         if matches!(
             operation.execution_state(),
-            index_v2::IndexOperationExecutionState::Queued { .. }
+            index_lifecycle::IndexOperationExecutionState::Queued { .. }
         ) {
             self.notify_index_worker();
         }
-        Ok(index_v2::IndexOperationStatus::from_record(&operation))
+        Ok(index_lifecycle::IndexOperationStatus::from_record(
+            &operation,
+        ))
     }
 
     /// Return the database path inside the object store.
@@ -1430,6 +1513,7 @@ impl HelixDB {
         let indexes = self.runtime_catalog_snapshot();
         PlannerContext {
             params,
+            late_bound_params: Default::default(),
             indexes,
             stats: Default::default(),
             runtime_feedback: Default::default(),
@@ -1448,6 +1532,7 @@ impl HelixDB {
         let indexes = self.runtime_catalog_snapshot_scoped(tenant_scope).await?;
         Ok(PlannerContext {
             params,
+            late_bound_params: Default::default(),
             indexes,
             stats: Default::default(),
             runtime_feedback: Default::default(),
@@ -1464,12 +1549,39 @@ impl HelixDB {
         tenant_scope: DataScope,
     ) -> Result<PreparedPlannerContext> {
         let catalog_permit = self.index_catalog_scope_permit(tenant_scope).await;
-        let (indexes, generation) = self
-            .runtime_catalog_snapshot_scoped_with_generation(tenant_scope)
-            .await?;
+        let _refresh_permit = self
+            .inner
+            .index_scope_gates
+            .catalog_refresh_permit(tenant_scope)
+            .await;
+        if let HelixStorage::Writer(writer) = self.storage() {
+            let repaired =
+                index_lifecycle::outbox::reconcile_legacy_reader_coordination_operations(
+                    writer.db(),
+                    tenant_scope,
+                )
+                .await?;
+            if repaired > 0 {
+                self.notify_index_worker();
+            }
+        }
+        let read_view =
+            execution::interpreter::read_view::StableRequestReadView::open(self).await?;
+        let loaded =
+            index_lifecycle::repository::load_scope_catalog(&read_view, tenant_scope).await?;
+        let (indexes, catalog) = {
+            let mut state = self
+                .inner
+                .runtime_state
+                .write()
+                .expect("runtime state lock is not poisoned");
+            state.replace_catalog(tenant_scope, loaded);
+            state.planner_snapshot_with_catalog(tenant_scope)
+        };
         Ok(PreparedPlannerContext {
             context: PlannerContext {
                 params,
+                late_bound_params: Default::default(),
                 indexes,
                 stats: Default::default(),
                 runtime_feedback: Default::default(),
@@ -1480,8 +1592,9 @@ impl HelixDB {
             proof: CatalogRefreshProof {
                 runtime: Arc::downgrade(&self.inner),
                 scope: tenant_scope,
-                generation,
                 catalog_permit,
+                catalog,
+                read_view: Box::new(read_view),
             },
         })
     }
@@ -1594,7 +1707,7 @@ impl HelixDB {
         tenant_scope: DataScope,
     ) -> Result<Vec<u8>> {
         let request = sonic_rs::from_slice::<QueryRequest>(request_json)
-            .map_err(|err| HelixDbError::Query(format!("invalid query JSON: {err}")))?;
+            .map_err(|error| HelixDbError::InvalidQueryJson(error.to_string()))?;
         let query_metrics = self.embedded_query_metrics();
         query_service::execute_query_on_scoped_observed(
             self,
@@ -1872,13 +1985,30 @@ impl HelixDB {
         Ok(summary)
     }
 
-    /// Wait for any currently owned startup warm tasks to finish.
+    /// Wait for owned startup warm tasks and the initial vector refresh to finish.
     pub async fn wait_for_startup_cache_warm(&self) {
         if let Some(task) = self.inner.caches.startup_tasks.slate.lock().await.take() {
             task.wait().await;
         }
         if let Some(task) = self.inner.caches.startup_tasks.fts.lock().await.take() {
             task.wait().await;
+        }
+        let initial_vector_refresh = self
+            .inner
+            .caches
+            .vector_memory
+            .refresh_task
+            .lock()
+            .await
+            .as_ref()
+            .map(|task| task.initial_refresh.clone());
+        let Some(mut initial_vector_refresh) = initial_vector_refresh else {
+            return;
+        };
+        while !*initial_vector_refresh.borrow() {
+            if initial_vector_refresh.changed().await.is_err() {
+                break;
+            }
         }
     }
 
@@ -1900,7 +2030,7 @@ impl HelixDB {
                 .loaded_scopes()
                 .into_iter()
                 .flat_map(|scope| runtime_state.active_handles(scope))
-                .filter(|handle| matches!(handle, index_v2::ActiveIndexHandle::Text { .. }))
+                .filter(|handle| matches!(handle, index_lifecycle::ActiveIndexHandle::Text { .. }))
                 .collect::<Vec<_>>()
         };
         handles.sort_by_key(|handle| (handle.scope(), handle.index_id(), handle.generation()));
@@ -1927,7 +2057,7 @@ impl HelixDB {
         &self,
         reader: &(impl slatedb::DbReadOps + Sync),
         cache: &Arc<search::text::FtsCache>,
-        handles: Vec<index_v2::ActiveIndexHandle>,
+        handles: Vec<index_lifecycle::ActiveIndexHandle>,
     ) -> search::text::FtsWarmSummary {
         let started = std::time::Instant::now();
         let generation_count = handles.len();
@@ -1938,15 +2068,19 @@ impl HelixDB {
         for handle in handles {
             let warmed: Result<search::text::FtsWarmSummary> = async {
                 let authority =
-                    index_v2::text::serving::ActiveTextServingAuthority::try_from_active(&handle)?;
+                    index_lifecycle::text::serving::ActiveTextServingAuthority::try_from_active(
+                        &handle,
+                    )?;
                 let roots =
-                    index_v2::text::serving::load_active_manifest_roots(reader, &authority).await?;
+                    index_lifecycle::text::serving::load_active_manifest_roots(reader, &authority)
+                        .await?;
                 let mut splits = Vec::new();
                 for root in roots {
                     for page in 0..root.page_count() {
-                        for split in
-                            index_v2::text::serving::load_active_manifest_page(reader, &root, page)
-                                .await?
+                        for split in index_lifecycle::text::serving::load_active_manifest_page(
+                            reader, &root, page,
+                        )
+                        .await?
                         {
                             splits.push(search::text::TextSplitRef {
                                 blob: search::text::TextBlobRef {
@@ -2072,7 +2206,9 @@ impl HelixDB {
         let budget = settings.budget();
         let interval = Duration::from_secs(settings.poll_interval_secs());
         let (shutdown, mut shutdown_rx) = watch::channel(false);
+        let (initial_refresh_tx, initial_refresh) = watch::channel(false);
         let handle = tokio::spawn(async move {
+            let mut initial_refresh_tx = Some(initial_refresh_tx);
             loop {
                 if *shutdown_rx.borrow() {
                     break;
@@ -2087,6 +2223,9 @@ impl HelixDB {
                 drop(database);
                 if let Err(err) = result {
                     tracing::warn!(error = %err, "failed to refresh vector memory stores");
+                }
+                if let Some(initial_refresh_tx) = initial_refresh_tx.take() {
+                    let _ = initial_refresh_tx.send(true);
                 }
                 tokio::select! {
                     changed = shutdown_rx.changed() => {
@@ -2104,7 +2243,11 @@ impl HelixDB {
             }
         });
         *self.inner.caches.vector_memory.refresh_task.lock().await =
-            Some(VectorMemoryRefreshTask { shutdown, handle });
+            Some(VectorMemoryRefreshTask {
+                shutdown,
+                initial_refresh,
+                handle,
+            });
         Ok(())
     }
 
@@ -2190,7 +2333,7 @@ impl HelixDB {
     pub(crate) async fn index_mutation_scope_permit(
         &self,
         scope: DataScope,
-    ) -> index_v2::IndexScopeMutationPermit {
+    ) -> index_lifecycle::IndexScopeMutationPermit {
         self.inner.index_scope_gates.mutation_permit(scope).await
     }
 
@@ -2198,7 +2341,7 @@ impl HelixDB {
     pub(crate) async fn index_catalog_scope_permit(
         &self,
         scope: DataScope,
-    ) -> index_v2::IndexScopeCatalogPermit {
+    ) -> index_lifecycle::IndexScopeCatalogPermit {
         self.inner.index_scope_gates.catalog_permit(scope).await
     }
 
@@ -2215,13 +2358,13 @@ impl HelixDB {
         worker.wake();
     }
 
-    pub(crate) async fn index_worker_epoch(&self) -> Result<index_v2::WriterEpoch> {
+    pub(crate) async fn index_worker_epoch(&self) -> Result<index_lifecycle::WriterEpoch> {
         self.inner
             .index_worker
             .lock()
             .await
             .as_ref()
-            .map(index_v2::worker::IndexWorkerSupervisor::writer_epoch)
+            .map(index_lifecycle::worker::IndexWorkerSupervisor::writer_epoch)
             .ok_or(HelixDbError::DatabaseClosed)
     }
 
@@ -2250,7 +2393,7 @@ impl HelixDB {
                 actual: self.mode().as_str(),
             });
         };
-        let receipt = index_v2::lifecycle::create_index_operation_from_current_source(
+        let receipt = index_lifecycle::lifecycle::create_index_operation_from_current_source(
             writer.db(),
             DataScope::LegacyUnscoped,
             definition,
@@ -2269,15 +2412,15 @@ impl HelixDB {
                     .get_index_operation(DataScope::LegacyUnscoped, operation_id)
                     .await?
                 {
-                    index_v2::IndexOperationStatus::Succeeded { .. } => break,
-                    index_v2::IndexOperationStatus::Blocked { .. }
-                    | index_v2::IndexOperationStatus::Aborted { .. } => {
+                    index_lifecycle::IndexOperationStatus::Succeeded { .. } => break,
+                    index_lifecycle::IndexOperationStatus::Blocked { .. }
+                    | index_lifecycle::IndexOperationStatus::Aborted { .. } => {
                         return Err(HelixDbError::InvariantViolation(
                             "test index lifecycle did not succeed".to_string(),
                         ));
                     }
-                    index_v2::IndexOperationStatus::Queued { .. }
-                    | index_v2::IndexOperationStatus::Running { .. } => {
+                    index_lifecycle::IndexOperationStatus::Queued { .. }
+                    | index_lifecycle::IndexOperationStatus::Running { .. } => {
                         tokio::task::yield_now().await;
                     }
                 }
@@ -2334,42 +2477,28 @@ impl HelixDB {
             .planner_snapshot(scope))
     }
 
-    async fn runtime_catalog_snapshot_scoped_with_generation(
+    /// Returns whether a proof and its exact read view belong to this scope.
+    pub(crate) fn catalog_refresh_proof_belongs_to(
         &self,
+        proof: &CatalogRefreshProof,
         scope: DataScope,
-    ) -> Result<(IndexCatalogSnapshot, CatalogGeneration)> {
-        self.refresh_runtime_catalog(scope).await?;
-        Ok(self
-            .inner
-            .runtime_state
-            .read()
-            .expect("runtime state lock is not poisoned")
-            .planner_snapshot_with_generation(scope))
+    ) -> bool {
+        proof
+            .runtime
+            .upgrade()
+            .is_some_and(|runtime| Arc::ptr_eq(&runtime, &self.inner) && proof.scope == scope)
     }
 
-    /// Transfers catalog authority when a planning proof still names this view.
+    /// Transfers catalog authority while its gate still excludes durable publication.
     pub(crate) fn consume_catalog_refresh_proof(
         &self,
         proof: CatalogRefreshProof,
         scope: DataScope,
-    ) -> Option<index_v2::IndexScopeCatalogPermit> {
-        let CatalogRefreshProof {
-            runtime,
-            scope: proof_scope,
-            generation,
-            catalog_permit,
-        } = proof;
-        let runtime = runtime.upgrade()?;
-        (Arc::ptr_eq(&runtime, &self.inner)
-            && proof_scope == scope
-            && self
-                .inner
-                .runtime_state
-                .read()
-                .expect("runtime state lock is not poisoned")
-                .generation(scope)
-                == generation)
-            .then_some(catalog_permit)
+    ) -> Option<index_lifecycle::IndexScopeCatalogPermit> {
+        if !self.catalog_refresh_proof_belongs_to(&proof, scope) {
+            return None;
+        }
+        Some(proof.into_write_permit())
     }
 
     #[cfg(test)]
@@ -2395,11 +2524,12 @@ impl HelixDB {
             .catalog_refresh_permit(scope)
             .await;
         if let HelixStorage::Writer(writer) = self.storage() {
-            let repaired = index_v2::outbox::reconcile_legacy_reader_coordination_operations(
-                writer.db(),
-                scope,
-            )
-            .await?;
+            let repaired =
+                index_lifecycle::outbox::reconcile_legacy_reader_coordination_operations(
+                    writer.db(),
+                    scope,
+                )
+                .await?;
             if repaired > 0 {
                 self.notify_index_worker();
             }
@@ -2408,7 +2538,7 @@ impl HelixDB {
             HelixStorage::Reader(reader) => {
                 let observed = reader.status();
                 let loaded =
-                    index_v2::repository::load_scope_catalog(reader.as_ref(), scope).await?;
+                    index_lifecycle::repository::load_scope_catalog(reader.as_ref(), scope).await?;
                 if reader.status() != observed {
                     return Err(HelixDbError::RequestReadViewChanged);
                 }
@@ -2416,7 +2546,7 @@ impl HelixDB {
             }
             HelixStorage::Writer(writer) => {
                 let snapshot = writer.db().snapshot().await?;
-                index_v2::repository::load_scope_catalog(snapshot.as_ref(), scope).await?
+                index_lifecycle::repository::load_scope_catalog(snapshot.as_ref(), scope).await?
             }
         };
         self.inner
@@ -2430,7 +2560,7 @@ impl HelixDB {
     pub(crate) fn active_index_handles_loaded(
         &self,
         scope: DataScope,
-    ) -> Vec<index_v2::ActiveIndexHandle> {
+    ) -> Vec<index_lifecycle::ActiveIndexHandle> {
         self.inner
             .runtime_state
             .read()
@@ -2538,7 +2668,25 @@ fn foyer_disk_block_size(disk_capacity_bytes: usize) -> usize {
 
 async fn build_slate_db_cache(config: &CacheMode) -> Result<Option<Arc<dyn DbCache>>> {
     match config {
-        CacheMode::VectorMemoryOnly | CacheMode::Memory { .. } => Ok(None),
+        CacheMode::VectorMemoryOnly => Ok(None),
+        CacheMode::Memory { slate_db, .. } => {
+            let block_cache: Arc<dyn DbCache> =
+                Arc::new(FoyerCache::new_with_opts(FoyerCacheOptions {
+                    max_capacity: slate_db.block_bytes(),
+                    ..Default::default()
+                }));
+            let metadata_cache: Arc<dyn DbCache> =
+                Arc::new(FoyerCache::new_with_opts(FoyerCacheOptions {
+                    max_capacity: slate_db.metadata_bytes(),
+                    ..Default::default()
+                }));
+            Ok(Some(Arc::new(
+                SplitCache::new()
+                    .with_block_cache(Some(block_cache))
+                    .with_meta_cache(Some(metadata_cache))
+                    .build(),
+            )))
+        }
         CacheMode::Hybrid { slate_db, .. } => {
             let metrics = FoyerHybridCacheMetrics::new();
             let cache = HybridCacheBuilder::new()
@@ -2576,7 +2724,7 @@ async fn build_slate_db_cache(config: &CacheMode) -> Result<Option<Arc<dyn DbCac
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encoding::keys::tenant::TenantId;
+    use crate::encoding::keys::scope::TenantId;
     use helix_ast::batch::{read_batch, write_batch};
     use helix_ast::graph::NodeRef;
     use helix_ast::query::QueryRequest;
@@ -2651,6 +2799,81 @@ mod tests {
         );
     }
 
+    #[test]
+    fn embedded_sources_select_bounded_local_defaults() {
+        for (source, flush_interval, block_bytes, metadata_bytes) in [
+            (
+                HelixDbSource::InMemory {
+                    database: "memory-defaults".to_string(),
+                },
+                Duration::from_millis(1),
+                16 * 1024 * 1024,
+                8 * 1024 * 1024,
+            ),
+            (
+                HelixDbSource::Disk {
+                    root: PathBuf::from("/tmp/helix-embedded-default-contract"),
+                    database: "disk-defaults".to_string(),
+                },
+                Duration::from_millis(3),
+                48 * 1024 * 1024,
+                16 * 1024 * 1024,
+            ),
+        ] {
+            let config = source.embedded_default_config();
+            let slate = config.slate().to_writer_settings(None);
+            assert_eq!(slate.flush_interval, Some(flush_interval));
+            assert_eq!(slate.l0_sst_size_bytes, 16 * 1024 * 1024);
+            assert_eq!(slate.max_unflushed_bytes, 64 * 1024 * 1024);
+            assert_eq!(
+                config.cache().vector_memory().budget().bytes(),
+                Some(64 * 1024 * 1024)
+            );
+            assert_eq!(
+                config.cache().vector_memory().simhasher_cache().bytes(),
+                8 * 1024 * 1024
+            );
+            let CacheMode::Memory {
+                slate_db,
+                slate_warm,
+                fts: Some(fts),
+            } = config.cache().mode()
+            else {
+                panic!("embedded local defaults must use bounded memory caches");
+            };
+            assert_eq!(slate_db.block_bytes(), block_bytes);
+            assert_eq!(slate_db.metadata_bytes(), metadata_bytes);
+            assert_eq!(slate_warm, &crate::config::SlateWarmConfig::Off);
+            assert_eq!(fts.memory_bytes(), 16 * 1024 * 1024);
+            assert_eq!(fts.warm(), &crate::config::FtsWarmConfig::Off);
+        }
+
+        let object_storage = HelixDbSource::ObjectStorage {
+            database: "remote-defaults".to_string(),
+            bucket: "bucket".to_string(),
+            region: "region".to_string(),
+            endpoint: None,
+            allow_http: false,
+        }
+        .embedded_default_config();
+        assert_eq!(
+            object_storage
+                .slate()
+                .to_writer_settings(None)
+                .flush_interval,
+            Some(Duration::from_millis(100))
+        );
+        assert_eq!(
+            object_storage.cache().vector_memory().budget().bytes(),
+            Some(256 * 1024 * 1024)
+        );
+        let CacheMode::Memory { slate_db, .. } = object_storage.cache().mode() else {
+            panic!("object storage retains the general memory-cache profile");
+        };
+        assert_eq!(slate_db.block_bytes(), 512 * 1024 * 1024);
+        assert_eq!(slate_db.metadata_bytes(), 128 * 1024 * 1024);
+    }
+
     #[tokio::test]
     async fn cache_stats_are_publishable_without_cache_io() {
         let db = HelixDB::open(HelixDbSource::InMemory {
@@ -2666,20 +2889,43 @@ mod tests {
             CacheTierSnapshot::disabled(CacheUsageSemantics::AllocatedBlocks)
         );
         assert!(matches!(
+            snapshot.slate_memory.state,
+            CacheTierState::Ready {
+                capacity_bytes: Some(25_165_824),
+                ..
+            }
+        ));
+        assert!(matches!(
             snapshot.fts_memory.state,
             CacheTierState::Ready {
                 used_bytes: 0,
-                capacity_bytes: Some(_),
+                capacity_bytes: Some(16_777_216),
             }
         ));
         assert!(matches!(
             snapshot.vector_memory.state,
             CacheTierState::Ready {
                 used_bytes: 0,
-                capacity_bytes: Some(_),
+                capacity_bytes: Some(67_108_864),
             }
         ));
         db.close().await.expect("close database");
+
+        let root = tempfile::tempdir().expect("disk cache-stats root");
+        let db = HelixDB::open(HelixDbSource::Disk {
+            root: root.path().to_path_buf(),
+            database: "disk-cache-stats-contract".to_string(),
+        })
+        .await
+        .expect("open disk database");
+        assert!(matches!(
+            db.cache_stats().slate_memory.state,
+            CacheTierState::Ready {
+                capacity_bytes: Some(67_108_864),
+                ..
+            }
+        ));
+        db.close().await.expect("close disk database");
     }
 
     #[tokio::test]
@@ -2744,11 +2990,11 @@ mod tests {
         db.wait_for_startup_cache_warm().await;
         let fts = db.fts_cache_state().await.expect("FTS cache state");
         assert!(fts.enabled);
-        assert_eq!(fts.resolved_memory_budget_bytes, 64 * 1024 * 1024);
+        assert_eq!(fts.resolved_memory_budget_bytes, 16 * 1024 * 1024);
         let slate = db.slate_cache_state().await;
-        assert!(slate.enabled);
-        assert_eq!(slate.warm_mode, Some(config::CacheWarmMode::Background));
-        assert_eq!(slate.last_warm.expect("warm completed").sst_count, 0);
+        assert!(!slate.enabled);
+        assert_eq!(slate.warm_mode, Some(config::CacheWarmMode::Off));
+        assert!(slate.last_warm.is_none());
         assert_eq!(
             db.warm_fts_cache()
                 .await
@@ -2811,7 +3057,7 @@ mod tests {
             )
             .await
             .expect("create is enqueued");
-        let index_v2::IndexDdlReceipt::Accepted {
+        let index_lifecycle::IndexDdlReceipt::Accepted {
             operation_id: create_operation,
             ..
         } = receipt
@@ -2825,13 +3071,13 @@ mod tests {
                     .await
                     .expect("create status loads")
                 {
-                    index_v2::IndexOperationStatus::Succeeded { .. } => break,
-                    index_v2::IndexOperationStatus::Blocked { .. }
-                    | index_v2::IndexOperationStatus::Aborted { .. } => {
+                    index_lifecycle::IndexOperationStatus::Succeeded { .. } => break,
+                    index_lifecycle::IndexOperationStatus::Blocked { .. }
+                    | index_lifecycle::IndexOperationStatus::Aborted { .. } => {
                         panic!("empty secondary build must succeed")
                     }
-                    index_v2::IndexOperationStatus::Queued { .. }
-                    | index_v2::IndexOperationStatus::Running { .. } => {
+                    index_lifecycle::IndexOperationStatus::Queued { .. }
+                    | index_lifecycle::IndexOperationStatus::Running { .. } => {
                         tokio::time::sleep(Duration::from_millis(10)).await;
                     }
                 }
@@ -2874,7 +3120,7 @@ mod tests {
             )
             .await
             .expect("drop is enqueued");
-        let index_v2::IndexDdlReceipt::Accepted {
+        let index_lifecycle::IndexDdlReceipt::Accepted {
             operation_id: drop_operation,
             ..
         } = receipt
@@ -2888,13 +3134,13 @@ mod tests {
                     .await
                     .expect("drop status loads")
                 {
-                    index_v2::IndexOperationStatus::Succeeded { .. } => break,
-                    index_v2::IndexOperationStatus::Blocked { .. }
-                    | index_v2::IndexOperationStatus::Aborted { .. } => {
+                    index_lifecycle::IndexOperationStatus::Succeeded { .. } => break,
+                    index_lifecycle::IndexOperationStatus::Blocked { .. }
+                    | index_lifecycle::IndexOperationStatus::Aborted { .. } => {
                         panic!("unleased empty secondary drop must succeed")
                     }
-                    index_v2::IndexOperationStatus::Queued { .. }
-                    | index_v2::IndexOperationStatus::Running { .. } => {
+                    index_lifecycle::IndexOperationStatus::Queued { .. }
+                    | index_lifecycle::IndexOperationStatus::Running { .. } => {
                         tokio::time::sleep(Duration::from_millis(10)).await;
                     }
                 }
@@ -2946,10 +3192,10 @@ mod tests {
         use bytes::Bytes;
         use slatedb::IsolationLevel;
 
-        use crate::encoding::v1::keys::index_v2::IndexV2Key;
-        use crate::encoding::v1::keys::vectors::{VectorKey, VectorUpperVectorKey};
-        use crate::encoding::v1::keys::{DataKeyKind, Key};
-        use crate::encoding::v1::values::index_v2::encode_index_record;
+        use crate::encoding::v2::keys::indexes::vector::{VectorKey, VectorUpperVectorKey};
+        use crate::encoding::v2::keys::ScopedKey;
+        use crate::encoding::v2::keys::{DataKey, DataKeyKind};
+        use crate::encoding::v2::values::encode_index_record;
 
         let db = HelixDB::open(HelixDbSource::InMemory {
             database: "facade-canonical-vector-hydration".to_string(),
@@ -2981,34 +3227,34 @@ mod tests {
         let ValidatedDynamicIndexDefinition::Vector(vector) = &definition else {
             unreachable!("the fixture constructs a vector definition")
         };
-        let descriptor = index_v2::VectorGenerationDescriptor::for_definition(vector);
-        let physical_index_id = index_v2::VectorPhysicalIndexId::new(707).unwrap();
-        let record = index_v2::IndexRecordV2::building(
-            index_v2::IndexId::new(70).unwrap(),
+        let descriptor = index_lifecycle::VectorGenerationDescriptor::for_definition(vector);
+        let physical_index_id = index_lifecycle::VectorPhysicalIndexId::new(707).unwrap();
+        let record = index_lifecycle::IndexRecordV2::building(
+            index_lifecycle::IndexId::new(70).unwrap(),
             definition,
-            index_v2::IndexRevision::initial(),
-            index_v2::PhysicalGeneration::Vector {
-                generation: index_v2::IndexGenerationId::initial(),
-                layout: index_v2::VectorPhysicalLayout::Unpartitioned { physical_index_id },
+            index_lifecycle::IndexRevision::initial(),
+            index_lifecycle::PhysicalGeneration::Vector {
+                generation: index_lifecycle::IndexGenerationId::initial(),
+                layout: index_lifecycle::VectorPhysicalLayout::Unpartitioned { physical_index_id },
                 descriptor,
             },
-            index_v2::IndexOperationId::new_v4(),
+            index_lifecycle::IndexOperationId::new_v4(),
         )
         .unwrap()
-        .transition(index_v2::IndexStateTransition::Activate)
+        .transition(index_lifecycle::IndexStateTransition::Activate)
         .unwrap();
-        let active = index_v2::ActiveIndexHandle::try_from_record(scope, &record).unwrap();
+        let active = index_lifecycle::ActiveIndexHandle::try_from_record(scope, &record).unwrap();
         let generation = search::vector::ValidatedVectorGenerationHandle::try_from_active_current(
             &active,
             physical_index_id,
         )
         .unwrap();
-        let record_key = Key::Data {
+        let record_key = crate::encoding::v2::keys::ManagedIndexKey::Data {
             scope,
-            kind: DataKeyKind::IndexV2(IndexV2Key::index_record(record.identity().clone())),
+            kind: ScopedKey::index_record(record.identity().clone()),
         }
         .to_bytes();
-        let vector_key = Key::Data {
+        let vector_key = DataKey::Data {
             scope,
             kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
                 physical_index_id.get(),
@@ -3047,15 +3293,15 @@ mod tests {
         let scope = tenant_scope("0000000000000000000000000A");
         let mut state = HelixRuntimeState::new(
             DataScope::LegacyUnscoped,
-            index_v2::LoadedV2ScopeCatalog::new(DataScope::LegacyUnscoped),
+            index_lifecycle::LoadedV2ScopeCatalog::new(DataScope::LegacyUnscoped),
         );
         assert_eq!(
             state.generation(DataScope::LegacyUnscoped),
             CatalogGeneration::INITIAL
         );
-        state.replace_catalog(scope, index_v2::LoadedV2ScopeCatalog::new(scope));
+        state.replace_catalog(scope, index_lifecycle::LoadedV2ScopeCatalog::new(scope));
         assert_eq!(state.generation(scope), CatalogGeneration::INITIAL);
-        state.replace_catalog(scope, index_v2::LoadedV2ScopeCatalog::new(scope));
+        state.replace_catalog(scope, index_lifecycle::LoadedV2ScopeCatalog::new(scope));
         assert_eq!(state.generation(scope), CatalogGeneration::INITIAL.next());
         let _ = state.planner_snapshot(scope);
         assert_eq!(
@@ -3072,20 +3318,20 @@ mod tests {
                 .expect("dynamic index is valid"),
         )
         .expect("dynamic definition validates");
-        let building = index_v2::IndexRecordV2::building(
-            index_v2::IndexId::initial(),
+        let building = index_lifecycle::IndexRecordV2::building(
+            index_lifecycle::IndexId::initial(),
             definition.clone(),
-            index_v2::IndexRevision::initial(),
-            index_v2::PhysicalGeneration::Secondary {
-                generation: index_v2::IndexGenerationId::initial(),
+            index_lifecycle::IndexRevision::initial(),
+            index_lifecycle::PhysicalGeneration::Secondary {
+                generation: index_lifecycle::IndexGenerationId::initial(),
             },
-            index_v2::IndexOperationId::new_v4(),
+            index_lifecycle::IndexOperationId::new_v4(),
         )
         .expect("building record is valid");
         let active = building
-            .transition(index_v2::IndexStateTransition::Activate)
+            .transition(index_lifecycle::IndexStateTransition::Activate)
             .expect("building record activates");
-        let mut loaded = index_v2::LoadedV2ScopeCatalog::new(scope);
+        let mut loaded = index_lifecycle::LoadedV2ScopeCatalog::new(scope);
         loaded
             .insert_active(&active)
             .expect("active row enters initial catalog");
@@ -3094,7 +3340,7 @@ mod tests {
         assert!(state
             .catalog(scope)
             .has_scoped_equality_index("User", "email"));
-        state.replace_catalog(scope, index_v2::LoadedV2ScopeCatalog::new(scope));
+        state.replace_catalog(scope, index_lifecycle::LoadedV2ScopeCatalog::new(scope));
         assert!(!state
             .catalog(scope)
             .has_scoped_equality_index("User", "email"));
@@ -3228,7 +3474,7 @@ mod tests {
             )
             .await
             .expect("CREATE is durably accepted");
-        let index_v2::IndexDdlReceipt::Accepted { operation_id, .. } = receipt else {
+        let index_lifecycle::IndexDdlReceipt::Accepted { operation_id, .. } = receipt else {
             panic!("fresh CREATE must enqueue");
         };
 
@@ -3254,13 +3500,13 @@ mod tests {
                 .await
                 .expect("CREATE status remains readable")
             {
-                index_v2::IndexOperationStatus::Succeeded { .. } => break,
-                index_v2::IndexOperationStatus::Blocked { .. }
-                | index_v2::IndexOperationStatus::Aborted { .. } => {
+                index_lifecycle::IndexOperationStatus::Succeeded { .. } => break,
+                index_lifecycle::IndexOperationStatus::Blocked { .. }
+                | index_lifecycle::IndexOperationStatus::Aborted { .. } => {
                     panic!("empty CREATE must succeed")
                 }
-                index_v2::IndexOperationStatus::Queued { .. }
-                | index_v2::IndexOperationStatus::Running { .. } => {
+                index_lifecycle::IndexOperationStatus::Queued { .. }
+                | index_lifecycle::IndexOperationStatus::Running { .. } => {
                     assert!(reopened
                         .process_secondary_index_lifecycle_once()
                         .await
@@ -3273,7 +3519,7 @@ mod tests {
                 .get_index_operation(scope, operation_id)
                 .await
                 .expect("terminal CREATE reads"),
-            index_v2::IndexOperationStatus::Succeeded { .. }
+            index_lifecycle::IndexOperationStatus::Succeeded { .. }
         ));
 
         let receipt = reopened
@@ -3286,7 +3532,7 @@ mod tests {
             )
             .await
             .expect("DROP is durably accepted");
-        let index_v2::IndexDdlReceipt::Accepted { operation_id, .. } = receipt else {
+        let index_lifecycle::IndexDdlReceipt::Accepted { operation_id, .. } = receipt else {
             panic!("fresh DROP must enqueue");
         };
         for _ in 0..16 {
@@ -3295,13 +3541,13 @@ mod tests {
                 .await
                 .expect("DROP status remains readable")
             {
-                index_v2::IndexOperationStatus::Succeeded { .. } => break,
-                index_v2::IndexOperationStatus::Blocked { .. }
-                | index_v2::IndexOperationStatus::Aborted { .. } => {
+                index_lifecycle::IndexOperationStatus::Succeeded { .. } => break,
+                index_lifecycle::IndexOperationStatus::Blocked { .. }
+                | index_lifecycle::IndexOperationStatus::Aborted { .. } => {
                     panic!("empty DROP must succeed")
                 }
-                index_v2::IndexOperationStatus::Queued { .. }
-                | index_v2::IndexOperationStatus::Running { .. } => {
+                index_lifecycle::IndexOperationStatus::Queued { .. }
+                | index_lifecycle::IndexOperationStatus::Running { .. } => {
                     assert!(reopened
                         .process_secondary_index_lifecycle_once()
                         .await
@@ -3314,7 +3560,7 @@ mod tests {
                 .get_index_operation(scope, operation_id)
                 .await
                 .expect("terminal DROP reads"),
-            index_v2::IndexOperationStatus::Succeeded { .. }
+            index_lifecycle::IndexOperationStatus::Succeeded { .. }
         ));
         assert!(!reopened
             .process_secondary_index_lifecycle_once()
@@ -3345,7 +3591,7 @@ mod tests {
 
     #[tokio::test]
     async fn lifecycle_control_facade_and_dsl_use_the_exact_request_scope() {
-        use crate::encoding::v1::keys::{DataKeyKind, Key, NodePropertyKey};
+        use crate::encoding::v2::keys::{DataKey, DataKeyKind, NodePropertyKey};
 
         let db = HelixDB::open(HelixDbSource::InMemory {
             database: "lifecycle-control-facade".to_string(),
@@ -3358,8 +3604,8 @@ mod tests {
                 .expect("secondary definition"),
         )
         .expect("validated secondary definition");
-        let cursor = index_v2::IndexCursor::try_new(
-            Key::Data {
+        let cursor = index_lifecycle::IndexCursor::try_new(
+            DataKey::Data {
                 scope,
                 kind: DataKeyKind::NodeProperty(NodePropertyKey::new(42)),
             }
@@ -3369,16 +3615,16 @@ mod tests {
         let HelixStorage::Writer(writer) = db.storage() else {
             panic!("writer handle expected");
         };
-        let receipt = index_v2::lifecycle::create_index_operation(
+        let receipt = index_lifecycle::lifecycle::create_index_operation(
             writer.db(),
             scope,
             definition,
             ir::IndexCreateMode::ErrorIfExists,
-            index_v2::lifecycle::InitialBuildProgress::secondary(cursor),
+            index_lifecycle::lifecycle::InitialBuildProgress::secondary(cursor),
         )
         .await
         .expect("build operation is accepted");
-        let index_v2::IndexDdlReceipt::Accepted { operation_id, .. } = receipt else {
+        let index_lifecycle::IndexDdlReceipt::Accepted { operation_id, .. } = receipt else {
             panic!("new operation must return accepted receipt");
         };
         let operation_id_string = operation_id.as_uuid().to_string();
@@ -3387,7 +3633,7 @@ mod tests {
             db.get_index_operation(scope, operation_id)
                 .await
                 .expect("direct status lookup"),
-            index_v2::IndexOperationStatus::Queued { .. }
+            index_lifecycle::IndexOperationStatus::Queued { .. }
         ));
         let get_request = QueryRequest::read(
             read_batch()
@@ -3445,7 +3691,7 @@ mod tests {
 
     #[tokio::test]
     async fn disk_source_reopens_as_reader() {
-        use crate::encoding::v1::keys::{DataKeyKind, Key, NodePropertyKey};
+        use crate::encoding::v2::keys::{DataKey, DataKeyKind, NodePropertyKey};
 
         let root = tempfile::tempdir().expect("disk root");
         let database = "facade-disk".to_string();
@@ -3461,8 +3707,8 @@ mod tests {
                 .expect("secondary definition"),
         )
         .expect("validated secondary definition");
-        let cursor = index_v2::IndexCursor::try_new(
-            Key::Data {
+        let cursor = index_lifecycle::IndexCursor::try_new(
+            DataKey::Data {
                 scope,
                 kind: DataKeyKind::NodeProperty(NodePropertyKey::new(42)),
             }
@@ -3472,16 +3718,16 @@ mod tests {
         let HelixStorage::Writer(storage) = writer.storage() else {
             panic!("writer handle expected");
         };
-        let receipt = index_v2::lifecycle::create_index_operation(
+        let receipt = index_lifecycle::lifecycle::create_index_operation(
             storage.db(),
             scope,
             definition,
             ir::IndexCreateMode::ErrorIfExists,
-            index_v2::lifecycle::InitialBuildProgress::secondary(cursor),
+            index_lifecycle::lifecycle::InitialBuildProgress::secondary(cursor),
         )
         .await
         .expect("reader fixture operation is accepted");
-        let index_v2::IndexDdlReceipt::Accepted { operation_id, .. } = receipt else {
+        let index_lifecycle::IndexDdlReceipt::Accepted { operation_id, .. } = receipt else {
             panic!("new operation must return accepted receipt");
         };
         writer.close().await.expect("disk writer closes");
@@ -3508,7 +3754,7 @@ mod tests {
                 .get_index_operation(scope, operation_id)
                 .await
                 .expect("reader can point-read lifecycle status"),
-            index_v2::IndexOperationStatus::Queued { .. }
+            index_lifecycle::IndexOperationStatus::Queued { .. }
         ));
         assert!(matches!(
             reader.retry_index_operation(scope, operation_id).await,
@@ -3555,7 +3801,7 @@ mod tests {
                 db.install_index_for_tests(definition.clone())
                     .await
                     .expect("core index activates without runtime dependencies");
-                let before = index_v2::repository::load_index_record(
+                let before = index_lifecycle::repository::load_index_record(
                     db.inner_db().as_ref(),
                     DataScope::LegacyUnscoped,
                     &definition.identity(),
@@ -3563,14 +3809,15 @@ mod tests {
                 .await
                 .expect("active core index decodes")
                 .expect("active core index exists");
-                let receipt = index_v2::lifecycle::drop_index_operation(
+                let receipt = index_lifecycle::lifecycle::drop_index_operation(
                     db.inner_db().as_ref(),
                     DataScope::LegacyUnscoped,
                     &definition,
                 )
                 .await
                 .expect("core index DROP enqueues without runtime dependencies");
-                let index_v2::IndexDdlReceipt::Accepted { operation_id, .. } = receipt else {
+                let index_lifecycle::IndexDdlReceipt::Accepted { operation_id, .. } = receipt
+                else {
                     panic!("first core index DROP must be accepted");
                 };
                 db.wake_index_worker().await;
@@ -3581,13 +3828,13 @@ mod tests {
                             .await
                             .expect("core index DROP status loads")
                         {
-                            index_v2::IndexOperationStatus::Succeeded { .. } => break,
-                            index_v2::IndexOperationStatus::Blocked { .. }
-                            | index_v2::IndexOperationStatus::Aborted { .. } => {
+                            index_lifecycle::IndexOperationStatus::Succeeded { .. } => break,
+                            index_lifecycle::IndexOperationStatus::Blocked { .. }
+                            | index_lifecycle::IndexOperationStatus::Aborted { .. } => {
                                 panic!("core index DROP must succeed")
                             }
-                            index_v2::IndexOperationStatus::Queued { .. }
-                            | index_v2::IndexOperationStatus::Running { .. } => {
+                            index_lifecycle::IndexOperationStatus::Queued { .. }
+                            | index_lifecycle::IndexOperationStatus::Running { .. } => {
                                 tokio::task::yield_now().await;
                             }
                         }
@@ -3598,7 +3845,7 @@ mod tests {
                 db.install_index_for_tests(definition.clone())
                     .await
                     .expect("core index recreates without runtime dependencies");
-                let recreated = index_v2::repository::load_index_record(
+                let recreated = index_lifecycle::repository::load_index_record(
                     db.inner_db().as_ref(),
                     DataScope::LegacyUnscoped,
                     &definition.identity(),

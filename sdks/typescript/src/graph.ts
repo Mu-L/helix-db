@@ -365,11 +365,11 @@ export async function loadGraph(client: GraphLoadingClient, selection: GraphSele
   return new NativeGraph(response instanceof Uint8Array ? native.graph_from_query_response(spec, response) : response, native);
 }
 
-const DEFAULT_NATIVE_PACKAGE = "@helix-db/uniffi";
+const DEFAULT_NATIVE_PACKAGE = "@helix-db/helix-db-embedded";
 const dynamicImport = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<NativeGraphModule>;
 
 async function loadNativeGraphModule(): Promise<NativeGraphModule> {
-  const packageName = process.env.HELIXDB_UNIFFI_NODE_PACKAGE ?? DEFAULT_NATIVE_PACKAGE;
+  const packageName = process.env.HELIXDB_EMBEDDED_NODE_PACKAGE ?? process.env.HELIXDB_UNIFFI_NODE_PACKAGE ?? DEFAULT_NATIVE_PACKAGE;
   let native: NativeGraphModule;
   try {
     native = await dynamicImport(packageName);

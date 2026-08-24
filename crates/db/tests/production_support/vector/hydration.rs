@@ -10,15 +10,19 @@ use slatedb::{Db, IsolationLevel};
 
 use super::*;
 use crate::config::{SecondaryIndexDefinition, VectorIndexDefinition};
-use crate::encoding::v1::keys::index_v2::SecondaryEntryLane;
-use crate::encoding::v1::keys::index_v2::VectorPartitionMappingKey;
-use crate::encoding::v1::keys::tenant::{DataScope, TenantId};
-use crate::encoding::v1::keys::vectors::{VectorKey, VectorMemoryPrefixKey, VectorUpperVectorKey};
-use crate::encoding::v1::values::index_v2::encode_work_value;
-use crate::index_v2::work::{
+use crate::encoding::v2::keys::indexes::vector::{
+    VectorKey, VectorMemoryPrefixKey, VectorUpperVectorKey,
+};
+use crate::encoding::v2::keys::scope::{DataScope, TenantId};
+use crate::encoding::v2::keys::ManagedIndexKey as IndexKey;
+use crate::encoding::v2::keys::SecondaryEntryLane;
+use crate::encoding::v2::keys::VectorPartitionMappingKey;
+use crate::encoding::v2::keys::{DataKey as GraphKey, DataKeyKind};
+use crate::encoding::v2::values::{encode_partition_mapping, encode_secondary_entry};
+use crate::index_lifecycle::work::{
     SecondaryEntryValue, VectorPartitionMappingValue, VectorTenantPartition,
 };
-use crate::index_v2::{
+use crate::index_lifecycle::{
     IndexEntityId, IndexGenerationId, IndexId, IndexOperationId, IndexRecordV2, IndexRevision,
     IndexStateTransition, PhysicalGeneration, ValidatedDynamicIndexDefinition,
     VectorGenerationDescriptor, VectorPhysicalIndexId,
@@ -131,7 +135,7 @@ fn with_mismatched_descriptor(mut active: ActiveIndexHandle) -> ActiveIndexHandl
 
 /// Builds one deployed upper-vector row key.
 fn upper_vector_key(scope: DataScope, physical_index_id: u64, node_id: u64) -> Bytes {
-    Key::Data {
+    GraphKey::Data {
         scope,
         kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
             physical_index_id,
@@ -150,25 +154,21 @@ async fn put_partition_mapping(
     value_partition: VectorTenantPartition,
     physical_index_id: VectorPhysicalIndexId,
 ) {
-    let key = Key::Data {
+    let key = IndexKey::Data {
         scope,
-        kind: DataKeyKind::IndexV2(IndexV2Key::VectorPartitionMapping(
-            VectorPartitionMappingKey {
-                index_id,
-                generation: IndexGenerationId::initial(),
-                partition: key_partition.fingerprint(),
-            },
-        )),
-    }
-    .to_bytes();
-    let value = encode_work_value(&IndexV2WorkValue::VectorPartitionMapping(
-        VectorPartitionMappingValue {
+        kind: ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
             index_id,
             generation: IndexGenerationId::initial(),
-            partition: value_partition,
-            physical_index_id,
-        },
-    ));
+            partition: key_partition.fingerprint(),
+        }),
+    }
+    .to_bytes();
+    let value = encode_partition_mapping(&VectorPartitionMappingValue {
+        index_id,
+        generation: IndexGenerationId::initial(),
+        partition: value_partition,
+        physical_index_id,
+    });
     let transaction = db
         .begin(IsolationLevel::Snapshot)
         .await
@@ -457,23 +457,21 @@ async fn run_partition_contracts() {
     let physical_id = VectorPhysicalIndexId::new(131).unwrap();
     let (active, _) = active_vector(scope, index_id.get(), physical_id.get(), true);
     let partition = VectorTenantPartition::try_new(Bytes::from_static(b"wrong-kind")).unwrap();
-    let key = Key::Data {
+    let key = IndexKey::Data {
         scope,
-        kind: DataKeyKind::IndexV2(IndexV2Key::VectorPartitionMapping(
-            VectorPartitionMappingKey {
-                index_id,
-                generation: IndexGenerationId::initial(),
-                partition: partition.fingerprint(),
-            },
-        )),
+        kind: ScopedKey::VectorPartitionMapping(VectorPartitionMappingKey {
+            index_id,
+            generation: IndexGenerationId::initial(),
+            partition: partition.fingerprint(),
+        }),
     }
     .to_bytes();
-    let value = encode_work_value(&IndexV2WorkValue::SecondaryEntry(SecondaryEntryValue {
+    let value = encode_secondary_entry(&SecondaryEntryValue {
         index_id,
         generation: IndexGenerationId::initial(),
         lane: SecondaryEntryLane::NodeEquality,
         entity_id: IndexEntityId::initial(),
-    }));
+    });
     let transaction = db.begin(IsolationLevel::Snapshot).await.unwrap();
     transaction.put(key, value).unwrap();
     transaction.commit().await.unwrap();
@@ -626,7 +624,7 @@ async fn run_shutdown_and_corruption_contracts() {
 
     let db = raw_db("production-vector-hydration-corrupt").await;
     let (active, physical) = active_vector(scope, 11, 111, false);
-    let mut malformed = Key::Data {
+    let mut malformed = GraphKey::Data {
         scope,
         kind: DataKeyKind::Vector(VectorKey::MemoryPrefix(VectorMemoryPrefixKey::new(111))),
     }

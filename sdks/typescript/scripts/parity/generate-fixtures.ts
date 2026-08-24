@@ -586,7 +586,9 @@ export function runtimeFixtures(): Fixture[] {
           .varAs("target", g().addN("ParityUser", [["externalId", PropertyInput.value("active-text-target")]]))
           .varAs(
             "edge",
-            g().n(NodeRef.var("source")).addE("FOLLOWS", NodeRef.var("target"), [["note", PropertyInput.value("activeinsertedge")]]),
+            g()
+              .n(NodeRef.var("source"))
+              .addE("FOLLOWS", NodeRef.var("target"), [["note", PropertyInput.value("activeinsertedge")]]),
           )
           .returning(["source", "target", "edge"]),
       ),
@@ -608,10 +610,7 @@ export function runtimeFixtures(): Fixture[] {
             "nodes",
             g().nWithLabel("ParityUser").where(Predicate.eq("externalId", "active-text-source")).removeProperty("bio").count(),
           )
-          .varAs(
-            "edges",
-            g().eWithLabel("FOLLOWS").where(Predicate.eq("note", "activeinsertedge")).removeProperty("note").count(),
-          )
+          .varAs("edges", g().eWithLabel("FOLLOWS").where(Predicate.eq("note", "activeinsertedge")).removeProperty("note").count())
           .returning(["nodes", "edges"]),
       ),
     ),
@@ -638,9 +637,14 @@ export function runtimeFixtures(): Fixture[] {
           .varAs("target", g().addN("ParityUser", [["externalId", PropertyInput.value("drop-text-target")]]))
           .varAs(
             "edge",
-            g().n(NodeRef.var("source")).addE("FOLLOWS", NodeRef.var("target"), [["note", PropertyInput.value("dropitemedge")]]),
+            g()
+              .n(NodeRef.var("source"))
+              .addE("FOLLOWS", NodeRef.var("target"), [["note", PropertyInput.value("dropitemedge")]]),
           )
-          .returning(["source", "target", "edge"]),
+          .varAs("source_values", g().n(NodeRef.var("source")).values(["externalId", "bio"]))
+          .varAs("target_values", g().n(NodeRef.var("target")).values(["externalId"]))
+          .varAs("edge_values", g().e(EdgeRef.var("edge")).values(["note"]))
+          .returning(["source_values", "target_values", "edge_values"]),
       ),
     ),
     runtime(
@@ -1214,6 +1218,8 @@ function remainingReadContractFixture(): Fixture {
       .varAs("vector_nodes_within", g().nWithLabel("ParityUser").vectorSearch("ParityUser", "embedding", [1, 0, 0], 5))
       .varAs("vector_edges_within", g().e(EdgeRef.all()).hasLabel("FOLLOWS").vectorSearch("FOLLOWS", "embedding", [1, 0], 5))
       .varAs("text_edges", g().textSearchEdges("FOLLOWS", "note", "graph", 5).edgeProperties())
+      .varAs("text_nodes_within", g().nWithLabel("ParityUser").textSearch("ParityUser", "bio", "graph", 5))
+      .varAs("text_edges_within", g().e(EdgeRef.all()).hasLabel("FOLLOWS").textSearch("FOLLOWS", "note", "graph", 5))
       .varAsIf("previous", BatchCondition.prevNotEmpty(), g().n(NodeRef.all()).count())
       .varAsIf("not_empty", BatchCondition.varNotEmpty("expressions_and_predicates"), g().n(NodeRef.all()).count())
       .varAsIf("empty", BatchCondition.varEmpty("missing"), g().n(NodeRef.all()).count())
@@ -1250,6 +1256,8 @@ function remainingReadContractFixture(): Fixture {
         "vector_nodes_within",
         "vector_edges_within",
         "text_edges",
+        "text_nodes_within",
+        "text_edges_within",
         "previous",
         "not_empty",
         "empty",
