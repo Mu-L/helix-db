@@ -237,6 +237,19 @@ assert.throws(
   assert.equal(result, undefined);
 }
 
+// ---- Empty HTTP 200 still fails response deserialization -------------------
+
+{
+  const server = await spawnCaptureServer({ status: 200, body: "" });
+  const client = new Client(server.base);
+
+  await assert.rejects(
+    client.query(sampleRequest()).send(),
+    (error: unknown) => error instanceof HelixError && error.kind === "Serialization",
+  );
+  await server.close();
+}
+
 // ---- Other non-success responses surface a remote error --------------------
 
 {

@@ -160,6 +160,11 @@ interface RequestParts {
   query: QueryRequest;
 }
 
+interface QueryResponse {
+  status: number;
+  body: Uint8Array;
+}
+
 export type HelixDbSource =
   | { kind: "inMemory"; database: string }
   | { kind: "disk"; root: string; database: string }
@@ -370,7 +375,7 @@ export class QueryBuilder<R = unknown> {
 export class QueryExecutionRequest<R = unknown> {
   constructor(private readonly parts: RequestParts) {}
 
-  async sendBytes(): Promise<Uint8Array> {
+  private async execute(): Promise<QueryResponse> {
     const { backend, headers, query } = this.parts;
 
     if (backend.kind === "embedded") {
@@ -384,7 +389,7 @@ export class QueryExecutionRequest<R = unknown> {
       } catch (error) {
         throw embeddedError(error);
       }
-      return response;
+      return { status: 200, body: response };
     }
 
     let url: string;
@@ -405,7 +410,7 @@ export class QueryExecutionRequest<R = unknown> {
     }
 
     if (response.status === 200 || response.status === 204) {
-      return new Uint8Array(await response.arrayBuffer());
+      return { status: response.status, body: new Uint8Array(await response.arrayBuffer()) };
     }
 
     let body: string;
@@ -417,11 +422,15 @@ export class QueryExecutionRequest<R = unknown> {
     throw remoteError(body, response.statusText || `unknown error with code: ${response.status}`, response.status);
   }
 
+  async sendBytes(): Promise<Uint8Array> {
+    return (await this.execute()).body;
+  }
+
   async send(): Promise<R> {
-    const response = await this.sendBytes();
-    if (response.byteLength === 0) return undefined as R;
+    const response = await this.execute();
+    if (response.status === 204) return undefined as R;
     try {
-      return parseJson(new TextDecoder().decode(response)) as R;
+      return parseJson(new TextDecoder().decode(response.body)) as R;
     } catch (error) {
       throw HelixError.serialization(error instanceof Error ? error.message : String(error));
     }
