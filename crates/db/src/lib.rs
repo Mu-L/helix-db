@@ -2375,9 +2375,7 @@ impl HelixDB {
                 actual: self.mode().as_str(),
             });
         };
-        if self.config().db().migrations().worker_mode()
-            != config::MigrationWorkerMode::Disabled
-        {
+        if self.config().db().migrations().worker_mode() != config::MigrationWorkerMode::Disabled {
             return Err(HelixDbError::MigrationSteppingRequiresDisabledMode);
         }
         migrations::process_migration_once(

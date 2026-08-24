@@ -7591,12 +7591,10 @@ pub(crate) mod production_contracts {
         )
         .await
         .expect("pending Disabled-mode job reads"));
-        assert!(
-            disabled
-                .process_migration_once()
-                .await
-                .expect("Disabled mode permits one deterministic step")
-        );
+        assert!(disabled
+            .process_migration_once()
+            .await
+            .expect("Disabled mode permits one deterministic step"));
         assert!(migration_completed(
             disabled.inner_db().as_ref(),
             scope,
@@ -7604,16 +7602,11 @@ pub(crate) mod production_contracts {
         )
         .await
         .expect("completed Disabled-mode job reads"));
-        assert!(
-            !disabled
-                .process_migration_once()
-                .await
-                .expect("drained Disabled-mode scan succeeds")
-        );
-        disabled
-            .close()
+        assert!(!disabled
+            .process_migration_once()
             .await
-            .expect("Disabled-mode writer closes");
+            .expect("drained Disabled-mode scan succeeds"));
+        disabled.close().await.expect("Disabled-mode writer closes");
     }
 
     async fn seed_bootstrap_tuple(
