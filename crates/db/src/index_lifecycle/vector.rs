@@ -765,13 +765,13 @@ pub(crate) fn vector_document(
     definition: &ValidatedVectorIndexDefinition,
     properties: &[Property],
 ) -> Result<Option<VectorIndexedDocument>> {
-    let Some(partition) = vector_partition(definition, properties)? else {
-        return Ok(None);
-    };
     let Some(property) = properties
         .iter()
         .find(|property| property.name == definition.property().as_str())
     else {
+        return Ok(None);
+    };
+    let Some(partition) = vector_partition(definition, properties)? else {
         return Ok(None);
     };
     let vector = property_vector_to_f32(&property.value)?;
