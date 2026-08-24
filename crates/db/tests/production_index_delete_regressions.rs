@@ -21,6 +21,10 @@ const INDEX_PROPERTY: &str = "name_embedding";
 const TENANT_PROPERTY: &str = "tenant";
 const TARGET_TENANT: &str = "target-tenant";
 const CONTROL_TENANT: &str = "control-tenant";
+const BULK_DELETE_TARGETS: usize = 513;
+const BULK_DELETE_PROPERTY: &str = "delete_group";
+const BULK_DELETE_VALUE: &str = "bulk";
+const BULK_SEED_BATCH: usize = 64;
 
 /// Every valid public index shape with a behaviorally distinct delete path.
 #[derive(Debug, Clone, Copy)]
@@ -481,6 +485,75 @@ async fn entity_ids(db: &HelixDB, case: DeleteCase, id: u64) -> Vec<u64> {
         .collect()
 }
 
+async fn seed_unindexed_text_nodes(db: &HelixDB) {
+    for batch_start in (0..BULK_DELETE_TARGETS).step_by(BULK_SEED_BATCH) {
+        let mut seed = batch::write_batch();
+        for target in batch_start..(batch_start + BULK_SEED_BATCH).min(BULK_DELETE_TARGETS) {
+            seed = seed.var_as(
+                &format!("target-{target}"),
+                traversal::g().add_n(
+                    NODE_LABEL,
+                    vec![(BULK_DELETE_PROPERTY, PropertyInput::from(BULK_DELETE_VALUE))],
+                ),
+            );
+        }
+        db.query(QueryRequest::write(seed.returning(Vec::<String>::new())))
+            .await
+            .expect("unindexed text nodes seed before index creation");
+    }
+}
+
+async fn seed_unindexed_text_edges(db: &HelixDB, from: u64, to: u64) {
+    for batch_start in (0..BULK_DELETE_TARGETS).step_by(BULK_SEED_BATCH) {
+        let mut seed = batch::write_batch();
+        for target in batch_start..(batch_start + BULK_SEED_BATCH).min(BULK_DELETE_TARGETS) {
+            seed = seed.var_as(
+                &format!("target-{target}"),
+                traversal::g().n(NodeRef::id(from)).add_e(
+                    EDGE_LABEL,
+                    NodeRef::id(to),
+                    vec![
+                        (BULK_DELETE_PROPERTY, PropertyInput::from(BULK_DELETE_VALUE)),
+                        (TENANT_PROPERTY, PropertyInput::from(TARGET_TENANT)),
+                    ],
+                ),
+            );
+        }
+        db.query(QueryRequest::write(seed.returning(Vec::<String>::new())))
+            .await
+            .expect("unindexed text edges seed before index creation");
+    }
+}
+
+async fn bulk_delete_target_count(db: &HelixDB, nodes: bool) -> u64 {
+    let count = if nodes {
+        traversal::g()
+            .n_with_label_where(
+                NODE_LABEL,
+                Predicate::eq(BULK_DELETE_PROPERTY, BULK_DELETE_VALUE),
+            )
+            .count()
+    } else {
+        traversal::g()
+            .e_with_label_where(
+                EDGE_LABEL,
+                Predicate::eq(BULK_DELETE_PROPERTY, BULK_DELETE_VALUE),
+            )
+            .count()
+    };
+    let response = db
+        .query(QueryRequest::read(
+            batch::read_batch()
+                .var_as("count", count)
+                .returning(["count"]),
+        ))
+        .await
+        .expect("bulk-delete target count reads");
+    response["count"]
+        .as_u64()
+        .expect("bulk-delete target count is numeric")
+}
+
 async fn run_direct_delete_case(case: DeleteCase) {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: format!("production-index-delete-{}", case.name()),
@@ -630,6 +703,136 @@ async fn deletes_edge_omitted_from_tenant_text_index() {
         tenant_partitioned: true,
     })
     .await;
+}
+
+#[tokio::test]
+async fn active_node_text_index_ignores_unindexed_bulk_delete_limit() {
+    let db = HelixDB::open(HelixDbSource::InMemory {
+        database: "production-index-delete-text-node-bulk".to_owned(),
+    })
+    .await
+    .expect("bulk node database opens");
+    let text_case = DeleteCase::NodeText {
+        tenant_partitioned: false,
+    };
+    seed_unindexed_text_nodes(&db).await;
+    let control = db
+        .query(QueryRequest::write(
+            batch::write_batch()
+                .var_as(
+                    "control",
+                    traversal::g()
+                        .add_n(NODE_LABEL, text_case.control_properties())
+                        .id(),
+                )
+                .returning(["control"]),
+        ))
+        .await
+        .expect("indexed text node control seeds");
+    let control_id = first_id(&control, "control");
+    create_index(&db, text_case).await;
+    assert_eq!(control_ids(&db, text_case).await, vec![control_id]);
+    assert_eq!(
+        bulk_delete_target_count(&db, true).await,
+        BULK_DELETE_TARGETS as u64
+    );
+
+    db.query(QueryRequest::write(
+        batch::write_batch()
+            .var_as(
+                "deleted",
+                traversal::g()
+                    .n_with_label_where(
+                        NODE_LABEL,
+                        Predicate::eq(BULK_DELETE_PROPERTY, BULK_DELETE_VALUE),
+                    )
+                    .drop(),
+            )
+            .returning(Vec::<String>::new()),
+    ))
+    .await
+    .expect("active text index ignores unindexed nodes at the mutation limit");
+
+    assert_eq!(bulk_delete_target_count(&db, true).await, 0);
+    assert_eq!(control_ids(&db, text_case).await, vec![control_id]);
+    db.close().await.expect("bulk node database closes");
+}
+
+#[tokio::test]
+async fn active_tenant_edge_text_index_ignores_unindexed_bulk_delete_limit() {
+    let db = HelixDB::open(HelixDbSource::InMemory {
+        database: "production-index-delete-text-edge-bulk".to_owned(),
+    })
+    .await
+    .expect("bulk edge database opens");
+    let text_case = DeleteCase::EdgeText {
+        tenant_partitioned: true,
+    };
+    let endpoints = db
+        .query(QueryRequest::write(
+            batch::write_batch()
+                .var_as(
+                    "from",
+                    traversal::g()
+                        .add_n("Endpoint", Vec::<(&str, PropertyInput)>::new())
+                        .id(),
+                )
+                .var_as(
+                    "to",
+                    traversal::g()
+                        .add_n("Endpoint", Vec::<(&str, PropertyInput)>::new())
+                        .id(),
+                )
+                .returning(["from", "to"]),
+        ))
+        .await
+        .expect("bulk edge endpoints seed");
+    let from = first_id(&endpoints, "from");
+    let to = first_id(&endpoints, "to");
+    seed_unindexed_text_edges(&db, from, to).await;
+    let control = db
+        .query(QueryRequest::write(
+            batch::write_batch()
+                .var_as(
+                    "control",
+                    traversal::g()
+                        .n(NodeRef::id(from))
+                        .add_e(EDGE_LABEL, NodeRef::id(to), text_case.control_properties())
+                        .id(),
+                )
+                .returning(["control"]),
+        ))
+        .await
+        .expect("indexed text edge control seeds");
+    let control_id = first_id(&control, "control");
+    create_index(&db, text_case).await;
+    assert_eq!(control_ids(&db, text_case).await, vec![control_id]);
+    assert_eq!(
+        bulk_delete_target_count(&db, false).await,
+        BULK_DELETE_TARGETS as u64
+    );
+
+    db.query(QueryRequest::write(
+        batch::write_batch()
+            .var_as(
+                "targets",
+                traversal::g().e_with_label_where(
+                    EDGE_LABEL,
+                    Predicate::eq(BULK_DELETE_PROPERTY, BULK_DELETE_VALUE),
+                ),
+            )
+            .var_as(
+                "deleted",
+                traversal::g().drop_edge_by_id(EdgeRef::var("targets")),
+            )
+            .returning(Vec::<String>::new()),
+    ))
+    .await
+    .expect("active text index ignores unindexed edges at the mutation limit");
+
+    assert_eq!(bulk_delete_target_count(&db, false).await, 0);
+    assert_eq!(control_ids(&db, text_case).await, vec![control_id]);
+    db.close().await.expect("bulk edge database closes");
 }
 
 #[tokio::test]

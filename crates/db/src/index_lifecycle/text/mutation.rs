@@ -741,6 +741,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_property_delete_prepares_no_hidden_build_delta() {
+        let db = test_db("missing-property-delete-no-delta").await;
+        let scope = DataScope::LegacyUnscoped;
+        let mutations = TextMutationSet::one_build_target(
+            IndexId::initial(),
+            IndexGenerationId::initial(),
+            definition(),
+        );
+        let before = vec![
+            Property::new("$label", PropertyValue::String("Document".to_string())),
+            Property::new("tenant", PropertyValue::String("acme".to_string())),
+            Property::new("unrelated", PropertyValue::I64(1)),
+        ];
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .expect("missing-property text transaction opens");
+
+        let prepared = prepare_text_build_deltas(
+            &transaction,
+            scope,
+            &mutations,
+            TextEntityMutation::new(IndexElementKind::Node, 8, &before, &[]),
+        )
+        .await
+        .expect("missing-property delete preparation succeeds");
+        assert_eq!(prepared.measurements().output_operations(), 0);
+        assert_eq!(prepared.measurements().output_bytes(), 0);
+
+        drop(transaction);
+        db.close()
+            .await
+            .expect("missing-property text database closes");
+    }
+
+    #[tokio::test]
     async fn prepared_delta_measurement_is_exact_and_stale_validation_writes_nothing() {
         let db = test_db("prepared-delta-stale-validation").await;
         let scope = DataScope::LegacyUnscoped;

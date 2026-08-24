@@ -1213,6 +1213,28 @@ mod tests {
             oversized_tenant,
             Err(HelixDbError::InvariantViolation(_))
         ));
+
+        let missing_vector_with_oversized_tenant = vector_document(
+            &tenant,
+            &[
+                property("$label", PropertyValue::String("Document".to_string())),
+                property(
+                    "account_id",
+                    PropertyValue::Bytes(vec![0x7a; 16 * 1024 * 1024 + 1]),
+                ),
+            ],
+        );
+        assert_eq!(missing_vector_with_oversized_tenant.unwrap(), None);
+
+        let wrong_label_with_invalid_vector = vector_document(
+            &tenant,
+            &[
+                property("$label", PropertyValue::String("Other".to_string())),
+                property("account_id", PropertyValue::String("acme".to_string())),
+                property("embedding", PropertyValue::String("invalid".to_string())),
+            ],
+        );
+        assert_eq!(wrong_label_with_invalid_vector.unwrap(), None);
     }
 
     /// Covers active insert/remove dispatch for every supported distance metric.
