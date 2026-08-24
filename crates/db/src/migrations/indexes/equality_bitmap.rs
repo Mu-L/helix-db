@@ -14,11 +14,11 @@ use roaring::RoaringTreemap;
 use slatedb::{Db, IsolationLevel};
 
 use crate::encoding::property::decode_properties;
-use crate::encoding::v1::keys::tenant::DataScope;
+use crate::encoding::v2::keys::scope::DataScope;
 #[cfg(test)]
-use crate::encoding::v1::keys::tenant::TenantId;
+use crate::encoding::v2::keys::scope::TenantId;
 use crate::encoding::v2::keys::{
-    CanonicalSecondaryValue, GlobalKey, IndexEntity, Key, RecordKind, ScopedKey,
+    CanonicalSecondaryValue, GlobalKey, IndexEntity, ManagedIndexKey, RecordKind, ScopedKey,
     SecondaryEntryLane, SecondaryEqualityBitmapKey,
 };
 use crate::encoding::v2::values::{
@@ -173,7 +173,7 @@ pub(crate) async fn migrate_v3_to_v4(db: &Db) -> Result<()> {
     trip(EqualityBitmapMigrationFailpoint::PublicationBefore)?;
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
     transaction.put(
-        Key::Global {
+        ManagedIndexKey::Global {
             kind: GlobalKey::StorageVersion,
         }
         .to_bytes(),
@@ -257,7 +257,8 @@ async fn discover_catalog(db: &Db) -> Result<MigrationCatalog> {
 }
 
 fn index_record_candidates(key: &[u8]) -> Result<Vec<(DataScope, ScopedKey)>> {
-    let Ok(Key::Data { scope, kind }) = Key::parse_data_from_slice(key) else {
+    let Ok(ManagedIndexKey::Data { scope, kind }) = ManagedIndexKey::parse_data_from_slice(key)
+    else {
         return Ok(Vec::new());
     };
     if matches!(kind, ScopedKey::IndexRecord(_)) {
@@ -373,10 +374,10 @@ async fn verify_bitmaps_to_graph(db: &Db, generation: &EqualityGeneration) -> Re
     let prefix = bitmap_prefix(generation);
     let mut rows = db.scan_prefix(prefix, ..).await?;
     while let Some(row) = rows.next().await? {
-        let Key::Data {
+        let ManagedIndexKey::Data {
             kind: ScopedKey::SecondaryEqualityBitmap(key),
             ..
-        } = Key::parse_from_slice(generation.scope, &row.key)?
+        } = ManagedIndexKey::parse_from_slice(generation.scope, &row.key)?
         else {
             return Err(corruption("V4 equality prefix yielded another key kind"));
         };
@@ -442,7 +443,7 @@ fn authoritative_bitmap_key(
             .map_err(|_| corruption("authoritative equality value cannot be indexed"))?;
     match canonical {
         Some(CanonicalSecondaryValue::Equality(value)) => Ok(Some(
-            Key::Data {
+            ManagedIndexKey::Data {
                 scope: generation.scope,
                 kind: ScopedKey::SecondaryEqualityBitmap(SecondaryEqualityBitmapKey::try_new(
                     generation.index_id,
@@ -462,7 +463,7 @@ fn authoritative_bitmap_key(
 
 async fn restart_building_generation(db: &Db, building: &BuildingEqualityGeneration) -> Result<()> {
     for prefix in [
-        Key::data_prefix(
+        ManagedIndexKey::data_prefix(
             building.generation.scope,
             ScopedKey::generation_prefix(
                 RecordKind::SecondaryEntry,
@@ -471,7 +472,7 @@ async fn restart_building_generation(db: &Db, building: &BuildingEqualityGenerat
             ),
         ),
         bitmap_prefix(&building.generation),
-        Key::data_prefix(
+        ManagedIndexKey::data_prefix(
             building.generation.scope,
             ScopedKey::generation_prefix(
                 RecordKind::BuildDelta,
@@ -479,7 +480,7 @@ async fn restart_building_generation(db: &Db, building: &BuildingEqualityGenerat
                 building.generation.generation,
             ),
         ),
-        Key::data_prefix(
+        ManagedIndexKey::data_prefix(
             building.generation.scope,
             ScopedKey::generation_prefix(
                 RecordKind::AppliedState,
@@ -497,7 +498,7 @@ async fn restart_building_generation(db: &Db, building: &BuildingEqualityGenerat
         building.generation.definition.element_kind(),
     )
     .await?;
-    let operation_key = Key::Data {
+    let operation_key = ManagedIndexKey::Data {
         scope: building.generation.scope,
         kind: ScopedKey::operation(building.operation_id),
     }
@@ -542,7 +543,7 @@ async fn restart_building_generation(db: &Db, building: &BuildingEqualityGenerat
     .map_err(|error| corruption(&error.to_string()))?;
     transaction.put(operation_key, encode_operation_record(&restarted))?;
     transaction.put(
-        Key::Global {
+        ManagedIndexKey::Global {
             kind: GlobalKey::OperationPointer(building.operation_id),
         }
         .to_bytes(),
@@ -627,10 +628,10 @@ async fn verify_v3_equality_absent_and_publish_cleanup(db: &Db) -> Result<()> {
 }
 
 fn is_v3_nonunique_equality_key(key: &[u8]) -> bool {
-    let Ok(Key::Data {
+    let Ok(ManagedIndexKey::Data {
         kind: ScopedKey::SecondaryEntry(entry),
         ..
-    }) = Key::parse_data_from_slice(key)
+    }) = ManagedIndexKey::parse_data_from_slice(key)
     else {
         return false;
     };
@@ -641,7 +642,7 @@ fn is_v3_nonunique_equality_key(key: &[u8]) -> bool {
 }
 
 fn bitmap_prefix(generation: &EqualityGeneration) -> Bytes {
-    Key::data_prefix(
+    ManagedIndexKey::data_prefix(
         generation.scope,
         ScopedKey::secondary_equality_bitmap_prefix(
             generation.index_id,
@@ -664,10 +665,10 @@ mod tests {
     use super::*;
     use crate::config::SecondaryIndexDefinition;
     use crate::encoding::property::{encode_properties, Property};
-    use crate::encoding::v1::keys::{DataKeyKind, Key as GraphKey, NodePropertyKey};
     use crate::encoding::v2::keys::{
         CanonicalSecondaryValue, SecondaryEntryKey, SecondaryEntryLane,
     };
+    use crate::encoding::v2::keys::{DataKey as GraphKey, DataKeyKind, NodePropertyKey};
     use crate::encoding::v2::values::{
         decode_metadata_value, encode_index_record, encode_secondary_entry,
     };
@@ -687,7 +688,7 @@ mod tests {
             .await
             .unwrap();
         db.put(
-            Key::Global {
+            ManagedIndexKey::Global {
                 kind: GlobalKey::StorageVersion,
             }
             .to_bytes(),
@@ -698,7 +699,7 @@ mod tests {
         .await
         .unwrap();
         db.put(
-            Key::Global {
+            ManagedIndexKey::Global {
                 kind: GlobalKey::LogicalIndexIdWatermark,
             }
             .to_bytes(),
@@ -711,7 +712,7 @@ mod tests {
         .await
         .unwrap();
         db.put(
-            Key::Global {
+            ManagedIndexKey::Global {
                 kind: GlobalKey::VectorPhysicalIdWatermark,
             }
             .to_bytes(),
@@ -840,7 +841,7 @@ mod tests {
     async fn assert_active_migrated(db: &Db, generation: &EqualityGeneration) {
         let marker = db
             .get(
-                Key::Global {
+                ManagedIndexKey::Global {
                     kind: GlobalKey::StorageVersion,
                 }
                 .to_bytes(),
@@ -865,7 +866,7 @@ mod tests {
                 .into_ids(),
             RoaringTreemap::from_iter([0, 1])
         );
-        let v3_prefix = Key::data_prefix(
+        let v3_prefix = ManagedIndexKey::data_prefix(
             generation.scope,
             ScopedKey::generation_prefix(
                 RecordKind::SecondaryEntry,
@@ -901,7 +902,7 @@ mod tests {
         let _guard = TEST_LOCK.lock().await;
         let db = v3_db("completed-v4-startup-skips-cleanup").await;
         db.put(
-            Key::Global {
+            ManagedIndexKey::Global {
                 kind: GlobalKey::StorageVersion,
             }
             .to_bytes(),
@@ -932,7 +933,7 @@ mod tests {
         let _guard = TEST_LOCK.lock().await;
         let db = v3_db("v4-global-orphan-cleanup").await;
         db.put(
-            Key::Global {
+            ManagedIndexKey::Global {
                 kind: GlobalKey::StorageVersion,
             }
             .to_bytes(),
@@ -997,7 +998,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let unique_key = Key::Data {
+        let unique_key = ManagedIndexKey::Data {
             scope: tenant,
             kind: unique_kind.clone(),
         }
@@ -1039,7 +1040,7 @@ mod tests {
         let _guard = TEST_LOCK.lock().await;
         let db = v3_db("v4-cleanup-before-tenant-envelope").await;
         db.put(
-            Key::Global {
+            ManagedIndexKey::Global {
                 kind: GlobalKey::StorageVersion,
             }
             .to_bytes(),
@@ -1222,7 +1223,7 @@ mod tests {
         );
         let old_unique_key =
             tenant_envelope_migration::legacy_data_key(tenant, unique_kind.clone());
-        let new_unique_key = Key::Data {
+        let new_unique_key = ManagedIndexKey::Data {
             scope: tenant,
             kind: unique_kind,
         }
@@ -1268,7 +1269,7 @@ mod tests {
             tenant,
             ScopedKey::index_record(tenant_generation.definition.identity()),
         );
-        let new_catalog_key = Key::Data {
+        let new_catalog_key = ManagedIndexKey::Data {
             scope: tenant,
             kind: ScopedKey::index_record(tenant_generation.definition.identity()),
         }
@@ -1296,7 +1297,7 @@ mod tests {
             .unwrap(),
         );
         let old_key = tenant_envelope_migration::legacy_data_key(tenant, kind.clone());
-        let new_key = Key::Data {
+        let new_key = ManagedIndexKey::Data {
             scope: tenant,
             kind,
         }
@@ -1336,7 +1337,7 @@ mod tests {
             .unwrap(),
         );
         let old_key = tenant_envelope_migration::legacy_data_key(tenant, kind.clone());
-        let new_key = Key::Data {
+        let new_key = ManagedIndexKey::Data {
             scope: tenant,
             kind,
         }
@@ -1398,7 +1399,7 @@ mod tests {
         )
         .unwrap();
         db.put(
-            Key::Data {
+            ManagedIndexKey::Data {
                 scope,
                 kind: ScopedKey::index_record(definition.identity()),
             }
@@ -1432,7 +1433,7 @@ mod tests {
         )
         .unwrap();
         db.put(
-            Key::Data {
+            ManagedIndexKey::Data {
                 scope,
                 kind: ScopedKey::operation(operation_id),
             }
@@ -1442,7 +1443,7 @@ mod tests {
         .await
         .unwrap();
         db.put(
-            Key::Global {
+            ManagedIndexKey::Global {
                 kind: GlobalKey::OperationPointer(operation_id),
             }
             .to_bytes(),
@@ -1466,7 +1467,7 @@ mod tests {
 
         let restarted = db
             .get(
-                Key::Data {
+                ManagedIndexKey::Data {
                     scope,
                     kind: ScopedKey::operation(operation_id),
                 }
@@ -1489,7 +1490,7 @@ mod tests {
                 })
             ))
         ));
-        let v3_prefix = Key::data_prefix(
+        let v3_prefix = ManagedIndexKey::data_prefix(
             scope,
             ScopedKey::generation_prefix(RecordKind::SecondaryEntry, index_id, generation),
         );

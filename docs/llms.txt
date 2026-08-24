@@ -4,19 +4,29 @@
 
 Quickstart (local instance requires Docker or Podman):
 
+macOS and Linux:
 ```bash
 curl -sSL "https://install.helix-db.com" | bash   # install the helix CLI
+```
+
+Windows PowerShell:
+```powershell
+irm https://raw.githubusercontent.com/HelixDB/helix-db/main/crates/cli/install.ps1 | iex
+```
+
+Then:
+```bash
 helix init local                                  # scaffold helix.toml + examples/
 helix start dev                                   # start a local instance
 helix query dev -e 'writeBatch().varAs("alice", g().addN("User", { username: "alice" })).returning(["alice"])'
 helix query dev -e 'readBatch().varAs("users", g().nWithLabel("User")).returning(["users"])'
 ```
 
-Full walkthrough: https://docs.helix-db.com/cli/getting-started
+Full walkthrough: https://docs.helix-db.com/database/helix-db/start-here/quickstart
 
 ## HelixDB — Start Here
 - [Introduction](https://docs.helix-db.com/database/helix-db/start-here/introduction) — Page type: Concept
-- [Get Started](https://docs.helix-db.com/database/helix-db/start-here/quickstart): Start HelixDB locally, write data, and follow an edge in ten minutes — Page type: Tutorial
+- [Get Started](https://docs.helix-db.com/database/helix-db/start-here/quickstart): Initialize HelixDB, start a local instance, run the generated query, and stop it — Page type: Tutorial
 - [Deployment options](https://docs.helix-db.com/database/helix-db/start-here/run-modes): Compare Cloud, local server, and embedded execution — Page type: Concept
 - [Local server](https://docs.helix-db.com/database/helix-db/start-here/local-development/local-server): Start HelixDB locally with ephemeral memory or persistent object storage — Page type: Guide
 - [Embedded database](https://docs.helix-db.com/database/helix-db/start-here/local-development/embedded-database): Open HelixDB directly inside your process with explicit storage and cache settings — Page type: Guide
@@ -42,14 +52,15 @@ Full walkthrough: https://docs.helix-db.com/cli/getting-started
 - [Shape query results](https://docs.helix-db.com/database/helix-db/query-guides/projections): Return properties, computed values, aggregates, and correlated binding rows — Page type: Guide
 - [Branch, repeat, and condition queries](https://docs.helix-db.com/database/helix-db/query-guides/advanced): Compose sub-traversals and gate named entries without leaving one transaction — Page type: Guide
 - [Bind typed query parameters](https://docs.helix-db.com/database/helix-db/query-guides/parameters): Keep the operation tree stable while request values change — Page type: Guide
+- [Handle query errors](https://docs.helix-db.com/database/helix-db/query-guides/error-handling): Branch on stable error codes while retaining diagnostic messages — Page type: Reference
 
 ## Helix Cloud — Start Here
 - [Connect to Helix Cloud](https://docs.helix-db.com/database/helix-cloud/start-here/working-with-enterprise): Send dynamic requests through a managed gateway — Page type: Guide
-- [Using the Dashboard](https://docs.helix-db.com/database/helix-cloud/start-here/using-the-dashboard): Sign in, create a workspace and project, provision a database, and test the connection — Page type: Tutorial
+- [Using the Cloud](https://docs.helix-db.com/database/helix-cloud/start-here/using-the-cloud): Sign in, create a workspace and choose its plan, provision a database, and test the connection — Page type: Tutorial
 - [Architecture](https://docs.helix-db.com/database/helix-cloud/start-here/architecture) — Page type: Concept
 
 ## Connect and automate
-- [HelixDB Model Context Protocol (MCP)](https://docs.helix-db.com/database/helix-cloud/connect/mcp): Connect Codex, Cursor, VS Code, Claude Code, and other agents to Helix Cloud insights — Page type: Tutorial; Status: Preview
+- [HelixDB Model Context Protocol (MCP)](https://docs.helix-db.com/database/helix-cloud/connect/mcp): Connect Codex, Cursor, VS Code, Claude Code, and other agents to Helix Cloud insights — Page type: Tutorial
 
 ## Operate
 - [Multi-Tenancy](https://docs.helix-db.com/database/helix-cloud/operate/multi-tenancy) — Page type: Guide
@@ -60,14 +71,14 @@ Full walkthrough: https://docs.helix-db.com/cli/getting-started
 - [Troubleshoot HelixDB](https://docs.helix-db.com/database/helix-cloud/operate/troubleshooting): Diagnose query, index, vector, embedded, and local runtime failures — Page type: Troubleshooting
 
 ## Using the helix CLI
-- [Getting started with HelixDB CLI](https://docs.helix-db.com/cli/getting-started): Install the Helix CLI v3, bootstrap a first app, run a local instance, and send your first dynamic query — Page type: Tutorial
+- [Getting started with HelixDB CLI](https://docs.helix-db.com/cli/getting-started): Install the Helix CLI 3.x release, bootstrap a first app, run a local instance, and send your first dynamic query — Page type: Tutorial
 - [Local Development](https://docs.helix-db.com/cli/workflows/local): Run a local instance and iterate on dynamic JSON queries — Page type: Guide
 - [Helix Cloud](https://docs.helix-db.com/cli/workflows/helix_cloud): Authenticate, link a project, and query a Helix Cloud cluster from the CLI — Page type: Guide
 - [Configuration Guide](https://docs.helix-db.com/cli/configuration): Reference for helix.toml, ~/.helix/config, and credentials — Page type: Reference
-- [Troubleshooting](https://docs.helix-db.com/cli/troubleshooting): Solutions to common issues and error messages in Helix CLI v3 — Page type: Troubleshooting
+- [Troubleshooting](https://docs.helix-db.com/cli/troubleshooting): Solutions to common issues and error messages in the Helix CLI 3.x release line — Page type: Troubleshooting
 
 ## CLI Command Reference
-- [CLI Command Reference](https://docs.helix-db.com/cli/command-reference): Complete reference for all Helix CLI v3 commands and options — Page type: Reference
+- [CLI Command Reference](https://docs.helix-db.com/cli/command-reference): Complete reference for all Helix CLI 3.x commands and options — Page type: Reference
 - [helix add](https://docs.helix-db.com/cli/command-reference/add) — Page type: Reference
 - [helix auth](https://docs.helix-db.com/cli/command-reference/auth) — Page type: Reference
 - [helix chef](https://docs.helix-db.com/cli/command-reference/chef) — Page type: Reference

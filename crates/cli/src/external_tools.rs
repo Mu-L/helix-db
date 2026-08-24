@@ -21,6 +21,7 @@ pub(crate) enum ExternalTool {
     ClaudeCode,
     OpenAiCodex,
     OpenCode,
+    CursorAgent,
 }
 
 impl ExternalTool {
@@ -34,6 +35,7 @@ impl ExternalTool {
             Self::ClaudeCode => "claude",
             Self::OpenAiCodex => "codex",
             Self::OpenCode => "opencode",
+            Self::CursorAgent => "cursor-agent",
         }
     }
 
@@ -120,6 +122,7 @@ mod tests {
         assert_eq!(ExternalTool::ClaudeCode.binary(), "claude");
         assert_eq!(ExternalTool::OpenAiCodex.binary(), "codex");
         assert_eq!(ExternalTool::OpenCode.binary(), "opencode");
+        assert_eq!(ExternalTool::CursorAgent.binary(), "cursor-agent");
     }
 
     #[cfg(windows)]

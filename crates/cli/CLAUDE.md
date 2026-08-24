@@ -7,7 +7,7 @@ The Helix CLI — binary `helix`, crate `helix-cli` (v3.0.1). It is a **runtime 
 This CLI has **no `helix compile` and no `helix check`**, and there is **no `.hx` query workflow** in it. (Older notes/memory that mention those commands describe the v2 CLI and are stale.) In v3:
 
 - **Queries are JSON requests** sent to a *running* instance via `POST /v2/query` (`helix query`). Validation happens server-side, in the instance.
-- **Local instances are Docker/Podman containers** (image `ghcr.io/helixdb/helixdb:v0.0.3`), managed by `LocalRuntime`. `helix start` starts one; in-memory by default, on-disk (MinIO-backed) with `--disk`.
+- **Local instances are Docker/Podman containers** (image `ghcr.io/helixdb/helixdb:v0.0.4`), managed by `LocalRuntime`. `helix start` starts one; in-memory by default, on-disk (MinIO-backed) with `--disk`.
 - **Enterprise instances deploy to Helix Cloud** via `helix push`, with auth/metadata managed through `helix auth`, `helix sync`, and the `workspace`/`project`/`cluster` commands.
 
 The Rust DSL builder lives in `sdks/rust/` (a client library), not in this CLI.
@@ -83,7 +83,7 @@ Defined in `src/commands/chef.rs`, dispatched from `src/main.rs` (`Commands::Che
    - `write_agent_prompt` + `write_example_queries` — writes `HELIX_CHEF_PROMPT.md` (the system prompt) and `examples/{seed,read_users}.json`.
    - `run_database` — `helix start dev` (port 8080, in-memory).
    - `seed_starter_data` — runs `examples/seed.json`.
-5. **Agent detection** (`detect_agent`) — first available of `AGENT_PRIORITY`: Claude Code (`claude`) → OpenAI Codex (`codex`) → OpenCode (`opencode`), via `utils::command_exists`.
+5. **Agent detection** (`detect_agent`) — first available of `AGENT_PRIORITY`: Claude Code → OpenAI Codex → OpenCode → Cursor Agent (`claude` → `codex` → `opencode` → `cursor-agent`), via `external_tools::available`.
 6. **Permission prompt** (`select_permission_mode`) — "Give the agent full autonomy?": Yes (full auto) / Scoped (ask per command) / Don't launch. Non-interactive → `None` (skip launch).
 7. **Launch** (`launch_agent`, async) — Claude goes through `launch_claude_streaming`; codex/opencode through a captured stdout/stderr path so `chef` can include a transcript in the snapshot.
 8. **Post-run** — on success, print the agent's structured summary and `try_open_frontend` (open `http://localhost:3000` if `web/package.json` exists and the server responds). On failure / abort / no-agent → `print_paste_prompt_hint` points the user at `HELIX_CHEF_PROMPT.md`.
@@ -133,7 +133,7 @@ Snapshot safety excludes `.git`, `.helix`, `node_modules`, `.next`, `target`, bu
 **Project config — `helix.toml`** (`HelixConfig` in `config.rs`, found via `ProjectContext::find_and_load`):
 
 - `[project]` — `name` (required), optional `id` / `workspace_id`, `queries` (default `db/`), `container_runtime` (`docker` | `podman`, default docker).
-- `[local.<name>]` — `port` (default `6969`), `image` (default `ghcr.io/helixdb/helixdb`), `tag` (default `v0.0.3`), `storage` (`memory` | `disk`, default memory).
+- `[local.<name>]` — `port` (default `6969`), `image` (default `ghcr.io/helixdb/helixdb`), `tag` (default `v0.0.4`), `storage` (`memory` | `disk`, default memory).
 - `[enterprise.<name>]` — `cluster_id` (required), optional `workspace_id`/`project_id`/`gateway_url`, `query_auth_header` (default `Authorization`), `query_auth_env` (default `HELIX_API_KEY`), `availability_mode`, `gateway_node_type`, `db_node_type`, `min_instances`/`max_instances` (default 1), plus a **flattened `DbConfig`**: `vector_config` (m=16, ef_construction=128, ef_search=768, db_max_size_gb=20), `graph_config.secondary_indices`, `mcp`/`bm25` (default true), `schema`, `embedding_model` (default `text-embedding-ada-002`), `graphvis_node_label`.
 
 `HelixConfig::validate` requires a non-empty project name, ≥1 instance, non-empty instance names, and a non-empty `cluster_id` for each enterprise instance. `default_config()` seeds a single in-memory `local.dev`.

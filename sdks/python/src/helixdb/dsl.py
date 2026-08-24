@@ -7,19 +7,20 @@ builders are immutable.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from enum import Enum
 import json
 import math
 import re
 import struct
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Literal, TypeAlias
 
 JsonValue: TypeAlias = Any
 NodeId: TypeAlias = int
 EdgeId: TypeAlias = int
+
 
 class _Omit:
     pass
@@ -162,7 +163,8 @@ class QueryError(ValueError):
     def invalid_datetime(cls, path: str, millis: int) -> "QueryError":
         return cls(
             "InvalidDateTimeParameter",
-            f"parameter '{path}' uses datetime millis '{millis}', which cannot be rendered as RFC3339",
+            f"parameter '{path}' uses datetime millis '{millis}', "
+            "which cannot be rendered as RFC3339",
             path=path,
             millis=millis,
         )
@@ -389,8 +391,7 @@ class PropertyValue:
             if all(isinstance(entry, int) and not isinstance(entry, bool) for entry in value):
                 return cls.i64_array(value)
             if all(
-                isinstance(entry, (int, float)) and not isinstance(entry, bool)
-                for entry in value
+                isinstance(entry, (int, float)) and not isinstance(entry, bool) for entry in value
             ):
                 return cls.f64_array(value)
             return cls.array(value)
@@ -498,7 +499,9 @@ class NodeRef:
         return cls.id(value)  # type: ignore[arg-type]
 
     def to_json(self) -> JsonValue:
-        return _ast_unit("All") if self.variant == "All" else _ast_newtype(self.variant, self.payload)
+        return (
+            _ast_unit("All") if self.variant == "All" else _ast_newtype(self.variant, self.payload)
+        )
 
 
 @dataclass(frozen=True)
@@ -535,7 +538,9 @@ class EdgeRef:
         return cls.id(value)  # type: ignore[arg-type]
 
     def to_json(self) -> JsonValue:
-        return _ast_unit("All") if self.variant == "All" else _ast_newtype(self.variant, self.payload)
+        return (
+            _ast_unit("All") if self.variant == "All" else _ast_newtype(self.variant, self.payload)
+        )
 
 
 class CompareOp(str, Enum):
@@ -767,7 +772,9 @@ class Predicate:
     payload: Any = None
 
     @staticmethod
-    def _comparison(variant: str, property: str, value: PropertyValueInput | Expr | "ParamRef") -> "Predicate":
+    def _comparison(
+        variant: str, property: str, value: PropertyValueInput | Expr | "ParamRef"
+    ) -> "Predicate":
         input_value = PropertyInput.from_value(value)
         if input_value.variant == "Value":
             return Predicate(variant, [property, input_value.payload])
@@ -836,7 +843,9 @@ class Predicate:
 
     @classmethod
     def contains_expr(cls, property: str, expr: Expr | "ParamRef") -> "Predicate":
-        return cls("ContainsExpr", [property, expr.to_expr() if isinstance(expr, ParamRef) else expr])
+        return cls(
+            "ContainsExpr", [property, expr.to_expr() if isinstance(expr, ParamRef) else expr]
+        )
 
     @classmethod
     def contains_param(cls, property: str, param_name: str) -> "Predicate":
@@ -848,7 +857,9 @@ class Predicate:
 
     @classmethod
     def is_in_expr(cls, property: str, values: Expr | "ParamRef") -> "Predicate":
-        return cls("IsInExpr", [property, values.to_expr() if isinstance(values, ParamRef) else values])
+        return cls(
+            "IsInExpr", [property, values.to_expr() if isinstance(values, ParamRef) else values]
+        )
 
     @classmethod
     def is_in_param(cls, property: str, param_name: str) -> "Predicate":
@@ -927,7 +938,11 @@ class Predicate:
             property, min_value, max_value = self.payload
             return _ast_struct(
                 "Between",
-                {"value": prop_expr(property), "min": as_expr(min_value), "max": as_expr(max_value)},
+                {
+                    "value": prop_expr(property),
+                    "min": as_expr(min_value),
+                    "max": as_expr(max_value),
+                },
             )
         if self.variant == "BetweenExpr":
             property, min_value, max_value = self.payload
@@ -939,13 +954,19 @@ class Predicate:
             return _ast_struct(self.variant, {"property": self.payload})
         if self.variant == "StartsWith":
             property, prefix = self.payload
-            return _ast_struct("StartsWith", {"value": prop_expr(property), "prefix": Expr.val(prefix)})
+            return _ast_struct(
+                "StartsWith", {"value": prop_expr(property), "prefix": Expr.val(prefix)}
+            )
         if self.variant == "EndsWith":
             property, suffix = self.payload
-            return _ast_struct("EndsWith", {"value": prop_expr(property), "suffix": Expr.val(suffix)})
+            return _ast_struct(
+                "EndsWith", {"value": prop_expr(property), "suffix": Expr.val(suffix)}
+            )
         if self.variant == "Contains":
             property, substring = self.payload
-            return _ast_struct("Contains", {"value": prop_expr(property), "substring": Expr.val(substring)})
+            return _ast_struct(
+                "Contains", {"value": prop_expr(property), "substring": Expr.val(substring)}
+            )
         if self.variant == "ContainsExpr":
             property, substring = self.payload
             return _ast_struct("Contains", {"value": prop_expr(property), "substring": substring})
@@ -1252,7 +1273,9 @@ class RepeatConfig:
             "times": self.times_value if self.times_value is not None else _OMIT,
             "until": self.until_value if self.until_value is not None else _OMIT,
             "emit": self.emit_value,
-            "emit_predicate": self.emit_predicate_value if self.emit_predicate_value is not None else _OMIT,
+            "emit_predicate": self.emit_predicate_value
+            if self.emit_predicate_value is not None
+            else _OMIT,
             "max_depth": self.max_depth_value,
         }
 
@@ -1263,7 +1286,9 @@ class IndexSpec:
     fields: Mapping[str, Any]
 
     @staticmethod
-    def _range_fields(label: str, property: str, direction: RangeIndexDirection) -> Mapping[str, Any]:
+    def _range_fields(
+        label: str, property: str, direction: RangeIndexDirection
+    ) -> Mapping[str, Any]:
         return {"label": label, "property": property, "direction": direction.value}
 
     @classmethod
@@ -1331,10 +1356,16 @@ class IndexSpec:
         )
 
     @classmethod
-    def node_text(cls, label: str, property: str, tenant_property: str | None = None) -> "IndexSpec":
+    def node_text(
+        cls, label: str, property: str, tenant_property: str | None = None
+    ) -> "IndexSpec":
         return cls(
             "NodeText",
-            {"label": label, "property": property, "tenant_property": tenant_property if tenant_property is not None else _OMIT},
+            {
+                "label": label,
+                "property": property,
+                "tenant_property": tenant_property if tenant_property is not None else _OMIT,
+            },
         )
 
     @classmethod
@@ -1362,10 +1393,16 @@ class IndexSpec:
         )
 
     @classmethod
-    def edge_text(cls, label: str, property: str, tenant_property: str | None = None) -> "IndexSpec":
+    def edge_text(
+        cls, label: str, property: str, tenant_property: str | None = None
+    ) -> "IndexSpec":
         return cls(
             "EdgeText",
-            {"label": label, "property": property, "tenant_property": tenant_property if tenant_property is not None else _OMIT},
+            {
+                "label": label,
+                "property": property,
+                "tenant_property": tenant_property if tenant_property is not None else _OMIT,
+            },
         )
 
     def to_json(self) -> JsonValue:
@@ -1378,10 +1415,13 @@ IndexOperationId: TypeAlias = str
 def _index_operation_id(value: str) -> IndexOperationId:
     """Validate the frozen lowercase non-nil UUID control identifier."""
 
-    if re.fullmatch(
-        r"(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-        value,
-    ) is None:
+    if (
+        re.fullmatch(
+            r"(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            value,
+        )
+        is None
+    ):
         raise ValueError(f"index operation ID must be a canonical lowercase non-nil UUID: {value}")
     return value
 
@@ -1523,22 +1563,42 @@ IndexOperationStatus: TypeAlias = (
 
 _INDEX_OPERATION_KINDS = frozenset(("build", "drop"))
 _INDEX_FAMILIES = frozenset(("secondary", "vector", "text"))
-_INDEX_OPERATION_BLOCKERS = frozenset((
-    "invalid_source_data",
-    "uniqueness_violation",
-    "oversized_entity",
-    "manifest_limit",
-    "object_store_configuration_unavailable",
-    "invariant_violation",
-))
-_INDEX_OPERATION_STAGES = frozenset((
-    "scan", "scan_partitions", "catch_up", "validate",
-    "validate_descriptor", "validate_legacy_physical", "compact", "prepare_manifests", "validate_manifests",
-    "activate", "delete_entries",
-    "retire_cache", "delete_physical", "delete_deltas", "delete_metadata", "finalize",
-    "aborting_delete_entries", "aborting_retire_cache", "aborting_delete_physical",
-    "aborting_delete_deltas", "aborting_delete_metadata", "aborting_finalize",
-))
+_INDEX_OPERATION_BLOCKERS = frozenset(
+    (
+        "invalid_source_data",
+        "uniqueness_violation",
+        "oversized_entity",
+        "manifest_limit",
+        "object_store_configuration_unavailable",
+        "invariant_violation",
+    )
+)
+_INDEX_OPERATION_STAGES = frozenset(
+    (
+        "scan",
+        "scan_partitions",
+        "catch_up",
+        "validate",
+        "validate_descriptor",
+        "validate_legacy_physical",
+        "compact",
+        "prepare_manifests",
+        "validate_manifests",
+        "activate",
+        "delete_entries",
+        "retire_cache",
+        "delete_physical",
+        "delete_deltas",
+        "delete_metadata",
+        "finalize",
+        "aborting_delete_entries",
+        "aborting_retire_cache",
+        "aborting_delete_physical",
+        "aborting_delete_deltas",
+        "aborting_delete_metadata",
+        "aborting_finalize",
+    )
+)
 
 
 def _lifecycle_mapping(value: Any, contract: str) -> Mapping[str, Any]:
@@ -1609,16 +1669,26 @@ def parse_index_operation_status(value: Any) -> IndexOperationStatus:
     if stage not in _INDEX_OPERATION_STAGES:
         raise ValueError(f"unknown index operation stage: {stage}")
     attempt = payload.get("attempt")
-    if isinstance(attempt, bool) or not isinstance(attempt, int) or not 0 <= attempt <= 4_294_967_295:
+    if (
+        isinstance(attempt, bool)
+        or not isinstance(attempt, int)
+        or not 0 <= attempt <= 4_294_967_295
+    ):
         raise TypeError("attempt must be a u32 JSON number")
     progress_payload = _lifecycle_mapping(payload.get("progress"), "index operation progress")
     progress = IndexOperationProgress(
-        entities=_lifecycle_u64(progress_payload.get("entities"), "progress.entities", allow_zero=True),
-        input_bytes=_lifecycle_u64(progress_payload.get("input_bytes"), "progress.input_bytes", allow_zero=True),
+        entities=_lifecycle_u64(
+            progress_payload.get("entities"), "progress.entities", allow_zero=True
+        ),
+        input_bytes=_lifecycle_u64(
+            progress_payload.get("input_bytes"), "progress.input_bytes", allow_zero=True
+        ),
         output_operations=_lifecycle_u64(
             progress_payload.get("output_operations"), "progress.output_operations", allow_zero=True
         ),
-        output_bytes=_lifecycle_u64(progress_payload.get("output_bytes"), "progress.output_bytes", allow_zero=True),
+        output_bytes=_lifecycle_u64(
+            progress_payload.get("output_bytes"), "progress.output_bytes", allow_zero=True
+        ),
     )
     common = IndexOperationStatusCommon(
         operation_id=_index_operation_id(_lifecycle_string(payload, "operation_id")),
@@ -1946,11 +2016,19 @@ class Step:
 
     @classmethod
     def limit(cls, bound: StreamBound) -> "Step":
-        return cls.newtype("Limit", bound.payload) if bound.variant == "Literal" else cls.newtype("LimitBy", bound.payload)
+        return (
+            cls.newtype("Limit", bound.payload)
+            if bound.variant == "Literal"
+            else cls.newtype("LimitBy", bound.payload)
+        )
 
     @classmethod
     def skip(cls, bound: StreamBound) -> "Step":
-        return cls.newtype("Skip", bound.payload) if bound.variant == "Literal" else cls.newtype("SkipBy", bound.payload)
+        return (
+            cls.newtype("Skip", bound.payload)
+            if bound.variant == "Literal"
+            else cls.newtype("SkipBy", bound.payload)
+        )
 
     @classmethod
     def range(cls, start: StreamBound, end: StreamBound) -> "Step":
@@ -2004,7 +2082,9 @@ class Step:
 
     @classmethod
     def project(cls, projections: Iterable[ProjectionInput]) -> "Step":
-        return cls.newtype("Project", [Projection.from_value(projection) for projection in projections])
+        return cls.newtype(
+            "Project", [Projection.from_value(projection) for projection in projections]
+        )
 
     @classmethod
     def project_bindings(
@@ -2043,13 +2123,17 @@ class Step:
     def retry_index_operation(cls, operation_id: str) -> "Step":
         """Build the raw AST terminal for a convergent retry."""
 
-        return cls.struct("RetryIndexOperation", {"operation_id": _index_operation_id(operation_id)})
+        return cls.struct(
+            "RetryIndexOperation", {"operation_id": _index_operation_id(operation_id)}
+        )
 
     @classmethod
     def abort_index_operation(cls, operation_id: str) -> "Step":
         """Build the raw AST terminal for build-abort cleanup."""
 
-        return cls.struct("AbortIndexOperation", {"operation_id": _index_operation_id(operation_id)})
+        return cls.struct(
+            "AbortIndexOperation", {"operation_id": _index_operation_id(operation_id)}
+        )
 
     @classmethod
     def create_vector_index_nodes(
@@ -2060,7 +2144,9 @@ class Step:
         metric: VectorDistanceMetric,
         tenant_property: str | None = None,
     ) -> "Step":
-        return cls.create_index(IndexSpec.node_vector(label, property, dimension, metric, tenant_property), True)
+        return cls.create_index(
+            IndexSpec.node_vector(label, property, dimension, metric, tenant_property), True
+        )
 
     @classmethod
     def create_vector_index_edges(
@@ -2071,14 +2157,20 @@ class Step:
         metric: VectorDistanceMetric,
         tenant_property: str | None = None,
     ) -> "Step":
-        return cls.create_index(IndexSpec.edge_vector(label, property, dimension, metric, tenant_property), True)
+        return cls.create_index(
+            IndexSpec.edge_vector(label, property, dimension, metric, tenant_property), True
+        )
 
     @classmethod
-    def create_text_index_nodes(cls, label: str, property: str, tenant_property: str | None = None) -> "Step":
+    def create_text_index_nodes(
+        cls, label: str, property: str, tenant_property: str | None = None
+    ) -> "Step":
         return cls.create_index(IndexSpec.node_text(label, property, tenant_property), True)
 
     @classmethod
-    def create_text_index_edges(cls, label: str, property: str, tenant_property: str | None = None) -> "Step":
+    def create_text_index_edges(
+        cls, label: str, property: str, tenant_property: str | None = None
+    ) -> "Step":
         return cls.create_index(IndexSpec.edge_text(label, property, tenant_property), True)
 
     @classmethod
@@ -2086,7 +2178,9 @@ class Step:
         return cls.struct("AddN", {"label": label, "properties": list(properties)})
 
     @classmethod
-    def add_e(cls, label: str, to: NodeRef, properties: Iterable[tuple[str, PropertyInput]]) -> "Step":
+    def add_e(
+        cls, label: str, to: NodeRef, properties: Iterable[tuple[str, PropertyInput]]
+    ) -> "Step":
         return cls.struct("AddE", {"label": label, "to": to, "properties": list(properties)})
 
     @classmethod
@@ -2219,7 +2313,12 @@ class Step:
             return _ast_struct("Edges", {"reference": self.payload})
         if self.variant == "EWhere":
             return _ast_struct("EdgesWhere", {"predicate": self.payload})
-        if self.variant in {"VectorSearchNodes", "TextSearchNodes", "VectorSearchEdges", "TextSearchEdges"}:
+        if self.variant in {
+            "VectorSearchNodes",
+            "TextSearchNodes",
+            "VectorSearchEdges",
+            "TextSearchEdges",
+        }:
             return _ast_struct(self.variant, self.payload)
         if self.variant in {
             "VectorSearchNodesWithin",
@@ -2328,7 +2427,9 @@ class Step:
         if self.variant == "Choose":
             fields = {
                 **self.payload,
-                "else_traversal": self.payload["else_traversal"] if self.payload.get("else_traversal") is not None else _OMIT,
+                "else_traversal": self.payload["else_traversal"]
+                if self.payload.get("else_traversal") is not None
+                else _OMIT,
             }
             return unary("Choose", **fields)
         if self.variant == "Coalesce":
@@ -2707,7 +2808,9 @@ class Traversal:
         metric: VectorDistanceMetric,
         tenant_property: str | None = None,
     ) -> "Traversal":
-        return self.create_index_if_not_exists(IndexSpec.node_vector(label, property, dimension, metric, tenant_property))
+        return self.create_index_if_not_exists(
+            IndexSpec.node_vector(label, property, dimension, metric, tenant_property)
+        )
 
     def create_vector_index_edges(
         self,
@@ -2717,13 +2820,23 @@ class Traversal:
         metric: VectorDistanceMetric,
         tenant_property: str | None = None,
     ) -> "Traversal":
-        return self.create_index_if_not_exists(IndexSpec.edge_vector(label, property, dimension, metric, tenant_property))
+        return self.create_index_if_not_exists(
+            IndexSpec.edge_vector(label, property, dimension, metric, tenant_property)
+        )
 
-    def create_text_index_nodes(self, label: str, property: str, tenant_property: str | None = None) -> "Traversal":
-        return self.create_index_if_not_exists(IndexSpec.node_text(label, property, tenant_property))
+    def create_text_index_nodes(
+        self, label: str, property: str, tenant_property: str | None = None
+    ) -> "Traversal":
+        return self.create_index_if_not_exists(
+            IndexSpec.node_text(label, property, tenant_property)
+        )
 
-    def create_text_index_edges(self, label: str, property: str, tenant_property: str | None = None) -> "Traversal":
-        return self.create_index_if_not_exists(IndexSpec.edge_text(label, property, tenant_property))
+    def create_text_index_edges(
+        self, label: str, property: str, tenant_property: str | None = None
+    ) -> "Traversal":
+        return self.create_index_if_not_exists(
+            IndexSpec.edge_text(label, property, tenant_property)
+        )
 
     def out(self, label: str | None = None) -> "Traversal":
         return self._push(Step.out(label), "nodes")
@@ -2775,7 +2888,9 @@ class Traversal:
     def without(self, name: str) -> "Traversal":
         return self._push(Step.without(name))
 
-    def edge_has(self, property: str, value: PropertyInput | Expr | ParamRef | PropertyValueInput) -> "Traversal":
+    def edge_has(
+        self, property: str, value: PropertyInput | Expr | ParamRef | PropertyValueInput
+    ) -> "Traversal":
         return self._push(Step.edge_has(property, PropertyInput.from_value(value)))
 
     def edge_has_label(self, label: str) -> "Traversal":
@@ -2787,7 +2902,9 @@ class Traversal:
     def skip(self, n: StreamBound | Expr | ParamRef | int) -> "Traversal":
         return self._push(Step.skip(StreamBound.from_value(n)))
 
-    def range(self, start: StreamBound | Expr | ParamRef | int, end: StreamBound | Expr | ParamRef | int) -> "Traversal":
+    def range(
+        self, start: StreamBound | Expr | ParamRef | int, end: StreamBound | Expr | ParamRef | int
+    ) -> "Traversal":
         return self._push(Step.range(StreamBound.from_value(start), StreamBound.from_value(end)))
 
     def as_(self, name: str) -> "Traversal":
@@ -2897,11 +3014,24 @@ class Traversal:
     def add_n(self, label: str, properties: PropEntries | None = None) -> "Traversal":
         return self._push(Step.add_n(label, _property_entries(properties)), "nodes", "write")
 
-    def add_e(self, label: str, to: NodeRef | NodeId | Iterable[NodeId] | str, properties: PropEntries | None = None) -> "Traversal":
-        return self._push(Step.add_e(label, NodeRef.from_value(to), _property_entries(properties)), "nodes", "write")
+    def add_e(
+        self,
+        label: str,
+        to: NodeRef | NodeId | Iterable[NodeId] | str,
+        properties: PropEntries | None = None,
+    ) -> "Traversal":
+        return self._push(
+            Step.add_e(label, NodeRef.from_value(to), _property_entries(properties)),
+            "nodes",
+            "write",
+        )
 
-    def set_property(self, name: str, value: PropertyInput | Expr | ParamRef | PropertyValueInput) -> "Traversal":
-        return self._push(Step.set_property(name, PropertyInput.from_value(value)), "nodes", "write")
+    def set_property(
+        self, name: str, value: PropertyInput | Expr | ParamRef | PropertyValueInput
+    ) -> "Traversal":
+        return self._push(
+            Step.set_property(name, PropertyInput.from_value(value)), "nodes", "write"
+        )
 
     def remove_property(self, name: str) -> "Traversal":
         return self._push(Step.remove_property(name), "nodes", "write")
@@ -2912,7 +3042,9 @@ class Traversal:
     def drop_edge(self, to: NodeRef | NodeId | Iterable[NodeId] | str) -> "Traversal":
         return self._push(Step.drop_edge(NodeRef.from_value(to)), "nodes", "write")
 
-    def drop_edge_labeled(self, to: NodeRef | NodeId | Iterable[NodeId] | str, label: str) -> "Traversal":
+    def drop_edge_labeled(
+        self, to: NodeRef | NodeId | Iterable[NodeId] | str, label: str
+    ) -> "Traversal":
         return self._push(Step.drop_edge_labeled(NodeRef.from_value(to), label), "nodes", "write")
 
     def drop_edge_by_id(self, edges: EdgeRef | EdgeId | Iterable[EdgeId]) -> "Traversal":
@@ -2988,7 +3120,9 @@ class SubTraversal:
     def without(self, name: str) -> "SubTraversal":
         return self._push(Step.without(name))
 
-    def edge_has(self, property: str, value: PropertyInput | Expr | ParamRef | PropertyValueInput) -> "SubTraversal":
+    def edge_has(
+        self, property: str, value: PropertyInput | Expr | ParamRef | PropertyValueInput
+    ) -> "SubTraversal":
         return self._push(Step.edge_has(property, PropertyInput.from_value(value)))
 
     def edge_has_label(self, label: str) -> "SubTraversal":
@@ -3000,7 +3134,9 @@ class SubTraversal:
     def skip(self, n: StreamBound | Expr | ParamRef | int) -> "SubTraversal":
         return self._push(Step.skip(StreamBound.from_value(n)))
 
-    def range(self, start: StreamBound | Expr | ParamRef | int, end: StreamBound | Expr | ParamRef | int) -> "SubTraversal":
+    def range(
+        self, start: StreamBound | Expr | ParamRef | int, end: StreamBound | Expr | ParamRef | int
+    ) -> "SubTraversal":
         return self._push(Step.range(StreamBound.from_value(start), StreamBound.from_value(end)))
 
     def as_(self, name: str) -> "SubTraversal":
@@ -3314,9 +3450,7 @@ class QueryParamType:
         object.__setattr__(self, "inner", inner)
 
     @classmethod
-    def _create(
-        cls, variant: str, inner: "QueryParamType | None" = None
-    ) -> "QueryParamType":
+    def _create(cls, variant: str, inner: "QueryParamType | None" = None) -> "QueryParamType":
         return cls(variant, inner, _token=_FACTORY_TOKEN)
 
     @classmethod
@@ -3362,7 +3496,11 @@ class QueryParamType:
         return cls._create("Array", inner)
 
     def to_json(self) -> JsonValue:
-        return _ast_newtype("Array", self.inner) if self.variant == "Array" else _ast_unit(self.variant)
+        return (
+            _ast_newtype("Array", self.inner)
+            if self.variant == "Array"
+            else _ast_unit(self.variant)
+        )
 
 
 @dataclass(frozen=True, init=False)
@@ -3499,7 +3637,9 @@ class ParamRef:
 class DefinedParams:
     def __init__(self, schema: Mapping[str, ParamSchema]) -> None:
         self.schema = dict(schema)
-        self._refs = {name: ParamRef(name, param_schema) for name, param_schema in self.schema.items()}
+        self._refs = {
+            name: ParamRef(name, param_schema) for name, param_schema in self.schema.items()
+        }
 
     def __getattr__(self, name: str) -> ParamRef:
         try:
@@ -3570,8 +3710,7 @@ def _convert_param_value(schema: ParamSchema, value: Any, path: str) -> JsonValu
             raise TypeError(f"parameter '{path}' must be object")
         inner = schema.object_inner or param.value()
         return {
-            key: _convert_param_value(inner, entry, f"{path}.{key}")
-            for key, entry in value.items()
+            key: _convert_param_value(inner, entry, f"{path}.{key}") for key, entry in value.items()
         }
     if schema.kind == "Array":
         if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
@@ -3664,8 +3803,7 @@ def _validate_json_value(value: JsonValue, path: str) -> JsonValue:
         raise QueryError.unsupported_bytes(path)
     if isinstance(value, Sequence):
         return [
-            _validate_json_value(entry, f"{path}[{index}]")
-            for index, entry in enumerate(value)
+            _validate_json_value(entry, f"{path}[{index}]") for index, entry in enumerate(value)
         ]
     if isinstance(value, Mapping):
         out: dict[str, JsonValue] = {}
@@ -3747,9 +3885,7 @@ class QueryRequest:
     @property
     def request_type(self) -> QueryRequestType:
         return (
-            QueryRequestType.READ
-            if isinstance(self._query, ReadBatch)
-            else QueryRequestType.WRITE
+            QueryRequestType.READ if isinstance(self._query, ReadBatch) else QueryRequestType.WRITE
         )
 
     @property
@@ -3852,9 +3988,7 @@ def _add_query_parameters(
     _reject_unknown_parameters(values, params.schema)
     converted = _convert_input_from_schema(params.schema, values)
     for name, schema in params.schema.items():
-        request.insert_typed_parameter(
-            name, schema.to_param_type(), converted[name]
-        )
+        request.insert_typed_parameter(name, schema.to_param_type(), converted[name])
     return request
 
 

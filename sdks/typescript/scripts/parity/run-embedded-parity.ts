@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { structuralJsonEqual } from "../../src/index.js";
+import { canonicalizeJson, parseJsonStructural, structuralJsonEqual } from "../../src/index.js";
 import { workspaceRoot } from "./paths.js";
 
 const EXPECTED_RUNTIME = 233;
 const typescriptRoot = join(workspaceRoot, "sdks", "typescript");
 const pythonRoot = join(workspaceRoot, "sdks", "python");
 const goRoot = join(workspaceRoot, "sdks", "go");
+const goEmbeddedTemplates = join(goRoot, "internal", "embedded_templates");
 const rustManifest = join(workspaceRoot, "sdks", "rust", "Cargo.toml");
 const bindingManifest = join(workspaceRoot, "bindings", "uniffi", "Cargo.toml");
 const bindingConfig = join(workspaceRoot, "bindings", "uniffi", "uniffi.toml");
@@ -40,6 +41,11 @@ try {
     cp(goRoot, goSdk, { recursive: true }),
     ...Object.values(disks).map((root) => mkdir(root, { recursive: true })),
   ]);
+  await Promise.all(
+    ["embedded_uniffi.go", "native_graph_uniffi.go", "embedded_generated_test.go", "graph_generated_test.go"].map((file) =>
+      copyFile(join(goEmbeddedTemplates, `${file}.tmpl`), join(goSdk, file)),
+    ),
+  );
   run("cargo", ["build", "--locked", "-p", "helixdb-uniffi"], workspaceRoot, 900_000);
 
   run(
@@ -128,6 +134,17 @@ try {
   }
   const goPackage = join(goBindings, "helixdb");
   await copyFile(nativeLibrary, join(goPackage, basename(nativeLibrary)));
+  run(
+    "go",
+    ["test", "-tags", "helixdb_uniffi", "./..."],
+    goSdk,
+    900_000,
+    embeddedEnv(join(temp, "go-test-results"), "go-sdk-binding-tests", goPackage, "memory", disks.go, {
+      CGO_ENABLED: "1",
+      CGO_LDFLAGS: `-L${goPackage} -lhelixdb_uniffi`,
+      GOCACHE: join(temp, "go-build-cache"),
+    }),
+  );
 
   for (const storage of storageModes) {
     run(
@@ -249,9 +266,13 @@ async function compareResults(baselineRoot: string, candidateRoot: string, basel
   const mismatches: string[] = [];
   for (const file of baselineFiles) {
     const [baseline, value] = await Promise.all([readFile(join(baselineRoot, file), "utf8"), readFile(join(candidateRoot, file), "utf8")]);
-    if (!structuralJsonEqual(baseline, value)) mismatches.push(file);
+    if (!structuralJsonEqual(baseline, value)) {
+      mismatches.push(
+        `${file}\nRust: ${JSON.stringify(canonicalizeJson(parseJsonStructural(baseline)))}\n${candidate}: ${JSON.stringify(canonicalizeJson(parseJsonStructural(value)))}`,
+      );
+    }
   }
-  if (mismatches.length > 0) throw new Error(`${candidate} embedded result mismatches:\n${mismatches.join("\n")}`);
+  if (mismatches.length > 0) throw new Error(`${candidate} embedded result mismatches:\n\n${mismatches.join("\n\n")}`);
 }
 
 function assertFixtureCount(label: string, files: string[]) {
