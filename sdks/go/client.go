@@ -31,7 +31,14 @@ type HelixError struct {
 	Kind       ErrorKind
 	Details    string
 	StatusCode int
+	Response   *ErrorResponse
 	Err        error
+}
+
+// ErrorResponse is the stable JSON envelope returned by Helix query endpoints.
+type ErrorResponse struct {
+	Error string `json:"error"`
+	Msg   string `json:"msg"`
 }
 
 func (e *HelixError) Error() string {
@@ -291,6 +298,14 @@ func (c *Client) Exec(ctx context.Context, req Request, out any, opts ...ExecOpt
 			details = resp.Status
 		}
 		remoteErr := &HelixError{Kind: ErrorRemote, Details: details, StatusCode: resp.StatusCode}
+		var envelope map[string]any
+		if json.Unmarshal(respBody, &envelope) == nil {
+			errorCode, hasError := envelope["error"].(string)
+			message, hasMessage := envelope["msg"].(string)
+			if hasError && hasMessage {
+				remoteErr.Response = &ErrorResponse{Error: errorCode, Msg: message}
+			}
+		}
 		if resp.StatusCode == http.StatusConflict {
 			remoteErr.Err = ErrConflict
 		}

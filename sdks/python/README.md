@@ -36,6 +36,11 @@ SDKs. Python methods use `snake_case`; compatibility aliases such as
 `nWithLabel` and `valueMap` are also available for users translating TypeScript
 examples directly.
 
+Non-success HTTP responses raise `HelixError` with `status_code` and the raw
+response in `details`. When the server returns the stable
+`{"error":"...","msg":"..."}` envelope, use `error_response.error` for
+programmatic branching and `error_response.msg` as diagnostic text.
+
 ## Query Parameters
 
 ```python

@@ -54,6 +54,7 @@ Full walkthrough: https://docs.helix-db.com/cli/getting-started
 - [Security](https://docs.helix-db.com/database/helix-cloud/operate/security) — Page type: Reference
 - [Tradeoffs](https://docs.helix-db.com/database/helix-cloud/operate/tradeoffs) — Page type: Concept
 - [Limits](https://docs.helix-db.com/database/helix-cloud/operate/limits) — Page type: Reference
+- [Handle query errors](https://docs.helix-db.com/database/helix-cloud/operate/error-handling): Use stable Helix Cloud error codes, HTTP statuses, and SDK error metadata — Page type: Reference
 - [Troubleshoot HelixDB](https://docs.helix-db.com/database/helix-cloud/operate/troubleshooting): Diagnose query, index, vector, embedded, and local runtime failures — Page type: Troubleshooting
 
 ## Using the helix CLI

@@ -16,6 +16,14 @@ DEFAULT_URL = "http://localhost:6969"
 QUERY_PATH = "/v2/query"
 
 
+@dataclass(frozen=True)
+class ErrorResponse:
+    """Stable JSON envelope returned by Helix query endpoints."""
+
+    error: str
+    msg: str
+
+
 class HelixError(Exception):
     """Error raised by the HelixDB client."""
 
@@ -26,12 +34,14 @@ class HelixError(Exception):
         *,
         details: str | None = None,
         status_code: int | None = None,
+        error_response: ErrorResponse | None = None,
         cause: BaseException | None = None,
     ) -> None:
         super().__init__(message)
         self.kind = kind
         self.details = details
         self.status_code = status_code
+        self.error_response = error_response
         self.__cause__ = cause
 
     @classmethod
@@ -45,11 +55,23 @@ class HelixError(Exception):
 
     @classmethod
     def remote(cls, details: str, *, status_code: int | None = None) -> "HelixError":
+        error_response = None
+        try:
+            payload = json.loads(details)
+            if (
+                isinstance(payload, dict)
+                and isinstance(payload.get("error"), str)
+                and isinstance(payload.get("msg"), str)
+            ):
+                error_response = ErrorResponse(error=payload["error"], msg=payload["msg"])
+        except json.JSONDecodeError:
+            pass
         return cls(
             "Remote",
             f"got error from server: {details}",
             details=details,
             status_code=status_code,
+            error_response=error_response,
         )
 
     @classmethod
@@ -439,6 +461,7 @@ __all__ = [
     "HelixDbSource",
     "HelixError",
     "EmbeddedCacheConfig",
+    "ErrorResponse",
     "HybridCache",
     "MemoryCache",
     "VectorMemoryOnly",

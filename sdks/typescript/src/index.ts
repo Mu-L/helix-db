@@ -14,6 +14,14 @@ import { GraphSelection, NativeGraph, loadGraph } from "./graph.js";
 const DEFAULT_URL = "http://localhost:6969";
 const QUERY_PATH = "/v2/query";
 
+/** Stable JSON envelope returned by Helix query endpoints. */
+export interface ErrorResponse {
+  /** Stable lower-snake-case code suitable for programmatic branching. */
+  error: string;
+  /** Human-readable diagnostic text. Do not branch on this value. */
+  msg: string;
+}
+
 /**
  * Error raised by the network {@link Client}.
  *
@@ -27,12 +35,16 @@ const QUERY_PATH = "/v2/query";
 export class HelixError extends Error {
   readonly kind: "Network" | "Remote" | "Serialization" | "InvalidUrl" | "InvalidRequest" | "EmbeddedUnavailable" | "Embedded";
   readonly details?: string;
+  readonly statusCode?: number;
+  readonly errorResponse?: ErrorResponse;
 
-  private constructor(kind: HelixError["kind"], message: string, details?: string) {
+  private constructor(kind: HelixError["kind"], message: string, details?: string, statusCode?: number, errorResponse?: ErrorResponse) {
     super(message);
     this.name = "HelixError";
     this.kind = kind;
     this.details = details;
+    this.statusCode = statusCode;
+    this.errorResponse = errorResponse;
   }
 
   static network(message: string, url?: string): HelixError {
@@ -42,8 +54,25 @@ export class HelixError extends Error {
     return new HelixError("Network", `error communicating with server: ${message}.${hint}`, message);
   }
 
-  static remote(details: string): HelixError {
-    return new HelixError("Remote", `got error from server: ${details}`, details);
+  static remote(details: string, statusCode: number): HelixError {
+    let errorResponse: ErrorResponse | undefined;
+    try {
+      const parsed: unknown = JSON.parse(details);
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        typeof (parsed as Record<string, unknown>).error === "string" &&
+        typeof (parsed as Record<string, unknown>).msg === "string"
+      ) {
+        errorResponse = {
+          error: (parsed as Record<string, string>).error,
+          msg: (parsed as Record<string, string>).msg,
+        };
+      }
+    } catch {
+      // Older endpoints and intermediaries may return plain text.
+    }
+    return new HelixError("Remote", `got error from server: ${details}`, details, statusCode, errorResponse);
   }
 
   static serialization(message: string): HelixError {
@@ -332,7 +361,7 @@ export class QueryExecutionRequest<R = unknown> {
       details = response.statusText;
     }
     if (details.length === 0) details = response.statusText || `unknown error with code: ${response.status}`;
-    throw HelixError.remote(details);
+    throw HelixError.remote(details, response.status);
   }
 
   async send(): Promise<R> {

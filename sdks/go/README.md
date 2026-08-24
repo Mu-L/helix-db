@@ -190,8 +190,10 @@ create a binding.
 
 `Client.Exec` does not retry HTTP 409 conflicts automatically. Callers should
 retry only when the operation is safe to replay. Remote errors are returned as
-`*helix.HelixError` with `StatusCode` populated, and `helix.IsConflict(err)`
-or `errors.Is(err, helix.ErrConflict)` checks for HTTP 409:
+`*helix.HelixError` with `StatusCode` populated. `Response` contains the stable
+`Error` code and diagnostic `Msg` when the server returns the structured JSON
+envelope; `Details` always retains the raw response. `helix.IsConflict(err)` or
+`errors.Is(err, helix.ErrConflict)` checks for HTTP 409:
 
 ```go
 func ExecWithConflictRetry(ctx context.Context, client *helix.Client, build func() helix.Request, out any) error {

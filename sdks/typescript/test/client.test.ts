@@ -212,6 +212,38 @@ assert.throws(
   await server.close();
 }
 
+{
+  const body = '{"error":"query_timeout","msg":"query exceeded its wall-clock limit"}';
+  const server = await spawnCaptureServer({ status: 408, body });
+  const client = new Client(server.base);
+  await assert.rejects(
+    client.query(sampleRequest()).send(),
+    (error: unknown) =>
+      error instanceof HelixError &&
+      error.kind === "Remote" &&
+      error.statusCode === 408 &&
+      error.details === body &&
+      error.errorResponse?.error === "query_timeout" &&
+      error.errorResponse.msg === "query exceeded its wall-clock limit",
+  );
+  await server.close();
+}
+
+for (const body of ["upstream unavailable", '{"error":"query_timeout"}']) {
+  const server = await spawnCaptureServer({ status: 502, body });
+  const client = new Client(server.base);
+  await assert.rejects(
+    client.query(sampleRequest()).send(),
+    (error: unknown) =>
+      error instanceof HelixError &&
+      error.kind === "Remote" &&
+      error.statusCode === 502 &&
+      error.details === body &&
+      error.errorResponse === undefined,
+  );
+  await server.close();
+}
+
 // ---- Unreachable server surfaces an actionable network error ----------------
 
 {
