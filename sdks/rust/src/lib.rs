@@ -170,7 +170,8 @@ impl fmt::Debug for Client {
 /// Backwards-compatible alias for [`Client`].
 pub type HelixDBClient = Client;
 
-/// Metadata returned when the server responds with a non-`200` HTTP status.
+/// Metadata returned when the server responds with a status other than `200`
+/// or the Cloud warm-success status `204`.
 #[derive(Debug)]
 pub struct RemoteError {
     status_code: u16,
@@ -230,7 +231,7 @@ pub enum HelixError {
     /// timeout, TLS error, …), surfaced from [`reqwest`].
     #[error("Error communicating with server: {0}")]
     ReqwestError(#[from] reqwest::Error),
-    /// The server responded with a non-`200` status.
+    /// The server responded with a status other than `200` or `204`.
     #[error("Got Error from server: {0}")]
     RemoteError(Box<RemoteError>),
     /// Failed to (de)serialize a request body or response payload.
@@ -625,9 +626,13 @@ pub struct QueryExecutionRequest<'hlx, 'a, R> {
     _phantom: PhantomData<R>,
 }
 
+struct QueryResponse {
+    status: StatusCode,
+    body: Vec<u8>,
+}
+
 impl<'hlx, 'a, R> QueryExecutionRequest<'hlx, 'a, R> {
-    /// Send the request and return the successful response body unchanged.
-    pub async fn send_bytes(self) -> Result<Vec<u8>, HelixError> {
+    async fn execute(self) -> Result<QueryResponse, HelixError> {
         match &self.client.backend {
             ClientBackend::Server(server) => {
                 let mut request = server.client.post(server.url.clone());
@@ -639,11 +644,10 @@ impl<'hlx, 'a, R> QueryExecutionRequest<'hlx, 'a, R> {
                 }
                 let response = request.body(sonic_rs::to_vec(&self.query)?).send().await?;
                 match response.status() {
-                    StatusCode::OK => response
-                        .bytes()
-                        .await
-                        .map(|bytes| bytes.to_vec())
-                        .map_err(Into::into),
+                    status @ (StatusCode::OK | StatusCode::NO_CONTENT) => {
+                        let body = response.bytes().await?.to_vec();
+                        Ok(QueryResponse { status, body })
+                    }
                     code => Err(remote_error(
                         code,
                         response.text().await.unwrap_or_default(),
@@ -658,9 +662,20 @@ impl<'hlx, 'a, R> QueryExecutionRequest<'hlx, 'a, R> {
                     });
                 }
                 let request = sonic_rs::to_vec(&self.query)?;
-                db.query_json(&request).await.map_err(embedded_error)
+                db.query_json(&request)
+                    .await
+                    .map(|body| QueryResponse {
+                        status: StatusCode::OK,
+                        body,
+                    })
+                    .map_err(embedded_error)
             }
         }
+    }
+
+    /// Send the request and return the successful response body unchanged.
+    pub async fn send_bytes(self) -> Result<Vec<u8>, HelixError> {
+        self.execute().await.map(|response| response.body)
     }
 }
 
@@ -673,8 +688,9 @@ impl<'hlx, 'a, R: for<'de> Deserialize<'de>> QueryExecutionRequest<'hlx, 'a, R> 
     /// # Errors
     ///
     /// - [`HelixError::ReqwestError`] for transport failures.
-    /// - [`HelixError::RemoteError`] for any non-`200` response (carrying the
-    ///   server's body or status reason).
+    /// - [`HelixError::RemoteError`] for any response other than `200` or the
+    ///   Cloud warm-success status `204` (carrying the server's body or status
+    ///   reason).
     /// - [`HelixError::SerializationError`] if the request payload cannot be
     ///   serialized or the response body cannot be deserialized into `R`.
     ///
@@ -696,8 +712,12 @@ impl<'hlx, 'a, R: for<'de> Deserialize<'de>> QueryExecutionRequest<'hlx, 'a, R> 
     /// # }
     /// ```
     pub async fn send(self) -> Result<R, HelixError> {
-        let response = self.send_bytes().await?;
-        sonic_rs::from_slice::<R>(&response).map_err(Into::into)
+        let response = self.execute().await?;
+        if response.status == StatusCode::NO_CONTENT {
+            sonic_rs::from_slice::<R>(b"null").map_err(Into::into)
+        } else {
+            sonic_rs::from_slice::<R>(&response.body).map_err(Into::into)
+        }
     }
 }
 
@@ -1436,6 +1456,33 @@ mod client_tests {
         let (base, handle) = spawn_capture_server(200, "{}").await;
         let client = Client::new(Some(&base)).unwrap();
         let _: EmptyResp = client.query(sample_request()).send().await.unwrap();
+        assert_eq!(handle.await.unwrap(), "/v2/query");
+    }
+
+    #[tokio::test]
+    async fn warm_no_content_is_success() {
+        let (base, handle) = spawn_capture_server(204, "").await;
+        let client = Client::new(Some(&base)).unwrap();
+        client
+            .request_builder::<()>()
+            .warm_only()
+            .query(sample_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(handle.await.unwrap(), "/v2/query");
+    }
+
+    #[tokio::test]
+    async fn empty_ok_response_is_a_serialization_error() {
+        let (base, handle) = spawn_capture_server(200, "").await;
+        let client = Client::new(Some(&base)).unwrap();
+        let error = client
+            .query::<()>(sample_request())
+            .send()
+            .await
+            .expect_err("an empty 200 response must not decode as JSON null");
+        assert!(matches!(error, HelixError::SerializationError(_)));
         assert_eq!(handle.await.unwrap(), "/v2/query");
     }
 
