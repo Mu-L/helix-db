@@ -879,7 +879,7 @@ pub(crate) async fn run_missing_partition_mapping_delete_contract() {
     .build()
     .await
     .expect("production contract database opens");
-    repository::bootstrap_writer(&db)
+    crate::migrations::startup::bootstrap_writer(&db)
         .await
         .expect("production contract database bootstraps");
 
