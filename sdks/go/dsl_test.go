@@ -534,6 +534,39 @@ func TestAtomicTypedAndExplicitUntypedParameterStates(t *testing.T) {
 	}
 }
 
+func TestFloatParametersAcceptEveryIntegerWidth(t *testing.T) {
+	request := NewReadQueryRequest(Read())
+	values := []struct {
+		name  string
+		value any
+	}{
+		{"i", int(-2)}, {"i8", int8(-3)}, {"i16", int16(-4)}, {"i32", int32(-5)}, {"i64", int64(-6)},
+		{"u", uint(7)}, {"u8", uint8(8)}, {"u16", uint16(9)}, {"u32", uint32(10)}, {"u64", uint64(11)},
+	}
+	for _, value := range values {
+		request.ParamF64("f64_"+value.name, value.value)
+		request.ParamF32("f32_"+value.name, value.value)
+	}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("integer-width float parameters failed: %v", err)
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`"f64_i":-2`, `"f32_u64":11`} {
+		if !strings.Contains(string(body), expected) {
+			t.Fatalf("float parameter missing %s: %s", expected, body)
+		}
+	}
+
+	rejected := NewReadQueryRequest(Read())
+	rejected.ParamF64("text", "not-a-number")
+	if !errors.Is(rejected.Validate(), ErrInvalidParameterType) {
+		t.Fatal("non-numeric float parameter unexpectedly accepted")
+	}
+}
+
 func TestBatchDecodersCoverClosedVariantsAndMalformedShapes(t *testing.T) {
 	for _, input := range []string{
 		`"prev_not_empty"`,
