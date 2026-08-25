@@ -74,12 +74,10 @@ impl From<HelixDbError> for HelixError {
             | HelixDbError::InvalidIndexSourceData { .. }
             | HelixDbError::SecondaryIndexValue(_)
             | HelixDbError::SecondaryLifecycleSteppingRequiresDisabledMode
-            | HelixDbError::MigrationSteppingRequiresDisabledMode => {
-                Self::InvalidRequest {
-                    error: error_code,
-                    msg,
-                }
-            }
+            | HelixDbError::MigrationSteppingRequiresDisabledMode => Self::InvalidRequest {
+                error: error_code,
+                msg,
+            },
             HelixDbError::WriterModeRequired { .. } | HelixDbError::ReaderModeRequired { .. } => {
                 Self::InvalidRequest {
                     error: error_code,
