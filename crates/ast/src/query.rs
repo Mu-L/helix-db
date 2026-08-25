@@ -587,6 +587,7 @@ fn normalize_typed_value(
         (QueryParamType::F64, QueryValue::F32(value)) if value.is_finite() => {
             Ok(QueryValue::F64(value.into()))
         }
+        (QueryParamType::F64, QueryValue::I64(value)) => Ok(QueryValue::F64(value as f64)),
         (QueryParamType::F32, QueryValue::F32(value)) if value.is_finite() => {
             Ok(QueryValue::F32(value))
         }
@@ -597,6 +598,7 @@ fn normalize_typed_value(
         {
             Ok(QueryValue::F32(value as f32))
         }
+        (QueryParamType::F32, QueryValue::I64(value)) => Ok(QueryValue::F32(value as f32)),
         (QueryParamType::DateTime, QueryValue::String(datetime))
             if chrono::DateTime::parse_from_rfc3339(&datetime).is_ok() =>
         {
@@ -742,12 +744,22 @@ mod tests {
             f64_from_f32.parameters().unwrap().get("value"),
             Some(QueryValue::F64(value)) if *value == 1.25
         ));
+        let f64_from_i64 = typed(QueryParamType::F64, QueryValue::I64(i64::MAX)).unwrap();
+        assert!(matches!(
+            f64_from_i64.parameters().unwrap().get("value"),
+            Some(QueryValue::F64(value)) if *value == i64::MAX as f64
+        ));
         assert!(typed(QueryParamType::F64, QueryValue::F64(f64::NAN)).is_err());
 
         let f32_from_json = typed(QueryParamType::F32, QueryValue::F64(1.25)).unwrap();
         assert!(matches!(
             f32_from_json.parameters().unwrap().get("value"),
             Some(QueryValue::F32(value)) if *value == 1.25
+        ));
+        let f32_from_i64 = typed(QueryParamType::F32, QueryValue::I64(i64::MIN)).unwrap();
+        assert!(matches!(
+            f32_from_i64.parameters().unwrap().get("value"),
+            Some(QueryValue::F32(value)) if *value == i64::MIN as f32
         ));
         assert!(typed(QueryParamType::F32, QueryValue::F64(f64::MAX)).is_err());
         assert!(typed(QueryParamType::F32, QueryValue::F32(f32::INFINITY)).is_err());
@@ -798,6 +810,25 @@ mod tests {
             QueryValue::Array(vec![QueryValue::Bool(true), QueryValue::I64(0)]),
         )
         .is_err());
+
+        let f32_array_from_i64 = typed(
+            QueryParamType::Array(Box::new(QueryParamType::F32)),
+            QueryValue::Array(vec![
+                QueryValue::I64(1),
+                QueryValue::I64(0),
+                QueryValue::I64(-1),
+            ]),
+        )
+        .unwrap();
+        assert!(matches!(
+            f32_array_from_i64.parameters().unwrap().get("value"),
+            Some(QueryValue::Array(values))
+                if values.as_slice() == [
+                    QueryValue::F32(1.0),
+                    QueryValue::F32(0.0),
+                    QueryValue::F32(-1.0),
+                ]
+        ));
     }
 
     #[test]
@@ -881,6 +912,22 @@ mod tests {
         assert!(matches!(
             typed.parameters().unwrap().get("value"),
             Some(QueryValue::F32(value)) if *value == 1.25
+        ));
+
+        let raw = read_wire(
+            r#"{"value":[1,0,-1]}"#,
+            Some(r#"{"value":{"array":"f32"}}"#),
+        );
+        let typed = sonic_rs::from_str::<QueryRequest>(&raw)
+            .expect("integer JSON values normalize into a typed f32 array");
+        assert!(matches!(
+            typed.parameters().unwrap().get("value"),
+            Some(QueryValue::Array(values))
+                if values.as_slice() == [
+                    QueryValue::F32(1.0),
+                    QueryValue::F32(0.0),
+                    QueryValue::F32(-1.0),
+                ]
         ));
 
         let raw = read_wire(r#"{"value":{"nested":[true,1,"x"]}}"#, None);
