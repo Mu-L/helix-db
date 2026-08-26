@@ -1,5 +1,7 @@
 use super::auth::require_auth;
-use super::config::{linked_database, linked_project, print_collection, print_resource};
+use super::config::{
+    linked_database, linked_project, print_collection, print_resource, project_workspace,
+};
 use crate::config::DatabaseReference;
 use crate::{
     prompts, CloudApiAction, ConfigOutputFormat, DatabaseAction, DatabaseKeyAction,
@@ -11,20 +13,26 @@ use serde_json::{json, Map, Value};
 pub async fn run_database(action: Option<DatabaseAction>) -> Result<()> {
     match action {
         Some(DatabaseAction::List { project, format }) => {
+            let linked = linked_project();
             let project = project
-                .or_else(|| linked_project().map(|(project, _)| project))
+                .or_else(|| linked.as_ref().map(|(project, _)| project.clone()))
                 .ok_or_else(|| eyre!("Pass --project or link a project in helix.toml"))?;
             let client = require_auth().await?;
+            let workspace = match linked.and_then(|(_, workspace)| workspace) {
+                Some(workspace) => workspace,
+                None => project_workspace(&client, &project).await?,
+            };
             let encoded = urlencoding::encode(&project);
+            let encoded_workspace = urlencoding::encode(&workspace);
             let clusters = client
                 .get(
-                    &format!("/v1/clusters?projectId={encoded}"),
+                    &format!("/v1/clusters?workspace_id={encoded_workspace}&project_id={encoded}"),
                     "list project clusters",
                 )
                 .await?;
             let tenants = client
                 .get(
-                    &format!("/v1/tenants?projectId={encoded}"),
+                    &format!("/v1/tenants?workspace_id={encoded_workspace}&project_id={encoded}"),
                     "list project tenants",
                 )
                 .await?;
@@ -90,11 +98,14 @@ pub async fn run_database(action: Option<DatabaseAction>) -> Result<()> {
                     "create tenant database",
                 )
                 .await?;
-            print_resource(
-                &response,
-                "Database created without an application key",
-                format,
-            )
+            response
+                .get("token")
+                .and_then(Value::as_str)
+                .filter(|token| !token.is_empty())
+                .ok_or_else(|| eyre!("database response omitted its one-time application key"))?;
+            print_resource(&response, "Database and application key created", format)?;
+            eprintln!("This application key is shown once. The CLI did not store it.");
+            Ok(())
         }
         Some(DatabaseAction::Delete { database, yes }) => {
             let database = resolve_database(database)?;

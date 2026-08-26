@@ -11,7 +11,7 @@ fn stdout(assert: Assert) -> String {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn database_keys_are_explicit_and_service_credentials_are_never_stored() {
+async fn database_and_service_credentials_are_displayed_once_and_never_stored() {
     let server = MockServer::start().await;
     let fixture = CliFixture::new().with_http_base(server.uri());
     fixture.write_credentials("owner@example.com", "session-access");
@@ -24,7 +24,8 @@ async fn database_keys_are_explicit_and_service_credentials_are_never_stored() {
             "planCode":"starter"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "tenant":{"id":"tenant-1","projectId":"project-1","name":"App"}
+            "tenant":{"id":"tenant-1","projectId":"project-1","name":"App"},
+            "token":"default-database-secret", "key":{"id":"default-key-1"}
         })))
         .expect(1)
         .mount(&server)
@@ -51,7 +52,7 @@ async fn database_keys_are_explicit_and_service_credentials_are_never_stored() {
     );
     let created: Value = serde_json::from_str(&created).unwrap();
     assert_eq!(created["tenant"]["id"], "tenant-1");
-    assert!(created.get("token").is_none());
+    assert_eq!(created["token"], "default-database-secret");
 
     Mock::given(method("POST"))
         .and(path("/v1/tenants/tenant-1/keys"))
@@ -114,6 +115,7 @@ async fn database_keys_are_explicit_and_service_credentials_are_never_stored() {
     );
     assert_eq!(credential.trim(), "service-secret");
     let stored = std::fs::read_to_string(fixture.helix_home().join("credentials")).unwrap();
+    assert!(!stored.contains("default-database-secret"));
     assert!(!stored.contains("database-secret"));
     assert!(!stored.contains("service-secret"));
 }
@@ -125,7 +127,7 @@ async fn discovery_uses_explicit_workspace_and_project_filters() {
     fixture.write_credentials("owner@example.com", "session-access");
     Mock::given(method("GET"))
         .and(path("/v1/projects"))
-        .and(query_param("workspaceId", "ws-1"))
+        .and(query_param("workspace_id", "ws-1"))
         .and(header("authorization", "Bearer session-access"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "projects":[{"id":"project-1","displayName":"Graph"}]

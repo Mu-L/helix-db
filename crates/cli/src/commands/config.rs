@@ -1,3 +1,4 @@
+use crate::cloud::CloudClient;
 use crate::commands::auth::require_auth;
 use crate::config::DatabaseReference;
 use crate::project::ProjectContext;
@@ -53,7 +54,7 @@ pub async fn run_project(action: Option<ProjectConfigAction>) -> Result<()> {
             let response = client
                 .get(
                     &format!(
-                        "/v1/projects?workspaceId={}",
+                        "/v1/projects?workspace_id={}",
                         urlencoding::encode(&workspace_id)
                     ),
                     "list projects",
@@ -153,10 +154,21 @@ pub async fn run_cluster(action: Option<ClusterConfigAction>) -> Result<()> {
             let project_id =
                 project_id.or_else(|| linked.as_ref().map(|(project, _)| project.clone()));
             let workspace_id = workspace_id.or_else(|| linked.and_then(|(_, workspace)| workspace));
+            let client = require_auth().await?;
             let query = match (project_id, workspace_id) {
-                (Some(project), _) => format!("projectId={}", urlencoding::encode(&project)),
+                (Some(project), workspace) => {
+                    let workspace = match workspace {
+                        Some(workspace) => workspace,
+                        None => project_workspace(&client, &project).await?,
+                    };
+                    format!(
+                        "workspace_id={}&project_id={}",
+                        urlencoding::encode(&workspace),
+                        urlencoding::encode(&project)
+                    )
+                }
                 (None, Some(workspace)) => {
-                    format!("workspaceId={}", urlencoding::encode(&workspace))
+                    format!("workspace_id={}", urlencoding::encode(&workspace))
                 }
                 (None, None) => {
                     return Err(eyre!(
@@ -164,8 +176,7 @@ pub async fn run_cluster(action: Option<ClusterConfigAction>) -> Result<()> {
                     ));
                 }
             };
-            let response = require_auth()
-                .await?
+            let response = client
                 .get(&format!("/v1/clusters?{query}"), "list clusters")
                 .await?;
             print_collection(&response, "clusters", "Clusters", format)
@@ -284,16 +295,21 @@ pub(crate) async fn resolve_cloud_target(
         .or_else(|| linked.as_ref().map(|(project, _)| project.clone()))
         .ok_or_else(|| eyre!("Pass --database or --project; no project is linked"))?;
     let workspace_id = workspace_id.or_else(|| linked.and_then(|(_, workspace)| workspace));
+    let workspace_id = match workspace_id {
+        Some(workspace_id) => workspace_id,
+        None => project_workspace(&client, &project_id).await?,
+    };
     let encoded_project = urlencoding::encode(&project_id);
+    let encoded_workspace = urlencoding::encode(&workspace_id);
     let clusters = client
         .get(
-            &format!("/v1/clusters?projectId={encoded_project}"),
+            &format!("/v1/clusters?workspace_id={encoded_workspace}&project_id={encoded_project}"),
             "list project clusters",
         )
         .await?;
     let tenants = client
         .get(
-            &format!("/v1/tenants?projectId={encoded_project}"),
+            &format!("/v1/tenants?workspace_id={encoded_workspace}&project_id={encoded_project}"),
             "list project tenants",
         )
         .await?;
@@ -333,20 +349,18 @@ pub(crate) async fn resolve_cloud_target(
             "Project {project_id} does not resolve to exactly one database. Candidates: {available}. Pass --database."
         ));
     };
-    let workspace_id = match workspace_id {
-        Some(workspace_id) => workspace_id,
-        None => {
-            let project = client
-                .get(&format!("/v1/projects/{project_id}"), "get project")
-                .await?;
-            required_string(&project, "workspaceId")?.to_owned()
-        }
-    };
     Ok(ResolvedCloudTarget {
         database: database.clone(),
         project_id,
         workspace_id,
     })
+}
+
+pub(crate) async fn project_workspace(client: &CloudClient, project: &str) -> Result<String> {
+    let remote = client
+        .get(&format!("/v1/projects/{project}"), "get project owner")
+        .await?;
+    Ok(required_string(&remote, "workspaceId")?.to_owned())
 }
 
 fn required_string<'a>(value: &'a Value, field: &str) -> Result<&'a str> {

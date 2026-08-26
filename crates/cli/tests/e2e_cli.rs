@@ -601,26 +601,21 @@ fn default_instance_and_noninteractive_error_branches_run_through_the_binary() {
     );
     assert!(unconfirmed_prune.contains("Re-run with --yes"));
 
+    let delete = stderr(
+        fixture
+            .command()
+            .current_dir(&project)
+            .args(["delete", "dev", "--yes"])
+            .assert()
+            .failure(),
+    );
+    assert!(delete.contains("Cannot delete the final instance 'dev'"));
     fixture
         .command()
         .current_dir(&project)
-        .args(["delete", "dev", "--yes"])
+        .arg("status")
         .assert()
         .success();
-    for command in ["start", "stop", "restart"] {
-        let error = stderr(
-            fixture
-                .command()
-                .current_dir(&project)
-                .arg(command)
-                .assert()
-                .failure(),
-        );
-        assert!(
-            error.contains("at least one instance must be defined"),
-            "{error}"
-        );
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

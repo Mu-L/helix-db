@@ -333,7 +333,7 @@ pub enum DatabaseAction {
         #[arg(long, value_enum, default_value_t = ConfigOutputFormat::Human)]
         format: ConfigOutputFormat,
     },
-    /// Create a shared or dedicated tenant database; this never creates a key
+    /// Create a tenant database and display its default read-write key once
     Create {
         #[arg(long)]
         project: Option<String>,

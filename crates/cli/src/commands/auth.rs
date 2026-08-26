@@ -15,6 +15,8 @@ use tokio::{
 };
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const LOGIN_CALLBACK_ADDRESS: &str = "127.0.0.1:8765";
+const LOGIN_CALLBACK_URI: &str = "http://localhost:8765/callback";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,16 +51,16 @@ pub async fn login() -> Result<()> {
     }
     output::info("Logging into Helix Cloud with WorkOS");
     let client = CloudClient::new()?;
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let callback = format!(
-        "http://127.0.0.1:{}/callback",
-        listener.local_addr()?.port()
-    );
+    let listener = TcpListener::bind(LOGIN_CALLBACK_ADDRESS)
+        .await
+        .wrap_err_with(|| {
+            format!("bind the WorkOS callback listener at {LOGIN_CALLBACK_ADDRESS}")
+        })?;
     let started: StartLoginResponse = serde_json::from_value(
         client
             .public_post(
                 "/v1/auth/login:start",
-                json!({"redirectUri": callback, "provider": "AUTH_PROVIDER_GITHUB"}),
+                json!({"redirectUri": LOGIN_CALLBACK_URI, "provider": "AUTH_PROVIDER_GITHUB"}),
                 "start WorkOS login",
             )
             .await?,
