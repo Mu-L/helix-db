@@ -8,7 +8,7 @@ This CLI has **no `helix compile` and no `helix check`**, and there is **no `.hx
 
 - **Queries are JSON requests** sent to a *running* instance via `POST /v2/query` (`helix query`). Validation happens server-side, in the instance.
 - **Local instances are Docker/Podman containers** (image `ghcr.io/helixdb/helixdb:v0.0.4`), managed by `LocalRuntime`. `helix start` starts one; in-memory by default, on-disk (MinIO-backed) with `--disk`.
-- **Enterprise instances deploy to Helix Cloud** via `helix push`, with auth/metadata managed through `helix auth`, `helix sync`, and the `workspace`/`project`/`cluster` commands.
+- **Cloud instances are linked resources.** The CLI authenticates only with a rotating WorkOS session and sends Cloud queries through WFE's backend broker. It does not deploy query bundles or call Cloud gateways directly.
 
 The Rust DSL builder lives in `sdks/rust/` (a client library), not in this CLI.
 
@@ -20,11 +20,11 @@ The Rust DSL builder lives in `sdks/rust/` (a client library), not in this CLI.
 
 - `commands/` — one module per subcommand (the handlers below).
 - `lib.rs` — the public crate root; defines the subcommand enums (`InitTarget`, `AddTarget`, `AuthAction`, `MetricsAction`, `Workspace/Project/ClusterConfigAction`, `ConfigOutputFormat`) and re-exports modules.
-- `config.rs` — `helix.toml` (`HelixConfig`) and user-level `~/.helix/config` (`WorkspaceConfig`) formats; load/save/validate; key constants.
+- `cloud.rs` — strict WorkOS session loading, locked refresh rotation, and WFE requests.
+- `config.rs` — `helix.toml` (`HelixConfig`) load/save/validation; stable project and typed database linkage only.
 - `project.rs` — `ProjectContext::find_and_load()` walks up the tree to find `helix.toml`; resolves `.helix/<instance>` state dirs. `get_helix_cache_dir()` honors `HELIX_CACHE_DIR`.
 - `local_runtime.rs` — `LocalRuntime`: Docker/Podman container lifecycle (`check_available`, `container_name` = `helix-<project>-<instance>`, pull/run/stop/restart/status/prune). Disk mode also spins up MinIO container + volume + network; memory mode is the Helix container alone. Health-checks via TCP probe.
-- `enterprise_cloud.rs` — cloud REST types (`CliWorkspace`, `CliProject`, `CliEnterpriseCluster`, …) and fetchers (`fetch_workspaces`, `fetch_projects`, `fetch_workspace_clusters`). `cloud_base_url()` reads `CLOUD_AUTHORITY` (default `cloud.helix-db.com`).
-- `sse_client.rs` — `SseClient` / `SseEvent` for server-sent-event streams: auth device-code flow, deploy progress, and enterprise log ranges.
+- `service_endpoints.rs` — resolves the WFE base URL from `CLOUD_AUTHORITY` or the production default.
 - `metrics_sender.rs` — `MetricsSender` + `MetricsConfig` (level Full/Basic/Off, user_id, email). Async event sender to the logs endpoint; created in `main`, `shutdown()` on exit.
 - `port.rs` — `is_port_available`, `find_available_port`, `ensure_port_available` (scans up to 100 ports).
 - `update.rs` — `check_for_updates` (cached 24h in `~/.helix/`), `current_version`; `commands::update` does the actual `self_update` binary swap.
@@ -38,9 +38,9 @@ The Rust DSL builder lives in `sdks/rust/` (a client library), not in this CLI.
 All instance args default to `dev` (or prompt interactively when ambiguous). Enterprise/cloud commands call `require_auth()` (credentials from `helix auth login`).
 
 **Project setup**
-- `init [--path <dir>] (local|enterprise)` — scaffold a project: writes `helix.toml`, `.helix/`, `examples/request.json`, `AGENTS.md` (local only; never overwrites an existing one), and `.gitignore` entries. `--path` is a clap global arg, so it works before or after the subcommand. `local`: `--name dev --port 8080 [--disk]`. `enterprise`: `--name production --cluster-id <id> [--gateway-url <url>]`.
+- `init [--path <dir>] (local|cloud)` — scaffold a project. Cloud uses `--database cluster:<id>|tenant:<id>` plus owner IDs when they cannot be derived; it stores no gateway URL or query credential.
 - `chef` (alias `cook`) — interactive one-shot bootstrapper that hands off to an AI agent. **See dedicated section below.**
-- `add [--path <dir>] (local|enterprise)` — add an instance to an existing `helix.toml` without clobbering others. Same flags as `init` targets (`--name` required here); `--path` is global (either position) and points at the project directory.
+- `add [--path <dir>] (local|cloud)` — add an instance to an existing `helix.toml` without clobbering others. Cloud resolves and stores a typed database link.
 
 **Local lifecycle**
 - `start [instance] [--foreground] [--port <p>] [--disk] [--persist]` (alias `run`) — start a local container (background by default; `--detach` is a hidden alias). `--disk` forces on-disk/MinIO storage for this run; `--persist` writes the resolved port/storage back to `helix.toml`. The in-memory data-loss warning is shown only once per instance (tracked by a `.warned-memory` marker in the instance workspace).
@@ -51,16 +51,17 @@ All instance args default to `dev` (or prompt interactively when ambiguous). Ent
 - `delete <instance> [-y/--yes]` — remove instance from `helix.toml` **and** its local runtime state (instance arg required).
 
 **Queries**
-- `query [instance] (--file <req.json> | --json '<body>' | -e/--ts '<ts>' | --ts-file <query.ts>) [--warm] [--host <h>] [--port <p>] [--compact]` — send a query to `POST /v2/query`. The four input flags are mutually exclusive and exactly one is required (enforced by a clap `ArgGroup`). `--file`/`--json` pass a raw query JSON body (`request_type` + `query`). `-e`/`--ts`/`--ts-file` accept a **raw TypeScript DSL expression** (like `mysql -e`): `src/ts_query.rs` evaluates it in Node with the published `@helix-db/helix-db` SDK in scope (auto-imports `g`/`readBatch`/`writeBatch`/`defineParams`/`param`), calls `.toQueryJson()`, and feeds the result into the same send path — `request_type` is inferred from read-vs-write batch. The CLI installs exact SDK version `3.0.0` into a prepared cache, verifies the package version/import, and atomically promotes it to `<helix cache>/ts-runtime/`; missing, corrupt, partial, or wrong-version caches reinstall under a cross-process lock. Node 20+ and npm are required on PATH. `--warm` adds `X-Helix-Warm` (read-only). Pretty JSON unless `--compact`. Enterprise targets use the configured gateway URL + auth header; the auth value is read from `query_auth_env`, now also loaded from a project-root `.env` (via `dotenvy`).
+- `query [instance|cluster:<id>|tenant:<id>] (--file <req.json> | --json '<body>' | -e/--ts '<ts>' | --ts-file <query.ts>) [--warm] [--host <h>] [--port <p>] [--compact]` — local targets send to `POST /v2/query` with auth disabled. Cloud targets use the active WorkOS session and WFE's separate read/write broker endpoints. They never load an application key. The four input flags are mutually exclusive and exactly one is required. TypeScript input is evaluated through the cached `@helix-db/helix-db` SDK.
 
 **Cloud**
-- `auth (login | logout | create-key <cluster>)` — `login`: GitHub OAuth via SSE, stores `~/.helix/credentials`. `logout`: clears it. `create-key`: rotate a cluster API key (shown once).
-- `push [instance]` — deploy an Enterprise instance to Helix Cloud (`deploy_enterprise`); errors on local instances; emits deploy metrics.
-- `sync [instance] [-y/--yes] [--dry-run]` — reconcile enterprise metadata + source between local and cloud (SHA256/mtime diff, conflict prompts unless `--yes`); updates `helix.toml`. `--dry-run` (conflicts with `--yes`) fetches remote state and prints the would-be plan via `print_dry_run_summary`, then returns before any mutation.
-- `workspace (list|show|switch) [--format human|json]` — manage active cloud workspace (selection in `~/.helix/config`).
-- `project (list|show|switch) [--format human|json]` — manage linked cloud project.
-- `cluster list [--workspace-id] [--project-id] [--format human|json]` — list Enterprise clusters.
-- `config (workspace|project|cluster) …` — hidden parent grouping the three above.
+- `auth (login|status|logout)` — WorkOS PKCE login and rotating session credentials. Refresh is serialized and persisted atomically. There is no API-key or service-credential login.
+- `workspace (list|get)` — discover workspaces without global selection state.
+- `project (list|get|create|delete|link)` — discover/manage projects and link only the current `helix.toml`.
+- `cluster (list|get|indexes)` — discover and inspect existing clusters.
+- `database (list|get|create|delete|indexes|key)` — manage tenant databases. Creation returns a default read-write application key once; the CLI displays but never stores it.
+- `service-credential (create|list|get|update|revoke)` — manage workspace-owned headless automation credentials through the user session. These credentials cannot log the CLI in.
+- `api (get|post|patch|delete)` — call WFE with the active WorkOS session.
+- `push`, `sync`, `workspace switch`, `project switch`, and `auth create-key` do not exist.
 
 **Misc**
 - `metrics (full|basic|off|status)` — manage telemetry level (`~/.helix/metrics.toml`); `full` prompts for email.
@@ -73,7 +74,7 @@ Defined in `src/commands/chef.rs`, dispatched from `src/main.rs` (`Commands::Che
 
 ### End-to-end flow (`run()` → `collect_options()`)
 
-1. **Ensure Helix Cloud auth** — `chef` requires Cloud credentials before setup. If `~/.helix/credentials` is missing/invalid, it runs the existing GitHub device login flow inline. Login failure exits `chef` without user-facing error and emits a Chef auth-failure metric.
+1. **Ensure Helix Cloud auth** — `chef` requires a WorkOS session. If credentials are missing or invalid, it runs the same PKCE login as `helix auth login`.
 2. **Ask the build intent** — "What do you want to build?" (free text; blank → Personal CRM default).
 3. **Ask the setup mode** — Manual vs Automatic (recommended). Manual adds per-step confirm prompts; Automatic runs everything with defaults. Both still ask the intent question.
 4. **Setup pipeline:**
@@ -134,11 +135,11 @@ Snapshot safety excludes `.git`, `.helix`, `node_modules`, `.next`, `target`, bu
 
 - `[project]` — `name` (required), optional `id` / `workspace_id`, `queries` (default `db/`), `container_runtime` (`docker` | `podman`, default docker).
 - `[local.<name>]` — `port` (default `6969`), `image` (default `ghcr.io/helixdb/helixdb`), `tag` (default `v0.0.4`), `storage` (`memory` | `disk`, default memory).
-- `[enterprise.<name>]` — `cluster_id` (required), optional `workspace_id`/`project_id`/`gateway_url`, `query_auth_header` (default `Authorization`), `query_auth_env` (default `HELIX_API_KEY`), `availability_mode`, `gateway_node_type`, `db_node_type`, `min_instances`/`max_instances` (default 1), plus a **flattened `DbConfig`**: `vector_config` (m=16, ef_construction=128, ef_search=768, db_max_size_gb=20), `graph_config.secondary_indices`, `mcp`/`bm25` (default true), `schema`, `embedding_model` (default `text-embedding-ada-002`), `graphvis_node_label`.
+- `[enterprise.<name>]` — typed `database = "cluster:<id>"|"tenant:<id>"`, plus optional stable `workspace_id` and `project_id` linkage. Gateway URLs, query keys, query bundles, and sync snapshots are rejected as obsolete.
 
-`HelixConfig::validate` requires a non-empty project name, ≥1 instance, non-empty instance names, and a non-empty `cluster_id` for each enterprise instance. `default_config()` seeds a single in-memory `local.dev`.
+`HelixConfig::validate` requires a non-empty project name, at least one instance, non-empty instance names, and a valid typed database for each Cloud instance. `default_config()` seeds a single in-memory `local.dev`.
 
-**User-level state — `~/.helix/`:** `config` (`WorkspaceConfig` = active `workspace_id`), `credentials` (auth), `metrics.toml` (telemetry level/user). Constants: `DEFAULT_LOCAL_PORT = 6969`, `DEFAULT_LOCAL_IMAGE`, `DEFAULT_LOCAL_IMAGE_TAG`, `DEFAULT_QUERY_AUTH_HEADER = Authorization`, `DEFAULT_QUERY_AUTH_ENV = HELIX_API_KEY`.
+**User-level state — `~/.helix/`:** `credentials` contains only the rotating WorkOS session, and `metrics.toml` contains telemetry preferences. There is no global workspace/project selection file and no Cloud query key.
 
 ## Testing
 

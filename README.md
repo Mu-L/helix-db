@@ -289,17 +289,18 @@ func main() {
 
 ## HelixDB Cloud
 
-HelixDB Cloud is an object-storage-backed deployment with integrated vector and full-text search, full ACID transactions, a single writer with auto-scaling reader nodes, and high availability (3+ gateways and DB nodes). Cloud clusters use a separate deploy path from local instances:
+HelixDB Cloud is an object-storage-backed deployment with integrated vector and full-text search, full ACID transactions, a single writer with auto-scaling reader nodes, and high availability (3+ gateways and DB nodes). The CLI uses a WorkOS session for Cloud control-plane and brokered query operations:
 
 ```bash
-helix auth login                                  # authenticate
-helix workspace switch <workspace>                # select workspace + project
-helix project switch <project>
-helix init cloud --cluster-id <cluster-id>        # or: helix add cloud --name production --cluster-id <id>
-helix push production                             # deploy the query project
-helix sync production                             # pull gateway URL + auth contract into helix.toml
+helix auth login
+helix workspace list
+helix project link <project-id> --workspace <workspace-id>
+helix init cloud --database tenant:<tenant-id> --project <project-id> --workspace <workspace-id>
 helix query production --file examples/request.json
 ```
+
+Cloud queries go through the authenticated backend broker. Application keys returned by tenant or
+key creation are for direct gateway clients; the CLI displays them once and never stores or uses them.
 
 ## Commercial Support
 
