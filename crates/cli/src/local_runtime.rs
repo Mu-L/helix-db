@@ -314,6 +314,7 @@ impl LocalRuntime {
     }
 
     pub fn stop(&self, instance_name: &str) -> Result<bool> {
+        Self::check_available(self.runtime)?;
         let name = self.container_name(instance_name);
         let removed_helix = self.remove_container(&name)?;
         let removed_disk_resources = self.remove_disk_resources(instance_name, false)?;
@@ -325,6 +326,7 @@ impl LocalRuntime {
             return self.run_detached(instance_name, config);
         }
 
+        Self::check_available(self.runtime)?;
         let name = self.container_name(instance_name);
         let output = self
             .runtime_command()
