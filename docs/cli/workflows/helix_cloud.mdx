@@ -36,8 +36,9 @@ pageType: "Guide"
 
 The WorkOS session identifies the user. `database.query.read` or `database.query.write` independently
 authorizes the selected database; project-management access does not imply query access. The backend
-forwards an authorized request with a 30-second database- and request-type-scoped capability. The CLI
-never receives that capability and never contacts the gateway directly.
+forwards the authorized request using the existing cluster-scoped operational gateway key and, for a
+tenant database, the exact tenant header. The CLI never receives that key and never contacts the
+gateway directly.
 
 Owners/admins have both query scopes by default. Members have neither unless explicitly granted.
 Local queries keep the current local auth-disabled path.

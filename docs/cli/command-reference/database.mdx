@@ -23,8 +23,8 @@ helix database key list tenant:<id>
 helix database key revoke tenant:<id> --key <key-id> --yes
 ```
 
-Creating a database never creates a key or returns a token. Key creation is a separate explicit
-operation. The raw application token is printed once; the session-authenticated CLI never stores or
-uses it. Application keys are for software that calls the gateway directly.
+Creating a database creates a default read-write application key and prints its raw token once. The
+session-authenticated CLI never stores or uses it. Additional key creation is explicit, and each new
+raw token is also printed once. Application keys are for software that calls the gateway directly.
 
 Dedicated-cluster create/delete lifecycle is not supported by this CLI.

@@ -37,8 +37,9 @@ Tools:
 - `helix_execute_write_query`: consume the matching confirmation, then dispatch exactly once.
 
 Targets are textual `tenant:<id>` or dedicated `cluster:<id>`. Project-management `read`/`write`
-never implies query access. The broker uses a 30-second internal capability scoped to the exact
-database, gateway audience, and read/write request type. It never creates or uses a customer key.
+never implies query access. The backend resolves the target and forwards through the gateway with
+the existing cluster-scoped operational key. Tenant queries include the exact tenant header. MCP
+never receives that key and never creates or uses a customer key.
 
 ## Admin MCP
 
