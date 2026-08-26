@@ -51,6 +51,15 @@ We welcome contributions from the community! This guide will help you get starte
 - **Rust**: 1.97.1 (installed automatically from `rust-toolchain.toml` by [rustup](https://rustup.rs/))
 - **Cargo**: Comes with Rust
 - **Git**: For version control
+- **A C toolchain and OpenSSL development headers (Linux only)**: `helix-cli` depends on
+  `reqwest` with its default features, which enables `native-tls`. On Linux that builds
+  `openssl-sys`, which needs a C compiler, `pkg-config`, and the OpenSSL headers. macOS
+  and Windows do not need them, because `native-tls` uses Security.framework and SChannel
+  there. Most Linux desktops already have the packages, but a clean container, CI image,
+  or WSL install does not, and `cargo build` fails there with
+  `Could not find directory of OpenSSL installation`.
+  - Debian/Ubuntu: `sudo apt-get install -y build-essential pkg-config libssl-dev`
+  - Other Linux distributions: install the equivalent OpenSSL development package
 
 ### Optional Tools
 - **cargo-watch**: For development auto-reloading
