@@ -55,7 +55,7 @@ pub mod production_coverage {
 mod production_text_lifecycle_workspace_tests;
 
 use std::collections::HashMap;
-use std::num::{NonZeroU64, NonZeroUsize};
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
@@ -114,6 +114,53 @@ pub enum MembershipDeltaWriteMode {
     LegacyExclusive,
     /// Emit conflict-safe V2 membership delta operands.
     DisjointV2,
+}
+
+/// Durable storage schema understood by managed writer migration authorization.
+pub const MANAGED_STORAGE_SCHEMA_VERSION: u32 = 1;
+
+/// Non-forgeable capability data for one operator-authorized storage migration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedMigrationAuthorization {
+    operation_id: String,
+    target_schema_version: NonZeroU32,
+}
+
+impl ManagedMigrationAuthorization {
+    /// Creates authorization for one exact controlled rollout operation.
+    pub fn new(operation_id: impl Into<String>, target_schema_version: NonZeroU32) -> Result<Self> {
+        let operation_id = operation_id.into();
+        if operation_id.trim().is_empty() {
+            return Err(HelixDbError::Config(
+                "managed migration operation ID must not be empty".into(),
+            ));
+        }
+        Ok(Self {
+            operation_id,
+            target_schema_version,
+        })
+    }
+
+    /// Exact durable controlled-rollout operation authorizing migration.
+    pub fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+
+    /// Storage schema version the controlled rollout is authorized to install.
+    pub const fn target_schema_version(&self) -> NonZeroU32 {
+        self.target_schema_version
+    }
+}
+
+/// Explicit purpose for opening a managed SlateDB writer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManagedWriterOpenIntent {
+    /// Initialize a pristine managed database at the current storage schema.
+    Bootstrap,
+    /// Recover current storage without running any migration work.
+    Failover,
+    /// Run storage migration authorized by one durable controlled rollout.
+    ControlledMigration(ManagedMigrationAuthorization),
 }
 
 /// Meaning of the byte accounting exposed for one cache tier.
@@ -773,6 +820,14 @@ enum IndexLifecycleScheduling {
     ExplicitOnly,
 }
 
+enum WriterOpenMode {
+    Embedded,
+    Managed {
+        writer_epoch: NonZeroU64,
+        intent: ManagedWriterOpenIntent,
+    },
+}
+
 impl IndexLifecycleScheduling {
     const fn resolve(
         self,
@@ -847,13 +902,17 @@ impl HelixDB {
         source: HelixDbSource,
         config: DbConfig,
         writer_epoch: NonZeroU64,
+        intent: ManagedWriterOpenIntent,
     ) -> Result<Self> {
         let (path, object_store) = source.into_parts()?;
         Self::open_writer_inner_with_index_scheduling(
             path,
             object_store,
             config,
-            Some(writer_epoch),
+            WriterOpenMode::Managed {
+                writer_epoch,
+                intent,
+            },
             IndexLifecycleScheduling::Configured,
         )
         .await
@@ -933,7 +992,7 @@ impl HelixDB {
             path,
             object_store,
             config,
-            None,
+            WriterOpenMode::Embedded,
             IndexLifecycleScheduling::Configured,
         )
         .await
@@ -944,7 +1003,7 @@ impl HelixDB {
         path: String,
         object_store: Arc<dyn ObjectStore>,
         config: DbConfig,
-        writer_epoch: Option<NonZeroU64>,
+        open_mode: WriterOpenMode,
         index_scheduling: IndexLifecycleScheduling,
     ) -> Result<Self> {
         let vector_memory_settings = *config.cache().vector_memory();
@@ -956,8 +1015,8 @@ impl HelixDB {
                     .slate()
                     .to_writer_settings(config.cache().object_store_cache()),
             );
-        if let Some(writer_epoch) = writer_epoch {
-            builder = builder.with_writer_epoch(writer_epoch);
+        if let WriterOpenMode::Managed { writer_epoch, .. } = &open_mode {
+            builder = builder.with_writer_epoch(*writer_epoch);
         }
 
         match config.cache().mode() {
@@ -972,7 +1031,41 @@ impl HelixDB {
             }
         }
         let db = Arc::new(builder.build().await?);
-        let writer = migrations::startup::prepare_writer(Arc::clone(&db), &config).await?;
+        let writer = match &open_mode {
+            WriterOpenMode::Embedded => {
+                migrations::startup::prepare_writer(Arc::clone(&db), &config).await?
+            }
+            WriterOpenMode::Managed {
+                intent: ManagedWriterOpenIntent::Bootstrap,
+                ..
+            } => {
+                migrations::startup::bootstrap_managed_writer(&db).await?;
+                index_lifecycle::outbox::reconcile_operation_queue(&db).await?;
+                HelixWriter::new(Arc::clone(&db), config.id_lease_size())
+            }
+            WriterOpenMode::Managed {
+                intent: ManagedWriterOpenIntent::Failover,
+                ..
+            } => {
+                migrations::startup::require_current_managed_writer(&db).await?;
+                index_lifecycle::outbox::reconcile_operation_queue(&db).await?;
+                HelixWriter::new(Arc::clone(&db), config.id_lease_size())
+            }
+            WriterOpenMode::Managed {
+                intent: ManagedWriterOpenIntent::ControlledMigration(authorization),
+                ..
+            } => {
+                if authorization.target_schema_version().get() != MANAGED_STORAGE_SCHEMA_VERSION {
+                    return Err(HelixDbError::Config(format!(
+                        "managed migration operation {} targets storage schema {}, but this binary requires {}",
+                        authorization.operation_id(),
+                        authorization.target_schema_version(),
+                        MANAGED_STORAGE_SCHEMA_VERSION,
+                    )));
+                }
+                migrations::startup::prepare_writer(Arc::clone(&db), &config).await?
+            }
+        };
         let loaded_catalog =
             index_lifecycle::repository::load_scope_catalog(db.as_ref(), DataScope::LegacyUnscoped)
                 .await?;
@@ -987,14 +1080,28 @@ impl HelixDB {
             index_scheduling,
             index_lifecycle::repository::ReaderStorageCompatibility::Current,
         );
-        if let Err(error) = migrations::startup::finish_writer(&db).await {
-            let _ = db.close().await;
-            return Err(error);
+        let run_migrations = matches!(
+            &open_mode,
+            WriterOpenMode::Embedded
+                | WriterOpenMode::Managed {
+                    intent: ManagedWriterOpenIntent::ControlledMigration(_),
+                    ..
+                }
+        );
+        if run_migrations {
+            if let Err(error) = migrations::startup::finish_writer(&db).await {
+                let _ = db.close().await;
+                return Err(error);
+            }
         }
-        db.run_configured_startup_cache_warm().await?;
-        db.run_configured_vector_memory_warm(vector_memory_settings)
+        let allow_blocking_warm = matches!(&open_mode, WriterOpenMode::Embedded);
+        db.run_configured_startup_cache_warm(allow_blocking_warm)
             .await?;
-        db.start_background_migration_worker().await;
+        db.run_configured_vector_memory_warm(vector_memory_settings, allow_blocking_warm)
+            .await?;
+        if run_migrations {
+            db.start_background_migration_worker().await;
+        }
         Ok(db)
     }
 
@@ -1112,8 +1219,8 @@ impl HelixDB {
             fts_cache,
             compatibility,
         );
-        db.run_configured_startup_cache_warm().await?;
-        db.run_configured_vector_memory_warm(vector_memory_settings)
+        db.run_configured_startup_cache_warm(true).await?;
+        db.run_configured_vector_memory_warm(vector_memory_settings, true)
             .await?;
         Ok(db)
     }
@@ -2345,15 +2452,17 @@ impl HelixDB {
     async fn run_configured_vector_memory_warm(
         &self,
         settings: config::VectorMemorySettings,
+        allow_blocking: bool,
     ) -> Result<()> {
         if matches!(self.storage(), HelixStorage::Reader(_)) {
             return Ok(());
         }
         match settings.hydration() {
-            config::VectorMemoryHydrationMode::BlockingThenBackground { .. } => {
+            config::VectorMemoryHydrationMode::BlockingThenBackground { .. } if allow_blocking => {
                 self.refresh_vector_memory_cache().await?;
             }
-            config::VectorMemoryHydrationMode::Background { .. } => {}
+            config::VectorMemoryHydrationMode::BlockingThenBackground { .. }
+            | config::VectorMemoryHydrationMode::Background { .. } => {}
         }
 
         let runtime = Arc::downgrade(&self.inner);
@@ -2405,7 +2514,7 @@ impl HelixDB {
         Ok(())
     }
 
-    async fn run_configured_startup_cache_warm(&self) -> Result<()> {
+    async fn run_configured_startup_cache_warm(&self, allow_blocking: bool) -> Result<()> {
         match self
             .inner
             .config
@@ -2414,12 +2523,12 @@ impl HelixDB {
             .slate_warm()
             .map(config::SlateWarmConfig::mode)
         {
-            Some(config::CacheWarmMode::Blocking) => {
+            Some(config::CacheWarmMode::Blocking) if allow_blocking => {
                 if let Err(error) = self.warm_slate_cache().await {
                     tracing::warn!(%error, "SlateDB blocking startup cache warm failed");
                 }
             }
-            Some(config::CacheWarmMode::Background) => {
+            Some(config::CacheWarmMode::Blocking | config::CacheWarmMode::Background) => {
                 let runtime = Arc::downgrade(&self.inner);
                 let handle = tokio::spawn(async move {
                     let Some(inner) = runtime.upgrade() else {
@@ -2437,12 +2546,12 @@ impl HelixDB {
         }
 
         match self.inner.config.db().cache().fts_warm_mode() {
-            config::CacheWarmMode::Blocking => {
+            config::CacheWarmMode::Blocking if allow_blocking => {
                 if let Err(error) = self.warm_fts_cache().await {
                     tracing::warn!(%error, "FTS blocking startup cache warm failed");
                 }
             }
-            config::CacheWarmMode::Background => {
+            config::CacheWarmMode::Blocking | config::CacheWarmMode::Background => {
                 let runtime = Arc::downgrade(&self.inner);
                 let handle = tokio::spawn(async move {
                     let Some(inner) = runtime.upgrade() else {
@@ -3218,6 +3327,128 @@ mod tests {
         reader.close().await.unwrap();
     }
 
+    #[test]
+    fn managed_migration_authorization_rejects_empty_operation_ids() {
+        assert!(matches!(
+            ManagedMigrationAuthorization::new(
+                "   ",
+                NonZeroU32::new(MANAGED_STORAGE_SCHEMA_VERSION).unwrap(),
+            ),
+            Err(HelixDbError::Config(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn managed_bootstrap_is_explicit_and_failover_is_recovery_only() {
+        let token = ProcessLocalDatabaseToken::new("facade-managed-open-intents").unwrap();
+        let source = || HelixDbSource::InMemoryToken {
+            token: token.clone(),
+        };
+
+        let Err(error) = HelixDB::open_managed_writer_with_config(
+            source(),
+            DbConfig::new(),
+            NonZeroU64::new(1).unwrap(),
+            ManagedWriterOpenIntent::Failover,
+        )
+        .await
+        else {
+            panic!("failover must not initialize pristine storage")
+        };
+        assert!(matches!(
+            error,
+            HelixDbError::WriterMigrationRequired {
+                requirement: crate::error::WriterMigrationRequirement::IncompleteStorageSchema,
+            }
+        ));
+
+        let bootstrap = HelixDB::open_managed_writer_with_config(
+            source(),
+            DbConfig::new(),
+            NonZeroU64::new(2).unwrap(),
+            ManagedWriterOpenIntent::Bootstrap,
+        )
+        .await
+        .expect("explicit bootstrap initializes current storage");
+        let prefix = migrations::migration_job_scan_prefix_scoped(DataScope::LegacyUnscoped);
+        let mut jobs = bootstrap
+            .inner_db()
+            .scan_prefix(prefix.clone(), ..)
+            .await
+            .unwrap();
+        assert!(jobs.next().await.unwrap().is_none());
+        bootstrap.close().await.expect("bootstrap writer closes");
+
+        let recovered = HelixDB::open_managed_writer_with_config(
+            source(),
+            DbConfig::new(),
+            NonZeroU64::new(3).unwrap(),
+            ManagedWriterOpenIntent::Failover,
+        )
+        .await
+        .expect("current storage recovers without migration");
+        let mut jobs = recovered.inner_db().scan_prefix(prefix, ..).await.unwrap();
+        assert!(jobs.next().await.unwrap().is_none());
+        recovered.close().await.expect("recovered writer closes");
+    }
+
+    #[tokio::test]
+    async fn managed_failover_does_not_repair_incomplete_storage() {
+        let token = ProcessLocalDatabaseToken::new("facade-managed-incomplete-failover").unwrap();
+        let source = || HelixDbSource::InMemoryToken {
+            token: token.clone(),
+        };
+        let bootstrap = HelixDB::open_managed_writer_with_config(
+            source(),
+            DbConfig::new(),
+            NonZeroU64::new(1).unwrap(),
+            ManagedWriterOpenIntent::Bootstrap,
+        )
+        .await
+        .expect("managed bootstrap succeeds");
+        bootstrap
+            .inner_db()
+            .delete(migrations::storage_schema_complete_key_for_tests(
+                DataScope::LegacyUnscoped,
+            ))
+            .await
+            .expect("schema completion marker is removed");
+        bootstrap.close().await.expect("bootstrap closes");
+
+        let Err(error) = HelixDB::open_managed_writer_with_config(
+            source(),
+            DbConfig::new(),
+            NonZeroU64::new(2).unwrap(),
+            ManagedWriterOpenIntent::Failover,
+        )
+        .await
+        else {
+            panic!("failover must fail closed on incomplete storage")
+        };
+        assert!(matches!(
+            error,
+            HelixDbError::WriterMigrationRequired {
+                requirement: crate::error::WriterMigrationRequirement::IncompleteStorageSchema,
+            }
+        ));
+
+        let raw = DbReader::builder(token.database().to_string(), token.object_store())
+            .with_merge_operator(Arc::new(merge_operator::HelixMergeOperator::new()))
+            .build()
+            .await
+            .expect("raw reader opens");
+        assert!(
+            raw.get(migrations::storage_schema_complete_key_for_tests(
+                DataScope::LegacyUnscoped,
+            ))
+            .await
+            .unwrap()
+            .is_none(),
+            "recovery-only failover must not publish migration markers"
+        );
+        raw.close().await.expect("raw reader closes");
+    }
+
     #[tokio::test]
     async fn membership_delta_activation_is_durable_and_reader_visible() {
         let token = ProcessLocalDatabaseToken::new("facade-membership-delta-activation").unwrap();
@@ -3274,6 +3505,7 @@ mod tests {
             source(),
             DbConfig::new(),
             NonZeroU64::new(11).unwrap(),
+            ManagedWriterOpenIntent::Bootstrap,
         )
         .await
         .expect("epoch 11 writer opens");
@@ -3284,6 +3516,7 @@ mod tests {
                 source(),
                 DbConfig::new(),
                 NonZeroU64::new(stale_epoch).unwrap(),
+                ManagedWriterOpenIntent::Failover,
             )
             .await
             else {
@@ -3325,6 +3558,7 @@ mod tests {
             source(),
             DbConfig::new(),
             NonZeroU64::new(20).unwrap(),
+            ManagedWriterOpenIntent::Bootstrap,
         )
         .await
         .expect("epoch 20 writer opens");
@@ -3341,6 +3575,7 @@ mod tests {
             source(),
             DbConfig::new(),
             NonZeroU64::new(21).unwrap(),
+            ManagedWriterOpenIntent::Failover,
         )
         .await
         .expect("epoch 21 writer fences epoch 20");
@@ -3374,6 +3609,7 @@ mod tests {
             source(),
             DbConfig::new(),
             NonZeroU64::new(20).unwrap(),
+            ManagedWriterOpenIntent::Failover,
         )
         .await
         else {
@@ -3422,8 +3658,18 @@ mod tests {
         let epoch = NonZeroU64::new(30).unwrap();
 
         let (left, right) = tokio::join!(
-            HelixDB::open_managed_writer_with_config(source(), DbConfig::new(), epoch),
-            HelixDB::open_managed_writer_with_config(source(), DbConfig::new(), epoch),
+            HelixDB::open_managed_writer_with_config(
+                source(),
+                DbConfig::new(),
+                epoch,
+                ManagedWriterOpenIntent::Bootstrap,
+            ),
+            HelixDB::open_managed_writer_with_config(
+                source(),
+                DbConfig::new(),
+                epoch,
+                ManagedWriterOpenIntent::Bootstrap,
+            ),
         );
         let (writer, error) = match (left, right) {
             (Ok(writer), Err(error)) | (Err(error), Ok(writer)) => (writer, error),
@@ -3468,13 +3714,39 @@ mod tests {
         assert_eq!(reader.mode(), HelixDbMode::ReadOnly);
         reader.close().await.expect("old-storage reader closes");
 
-        let writer = HelixDB::open_managed_writer_with_config(
+        let Err(error) = HelixDB::open_managed_writer_with_config(
             source(),
             DbConfig::new(),
             NonZeroU64::new(2).unwrap(),
+            ManagedWriterOpenIntent::Failover,
         )
         .await
-        .expect("managed writer owns and completes migration");
+        else {
+            panic!("recovery-only failover must not migrate old storage")
+        };
+        assert!(matches!(
+            error,
+            HelixDbError::WriterMigrationRequired {
+                requirement: crate::error::WriterMigrationRequirement::StorageVersion {
+                    found: 2,
+                    target: 4,
+                },
+            }
+        ));
+
+        let authorization = ManagedMigrationAuthorization::new(
+            "controlled-v2-to-v4",
+            NonZeroU32::new(MANAGED_STORAGE_SCHEMA_VERSION).unwrap(),
+        )
+        .expect("valid controlled migration authorization");
+        let writer = HelixDB::open_managed_writer_with_config(
+            source(),
+            DbConfig::new(),
+            NonZeroU64::new(3).unwrap(),
+            ManagedWriterOpenIntent::ControlledMigration(authorization),
+        )
+        .await
+        .expect("authorized managed writer owns and completes migration");
         writer.close().await.expect("migrated writer closes");
         let reader = HelixDB::open_reader(source())
             .await
