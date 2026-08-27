@@ -234,7 +234,7 @@ fn stage_writer_bootstrap_initialization(transaction: &DbTransaction) -> Result<
             },
         )),
     )?;
-    super::super::stage_index_storage_v4_cleanup_ready(&transaction)?;
+    super::super::stage_index_storage_v4_cleanup_ready(transaction)?;
     Ok(())
 }
 
