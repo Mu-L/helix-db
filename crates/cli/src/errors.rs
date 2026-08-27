@@ -154,35 +154,6 @@ impl std::error::Error for CliError {}
 pub enum ConfigError {
     #[error("cannot find home directory")]
     HomeDirNotFound,
-    #[error("failed to create config directory at {path}: {source}")]
-    CreateWorkspaceDir {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("failed to read workspace config at {path}: {source}")]
-    ReadWorkspaceConfig {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("failed to parse workspace config at {path}: {source}")]
-    ParseWorkspaceConfig {
-        path: PathBuf,
-        #[source]
-        source: toml::de::Error,
-    },
-    #[error("failed to serialize workspace config: {source}")]
-    SerializeWorkspaceConfig {
-        #[source]
-        source: toml::ser::Error,
-    },
-    #[error("failed to write workspace config at {path}: {source}")]
-    WriteWorkspaceConfig {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
     #[error("failed to read helix.toml at {path}: {source}")]
     ReadHelixConfig {
         path: PathBuf,
@@ -212,8 +183,6 @@ pub enum ConfigError {
     MissingInstances { path: PathBuf },
     #[error("instance name cannot be empty in {path}")]
     EmptyInstanceName { path: PathBuf },
-    #[error("Enterprise instance '{name}' must have a non-empty cluster_id in {path}")]
-    MissingClusterId { name: String, path: PathBuf },
     #[error(
         "local instance '{name}' uses s3 storage but has no [local.{name}.s3] config in {path}"
     )]
@@ -271,30 +240,6 @@ impl ConfigError {
     pub fn to_cli_error(&self) -> CliError {
         match self {
             ConfigError::HomeDirNotFound => CliError::new("cannot find home directory"),
-            ConfigError::CreateWorkspaceDir { path, source } => CliError::new(format!(
-                "failed to create config directory at {}",
-                path.display()
-            ))
-            .with_caused_by(source.to_string()),
-            ConfigError::ReadWorkspaceConfig { path, source } => CliError::new(format!(
-                "failed to read workspace config at {}",
-                path.display()
-            ))
-            .with_caused_by(source.to_string()),
-            ConfigError::ParseWorkspaceConfig { path, source } => CliError::new(format!(
-                "failed to parse workspace config at {}",
-                path.display()
-            ))
-            .with_caused_by(source.to_string()),
-            ConfigError::SerializeWorkspaceConfig { source } => {
-                CliError::new("failed to serialize workspace config")
-                    .with_caused_by(source.to_string())
-            }
-            ConfigError::WriteWorkspaceConfig { path, source } => CliError::new(format!(
-                "failed to write workspace config at {}",
-                path.display()
-            ))
-            .with_caused_by(source.to_string()),
             ConfigError::ReadHelixConfig { path, source } => {
                 CliError::new(format!("failed to read helix.toml at {}", path.display()))
                     .with_caused_by(source.to_string())
@@ -321,11 +266,6 @@ impl ConfigError {
             .with_hint("add one with `helix add local --name dev` (or `helix add enterprise`)"),
             ConfigError::EmptyInstanceName { path } => CliError::new(format!(
                 "instance name cannot be empty in {}",
-                path.display()
-            )),
-            ConfigError::MissingClusterId { name, path } => CliError::new(format!(
-                "Enterprise instance '{}' must have a non-empty cluster_id in {}",
-                name,
                 path.display()
             )),
             ConfigError::MissingS3Config { name, path } => CliError::new(format!(
@@ -498,26 +438,9 @@ mod tests {
     #[test]
     fn config_errors_convert_to_actionable_cli_errors() {
         let path = PathBuf::from("/tmp/helix.toml");
-        let parse_workspace = toml::from_str::<crate::config::WorkspaceConfig>("=").unwrap_err();
         let parse_helix = toml::from_str::<crate::config::HelixConfig>("=").unwrap_err();
         let errors = vec![
             ConfigError::HomeDirNotFound,
-            ConfigError::CreateWorkspaceDir {
-                path: path.clone(),
-                source: io_error(std::io::ErrorKind::PermissionDenied),
-            },
-            ConfigError::ReadWorkspaceConfig {
-                path: path.clone(),
-                source: io_error(std::io::ErrorKind::NotFound),
-            },
-            ConfigError::ParseWorkspaceConfig {
-                path: path.clone(),
-                source: parse_workspace,
-            },
-            ConfigError::WriteWorkspaceConfig {
-                path: path.clone(),
-                source: io_error(std::io::ErrorKind::PermissionDenied),
-            },
             ConfigError::ReadHelixConfig {
                 path: path.clone(),
                 source: io_error(std::io::ErrorKind::NotFound),
@@ -533,10 +456,6 @@ mod tests {
             ConfigError::EmptyProjectName { path: path.clone() },
             ConfigError::MissingInstances { path: path.clone() },
             ConfigError::EmptyInstanceName { path: path.clone() },
-            ConfigError::MissingClusterId {
-                name: "prod".into(),
-                path: path.clone(),
-            },
             ConfigError::MissingS3Config {
                 name: "dev".into(),
                 path: path.clone(),

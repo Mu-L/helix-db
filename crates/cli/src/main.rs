@@ -3,9 +3,9 @@ use clap::{ArgGroup, Parser, Subcommand};
 use color_eyre::owo_colors::OwoColorize;
 use eyre::Result;
 use helix_cli::{
-    commands, errors, metrics_sender, output, update, AddTarget, AuthAction, ClusterConfigAction,
-    ConfigAction, InitTarget, MetricsAction, ProjectConfigAction, S3StorageArgs, SkillsAction,
-    WorkspaceConfigAction,
+    commands, errors, metrics_sender, output, update, AddTarget, AuthAction, CloudApiAction,
+    ClusterConfigAction, ConfigAction, DatabaseAction, InitTarget, MetricsAction,
+    ProjectConfigAction, S3StorageArgs, ServiceCredentialAction, SkillsAction, WorkspaceAction,
 };
 use std::io::IsTerminal;
 use tui_banner::{Align, Banner, ColorMode, Fill, Gradient, Palette};
@@ -168,7 +168,7 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
         /// Print help
         #[arg(short = 'h', long = "help", action = clap::ArgAction::HelpShort)]
         help: Option<bool>,
-        /// Instance to query (default: dev)
+        /// Instance or typed database; defaults to dev or the sole linked target
         instance: Option<String>,
         /// Query from a JSON request file
         #[arg(
@@ -210,13 +210,13 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
         compact: bool,
     },
 
-    /// Deploy an Enterprise Cloud instance
-    Push {
-        /// Enterprise instance name to deploy
+    /// Open an interactive v3 JSON query shell
+    Shell {
+        /// Instance or typed database; defaults to dev or the sole linked target
         instance: Option<String>,
-        /// Deprecated Helix Cloud dev deploy override; ignored for Enterprise deploys
-        #[arg(long, hide = true)]
-        dev: bool,
+        /// Print compact single-line JSON
+        #[arg(long)]
+        compact: bool,
     },
 
     /// Enterprise Cloud auth operations
@@ -225,20 +225,20 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
         action: AuthAction,
     },
 
-    /// Configure workspace, project, and Enterprise cluster defaults
+    /// Discover workspaces and manage project/database links
     #[command(hide = true)]
     Config {
         #[command(subcommand)]
         action: Option<ConfigAction>,
     },
 
-    /// Manage active Enterprise Cloud workspace selection
+    /// Discover accessible Enterprise Cloud workspaces
     Workspace {
         #[command(subcommand)]
-        action: Option<WorkspaceConfigAction>,
+        action: Option<WorkspaceAction>,
     },
 
-    /// Manage linked Enterprise Cloud project selection
+    /// Manage the current project's Enterprise Cloud link
     Project {
         #[command(subcommand)]
         action: Option<ProjectConfigAction>,
@@ -250,16 +250,22 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
         action: Option<ClusterConfigAction>,
     },
 
-    /// Sync Enterprise Cloud metadata into helix.toml
-    Sync {
-        /// Enterprise instance name
-        instance: Option<String>,
-        /// Overwrite local/remote source during reconciliation without confirmation prompts
-        #[arg(short = 'y', long)]
-        yes: bool,
-        /// Show what would change without applying anything
-        #[arg(long, conflicts_with = "yes")]
-        dry_run: bool,
+    /// Manage Cloud databases and application database keys
+    Database {
+        #[command(subcommand)]
+        action: Option<DatabaseAction>,
+    },
+
+    /// Manage workspace-owned credentials for headless API and MCP automation
+    ServiceCredential {
+        #[command(subcommand)]
+        action: Option<ServiceCredentialAction>,
+    },
+
+    /// Call a WFE Cloud API path with the active WorkOS session
+    Api {
+        #[command(subcommand)]
+        action: CloudApiAction,
     },
 
     /// Prune local v2 containers/workspaces
@@ -311,24 +317,24 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
         message: Option<String>,
     },
 
-    // --- Removed legacy commands ---------------------------------------------
+    // --- Removed v2 commands -------------------------------------------------
     // Hidden so they don't clutter `--help`, but caught explicitly to return a
     // helpful "this moved" message instead of clap's bare "unrecognized
     // subcommand". The trailing args make `helix compile path --flag` route here
     // (a friendly error) rather than failing on an unexpected-argument parse.
-    /// (removed) HelixDB v3 validates queries server-side; there is no compile step
+    /// (removed) HelixDB v2 validates queries server-side; there is no compile step
     #[command(hide = true)]
     Compile {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
         args: Vec<String>,
     },
-    /// (removed) HelixDB v3 validates queries server-side; there is no check step
+    /// (removed) HelixDB v2 validates queries server-side; there is no check step
     #[command(hide = true)]
     Check {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
         args: Vec<String>,
     },
-    /// (removed) use `helix push` to deploy an Enterprise instance
+    /// (removed) Cloud deployment is managed by the control plane
     #[command(hide = true)]
     Deploy {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
@@ -337,25 +343,23 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
 }
 
 /// Build the friendly error shown when an agent guesses a removed query
-/// command (`helix compile` / `helix check`). HelixDB v3 has no client-side
-/// compile step — queries are validated server-side through `POST /v2/query`.
+/// command (`helix compile` / `helix check`). HelixDB v2 has no client-side
+/// compile step — queries are validated server-side when sent to a running
+/// instance.
 fn removed_query_command_error(command: &str) -> eyre::Report {
-    errors::CliError::new(format!(
-        "`helix {command}` is not a command in Helix CLI 3.x"
-    ))
-    .with_hint(
-        "HelixDB v3 validates queries server-side through `POST /v2/query` — \
-             there is no compile/check step. Send a query to a running instance with \
+    errors::CliError::new(format!("`helix {command}` is not a command in HelixDB v2"))
+        .with_hint(
+            "HelixDB v2 validates queries server-side — there is no compile/check step. \
+             Send a query to a running instance with \
              `helix query <instance> --file <request.json>`.",
-    )
-    .into()
+        )
+        .into()
 }
 
-/// Build the friendly error shown when `helix deploy` is guessed instead of
-/// the real `helix push`.
+/// Build the friendly error shown for the removed deployment command.
 fn removed_deploy_command_error() -> eyre::Report {
-    errors::CliError::new("`helix deploy` is not a command in Helix CLI 3.x")
-        .with_hint("Use `helix push <instance>` to deploy an Enterprise Cloud instance.")
+    errors::CliError::new("`helix deploy` is not a command in HelixDB v2")
+        .with_hint("Cloud database lifecycle is managed through the Helix control plane.")
         .into()
 }
 
@@ -436,16 +440,6 @@ fn display_welcome(update_available: Option<String>, skills_update_available: bo
 
     print_section("HelixDB Cloud", use_color);
     print_command("helix auth login", "Login to the cloud", use_color);
-    print_command(
-        "helix push <instance>",
-        "Deploy a cloud instance",
-        use_color,
-    );
-    print_command(
-        "helix sync <instance>",
-        "Sync queries and config with a cloud instance",
-        use_color,
-    );
 
     println!();
     println!("Docs: https://docs.helix-db.com");
@@ -567,6 +561,12 @@ fn print_help() {
     print_command_w("logs", "View or follow instance logs", W, use_color);
     print_command_w("query", "Send a query to POST /v2/query", W, use_color);
     print_command_w(
+        "shell",
+        "Open an interactive JSON query shell",
+        W,
+        use_color,
+    );
+    print_command_w(
         "prune",
         "Remove Helix-owned local containers and state",
         W,
@@ -575,17 +575,28 @@ fn print_help() {
     print_command_w("delete", "Delete an instance from helix.toml", W, use_color);
 
     print_section("Helix Cloud", use_color);
-    print_command_w("auth", "Log in/out and manage Cloud API keys", W, use_color);
-    print_command_w("push", "Deploy an Enterprise Cloud instance", W, use_color);
-    print_command_w("sync", "Sync Cloud metadata into helix.toml", W, use_color);
+    print_command_w(
+        "auth",
+        "Log in, inspect, or end a WorkOS session",
+        W,
+        use_color,
+    );
     print_command_w(
         "workspace",
-        "Manage the active Cloud workspace",
+        "Discover accessible Cloud workspaces",
         W,
         use_color,
     );
     print_command_w("project", "Manage the linked Cloud project", W, use_color);
     print_command_w("cluster", "List and inspect Cloud clusters", W, use_color);
+    print_command_w("database", "Manage Cloud databases and keys", W, use_color);
+    print_command_w(
+        "service-credential",
+        "Manage headless automation credentials",
+        W,
+        use_color,
+    );
+    print_command_w("api", "Call a WorkOS-authenticated WFE API", W, use_color);
 
     print_section("CLI", use_color);
     print_command_w(
@@ -696,19 +707,21 @@ async fn main() -> Result<()> {
         }) => {
             commands::query::run(instance, file, json, ts, ts_file, warm, host, port, compact).await
         }
-        Some(Commands::Push { instance, dev }) => {
-            commands::push::run(instance, dev, &metrics_sender).await
+        Some(Commands::Shell { instance, compact }) => {
+            commands::shell::run(instance, compact).await
         }
         Some(Commands::Auth { action }) => commands::auth::run(action).await,
         Some(Commands::Config { action }) => commands::config::run(action).await,
         Some(Commands::Workspace { action }) => commands::config::run_workspace(action).await,
         Some(Commands::Project { action }) => commands::config::run_project(action).await,
         Some(Commands::Cluster { action }) => commands::config::run_cluster(action).await,
-        Some(Commands::Sync {
-            instance,
-            yes,
-            dry_run,
-        }) => commands::sync::run(instance, yes, dry_run).await,
+        Some(Commands::Database { action }) => {
+            commands::cloud_resources::run_database(action).await
+        }
+        Some(Commands::ServiceCredential { action }) => {
+            commands::cloud_resources::run_service_credential(action).await
+        }
+        Some(Commands::Api { action }) => commands::cloud_resources::run_api(action).await,
         Some(Commands::Prune { instance, all, yes }) => {
             commands::prune::run(instance, all, yes).await
         }
@@ -906,19 +919,16 @@ mod tests {
     }
 
     #[test]
-    fn init_cloud_with_cluster_id_parses() {
-        let cli = Cli::parse_from(["helix", "init", "cloud", "--cluster-id", "abc"]);
+    fn init_cloud_with_database_parses() {
+        let cli = Cli::parse_from(["helix", "init", "cloud", "--database", "cluster:abc"]);
 
         match cli.command {
             Some(Commands::Init {
-                target:
-                    Some(InitTarget::Enterprise {
-                        name, cluster_id, ..
-                    }),
+                target: Some(InitTarget::Enterprise { name, database, .. }),
                 ..
             }) => {
                 assert_eq!(name, "production");
-                assert_eq!(cluster_id.as_deref(), Some("abc"));
+                assert_eq!(database.as_deref(), Some("cluster:abc"));
             }
             _ => panic!("expected init cloud command"),
         }
@@ -1032,54 +1042,51 @@ mod tests {
     }
 
     #[test]
-    fn init_cloud_without_cluster_id_parses() {
+    fn init_cloud_without_database_parses() {
         let cli = Cli::parse_from(["helix", "init", "cloud"]);
 
         match cli.command {
             Some(Commands::Init {
-                target: Some(InitTarget::Enterprise { cluster_id, .. }),
+                target: Some(InitTarget::Enterprise { database, .. }),
                 ..
-            }) => assert!(cluster_id.is_none()),
+            }) => assert!(database.is_none()),
             _ => panic!("expected init cloud command"),
         }
     }
 
     #[test]
-    fn add_cloud_with_cluster_id_parses() {
+    fn add_cloud_with_database_parses() {
         let cli = Cli::parse_from([
             "helix",
             "add",
             "cloud",
             "--name",
             "production",
-            "--cluster-id",
-            "abc",
+            "--database",
+            "tenant:abc",
         ]);
 
         match cli.command {
             Some(Commands::Add {
-                target:
-                    Some(AddTarget::Enterprise {
-                        name, cluster_id, ..
-                    }),
+                target: Some(AddTarget::Enterprise { name, database, .. }),
                 ..
             }) => {
                 assert_eq!(name, "production");
-                assert_eq!(cluster_id.as_deref(), Some("abc"));
+                assert_eq!(database.as_deref(), Some("tenant:abc"));
             }
             _ => panic!("expected add cloud command"),
         }
     }
 
     #[test]
-    fn add_cloud_without_cluster_id_parses() {
+    fn add_cloud_without_database_parses() {
         let cli = Cli::parse_from(["helix", "add", "cloud", "--name", "production"]);
 
         match cli.command {
             Some(Commands::Add {
-                target: Some(AddTarget::Enterprise { cluster_id, .. }),
+                target: Some(AddTarget::Enterprise { database, .. }),
                 ..
-            }) => assert!(cluster_id.is_none()),
+            }) => assert!(database.is_none()),
             _ => panic!("expected add cloud command"),
         }
     }
@@ -1253,7 +1260,7 @@ mod tests {
 
         match cli.command {
             Some(Commands::Workspace {
-                action: Some(WorkspaceConfigAction::List { .. }),
+                action: Some(WorkspaceAction::List { .. }),
             }) => {}
             _ => panic!("expected workspace list command"),
         }
@@ -1261,13 +1268,13 @@ mod tests {
 
     #[test]
     fn root_project_command_parses() {
-        let cli = Cli::parse_from(["helix", "project", "show"]);
+        let cli = Cli::parse_from(["helix", "project", "get"]);
 
         match cli.command {
             Some(Commands::Project {
-                action: Some(ProjectConfigAction::Show { .. }),
+                action: Some(ProjectConfigAction::Get { .. }),
             }) => {}
-            _ => panic!("expected project show command"),
+            _ => panic!("expected project get command"),
         }
     }
 
@@ -1356,54 +1363,13 @@ mod tests {
     }
 
     #[test]
-    fn push_accepts_optional_enterprise_instance() {
-        let cli = Cli::parse_from(["helix", "push", "production"]);
-
-        match cli.command {
-            Some(Commands::Push { instance, dev }) => {
-                assert_eq!(instance.as_deref(), Some("production"));
-                assert!(!dev);
-            }
-            _ => panic!("expected push command"),
-        }
+    fn push_is_removed() {
+        assert!(Cli::try_parse_from(["helix", "push", "production"]).is_err());
     }
 
     #[test]
-    fn sync_accepts_yes_for_noninteractive_reconciliation() {
-        let cli = Cli::parse_from(["helix", "sync", "production", "--yes"]);
-
-        match cli.command {
-            Some(Commands::Sync {
-                instance,
-                yes,
-                dry_run,
-            }) => {
-                assert_eq!(instance.as_deref(), Some("production"));
-                assert!(yes);
-                assert!(!dry_run);
-            }
-            _ => panic!("expected sync command"),
-        }
-    }
-
-    #[test]
-    fn sync_accepts_dry_run() {
-        let cli = Cli::parse_from(["helix", "sync", "production", "--dry-run"]);
-
-        match cli.command {
-            Some(Commands::Sync { dry_run, yes, .. }) => {
-                assert!(dry_run);
-                assert!(!yes);
-            }
-            _ => panic!("expected sync command"),
-        }
-    }
-
-    #[test]
-    fn sync_rejects_dry_run_with_yes() {
-        assert!(
-            Cli::try_parse_from(["helix", "sync", "production", "--dry-run", "--yes"]).is_err()
-        );
+    fn sync_is_removed() {
+        assert!(Cli::try_parse_from(["helix", "sync", "production"]).is_err());
     }
 
     #[test]

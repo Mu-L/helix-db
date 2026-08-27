@@ -1,347 +1,226 @@
 use crate::{
-    enterprise_cloud::cloud_base_url,
+    cloud::{CloudClient, SessionCredentials},
     metrics_sender::{load_metrics_config, save_metrics_config},
-    output, paths,
-    sse_client::{SseClient, SseEvent},
-    AuthAction,
+    output, prompts, AuthAction,
 };
-use color_eyre::owo_colors::OwoColorize;
-use eyre::{eyre, OptionExt, Result};
+use color_eyre::owo_colors::OwoColorize as _;
+use eyre::{eyre, Result, WrapErr as _};
 use serde::Deserialize;
-use std::{
-    fs::{self, File},
-    path::PathBuf,
+use serde_json::json;
+use std::io::{self, Write as _};
+use tokio::{
+    io::{AsyncReadExt as _, AsyncWriteExt as _},
+    net::TcpListener,
+    time::{timeout, Duration},
 };
+
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const LOGIN_CALLBACK_ADDRESS: &str = "127.0.0.1:8765";
+const LOGIN_CALLBACK_URI: &str = "http://localhost:8765/callback";
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartLoginResponse {
+    url: String,
+    session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginResponse {
+    access_token: String,
+    refresh_token: String,
+    #[serde(deserialize_with = "crate::cloud::deserialize_i64")]
+    expires_at: i64,
+    email: String,
+    #[serde(default)]
+    email_verification_required: bool,
+}
 
 pub async fn run(action: AuthAction) -> Result<()> {
     match action {
         AuthAction::Login => login().await,
+        AuthAction::Status => status().await,
         AuthAction::Logout => logout().await,
-        AuthAction::CreateKey { cluster } => create_key(&cluster).await,
     }
 }
 
-async fn login() -> Result<()> {
-    output::info("Logging into Helix Cloud");
-
-    let config_path = paths::helix_home_dir()?;
-    let cred_path = config_path.join("credentials");
-
-    if !config_path.exists() {
-        fs::create_dir_all(&config_path)?;
+pub async fn login() -> Result<()> {
+    if !prompts::is_interactive() {
+        return Err(eyre!("WorkOS login requires an interactive terminal"));
     }
-    if !cred_path.exists() {
-        File::create(&cred_path)?;
-    }
+    output::info("Logging into Helix Cloud with WorkOS");
+    let client = CloudClient::new()?;
+    let listener = TcpListener::bind(LOGIN_CALLBACK_ADDRESS)
+        .await
+        .wrap_err_with(|| {
+            format!("bind the WorkOS callback listener at {LOGIN_CALLBACK_ADDRESS}")
+        })?;
+    let started: StartLoginResponse = serde_json::from_value(
+        client
+            .public_post(
+                "/v1/auth/login:start",
+                json!({"redirectUri": LOGIN_CALLBACK_URI, "provider": "AUTH_PROVIDER_GITHUB"}),
+                "start WorkOS login",
+            )
+            .await?,
+    )?;
 
-    // not needed?
-    if Credentials::try_read_from_file(&cred_path).is_some() {
-        println!(
-            "You already have saved credentials. Running login rotates your user key and revokes previous user keys."
-        );
-    }
-
-    let (key, user_id) = github_login().await?;
-
-    // write credentials
-    let credentials = Credentials {
-        user_id: user_id.clone(),
-        helix_admin_key: key,
+    open::that(&started.url).wrap_err("open WorkOS login in browser")?;
+    println!(
+        "Open this URL if the browser did not start:\n{}",
+        started.url.bold()
+    );
+    let (code, state) = timeout(LOGIN_TIMEOUT, receive_callback(listener))
+        .await
+        .map_err(|_| eyre!("WorkOS login timed out"))??;
+    let exchanged: LoginResponse = serde_json::from_value(
+        client
+            .public_post(
+                "/v1/auth/exchange",
+                json!({"sessionId": started.session_id, "code": code, "state": state}),
+                "exchange WorkOS authorization code",
+            )
+            .await?,
+    )?;
+    let session = if exchanged.email_verification_required {
+        print!("Enter the verification code sent to {}: ", exchanged.email);
+        io::stdout().flush()?;
+        let mut code = String::new();
+        io::stdin().read_line(&mut code)?;
+        serde_json::from_value::<LoginResponse>(
+            client
+                .public_post(
+                    "/v1/auth/verify-email",
+                    json!({"sessionId": started.session_id, "code": code.trim()}),
+                    "verify WorkOS email",
+                )
+                .await?,
+        )?
+    } else {
+        exchanged
     };
-    credentials.write_to_file(&cred_path);
+    let credentials = SessionCredentials {
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+        expires_at: session.expires_at,
+        email: session.email,
+    };
+    client.store_session(&credentials)?;
 
-    // write metics.toml
     let mut metrics = load_metrics_config()?;
-    metrics.user_id = Some(user_id);
+    metrics.user_id = None;
     save_metrics_config(&metrics)?;
-
     output::success("Logged in successfully");
     output::info(&format!(
-        "Your credentials are stored in {}",
-        cred_path.display()
+        "WorkOS session stored at {}",
+        client.credentials_path().display()
     ));
+    Ok(())
+}
 
+async fn receive_callback(listener: TcpListener) -> Result<(String, String)> {
+    let (mut stream, _) = listener.accept().await?;
+    let mut request = vec![0_u8; 8192];
+    let read = stream.read(&mut request).await?;
+    let first_line = std::str::from_utf8(&request[..read])?
+        .lines()
+        .next()
+        .ok_or_else(|| eyre!("browser callback was empty"))?;
+    let target = first_line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| eyre!("browser callback was malformed"))?;
+    let url = reqwest::Url::parse(&format!("http://127.0.0.1{target}"))?;
+    let code = url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "code").then(|| value.into_owned()));
+    let state = url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "state").then(|| value.into_owned()));
+    let result = match (code, state) {
+        (Some(code), Some(state)) if !code.is_empty() && !state.is_empty() => Ok((code, state)),
+        _ => Err(eyre!("WorkOS callback did not contain code and state")),
+    };
+    let (status, body) = if result.is_ok() {
+        (
+            "200 OK",
+            "Helix CLI login complete. You can close this window.",
+        )
+    } else {
+        (
+            "400 Bad Request",
+            "Helix CLI login failed. Return to the terminal.",
+        )
+    };
+    stream
+        .write_all(
+            format!(
+                "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await?;
+    result
+}
+
+async fn status() -> Result<()> {
+    let client = CloudClient::new()?;
+    let response = client.get("/v1/whoami", "load WorkOS session").await?;
+    let session = client.load_session()?;
+    output::success("Authenticated with WorkOS");
+    println!("Email: {}", session.email);
+    let memberships = response
+        .get("workspaces")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    println!("Workspace memberships: {memberships}");
     Ok(())
 }
 
 async fn logout() -> Result<()> {
     output::info("Logging out of Helix Cloud");
-
-    // Remove credentials file
-    let credentials_path = paths::helix_home_dir()?.join("credentials");
-
-    if credentials_path.exists() {
-        fs::remove_file(&credentials_path)?;
-        output::success("Logged out successfully");
-    } else {
-        output::info("Not currently logged in");
+    let client = CloudClient::new()?;
+    if client.load_session().is_ok()
+        && let Err(error) = client
+            .post("/v1/auth/logout", json!({}), "revoke WorkOS session")
+            .await
+    {
+        output::warning(&format!(
+            "Could not revoke the remote WorkOS session: {error}"
+        ));
     }
-
+    client.remove_session()?;
+    output::success("Logged out successfully");
     Ok(())
 }
 
-async fn create_key(cluster: &str) -> Result<()> {
-    #[derive(Deserialize)]
-    struct CreateKeyResponse {
-        key: String,
-        warning: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    struct ErrorResponse {
-        error: String,
-    }
-
-    output::info(&format!("Rotating API key for cluster: {cluster}"));
-
-    let credentials = require_auth().await?;
-    let url = format!(
-        "{}/api/cli/enterprise-clusters/{cluster}/key",
-        cloud_base_url()
-    );
-
-    let response = reqwest::Client::new()
-        .post(&url)
-        .header("x-api-key", &credentials.helix_admin_key)
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let error_body = response.text().await.unwrap_or_default();
-        let error_message = serde_json::from_str::<ErrorResponse>(&error_body)
-            .map(|error| error.error)
-            .unwrap_or_else(|_| {
-                if error_body.is_empty() {
-                    format!("request failed with status {status}")
-                } else {
-                    error_body
-                }
-            });
-
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(eyre!(
-                "Authentication failed. Run 'helix auth login' to re-authenticate."
-            ));
-        }
-
-        return Err(eyre!("Failed to rotate API key: {error_message}"));
-    }
-
-    let body: CreateKeyResponse = response.json().await?;
-
-    output::success("Cluster API key refresh completed");
-    if let Some(warning) = body.warning.as_deref() {
-        output::warning(warning);
-    } else {
-        output::info("Previous cluster keys were revoked after successful redeploy.");
-    }
-    println!();
-    println!("Cluster: {}", cluster.bold());
-    println!("New API key (shown once): {}", body.key.bold());
-
-    output::info("Update HELIX_API_KEY in your environment before running queries.");
-
-    Ok(())
-}
-
-#[derive(Debug)]
-pub struct Credentials {
-    pub(crate) user_id: String,
-    pub(crate) helix_admin_key: String,
-}
-
-impl Credentials {
-    pub fn is_authenticated(&self) -> bool {
-        !self.user_id.is_empty() && !self.helix_admin_key.is_empty()
-    }
-
-    #[allow(unused)]
-    pub(crate) fn read_from_file(path: &PathBuf) -> Self {
-        let content = fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("Failed to read credentials file at {path:?}: {e}"));
-        Self::parse_key_value_format(&content)
-            .unwrap_or_else(|e| panic!("Failed to parse credentials file at {path:?}: {e}"))
-    }
-
-    pub(crate) fn try_read_from_file(path: &PathBuf) -> Option<Self> {
-        let content = fs::read_to_string(path).ok()?;
-        Self::parse_key_value_format(&content).ok()
-    }
-
-    pub(crate) fn write_to_file(&self, path: &PathBuf) {
-        let content = format!(
-            "helix_user_id={}\nhelix_user_key={}",
-            self.user_id, self.helix_admin_key
-        );
-        fs::write(path, content)
-            .unwrap_or_else(|e| panic!("Failed to write credentials file to {path:?}: {e}"));
-    }
-
-    #[allow(unused)]
-    pub(crate) fn try_write_to_file(&self, path: &PathBuf) -> Option<()> {
-        let content = format!(
-            "helix_user_id={}\nhelix_user_key={}",
-            self.user_id, self.helix_admin_key
-        );
-        fs::write(path, content).ok()?;
-        Some(())
-    }
-
-    fn parse_key_value_format(content: &str) -> Result<Self> {
-        let mut user_id = None;
-        let mut helix_admin_key = None;
-
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            if let Some((key, value)) = line.split_once('=') {
-                match key.trim() {
-                    "helix_user_id" => user_id = Some(value.trim().to_string()),
-                    "helix_user_key" => helix_admin_key = Some(value.trim().to_string()),
-                    _ => {} // Ignore unknown keys
-                }
-            }
-        }
-
-        Ok(Credentials {
-            user_id: user_id.ok_or_eyre("Missing helix_user_id in credentials file")?,
-            helix_admin_key: helix_admin_key
-                .ok_or_eyre("Missing helix_user_key in credentials file")?,
-        })
-    }
-}
-
-/// Check that the user is authenticated with Helix Cloud.
-/// If not authenticated, prompts the user to login interactively.
-/// Returns credentials if authenticated (or after successful login).
-pub async fn require_auth() -> Result<Credentials> {
-    let credentials_path = paths::helix_home_dir()?.join("credentials");
-
-    // Check if we have valid credentials
-    if let Some(credentials) = Credentials::try_read_from_file(&credentials_path)
-        && credentials.is_authenticated()
-    {
-        return Ok(credentials);
-    }
-
-    output::warning("Not authenticated with Helix Cloud");
-    Err(eyre!(
-        "Authentication required. Run 'helix auth login' first."
-    ))
-}
-
-/// Ensure the user has Helix Cloud credentials, running the existing GitHub
-/// device login flow inline when credentials are missing or invalid.
-pub async fn ensure_auth_or_login() -> Result<Credentials> {
-    let config_path = paths::helix_home_dir()?;
-    let credentials_path = config_path.join("credentials");
-
-    if let Some(credentials) = Credentials::try_read_from_file(&credentials_path)
-        && credentials.is_authenticated()
-    {
-        return Ok(credentials);
-    }
-
-    fs::create_dir_all(&config_path)?;
-    let (key, user_id) = github_login().await?;
-    let credentials = Credentials {
-        user_id: user_id.clone(),
-        helix_admin_key: key,
-    };
-    credentials.write_to_file(&credentials_path);
-
-    let mut metrics = load_metrics_config()?;
-    metrics.user_id = Some(user_id);
-    save_metrics_config(&metrics)?;
-
-    Ok(credentials)
-}
-
-pub async fn github_login() -> Result<(String, String)> {
-    let url = format!("{}/github-login", cloud_base_url());
-    let client = SseClient::new(url).post();
-
-    let mut api_key: Option<String> = None;
-    let mut user_id: Option<String> = None;
-
-    client
-        .connect(|event| {
-            match event {
-                SseEvent::UserVerification {
-                    user_code,
-                    verification_uri,
-                    ..
-                } => {
-                    println!(
-                        "To Login please go \x1b]8;;{}\x1b\\here\x1b]8;;\x1b\\({}),\nand enter the code: {}",
-                        verification_uri,
-                        verification_uri,
-                        user_code.bold()
-                    );
-                    Ok(true) // Continue processing events
-                }
-                SseEvent::Success { data } => {
-                    // Extract API key and user_id from success event
-                    if let Some(key) = data.get("key").and_then(|v| v.as_str()) {
-                        api_key = Some(key.to_string());
-                    }
-                    if let Some(id) = data.get("user_id").and_then(|v| v.as_str()) {
-                        user_id = Some(id.to_string());
-                    }
-                    Ok(false) // Stop processing - login complete
-                }
-                SseEvent::DeviceCodeTimeout { message } => {
-                    Err(eyre!("Login timeout: {}. Please try again.", message))
-                }
-                SseEvent::Error { error } => {
-                    Err(eyre!("Login error: {}", error))
-                }
-                _ => {
-                    // Ignore other event types during login
-                    Ok(true)
-                }
-            }
-        })
-        .await?;
-
-    match (api_key, user_id) {
-        (Some(key), Some(id)) => Ok((key, id)),
-        _ => Err(eyre!("Login completed but credentials were not received")),
-    }
+pub async fn require_auth() -> Result<CloudClient> {
+    let client = CloudClient::new()?;
+    client.load_session().map_err(|error| {
+        eyre!("{error}. Authentication required. Run 'helix auth login' first.")
+    })?;
+    Ok(client)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn credentials_parse_comments_unknown_fields_and_round_trip() {
-        let credentials = Credentials::parse_key_value_format(
-            "# generated\nunknown=value\nhelix_user_id = user-1\nhelix_user_key = key-1\n",
-        )
-        .unwrap();
-        assert!(credentials.is_authenticated());
-        assert_eq!(credentials.user_id, "user-1");
-        assert_eq!(credentials.helix_admin_key, "key-1");
-
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("credentials");
-        credentials.write_to_file(&path);
-        let restored = Credentials::try_read_from_file(&path).unwrap();
-        assert_eq!(restored.user_id, "user-1");
-        assert_eq!(restored.helix_admin_key, "key-1");
-    }
-
-    #[test]
-    fn credentials_reject_missing_or_empty_required_values() {
-        assert!(Credentials::parse_key_value_format("helix_user_id=user").is_err());
-        assert!(Credentials::parse_key_value_format("helix_user_key=key").is_err());
-        let empty =
-            Credentials::parse_key_value_format("helix_user_id=\nhelix_user_key=\n").unwrap();
-        assert!(!empty.is_authenticated());
+    #[tokio::test]
+    async fn callback_requires_code_and_state() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let callback = tokio::spawn(receive_callback(listener));
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream
+            .write_all(b"GET /callback?code=abc&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            callback.await.unwrap().unwrap(),
+            ("abc".into(), "xyz".into())
+        );
     }
 }

@@ -31,8 +31,7 @@ Content-Type: application/json
 ```
 
 Local development uses `http://localhost:6969/v2/query` by default. For Helix
-Cloud, use the gateway URL and database ID shown in the dashboard or written to
-`helix.toml` by [`helix sync`](/cli/command-reference/sync). The
+Cloud, use the gateway URL and database ID shown in the dashboard. The
 `cluster.helix-db.com` hostname in the OpenAPI document is a placeholder, not a
 shared query endpoint.
 
@@ -57,8 +56,8 @@ X-Helix-Database-Id: <database-id>
 
 `X-Helix-Tenant-Id` remains a legacy alias in GA mode. Database-specific
 cluster-mode gateway URLs require the API key but reject both database and
-tenant selection headers. Use the endpoint mode shown in the dashboard or
-written by `helix sync`; do not copy headers between the two modes.
+tenant selection headers. Use the endpoint mode shown in the dashboard; do not
+copy headers between the two modes.
 
 The current public SDK request builders set bearer authentication and execution
 headers but do not expose the GA database-selection header. Use them with a

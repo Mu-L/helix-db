@@ -1,63 +1,18 @@
-use crate::{errors::ConfigError, paths};
-use serde::{Deserialize, Serialize};
+use crate::errors::ConfigError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::{fmt, str::FromStr};
 
 pub const DEFAULT_LOCAL_PORT: u16 = 6969;
 pub const DEFAULT_LOCAL_IMAGE: &str = "ghcr.io/helixdb/helixdb";
 pub const DEFAULT_LOCAL_IMAGE_TAG: &str = "v0.0.4";
-pub const DEFAULT_QUERY_AUTH_HEADER: &str = "Authorization";
-pub const DEFAULT_QUERY_AUTH_ENV: &str = "HELIX_API_KEY";
 pub const DEFAULT_S3_REGION: &str = "us-east-1";
 pub const DEFAULT_S3_PREFIX: &str = "db/";
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct WorkspaceConfig {
-    pub workspace_id: Option<String>,
-}
-
-impl WorkspaceConfig {
-    pub fn config_path() -> Result<PathBuf, ConfigError> {
-        paths::helix_home_dir()
-            .map(|home| home.join("config"))
-            .map_err(|_| ConfigError::HomeDirNotFound)
-    }
-
-    pub fn load() -> Result<Self, ConfigError> {
-        let path = Self::config_path()?;
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-
-        let content =
-            fs::read_to_string(&path).map_err(|source| ConfigError::ReadWorkspaceConfig {
-                path: path.clone(),
-                source,
-            })?;
-
-        toml::from_str(&content)
-            .map_err(|source| ConfigError::ParseWorkspaceConfig { path, source })
-    }
-
-    pub fn save(&self) -> Result<(), ConfigError> {
-        let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|source| ConfigError::CreateWorkspaceDir {
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        }
-
-        let content = toml::to_string_pretty(self)
-            .map_err(|source| ConfigError::SerializeWorkspaceConfig { source })?;
-        fs::write(&path, content)
-            .map_err(|source| ConfigError::WriteWorkspaceConfig { path, source })?;
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HelixConfig {
     pub project: ProjectConfig,
     #[serde(default)]
@@ -67,6 +22,7 @@ pub struct HelixConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -399,93 +355,87 @@ impl LocalInstanceConfig {
     }
 }
 
-/// How the CLI turns an environment value into a query authentication header.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum QueryAuthScheme {
-    /// Add the `Bearer` authorization scheme to the configured key.
-    Bearer,
-    /// Send the configured value without adding a scheme.
-    Raw,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DatabaseReference {
+    Cluster(String),
+    Tenant(String),
 }
 
-impl QueryAuthScheme {
-    pub(crate) fn inferred_from_header(header: &str) -> Self {
-        if header.eq_ignore_ascii_case(DEFAULT_QUERY_AUTH_HEADER) {
-            Self::Bearer
-        } else {
-            Self::Raw
+impl DatabaseReference {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Cluster(id) | Self::Tenant(id) => id,
         }
     }
 
-    pub(crate) fn format_header_value(self, value: &str) -> Option<String> {
-        if value.trim().is_empty() || value.chars().any(char::is_control) {
-            return None;
-        }
+    pub fn query_request(&self) -> serde_json::Value {
         match self {
-            Self::Raw => Some(value.to_string()),
-            Self::Bearer => {
-                let trimmed = value.trim();
-                let mut parts = trimmed.splitn(2, char::is_whitespace);
-                let prefix = parts.next().unwrap_or_default();
-                if prefix.eq_ignore_ascii_case("bearer") {
-                    let token = parts.next().unwrap_or_default().trim();
-                    (!token.is_empty()).then(|| format!("Bearer {token}"))
-                } else {
-                    Some(format!("Bearer {trimmed}"))
-                }
-            }
+            Self::Cluster(id) => serde_json::json!({"clusterId": id}),
+            Self::Tenant(id) => serde_json::json!({"tenantId": id}),
         }
+    }
+}
+
+impl fmt::Display for DatabaseReference {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cluster(id) => write!(formatter, "cluster:{id}"),
+            Self::Tenant(id) => write!(formatter, "tenant:{id}"),
+        }
+    }
+}
+
+impl FromStr for DatabaseReference {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (kind, id) = value
+            .split_once(':')
+            .ok_or_else(|| "database must be cluster:<id> or tenant:<id>".to_owned())?;
+        if id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err("database ID is invalid".to_owned());
+        }
+        match kind {
+            "cluster" => Ok(Self::Cluster(id.to_owned())),
+            "tenant" => Ok(Self::Tenant(id.to_owned())),
+            _ => Err("database must be cluster:<id> or tenant:<id>".to_owned()),
+        }
+    }
+}
+
+impl Serialize for DatabaseReference {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for DatabaseReference {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EnterpriseInstanceConfig {
-    pub cluster_id: String,
+    pub database: DatabaseReference,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gateway_url: Option<String>,
-    #[serde(default = "default_query_auth_header")]
-    pub query_auth_header: String,
-    #[serde(default = "default_query_auth_env")]
-    pub query_auth_env: String,
-    /// Explicit query authentication scheme. Legacy configs infer it from the header.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub query_auth_scheme: Option<QueryAuthScheme>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub availability_mode: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gateway_node_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub db_node_type: Option<String>,
-    #[serde(default = "default_min_instances")]
-    pub min_instances: u64,
-    #[serde(default = "default_min_instances")]
-    pub max_instances: u64,
-    #[serde(flatten)]
-    pub db_config: DbConfig,
-}
-
-impl EnterpriseInstanceConfig {
-    pub(crate) fn resolved_query_auth_scheme(&self) -> QueryAuthScheme {
-        self.query_auth_scheme
-            .unwrap_or_else(|| QueryAuthScheme::inferred_from_header(&self.query_auth_header))
-    }
-}
-
-fn default_min_instances() -> u64 {
-    1
-}
-
-fn default_query_auth_header() -> String {
-    DEFAULT_QUERY_AUTH_HEADER.to_string()
-}
-
-fn default_query_auth_env() -> String {
-    DEFAULT_QUERY_AUTH_ENV.to_string()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -499,10 +449,10 @@ impl InstanceInfo<'_> {
         matches!(self, Self::Local(_))
     }
 
-    pub fn cluster_id(&self) -> Option<&str> {
+    pub fn database(&self) -> Option<&DatabaseReference> {
         match self {
             Self::Local(_) => None,
-            Self::Enterprise(config) => Some(&config.cluster_id),
+            Self::Enterprise(config) => Some(&config.database),
         }
     }
 }
@@ -619,15 +569,6 @@ impl HelixConfig {
             }
         }
 
-        for (name, config) in &self.enterprise {
-            if config.cluster_id.trim().is_empty() {
-                return Err(ConfigError::MissingClusterId {
-                    name: name.clone(),
-                    path: relative_path.clone(),
-                });
-            }
-        }
-
         Ok(())
     }
 
@@ -688,112 +629,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn old_enterprise_config_defaults_queries_and_runtime_fields() {
-        let config: HelixConfig = toml::from_str(
+    fn obsolete_enterprise_cloud_fields_are_rejected() {
+        let error = toml::from_str::<HelixConfig>(
             r#"
 [project]
 name = "demo"
 
 [enterprise.production]
 cluster_id = "cluster-123"
-availability_mode = "ha"
-gateway_node_type = "GW-40"
-db_node_type = "HLX-160"
-min_instances = 2
-max_instances = 4
 "#,
         )
-        .expect("old enterprise config should deserialize");
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
 
-        assert_eq!(config.project.queries, PathBuf::from("db"));
-        let enterprise = config.enterprise.get("production").unwrap();
-        assert_eq!(enterprise.availability_mode.as_deref(), Some("ha"));
-        assert_eq!(enterprise.gateway_node_type.as_deref(), Some("GW-40"));
-        assert_eq!(enterprise.db_node_type.as_deref(), Some("HLX-160"));
-        assert_eq!(enterprise.min_instances, 2);
-        assert_eq!(enterprise.max_instances, 4);
-        assert_eq!(enterprise.db_config.vector_config.db_max_size_gb, 20);
-        assert_eq!(
-            enterprise.resolved_query_auth_scheme(),
-            QueryAuthScheme::Bearer
-        );
-    }
-
-    #[test]
-    fn query_auth_scheme_supports_legacy_and_explicit_configs() {
-        let legacy_raw: HelixConfig = toml::from_str(
+        let valid: HelixConfig = toml::from_str(
             r#"
 [project]
 name = "demo"
 
 [enterprise.production]
-cluster_id = "cluster-123"
-query_auth_header = "x-api-key"
+database = "cluster:cluster-123"
 "#,
         )
         .unwrap();
+        assert_eq!(valid.project.queries, PathBuf::from("db"));
         assert_eq!(
-            legacy_raw
-                .enterprise
-                .get("production")
-                .unwrap()
-                .resolved_query_auth_scheme(),
-            QueryAuthScheme::Raw
+            valid.enterprise["production"].database,
+            DatabaseReference::Cluster("cluster-123".into())
         );
 
-        let explicit: HelixConfig = toml::from_str(
+        let obsolete_query_auth = format!(
+            "\n[project]\nname = \"demo\"\n{}_{} = \"{}_{}\"\n\n[local.dev]\n",
+            "query", "auth_env", "HELIX", "API_KEY"
+        );
+        for obsolete in [
+            obsolete_query_auth.as_str(),
             r#"
 [project]
 name = "demo"
 
-[enterprise.production]
-cluster_id = "cluster-123"
-query_auth_header = "Authorization"
-query_auth_scheme = "bearer"
+[sync]
+snapshot = "obsolete"
+
+[local.dev]
 "#,
-        )
-        .unwrap();
-        assert_eq!(
-            explicit
-                .enterprise
-                .get("production")
-                .unwrap()
-                .query_auth_scheme,
-            Some(QueryAuthScheme::Bearer)
-        );
-
-        let invalid = toml::from_str::<HelixConfig>(
-            r#"
-[project]
-name = "demo"
-
-[enterprise.production]
-cluster_id = "cluster-123"
-query_auth_scheme = "token"
-"#,
-        );
-        assert!(invalid.is_err());
-    }
-
-    #[test]
-    fn query_auth_scheme_formats_header_values() {
-        assert_eq!(
-            QueryAuthScheme::Bearer.format_header_value("secret"),
-            Some("Bearer secret".to_string())
-        );
-        assert_eq!(
-            QueryAuthScheme::Bearer.format_header_value("bearer secret"),
-            Some("Bearer secret".to_string())
-        );
-        assert_eq!(
-            QueryAuthScheme::Raw.format_header_value("secret"),
-            Some("secret".to_string())
-        );
-        assert_eq!(QueryAuthScheme::Bearer.format_header_value("  "), None);
-        assert_eq!(
-            QueryAuthScheme::Bearer.format_header_value("Bearer\r\nsecret"),
-            None
-        );
+        ] {
+            assert!(toml::from_str::<HelixConfig>(obsolete).is_err());
+        }
     }
 
     #[test]
@@ -860,21 +742,17 @@ name = "  "
             Err(ConfigError::EmptyProjectName { .. })
         ));
 
-        // Enterprise instance without a cluster_id is rejected even leniently.
-        let no_cluster: HelixConfig = toml::from_str(
+        // Invalid database references are rejected during deserialization.
+        let no_database = toml::from_str::<HelixConfig>(
             r#"
 [project]
 name = "demo"
 
 [enterprise.production]
-cluster_id = ""
+database = "cluster:"
 "#,
-        )
-        .unwrap();
-        assert!(matches!(
-            no_cluster.validate(path, false),
-            Err(ConfigError::MissingClusterId { .. })
-        ));
+        );
+        assert!(no_database.is_err());
     }
 
     #[test]

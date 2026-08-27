@@ -1,8 +1,10 @@
-use crate::config::{InstanceInfo, QueryAuthScheme};
+use crate::cloud::CloudClient;
+use crate::config::{DatabaseReference, InstanceInfo};
 use crate::errors::CliError;
 use crate::project::ProjectContext;
+use base64::Engine as _;
 use eyre::{eyre, Report, Result};
-use reqwest::header::{HeaderName, HeaderValue, CONTENT_TYPE};
+use reqwest::header::CONTENT_TYPE;
 use serde_json::Value;
 
 #[allow(clippy::too_many_arguments)]
@@ -18,85 +20,154 @@ pub async fn run(
     compact: bool,
 ) -> Result<()> {
     let project = ProjectContext::find_and_load(None)?;
-    // Load a project-root .env so Enterprise query auth can come from a file
-    // instead of requiring the caller to export it in their shell.
-    let _ = dotenvy::from_path(project.root.join(".env"));
-    let instance = instance.unwrap_or_else(|| "dev".to_string());
+    let instance = resolve_instance_target(&project, instance)?;
     let request_json = parse_query_request(file, json, ts, ts_file)?;
+    execute(&project, &instance, request_json, warm, host, port, compact).await
+}
 
-    validate_dynamic_request(&request_json, warm)?;
-    let (mut request, endpoint, is_local) = match project.config.get_instance(&instance)? {
-        InstanceInfo::Local(config) => {
-            let client = reqwest::Client::new();
-            let host = host.unwrap_or_else(|| "localhost".to_string());
-            let port = port.unwrap_or(config.port);
-            let endpoint = format!("http://{host}:{port}/v2/query");
-            (client.post(&endpoint), endpoint, true)
+pub(crate) fn resolve_instance_target(
+    project: &ProjectContext,
+    instance: Option<String>,
+) -> Result<String> {
+    if let Some(instance) = instance {
+        return Ok(instance);
+    }
+    if project.config.local.contains_key("dev") || project.config.enterprise.contains_key("dev") {
+        return Ok("dev".to_owned());
+    }
+    let instances = project.config.list_instances();
+    if instances.len() == 1 {
+        return Ok(instances[0].clone());
+    }
+    let candidates = instances
+        .into_iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(eyre!(
+        "Cannot derive an unambiguous query target. Pass an instance name or cluster:<id> / tenant:<id>. Candidates: {candidates}"
+    ))
+}
+
+pub(crate) async fn execute(
+    project: &ProjectContext,
+    instance: &str,
+    request_json: Value,
+    warm: bool,
+    host: Option<String>,
+    port: Option<u16>,
+    compact: bool,
+) -> Result<()> {
+    let request_type = validate_dynamic_request(&request_json, warm)?;
+    let explicit_database = instance.parse::<DatabaseReference>().ok();
+    let body = if let Some(database) = explicit_database {
+        if host.is_some() || port.is_some() {
+            return Err(eyre!(
+                "--host and --port are only valid for local instances"
+            ));
         }
-        InstanceInfo::Enterprise(config) => {
-            let client = reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()?;
-            let gateway_url = config.gateway_url.as_deref().ok_or_else(|| {
-                eyre!(
-                    "Enterprise gateway URL is not configured for '{instance}'. Run 'helix sync {instance}' or set gateway_url in helix.toml."
-                )
-            })?;
-            let auth_value = std::env::var(&config.query_auth_env).map_err(|_| -> Report {
-                CliError::new(format!(
-                    "environment variable {} is required for Enterprise query auth",
-                    config.query_auth_env
-                ))
-                .with_hint(format!(
-                    "set {} in a .env file in your project root, or export it in your shell",
-                    config.query_auth_env
-                ))
-                .into()
-            })?;
-            let header_name = HeaderName::from_bytes(config.query_auth_header.as_bytes())?;
-            let header_value = query_auth_header_value(
-                config.resolved_query_auth_scheme(),
-                &auth_value,
-                &config.query_auth_env,
-            )?;
-            let endpoint = format!("{}/v2/query", gateway_url.trim_end_matches('/'));
-            (
-                client.post(&endpoint).header(header_name, header_value),
-                endpoint,
-                false,
-            )
+        if warm {
+            return Err(eyre!("--warm is only supported for local queries"));
+        }
+        execute_cloud_query(&database, request_type, &request_json).await?
+    } else {
+        match project.config.get_instance(instance)? {
+            InstanceInfo::Local(config) => {
+                let host = host.unwrap_or_else(|| "localhost".to_string());
+                let port = port.unwrap_or(config.port);
+                let endpoint = format!("http://{host}:{port}/v2/query");
+                let mut request = reqwest::Client::new()
+                    .post(&endpoint)
+                    .header(CONTENT_TYPE, "application/json");
+                if warm {
+                    request = request.header("X-Helix-Warm", "true");
+                }
+                let response =
+                    request
+                        .json(&request_json)
+                        .send()
+                        .await
+                        .map_err(|error| -> Report {
+                            if error.is_connect() || error.is_timeout() {
+                                connect_error(instance, &endpoint, &error.to_string()).into()
+                            } else {
+                                error.into()
+                            }
+                        })?;
+                let status = response.status();
+                if status == reqwest::StatusCode::NO_CONTENT {
+                    return Ok(());
+                }
+                let body = response.bytes().await?.to_vec();
+                if !status.is_success() {
+                    return Err(eyre!(
+                        "Query failed with HTTP {status}: {}",
+                        String::from_utf8_lossy(&body)
+                    ));
+                }
+                body
+            }
+            InstanceInfo::Enterprise(config) => {
+                if host.is_some() || port.is_some() {
+                    return Err(eyre!(
+                        "--host and --port are only valid for local instances"
+                    ));
+                }
+                if warm {
+                    return Err(eyre!("--warm is only supported for local queries"));
+                }
+                execute_cloud_query(&config.database, request_type, &request_json).await?
+            }
         }
     };
 
-    request = request.header(CONTENT_TYPE, "application/json");
-    if warm {
-        request = request.header("X-Helix-Warm", "true");
-    }
+    print_response(&body, compact)
+}
 
-    let response = request
-        .json(&request_json)
-        .send()
-        .await
-        .map_err(|e| -> Report {
-            if e.is_connect() || e.is_timeout() {
-                connect_error(&instance, &endpoint, is_local, &e.to_string()).into()
-            } else {
-                e.into()
-            }
-        })?;
-    let status = response.status();
-    if status == reqwest::StatusCode::NO_CONTENT {
+async fn execute_cloud_query(
+    database: &DatabaseReference,
+    request_type: &str,
+    request_json: &Value,
+) -> Result<Vec<u8>> {
+    let query_json = serde_json::to_vec(request_json)?;
+    let payload = serde_json::json!({
+        "database": database.query_request(),
+        "queryJson": base64::engine::general_purpose::STANDARD.encode(query_json),
+    });
+    let path = match request_type {
+        "read" => "/v1/databases:query-read",
+        "write" => "/v1/databases:query-write",
+        _ => unreachable!("validated request type"),
+    };
+    let response = CloudClient::new()?
+        .post(path, payload, "execute Cloud query")
+        .await?;
+    let status = response
+        .get("statusCode")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| eyre!("Cloud query response has no statusCode"))?;
+    let encoded = response
+        .get("responseJson")
+        .and_then(Value::as_str)
+        .ok_or_else(|| eyre!("Cloud query response has no responseJson"))?;
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| eyre!("Cloud query response is invalid: {error}"))?;
+    if !(200..300).contains(&status) {
+        return Err(eyre!(
+            "Query failed with HTTP {status}: {}",
+            String::from_utf8_lossy(&body)
+        ));
+    }
+    Ok(body)
+}
+
+fn print_response(body: &[u8], compact: bool) -> Result<()> {
+    if body.iter().all(u8::is_ascii_whitespace) {
         return Ok(());
     }
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(eyre!("Query failed with HTTP {status}: {body}"));
-    }
-
-    if body.trim().is_empty() {
-        return Ok(());
-    }
-    let value: Value = serde_json::from_str(&body).unwrap_or(Value::String(body));
+    let value: Value = serde_json::from_slice(body)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body).into_owned()));
     if crate::output::Verbosity::current().show_normal() {
         if compact {
             println!("{}", serde_json::to_string(&value)?);
@@ -107,50 +178,14 @@ pub async fn run(
     Ok(())
 }
 
-fn query_auth_header_value(
-    scheme: QueryAuthScheme,
-    value: &str,
-    env_name: &str,
-) -> Result<HeaderValue> {
-    let value = scheme
-        .format_header_value(value)
-        .ok_or_else(|| -> Report {
-            CliError::new(format!(
-                "environment variable {env_name} must contain a valid, non-empty Enterprise query auth value"
-            ))
-            .into()
-        })?;
-    let mut value = HeaderValue::from_str(&value).map_err(|_| -> Report {
-        CliError::new(format!(
-            "environment variable {env_name} contains a value that cannot be used for Enterprise query auth"
-        ))
-        .into()
-    })?;
-    value.set_sensitive(true);
-    Ok(value)
-}
-
-/// Error for a query that never reached a Helix instance (connection refused,
-/// DNS failure, timeout). The raw reqwest error doesn't tell an agent or user
-/// what to do next, so spell out the recovery path for each instance kind.
-fn connect_error(instance: &str, endpoint: &str, is_local: bool, cause: &str) -> CliError {
-    let hint = if is_local {
-        format!(
-            "No Helix instance is listening there. Start it with `helix start {instance}` and \
-             check it with `helix status {instance}`. If it runs on another host/port, pass \
-             --host/--port."
-        )
-    } else {
-        format!(
-            "Check the gateway_url for '{instance}' in helix.toml and your network connection. \
-             `helix sync {instance}` refreshes the gateway metadata from Helix Cloud."
-        )
-    };
+fn connect_error(instance: &str, endpoint: &str, cause: &str) -> CliError {
     CliError::new(format!(
         "cannot reach Helix instance '{instance}' at {endpoint}"
     ))
     .with_context(cause.to_string())
-    .with_hint(hint)
+    .with_hint(format!(
+        "No Helix instance is listening there. Start it with `helix start {instance}` and check it with `helix status {instance}`. If it runs on another host/port, pass --host/--port."
+    ))
 }
 
 fn parse_query_request(
@@ -198,7 +233,7 @@ fn parse_query_request(
     crate::ts_query::build_request_from_ts(&snippet)
 }
 
-fn validate_dynamic_request(request: &Value, warm: bool) -> Result<()> {
+fn validate_dynamic_request(request: &Value, warm: bool) -> Result<&str> {
     let request_type = request
         .get("request_type")
         .and_then(Value::as_str)
@@ -212,22 +247,12 @@ fn validate_dynamic_request(request: &Value, warm: bool) -> Result<()> {
     if request.get("query").is_none() {
         return Err(eyre!("query request must include query"));
     }
-    Ok(())
+    Ok(request_type)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::QueryAuthScheme;
-
-    #[test]
-    fn query_auth_header_values_are_sensitive() {
-        let value =
-            query_auth_header_value(QueryAuthScheme::Bearer, "secret", "HELIX_API_KEY").unwrap();
-
-        assert_eq!(value, "Bearer secret");
-        assert!(value.is_sensitive());
-    }
 
     #[test]
     fn parse_query_request_accepts_inline_json() {
@@ -238,63 +263,39 @@ mod tests {
             None,
         )
         .expect("inline JSON should parse");
-
         assert_eq!(request["request_type"], "read");
     }
 
     #[test]
-    fn parse_query_request_rejects_missing_input() {
-        let error = parse_query_request(None, None, None, None)
+    fn parse_query_request_rejects_missing_or_multiple_inputs() {
+        assert!(parse_query_request(None, None, None, None)
             .unwrap_err()
-            .to_string();
-
-        assert!(error.contains("--file <path>, --json"));
+            .to_string()
+            .contains("--file <path>, --json"));
+        assert!(
+            parse_query_request(Some("request.json".into()), Some("{}".into()), None, None)
+                .unwrap_err()
+                .to_string()
+                .contains("mutually exclusive")
+        );
     }
 
     #[test]
-    fn parse_query_request_rejects_both_inputs() {
-        let error = parse_query_request(
-            Some("request.json".to_string()),
-            Some("{}".to_string()),
-            None,
-            None,
+    fn validates_request_type_and_warm_mode() {
+        let read = serde_json::json!({"request_type":"read","query":{}});
+        assert_eq!(validate_dynamic_request(&read, true).unwrap(), "read");
+        let write = serde_json::json!({"request_type":"write","query":{}});
+        assert!(validate_dynamic_request(&write, true).is_err());
+        assert!(validate_dynamic_request(
+            &serde_json::json!({"request_type":"READ","query":{}}),
+            false
         )
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("mutually exclusive"));
+        .is_err());
     }
 
     #[test]
-    fn connect_error_local_points_at_helix_start() {
-        let err = connect_error("dev", "http://localhost:8080/v2/query", true, "refused");
-
-        assert!(err.message.contains("'dev'"));
-        assert!(err.message.contains("http://localhost:8080/v2/query"));
-        let hint = err.hint.expect("hint should be set");
-        assert!(hint.contains("helix start dev"));
-    }
-
-    #[test]
-    fn connect_error_enterprise_points_at_gateway_config() {
-        let err = connect_error("prod", "https://gw.example.com/v2/query", false, "timeout");
-
-        let hint = err.hint.expect("hint should be set");
-        assert!(hint.contains("gateway_url"));
-        assert!(hint.contains("helix sync prod"));
-    }
-
-    #[test]
-    fn parse_query_request_rejects_json_and_ts_together() {
-        let error = parse_query_request(
-            None,
-            Some("{}".to_string()),
-            Some("readBatch()".to_string()),
-            None,
-        )
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("mutually exclusive"));
+    fn connect_error_points_at_local_recovery() {
+        let error = connect_error("dev", "http://localhost:8080/v2/query", "refused");
+        assert!(error.hint.unwrap().contains("helix start dev"));
     }
 }

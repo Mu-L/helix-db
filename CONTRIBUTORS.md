@@ -127,23 +127,20 @@ crates/cli/
 │   ├── commands/           # CLI command implementations (one module per subcommand)
 │   │   ├── logs/          # Local + Helix Cloud log viewing
 │   │   ├── add.rs         # Add a local or Helix Cloud instance
-│   │   ├── auth.rs        # Helix Cloud auth (login/logout/create-key)
+│   │   ├── auth.rs        # WorkOS Cloud auth (login/status/logout)
 │   │   ├── chef.rs        # Bootstrap a first Helix app for a coding agent
 │   │   ├── config.rs      # workspace/project/cluster config (hidden parent)
 │   │   ├── delete.rs      # Delete an instance and its local state
-│   │   ├── enterprise_deploy.rs # Helix Cloud deploy helpers
 │   │   ├── feedback.rs    # Send feedback to the Helix team
 │   │   ├── init.rs        # Initialize a project
 │   │   ├── metrics.rs     # Metrics configuration
 │   │   ├── prune.rs       # Prune local containers/workspaces
-│   │   ├── push.rs        # Deploy a Helix Cloud instance
-│   │   ├── query.rs       # Send a query to POST /v2/query
+│   │   ├── query.rs       # Send a local or brokered Cloud query
 │   │   ├── restart.rs     # Restart a background local instance
 │   │   ├── skills.rs      # Install and manage Helix agent skills
 │   │   ├── start.rs       # Start a local instance (alias: run)
 │   │   ├── status.rs      # Instance status
 │   │   ├── stop.rs        # Stop a background local instance
-│   │   ├── sync.rs        # Sync Helix Cloud metadata into helix.toml
 │   │   └── update.rs      # Self-update the CLI
 │   ├── config.rs          # helix.toml + ~/.helix config management
 │   ├── enterprise_cloud.rs # Helix Cloud REST types and fetchers
@@ -173,12 +170,12 @@ crates/cli/
 - `helix status` - Show local and Helix Cloud instance status
 - `helix logs` - View logs for a local or Helix Cloud instance
 - `helix query` - Send a query to `POST /v2/query`
-- `helix push` - Deploy a Helix Cloud instance
-- `helix auth` - Helix Cloud authentication (login/logout/create-key)
-- `helix workspace` - Manage the active Helix Cloud workspace
+- `helix auth` - WorkOS Cloud authentication (login/status/logout)
+- `helix workspace` - Discover accessible Helix Cloud workspaces
 - `helix project` - Manage the linked Helix Cloud project
 - `helix cluster` - List and inspect Helix Cloud clusters
-- `helix sync` - Sync Helix Cloud metadata into `helix.toml`
+- `helix database` - Discover and manage Cloud databases and application keys
+- `helix service-credential` - Manage workspace-owned automation credentials
 - `helix prune` - Prune local containers/workspaces
 - `helix delete` - Delete an instance from `helix.toml` and local state
 - `helix skills` - Install, update, and list Helix agent skills
@@ -186,9 +183,9 @@ crates/cli/
 - `helix update` - Update the CLI to the latest version
 - `helix feedback` - Send feedback to the Helix team
 
-**Deployment Targets:**
+**Runtime Targets:**
 - Local Docker/Podman containers (`helix start`) — image `ghcr.io/helixdb/helixdb:v0.0.4`
-- Helix Cloud via `helix push`
+- Linked Helix Cloud databases for brokered `query`, `shell`, `status`, and `logs`
 
 **Build & Deploy Flow:**
 
@@ -198,7 +195,7 @@ The v3 CLI is a runtime orchestrator — there is no `helix compile`/`helix chec
 2. Start a local instance with `helix start` — a Docker/Podman container running `ghcr.io/helixdb/helixdb:v0.0.4` (in-memory by default, on-disk with `--disk`). The CLI waits for `GET /healthz` before returning.
 3. Author queries with the Rust, TypeScript, Go, or Python DSL; they serialize to query JSON.
 4. Send queries to a running instance via `POST /v2/query` (`helix query`); validation happens server-side.
-5. For production, deploy a Helix Cloud instance with `helix push`, managing auth/metadata via `helix auth`, `helix sync`, and the `workspace`/`project`/`cluster` commands.
+5. For Cloud, sign in with `helix auth login`, link a project/database, and run queries through the authenticated backend broker.
 
 ### Supporting Components
 

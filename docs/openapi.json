@@ -52,11 +52,11 @@
           },
           {
             "url": "https://{gatewayHost}",
-            "description": "Helix Cloud query gateway from the database connection details or helix sync output",
+            "description": "Helix Cloud query gateway from the database connection details",
             "variables": {
               "gatewayHost": {
                 "default": "cluster.helix-db.com",
-                "description": "Placeholder only. Replace it with the managed gateway hostname shown in the Helix Cloud dashboard or written to helix.toml by helix sync."
+                "description": "Placeholder only. Replace it with the managed gateway hostname shown in the Helix Cloud dashboard."
               }
             }
           }

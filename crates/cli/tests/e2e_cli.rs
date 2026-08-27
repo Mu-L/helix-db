@@ -61,7 +61,12 @@ fn removed_commands_return_friendly_errors() {
 
     let deploy = stderr(fixture.command().arg("deploy").assert().failure());
     assert!(deploy.contains("`helix deploy` is not a command"));
-    assert!(deploy.contains("helix push <instance>"));
+    assert!(deploy.contains("Cloud database lifecycle is managed"));
+
+    assert!(stderr(fixture.command().arg("push").assert().failure())
+        .contains("unrecognized subcommand"));
+    assert!(stderr(fixture.command().arg("sync").assert().failure())
+        .contains("unrecognized subcommand"));
 }
 
 #[test]
@@ -399,8 +404,7 @@ fn local_runtime_commands_have_cross_platform_no_daemon_smoke_coverage() {
         r#"
 
 [enterprise.production]
-cluster_id = "cluster-test"
-gateway_url = "http://127.0.0.1:9999"
+database = "cluster:cluster-test"
 "#,
     );
     fs::write(project.join("helix.toml"), config_text).unwrap();
@@ -455,16 +459,9 @@ fn project_and_metrics_commands_use_isolated_state() {
         .assert()
         .success();
 
-    let project_json = stdout(
-        fixture
-            .command()
-            .current_dir(&project)
-            .args(["project", "show", "--format", "json"])
-            .assert()
-            .success(),
-    );
-    let project_config: JsonValue = serde_json::from_str(&project_json).unwrap();
-    assert_eq!(project_config["name"].as_str(), Some("state-project"));
+    let config: TomlValue =
+        toml::from_str(&fs::read_to_string(project.join("helix.toml")).unwrap()).unwrap();
+    assert_eq!(config["project"]["name"].as_str(), Some("state-project"));
 
     fixture
         .command()
@@ -522,16 +519,6 @@ fn query_preflight_errors_do_not_need_running_runtime() {
 fn cloud_config_smoke_without_credentials() {
     let fixture = CliFixture::new();
 
-    let workspace_show = stdout(
-        fixture
-            .command()
-            .args(["workspace", "show", "--format", "json"])
-            .assert()
-            .success(),
-    );
-    let workspace: JsonValue = serde_json::from_str(&workspace_show).unwrap();
-    assert!(workspace["workspace_id"].is_null());
-
     let workspace_list = stderr(
         fixture
             .command()
@@ -555,24 +542,15 @@ fn default_instance_and_noninteractive_error_branches_run_through_the_binary() {
         .assert()
         .success();
 
-    let local_push = stderr(
+    assert!(stderr(
         fixture
             .command()
             .current_dir(&project)
             .args(["push", "dev"])
             .assert()
-            .failure(),
-    );
-    assert!(local_push.contains("uses the v2 runtime"));
-    let missing_cloud = stderr(
-        fixture
-            .command()
-            .current_dir(&project)
-            .arg("push")
-            .assert()
-            .failure(),
-    );
-    assert!(missing_cloud.contains("No Enterprise instances found"));
+            .failure()
+    )
+    .contains("unrecognized subcommand"));
 
     fixture
         .command()
@@ -623,57 +601,21 @@ fn default_instance_and_noninteractive_error_branches_run_through_the_binary() {
     );
     assert!(unconfirmed_prune.contains("Re-run with --yes"));
 
-    let mut config = fs::read_to_string(project.join("helix.toml")).unwrap();
-    config.push_str(
-        r#"
-
-[enterprise.production]
-cluster_id = "cluster-1"
-gateway_url = "https://primary.example.com"
-
-[enterprise.staging]
-cluster_id = "cluster-2"
-gateway_url = "https://staging.example.com"
-"#,
-    );
-    fs::write(project.join("helix.toml"), config).unwrap();
-    let all_status = stdout(
+    let delete = stderr(
         fixture
             .command()
             .current_dir(&project)
-            .arg("status")
-            .assert()
-            .success(),
-    );
-    assert!(all_status.contains("production (Enterprise)"));
-    assert!(all_status.contains("staging (Enterprise)"));
-    let ambiguous_push = stderr(
-        fixture
-            .command()
-            .current_dir(&project)
-            .arg("push")
+            .args(["delete", "dev", "--yes"])
             .assert()
             .failure(),
     );
-    assert!(ambiguous_push.contains("Available Enterprise instances"));
-
+    assert!(delete.contains("Cannot delete the final instance 'dev'"));
     fixture
         .command()
         .current_dir(&project)
-        .args(["delete", "dev", "--yes"])
+        .arg("status")
         .assert()
         .success();
-    for command in ["start", "stop", "restart"] {
-        let error = stderr(
-            fixture
-                .command()
-                .current_dir(&project)
-                .arg(command)
-                .assert()
-                .failure(),
-        );
-        assert!(error.contains("No local instance specified"), "{error}");
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

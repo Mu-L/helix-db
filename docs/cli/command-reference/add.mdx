@@ -1,71 +1,16 @@
 ---
 title: "helix add"
-sidebarTitle: "add"
+description: "Add a local instance or a Cloud database link"
 pageType: "Reference"
 ---
 
 <div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
 
-> For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
-
-Add a new instance to an existing Helix project. The new block is appended to `helix.toml`.
-
-## Usage
-
 ```bash
-helix add [SUBCOMMAND]
+helix add local --name dev [--port 6969] [--disk | --storage-uri s3://bucket/prefix]
+helix add cloud --name production [--database tenant:<id>|cluster:<id>] \
+  [--project <id>] [--workspace <id>]
 ```
 
-If you omit the subcommand in a TTY, the CLI prompts you to choose between `local` and `enterprise`.
-
-## Available sub-commands
-
-| Sub-command | Description |
-|-------------|-------------|
-| `local` | Add a local development instance. |
-| `enterprise` | Add a Helix Cloud instance linked to a cluster. |
-
-## Top-level flags
-
-| Flag | Type | Description | Default |
-|------|------|-------------|---------|
-| `-p`, `--path` | Path | Project directory containing `helix.toml`. | Found by walking up from the current directory |
-
-`--path` is accepted either before or after the subcommand: `helix add --path ./app local --name qa` and `helix add local --name qa --path ./app` both work.
-
-### `helix add local`
-
-| Flag | Type | Required | Description | Default |
-|------|------|----------|-------------|---------|
-| `-n`, `--name` | String | Yes | Local instance name (must be unique in `helix.toml`). | — |
-| `--port` | Number | No | Host port for the local gateway. | `6969` |
-| `--disk` | Boolean | No | Persist local data with on-disk storage backed by a CLI-managed MinIO volume. | `false` |
-
-Interactive local add prompts for the storage mode and defaults to in-memory.
-
-### `helix add cloud`
-
-| Flag | Type | Required | Description | Default |
-|------|------|----------|-------------|---------|
-| `-n`, `--name` | String | Yes | Helix Cloud instance name. | — |
-| `--cluster-id` | String | Yes | Helix Cloud cluster ID. Find one with [`helix cluster list`](/cli/command-reference/cluster). | — |
-| `--gateway-url` | URL | No | Runtime gateway URL for dynamic queries. If omitted, run [`helix sync`](/cli/command-reference/sync) afterward to fetch it. | — |
-
-`helix add cloud` requires Helix Cloud authentication. Run [`helix auth login`](/cli/command-reference/auth) first.
-
-## Examples
-
-```bash
-# Add a second local instance on a different port
-helix add local --name staging --port 9090
-
-# Add a local instance that uses persistent on-disk storage by default
-helix add local --name disk-dev --disk
-
-# Add a Helix Cloud instance with a known cluster ID
-helix add cloud --name production --cluster-id ec_01HX...
-
-# Add a Helix Cloud instance and let helix sync fill in gateway/auth metadata
-helix add cloud --name prod --cluster-id ec_01HX...
-helix sync prod
-```
+Cloud add uses the WorkOS session, verifies the selected database, and writes only stable IDs to
+`helix.toml`. If a project has multiple eligible databases, pass `--database` explicitly.

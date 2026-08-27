@@ -242,17 +242,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".env");
 
-        add_env_var_to_file(&path, "HELIX_API_KEY", "first").unwrap();
+        add_env_var_to_file(&path, "EXAMPLE_TOKEN", "first").unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "HELIX_API_KEY=first\n"
+            "EXAMPLE_TOKEN=first\n"
         );
 
-        std::fs::write(&path, "OTHER=value\n  HELIX_API_KEY=old\nTAIL=value").unwrap();
-        add_env_var_to_file(&path, "HELIX_API_KEY", "second").unwrap();
+        std::fs::write(&path, "OTHER=value\n  EXAMPLE_TOKEN=old\nTAIL=value").unwrap();
+        add_env_var_to_file(&path, "EXAMPLE_TOKEN", "second").unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "OTHER=value\nHELIX_API_KEY=second\nTAIL=value\n"
+            "OTHER=value\nEXAMPLE_TOKEN=second\nTAIL=value\n"
         );
     }
 

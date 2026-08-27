@@ -9,6 +9,11 @@ use std::io::IsTerminal;
 pub async fn run(instance: String, yes: bool) -> Result<()> {
     let mut project = ProjectContext::find_and_load(None)?;
     let info = project.config.get_instance(&instance)?;
+    if project.config.local.len() + project.config.enterprise.len() == 1 {
+        return Err(eyre!(
+            "Cannot delete the final instance '{instance}'. Add a replacement instance first."
+        ));
+    }
     print_warning(&format!(
         "This will remove instance '{instance}' from helix.toml and clean local runtime state, including Helix-managed on-disk storage volumes if present. Remote S3 object-store data is not deleted."
     ));

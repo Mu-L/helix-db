@@ -1,22 +1,11 @@
-use crate::commands::auth::require_auth;
-use crate::config::InstanceInfo;
-use crate::enterprise_cloud::cloud_base_url;
+use crate::cloud::CloudClient;
+use crate::config::{DatabaseReference, InstanceInfo};
 use crate::local_runtime::LocalRuntime;
 use crate::project::ProjectContext;
 use crate::prompts;
 use chrono::{DateTime, Duration, Utc};
 use eyre::{eyre, Result};
-use serde::Deserialize;
-
-#[derive(Debug, Deserialize)]
-struct LogsRangeResponse {
-    logs: Vec<LogEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LogEntry {
-    message: String,
-}
+use serde_json::Value;
 
 pub async fn run(
     instance: Option<String>,
@@ -31,7 +20,7 @@ pub async fn run(
         InstanceInfo::Local(_) => {
             if range || start.is_some() || end.is_some() {
                 return Err(eyre!(
-                    "--range, --start, and --end are only supported for Enterprise logs; local logs use docker/podman logs"
+                    "--range, --start, and --end are only supported for Cloud query errors; local logs use docker/podman logs"
                 ));
             }
             LocalRuntime::new(&project).logs(&instance, follow)?;
@@ -39,16 +28,43 @@ pub async fn run(
         InstanceInfo::Enterprise(config) => {
             if follow {
                 return Err(eyre!(
-                    "live Enterprise logs are not supported yet; use --range instead"
+                    "live Cloud log streaming is not supported; omit --follow to list recent query errors"
                 ));
             }
-            let credentials = require_auth().await?;
             let (start, end) = parse_range(range, start, end)?;
-            let logs =
-                query_enterprise_logs(&config.cluster_id, &credentials.helix_admin_key, start, end)
-                    .await?;
-            for line in logs {
-                println!("{line}");
+            let path = match &config.database {
+                DatabaseReference::Cluster(id) => format!(
+                    "/v1/clusters/{id}/query-errors?startTime={}&endTime={}",
+                    start.timestamp(),
+                    end.timestamp()
+                ),
+                DatabaseReference::Tenant(id) => format!(
+                    "/v1/tenants/{id}/query-errors?startTime={}&endTime={}",
+                    start.timestamp(),
+                    end.timestamp()
+                ),
+            };
+            let response = CloudClient::new()?
+                .get(&path, "list Cloud query errors")
+                .await?;
+            let errors = response
+                .get("errors")
+                .and_then(Value::as_array)
+                .ok_or_else(|| eyre!("Cloud query-error response has no errors list"))?;
+            for error in errors {
+                let timestamp = error
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown time");
+                let query = error
+                    .get("queryName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown query");
+                let output = error
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown error");
+                println!("{timestamp} {query}: {output}");
             }
         }
     }
@@ -82,7 +98,7 @@ fn all_instances(project: &ProjectContext) -> Vec<(String, String)> {
 }
 
 fn parse_range(
-    range: bool,
+    _range: bool,
     start: Option<String>,
     end: Option<String>,
 ) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
@@ -92,36 +108,9 @@ fn parse_range(
     };
     let start = match start {
         Some(start) => DateTime::parse_from_rfc3339(&start)?.with_timezone(&Utc),
-        None if range => end - Duration::hours(1),
         None => end - Duration::hours(1),
     };
     Ok((start, end))
-}
-
-async fn query_enterprise_logs(
-    cluster_id: &str,
-    api_key: &str,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-) -> Result<Vec<String>> {
-    let url = format!(
-        "{}/api/cli/enterprise-clusters/{}/logs/range?start_time={}&end_time={}",
-        cloud_base_url(),
-        cluster_id,
-        start.timestamp(),
-        end.timestamp()
-    );
-    let response = reqwest::Client::new()
-        .get(url)
-        .header("x-api-key", api_key)
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(eyre!("Failed to fetch Enterprise logs: {body}"));
-    }
-    let payload: LogsRangeResponse = response.json().await?;
-    Ok(payload.logs.into_iter().map(|log| log.message).collect())
 }
 
 #[cfg(test)]

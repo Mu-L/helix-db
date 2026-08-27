@@ -1,121 +1,47 @@
 ---
-title: "Helix Cloud"
-description: "Authenticate, link a project, and query a Helix Cloud cluster from the CLI"
-sidebarTitle: "Helix Cloud"
-icon: "cloud"
+title: "Helix Cloud CLI workflow"
+description: "Authenticate, link, query, and manage Cloud resources"
 pageType: "Guide"
 ---
 
 <div className="flex flex-wrap gap-2"><Badge color="blue" size="sm">Guide</Badge></div>
 
-> For the complete documentation index optimized for AI agents, see [llms.txt](/llms.txt).
-
-The CLI handles authentication, workspace/project/cluster selection, metadata sync, log retrieval, and dynamic queries against a remote gateway. Cluster provisioning and scaling happen in the Helix control plane, not the CLI.
-
-## Prerequisites
-
-- A Helix Cloud account with at least one workspace and Helix Cloud cluster.
-- A local Helix project (`helix init` in any directory).
-
-## End-to-end flow
-
 <Steps>
-  <Step title="Authenticate">
+  <Step title="Authenticate with WorkOS">
     ```bash
     helix auth login
-    ```
-
-    Opens a browser-based GitHub device flow. Credentials are stored in `~/.helix/credentials`.
-
-    To use the CLI from CI or another non-browser environment, rotate a cluster API key and export it as `HELIX_API_KEY`:
-
-    ```bash
-    helix auth create-key <cluster-id>
-    export HELIX_API_KEY="..."
+    helix auth status
     ```
   </Step>
-
-  <Step title="Pick a workspace">
+  <Step title="Discover a target">
     ```bash
     helix workspace list
-    helix workspace switch <workspace-slug>
+    helix project list --workspace-id <workspace-id>
+    helix database list --project <project-id>
     ```
-
-    The selection is persisted in `~/.helix/config` and applies to all subsequent Helix Cloud commands.
   </Step>
-
-  <Step title="Link a project">
+  <Step title="Link the current project and database">
     ```bash
-    helix project list
-    helix project switch <project>
+    helix project link <project-id>
+    helix add cloud --name production --database tenant:<tenant-id>
     ```
-
-    Linking writes `[project] workspace_id` and `[project] id` to your local `helix.toml`.
   </Step>
-
-  <Step title="Discover clusters and add an instance">
+  <Step title="Run a query through the broker">
     ```bash
-    helix cluster list
-    helix add cloud --name production --cluster-id <cluster-id>
+    helix query production --file request.json
+    helix shell production
     ```
-
-    Or scaffold a brand-new Helix Cloud-linked project with [`helix init cloud --cluster-id <cluster-id>`](/cli/command-reference/init).
-  </Step>
-
-  <Step title="Sync gateway and auth metadata">
-    ```bash
-    helix sync production
-    ```
-
-    `helix sync` writes the latest `gateway_url`, `query_auth_header`, `query_auth_env`, `query_auth_scheme`, and node-type values from the cloud into `[enterprise.production]` in `helix.toml`. Re-run after any cluster change.
-
-    If the cluster has not published a `gateway_url` yet, the CLI prints a warning. Set `gateway_url` manually under `[enterprise.production]` once you know it, or re-run `helix sync` later.
-  </Step>
-
-  <Step title="Send dynamic queries">
-    ```bash
-    export HELIX_API_KEY="..."   # raw key; bearer mode adds the prefix
-    helix query production --file examples/request.json
-    ```
-
-    `helix query` posts to `<gateway_url>/v2/query` with the header named by `query_auth_header` (default `Authorization`). `query_auth_scheme = "bearer"` adds the `Bearer` prefix; `"raw"` sends the environment value unchanged.
-  </Step>
-
-  <Step title="Pull historical logs">
-    ```bash
-    helix logs production \
-      --range \
-      --start 2026-05-12T00:00:00Z \
-      --end   2026-05-12T01:00:00Z
-    ```
-
-    Helix Cloud logs are queried over a time range. Live `--follow` is not yet supported for Helix Cloud instances.
   </Step>
 </Steps>
 
-## Reference: per-instance auth contract
+The WorkOS session identifies the user. `database.query.read` or `database.query.write` independently
+authorizes the selected database; project-management access does not imply query access. The backend
+forwards the authorized request using the existing cluster-scoped operational gateway key and, for a
+tenant database, the exact tenant header. The CLI never receives that key and never contacts the
+gateway directly.
 
-Each `[enterprise.<instance>]` block stores the auth contract used by `helix query`:
+Owners/admins have both query scopes by default. Members have neither unless explicitly granted.
+Local queries keep the current local auth-disabled path.
 
-| Field | Default | Purpose |
-|-------|---------|---------|
-| `query_auth_header` | `Authorization` | HTTP header name set on every query request. |
-| `query_auth_env` | `HELIX_API_KEY` | Environment variable the CLI reads to populate the header value. |
-| `query_auth_scheme` | inferred | `bearer` for `Authorization`; `raw` for other headers. |
-
-Override the variable name per-instance by setting `query_auth_env` under `[enterprise.<instance>]` and exporting whatever name you choose.
-
-## Common errors
-
-For Helix Cloud auth, gateway, and logging errors, see [Troubleshooting](/cli/troubleshooting).
-
-## What next?
-
-<CardGroup cols={2}>
-  <Card title="Local workflow" icon="computer" href="/cli/workflows/local">
-    Run the local dev runtime and iterate on JSON requests
-  </Card>
-  <Card title="CLI Command Reference" icon="terminal" href="/cli/command-reference">
-    Every command, subcommand, and flag
-  </Card>
-</CardGroup>
+Use `helix database key` only to create application keys for direct gateway clients. Use
+`helix service-credential` only to manage headless API/MCP credentials. Neither is a CLI login method.

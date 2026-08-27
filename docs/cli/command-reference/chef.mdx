@@ -24,11 +24,9 @@ helix chef
 
 ## Authentication
 
-The first interactive run signs you in to Helix Cloud through a GitHub device-code flow. This is used only to upload an optional, anonymized setup snapshot — the build itself does not require it.
-
-- **Non-interactive (agents, CI, sandboxes):** when stdin is not a TTY, `helix chef` skips the login automatically and proceeds without it. The snapshot upload is simply skipped.
-- **Opt out in an interactive shell:** set `HELIX_SKIP_CLOUD_AUTH=1`.
-- **No-auth alternative:** to scaffold without `chef` (and without any Cloud login), run `helix init local` → `helix start dev` → `helix query dev --file …` by hand.
+`helix chef` is a local workflow and does not require Cloud authentication. It neither uploads a
+project snapshot nor reads Cloud credentials. Use `helix auth login` separately only when you later
+run a Cloud command.
 
 ## What it does
 
@@ -64,9 +62,6 @@ Next, choose a setup mode:
 ```bash
 # Interactive setup
 helix chef
-
-# Skip the Cloud login (also implicit in non-interactive shells)
-HELIX_SKIP_CLOUD_AUTH=1 helix chef
 
 # Alias
 helix cook
