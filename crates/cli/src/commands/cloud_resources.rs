@@ -9,6 +9,7 @@ use crate::{
 };
 use eyre::{eyre, Result};
 use serde_json::{json, Map, Value};
+use std::collections::HashSet;
 
 pub async fn run_database(action: Option<DatabaseAction>) -> Result<()> {
     match action {
@@ -387,32 +388,81 @@ fn confirm_or_require_yes(yes: bool, question: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum ServiceCredentialPermission {
+    ProjectRead,
+    ProjectWrite,
+    QueryRead,
+    QueryWrite,
+}
+
+impl ServiceCredentialPermission {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "project-read" => Ok(Self::ProjectRead),
+            "project-write" => Ok(Self::ProjectWrite),
+            "query-read" => Ok(Self::QueryRead),
+            "query-write" => Ok(Self::QueryWrite),
+            permission => Err(eyre!(
+                "unknown service-credential permission '{permission}'"
+            )),
+        }
+    }
+
+    fn api_name(self) -> &'static str {
+        match self {
+            Self::ProjectRead => "SERVICE_CREDENTIAL_PERMISSION_PROJECT_READ",
+            Self::ProjectWrite => "SERVICE_CREDENTIAL_PERMISSION_PROJECT_WRITE",
+            Self::QueryRead => "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_READ",
+            Self::QueryWrite => "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_WRITE",
+        }
+    }
+}
+
 fn parse_grants(grants: &[String]) -> Result<Vec<Value>> {
+    let mut seen_projects = HashSet::with_capacity(grants.len());
     grants
         .iter()
         .map(|grant| {
             let (project, permissions) = grant.split_once('=').ok_or_else(|| {
                 eyre!("grant must be PROJECT_ID=project-read,project-write,query-read,query-write")
             })?;
-            if project.trim().is_empty() {
+            let project = project.trim();
+            if project.is_empty() {
                 return Err(eyre!("grant project ID cannot be empty"));
+            }
+            if !seen_projects.insert(project) {
+                return Err(eyre!("duplicate project grant '{project}'"));
             }
             let permissions = permissions
                 .split(',')
-                .map(|permission| match permission.trim() {
-                    "project-read" => Ok("SERVICE_CREDENTIAL_PERMISSION_PROJECT_READ"),
-                    "project-write" => Ok("SERVICE_CREDENTIAL_PERMISSION_PROJECT_WRITE"),
-                    "query-read" => Ok("SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_READ"),
-                    "query-write" => Ok("SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_WRITE"),
-                    permission => Err(eyre!(
-                        "unknown service-credential permission '{permission}'"
-                    )),
-                })
+                .map(str::trim)
+                .map(ServiceCredentialPermission::parse)
                 .collect::<Result<Vec<_>>>()?;
             if permissions.is_empty() {
                 return Err(eyre!("grant permissions cannot be empty"));
             }
-            Ok(json!({"projectId": project, "permissions": permissions}))
+            let unique_permissions = permissions.iter().copied().collect::<HashSet<_>>();
+            if unique_permissions.len() != permissions.len() {
+                return Err(eyre!("grant permissions cannot contain duplicates"));
+            }
+            if unique_permissions.contains(&ServiceCredentialPermission::ProjectWrite)
+                && !unique_permissions.contains(&ServiceCredentialPermission::ProjectRead)
+            {
+                return Err(eyre!("project-write requires project-read"));
+            }
+            if unique_permissions.contains(&ServiceCredentialPermission::QueryWrite)
+                && !unique_permissions.contains(&ServiceCredentialPermission::QueryRead)
+            {
+                return Err(eyre!("query-write requires query-read"));
+            }
+            Ok(json!({
+                "projectId": project,
+                "permissions": permissions
+                    .into_iter()
+                    .map(ServiceCredentialPermission::api_name)
+                    .collect::<Vec<_>>(),
+            }))
         })
         .collect()
 }
@@ -437,10 +487,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn grants_are_project_scoped_and_query_permissions_are_independent() {
-        let grants = parse_grants(&["project-1=project-read,query-write".into()]).unwrap();
+    fn grants_are_project_scoped_and_map_every_permission() {
+        let grants =
+            parse_grants(&[" project-1 =project-read,project-write,query-read,query-write".into()])
+                .unwrap();
         assert_eq!(grants[0]["projectId"], "project-1");
-        assert_eq!(grants[0]["permissions"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            grants[0]["permissions"],
+            json!([
+                "SERVICE_CREDENTIAL_PERMISSION_PROJECT_READ",
+                "SERVICE_CREDENTIAL_PERMISSION_PROJECT_WRITE",
+                "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_READ",
+                "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_WRITE",
+            ])
+        );
+    }
+
+    #[test]
+    fn grants_require_matching_read_permissions() {
+        assert!(parse_grants(&["project-1=project-write".into()]).is_err());
+        assert!(parse_grants(&["project-1=query-write".into()]).is_err());
+        assert!(
+            parse_grants(&["project-1=project-read,project-write,query-write".into()]).is_err()
+        );
+    }
+
+    #[test]
+    fn grants_reject_duplicate_and_malformed_values() {
+        assert!(parse_grants(&[
+            "project-1=query-read".into(),
+            "project-1=project-read".into(),
+        ])
+        .is_err());
+        assert!(parse_grants(&["project-1=query-read,query-read".into()]).is_err());
+        assert!(parse_grants(&["project-1=".into()]).is_err());
+        assert!(parse_grants(&["=query-read".into()]).is_err());
+        assert!(parse_grants(&["project-1".into()]).is_err());
         assert!(parse_grants(&["project-1=service-credentials-manage".into()]).is_err());
     }
 
