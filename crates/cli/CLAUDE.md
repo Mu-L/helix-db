@@ -74,21 +74,19 @@ Defined in `src/commands/chef.rs`, dispatched from `src/main.rs` (`Commands::Che
 
 ### End-to-end flow (`run()` → `collect_options()`)
 
-1. **Ensure Helix Cloud auth** — `chef` requires a WorkOS session. If credentials are missing or invalid, it runs the same PKCE login as `helix auth login`.
-2. **Ask the build intent** — "What do you want to build?" (free text; blank → Personal CRM default).
-3. **Ask the setup mode** — Manual vs Automatic (recommended). Manual adds per-step confirm prompts; Automatic runs everything with defaults. Both still ask the intent question.
-4. **Setup pipeline:**
+1. **Ask the build intent** — "What do you want to build?" (free text; blank → Personal CRM default).
+2. **Ask the setup mode** — Manual vs Automatic (recommended). Manual adds per-step confirm prompts; Automatic runs everything with defaults. Both still ask the intent question.
+3. **Setup pipeline:**
    - `install_skills` — `npx skills add HelixDB/skills` (the HelixDB query skills). **Global (`-g`) by default**; Manual mode asks global-vs-project.
    - `install_mcp` — `npx add-mcp <docs MCP>` scoped to `MCP_HTTP_COMPATIBLE_AGENTS` (add-mcp errors non-zero if it hits an http-incompatible agent like Claude Desktop, so the agent list is pinned).
    - `init_project` — reuses `helix init local`.
    - `write_agent_prompt` + `write_example_queries` — writes `HELIX_CHEF_PROMPT.md` (the system prompt) and `examples/{seed,read_users}.json`.
    - `run_database` — `helix start dev` (port 8080, in-memory).
    - `seed_starter_data` — runs `examples/seed.json`.
-5. **Agent detection** (`detect_agent`) — first available of `AGENT_PRIORITY`: Claude Code → OpenAI Codex → OpenCode → Cursor Agent (`claude` → `codex` → `opencode` → `cursor-agent`), via `external_tools::available`.
-6. **Permission prompt** (`select_permission_mode`) — "Give the agent full autonomy?": Yes (full auto) / Scoped (ask per command) / Don't launch. Non-interactive → `None` (skip launch).
-7. **Launch** (`launch_agent`, async) — Claude goes through `launch_claude_streaming`; codex/opencode through a captured stdout/stderr path so `chef` can include a transcript in the snapshot.
-8. **Post-run** — on success, print the agent's structured summary and `try_open_frontend` (open `http://localhost:3000` if `web/package.json` exists and the server responds). On failure / abort / no-agent → `print_paste_prompt_hint` points the user at `HELIX_CHEF_PROMPT.md`.
-9. **Snapshot upload** — always attempts to build a sanitized snapshot and upload it to Helix Cloud using presigned S3 URLs from `/api/cli/chef-snapshots/upload-urls`. Upload failures are silent and recorded through Chef metrics.
+4. **Agent detection** (`detect_agent`) — first available of `AGENT_PRIORITY`: Claude Code → OpenAI Codex → OpenCode → Cursor Agent (`claude` → `codex` → `opencode` → `cursor-agent`), via `external_tools::available`.
+5. **Permission prompt** (`select_permission_mode`) — "Give the agent full autonomy?": Yes (full auto) / Scoped (ask per command) / Don't launch. Non-interactive → `None` (skip launch).
+6. **Launch** (`launch_agent`, async) — Claude goes through `launch_claude_streaming`; Codex and OpenCode use captured stdout/stderr.
+7. **Post-run** — on success, print the agent's structured summary and `try_open_frontend` (open `http://localhost:3000` if `web/package.json` exists and the server responds). On failure / abort / no-agent → `print_paste_prompt_hint` points the user at `HELIX_CHEF_PROMPT.md`.
 
 ### The system prompt (`AGENT_PROMPT_TEMPLATE` + `DEFAULT_PROJECT_SPEC`)
 
@@ -115,15 +113,9 @@ stdout is piped and parsed line-by-line as NDJSON into `ClaudeEvent` (System / A
 
 **Robustness:** stdin is `Stdio::null()`; the read loop races `tokio::signal::ctrl_c()` (Ctrl-C kills the child + prints the paste hint); `child.wait()` is wrapped in a 5s `timeout` then force-kill so chef never hangs.
 
-### Chef snapshots and metrics
+### Chef metrics
 
-`chef` emits a `chef` metrics event for `started`, `completed`, `auth_failed`, and `upload_failed`. Metrics include only metadata (run id, phase, setup mode, agent, duration, success, sizes, and short error strings); prompt text, transcripts, and source code are never sent through metrics.
-
-After agent completion, `chef` creates two in-memory upload objects:
-- `overview.json` — run metadata, original intent, rendered `HELIX_CHEF_PROMPT.md`, final summary, transcript, file inventory, and skipped-file list.
-- `project.txt.gz` — a gzipped inert text rendering of selected UTF-8 project files.
-
-Snapshot safety excludes `.git`, `.helix`, `node_modules`, `.next`, `target`, build/cache/coverage directories, `.env*`, keys/certs, logs, DB dumps, binary/non-UTF8 files, oversized files, and files matching common secret patterns. The CLI uploads via presigned PUT URLs returned by Helix Cloud; upload failures do not fail the Chef build.
+`chef` emits `started` and `completed` metrics with run metadata, setup mode, agent, duration, and outcome. It does not require Cloud authentication or upload prompts, transcripts, source code, or project snapshots.
 
 ### Output helpers (`src/output.rs`)
 
