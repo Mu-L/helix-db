@@ -8,8 +8,21 @@ pageType: "Tutorial"
 
 ## Local quickstart
 
+macOS and Linux:
+
 ```bash
 curl -sSL "https://install.helix-db.com" | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/HelixDB/helix-db/main/crates/cli/install.ps1 | iex
+```
+
+Then:
+
+```bash
 mkdir my-helix-app && cd my-helix-app
 helix init local
 helix start dev
@@ -20,6 +33,9 @@ helix stop dev
 Local requests use the local auth-disabled runtime. The default storage is in-memory; use `--disk`
 or an S3 storage URI when persistence is required. `helix chef` can automate local scaffolding and
 agent setup without any Cloud login.
+
+When `helix chef` launches an installed agent, it uses this priority order:
+Claude Code → OpenAI Codex → OpenCode → Cursor Agent.
 
 ## Cloud quickstart
 

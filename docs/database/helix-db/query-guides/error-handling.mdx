@@ -223,6 +223,7 @@ to address the failure. Statuses list the current HTTP behavior; `400/503` and
 | --- | --- | --- | --- | --- |
 | `database_closed` | The database handle is closed. | 500 | After reopening | Operational |
 | `invalid_configuration` | Database configuration is invalid. | 500 | After fixing configuration | Operational |
+| `migration_stepping_requires_disabled_mode` | Explicit migration stepping requires disabled worker mode. | 500 | After changing worker mode | Operational |
 | `migration_required` | Existing storage requires an explicit migration. | 500 | After migration | Operational |
 | `writer_migration_required` | A writer must open and migrate existing storage. | 500 | After writer migration | Operational |
 | `unsupported_index_storage_version` | Stored index data is newer than this binary supports. | 500 | After upgrading the binary | Operational |
