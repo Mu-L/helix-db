@@ -2,6 +2,7 @@ mod support;
 
 use assert_cmd::assert::Assert;
 use base64::Engine as _;
+use helix_db_testkit::transport_corpus::{expected_transport_observations, transport_query_corpus};
 use serde_json::Value;
 use std::fs;
 use support::CliFixture;
@@ -292,4 +293,53 @@ database = "cluster:cluster-1"
             .success(),
     );
     assert!(logs.contains("read: failed"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_command_preserves_the_shared_transport_corpus() {
+    let server = MockServer::start().await;
+    let fixture = CliFixture::new();
+    let project = fixture.root().join("query-transport-corpus-project");
+    fixture
+        .command()
+        .args(["init", "--path"])
+        .arg(&project)
+        .args(["local", "--no-skills"])
+        .assert()
+        .success();
+
+    let corpus = transport_query_corpus();
+    let expected_observations = expected_transport_observations();
+    assert_eq!(corpus.len(), expected_observations.len());
+    for (step, expected) in corpus.into_iter().zip(expected_observations) {
+        server.reset().await;
+        let request = step.request();
+        Mock::given(method("POST"))
+            .and(path("/v2/query"))
+            .and(header("content-type", "application/json"))
+            .and(body_json(&request))
+            .respond_with(ResponseTemplate::new(200).set_body_json(expected.clone()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let output = stdout(
+            fixture
+                .command()
+                .current_dir(&project)
+                .args(["query", "dev", "--json"])
+                .arg(serde_json::to_string(&request).unwrap())
+                .args([
+                    "--host",
+                    &server.address().ip().to_string(),
+                    "--port",
+                    &server.address().port().to_string(),
+                    "--compact",
+                ])
+                .assert()
+                .success(),
+        );
+        let observed: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(observed, expected, "{} corpus response", step.name());
+    }
 }
