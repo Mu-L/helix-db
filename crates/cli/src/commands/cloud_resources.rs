@@ -434,14 +434,14 @@ fn parse_grants(grants: &[String]) -> Result<Vec<Value>> {
             if !seen_projects.insert(project) {
                 return Err(eyre!("duplicate project grant '{project}'"));
             }
+            if permissions.trim().is_empty() {
+                return Err(eyre!("grant permissions cannot be empty"));
+            }
             let permissions = permissions
                 .split(',')
                 .map(str::trim)
                 .map(ServiceCredentialPermission::parse)
                 .collect::<Result<Vec<_>>>()?;
-            if permissions.is_empty() {
-                return Err(eyre!("grant permissions cannot be empty"));
-            }
             let unique_permissions = permissions.iter().copied().collect::<HashSet<_>>();
             if unique_permissions.len() != permissions.len() {
                 return Err(eyre!("grant permissions cannot contain duplicates"));
@@ -514,6 +514,7 @@ mod tests {
 
     #[test]
     fn grants_reject_duplicate_and_malformed_values() {
+        assert!(parse_grants(&[]).unwrap().is_empty());
         assert!(parse_grants(&[
             "project-1=query-read".into(),
             "project-1=project-read".into(),
