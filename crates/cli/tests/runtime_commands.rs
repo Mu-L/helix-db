@@ -110,3 +110,37 @@ async fn disk_runtime_commands_cover_resource_reuse_status_cleanup_and_errors() 
     assert!(log.contains("logs -f"));
     assert!(log.contains("network inspect"));
 }
+
+#[test]
+fn logs_and_status_report_a_missing_runtime_like_stop_does() {
+    let fixture = CliFixture::new().with_missing_runtime();
+    let project = fixture.root().join("missing-runtime-project");
+    fixture
+        .command()
+        .args(["init", "--path"])
+        .arg(&project)
+        .args(["local", "--no-skills"])
+        .assert()
+        .success();
+
+    for command in [["logs", "dev"], ["status", "dev"], ["stop", "dev"]] {
+        let message = stderr(
+            fixture
+                .command()
+                .current_dir(&project)
+                .args(command)
+                .assert()
+                .failure(),
+        );
+        assert!(
+            message.contains("Docker is not installed"),
+            "`helix {}` should name the missing runtime, got: {message}",
+            command.join(" ")
+        );
+        assert!(
+            message.contains("os error 2"),
+            "`helix {}` should keep the underlying cause, got: {message}",
+            command.join(" ")
+        );
+    }
+}

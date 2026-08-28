@@ -77,6 +77,14 @@ impl CliFixture {
         }
     }
 
+    /// Points the runtime seam at a path that does not exist, so every runtime
+    /// command fails to spawn exactly as it does on a host without Docker.
+    #[allow(dead_code)]
+    pub fn with_missing_runtime(mut self) -> Self {
+        self.test_runtime_bin = Some(self.root.join("bin").join("missing-runtime"));
+        self
+    }
+
     #[allow(dead_code)]
     pub fn with_http_base(mut self, base_url: impl Into<String>) -> Self {
         self.http_base_url = Some(base_url.into());

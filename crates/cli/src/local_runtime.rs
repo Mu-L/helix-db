@@ -355,7 +355,7 @@ impl LocalRuntime {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status()
-            .map_err(|e| eyre!("Failed to read logs for {name}: {e}"))?;
+            .map_err(|e| not_installed_error(self.runtime, &e.to_string(), command_exists))?;
 
         if !status.success() {
             return Err(eyre!(
@@ -379,7 +379,7 @@ impl LocalRuntime {
                 &format!("name=^{name}$"),
             ])
             .output()
-            .map_err(|e| eyre!("Failed to inspect {name}: {e}"))?;
+            .map_err(|e| not_installed_error(self.runtime, &e.to_string(), command_exists))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
