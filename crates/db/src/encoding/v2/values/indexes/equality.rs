@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use roaring::RoaringTreemap;
 
 use crate::encoding::error::EncodingError;
@@ -16,6 +16,141 @@ use super::super::{
 };
 
 const SECONDARY_ENTRY_KIND: u8 = 0x05;
+const BITMAP_MEMBERSHIP_DELTA_MAGIC: &[u8; 8] = b"HLXRBM2\0";
+const BITMAP_MEMBERSHIP_DELTA_LEN_PREFIX_LEN: usize = core::mem::size_of::<u32>();
+
+/// Associative last-write-wins membership changes for one physical bitmap row.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct BitmapMembershipDelta {
+    additions: RoaringTreemap,
+    removals: RoaringTreemap,
+}
+
+impl BitmapMembershipDelta {
+    pub(crate) fn from_additions(additions: RoaringTreemap) -> Self {
+        Self {
+            additions,
+            removals: RoaringTreemap::new(),
+        }
+    }
+
+    pub(crate) fn add(&mut self, id: u64) {
+        self.removals.remove(id);
+        self.additions.insert(id);
+    }
+
+    pub(crate) fn remove(&mut self, id: u64) {
+        self.additions.remove(id);
+        self.removals.insert(id);
+    }
+
+    /// Applies a newer delta after this delta.
+    pub(crate) fn compose(&mut self, newer: &Self) {
+        self.removals -= &newer.additions;
+        self.additions |= &newer.additions;
+        self.additions -= &newer.removals;
+        self.removals |= &newer.removals;
+    }
+
+    pub(crate) fn apply_to(&self, ids: &mut RoaringTreemap) {
+        *ids -= &self.removals;
+        *ids |= &self.additions;
+    }
+
+    pub(crate) fn encode(&self) -> Bytes {
+        let mut additions = Vec::new();
+        self.additions
+            .serialize_into(&mut additions)
+            .expect("serializing membership additions into memory is infallible");
+        let mut removals = Vec::new();
+        self.removals
+            .serialize_into(&mut removals)
+            .expect("serializing membership removals into memory is infallible");
+        let mut bytes = Vec::with_capacity(
+            BITMAP_MEMBERSHIP_DELTA_MAGIC.len()
+                + BITMAP_MEMBERSHIP_DELTA_LEN_PREFIX_LEN
+                + additions.len()
+                + BITMAP_MEMBERSHIP_DELTA_LEN_PREFIX_LEN
+                + removals.len(),
+        );
+        bytes.extend_from_slice(BITMAP_MEMBERSHIP_DELTA_MAGIC);
+        bytes.put_u32(u32::try_from(additions.len()).expect("roaring additions fit u32"));
+        bytes.extend_from_slice(&additions);
+        bytes.put_u32(u32::try_from(removals.len()).expect("roaring removals fit u32"));
+        bytes.extend_from_slice(&removals);
+        Bytes::from(bytes)
+    }
+
+    pub(crate) fn decode_if_delta(bytes: &[u8]) -> Result<Option<Self>, EncodingError> {
+        if !bytes.starts_with(BITMAP_MEMBERSHIP_DELTA_MAGIC) {
+            return Ok(None);
+        }
+        let mut offset = BITMAP_MEMBERSHIP_DELTA_MAGIC.len();
+        let additions = take_delta_bitmap(bytes, &mut offset, "additions")?;
+        let removals = take_delta_bitmap(bytes, &mut offset, "removals")?;
+        if offset != bytes.len() {
+            return Err(EncodingError::Custom(format!(
+                "bitmap membership delta has {} trailing bytes",
+                bytes.len() - offset
+            )));
+        }
+        if !additions.is_disjoint(&removals) {
+            return Err(EncodingError::Custom(
+                "bitmap membership delta additions and removals overlap".to_string(),
+            ));
+        }
+        Ok(Some(Self {
+            additions,
+            removals,
+        }))
+    }
+}
+
+fn take_delta_bitmap(
+    bytes: &[u8],
+    offset: &mut usize,
+    name: &str,
+) -> Result<RoaringTreemap, EncodingError> {
+    let length_end = offset
+        .checked_add(BITMAP_MEMBERSHIP_DELTA_LEN_PREFIX_LEN)
+        .ok_or_else(|| EncodingError::Custom("bitmap delta length overflow".to_string()))?;
+    if length_end > bytes.len() {
+        return Err(EncodingError::BufferTooShort {
+            expected: length_end,
+            actual: bytes.len(),
+        });
+    }
+    let length = u32::from_be_bytes(
+        bytes[*offset..*offset + BITMAP_MEMBERSHIP_DELTA_LEN_PREFIX_LEN]
+            .try_into()
+            .expect("validated bitmap delta length slice is four bytes"),
+    ) as usize;
+    *offset = length_end;
+    let value_end = offset
+        .checked_add(length)
+        .ok_or_else(|| EncodingError::Custom("bitmap delta value overflow".to_string()))?;
+    if value_end > bytes.len() {
+        return Err(EncodingError::BufferTooShort {
+            expected: value_end,
+            actual: bytes.len(),
+        });
+    }
+    let mut cursor = Cursor::new(&bytes[*offset..*offset + length]);
+    let bitmap = RoaringTreemap::deserialize_from(&mut cursor).map_err(|error| {
+        EncodingError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("failed to decode bitmap membership delta {name}: {error}"),
+        ))
+    })?;
+    if cursor.position() != length as u64 {
+        return Err(EncodingError::Custom(format!(
+            "bitmap membership delta {name} has {} trailing bytes",
+            length as u64 - cursor.position()
+        )));
+    }
+    *offset = value_end;
+    Ok(bitmap)
+}
 
 /// Portable V4 value for one non-unique equality key.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +170,9 @@ impl SecondaryEqualityBitmapValue {
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self, EncodingError> {
+        if let Some(delta) = BitmapMembershipDelta::decode_if_delta(bytes)? {
+            return Ok(Self(delta.additions));
+        }
         let mut cursor = Cursor::new(bytes);
         let ids = RoaringTreemap::deserialize_from(&mut cursor).map_err(|error| {
             EncodingError::Io(std::io::Error::new(
@@ -132,6 +270,80 @@ mod tests {
     }
 
     #[test]
+    fn bitmap_membership_delta_round_trips_and_composes_last_write_wins() {
+        let mut older = BitmapMembershipDelta::default();
+        older.add(1);
+        older.add(2);
+        older.remove(3);
+        let mut newer = BitmapMembershipDelta::default();
+        newer.remove(1);
+        newer.add(3);
+        newer.remove(4);
+        older.compose(&newer);
+
+        let decoded = BitmapMembershipDelta::decode_if_delta(&older.encode())
+            .unwrap()
+            .expect("membership delta marker is recognized");
+        let mut base = RoaringTreemap::from_iter([1, 4, 5]);
+        decoded.apply_to(&mut base);
+
+        assert_eq!(base.iter().collect::<Vec<_>>(), vec![2, 3, 5]);
+        assert!(decoded.additions.contains(2));
+        assert!(decoded.additions.contains(3));
+        assert!(decoded.removals.contains(1));
+        assert!(decoded.removals.contains(4));
+    }
+
+    #[test]
+    fn bitmap_membership_delta_decoder_rejects_every_invalid_boundary() {
+        let mut delta = BitmapMembershipDelta::default();
+        delta.add(1);
+        let encoded = delta.encode();
+        assert_eq!(
+            BitmapMembershipDelta::decode_if_delta(b"portable-roaring").unwrap(),
+            None
+        );
+        for length in BITMAP_MEMBERSHIP_DELTA_MAGIC.len()..encoded.len() {
+            assert!(BitmapMembershipDelta::decode_if_delta(&encoded[0..length]).is_err());
+        }
+
+        let mut trailing = encoded.to_vec();
+        trailing.push(0xFF);
+        assert!(BitmapMembershipDelta::decode_if_delta(&trailing).is_err());
+
+        let overlapping = BitmapMembershipDelta {
+            additions: RoaringTreemap::from_iter([7]),
+            removals: RoaringTreemap::from_iter([7]),
+        };
+        assert!(BitmapMembershipDelta::decode_if_delta(&overlapping.encode()).is_err());
+    }
+
+    #[test]
+    fn equality_value_decoders_project_delta_against_an_empty_base() {
+        let mut delta = BitmapMembershipDelta::default();
+        delta.add(3);
+        delta.remove(4);
+        let encoded = delta.encode();
+
+        assert_eq!(
+            SecondaryEqualityBitmapValue::decode(&encoded)
+                .unwrap()
+                .into_ids()
+                .iter()
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
+        assert_eq!(
+            SecondaryEqualityValue::decode(&encoded)
+                .unwrap()
+                .into_ids()
+                .iter()
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
+    }
+
+    #[test]
     fn equality_entry_value_is_lane_bound_and_byte_frozen() {
         let value = SecondaryEntryValue {
             index_id: crate::index_lifecycle::IndexId::new(1).unwrap(),
@@ -174,6 +386,9 @@ impl SecondaryEqualityValue {
 
     /// Decodes the exact current portable Roaring equality-row value.
     pub(crate) fn decode(data: &[u8]) -> Result<Self, EncodingError> {
+        if let Some(delta) = BitmapMembershipDelta::decode_if_delta(data)? {
+            return Ok(Self(delta.additions));
+        }
         let ids = RoaringTreemap::deserialize_from(Cursor::new(data)).map_err(|error| {
             EncodingError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
