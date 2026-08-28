@@ -53,7 +53,8 @@ use crate::encoding::v2::values::property::range_index_value::{
 };
 use crate::encoding::v2::values::{
     decode_applied_state, decode_build_delta, decode_index_record, decode_secondary_entry,
-    encode_applied_state, encode_build_delta, encode_secondary_entry, SecondaryEqualityBitmapValue,
+    encode_applied_state, encode_build_delta, encode_secondary_entry, BitmapMembershipDelta,
+    SecondaryEqualityBitmapValue,
 };
 use crate::error::{HelixDbError, Result, SecondaryIndexValueError};
 use crate::index_lifecycle::outbox::{
@@ -2553,52 +2554,19 @@ async fn stage_bitmap_changes(
     transaction: &DbTransaction,
     changes: &BTreeMap<Bytes, BTreeMap<u64, bool>>,
 ) -> Result<()> {
-    let exclusive_keys = changes
-        .iter()
-        .filter(|(_, changes)| changes.values().any(|present| !present))
-        .map(|(key, _)| key.clone())
-        .collect::<Vec<_>>();
-    let exclusive_values = if exclusive_keys.is_empty() {
-        Vec::new()
-    } else {
-        transaction.multi_get(&exclusive_keys).await?
-    };
-    let mut exclusive_values = exclusive_keys
-        .into_iter()
-        .zip(exclusive_values)
-        .collect::<BTreeMap<_, _>>();
-
     for (key, changes) in changes {
-        if changes.values().all(|present| *present) {
-            let additions = roaring::RoaringTreemap::from_iter(changes.keys().copied());
-            transaction
-                .merge_commutative(key, SecondaryEqualityBitmapValue::new(additions).encode())?;
-            continue;
-        }
-
-        let existing = exclusive_values
-            .remove(key)
-            .expect("each removal-bearing bitmap key was read exactly once");
-        let mut bitmap = existing
-            .as_deref()
-            .map(SecondaryEqualityBitmapValue::decode)
-            .transpose()?
-            .map(SecondaryEqualityBitmapValue::into_ids)
-            .unwrap_or_default();
+        let mut delta = BitmapMembershipDelta::default();
+        let mut discriminators = Vec::with_capacity(changes.len());
         for (entity_id, present) in changes {
+            discriminators.push(Bytes::copy_from_slice(&entity_id.to_be_bytes()));
             if *present {
-                bitmap.insert(*entity_id);
+                delta.add(*entity_id);
             } else {
-                bitmap.remove(*entity_id);
+                delta.remove(*entity_id);
             }
         }
-        if bitmap.is_empty() {
-            transaction.delete(key)?;
-        } else {
-            transaction.put(key, SecondaryEqualityBitmapValue::new(bitmap).encode())?;
-        }
+        transaction.merge_disjoint(key, discriminators, delta.encode())?;
     }
-    assert!(exclusive_values.is_empty());
     Ok(())
 }
 
@@ -5712,7 +5680,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn removal_bearing_bitmap_changes_replace_or_delete_exclusively() {
+    async fn removal_bearing_bitmap_changes_merge_or_tombstone() {
         let db = test_db("secondary-mixed-bitmap-changes").await;
         let handle = active_read_handle(
             &db,
@@ -5790,7 +5758,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pure_bitmap_additions_commit_without_conflicts() {
+    async fn pure_bitmap_additions_commit_as_disjoint_merges() {
         let db = test_db("secondary-commutative-bitmap-additions").await;
         let handle = active_read_handle(
             &db,
@@ -5857,6 +5825,135 @@ mod tests {
         db.close()
             .await
             .expect("commutative bitmap database closes");
+    }
+
+    #[tokio::test]
+    async fn secondary_bitmap_insert_remove_races_respect_logical_members() {
+        let db = test_db("secondary-disjoint-bitmap-races").await;
+        let handle = active_read_handle(
+            &db,
+            SecondaryIndexDefinition::node_equality("User", "status")
+                .expect("node equality definition validates"),
+        )
+        .await;
+        let definition = handle
+            .secondary_definition()
+            .expect("secondary handle retains its definition");
+
+        for insert_commits_first in [false, true] {
+            let key = secondary_entry_key(
+                handle.scope(),
+                handle.index_id(),
+                handle.generation(),
+                definition,
+                CanonicalSecondaryValue::equality_string(&format!(
+                    "disjoint-{insert_commits_first}"
+                )),
+                IndexEntityId::initial(),
+            )
+            .expect("bitmap key validates");
+            db.put(
+                &key,
+                SecondaryEqualityBitmapValue::new(roaring::RoaringTreemap::from_iter([1])).encode(),
+            )
+            .await
+            .expect("initial bitmap persists");
+            let insert = db
+                .begin(IsolationLevel::SerializableSnapshot)
+                .await
+                .expect("insert transaction begins");
+            let remove = db
+                .begin(IsolationLevel::SerializableSnapshot)
+                .await
+                .expect("remove transaction begins");
+            stage_bitmap_changes(
+                &insert,
+                &BTreeMap::from([(key.clone(), BTreeMap::from([(2, true)]))]),
+            )
+            .await
+            .expect("insert stages");
+            stage_bitmap_changes(
+                &remove,
+                &BTreeMap::from([(key.clone(), BTreeMap::from([(1, false)]))]),
+            )
+            .await
+            .expect("remove stages");
+            if insert_commits_first {
+                insert.commit().await.expect("insert commits");
+                remove.commit().await.expect("disjoint remove commits");
+            } else {
+                remove.commit().await.expect("remove commits");
+                insert.commit().await.expect("disjoint insert commits");
+            }
+            assert_eq!(
+                SecondaryEqualityBitmapValue::decode(
+                    &db.get(&key)
+                        .await
+                        .expect("result bitmap reads")
+                        .expect("result bitmap exists"),
+                )
+                .unwrap()
+                .into_ids()
+                .iter()
+                .collect::<Vec<_>>(),
+                vec![2]
+            );
+        }
+
+        for insert_commits_first in [false, true] {
+            let key = secondary_entry_key(
+                handle.scope(),
+                handle.index_id(),
+                handle.generation(),
+                definition,
+                CanonicalSecondaryValue::equality_string(&format!(
+                    "overlap-{insert_commits_first}"
+                )),
+                IndexEntityId::initial(),
+            )
+            .expect("bitmap key validates");
+            db.put(
+                &key,
+                SecondaryEqualityBitmapValue::new(roaring::RoaringTreemap::from_iter([1])).encode(),
+            )
+            .await
+            .expect("initial bitmap persists");
+            let insert = db
+                .begin(IsolationLevel::SerializableSnapshot)
+                .await
+                .expect("insert transaction begins");
+            let remove = db
+                .begin(IsolationLevel::SerializableSnapshot)
+                .await
+                .expect("remove transaction begins");
+            stage_bitmap_changes(
+                &insert,
+                &BTreeMap::from([(key.clone(), BTreeMap::from([(1, true)]))]),
+            )
+            .await
+            .expect("insert stages");
+            stage_bitmap_changes(
+                &remove,
+                &BTreeMap::from([(key, BTreeMap::from([(1, false)]))]),
+            )
+            .await
+            .expect("remove stages");
+            if insert_commits_first {
+                insert.commit().await.expect("insert commits");
+                assert_eq!(
+                    remove.commit().await.unwrap_err().kind(),
+                    slatedb::ErrorKind::Transaction
+                );
+            } else {
+                remove.commit().await.expect("remove commits");
+                assert_eq!(
+                    insert.commit().await.unwrap_err().kind(),
+                    slatedb::ErrorKind::Transaction
+                );
+            }
+        }
+
+        db.close().await.expect("bitmap race database closes");
     }
 
     #[tokio::test]
