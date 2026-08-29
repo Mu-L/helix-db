@@ -642,8 +642,8 @@ async fn stage_shared_bitmap_membership(
                 txn.put_with_options(
                     key,
                     encode_roaring_treemap(&bitmap),
-                    &slatedb::PutOptions {
-                        ttl: slatedb::Ttl::NoExpiry,
+                    &slatedb::config::PutOptions {
+                        ttl: slatedb::config::Ttl::NoExpiry,
                     },
                 )?;
             }

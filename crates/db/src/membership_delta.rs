@@ -124,8 +124,8 @@ pub(crate) async fn activate(db: &Db) -> Result<()> {
                     ),
                 });
             }
-            let no_expiry = slatedb::PutOptions {
-                ttl: slatedb::Ttl::NoExpiry,
+            let no_expiry = slatedb::config::PutOptions {
+                ttl: slatedb::config::Ttl::NoExpiry,
             };
             transaction.put_with_options(
                 key,

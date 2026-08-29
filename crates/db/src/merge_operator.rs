@@ -158,6 +158,21 @@ impl MergeOperator for BitmapMergeOperator {
             Self::encode(&bitmap).map(MergeResult::Value)
         }
     }
+
+    fn validate_merge_with_base(
+        &self,
+        _key: &Bytes,
+        existing_value: Option<Bytes>,
+        operands: &[Bytes],
+    ) -> Result<(), MergeOperatorError> {
+        if let Some(existing) = existing_value {
+            SecondaryEqualityBitmapValue::decode(&existing).map_err(merge_decode_error)?;
+        }
+        for operand in operands {
+            Self::decode_operand(operand)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,6 +347,21 @@ impl MergeOperator for EdgeMergeOperator {
         } else {
             Ok(MergeResult::Value(edges::encode_edges(&merged)))
         }
+    }
+
+    fn validate_merge_with_base(
+        &self,
+        _key: &Bytes,
+        existing_value: Option<Bytes>,
+        operands: &[Bytes],
+    ) -> Result<(), MergeOperatorError> {
+        if let Some(existing) = existing_value {
+            edges::decode_edges(&existing).map_err(merge_decode_error)?;
+        }
+        for operand in operands {
+            Self::decode_operand(operand)?;
+        }
+        Ok(())
     }
 }
 
@@ -606,6 +636,36 @@ impl MergeOperator for HelixMergeOperator {
                 .ok_or(MergeOperatorError::EmptyBatch),
         }
     }
+
+    fn validate_merge_with_base(
+        &self,
+        key: &Bytes,
+        existing_value: Option<Bytes>,
+        operands: &[Bytes],
+    ) -> Result<(), MergeOperatorError> {
+        match Self::key_type(key) {
+            MergeKeyType::Edge => self
+                .edge
+                .validate_merge_with_base(key, existing_value, operands),
+            MergeKeyType::Bitmap => {
+                self.bitmap
+                    .validate_merge_with_base(key, existing_value, operands)
+            }
+            MergeKeyType::Layer0 => {
+                self.layer0
+                    .validate_merge_with_base(key, existing_value, operands)
+            }
+            MergeKeyType::Counter => {
+                self.counter
+                    .validate_merge_with_base(key, existing_value, operands)
+            }
+            MergeKeyType::Other => operands
+                .first()
+                .or(existing_value.as_ref())
+                .map(|_| ())
+                .ok_or(MergeOperatorError::EmptyBatch),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -804,6 +864,82 @@ mod tests {
                 .unwrap(),
             MergeResult::Tombstone
         );
+    }
+
+    #[test]
+    fn shared_row_validation_matches_full_resolution_acceptance() {
+        let bitmap_key = DataKey::Data {
+            scope: DataScope::LegacyUnscoped,
+            kind: DataKeyKind::EdgePairIndex(EdgePairIndexKey::new(1, 3)),
+        }
+        .to_bytes();
+        let adjacency_key = DataKey::Data {
+            scope: DataScope::LegacyUnscoped,
+            kind: DataKeyKind::Adjacency(AdjacencyKey::new(1)),
+        }
+        .to_bytes();
+        let operator = HelixMergeOperator::new();
+
+        let mut bitmap_delta = BitmapMembershipDelta::default();
+        bitmap_delta.remove(1);
+        bitmap_delta.add(2);
+        let bitmap_operand = bitmap_delta.encode();
+        let malformed_bitmap_delta = Bytes::copy_from_slice(b"HLXRBM2\0");
+        for (base, operand) in [
+            (Some(portable_bitmap([1, 3])), bitmap_operand.clone()),
+            (None, bitmap_operand),
+            (Some(Bytes::from_static(b"corrupt")), portable_bitmap([2])),
+            (Some(portable_bitmap([1])), malformed_bitmap_delta),
+        ] {
+            assert_eq!(
+                operator
+                    .validate_merge_with_base(
+                        &bitmap_key,
+                        base.clone(),
+                        std::slice::from_ref(&operand),
+                    )
+                    .is_ok(),
+                operator
+                    .merge_batch_with_base(&bitmap_key, base, std::slice::from_ref(&operand))
+                    .is_ok(),
+            );
+        }
+
+        let mut base_edges = edges::Edges::new();
+        base_edges.add_out(1);
+        let mut adjacency_delta = edges::AdjacencyMembershipDelta::default();
+        adjacency_delta.remove_out(1);
+        adjacency_delta.add_in(2);
+        let adjacency_operand = adjacency_delta.encode();
+        let malformed_adjacency_delta = Bytes::copy_from_slice(b"HLXADJ2\0");
+        for (base, operand) in [
+            (
+                Some(edges::encode_edges(&base_edges)),
+                adjacency_operand.clone(),
+            ),
+            (None, adjacency_operand),
+            (
+                Some(Bytes::from_static(b"corrupt")),
+                edges::AdjacencyMembershipDelta::default().encode(),
+            ),
+            (
+                Some(edges::encode_edges(&base_edges)),
+                malformed_adjacency_delta,
+            ),
+        ] {
+            assert_eq!(
+                operator
+                    .validate_merge_with_base(
+                        &adjacency_key,
+                        base.clone(),
+                        std::slice::from_ref(&operand),
+                    )
+                    .is_ok(),
+                operator
+                    .merge_batch_with_base(&adjacency_key, base, std::slice::from_ref(&operand))
+                    .is_ok(),
+            );
+        }
     }
 
     #[test]

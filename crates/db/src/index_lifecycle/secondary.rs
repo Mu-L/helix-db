@@ -2578,14 +2578,15 @@ async fn stage_bitmap_changes(
                     transaction.put_with_options(
                         key,
                         SecondaryEqualityBitmapValue::new(bitmap).encode(),
-                        &slatedb::PutOptions {
-                            ttl: slatedb::Ttl::NoExpiry,
+                        &slatedb::config::PutOptions {
+                            ttl: slatedb::config::Ttl::NoExpiry,
                         },
                     )?;
                 }
             }
         }
         crate::MembershipDeltaWriteMode::DisjointV2 => {
+            let mut merges = Vec::with_capacity(changes.len());
             for (key, changes) in changes {
                 let mut delta = BitmapMembershipDelta::default();
                 for (entity_id, present) in changes {
@@ -2595,14 +2596,13 @@ async fn stage_bitmap_changes(
                         delta.remove(*entity_id);
                     }
                 }
-                transaction
-                    .merge_disjoint_tokens_checked(
-                        key,
-                        delta.members().map(u128::from),
-                        delta.encode(),
-                    )
-                    .await?;
+                merges.push(slatedb::DisjointMergeBatchEntry::from_tokens(
+                    key.clone(),
+                    delta.members().map(u128::from),
+                    delta.encode(),
+                ));
             }
+            transaction.merge_disjoint_checked_batch(merges).await?;
         }
     }
     Ok(())

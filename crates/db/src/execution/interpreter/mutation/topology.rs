@@ -103,6 +103,8 @@ struct TopologyMutationBatch {
 pub(in crate::execution::interpreter) struct TopologyMutationRuntime {
     state: TopologyMutationRuntimeState,
     staged_keys: BTreeSet<Bytes>,
+    #[cfg(test)]
+    unchecked_disjoint_for_benchmark: bool,
 }
 
 #[derive(Debug, Default)]
@@ -424,8 +426,8 @@ impl TopologyMutationRuntime {
                         transaction.put_with_options(
                             &key,
                             secondary::SecondaryEqualityBitmapValue::new(bitmap).encode(),
-                            &slatedb::PutOptions {
-                                ttl: slatedb::Ttl::NoExpiry,
+                            &slatedb::config::PutOptions {
+                                ttl: slatedb::config::Ttl::NoExpiry,
                             },
                         )?;
                     }
@@ -451,8 +453,8 @@ impl TopologyMutationRuntime {
                         transaction.put_with_options(
                             &key,
                             edges::encode_edges(&adjacency),
-                            &slatedb::PutOptions {
-                                ttl: slatedb::Ttl::NoExpiry,
+                            &slatedb::config::PutOptions {
+                                ttl: slatedb::config::Ttl::NoExpiry,
                             },
                         )?;
                     }
@@ -460,16 +462,26 @@ impl TopologyMutationRuntime {
                 }
             }
             MembershipDeltaWriteMode::DisjointV2 => {
+                let mut merges = Vec::with_capacity(batch.bitmaps.len() + batch.adjacency.len());
+                let mut staged_keys = Vec::with_capacity(merges.capacity());
                 for (row, delta) in batch.bitmaps {
                     let key = row.to_bytes();
-                    transaction
-                        .merge_disjoint_tokens_checked(
+                    #[cfg(test)]
+                    if self.unchecked_disjoint_for_benchmark {
+                        transaction.merge_disjoint_tokens(
                             &key,
                             delta.members().map(u128::from),
                             delta.encode(),
-                        )
-                        .await?;
-                    self.staged_keys.insert(key);
+                        )?;
+                        self.staged_keys.insert(key);
+                        continue;
+                    }
+                    staged_keys.push(key.clone());
+                    merges.push(slatedb::DisjointMergeBatchEntry::from_tokens(
+                        key,
+                        delta.members().map(u128::from),
+                        delta.encode(),
+                    ));
                 }
 
                 for ((scope, node), delta) in batch.adjacency {
@@ -484,15 +496,30 @@ impl TopologyMutationRuntime {
                     let incoming = delta
                         .incoming_members()
                         .map(|neighbor| INCOMING_DIRECTION_TOKEN | u128::from(neighbor));
-                    transaction
-                        .merge_disjoint_tokens_checked(
+                    #[cfg(test)]
+                    if self.unchecked_disjoint_for_benchmark {
+                        transaction.merge_disjoint_tokens(
                             &key,
                             outgoing.chain(incoming),
                             delta.encode(),
-                        )
-                        .await?;
-                    self.staged_keys.insert(key);
+                        )?;
+                        self.staged_keys.insert(key);
+                        continue;
+                    }
+                    staged_keys.push(key.clone());
+                    merges.push(slatedb::DisjointMergeBatchEntry::from_tokens(
+                        key,
+                        outgoing.chain(incoming),
+                        delta.encode(),
+                    ));
                 }
+
+                #[cfg(test)]
+                if self.unchecked_disjoint_for_benchmark {
+                    return Ok(());
+                }
+                transaction.merge_disjoint_checked_batch(merges).await?;
+                self.staged_keys.extend(staged_keys);
             }
         }
         Ok(())
@@ -1403,6 +1430,7 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     enum SweepBenchmarkStrategy {
         ExclusiveReadModifyWrite,
+        UncheckedDisjointDelta,
         DisjointDelta,
     }
 
@@ -1509,8 +1537,11 @@ mod tests {
                         .expect("exclusive benchmark adjacency replacement stages");
                 }
             }
-            SweepBenchmarkStrategy::DisjointDelta => {
+            SweepBenchmarkStrategy::UncheckedDisjointDelta
+            | SweepBenchmarkStrategy::DisjointDelta => {
                 let mut runtime = TopologyMutationRuntime::default();
+                runtime.unchecked_disjoint_for_benchmark =
+                    matches!(strategy, SweepBenchmarkStrategy::UncheckedDisjointDelta);
                 for id in ids {
                     if present {
                         runtime
@@ -1558,6 +1589,7 @@ mod tests {
         let db = Arc::new(
             database(match strategy {
                 SweepBenchmarkStrategy::ExclusiveReadModifyWrite => "benchmark-exclusive",
+                SweepBenchmarkStrategy::UncheckedDisjointDelta => "benchmark-unchecked-disjoint",
                 SweepBenchmarkStrategy::DisjointDelta => "benchmark-disjoint",
             })
             .await,
@@ -1714,6 +1746,7 @@ mod tests {
 
         let db = database(match strategy {
             SweepBenchmarkStrategy::ExclusiveReadModifyWrite => "prepare-exclusive",
+            SweepBenchmarkStrategy::UncheckedDisjointDelta => "prepare-unchecked-disjoint",
             SweepBenchmarkStrategy::DisjointDelta => "prepare-disjoint",
         })
         .await;
@@ -1780,7 +1813,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore = "manual 100K-member conflict and preparation-performance comparison"]
     async fn benchmark_exclusive_vs_disjoint_linked_event_sweep() {
-        const MAX_PREPARATION_TIME_RATIO: f64 = 5.0;
+        const MAX_CHECKED_PREPARATION_REGRESSION: f64 = 1.10;
 
         let expired_members = std::env::var("HELIX_SWEEP_BENCH_EXPIRED")
             .ok()
@@ -1801,7 +1834,7 @@ mod tests {
         let performance_samples = std::env::var("HELIX_SWEEP_BENCH_SAMPLES")
             .ok()
             .and_then(|value| value.parse().ok())
-            .unwrap_or(5);
+            .unwrap_or(9);
         assert!(expired_members > 0);
         assert!(inserted_members > 0);
         assert!(sweep_chunk > 0);
@@ -1844,12 +1877,23 @@ mod tests {
             performance_samples,
         )
         .await;
+        let unchecked_preparation = run_sweep_preparation_benchmark(
+            SweepBenchmarkStrategy::UncheckedDisjointDelta,
+            expired_members,
+            sweep_chunk,
+            performance_samples,
+        )
+        .await;
         let before_preparation_throughput =
             expired_members as f64 / before_preparation.median.as_secs_f64();
         let after_preparation_throughput =
             expired_members as f64 / after_preparation.median.as_secs_f64();
-        let preparation_time_ratio =
+        let unchecked_preparation_throughput =
+            expired_members as f64 / unchecked_preparation.median.as_secs_f64();
+        let exclusive_preparation_time_ratio =
             after_preparation.median.as_secs_f64() / before_preparation.median.as_secs_f64();
+        let checked_preparation_time_ratio =
+            after_preparation.median.as_secs_f64() / unchecked_preparation.median.as_secs_f64();
 
         println!(
             "SWEEP_CONFLICT before sweep_commits={} sweep_conflicts={} sweep_conflict_rate={:.4} writer_commits={} writer_conflicts={}",
@@ -1876,6 +1920,14 @@ mod tests {
             before_preparation_throughput,
         );
         println!(
+            "SWEEP_PREP unchecked samples={} min_ms={} median_ms={} max_ms={} throughput_members_per_s={:.0}",
+            unchecked_preparation.samples,
+            unchecked_preparation.minimum.as_millis(),
+            unchecked_preparation.median.as_millis(),
+            unchecked_preparation.maximum.as_millis(),
+            unchecked_preparation_throughput,
+        );
+        println!(
             "SWEEP_PREP after samples={} min_ms={} median_ms={} max_ms={} throughput_members_per_s={:.0}",
             after_preparation.samples,
             after_preparation.minimum.as_millis(),
@@ -1884,18 +1936,20 @@ mod tests {
             after_preparation_throughput,
         );
         println!(
-            "SWEEP_DELTA conflict_rate_points={:.2} preparation_time_ratio={:.3}",
+            "SWEEP_DELTA conflict_rate_points={:.2} exclusive_preparation_time_ratio={:.3} checked_preparation_time_ratio={:.3}",
             (after_sweep_conflict_rate - before_sweep_conflict_rate) * 100.0,
-            preparation_time_ratio,
+            exclusive_preparation_time_ratio,
+            checked_preparation_time_ratio,
         );
 
         assert!(before_conflicts.sweeper_conflicts > 0);
         assert_eq!(after_conflicts.sweeper_conflicts, 0);
         assert_eq!(after_conflicts.writer_conflicts, 0);
         assert!(
-            preparation_time_ratio <= MAX_PREPARATION_TIME_RATIO,
-            "disjoint conflict metadata preparation exceeded the {MAX_PREPARATION_TIME_RATIO:.1}x regression budget: before={:?}, after={:?}",
-            before_preparation,
+            checked_preparation_time_ratio <= MAX_CHECKED_PREPARATION_REGRESSION,
+            "checked validation exceeded the {:.0}% preparation regression budget: unchecked={:?}, checked={:?}",
+            (MAX_CHECKED_PREPARATION_REGRESSION - 1.0) * 100.0,
+            unchecked_preparation,
             after_preparation,
         );
     }
