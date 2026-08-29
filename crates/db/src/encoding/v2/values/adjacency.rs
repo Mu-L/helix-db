@@ -141,6 +141,14 @@ impl AdjacencyMembershipDelta {
         self.incoming.apply_to(&mut edges.nxts_in);
     }
 
+    pub(crate) fn outgoing_members(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.outgoing.members()
+    }
+
+    pub(crate) fn incoming_members(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.incoming.members()
+    }
+
     pub(crate) fn encode(&self) -> Bytes {
         let outgoing = self.outgoing.encode();
         let incoming = self.incoming.encode();

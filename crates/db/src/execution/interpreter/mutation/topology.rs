@@ -26,17 +26,76 @@ enum MembershipMutation {
     Absent,
 }
 
-/// Direction local to adjacency rows; `Both` is represented by two entries.
+/// Logical identity for one shared bitmap row. Physical keys are encoded once
+/// when the coalesced epoch is flushed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum AdjacencyDirection {
-    Out,
-    In,
+enum BitmapRow {
+    NodeLabel {
+        scope: DataScope,
+        label_hash: [u8; 8],
+    },
+    EdgePair {
+        scope: DataScope,
+        from: u64,
+        to: u64,
+    },
+    EdgeLabelNeighbor {
+        scope: DataScope,
+        direction: EdgeDirection,
+        node: u64,
+        label_hash: [u8; 8],
+    },
+    GlobalEdgeLabel {
+        scope: DataScope,
+        label_hash: [u8; 8],
+    },
+}
+
+impl BitmapRow {
+    fn to_bytes(self) -> Bytes {
+        match self {
+            Self::NodeLabel { scope, label_hash } => DataKey::Data {
+                scope,
+                kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(
+                    crate::encoding::indexes::equality::EqualityIndexKey::new(
+                        hash_property_name("$label"),
+                        label_hash,
+                    ),
+                )),
+            }
+            .to_bytes(),
+            Self::EdgePair { scope, from, to } => DataKey::Data {
+                scope,
+                kind: DataKeyKind::EdgePairIndex(EdgePairIndexKey::new(from, to)),
+            }
+            .to_bytes(),
+            Self::EdgeLabelNeighbor {
+                scope,
+                direction,
+                node,
+                label_hash,
+            } => DataKey::Data {
+                scope,
+                kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabelNeighbor(
+                    EdgeLabelNeighborKey::new(direction, node, label_hash),
+                )),
+            }
+            .to_bytes(),
+            Self::GlobalEdgeLabel { scope, label_hash } => DataKey::Data {
+                scope,
+                kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(
+                    label_hash,
+                ))),
+            }
+            .to_bytes(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 struct TopologyMutationBatch {
-    bitmaps: BTreeMap<Bytes, BTreeMap<u64, MembershipMutation>>,
-    adjacency: BTreeMap<Bytes, BTreeMap<(AdjacencyDirection, u64), MembershipMutation>>,
+    bitmaps: BTreeMap<BitmapRow, secondary::BitmapMembershipDelta>,
+    adjacency: BTreeMap<(DataScope, u64), edges::AdjacencyMembershipDelta>,
 }
 
 /// Transaction-owned topology mutations with a terminal prepared state.
@@ -91,7 +150,10 @@ impl TopologyMutationRuntime {
         node_id: u64,
     ) -> Result<()> {
         self.record_bitmap(
-            node_label_key(scope, label),
+            BitmapRow::NodeLabel {
+                scope,
+                label_hash: hash_property_value(label),
+            },
             node_id,
             MembershipMutation::Present,
         )
@@ -105,7 +167,10 @@ impl TopologyMutationRuntime {
         node_id: u64,
     ) -> Result<()> {
         self.record_bitmap(
-            node_label_key(scope, label),
+            BitmapRow::NodeLabel {
+                scope,
+                label_hash: hash_property_value(label),
+            },
             node_id,
             MembershipMutation::Absent,
         )
@@ -120,7 +185,7 @@ impl TopologyMutationRuntime {
         edge_id: u64,
     ) -> Result<()> {
         self.record_bitmap(
-            edge_pair_key(scope, from, to),
+            BitmapRow::EdgePair { scope, from, to },
             edge_id,
             MembershipMutation::Present,
         )
@@ -135,7 +200,7 @@ impl TopologyMutationRuntime {
         edge_id: u64,
     ) -> Result<()> {
         self.record_bitmap(
-            edge_pair_key(scope, from, to),
+            BitmapRow::EdgePair { scope, from, to },
             edge_id,
             MembershipMutation::Absent,
         )
@@ -151,17 +216,30 @@ impl TopologyMutationRuntime {
         edge_id: u64,
     ) -> Result<()> {
         self.record_bitmap(
-            edge_label_neighbor_key(scope, EdgeDirection::Out, from, label),
+            BitmapRow::EdgeLabelNeighbor {
+                scope,
+                direction: EdgeDirection::Out,
+                node: from,
+                label_hash: hash_property_value(label),
+            },
             to,
             MembershipMutation::Present,
         )?;
         self.record_bitmap(
-            edge_label_neighbor_key(scope, EdgeDirection::In, to, label),
+            BitmapRow::EdgeLabelNeighbor {
+                scope,
+                direction: EdgeDirection::In,
+                node: to,
+                label_hash: hash_property_value(label),
+            },
             from,
             MembershipMutation::Present,
         )?;
         self.record_bitmap(
-            global_edge_label_key(scope, label),
+            BitmapRow::GlobalEdgeLabel {
+                scope,
+                label_hash: hash_property_value(label),
+            },
             edge_id,
             MembershipMutation::Present,
         )
@@ -175,7 +253,10 @@ impl TopologyMutationRuntime {
         edge_id: u64,
     ) -> Result<()> {
         self.record_bitmap(
-            global_edge_label_key(scope, label),
+            BitmapRow::GlobalEdgeLabel {
+                scope,
+                label_hash: hash_property_value(label),
+            },
             edge_id,
             MembershipMutation::Absent,
         )
@@ -190,12 +271,22 @@ impl TopologyMutationRuntime {
         label: &str,
     ) -> Result<()> {
         self.record_bitmap(
-            edge_label_neighbor_key(scope, EdgeDirection::Out, from, label),
+            BitmapRow::EdgeLabelNeighbor {
+                scope,
+                direction: EdgeDirection::Out,
+                node: from,
+                label_hash: hash_property_value(label),
+            },
             to,
             MembershipMutation::Absent,
         )?;
         self.record_bitmap(
-            edge_label_neighbor_key(scope, EdgeDirection::In, to, label),
+            BitmapRow::EdgeLabelNeighbor {
+                scope,
+                direction: EdgeDirection::In,
+                node: to,
+                label_hash: hash_property_value(label),
+            },
             from,
             MembershipMutation::Absent,
         )
@@ -229,9 +320,17 @@ impl TopologyMutationRuntime {
         self.record_adjacency(scope, node, neighbor, direction, MembershipMutation::Absent)
     }
 
-    fn record_bitmap(&mut self, key: Bytes, id: u64, mutation: MembershipMutation) -> Result<()> {
-        let batch = self.collecting_batch()?;
-        batch.bitmaps.entry(key).or_default().insert(id, mutation);
+    fn record_bitmap(
+        &mut self,
+        row: BitmapRow,
+        id: u64,
+        mutation: MembershipMutation,
+    ) -> Result<()> {
+        let delta = self.collecting_batch()?.bitmaps.entry(row).or_default();
+        match mutation {
+            MembershipMutation::Present => delta.add(id),
+            MembershipMutation::Absent => delta.remove(id),
+        }
         Ok(())
     }
 
@@ -243,22 +342,31 @@ impl TopologyMutationRuntime {
         direction: helix_planner::ir::ExpandDirection,
         mutation: MembershipMutation,
     ) -> Result<()> {
-        let key = DataKey::Data {
-            scope,
-            kind: DataKeyKind::Adjacency(AdjacencyKey::new(node)),
-        }
-        .to_bytes();
-        let row = self.collecting_batch()?.adjacency.entry(key).or_default();
-        match direction {
-            helix_planner::ir::ExpandDirection::Out => {
-                row.insert((AdjacencyDirection::Out, neighbor), mutation);
+        let delta = self
+            .collecting_batch()?
+            .adjacency
+            .entry((scope, node))
+            .or_default();
+        match (direction, mutation) {
+            (helix_planner::ir::ExpandDirection::Out, MembershipMutation::Present) => {
+                delta.add_out(neighbor);
             }
-            helix_planner::ir::ExpandDirection::In => {
-                row.insert((AdjacencyDirection::In, neighbor), mutation);
+            (helix_planner::ir::ExpandDirection::In, MembershipMutation::Present) => {
+                delta.add_in(neighbor);
             }
-            helix_planner::ir::ExpandDirection::Both => {
-                row.insert((AdjacencyDirection::Out, neighbor), mutation);
-                row.insert((AdjacencyDirection::In, neighbor), mutation);
+            (helix_planner::ir::ExpandDirection::Both, MembershipMutation::Present) => {
+                delta.add_out(neighbor);
+                delta.add_in(neighbor);
+            }
+            (helix_planner::ir::ExpandDirection::Out, MembershipMutation::Absent) => {
+                delta.remove_out(neighbor);
+            }
+            (helix_planner::ir::ExpandDirection::In, MembershipMutation::Absent) => {
+                delta.remove_in(neighbor);
+            }
+            (helix_planner::ir::ExpandDirection::Both, MembershipMutation::Absent) => {
+                delta.remove_out(neighbor);
+                delta.remove_in(neighbor);
             }
         }
         Ok(())
@@ -296,52 +404,40 @@ impl TopologyMutationRuntime {
             }
         };
 
-        for (key, mutations) in batch.bitmaps {
-            let mut delta = secondary::BitmapMembershipDelta::default();
-            let mut discriminators = Vec::with_capacity(mutations.len());
-            for (id, mutation) in &mutations {
-                discriminators.push(Bytes::copy_from_slice(&id.to_be_bytes()));
-                match mutation {
-                    MembershipMutation::Present => {
-                        delta.add(*id);
-                    }
-                    MembershipMutation::Absent => {
-                        delta.remove(*id);
-                    }
-                }
-            }
-            transaction.merge_disjoint(&key, discriminators, delta.encode())?;
+        for (row, delta) in batch.bitmaps {
+            let key = row.to_bytes();
+            transaction.merge_disjoint(
+                &key,
+                delta.members().map(|id| id.to_be_bytes()),
+                delta.encode(),
+            )?;
             self.staged_keys.insert(key);
         }
 
-        for (key, mutations) in batch.adjacency {
-            let mut delta = edges::AdjacencyMembershipDelta::default();
-            let mut discriminators = Vec::with_capacity(mutations.len());
-            for ((direction, neighbor), mutation) in &mutations {
-                let mut discriminator =
-                    Vec::with_capacity(core::mem::size_of::<u8>() + core::mem::size_of::<u64>());
-                discriminator.push(match direction {
-                    AdjacencyDirection::Out => 0,
-                    AdjacencyDirection::In => 1,
-                });
-                discriminator.extend_from_slice(&neighbor.to_be_bytes());
-                discriminators.push(Bytes::from(discriminator));
-                match (direction, mutation) {
-                    (AdjacencyDirection::Out, MembershipMutation::Present) => {
-                        delta.add_out(*neighbor);
-                    }
-                    (AdjacencyDirection::In, MembershipMutation::Present) => {
-                        delta.add_in(*neighbor);
-                    }
-                    (AdjacencyDirection::Out, MembershipMutation::Absent) => {
-                        delta.remove_out(*neighbor);
-                    }
-                    (AdjacencyDirection::In, MembershipMutation::Absent) => {
-                        delta.remove_in(*neighbor);
-                    }
-                }
+        for ((scope, node), delta) in batch.adjacency {
+            const DIRECTION_LEN: usize = core::mem::size_of::<u8>();
+            const NODE_ID_LEN: usize = core::mem::size_of::<u64>();
+
+            let key = DataKey::Data {
+                scope,
+                kind: DataKeyKind::Adjacency(AdjacencyKey::new(node)),
             }
-            transaction.merge_disjoint(&key, discriminators, delta.encode())?;
+            .to_bytes();
+            let outgoing = delta.outgoing_members().map(|neighbor| {
+                let mut discriminator = [0; DIRECTION_LEN + NODE_ID_LEN];
+                discriminator[0] = 0;
+                discriminator[DIRECTION_LEN..DIRECTION_LEN + NODE_ID_LEN]
+                    .copy_from_slice(&neighbor.to_be_bytes());
+                discriminator
+            });
+            let incoming = delta.incoming_members().map(|neighbor| {
+                let mut discriminator = [0; DIRECTION_LEN + NODE_ID_LEN];
+                discriminator[0] = 1;
+                discriminator[DIRECTION_LEN..DIRECTION_LEN + NODE_ID_LEN]
+                    .copy_from_slice(&neighbor.to_be_bytes());
+                discriminator
+            });
+            transaction.merge_disjoint(&key, outgoing.chain(incoming), delta.encode())?;
             self.staged_keys.insert(key);
         }
         Ok(())
@@ -370,6 +466,7 @@ impl TopologyMutationRuntime {
     }
 }
 
+#[cfg(test)]
 fn node_label_key(scope: DataScope, label: &str) -> Bytes {
     DataKey::Data {
         scope,
@@ -383,6 +480,7 @@ fn node_label_key(scope: DataScope, label: &str) -> Bytes {
     .to_bytes()
 }
 
+#[cfg(test)]
 fn edge_pair_key(scope: DataScope, from: u64, to: u64) -> Bytes {
     DataKey::Data {
         scope,
@@ -391,6 +489,7 @@ fn edge_pair_key(scope: DataScope, from: u64, to: u64) -> Bytes {
     .to_bytes()
 }
 
+#[cfg(test)]
 fn edge_label_neighbor_key(
     scope: DataScope,
     direction: EdgeDirection,
@@ -406,6 +505,7 @@ fn edge_label_neighbor_key(
     .to_bytes()
 }
 
+#[cfg(test)]
 fn global_edge_label_key(scope: DataScope, label: &str) -> Bytes {
     DataKey::Data {
         scope,
@@ -1010,6 +1110,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn coalesced_membership_deltas_keep_the_last_mutation_per_member() {
+        let db = database("coalesced-last-membership-mutation").await;
+        let transaction = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        let scope = DataScope::LegacyUnscoped;
+        let mut runtime = TopologyMutationRuntime::default();
+
+        runtime.add_node_label(scope, "User", 1).unwrap();
+        runtime.remove_node_label(scope, "User", 1).unwrap();
+        runtime.remove_node_label(scope, "User", 2).unwrap();
+        runtime.add_node_label(scope, "User", 2).unwrap();
+        runtime
+            .add_adjacency(scope, 9, 1, helix_planner::ir::ExpandDirection::Both)
+            .unwrap();
+        runtime
+            .remove_adjacency(scope, 9, 1, helix_planner::ir::ExpandDirection::Out)
+            .unwrap();
+        runtime
+            .remove_adjacency(scope, 9, 2, helix_planner::ir::ExpandDirection::Both)
+            .unwrap();
+        runtime
+            .add_adjacency(scope, 9, 2, helix_planner::ir::ExpandDirection::Out)
+            .unwrap();
+        runtime.prepare(&transaction).await.unwrap();
+        runtime.consume_prepared().unwrap();
+        transaction.commit().await.unwrap();
+
+        assert_eq!(
+            secondary::SecondaryEqualityValue::decode(
+                &db.get(node_label_key(scope, "User"))
+                    .await
+                    .unwrap()
+                    .expect("coalesced node-label row exists"),
+            )
+            .unwrap()
+            .into_ids()
+            .iter()
+            .collect::<Vec<_>>(),
+            vec![2]
+        );
+        let adjacency = edges::decode_edges(
+            &db.get(
+                DataKey::Data {
+                    scope,
+                    kind: DataKeyKind::Adjacency(AdjacencyKey::new(9)),
+                }
+                .to_bytes(),
+            )
+            .await
+            .unwrap()
+            .expect("coalesced adjacency row exists"),
+        )
+        .unwrap();
+        assert_eq!(adjacency.iter_out().collect::<Vec<_>>(), vec![2]);
+        assert_eq!(adjacency.iter_in().collect::<Vec<_>>(), vec![1]);
+
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn prepared_runtime_rejects_further_collection() {
         let transaction = transaction("prepared-rejects-collection").await;
         let mut runtime = TopologyMutationRuntime::default();
@@ -1028,12 +1190,19 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct SweepBenchmarkResult {
-        elapsed: Duration,
+    struct SweepConflictBenchmarkResult {
         writer_conflicts: usize,
         sweeper_conflicts: usize,
         writer_commits: usize,
         sweeper_commits: usize,
+    }
+
+    #[derive(Debug)]
+    struct SweepPreparationBenchmarkResult {
+        minimum: Duration,
+        median: Duration,
+        maximum: Duration,
+        samples: usize,
     }
 
     async fn stage_benchmark_memberships(
@@ -1159,13 +1328,13 @@ mod tests {
         transaction
     }
 
-    async fn run_sweep_benchmark(
+    async fn run_sweep_conflict_benchmark(
         strategy: SweepBenchmarkStrategy,
         expired_members: u64,
         inserted_members: u64,
         sweep_chunk: u64,
         writer_chunk: u64,
-    ) -> SweepBenchmarkResult {
+    ) -> SweepConflictBenchmarkResult {
         const PARENT_ID: u64 = u64::MAX - 1;
         const LABEL: &str = "KubernetesEvent";
 
@@ -1208,8 +1377,6 @@ mod tests {
             .collect::<Vec<_>>();
         let writer_progress = Arc::new(AtomicUsize::new(0));
         let writer_notify = Arc::new(tokio::sync::Notify::new());
-        let started = Instant::now();
-
         let writer = {
             let db = Arc::clone(&db);
             let barriers = barriers.clone();
@@ -1281,8 +1448,6 @@ mod tests {
         };
         let writer_conflicts = writer.await.expect("benchmark writer joins");
         let sweeper_conflicts = sweeper.await.expect("benchmark sweeper joins");
-        let elapsed = started.elapsed();
-
         let labels = secondary::SecondaryEqualityValue::decode(
             &db.get(&label_key)
                 .await
@@ -1294,10 +1459,26 @@ mod tests {
         assert_eq!(labels.len(), inserted_members);
         assert_eq!(labels.min(), Some(expired_members));
         assert_eq!(labels.max(), Some(expired_members + inserted_members - 1));
+        let adjacency = edges::decode_edges(
+            &db.get(
+                DataKey::Data {
+                    scope: DataScope::LegacyUnscoped,
+                    kind: DataKeyKind::Adjacency(AdjacencyKey::new(PARENT_ID)),
+                }
+                .to_bytes(),
+            )
+            .await
+            .expect("benchmark adjacency result reads")
+            .expect("inserted adjacency memberships remain"),
+        )
+        .expect("benchmark adjacency result decodes");
+        let outgoing = adjacency.iter_out().collect::<RoaringTreemap>();
+        assert_eq!(outgoing.len(), inserted_members);
+        assert_eq!(outgoing.min(), Some(expired_members));
+        assert_eq!(outgoing.max(), Some(expired_members + inserted_members - 1));
         db.close().await.expect("benchmark database closes");
 
-        SweepBenchmarkResult {
-            elapsed,
+        SweepConflictBenchmarkResult {
             writer_conflicts,
             sweeper_conflicts,
             writer_commits: writer_chunks,
@@ -1305,9 +1486,85 @@ mod tests {
         }
     }
 
+    async fn run_sweep_preparation_benchmark(
+        strategy: SweepBenchmarkStrategy,
+        expired_members: u64,
+        sweep_chunk: u64,
+        samples: usize,
+    ) -> SweepPreparationBenchmarkResult {
+        const PARENT_ID: u64 = u64::MAX - 1;
+        const LABEL: &str = "KubernetesEvent";
+
+        let db = database(match strategy {
+            SweepBenchmarkStrategy::ExclusiveReadModifyWrite => "prepare-exclusive",
+            SweepBenchmarkStrategy::DisjointDelta => "prepare-disjoint",
+        })
+        .await;
+        db.put(
+            node_label_key(DataScope::LegacyUnscoped, LABEL),
+            secondary::SecondaryEqualityValue::encode_ids(
+                &(0..expired_members).collect::<RoaringTreemap>(),
+            ),
+        )
+        .await
+        .expect("preparation benchmark label seed persists");
+        let mut adjacency = edges::Edges::new();
+        for id in 0..expired_members {
+            adjacency.add_out(id);
+        }
+        db.put(
+            DataKey::Data {
+                scope: DataScope::LegacyUnscoped,
+                kind: DataKeyKind::Adjacency(AdjacencyKey::new(PARENT_ID)),
+            }
+            .to_bytes(),
+            edges::encode_edges(&adjacency),
+        )
+        .await
+        .expect("preparation benchmark adjacency seed persists");
+
+        // Warm storage and codec paths before collecting paired samples. The
+        // transaction is deliberately not committed so every sample stages a
+        // sweep against the same full hot rows.
+        drop(
+            stage_benchmark_memberships(&db, strategy, 0..sweep_chunk.min(expired_members), false)
+                .await,
+        );
+
+        let mut elapsed = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let started = Instant::now();
+            for start in (0..expired_members).step_by(sweep_chunk as usize) {
+                drop(
+                    stage_benchmark_memberships(
+                        &db,
+                        strategy,
+                        start..(start + sweep_chunk).min(expired_members),
+                        false,
+                    )
+                    .await,
+                );
+            }
+            elapsed.push(started.elapsed());
+        }
+        elapsed.sort_unstable();
+        db.close()
+            .await
+            .expect("preparation benchmark database closes");
+
+        SweepPreparationBenchmarkResult {
+            minimum: elapsed[0],
+            median: elapsed[elapsed.len() / 2],
+            maximum: elapsed[elapsed.len() - 1],
+            samples: elapsed.len(),
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    #[ignore = "manual 100K-member conflict and throughput comparison"]
+    #[ignore = "manual 100K-member conflict and preparation-performance comparison"]
     async fn benchmark_exclusive_vs_disjoint_linked_event_sweep() {
+        const MAX_PREPARATION_TIME_RATIO: f64 = 5.0;
+
         let expired_members = std::env::var("HELIX_SWEEP_BENCH_EXPIRED")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -1324,12 +1581,18 @@ mod tests {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(250);
+        let performance_samples = std::env::var("HELIX_SWEEP_BENCH_SAMPLES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(5);
         assert!(expired_members > 0);
         assert!(inserted_members > 0);
         assert!(sweep_chunk > 0);
         assert!(writer_chunk > 0);
+        assert!(performance_samples >= 3);
+        assert!(performance_samples % 2 == 1);
 
-        let before = run_sweep_benchmark(
+        let before_conflicts = run_sweep_conflict_benchmark(
             SweepBenchmarkStrategy::ExclusiveReadModifyWrite,
             expired_members,
             inserted_members,
@@ -1337,7 +1600,7 @@ mod tests {
             writer_chunk,
         )
         .await;
-        let after = run_sweep_benchmark(
+        let after_conflicts = run_sweep_conflict_benchmark(
             SweepBenchmarkStrategy::DisjointDelta,
             expired_members,
             inserted_members,
@@ -1346,41 +1609,77 @@ mod tests {
         )
         .await;
         let before_sweep_conflict_rate =
-            before.sweeper_conflicts as f64 / before.sweeper_commits as f64;
+            before_conflicts.sweeper_conflicts as f64 / before_conflicts.sweeper_commits as f64;
         let after_sweep_conflict_rate =
-            after.sweeper_conflicts as f64 / after.sweeper_commits as f64;
-        let operations = expired_members + inserted_members;
-        let before_throughput = operations as f64 / before.elapsed.as_secs_f64();
-        let after_throughput = operations as f64 / after.elapsed.as_secs_f64();
+            after_conflicts.sweeper_conflicts as f64 / after_conflicts.sweeper_commits as f64;
+
+        let before_preparation = run_sweep_preparation_benchmark(
+            SweepBenchmarkStrategy::ExclusiveReadModifyWrite,
+            expired_members,
+            sweep_chunk,
+            performance_samples,
+        )
+        .await;
+        let after_preparation = run_sweep_preparation_benchmark(
+            SweepBenchmarkStrategy::DisjointDelta,
+            expired_members,
+            sweep_chunk,
+            performance_samples,
+        )
+        .await;
+        let before_preparation_throughput =
+            expired_members as f64 / before_preparation.median.as_secs_f64();
+        let after_preparation_throughput =
+            expired_members as f64 / after_preparation.median.as_secs_f64();
+        let preparation_time_ratio =
+            after_preparation.median.as_secs_f64() / before_preparation.median.as_secs_f64();
 
         println!(
-            "SWEEP_BENCH before elapsed_ms={} sweep_commits={} sweep_conflicts={} sweep_conflict_rate={:.4} writer_commits={} writer_conflicts={} throughput_members_per_s={:.0}",
-            before.elapsed.as_millis(),
-            before.sweeper_commits,
-            before.sweeper_conflicts,
+            "SWEEP_CONFLICT before sweep_commits={} sweep_conflicts={} sweep_conflict_rate={:.4} writer_commits={} writer_conflicts={}",
+            before_conflicts.sweeper_commits,
+            before_conflicts.sweeper_conflicts,
             before_sweep_conflict_rate,
-            before.writer_commits,
-            before.writer_conflicts,
-            before_throughput,
+            before_conflicts.writer_commits,
+            before_conflicts.writer_conflicts,
         );
         println!(
-            "SWEEP_BENCH after elapsed_ms={} sweep_commits={} sweep_conflicts={} sweep_conflict_rate={:.4} writer_commits={} writer_conflicts={} throughput_members_per_s={:.0}",
-            after.elapsed.as_millis(),
-            after.sweeper_commits,
-            after.sweeper_conflicts,
+            "SWEEP_CONFLICT after sweep_commits={} sweep_conflicts={} sweep_conflict_rate={:.4} writer_commits={} writer_conflicts={}",
+            after_conflicts.sweeper_commits,
+            after_conflicts.sweeper_conflicts,
             after_sweep_conflict_rate,
-            after.writer_commits,
-            after.writer_conflicts,
-            after_throughput,
+            after_conflicts.writer_commits,
+            after_conflicts.writer_conflicts,
         );
         println!(
-            "SWEEP_BENCH delta conflict_rate_points={:.2} throughput_ratio={:.3}",
+            "SWEEP_PREP before samples={} min_ms={} median_ms={} max_ms={} throughput_members_per_s={:.0}",
+            before_preparation.samples,
+            before_preparation.minimum.as_millis(),
+            before_preparation.median.as_millis(),
+            before_preparation.maximum.as_millis(),
+            before_preparation_throughput,
+        );
+        println!(
+            "SWEEP_PREP after samples={} min_ms={} median_ms={} max_ms={} throughput_members_per_s={:.0}",
+            after_preparation.samples,
+            after_preparation.minimum.as_millis(),
+            after_preparation.median.as_millis(),
+            after_preparation.maximum.as_millis(),
+            after_preparation_throughput,
+        );
+        println!(
+            "SWEEP_DELTA conflict_rate_points={:.2} preparation_time_ratio={:.3}",
             (after_sweep_conflict_rate - before_sweep_conflict_rate) * 100.0,
-            after_throughput / before_throughput,
+            preparation_time_ratio,
         );
 
-        assert!(before.sweeper_conflicts > 0);
-        assert_eq!(after.sweeper_conflicts, 0);
-        assert_eq!(after.writer_conflicts, 0);
+        assert!(before_conflicts.sweeper_conflicts > 0);
+        assert_eq!(after_conflicts.sweeper_conflicts, 0);
+        assert_eq!(after_conflicts.writer_conflicts, 0);
+        assert!(
+            preparation_time_ratio <= MAX_PREPARATION_TIME_RATIO,
+            "disjoint conflict metadata preparation exceeded the {MAX_PREPARATION_TIME_RATIO:.1}x regression budget: before={:?}, after={:?}",
+            before_preparation,
+            after_preparation,
+        );
     }
 }

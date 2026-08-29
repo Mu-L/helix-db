@@ -57,6 +57,10 @@ impl BitmapMembershipDelta {
         *ids |= &self.additions;
     }
 
+    pub(crate) fn members(&self) -> impl Iterator<Item = u64> + '_ {
+        self.additions.iter().chain(self.removals.iter())
+    }
+
     pub(crate) fn encode(&self) -> Bytes {
         let mut additions = Vec::new();
         self.additions
