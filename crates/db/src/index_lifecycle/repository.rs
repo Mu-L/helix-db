@@ -55,6 +55,7 @@ fn metadata_or_migration_required(
 pub(crate) async fn require_reader_bootstrap_or_legacy(
     reader: &(impl DbReadOps + Send + Sync),
 ) -> Result<()> {
+    crate::membership_delta::read_write_mode(reader).await?;
     let tenant_envelope_ready = crate::migrations::tenant_key_envelope_ready(reader).await?;
     let marker_key = global_key(GlobalKey::StorageVersion);
     let logical_key = global_key(GlobalKey::LogicalIndexIdWatermark);
@@ -167,10 +168,10 @@ fn validate_bootstrap_values(
             ),
         });
     }
-    if version > IndexStorageVersion::CURRENT {
+    if version > IndexStorageVersion::MAX_SUPPORTED {
         return Err(HelixDbError::UnsupportedIndexStorageVersion {
             found: version.get(),
-            supported: IndexStorageVersion::CURRENT.get(),
+            supported: IndexStorageVersion::MAX_SUPPORTED.get(),
         });
     }
     let Some(logical) = logical else {
@@ -1156,15 +1157,15 @@ mod tests {
     }
 
     #[test]
-    fn storage_version_five_is_unsupported() {
-        let version_five =
-            IndexStorageVersion::new(0x0005).expect("storage version five remains representable");
-        let marker = encode_metadata_value(&IndexV2MetadataValue::StorageVersion(version_five));
+    fn storage_version_after_max_supported_is_rejected() {
+        let unsupported = IndexStorageVersion::new(IndexStorageVersion::MAX_SUPPORTED.get() + 1)
+            .expect("the next storage version remains representable");
+        let marker = encode_metadata_value(&IndexV2MetadataValue::StorageVersion(unsupported));
         assert!(matches!(
             validate_bootstrap_values(&marker, None, None),
             Err(HelixDbError::UnsupportedIndexStorageVersion {
-                found: 0x0005,
-                supported: 0x0004,
+                found: 0x0006,
+                supported: 0x0005,
             })
         ));
     }

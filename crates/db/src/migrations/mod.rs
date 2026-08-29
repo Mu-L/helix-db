@@ -7673,7 +7673,7 @@ pub(crate) mod production_contracts {
             (
                 "future",
                 encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
-                    IndexStorageVersion::new(IndexStorageVersion::CURRENT.get() + 1)
+                    IndexStorageVersion::new(IndexStorageVersion::MAX_SUPPORTED.get() + 1)
                         .expect("future version is nonzero"),
                 )),
                 true,

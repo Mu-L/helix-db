@@ -945,6 +945,18 @@ operation_record=010211111111111111111111111111111111000000000000000101010000000
                     revision: TextManifestRevision::new(4).unwrap(),
                 }),
             ),
+            (
+                "membership_delta_legacy",
+                IndexV2MetadataValue::MembershipDeltaWriteMode(
+                    crate::MembershipDeltaWriteMode::LegacyExclusive,
+                ),
+            ),
+            (
+                "membership_delta_disjoint_v2",
+                IndexV2MetadataValue::MembershipDeltaWriteMode(
+                    crate::MembershipDeltaWriteMode::DisjointV2,
+                ),
+            ),
         ];
 
         let mut rendered = String::new();
@@ -963,6 +975,8 @@ legacy_vector_adoption=010602000000000000000100000000000000021111111111111111111
 legacy_vector_active=01060300000000000000010000000000000002
 legacy_vector_retiring=01060400000000000000010000000000000002
 text_compaction_pointer=01070000000000000004
+membership_delta_legacy=010800
+membership_delta_disjoint_v2=010801
 ");
     }
 }
