@@ -17,7 +17,7 @@ use crate::encoding::indexes::{
 use crate::encoding::v2::keys::scope::DataScope;
 use crate::encoding::v2::keys::{AdjacencyKey, DataKey, DataKeyKind, EdgePairIndexKey};
 use crate::encoding::v2::values::{adjacency as edges, indexes as secondary};
-use crate::{HelixDbError, Result};
+use crate::{HelixDbError, MembershipDeltaWriteMode, Result};
 
 /// A final membership operation for one ID within the current epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -404,30 +404,96 @@ impl TopologyMutationRuntime {
             }
         };
 
-        for (row, delta) in batch.bitmaps {
-            let key = row.to_bytes();
-            transaction.merge_disjoint_tokens(
-                &key,
-                delta.members().map(u128::from),
-                delta.encode(),
-            )?;
-            self.staged_keys.insert(key);
-        }
+        match crate::membership_delta::transaction_write_mode(transaction).await? {
+            MembershipDeltaWriteMode::LegacyExclusive => {
+                for (row, delta) in batch.bitmaps {
+                    let key = row.to_bytes();
+                    let mut bitmap = transaction
+                        .get(&key)
+                        .await?
+                        .map(|value| {
+                            secondary::SecondaryEqualityBitmapValue::decode(&value)
+                                .map(secondary::SecondaryEqualityBitmapValue::into_ids)
+                        })
+                        .transpose()?
+                        .unwrap_or_default();
+                    delta.apply_to(&mut bitmap);
+                    if bitmap.is_empty() {
+                        transaction.delete(&key)?;
+                    } else {
+                        transaction.put_with_options(
+                            &key,
+                            secondary::SecondaryEqualityBitmapValue::new(bitmap).encode(),
+                            &slatedb::PutOptions {
+                                ttl: slatedb::Ttl::NoExpiry,
+                            },
+                        )?;
+                    }
+                    self.staged_keys.insert(key);
+                }
 
-        for ((scope, node), delta) in batch.adjacency {
-            const INCOMING_DIRECTION_TOKEN: u128 = 1_u128 << u64::BITS;
-
-            let key = DataKey::Data {
-                scope,
-                kind: DataKeyKind::Adjacency(AdjacencyKey::new(node)),
+                for ((scope, node), delta) in batch.adjacency {
+                    let key = DataKey::Data {
+                        scope,
+                        kind: DataKeyKind::Adjacency(AdjacencyKey::new(node)),
+                    }
+                    .to_bytes();
+                    let mut adjacency = transaction
+                        .get(&key)
+                        .await?
+                        .map(|value| edges::decode_edges(&value))
+                        .transpose()?
+                        .unwrap_or_default();
+                    delta.apply_to(&mut adjacency);
+                    if adjacency.is_empty() {
+                        transaction.delete(&key)?;
+                    } else {
+                        transaction.put_with_options(
+                            &key,
+                            edges::encode_edges(&adjacency),
+                            &slatedb::PutOptions {
+                                ttl: slatedb::Ttl::NoExpiry,
+                            },
+                        )?;
+                    }
+                    self.staged_keys.insert(key);
+                }
             }
-            .to_bytes();
-            let outgoing = delta.outgoing_members().map(u128::from);
-            let incoming = delta
-                .incoming_members()
-                .map(|neighbor| INCOMING_DIRECTION_TOKEN | u128::from(neighbor));
-            transaction.merge_disjoint_tokens(&key, outgoing.chain(incoming), delta.encode())?;
-            self.staged_keys.insert(key);
+            MembershipDeltaWriteMode::DisjointV2 => {
+                for (row, delta) in batch.bitmaps {
+                    let key = row.to_bytes();
+                    transaction
+                        .merge_disjoint_tokens_checked(
+                            &key,
+                            delta.members().map(u128::from),
+                            delta.encode(),
+                        )
+                        .await?;
+                    self.staged_keys.insert(key);
+                }
+
+                for ((scope, node), delta) in batch.adjacency {
+                    const INCOMING_DIRECTION_TOKEN: u128 = 1_u128 << u64::BITS;
+
+                    let key = DataKey::Data {
+                        scope,
+                        kind: DataKeyKind::Adjacency(AdjacencyKey::new(node)),
+                    }
+                    .to_bytes();
+                    let outgoing = delta.outgoing_members().map(u128::from);
+                    let incoming = delta
+                        .incoming_members()
+                        .map(|neighbor| INCOMING_DIRECTION_TOKEN | u128::from(neighbor));
+                    transaction
+                        .merge_disjoint_tokens_checked(
+                            &key,
+                            outgoing.chain(incoming),
+                            delta.encode(),
+                        )
+                        .await?;
+                    self.staged_keys.insert(key);
+                }
+            }
         }
         Ok(())
     }
@@ -456,7 +522,7 @@ impl TopologyMutationRuntime {
 }
 
 #[cfg(test)]
-fn node_label_key(scope: DataScope, label: &str) -> Bytes {
+pub(super) fn node_label_key(scope: DataScope, label: &str) -> Bytes {
     DataKey::Data {
         scope,
         kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(
@@ -470,7 +536,7 @@ fn node_label_key(scope: DataScope, label: &str) -> Bytes {
 }
 
 #[cfg(test)]
-fn edge_pair_key(scope: DataScope, from: u64, to: u64) -> Bytes {
+pub(super) fn edge_pair_key(scope: DataScope, from: u64, to: u64) -> Bytes {
     DataKey::Data {
         scope,
         kind: DataKeyKind::EdgePairIndex(EdgePairIndexKey::new(from, to)),
@@ -479,7 +545,7 @@ fn edge_pair_key(scope: DataScope, from: u64, to: u64) -> Bytes {
 }
 
 #[cfg(test)]
-fn edge_label_neighbor_key(
+pub(super) fn edge_label_neighbor_key(
     scope: DataScope,
     direction: EdgeDirection,
     node: u64,
@@ -495,7 +561,7 @@ fn edge_label_neighbor_key(
 }
 
 #[cfg(test)]
-fn global_edge_label_key(scope: DataScope, label: &str) -> Bytes {
+pub(super) fn global_edge_label_key(scope: DataScope, label: &str) -> Bytes {
     DataKey::Data {
         scope,
         kind: DataKeyKind::PropertyIndex(PropertyIndexKey::EdgeLabel(EdgeLabelKey::new(
@@ -517,15 +583,28 @@ mod tests {
 
     use super::*;
 
-    async fn database(name: &str) -> Db {
-        Db::builder(
+    async fn database_with_mode(name: &str, mode: MembershipDeltaWriteMode) -> Db {
+        let db = Db::builder(
             format!("topology-mutation-runtime/{name}"),
             Arc::new(InMemory::new()),
         )
         .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
         .build()
         .await
-        .expect("topology test database opens")
+        .expect("topology test database opens");
+        crate::migrations::startup::bootstrap_writer(&db)
+            .await
+            .expect("topology test database bootstraps storage metadata");
+        if mode == MembershipDeltaWriteMode::DisjointV2 {
+            crate::membership_delta::activate(&db)
+                .await
+                .expect("topology test database activates V2 deltas");
+        }
+        db
+    }
+
+    async fn database(name: &str) -> Db {
+        database_with_mode(name, MembershipDeltaWriteMode::DisjointV2).await
     }
 
     async fn transaction(name: &str) -> DbTransaction {
@@ -665,6 +744,69 @@ mod tests {
                         helix_planner::ir::ExpandDirection::In,
                     )
                     .unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn corrupt_topology_rows_fail_closed_in_every_write_mode() {
+        let scope = DataScope::LegacyUnscoped;
+        for mode in [
+            MembershipDeltaWriteMode::LegacyExclusive,
+            MembershipDeltaWriteMode::DisjointV2,
+        ] {
+            for row in [
+                "node-label",
+                "edge-pair",
+                "edge-neighbor-out",
+                "edge-neighbor-in",
+                "global-edge-label",
+                "adjacency",
+            ] {
+                let db = database_with_mode(&format!("corrupt-{mode:?}-{row}"), mode).await;
+                let key = match row {
+                    "node-label" => node_label_key(scope, "Corrupt"),
+                    "edge-pair" => edge_pair_key(scope, 10, 11),
+                    "edge-neighbor-out" => {
+                        edge_label_neighbor_key(scope, EdgeDirection::Out, 10, "CORRUPT")
+                    }
+                    "edge-neighbor-in" => {
+                        edge_label_neighbor_key(scope, EdgeDirection::In, 11, "CORRUPT")
+                    }
+                    "global-edge-label" => global_edge_label_key(scope, "CORRUPT"),
+                    "adjacency" => DataKey::Data {
+                        scope,
+                        kind: DataKeyKind::Adjacency(AdjacencyKey::new(10)),
+                    }
+                    .to_bytes(),
+                    _ => unreachable!("the fixture lists every topology row"),
+                };
+                let corrupt = Bytes::from_static(b"corrupt-topology-value");
+                db.put(&key, corrupt.clone()).await.unwrap();
+
+                let transaction = db
+                    .begin(IsolationLevel::SerializableSnapshot)
+                    .await
+                    .unwrap();
+                let mut runtime = TopologyMutationRuntime::default();
+                match row {
+                    "node-label" => runtime.remove_node_label(scope, "Corrupt", 1).unwrap(),
+                    "edge-pair" => runtime.remove_edge_pair(scope, 10, 11, 1).unwrap(),
+                    "edge-neighbor-out" | "edge-neighbor-in" => runtime
+                        .remove_edge_label_neighbors(scope, 10, 11, "CORRUPT")
+                        .unwrap(),
+                    "global-edge-label" => runtime
+                        .remove_global_edge_label(scope, "CORRUPT", 1)
+                        .unwrap(),
+                    "adjacency" => runtime
+                        .remove_adjacency(scope, 10, 11, helix_planner::ir::ExpandDirection::Out)
+                        .unwrap(),
+                    _ => unreachable!("the fixture lists every topology row"),
+                }
+                assert!(runtime.flush(&transaction).await.is_err(), "{mode:?} {row}");
+                transaction.rollback();
+                assert_eq!(db.get(&key).await.unwrap(), Some(corrupt), "{mode:?} {row}");
+                db.close().await.unwrap();
             }
         }
     }

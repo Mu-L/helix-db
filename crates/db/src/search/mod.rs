@@ -59,9 +59,10 @@ use crate::encoding::v2::legacy::text::storage_keys::{
     self as key_metadata, LegacyTextMetadataElement as TextMetadataElement,
 };
 use crate::encoding::v2::values::edge_endpoints::EdgeEndpointsValue;
-use crate::encoding::v2::values::indexes::SecondaryEqualityValue;
+use crate::encoding::v2::values::indexes::{BitmapMembershipDelta, SecondaryEqualityValue};
 use crate::encoding::{EdgeId, NodeId};
 use crate::error::HelixDbError;
+use crate::MembershipDeltaWriteMode;
 use slatedb::DbReadOps;
 
 fn bounded_prefix_end(prefix: &Bytes) -> Bytes {
@@ -612,6 +613,55 @@ pub fn decode_roaring_treemap(data: &[u8]) -> Result<RoaringTreemap, HelixDbErro
     Ok(SecondaryEqualityValue::decode(data)?.into_ids())
 }
 
+async fn stage_shared_bitmap_membership(
+    txn: &DbTransaction,
+    key: &Bytes,
+    entity_id: u64,
+    present: bool,
+) -> Result<(), HelixDbError> {
+    match crate::membership_delta::transaction_write_mode(txn).await? {
+        MembershipDeltaWriteMode::LegacyExclusive => {
+            let existing = txn.get(key).await?;
+            if existing.is_none() && !present {
+                return Ok(());
+            }
+            let mut bitmap = existing
+                .as_deref()
+                .map(SecondaryEqualityValue::decode)
+                .transpose()?
+                .map(SecondaryEqualityValue::into_ids)
+                .unwrap_or_default();
+            if present {
+                bitmap.insert(entity_id);
+            } else {
+                bitmap.remove(entity_id);
+            }
+            if bitmap.is_empty() {
+                txn.delete(key)?;
+            } else {
+                txn.put_with_options(
+                    key,
+                    encode_roaring_treemap(&bitmap),
+                    &slatedb::PutOptions {
+                        ttl: slatedb::Ttl::NoExpiry,
+                    },
+                )?;
+            }
+        }
+        MembershipDeltaWriteMode::DisjointV2 => {
+            let mut delta = BitmapMembershipDelta::default();
+            if present {
+                delta.add(entity_id);
+            } else {
+                delta.remove(entity_id);
+            }
+            txn.merge_disjoint_tokens_checked(key, [u128::from(entity_id)], delta.encode())
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 /// Add a node to an equality index
 pub async fn add_to_equality_index(
     txn: &DbTransaction,
@@ -638,8 +688,7 @@ pub async fn add_to_equality_index_scoped(
     }
     .to_bytes();
 
-    txn.merge_commutative(&key, crate::merge_operator::encode_bitmap_add(node_id))?;
-    Ok(())
+    stage_shared_bitmap_membership(txn, &key, node_id, true).await
 }
 
 /// Remove a node from an equality index
@@ -669,17 +718,7 @@ pub async fn remove_from_equality_index_scoped(
     }
     .to_bytes();
 
-    if let Some(data) = txn.get(&key).await? {
-        let mut bitmap = decode_roaring_treemap(&data)?;
-        bitmap.remove(node_id);
-
-        if bitmap.is_empty() {
-            txn.delete(&key)?;
-        } else {
-            txn.put(&key, encode_roaring_treemap(&bitmap))?;
-        }
-    }
-    Ok(())
+    stage_shared_bitmap_membership(txn, &key, node_id, false).await
 }
 
 /// Look up nodes by equality index
@@ -1600,7 +1639,7 @@ pub async fn add_to_edge_label_index_scoped(
         )),
     }
     .to_bytes();
-    txn.merge_commutative(&out_key, crate::merge_operator::encode_bitmap_add(to))?;
+    stage_shared_bitmap_membership(txn, &out_key, to, true).await?;
 
     // Update incoming index: to + label -> from
     let in_key = DataKey::Data {
@@ -1610,9 +1649,7 @@ pub async fn add_to_edge_label_index_scoped(
         )),
     }
     .to_bytes();
-    txn.merge_commutative(&in_key, crate::merge_operator::encode_bitmap_add(from))?;
-
-    Ok(())
+    stage_shared_bitmap_membership(txn, &in_key, from, true).await
 }
 
 /// Remove an edge from the edge label index
@@ -1642,15 +1679,7 @@ pub async fn remove_from_edge_label_index_scoped(
         )),
     }
     .to_bytes();
-    if let Some(data) = txn.get(&out_key).await? {
-        let mut bitmap = decode_roaring_treemap(&data)?;
-        bitmap.remove(to);
-        if bitmap.is_empty() {
-            txn.delete(&out_key)?;
-        } else {
-            txn.put(&out_key, encode_roaring_treemap(&bitmap))?;
-        }
-    }
+    stage_shared_bitmap_membership(txn, &out_key, to, false).await?;
 
     // Update incoming index
     let in_key = DataKey::Data {
@@ -1660,17 +1689,7 @@ pub async fn remove_from_edge_label_index_scoped(
         )),
     }
     .to_bytes();
-    if let Some(data) = txn.get(&in_key).await? {
-        let mut bitmap = decode_roaring_treemap(&data)?;
-        bitmap.remove(from);
-        if bitmap.is_empty() {
-            txn.delete(&in_key)?;
-        } else {
-            txn.put(&in_key, encode_roaring_treemap(&bitmap))?;
-        }
-    }
-
-    Ok(())
+    stage_shared_bitmap_membership(txn, &in_key, from, false).await
 }
 
 /// Look up outgoing neighbors by edge label
@@ -1779,7 +1798,7 @@ pub async fn add_to_edge_equality_index_scoped(
         )),
     }
     .to_bytes();
-    txn.merge_commutative(&out_key, crate::merge_operator::encode_bitmap_add(edge_id))?;
+    stage_shared_bitmap_membership(txn, &out_key, edge_id, true).await?;
 
     let in_key = DataKey::Data {
         scope: tenant_scope,
@@ -1793,7 +1812,7 @@ pub async fn add_to_edge_equality_index_scoped(
         )),
     }
     .to_bytes();
-    txn.merge_commutative(&in_key, crate::merge_operator::encode_bitmap_add(edge_id))?;
+    stage_shared_bitmap_membership(txn, &in_key, edge_id, true).await?;
 
     let global_key = DataKey::Data {
         scope: tenant_scope,
@@ -1805,12 +1824,7 @@ pub async fn add_to_edge_equality_index_scoped(
         )),
     }
     .to_bytes();
-    txn.merge_commutative(
-        &global_key,
-        crate::merge_operator::encode_bitmap_add(edge_id),
-    )?;
-
-    Ok(())
+    stage_shared_bitmap_membership(txn, &global_key, edge_id, true).await
 }
 
 /// Remove an edge from the equality index (both directions)
@@ -1855,15 +1869,7 @@ pub async fn remove_from_edge_equality_index_scoped(
         )),
     }
     .to_bytes();
-    if let Some(data) = txn.get(&out_key).await? {
-        let mut bitmap = decode_roaring_treemap(&data)?;
-        bitmap.remove(edge_id);
-        if bitmap.is_empty() {
-            txn.delete(&out_key)?;
-        } else {
-            txn.put(&out_key, encode_roaring_treemap(&bitmap))?;
-        }
-    }
+    stage_shared_bitmap_membership(txn, &out_key, edge_id, false).await?;
 
     let in_key = DataKey::Data {
         scope: tenant_scope,
@@ -1877,15 +1883,7 @@ pub async fn remove_from_edge_equality_index_scoped(
         )),
     }
     .to_bytes();
-    if let Some(data) = txn.get(&in_key).await? {
-        let mut bitmap = decode_roaring_treemap(&data)?;
-        bitmap.remove(edge_id);
-        if bitmap.is_empty() {
-            txn.delete(&in_key)?;
-        } else {
-            txn.put(&in_key, encode_roaring_treemap(&bitmap))?;
-        }
-    }
+    stage_shared_bitmap_membership(txn, &in_key, edge_id, false).await?;
 
     let global_key = DataKey::Data {
         scope: tenant_scope,
@@ -1897,17 +1895,7 @@ pub async fn remove_from_edge_equality_index_scoped(
         )),
     }
     .to_bytes();
-    if let Some(data) = txn.get(&global_key).await? {
-        let mut bitmap = decode_roaring_treemap(&data)?;
-        bitmap.remove(edge_id);
-        if bitmap.is_empty() {
-            txn.delete(&global_key)?;
-        } else {
-            txn.put(&global_key, encode_roaring_treemap(&bitmap))?;
-        }
-    }
-
-    Ok(())
+    stage_shared_bitmap_membership(txn, &global_key, edge_id, false).await
 }
 
 /// Look up edges by equality (outgoing from source)
@@ -2026,8 +2014,7 @@ pub async fn add_to_global_edge_label_index_scoped(
         ))),
     }
     .to_bytes();
-    txn.merge_commutative(&key, crate::merge_operator::encode_bitmap_add(edge_id))?;
-    Ok(())
+    stage_shared_bitmap_membership(txn, &key, edge_id, true).await
 }
 
 /// Remove an edge from the global label -> edge IDs index.
@@ -2052,16 +2039,7 @@ pub async fn remove_from_global_edge_label_index_scoped(
         ))),
     }
     .to_bytes();
-    if let Some(data) = txn.get(&key).await? {
-        let mut bitmap = decode_roaring_treemap(&data)?;
-        bitmap.remove(edge_id);
-        if bitmap.is_empty() {
-            txn.delete(&key)?;
-        } else {
-            txn.put(&key, encode_roaring_treemap(&bitmap))?;
-        }
-    }
-    Ok(())
+    stage_shared_bitmap_membership(txn, &key, edge_id, false).await
 }
 
 /// Look up all edge IDs for a label from the global edge-label index.
@@ -2169,8 +2147,7 @@ pub async fn add_to_edge_pair_index_scoped(
         kind: DataKeyKind::EdgePairIndex(crate::encoding::keys::EdgePairIndexKey::new(from, to)),
     }
     .to_bytes();
-    txn.merge_commutative(&key, crate::merge_operator::encode_bitmap_add(edge_id))?;
-    Ok(())
+    stage_shared_bitmap_membership(txn, &key, edge_id, true).await
 }
 
 /// Remove an edge id from the exact `(from, to)` multigraph pair index.
@@ -2195,17 +2172,7 @@ pub async fn remove_from_edge_pair_index_scoped(
         kind: DataKeyKind::EdgePairIndex(crate::encoding::keys::EdgePairIndexKey::new(from, to)),
     }
     .to_bytes();
-    let Some(data) = txn.get(&key).await? else {
-        return Ok(());
-    };
-    let mut bitmap = decode_roaring_treemap(&data)?;
-    bitmap.remove(edge_id);
-    if bitmap.is_empty() {
-        txn.delete(&key)?;
-    } else {
-        txn.put(&key, encode_roaring_treemap(&bitmap))?;
-    }
-    Ok(())
+    stage_shared_bitmap_membership(txn, &key, edge_id, false).await
 }
 
 /// Delete all node `$label` equality-index entries before a full rebuild.
@@ -3736,6 +3703,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shared_bitmap_staging_rejects_corruption_in_every_write_mode() {
+        for mode in [
+            MembershipDeltaWriteMode::LegacyExclusive,
+            MembershipDeltaWriteMode::DisjointV2,
+        ] {
+            for present in [false, true] {
+                let db = crate::HelixDB::open(crate::HelixDbSource::InMemory {
+                    database: format!("search-corrupt-shared-bitmap-{mode:?}-{present}"),
+                })
+                .await
+                .expect("db opens");
+                if mode == MembershipDeltaWriteMode::DisjointV2 {
+                    db.activate_membership_delta_v2()
+                        .await
+                        .expect("corruption fixture activates V2 deltas");
+                }
+                let key = DataKey::Data {
+                    scope: DataScope::LegacyUnscoped,
+                    kind: DataKeyKind::PropertyIndex(PropertyIndexKey::Equality(
+                        EqualityIndexKey::new(
+                            hash_property_name("status"),
+                            hash_property_value("corrupt"),
+                        ),
+                    )),
+                }
+                .to_bytes();
+                let corrupt = Bytes::from_static(b"not-a-shared-bitmap");
+                db.inner_db().put(&key, corrupt.clone()).await.unwrap();
+
+                let txn = db
+                    .inner_db()
+                    .begin(IsolationLevel::SerializableSnapshot)
+                    .await
+                    .unwrap();
+                assert!(
+                    stage_shared_bitmap_membership(&txn, &key, 7, present)
+                        .await
+                        .is_err(),
+                    "{mode:?} present={present}"
+                );
+                txn.rollback();
+                assert_eq!(db.inner_db().get(&key).await.unwrap(), Some(corrupt));
+                db.close().await.unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn concurrent_bitmap_inserts_cover_every_family_and_tenant_scope() {
         const INSERTS_PER_TENANT: u64 = 16;
 
@@ -3744,6 +3759,9 @@ mod tests {
         })
         .await
         .expect("db opens");
+        db.activate_membership_delta_v2()
+            .await
+            .expect("concurrent shared-bitmap fixture activates V2 deltas");
         let tenant_a =
             crate::encoding::keys::scope::TenantId::from_ulid_str("0000000000000000000000000A")
                 .expect("valid tenant");

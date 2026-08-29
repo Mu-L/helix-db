@@ -34,6 +34,7 @@ const BITMAP_DELTA_LEN: usize =
     BITMAP_DELTA_MAGIC.len() + BITMAP_DELTA_OP_LEN + BITMAP_DELTA_ID_LEN;
 const BITMAP_ADD: u8 = 0x00;
 
+#[cfg(any(test, feature = "fuzzing"))]
 pub(crate) fn encode_bitmap_add(id: u64) -> Bytes {
     let mut bytes = Vec::with_capacity(BITMAP_DELTA_LEN);
     bytes.extend_from_slice(BITMAP_DELTA_MAGIC);

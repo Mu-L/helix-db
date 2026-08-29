@@ -2554,16 +2554,56 @@ async fn stage_bitmap_changes(
     transaction: &DbTransaction,
     changes: &BTreeMap<Bytes, BTreeMap<u64, bool>>,
 ) -> Result<()> {
-    for (key, changes) in changes {
-        let mut delta = BitmapMembershipDelta::default();
-        for (entity_id, present) in changes {
-            if *present {
-                delta.add(*entity_id);
-            } else {
-                delta.remove(*entity_id);
+    match crate::membership_delta::transaction_write_mode(transaction).await? {
+        crate::MembershipDeltaWriteMode::LegacyExclusive => {
+            for (key, changes) in changes {
+                let mut bitmap = transaction
+                    .get(key)
+                    .await?
+                    .as_deref()
+                    .map(SecondaryEqualityBitmapValue::decode)
+                    .transpose()?
+                    .map(SecondaryEqualityBitmapValue::into_ids)
+                    .unwrap_or_default();
+                for (entity_id, present) in changes {
+                    if *present {
+                        bitmap.insert(*entity_id);
+                    } else {
+                        bitmap.remove(*entity_id);
+                    }
+                }
+                if bitmap.is_empty() {
+                    transaction.delete(key)?;
+                } else {
+                    transaction.put_with_options(
+                        key,
+                        SecondaryEqualityBitmapValue::new(bitmap).encode(),
+                        &slatedb::PutOptions {
+                            ttl: slatedb::Ttl::NoExpiry,
+                        },
+                    )?;
+                }
             }
         }
-        transaction.merge_disjoint_tokens(key, delta.members().map(u128::from), delta.encode())?;
+        crate::MembershipDeltaWriteMode::DisjointV2 => {
+            for (key, changes) in changes {
+                let mut delta = BitmapMembershipDelta::default();
+                for (entity_id, present) in changes {
+                    if *present {
+                        delta.add(*entity_id);
+                    } else {
+                        delta.remove(*entity_id);
+                    }
+                }
+                transaction
+                    .merge_disjoint_tokens_checked(
+                        key,
+                        delta.members().map(u128::from),
+                        delta.encode(),
+                    )
+                    .await?;
+            }
+        }
     }
     Ok(())
 }
@@ -3390,6 +3430,26 @@ fn secondary_entry_key(
     Ok(scoped_index_key(scope, ScopedKey::SecondaryEntry(key)))
 }
 
+#[cfg(test)]
+pub(crate) fn equality_bitmap_key_for_test(handle: &ActiveIndexHandle, value: &str) -> Bytes {
+    let definition = handle
+        .secondary_definition()
+        .expect("an equality bitmap fixture requires a secondary handle");
+    assert!(
+        definition_uses_equality_bitmap(definition),
+        "an equality bitmap fixture requires a non-unique equality definition"
+    );
+    secondary_entry_key(
+        handle.scope(),
+        handle.index_id(),
+        handle.generation(),
+        definition,
+        CanonicalSecondaryValue::equality_string(value),
+        IndexEntityId::initial(),
+    )
+    .expect("an equality bitmap fixture key validates")
+}
+
 fn decode_secondary_entry_value(
     index_id: IndexId,
     generation: IndexGenerationId,
@@ -3623,7 +3683,7 @@ mod tests {
 
     const NOW_MILLIS: u64 = 1;
 
-    pub(super) async fn test_db(name: &str) -> Db {
+    async fn test_db_with_mode(name: &str, mode: crate::MembershipDeltaWriteMode) -> Db {
         let db = Db::builder(name, Arc::new(InMemory::new()))
             .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
             .build()
@@ -3632,7 +3692,16 @@ mod tests {
         bootstrap_writer(&db)
             .await
             .expect("secondary test database bootstraps V2 metadata");
+        if mode == crate::MembershipDeltaWriteMode::DisjointV2 {
+            crate::membership_delta::activate(&db)
+                .await
+                .expect("secondary test database activates V2 deltas");
+        }
         db
+    }
+
+    pub(super) async fn test_db(name: &str) -> Db {
+        test_db_with_mode(name, crate::MembershipDeltaWriteMode::DisjointV2).await
     }
 
     fn validated(definition: SecondaryIndexDefinition) -> ValidatedDynamicIndexDefinition {
@@ -5753,6 +5822,66 @@ mod tests {
         );
 
         db.close().await.expect("mixed bitmap database closes");
+    }
+
+    #[tokio::test]
+    async fn corrupt_node_and_edge_equality_rows_fail_closed_in_every_write_mode() {
+        for mode in [
+            crate::MembershipDeltaWriteMode::LegacyExclusive,
+            crate::MembershipDeltaWriteMode::DisjointV2,
+        ] {
+            for (kind, definition) in [
+                (
+                    "node",
+                    SecondaryIndexDefinition::node_equality("User", "status")
+                        .expect("node equality definition validates"),
+                ),
+                (
+                    "edge",
+                    SecondaryIndexDefinition::edge_equality("FOLLOWS", "status")
+                        .expect("edge equality definition validates"),
+                ),
+            ] {
+                let db =
+                    test_db_with_mode(&format!("secondary-corrupt-{mode:?}-{kind}-equality"), mode)
+                        .await;
+                let handle = active_read_handle(&db, definition).await;
+                let key = secondary_entry_key(
+                    handle.scope(),
+                    handle.index_id(),
+                    handle.generation(),
+                    handle
+                        .secondary_definition()
+                        .expect("secondary handle retains its definition"),
+                    CanonicalSecondaryValue::equality_string("corrupt"),
+                    IndexEntityId::initial(),
+                )
+                .expect("equality bitmap key validates");
+                let corrupt = Bytes::from_static(b"corrupt-equality-bitmap");
+                db.put(&key, corrupt.clone()).await.unwrap();
+
+                let transaction = db
+                    .begin(IsolationLevel::SerializableSnapshot)
+                    .await
+                    .unwrap();
+                assert!(
+                    stage_bitmap_changes(
+                        &transaction,
+                        &BTreeMap::from([(key.clone(), BTreeMap::from([(1, false)]))]),
+                    )
+                    .await
+                    .is_err(),
+                    "{mode:?} {kind} equality corruption"
+                );
+                transaction.rollback();
+                assert_eq!(
+                    db.get(&key).await.unwrap(),
+                    Some(corrupt),
+                    "{mode:?} {kind} equality corruption"
+                );
+                db.close().await.unwrap();
+            }
+        }
     }
 
     #[tokio::test]
