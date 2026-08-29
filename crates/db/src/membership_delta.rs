@@ -22,7 +22,7 @@ fn storage_version_key() -> Bytes {
     .to_bytes()
 }
 
-fn decode_write_mode(
+pub(crate) fn decode_write_mode(
     mode: Option<&[u8]>,
     storage_version: Option<&[u8]>,
 ) -> Result<MembershipDeltaWriteMode> {

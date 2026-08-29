@@ -2094,6 +2094,8 @@ async fn scan_v2_state(
     state.text_term_statistics.sort();
     state.text_entity_statistics.sort();
 
+    let mut storage_version_value = None;
+    let mut membership_delta_write_mode_value = None;
     let mut global = read
         .scan_prefix(Bytes::copy_from_slice(&GLOBAL_SENTINEL), ..)
         .await?;
@@ -2103,6 +2105,7 @@ async fn scan_v2_state(
         increment_count(&mut state.global_row_counts, &kind);
         match key {
             GlobalKey::StorageVersion => {
+                storage_version_value = Some(row.value.clone());
                 let crate::index_lifecycle::IndexV2MetadataValue::StorageVersion(version) =
                     decode_metadata_value(&row.value)?
                 else {
@@ -2213,13 +2216,18 @@ async fn scan_v2_state(
                         })?;
                 }
             }
+            GlobalKey::MembershipDeltaWriteMode => {
+                membership_delta_write_mode_value = Some(row.value);
+            }
             GlobalKey::TextCompactionPointer(_)
             | GlobalKey::LogicalIndexIdWatermark
-            | GlobalKey::VectorPhysicalIdWatermark
-            | GlobalKey::MembershipDeltaWriteMode => {}
+            | GlobalKey::VectorPhysicalIdWatermark => {}
         }
     }
-    state.membership_delta_write_mode = crate::membership_delta::read_write_mode(read).await?;
+    state.membership_delta_write_mode = crate::membership_delta::decode_write_mode(
+        membership_delta_write_mode_value.as_deref(),
+        storage_version_value.as_deref(),
+    )?;
     state.vector_migration.rebuilt_indexes =
         u64::try_from(completed_vector_builds.len()).map_err(|_| {
             crate::error::HelixDbError::InvariantViolation(
