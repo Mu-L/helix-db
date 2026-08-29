@@ -406,38 +406,27 @@ impl TopologyMutationRuntime {
 
         for (row, delta) in batch.bitmaps {
             let key = row.to_bytes();
-            transaction.merge_disjoint(
+            transaction.merge_disjoint_tokens(
                 &key,
-                delta.members().map(|id| id.to_be_bytes()),
+                delta.members().map(u128::from),
                 delta.encode(),
             )?;
             self.staged_keys.insert(key);
         }
 
         for ((scope, node), delta) in batch.adjacency {
-            const DIRECTION_LEN: usize = core::mem::size_of::<u8>();
-            const NODE_ID_LEN: usize = core::mem::size_of::<u64>();
+            const INCOMING_DIRECTION_TOKEN: u128 = 1_u128 << u64::BITS;
 
             let key = DataKey::Data {
                 scope,
                 kind: DataKeyKind::Adjacency(AdjacencyKey::new(node)),
             }
             .to_bytes();
-            let outgoing = delta.outgoing_members().map(|neighbor| {
-                let mut discriminator = [0; DIRECTION_LEN + NODE_ID_LEN];
-                discriminator[0] = 0;
-                discriminator[DIRECTION_LEN..DIRECTION_LEN + NODE_ID_LEN]
-                    .copy_from_slice(&neighbor.to_be_bytes());
-                discriminator
-            });
-            let incoming = delta.incoming_members().map(|neighbor| {
-                let mut discriminator = [0; DIRECTION_LEN + NODE_ID_LEN];
-                discriminator[0] = 1;
-                discriminator[DIRECTION_LEN..DIRECTION_LEN + NODE_ID_LEN]
-                    .copy_from_slice(&neighbor.to_be_bytes());
-                discriminator
-            });
-            transaction.merge_disjoint(&key, outgoing.chain(incoming), delta.encode())?;
+            let outgoing = delta.outgoing_members().map(u128::from);
+            let incoming = delta
+                .incoming_members()
+                .map(|neighbor| INCOMING_DIRECTION_TOKEN | u128::from(neighbor));
+            transaction.merge_disjoint_tokens(&key, outgoing.chain(incoming), delta.encode())?;
             self.staged_keys.insert(key);
         }
         Ok(())
@@ -831,6 +820,92 @@ mod tests {
         }
 
         db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn incoming_and_outgoing_tokens_do_not_alias_at_the_id_boundary() {
+        const NODE: u64 = 300;
+        const NEIGHBOR: u64 = u64::MAX;
+
+        for outgoing_commits_first in [false, true] {
+            let db = database(&format!(
+                "adjacency-direction-token-boundary-{outgoing_commits_first}"
+            ))
+            .await;
+            let scope = DataScope::LegacyUnscoped;
+            let seed = db
+                .begin(IsolationLevel::SerializableSnapshot)
+                .await
+                .unwrap();
+            let mut seed_runtime = TopologyMutationRuntime::default();
+            seed_runtime
+                .add_adjacency(
+                    scope,
+                    NODE,
+                    NEIGHBOR,
+                    helix_planner::ir::ExpandDirection::In,
+                )
+                .unwrap();
+            seed_runtime.prepare(&seed).await.unwrap();
+            seed_runtime.consume_prepared().unwrap();
+            seed.commit().await.unwrap();
+
+            let outgoing = db
+                .begin(IsolationLevel::SerializableSnapshot)
+                .await
+                .unwrap();
+            let incoming = db
+                .begin(IsolationLevel::SerializableSnapshot)
+                .await
+                .unwrap();
+            let mut outgoing_runtime = TopologyMutationRuntime::default();
+            outgoing_runtime
+                .add_adjacency(
+                    scope,
+                    NODE,
+                    NEIGHBOR,
+                    helix_planner::ir::ExpandDirection::Out,
+                )
+                .unwrap();
+            outgoing_runtime.prepare(&outgoing).await.unwrap();
+            outgoing_runtime.consume_prepared().unwrap();
+            let mut incoming_runtime = TopologyMutationRuntime::default();
+            incoming_runtime
+                .remove_adjacency(
+                    scope,
+                    NODE,
+                    NEIGHBOR,
+                    helix_planner::ir::ExpandDirection::In,
+                )
+                .unwrap();
+            incoming_runtime.prepare(&incoming).await.unwrap();
+            incoming_runtime.consume_prepared().unwrap();
+
+            if outgoing_commits_first {
+                outgoing.commit().await.unwrap();
+                incoming.commit().await.unwrap();
+            } else {
+                incoming.commit().await.unwrap();
+                outgoing.commit().await.unwrap();
+            }
+
+            let adjacency = edges::decode_edges(
+                &db.get(
+                    DataKey::Data {
+                        scope,
+                        kind: DataKeyKind::Adjacency(AdjacencyKey::new(NODE)),
+                    }
+                    .to_bytes(),
+                )
+                .await
+                .unwrap()
+                .expect("adjacency row remains present"),
+            )
+            .unwrap();
+            assert_eq!(adjacency.iter_out().collect::<Vec<_>>(), vec![NEIGHBOR]);
+            assert_eq!(adjacency.iter_in().collect::<Vec<_>>(), Vec::<u64>::new());
+            db.close().await.unwrap();
+        }
     }
 
     #[tokio::test]

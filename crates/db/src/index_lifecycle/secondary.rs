@@ -2556,16 +2556,14 @@ async fn stage_bitmap_changes(
 ) -> Result<()> {
     for (key, changes) in changes {
         let mut delta = BitmapMembershipDelta::default();
-        let mut discriminators = Vec::with_capacity(changes.len());
         for (entity_id, present) in changes {
-            discriminators.push(Bytes::copy_from_slice(&entity_id.to_be_bytes()));
             if *present {
                 delta.add(*entity_id);
             } else {
                 delta.remove(*entity_id);
             }
         }
-        transaction.merge_disjoint(key, discriminators, delta.encode())?;
+        transaction.merge_disjoint_tokens(key, delta.members().map(u128::from), delta.encode())?;
     }
     Ok(())
 }
