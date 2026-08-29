@@ -320,6 +320,8 @@ fn migration_parity_text_partition(
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MigrationParityV2State {
     pub storage_version: Option<u16>,
+    #[serde(default)]
+    pub membership_delta_write_mode: crate::MembershipDeltaWriteMode,
     pub canonical_records: Vec<MigrationParityV2Record>,
     pub operation_statuses: Vec<String>,
     pub scoped_row_counts: BTreeMap<String, u64>,
@@ -2213,9 +2215,11 @@ async fn scan_v2_state(
             }
             GlobalKey::TextCompactionPointer(_)
             | GlobalKey::LogicalIndexIdWatermark
-            | GlobalKey::VectorPhysicalIdWatermark => {}
+            | GlobalKey::VectorPhysicalIdWatermark
+            | GlobalKey::MembershipDeltaWriteMode => {}
         }
     }
+    state.membership_delta_write_mode = crate::membership_delta::read_write_mode(read).await?;
     state.vector_migration.rebuilt_indexes =
         u64::try_from(completed_vector_builds.len()).map_err(|_| {
             crate::error::HelixDbError::InvariantViolation(
@@ -2592,6 +2596,10 @@ fn increment_count(counts: &mut BTreeMap<String, u64>, name: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use slatedb::object_store::memory::InMemory;
+
     use super::*;
     use crate::encoding::v1::keys::NodePropertyKey;
     use crate::encoding::v1::property::equality_value::{
@@ -2605,6 +2613,40 @@ mod tests {
     use crate::index_lifecycle::{
         IndexElementKind, IndexEntityId, IndexGenerationId, IndexId, IndexOperationId,
     };
+
+    #[tokio::test]
+    async fn parity_state_tracks_the_validated_membership_delta_mode() {
+        let db = slatedb::Db::builder(
+            "migration-parity-membership-mode",
+            Arc::new(InMemory::new()),
+        )
+        .with_merge_operator(Arc::new(crate::merge_operator::HelixMergeOperator::new()))
+        .build()
+        .await
+        .unwrap();
+        crate::migrations::startup::bootstrap_writer(&db)
+            .await
+            .unwrap();
+
+        let mut legacy = MigrationParityV2State::default();
+        scan_v2_state(&db, DataScope::LegacyUnscoped, &mut legacy)
+            .await
+            .unwrap();
+        assert_eq!(
+            legacy.membership_delta_write_mode,
+            crate::MembershipDeltaWriteMode::LegacyExclusive
+        );
+
+        crate::membership_delta::activate(&db).await.unwrap();
+        let mut activated = MigrationParityV2State::default();
+        scan_v2_state(&db, DataScope::LegacyUnscoped, &mut activated)
+            .await
+            .unwrap();
+        assert_eq!(
+            activated.membership_delta_write_mode,
+            crate::MembershipDeltaWriteMode::DisjointV2
+        );
+    }
 
     #[test]
     fn tenant_envelope_parity_identity_is_typed_and_legacy_shaped() {

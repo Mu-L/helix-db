@@ -105,7 +105,9 @@ pub enum HelixDbMode {
 }
 
 /// Persisted write strategy for shared graph membership rows.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize,
+)]
 pub enum MembershipDeltaWriteMode {
     /// Emit only canonical values through the legacy exclusive update path.
     #[default]
