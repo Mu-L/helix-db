@@ -220,16 +220,13 @@ impl RequestSideEffects {
     fn operation(operation: &exec::ExecOp) -> Self {
         match operation {
             exec::ExecOp::Mutation { .. } => Self::GraphMutation,
-            exec::ExecOp::IndexDdl {
-                plan: ir::IndexDdlPlan::GetOperation { .. },
-            } => Self::None,
-            exec::ExecOp::IndexDdl {
-                plan:
-                    ir::IndexDdlPlan::Create { .. }
-                    | ir::IndexDdlPlan::Drop { .. }
-                    | ir::IndexDdlPlan::RetryOperation { .. }
-                    | ir::IndexDdlPlan::AbortOperation { .. },
-            } => Self::IndexDdl,
+            exec::ExecOp::IndexDdl { plan } => {
+                if plan.requires_isolated_catalog_transaction() {
+                    Self::IndexDdl
+                } else {
+                    Self::None
+                }
+            }
             exec::ExecOp::Branch { plan } => match plan {
                 exec::ExecBranchPlan::Union(plans) => {
                     plans.iter().fold(Self::None, |effects, plan| {
@@ -418,6 +415,26 @@ mod request_execution_mode_tests {
         assert_eq!(
             RequestExecutionMode::try_from(&plan).unwrap(),
             RequestExecutionMode::Read
+        );
+    }
+
+    #[test]
+    fn graph_write_with_index_status_stays_one_write_transaction() {
+        let first = exec::ExecStepId::new(1).unwrap();
+        let second = exec::ExecStepId::new(2).unwrap();
+        let plan = test_support::executable(
+            ir::PlanKind::Write,
+            vec![
+                test_support::step(1, Vec::new(), mutation()),
+                test_support::step(2, vec![first], index_status()),
+                test_support::step(3, vec![second], mutation()),
+            ],
+            3,
+        );
+
+        assert_eq!(
+            RequestExecutionMode::try_from(&plan).unwrap(),
+            RequestExecutionMode::GraphWrite
         );
     }
 }

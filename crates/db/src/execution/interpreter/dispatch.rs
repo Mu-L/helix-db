@@ -93,14 +93,18 @@ impl<'db> ExecutionContext<'db> {
             )),
             exec::ExecOp::Mutation { plan } => self.execute_mutation(input, plan).await,
             exec::ExecOp::IndexDdl { plan } => {
-                let resume_request_scope = self.has_request_write_scope();
-                self.check_execution_deadline()?;
-                self.commit_request_write_scope().await?;
-                let result = self.execute_index_ddl(input, plan).await;
-                if resume_request_scope && result.is_ok() {
-                    self.enable_request_write_scope().await?;
+                if plan.requires_isolated_catalog_transaction() {
+                    let resume_request_scope = self.has_request_write_scope();
+                    self.check_execution_deadline()?;
+                    self.commit_request_write_scope().await?;
+                    let result = self.execute_index_ddl(input, plan).await;
+                    if resume_request_scope && result.is_ok() {
+                        self.enable_request_write_scope().await?;
+                    }
+                    result
+                } else {
+                    self.execute_index_ddl(input, plan).await
                 }
-                result
             }
             exec::ExecOp::Noop | exec::ExecOp::Barrier { .. } => Ok(input),
             exec::ExecOp::Reserved { op } => self.reserved(input, op).await,
@@ -519,5 +523,120 @@ mod tests {
         assert_eq!(persisted.len(), 3);
         assert_eq!(persisted[0].entity_id(), 3);
         db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_operation_does_not_commit_an_open_graph_write() {
+        let db = test_support::open_db("dispatch-get-op-does-not-commit").await;
+        let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
+        let create = context
+            .execute_op(
+                &exec::ExecOp::IndexDdl {
+                    plan: ir::IndexDdlPlan::Create {
+                        spec: ir::IndexDdlCreateSpec::NodeEquality {
+                            key: helix_planner::catalog::ScopedPropertyKey::try_new(
+                                "User", "email",
+                            )
+                            .unwrap(),
+                            uniqueness: helix_planner::catalog::IndexUniqueness::NonUnique,
+                        },
+                        mode: ir::IndexCreateMode::ErrorIfExists,
+                    },
+                },
+                ExecutionValue::Stream(Vec::new()),
+            )
+            .await
+            .expect("create enqueues a durable operation");
+        let ExecutionValue::IndexDdlReceipt(crate::index_lifecycle::IndexDdlReceipt::Accepted {
+            operation_id,
+            ..
+        }) = create
+        else {
+            panic!("new index create must be accepted");
+        };
+        let operation_id = ir::IndexOperationId::try_new(operation_id.as_uuid().to_string())
+            .expect("receipt UUID is a canonical lowercase operation ID");
+
+        context.enable_request_write_scope().await.unwrap();
+        let added = context
+            .execute_op(
+                &exec::ExecOp::Mutation {
+                    plan: exec::ExecMutationPlan::AddNodeSource {
+                        label: test_support::name("User"),
+                        properties: test_support::assignments(vec![(
+                            "email",
+                            helix_ast::value::PropertyValue::from("uncommitted@example.com"),
+                        )]),
+                    },
+                },
+                ExecutionValue::Stream(Vec::new()),
+            )
+            .await
+            .expect("graph write stays on the request transaction");
+        let ExecutionValue::Stream(rows) = added else {
+            panic!("node write should return a stream");
+        };
+        let Some(ExecutionRow {
+            current: Some(ElementRef::Node(id)),
+            ..
+        }) = rows.first()
+        else {
+            panic!("node write should return a node row");
+        };
+        let node_key = crate::encoding::keys::DataKey::Data {
+            scope: crate::encoding::keys::scope::DataScope::LegacyUnscoped,
+            kind: crate::encoding::keys::DataKeyKind::NodeProperty(
+                crate::encoding::keys::NodePropertyKey::new(*id),
+            ),
+        }
+        .to_bytes();
+        assert!(
+            db.inner_db().get(&node_key).await.unwrap().is_none(),
+            "uncommitted graph write must not be visible on a snapshot"
+        );
+
+        let status = context
+            .execute_op(
+                &exec::ExecOp::IndexDdl {
+                    plan: ir::IndexDdlPlan::GetOperation { operation_id },
+                },
+                ExecutionValue::Stream(Vec::new()),
+            )
+            .await
+            .expect("status read stays on the open graph write");
+        assert!(matches!(status, ExecutionValue::IndexOperationStatus(_)));
+        assert!(
+            context.has_request_write_scope(),
+            "status read must not disable the request write"
+        );
+        assert!(
+            db.inner_db().get(&node_key).await.unwrap().is_none(),
+            "successful GetOperation must not publish the open graph write"
+        );
+
+        let missing = context
+            .execute_op(
+                &exec::ExecOp::IndexDdl {
+                    plan: ir::IndexDdlPlan::GetOperation {
+                        operation_id: ir::IndexOperationId::try_new(
+                            "07070707-0707-0707-0707-070707070707",
+                        )
+                        .unwrap(),
+                    },
+                },
+                ExecutionValue::Stream(Vec::new()),
+            )
+            .await
+            .expect_err("unknown operation ID is a status miss, not a commit");
+        assert!(matches!(
+            missing,
+            HelixDbError::IndexOperationNotFound { .. }
+        ));
+        assert!(context.has_request_write_scope());
+        assert!(db.inner_db().get(&node_key).await.unwrap().is_none());
+
+        context.commit_request_write_scope().await.unwrap();
+        assert!(db.inner_db().get(&node_key).await.unwrap().is_some());
+        db.close().await.expect("writer closes");
     }
 }
