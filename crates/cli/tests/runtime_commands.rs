@@ -137,8 +137,11 @@ fn logs_and_status_report_a_missing_runtime_like_stop_does() {
             "`helix {}` should name the missing runtime, got: {message}",
             command.join(" ")
         );
+        // The number is platform-specific: ENOENT is 2, while Windows reports 3
+        // (ERROR_PATH_NOT_FOUND) when the parent directory is absent too. What
+        // matters is that the originating error survives as the cause.
         assert!(
-            message.contains("os error 2"),
+            message.contains("os error"),
             "`helix {}` should keep the underlying cause, got: {message}",
             command.join(" ")
         );
