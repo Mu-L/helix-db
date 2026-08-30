@@ -355,7 +355,13 @@ impl LocalRuntime {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status()
-            .map_err(|e| not_installed_error(self.runtime, &e.to_string(), command_exists))?;
+            .map_err(|e| {
+                if spawn_failed_because_runtime_missing(self.runtime, &e) {
+                    not_installed_error(self.runtime, &e.to_string(), command_exists).into()
+                } else {
+                    eyre!("Failed to read logs for {name}: {e}")
+                }
+            })?;
 
         if !status.success() {
             return Err(eyre!(
@@ -379,7 +385,13 @@ impl LocalRuntime {
                 &format!("name=^{name}$"),
             ])
             .output()
-            .map_err(|e| not_installed_error(self.runtime, &e.to_string(), command_exists))?;
+            .map_err(|e| {
+                if spawn_failed_because_runtime_missing(self.runtime, &e) {
+                    not_installed_error(self.runtime, &e.to_string(), command_exists).into()
+                } else {
+                    eyre!("Failed to inspect {name}: {e}")
+                }
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -703,8 +715,27 @@ fn runtime_tokio_command(runtime: ContainerRuntime) -> TokioCommand {
     }
 }
 
+/// Whether a test runtime binary has to be launched through `cmd`.
+///
+/// `.cmd`/`.bat` fixtures are not executable images, so Windows can only run
+/// them via `cmd /C call`. Anything else is spawned directly, which keeps a
+/// missing path failing with `NotFound` instead of `cmd.exe` spawning fine and
+/// reporting exit code 1.
+#[cfg(windows)]
+fn test_runtime_bin_needs_shell(bin: &std::ffi::OsStr) -> bool {
+    std::path::Path::new(bin)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        })
+}
+
 #[cfg(windows)]
 fn command_from_test_runtime_bin(bin: OsString) -> Command {
+    if !test_runtime_bin_needs_shell(&bin) {
+        return Command::new(bin);
+    }
     let mut command = Command::new("cmd");
     command.arg("/C").arg("call").arg(bin);
     command
@@ -717,6 +748,9 @@ fn command_from_test_runtime_bin(bin: OsString) -> Command {
 
 #[cfg(windows)]
 fn tokio_command_from_test_runtime_bin(bin: OsString) -> TokioCommand {
+    if !test_runtime_bin_needs_shell(&bin) {
+        return TokioCommand::new(bin);
+    }
     let mut command = TokioCommand::new("cmd");
     command.arg("/C").arg("call").arg(bin);
     command
@@ -725,6 +759,34 @@ fn tokio_command_from_test_runtime_bin(bin: OsString) -> TokioCommand {
 #[cfg(not(windows))]
 fn tokio_command_from_test_runtime_bin(bin: OsString) -> TokioCommand {
     TokioCommand::new(bin)
+}
+
+/// The executable `runtime_command` will actually spawn.
+///
+/// Mirrors the `HELIX_TEST_CONTAINER_RUNTIME_BIN` seam so the presence check and
+/// the spawned command always agree about which binary is in play.
+fn resolved_runtime_binary(runtime: ContainerRuntime) -> OsString {
+    std::env::var_os(TEST_CONTAINER_RUNTIME_BIN_ENV)
+        .unwrap_or_else(|| OsString::from(runtime.binary()))
+}
+
+fn runtime_binary_present(runtime: ContainerRuntime) -> bool {
+    match resolved_runtime_binary(runtime).to_str() {
+        Some(binary) => command_exists(binary),
+        // A path we cannot inspect is not evidence that the runtime is absent.
+        None => true,
+    }
+}
+
+/// Whether a spawn failure means the runtime executable is genuinely absent.
+///
+/// A present binary can still fail to spawn: a missing interpreter, an invalid
+/// executable format, a permission failure, or process resource exhaustion. Those
+/// keep their command-specific error rather than being reported as a missing
+/// installation, which would send the user off to install or switch runtimes for
+/// a runtime that is already there.
+fn spawn_failed_because_runtime_missing(runtime: ContainerRuntime, error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound && !runtime_binary_present(runtime)
 }
 
 /// Build the error for a container runtime whose binary is missing from PATH.

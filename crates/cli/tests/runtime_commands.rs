@@ -144,3 +144,35 @@ fn logs_and_status_report_a_missing_runtime_like_stop_does() {
         );
     }
 }
+
+/// A runtime that is present but refuses to launch is a different failure from
+/// one that is not installed, and must not be reported as a missing install.
+#[cfg(unix)]
+#[test]
+fn a_present_but_unspawnable_runtime_keeps_its_command_error() {
+    let fixture = CliFixture::new().with_unspawnable_runtime();
+    let project = fixture.root().join("unspawnable-runtime-project");
+    fixture
+        .command()
+        .args(["init", "--path"])
+        .arg(&project)
+        .args(["local", "--no-skills"])
+        .assert()
+        .success();
+
+    for command in [["logs", "dev"], ["status", "dev"]] {
+        let message = stderr(
+            fixture
+                .command()
+                .current_dir(&project)
+                .args(command)
+                .assert()
+                .failure(),
+        );
+        assert!(
+            !message.contains("is not installed"),
+            "`helix {}` should not blame the install for a permission failure, got: {message}",
+            command.join(" ")
+        );
+    }
+}
