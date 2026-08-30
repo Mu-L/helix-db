@@ -469,6 +469,12 @@ pub async fn interpreter_request_mode_and_isolated_mutation_contracts() {
         .await;
 }
 
+/// Proves index status stays on the open graph write and does not publish it.
+pub async fn interpreter_get_operation_keeps_open_graph_write() {
+    crate::execution::interpreter::production_contracts::run_get_operation_keeps_open_graph_write()
+        .await;
+}
+
 /// Proves coalesced topology rows preserve transactional graph semantics.
 pub async fn interpreter_topology_mutation_contracts() {
     crate::execution::interpreter::production_contracts::run_topology_mutation_contracts().await;
