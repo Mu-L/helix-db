@@ -1594,6 +1594,11 @@ mod tests {
             })
             .await,
         );
+        if !matches!(strategy, SweepBenchmarkStrategy::ExclusiveReadModifyWrite) {
+            crate::membership_delta::activate(db.as_ref())
+                .await
+                .expect("disjoint conflict benchmark activates V2 membership deltas");
+        }
         let label_key = node_label_key(DataScope::LegacyUnscoped, LABEL);
         db.put(
             &label_key,
@@ -1750,6 +1755,11 @@ mod tests {
             SweepBenchmarkStrategy::DisjointDelta => "prepare-disjoint",
         })
         .await;
+        if !matches!(strategy, SweepBenchmarkStrategy::ExclusiveReadModifyWrite) {
+            crate::membership_delta::activate(&db)
+                .await
+                .expect("disjoint preparation benchmark activates V2 membership deltas");
+        }
         db.put(
             node_label_key(DataScope::LegacyUnscoped, LABEL),
             secondary::SecondaryEqualityValue::encode_ids(
