@@ -253,10 +253,10 @@ QUERY addUser(name: String, age: I64) =>
 
 Run Clippy to check code quality:
 ```bash
-./clippy_check.sh
+cargo clippy --workspace -- -D warnings
 ```
 
-The `clippy_check.sh` script at the repository root runs `cargo clippy --workspace -- -D warnings`, treating all warnings as errors across every workspace crate.
+This treats all Clippy warnings as errors across every workspace crate.
 
 ### Testing
 
@@ -293,7 +293,7 @@ cd sdks/typescript && npm test
 cd sdks/go && go test ./...
 ```
 
-Format and lint before opening a PR: `cargo fmt` and `./clippy_check.sh`.
+Format and lint before opening a PR: `cargo fmt` and `cargo clippy --workspace -- -D warnings`.
 
 #### Testing Guidelines
 - Write tests for all new features
