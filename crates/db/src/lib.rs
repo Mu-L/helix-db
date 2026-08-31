@@ -1169,11 +1169,9 @@ impl HelixDB {
         );
         log_stage("runtime_construction", stage_started);
         let stage_started = Instant::now();
-        if migration_authorized {
-            if let Err(error) = migrations::startup::finish_writer(&db).await {
-                let _ = db.close().await;
-                return Err(error);
-            }
+        if migration_authorized && let Err(error) = migrations::startup::finish_writer(&db).await {
+            let _ = db.close().await;
+            return Err(error);
         }
         log_stage("legacy_migration_cleanup", stage_started);
         let allow_blocking_warm = matches!(&open_mode, WriterOpenMode::Embedded);
