@@ -48,6 +48,7 @@ async fn preflight_writer_bootstrap(db: &Db) -> Result<WriterBootstrapPlan> {
     let vector = transaction.get(&vector_key).await?;
     let cleanup_ready = super::super::index_storage_v4_cleanup_ready(&transaction).await?;
     let tenant_envelope_ready = super::super::tenant_key_envelope_ready(&transaction).await?;
+    crate::membership_delta::transaction_write_mode(&transaction).await?;
 
     let Some(marker) = marker else {
         if logical.is_some() || vector.is_some() || cleanup_ready {
@@ -185,10 +186,10 @@ fn validate_writer_bootstrap_values(
             ),
         });
     }
-    if version > IndexStorageVersion::CURRENT {
+    if version > IndexStorageVersion::MAX_SUPPORTED {
         return Err(HelixDbError::UnsupportedIndexStorageVersion {
             found: version.get(),
-            supported: IndexStorageVersion::CURRENT.get(),
+            supported: IndexStorageVersion::MAX_SUPPORTED.get(),
         });
     }
     let Some(logical) = logical else {

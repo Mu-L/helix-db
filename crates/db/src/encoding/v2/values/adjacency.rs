@@ -1,10 +1,13 @@
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use roaring::RoaringTreemap;
 
 use super::codec::{take_slice, take_u32_le, take_u8, ENCODING_TYPE_LEN, U32_LEN};
+use super::indexes::BitmapMembershipDelta;
 use crate::encoding::{error::EncodingError, NodeId};
 
 const BITMAP_LEN_PREFIX_LEN: usize = U32_LEN;
+const ADJACENCY_MEMBERSHIP_DELTA_MAGIC: &[u8; 8] = b"HLXADJ2\0";
+const ADJACENCY_RESET_OUT_LEN: usize = core::mem::size_of::<u8>();
 
 /// Encoding type: No compression
 ///
@@ -79,6 +82,135 @@ pub struct Edges {
     pub(crate) nxts_out: RoaringTreemap,
     /// Incoming edges (neighbor -> this node)
     pub(crate) nxts_in: RoaringTreemap,
+}
+
+/// Associative last-write-wins membership changes for one adjacency row.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct AdjacencyMembershipDelta {
+    reset_out: bool,
+    outgoing: BitmapMembershipDelta,
+    incoming: BitmapMembershipDelta,
+}
+
+impl AdjacencyMembershipDelta {
+    pub(crate) fn from_edges(edges: &Edges) -> Self {
+        Self {
+            reset_out: false,
+            outgoing: BitmapMembershipDelta::from_additions(edges.nxts_out.clone()),
+            incoming: BitmapMembershipDelta::from_additions(edges.nxts_in.clone()),
+        }
+    }
+
+    pub(crate) fn add_out(&mut self, neighbor: NodeId) {
+        self.outgoing.add(neighbor);
+    }
+
+    pub(crate) fn remove_out(&mut self, neighbor: NodeId) {
+        self.outgoing.remove(neighbor);
+    }
+
+    pub(crate) fn add_in(&mut self, neighbor: NodeId) {
+        self.incoming.add(neighbor);
+    }
+
+    pub(crate) fn remove_in(&mut self, neighbor: NodeId) {
+        self.incoming.remove(neighbor);
+    }
+
+    pub(crate) fn reset_out(&mut self) {
+        self.reset_out = true;
+        self.outgoing = BitmapMembershipDelta::default();
+    }
+
+    /// Applies a newer delta after this delta.
+    pub(crate) fn compose(&mut self, newer: &Self) {
+        if newer.reset_out {
+            self.reset_out = true;
+            self.outgoing = newer.outgoing.clone();
+        } else {
+            self.outgoing.compose(&newer.outgoing);
+        }
+        self.incoming.compose(&newer.incoming);
+    }
+
+    pub(crate) fn apply_to(&self, edges: &mut Edges) {
+        if self.reset_out {
+            edges.nxts_out.clear();
+        }
+        self.outgoing.apply_to(&mut edges.nxts_out);
+        self.incoming.apply_to(&mut edges.nxts_in);
+    }
+
+    pub(crate) fn outgoing_members(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.outgoing.members()
+    }
+
+    pub(crate) fn incoming_members(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.incoming.members()
+    }
+
+    pub(crate) fn encode(&self) -> Bytes {
+        let outgoing = self.outgoing.encode();
+        let incoming = self.incoming.encode();
+        let mut bytes = Vec::with_capacity(
+            ADJACENCY_MEMBERSHIP_DELTA_MAGIC.len()
+                + ADJACENCY_RESET_OUT_LEN
+                + BITMAP_LEN_PREFIX_LEN
+                + outgoing.len()
+                + BITMAP_LEN_PREFIX_LEN
+                + incoming.len(),
+        );
+        bytes.extend_from_slice(ADJACENCY_MEMBERSHIP_DELTA_MAGIC);
+        bytes.put_u8(u8::from(self.reset_out));
+        bytes.put_u32_le(u32::try_from(outgoing.len()).expect("outgoing delta length fits u32"));
+        bytes.extend_from_slice(&outgoing);
+        bytes.put_u32_le(u32::try_from(incoming.len()).expect("incoming delta length fits u32"));
+        bytes.extend_from_slice(&incoming);
+        Bytes::from(bytes)
+    }
+
+    pub(crate) fn decode_if_delta(bytes: &[u8]) -> Result<Option<Self>, EncodingError> {
+        if !bytes.starts_with(ADJACENCY_MEMBERSHIP_DELTA_MAGIC) {
+            return Ok(None);
+        }
+        let mut offset = ADJACENCY_MEMBERSHIP_DELTA_MAGIC.len();
+        let reset_out = match take_u8(bytes, &mut offset)? {
+            0 => false,
+            1 => true,
+            value => {
+                return Err(EncodingError::Custom(format!(
+                    "invalid adjacency reset flag {value}"
+                )))
+            }
+        };
+        let outgoing_len = take_u32_le(bytes, &mut offset)?;
+        let outgoing_bytes = take_slice(bytes, &mut offset, outgoing_len)?;
+        let outgoing =
+            BitmapMembershipDelta::decode_if_delta(outgoing_bytes)?.ok_or_else(|| {
+                EncodingError::Custom(
+                    "adjacency outgoing membership delta is malformed".to_string(),
+                )
+            })?;
+        let incoming_len = take_u32_le(bytes, &mut offset)?;
+        let incoming_bytes = take_slice(bytes, &mut offset, incoming_len)?;
+        let incoming =
+            BitmapMembershipDelta::decode_if_delta(incoming_bytes)?.ok_or_else(|| {
+                EncodingError::Custom(
+                    "adjacency incoming membership delta is malformed".to_string(),
+                )
+            })?;
+        if offset != bytes.len() {
+            return Err(EncodingError::Custom(format!(
+                "adjacency membership delta has {} trailing bytes",
+                bytes.len() - offset
+            )));
+        }
+        Ok(Some(Self {
+            reset_out,
+            outgoing,
+            incoming,
+        }))
+    }
 }
 
 impl Edges {
@@ -225,6 +357,11 @@ pub fn decode_edges(data: &[u8]) -> Result<Edges, EncodingError> {
     if data.is_empty() {
         return Ok(Edges::new());
     }
+    if let Some(delta) = AdjacencyMembershipDelta::decode_if_delta(data)? {
+        let mut edges = Edges::new();
+        delta.apply_to(&mut edges);
+        return Ok(edges);
+    }
 
     let mut offset = 0;
     let encoding_type = take_u8(data, &mut offset)?;
@@ -254,6 +391,11 @@ pub fn decode_out_edges(data: &[u8]) -> Result<Edges, EncodingError> {
     if data.is_empty() {
         return Ok(Edges::new());
     }
+    if AdjacencyMembershipDelta::decode_if_delta(data)?.is_some() {
+        let mut edges = decode_edges(data)?;
+        edges.nxts_in.clear();
+        return Ok(edges);
+    }
 
     let mut offset = 0;
     let encoding_type = take_u8(data, &mut offset)?;
@@ -279,6 +421,11 @@ pub fn decode_out_edges(data: &[u8]) -> Result<Edges, EncodingError> {
 pub fn decode_in_edges(data: &[u8]) -> Result<Edges, EncodingError> {
     if data.is_empty() {
         return Ok(Edges::new());
+    }
+    if AdjacencyMembershipDelta::decode_if_delta(data)?.is_some() {
+        let mut edges = decode_edges(data)?;
+        edges.nxts_out.clear();
+        return Ok(edges);
     }
 
     let mut offset = 0;
@@ -398,6 +545,66 @@ mod tests {
         assert!(out.iter_in().collect::<Vec<_>>().is_empty());
         assert!(incoming.iter_out().collect::<Vec<_>>().is_empty());
         assert_eq!(incoming.iter_in().collect::<Vec<_>>(), vec![2]);
+    }
+
+    #[test]
+    fn adjacency_membership_delta_round_trips_composes_and_resets() {
+        let mut older = AdjacencyMembershipDelta::default();
+        older.add_out(1);
+        older.add_out(2);
+        older.remove_in(3);
+        let mut newer = AdjacencyMembershipDelta::default();
+        newer.reset_out();
+        newer.add_out(4);
+        newer.add_in(3);
+        older.compose(&newer);
+
+        let decoded = AdjacencyMembershipDelta::decode_if_delta(&older.encode())
+            .unwrap()
+            .expect("adjacency delta marker is recognized");
+        let mut base = Edges::new();
+        base.add_out(9);
+        base.add_in(8);
+        decoded.apply_to(&mut base);
+
+        assert_eq!(base.iter_out().collect::<Vec<_>>(), vec![4]);
+        assert_eq!(base.iter_in().collect::<Vec<_>>(), vec![3, 8]);
+        assert_eq!(
+            decode_out_edges(&decoded.encode())
+                .unwrap()
+                .iter_out()
+                .collect::<Vec<_>>(),
+            vec![4]
+        );
+        assert_eq!(
+            decode_in_edges(&decoded.encode())
+                .unwrap()
+                .iter_in()
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
+    }
+
+    #[test]
+    fn adjacency_membership_delta_decoder_rejects_invalid_boundaries() {
+        let mut delta = AdjacencyMembershipDelta::default();
+        delta.add_out(1);
+        let encoded = delta.encode();
+        assert_eq!(
+            AdjacencyMembershipDelta::decode_if_delta(&encode_edges(&Edges::new())).unwrap(),
+            None
+        );
+        for length in ADJACENCY_MEMBERSHIP_DELTA_MAGIC.len()..encoded.len() {
+            assert!(AdjacencyMembershipDelta::decode_if_delta(&encoded[0..length]).is_err());
+        }
+
+        let mut invalid_reset = encoded.to_vec();
+        invalid_reset[ADJACENCY_MEMBERSHIP_DELTA_MAGIC.len()] = 2;
+        assert!(AdjacencyMembershipDelta::decode_if_delta(&invalid_reset).is_err());
+
+        let mut trailing = encoded.to_vec();
+        trailing.push(0xFF);
+        assert!(AdjacencyMembershipDelta::decode_if_delta(&trailing).is_err());
     }
 
     #[test]

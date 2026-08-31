@@ -5,7 +5,7 @@
 
 use std::{num::NonZeroUsize, time::Duration};
 
-use db::{HelixDB, HelixDbSource};
+use db::{HelixDB, HelixDbSource, MembershipDeltaWriteMode};
 use helix_ast::batch;
 use helix_ast::expr::Predicate;
 use helix_ast::graph::{EdgeRef, NodeRef};
@@ -607,6 +607,57 @@ async fn deletes_node_omitted_from_unique_equality_index() {
 #[tokio::test]
 async fn deletes_edge_omitted_from_equality_index() {
     run_direct_delete_case(DeleteCase::EdgeEquality).await;
+}
+
+#[tokio::test]
+async fn deletes_indexed_node_and_edge_equality_members_through_disjoint_deltas() {
+    for case in [
+        DeleteCase::NodeEquality { unique: false },
+        DeleteCase::EdgeEquality,
+    ] {
+        let db = HelixDB::open(HelixDbSource::InMemory {
+            database: format!("production-index-delete-disjoint-{}", case.name()),
+        })
+        .await
+        .unwrap_or_else(|error| panic!("{} database opens: {error}", case.name()));
+        assert_eq!(
+            db.membership_delta_write_mode().await.unwrap(),
+            MembershipDeltaWriteMode::LegacyExclusive
+        );
+        db.activate_membership_delta_v2()
+            .await
+            .unwrap_or_else(|error| panic!("{} activates disjoint deltas: {error}", case.name()));
+        assert_eq!(
+            db.membership_delta_write_mode().await.unwrap(),
+            MembershipDeltaWriteMode::DisjointV2
+        );
+
+        let seeded = seed_case(&db, case).await;
+        create_index(&db, case).await;
+        assert_eq!(control_ids(&db, case).await, vec![seeded.control_id]);
+
+        let delete = if case.is_node() {
+            traversal::g().n(NodeRef::id(seeded.control_id)).drop()
+        } else {
+            traversal::g().drop_edge_by_id(EdgeRef::id(seeded.control_id))
+        };
+        db.query(QueryRequest::write(
+            batch::write_batch()
+                .var_as("deleted", delete)
+                .returning(Vec::<String>::new()),
+        ))
+        .await
+        .unwrap_or_else(|error| panic!("{} indexed delete succeeds: {error}", case.name()));
+
+        assert!(control_ids(&db, case).await.is_empty());
+        assert_eq!(
+            entity_ids(&db, case, seeded.target_id).await,
+            vec![seeded.target_id]
+        );
+        db.close()
+            .await
+            .unwrap_or_else(|error| panic!("{} database closes: {error}", case.name()));
+    }
 }
 
 #[tokio::test]

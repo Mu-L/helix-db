@@ -6,5 +6,7 @@ mod secondary_entry;
 pub(crate) mod text;
 pub mod vector;
 
-pub(crate) use equality::{SecondaryEqualityBitmapValue, SecondaryEqualityValue};
+pub(crate) use equality::{
+    BitmapMembershipDelta, SecondaryEqualityBitmapValue, SecondaryEqualityValue,
+};
 pub(crate) use secondary_entry::{decode_secondary_entry, encode_secondary_entry};

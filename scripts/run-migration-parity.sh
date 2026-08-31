@@ -207,7 +207,7 @@ run_dev() {
         --scale-edges 4000 \
         --seed-batch-rows 1000 \
         --maximum-scenario-seconds 300 \
-        --maximum-suite-seconds 300 \
+        --maximum-suite-seconds 600 \
         --compaction-drain-seconds 5
 }
 

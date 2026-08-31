@@ -17,6 +17,7 @@ pub mod id_allocator;
 pub mod index_lifecycle;
 #[cfg(feature = "index-lifecycle-testing")]
 pub mod index_lifecycle_testing;
+mod membership_delta;
 mod merge_operator;
 #[cfg(feature = "migration-parity")]
 pub mod migration_parity;
@@ -101,6 +102,18 @@ pub enum HelixDbMode {
     ReadOnly,
     /// Read/write handle.
     Writer,
+}
+
+/// Persisted write strategy for shared graph membership rows.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize,
+)]
+pub enum MembershipDeltaWriteMode {
+    /// Emit only canonical values through the legacy exclusive update path.
+    #[default]
+    LegacyExclusive,
+    /// Emit conflict-safe V2 membership delta operands.
+    DisjointV2,
 }
 
 /// Meaning of the byte accounting exposed for one cache tier.
@@ -1232,6 +1245,30 @@ impl HelixDB {
     /// Whether this handle can execute write plans.
     pub fn is_writer_mode(&self) -> bool {
         self.mode() == HelixDbMode::Writer
+    }
+
+    /// Returns the persisted shared-membership write strategy.
+    pub async fn membership_delta_write_mode(&self) -> Result<MembershipDeltaWriteMode> {
+        match self.storage() {
+            HelixStorage::Reader(reader) => {
+                membership_delta::read_write_mode(reader.as_ref()).await
+            }
+            HelixStorage::Writer(writer) => membership_delta::read_write_mode(writer.db()).await,
+        }
+    }
+
+    /// Permanently enables V2 disjoint membership operands for this database.
+    ///
+    /// The caller must first prove that every active reader supports V2 and
+    /// fence all older processes. After activation, rollback to a pre-V2 binary
+    /// is unsafe and must be rejected by deployment tooling.
+    pub async fn activate_membership_delta_v2(&self) -> Result<()> {
+        let HelixStorage::Writer(writer) = self.storage() else {
+            return Err(HelixDbError::WriterModeRequired {
+                actual: self.mode().as_str(),
+            });
+        };
+        membership_delta::activate(writer.db()).await
     }
 
     async fn start_background_migration_worker(&self) {
@@ -3026,6 +3063,51 @@ mod tests {
             .unwrap();
         assert!(Arc::ptr_eq(reader.object_store(), &expected_store,));
         reader.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn membership_delta_activation_is_durable_and_reader_visible() {
+        let token = ProcessLocalDatabaseToken::new("facade-membership-delta-activation").unwrap();
+        let writer = HelixDB::open(HelixDbSource::InMemoryToken {
+            token: token.clone(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            writer.membership_delta_write_mode().await.unwrap(),
+            MembershipDeltaWriteMode::LegacyExclusive
+        );
+        writer.activate_membership_delta_v2().await.unwrap();
+        assert_eq!(
+            writer.membership_delta_write_mode().await.unwrap(),
+            MembershipDeltaWriteMode::DisjointV2
+        );
+        writer.inner_db().flush().await.unwrap();
+        writer.close().await.unwrap();
+
+        let reader = HelixDB::open_reader(HelixDbSource::InMemoryToken {
+            token: token.clone(),
+        })
+        .await
+        .expect("a new reader accepts the activated storage fence");
+        assert_eq!(
+            reader.membership_delta_write_mode().await.unwrap(),
+            MembershipDeltaWriteMode::DisjointV2
+        );
+        assert!(matches!(
+            reader.activate_membership_delta_v2().await,
+            Err(HelixDbError::WriterModeRequired { .. })
+        ));
+        reader.close().await.unwrap();
+
+        let writer = HelixDB::open(HelixDbSource::InMemoryToken { token })
+            .await
+            .expect("a writer reopens after the one-way format activation");
+        assert_eq!(
+            writer.membership_delta_write_mode().await.unwrap(),
+            MembershipDeltaWriteMode::DisjointV2
+        );
+        writer.close().await.unwrap();
     }
 
     #[tokio::test]

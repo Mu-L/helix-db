@@ -30,6 +30,7 @@ pub(crate) enum GlobalKind {
     OperationPointer = 0x04,
     LegacyVectorPhysicalReservation = 0x0A,
     TextCompactionPointer = 0x0B,
+    MembershipDeltaWriteMode = 0x0C,
 }
 
 impl GlobalKind {
@@ -45,6 +46,7 @@ impl GlobalKind {
             0x04 => Ok(Self::OperationPointer),
             0x0A => Ok(Self::LegacyVectorPhysicalReservation),
             0x0B => Ok(Self::TextCompactionPointer),
+            0x0C => Ok(Self::MembershipDeltaWriteMode),
             unknown => Err(EncodingError::InvalidKey(format!(
                 "unknown global V2 key kind {unknown:#04x}"
             ))),
@@ -119,6 +121,7 @@ pub(crate) enum GlobalKey {
     OperationPointer(IndexOperationId),
     LegacyVectorPhysicalReservation(VectorPhysicalIndexId),
     TextCompactionPointer(TextCompactionTarget),
+    MembershipDeltaWriteMode,
 }
 
 impl GlobalKey {
@@ -137,6 +140,7 @@ impl GlobalKey {
             Self::OperationPointer(_) => GlobalKind::OperationPointer,
             Self::LegacyVectorPhysicalReservation(_) => GlobalKind::LegacyVectorPhysicalReservation,
             Self::TextCompactionPointer(_) => GlobalKind::TextCompactionPointer,
+            Self::MembershipDeltaWriteMode => GlobalKind::MembershipDeltaWriteMode,
         }
     }
 
@@ -144,7 +148,8 @@ impl GlobalKey {
         let suffix = match self {
             Self::StorageVersion
             | Self::LogicalIndexIdWatermark
-            | Self::VectorPhysicalIdWatermark => 0,
+            | Self::VectorPhysicalIdWatermark
+            | Self::MembershipDeltaWriteMode => 0,
             Self::OperationPointer(_) => UUID_LEN,
             Self::LegacyVectorPhysicalReservation(_) => U64_LEN,
             Self::TextCompactionPointer(target) => {
@@ -166,7 +171,8 @@ impl GlobalKey {
         match self {
             Self::StorageVersion
             | Self::LogicalIndexIdWatermark
-            | Self::VectorPhysicalIdWatermark => {}
+            | Self::VectorPhysicalIdWatermark
+            | Self::MembershipDeltaWriteMode => {}
             Self::OperationPointer(id) => buffer.put_slice(id.as_bytes()),
             Self::LegacyVectorPhysicalReservation(physical_index_id) => {
                 buffer.put_u64(physical_index_id.get());
@@ -244,6 +250,7 @@ impl GlobalKey {
                     decoder.take_u32()?,
                 )?)
             }
+            GlobalKind::MembershipDeltaWriteMode => Self::MembershipDeltaWriteMode,
         };
         decoder.finish()?;
         Ok(key)

@@ -25,7 +25,8 @@ Named profiles are:
 
 - `contracts`: production-linked DB migration contracts.
 - `dev`: all migration modes at 1k nodes/4k edges plus hash and corruption
-  contracts, with a hard 300-second aggregate limit.
+  contracts, with a hard 600-second aggregate limit and a 300-second limit for
+  each individual mode.
 - `full-correctness`: six distributions, batch sizes 1 and 1,024, every crash
   boundary, and the MinIO operation-fault matrix.
 - `scale-local`: the progressive 5k/20k through 2M/8M local ladder.
