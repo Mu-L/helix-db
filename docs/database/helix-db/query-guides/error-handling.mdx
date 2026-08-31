@@ -229,6 +229,7 @@ to address the failure. Statuses list the current HTTP behavior; `400/503` and
 | `unsupported_index_storage_version` | Stored index data is newer than this binary supports. | 500 | After upgrading the binary | Operational |
 | `writer_mode_required` | The operation requires a writer handle. | 503 | On a writer | Operational |
 | `reader_mode_required` | The operation requires a standalone reader handle. | 500 | On a reader | Operational |
+| `query_cancelled_by_reader_retirement` | Reader retirement cancelled the query before the reader closed. | 500 | After routing to another reader | Operational |
 
 ### Internal failures
 

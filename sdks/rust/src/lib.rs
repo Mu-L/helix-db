@@ -177,6 +177,7 @@ pub struct RemoteError {
     status_code: u16,
     code: Option<String>,
     message: String,
+    retryable: Option<bool>,
     details: Option<serde_json::Value>,
     raw_body: String,
 }
@@ -195,6 +196,16 @@ impl RemoteError {
     /// Return the server-provided message or fallback message.
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// Return the server's explicit retry classification, when present.
+    pub fn retryable(&self) -> Option<bool> {
+        self.retryable
+    }
+
+    /// Return true only when the server explicitly marked the result retryable.
+    pub fn is_retryable(&self) -> bool {
+        self.retryable == Some(true)
     }
 
     /// Return structured server details, when present.
@@ -283,6 +294,19 @@ impl HelixError {
         Some(error.message())
     }
 
+    /// Return the server's explicit retry classification for a remote error.
+    pub fn retryable(&self) -> Option<bool> {
+        let Self::RemoteError(error) = self else {
+            return None;
+        };
+        error.retryable()
+    }
+
+    /// Return true only when a remote error explicitly says it is retryable.
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::RemoteError(error) if error.is_retryable())
+    }
+
     /// Return structured server details for a remote error.
     pub fn remote_details(&self) -> Option<&serde_json::Value> {
         let Self::RemoteError(error) = self else {
@@ -365,11 +389,15 @@ fn remote_error(status: StatusCode, raw_body: String) -> HelixError {
             }
         });
     let details = object.and_then(|body| body.get("details")).cloned();
+    let retryable = object
+        .and_then(|body| body.get("retryable"))
+        .and_then(serde_json::Value::as_bool);
 
     HelixError::RemoteError(Box::new(RemoteError {
         status_code: status.as_u16(),
         code,
         message,
+        retryable,
         details,
         raw_body,
     }))
@@ -1262,7 +1290,6 @@ mod client_tests {
         )
     }
 
-    #[cfg(feature = "embedded")]
     fn write_request() -> QueryRequest {
         QueryRequest::write(
             write_batch()
@@ -1355,6 +1382,21 @@ mod client_tests {
             let error = remote_error(StatusCode::BAD_REQUEST, body.to_string());
             assert_eq!(error.error_code(), expected_code);
             assert_eq!(error.remote_message(), Some(expected_details));
+        }
+    }
+
+    #[test]
+    fn remote_retryability_requires_an_explicit_boolean_true() {
+        for (body, expected) in [
+            (r#"{"error":"busy","retryable":true}"#, true),
+            (r#"{"error":"unknown","retryable":false}"#, false),
+            (r#"{"error":"malformed","retryable":"true"}"#, false),
+            (r#"{"error":"missing"}"#, false),
+        ] {
+            assert_eq!(
+                remote_error(StatusCode::SERVICE_UNAVAILABLE, body.to_owned()).is_retryable(),
+                expected
+            );
         }
     }
 
@@ -1502,6 +1544,70 @@ mod client_tests {
         assert_eq!(error.raw_response_body(), Some(body));
         assert!(error.is_conflict());
         assert!(!error.is_rate_limited());
+        assert_eq!(error.retryable(), None);
+        assert!(!error.is_retryable());
+    }
+
+    #[tokio::test]
+    async fn direct_and_hosted_unknown_write_outcomes_are_terminal_and_sent_once() {
+        for (body, expected_code) in [
+            (
+                r#"{"error":"writer_fenced_commit_outcome_unknown","msg":"write outcome is unknown","retryable":false}"#,
+                "writer_fenced_commit_outcome_unknown",
+            ),
+            (
+                r#"{"code":"WRITE_OUTCOME_UNKNOWN","error":"write outcome is unknown","retryable":false}"#,
+                "WRITE_OUTCOME_UNKNOWN",
+            ),
+        ] {
+            let (base, handle) = spawn_capture_server(503, body).await;
+            let client = Client::new(Some(&base)).unwrap();
+            let error = client
+                .query::<serde_json::Value>(write_request())
+                .send()
+                .await
+                .expect_err("unknown write outcome must be terminal");
+
+            assert_eq!(handle.await.unwrap(), "/v2/query");
+            assert_eq!(error.remote_code(), Some(expected_code));
+            assert_eq!(error.retryable(), Some(false));
+            assert!(!error.is_conflict());
+            assert!(!error.is_retryable());
+        }
+    }
+
+    #[tokio::test]
+    async fn lost_response_gateway_probe() {
+        let Ok(base_url) = std::env::var("HELIX_LOST_RESPONSE_GATEWAY_URL") else {
+            return;
+        };
+        let probe_id =
+            std::env::var("HELIX_LOST_RESPONSE_PROBE_ID").expect("lost-response probe ID");
+        let request = QueryRequest::write(
+            write_batch()
+                .var_as(
+                    "created",
+                    g().add_n(
+                        "LostResponseProbe",
+                        vec![("business_id", PropertyInput::from(probe_id))],
+                    ),
+                )
+                .returning(["created"]),
+        );
+        let api_key = std::env::var("HELIX_LOST_RESPONSE_API_KEY").ok();
+        let error = Client::new(Some(&base_url))
+            .unwrap()
+            .with_api_key(api_key.as_deref())
+            .query::<serde_json::Value>(request)
+            .send()
+            .await
+            .expect_err("lost response must be terminal");
+
+        assert_eq!(error.status_code(), Some(503));
+        assert_eq!(error.remote_code(), Some("WRITE_OUTCOME_UNKNOWN"));
+        assert_eq!(error.retryable(), Some(false));
+        assert!(!error.is_conflict());
+        assert!(!error.is_retryable());
     }
 
     #[tokio::test]

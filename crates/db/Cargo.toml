@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-slatedb = { git = "https://github.com/HelixDB/slatedb.git", rev = "1cf0c4a317a5f7ce12126ab8549eb5d71d985ba2" }
+slatedb = { git = "https://github.com/HelixDB/slatedb.git", rev = "099067afda1294e80308687d4ae41cdf6e5d01df" }
 helix-ast = { path = "../ast" }
 helix-planner = { path = "../planner" }
 helix-value-semantics = { path = "../value-semantics" }
@@ -127,6 +127,10 @@ name = "production_index_lifecycle_contracts"
 required-features = ["production-coverage"]
 
 [[test]]
+name = "production_secondary_equality_hot_path_contracts"
+required-features = ["production-coverage"]
+
+[[test]]
 name = "production_migration_contracts"
 required-features = [
     "production-coverage",
@@ -148,6 +152,10 @@ required-features = [
 
 [[test]]
 name = "production_index_lifecycle_scale"
+required-features = ["production-scale"]
+
+[[test]]
+name = "production_vector_migration_scale"
 required-features = ["production-scale"]
 
 [[test]]

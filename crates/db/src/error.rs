@@ -181,6 +181,10 @@ pub enum HelixDbError {
     #[error("Query execution deadline exceeded")]
     QueryDeadlineExceeded,
 
+    /// Reader retirement cancelled an admitted read before completion.
+    #[error("Query was cancelled because its reader is retiring")]
+    QueryCancelledByReaderRetirement,
+
     /// Invalid node ID
     #[error("Invalid node ID: {0}")]
     InvalidNodeId(u64),
@@ -494,6 +498,9 @@ impl HelixDbError {
             Self::TransactionConflict(_) => error_code::QueryErrorCode::TransactionConflict,
             Self::RequestReadViewChanged => error_code::QueryErrorCode::RequestReadViewChanged,
             Self::QueryDeadlineExceeded => error_code::QueryErrorCode::QueryDeadlineExceeded,
+            Self::QueryCancelledByReaderRetirement => {
+                error_code::QueryErrorCode::QueryCancelledByReaderRetirement
+            }
             Self::InvalidNodeId(_) => error_code::QueryErrorCode::InvalidNodeId,
             Self::NodeNotFound(_) => error_code::QueryErrorCode::NodeNotFound,
             Self::EdgeNotFound { .. } => error_code::QueryErrorCode::EdgeNotFound,
@@ -605,18 +612,28 @@ impl HelixDbError {
                 | error_code::QueryErrorCode::IndexRevisionExhausted
                 | error_code::QueryErrorCode::IndexOperationRevisionExhausted
                 | error_code::QueryErrorCode::StaleIndexGeneration
-                | error_code::QueryErrorCode::WriterFencedCommitOutcomeUnknown
         )
         .then_some(code.as_str())
+    }
+
+    /// Classifies a failure returned by an invoked durable storage commit.
+    ///
+    /// Once SlateDB reports that the committing writer was fenced, neither a
+    /// retryable conflict nor a definite abort can be proven. Callers must
+    /// therefore preserve the request as a terminal unknown outcome.
+    pub fn from_storage_commit(error: slatedb::Error) -> Self {
+        if error.kind() == ErrorKind::Closed(slatedb::CloseReason::Fenced) {
+            Self::WriterFencedCommitOutcomeUnknown
+        } else {
+            Self::Storage(error)
+        }
     }
 
     /// Returns true when the error represents a retryable transaction conflict.
     #[must_use]
     pub fn is_transaction_conflict(&self) -> bool {
-        matches!(
-            self,
-            Self::TransactionConflict(_) | Self::WriterFencedCommitOutcomeUnknown
-        ) || matches!(self, Self::Storage(storage_err) if storage_err.kind() == ErrorKind::Transaction)
+        matches!(self, Self::TransactionConflict(_))
+            || matches!(self, Self::Storage(storage_err) if storage_err.kind() == ErrorKind::Transaction)
     }
 
     /// Returns true when a public vector failed caller-controlled validation.
@@ -685,7 +702,7 @@ mod tests {
     #[test]
     fn retryable_conflict_classification_is_explicit() {
         assert!(HelixDbError::TransactionConflict("retry".to_string()).is_transaction_conflict());
-        assert!(HelixDbError::WriterFencedCommitOutcomeUnknown.is_transaction_conflict());
+        assert!(!HelixDbError::WriterFencedCommitOutcomeUnknown.is_transaction_conflict());
         assert!(
             HelixDbError::Storage(slatedb::Error::transaction("retry".to_string()))
                 .is_transaction_conflict()
@@ -768,6 +785,10 @@ mod tests {
             (
                 HelixDbError::QueryDeadlineExceeded,
                 Code::QueryDeadlineExceeded,
+            ),
+            (
+                HelixDbError::QueryCancelledByReaderRetirement,
+                Code::QueryCancelledByReaderRetirement,
             ),
             (HelixDbError::InvalidNodeId(0), Code::InvalidNodeId),
             (HelixDbError::NodeNotFound(1), Code::NodeNotFound),
@@ -1069,7 +1090,7 @@ mod tests {
         assert_eq!(HelixDbError::NodeNotFound(1).index_error_code(), None);
         assert_eq!(
             HelixDbError::WriterFencedCommitOutcomeUnknown.index_error_code(),
-            Some("writer_fenced_commit_outcome_unknown")
+            None
         );
     }
 

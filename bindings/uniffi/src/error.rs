@@ -86,8 +86,7 @@ impl From<HelixDbError> for HelixError {
             }
             HelixDbError::TransactionConflict(_)
             | HelixDbError::RequestReadViewChanged
-            | HelixDbError::StaleIndexGeneration { .. }
-            | HelixDbError::WriterFencedCommitOutcomeUnknown => Self::Transaction {
+            | HelixDbError::StaleIndexGeneration { .. } => Self::Transaction {
                 error: error_code,
                 msg,
             },
@@ -112,6 +111,7 @@ impl From<HelixDbError> for HelixError {
             | HelixDbError::InvalidVectorItem(_)
             | HelixDbError::IndexLifecycleUnavailable { .. }
             | HelixDbError::InvalidIndexV2Model(_)
+            | HelixDbError::WriterFencedCommitOutcomeUnknown
             | HelixDbError::MigrationRequired { .. }
             | HelixDbError::WriterMigrationRequired { .. }
             | HelixDbError::UnsupportedIndexStorageVersion { .. }
@@ -120,6 +120,7 @@ impl From<HelixDbError> for HelixError {
             | HelixDbError::IndexCatalogCorruption(_)
             | HelixDbError::LegacyZeroNormCosineVector { .. }
             | HelixDbError::QueryDeadlineExceeded
+            | HelixDbError::QueryCancelledByReaderRetirement
             | HelixDbError::InvariantViolation(_) => Self::Internal {
                 error: error_code,
                 msg,
@@ -204,6 +205,16 @@ mod tests {
     }
 
     #[test]
+    fn reader_retirement_does_not_expand_the_stable_binding_error_contract() {
+        assert!(matches!(
+            HelixError::from(HelixDbError::QueryCancelledByReaderRetirement),
+            HelixError::Internal { error, msg }
+                if error == "query_cancelled_by_reader_retirement"
+                    && msg.contains("reader is retiring")
+        ));
+    }
+
+    #[test]
     fn active_text_resource_limits_are_invalid_requests() {
         assert!(matches!(
             HelixError::from(HelixDbError::ActiveTextMutationLimitExceeded {
@@ -240,10 +251,10 @@ mod tests {
     }
 
     #[test]
-    fn fenced_commit_outcomes_are_retryable_transaction_failures() {
+    fn fenced_commit_outcomes_are_terminal_internal_failures() {
         assert!(matches!(
             HelixError::from(HelixDbError::WriterFencedCommitOutcomeUnknown),
-            HelixError::Transaction { .. }
+            HelixError::Internal { .. }
         ));
     }
 

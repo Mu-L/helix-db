@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -758,6 +759,115 @@ func TestClientExecWarmNoContentIsSuccess(t *testing.T) {
 	}
 	if warmHeader != "true" {
 		t.Fatalf("expected warm header, got %q", warmHeader)
+	}
+}
+
+func TestClientUnknownWriteOutcomeIsTerminalAndSentOnce(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+		code QueryErrorCode
+	}{
+		{
+			name: "direct server",
+			body: `{"error":"writer_fenced_commit_outcome_unknown","msg":"write outcome is unknown","retryable":false}`,
+			code: QueryErrorCode("writer_fenced_commit_outcome_unknown"),
+		},
+		{
+			name: "hosted gateway",
+			body: `{"code":"WRITE_OUTCOME_UNKNOWN","error":"write outcome is unknown","retryable":false}`,
+			code: QueryErrorCode("WRITE_OUTCOME_UNKNOWN"),
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			requestCount := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestCount++
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(testCase.body))
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			request := WriteQuery("create_user").
+				VarAs("created", G().AddN("User", Props{Prop("name", "Ada")})).
+				Returning("created")
+			err = client.Exec(context.Background(), request, nil)
+			var helixErr *HelixError
+			if !errors.As(err, &helixErr) {
+				t.Fatalf("expected HelixError, got %T", err)
+			}
+			if requestCount != 1 {
+				t.Fatalf("write executed %d times, want exactly once", requestCount)
+			}
+			if helixErr.Code != testCase.code {
+				t.Fatalf("unexpected error code %q", helixErr.Code)
+			}
+			if helixErr.Retryable == nil || *helixErr.Retryable {
+				t.Fatalf("retryable = %v, want explicit false", helixErr.Retryable)
+			}
+			if IsRetryable(err) {
+				t.Fatal("unknown write outcome must not be retryable")
+			}
+		})
+	}
+}
+
+func TestLostResponseGatewayProbe(t *testing.T) {
+	baseURL := os.Getenv("HELIX_LOST_RESPONSE_GATEWAY_URL")
+	if baseURL == "" {
+		t.Skip("real lost-response gateway fixture is not configured")
+	}
+	probeID := os.Getenv("HELIX_LOST_RESPONSE_PROBE_ID")
+	if probeID == "" {
+		t.Fatal("HELIX_LOST_RESPONSE_PROBE_ID is required")
+	}
+	client, err := NewClient(baseURL, WithAPIKey(os.Getenv("HELIX_LOST_RESPONSE_API_KEY")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := WriteQuery("lost_response_probe").
+		VarAs(
+			"created",
+			G().AddN("LostResponseProbe", Props{Prop("business_id", probeID)}),
+		).
+		Returning("created")
+	err = client.Exec(context.Background(), request, nil)
+	var helixErr *HelixError
+	if !errors.As(err, &helixErr) {
+		t.Fatalf("expected HelixError, got %T", err)
+	}
+	if helixErr.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", helixErr.StatusCode)
+	}
+	if helixErr.Code != QueryErrorCode("WRITE_OUTCOME_UNKNOWN") {
+		t.Fatalf("code = %q, want WRITE_OUTCOME_UNKNOWN", helixErr.Code)
+	}
+	if helixErr.Retryable == nil || *helixErr.Retryable {
+		t.Fatalf("retryable = %v, want explicit false", helixErr.Retryable)
+	}
+	if IsConflict(err) || IsRetryable(err) {
+		t.Fatal("unknown write outcome must be terminal and non-retryable")
+	}
+}
+
+func TestRemoteRetryabilityRequiresExplicitBooleanTrue(t *testing.T) {
+	for _, testCase := range []struct {
+		body     string
+		expected bool
+	}{
+		{`{"error":"busy","retryable":true}`, true},
+		{`{"error":"unknown","retryable":false}`, false},
+		{`{"error":"malformed","retryable":"true"}`, false},
+		{`{"error":"missing"}`, false},
+	} {
+		err := decodeRemoteError([]byte(testCase.body), "fallback", http.StatusServiceUnavailable)
+		if IsRetryable(err) != testCase.expected {
+			t.Fatalf("body %s retryable = %t, want %t", testCase.body, IsRetryable(err), testCase.expected)
+		}
 	}
 }
 

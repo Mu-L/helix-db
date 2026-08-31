@@ -17,6 +17,8 @@ mod vector_retirement;
 mod vector_scale;
 mod vector_simhash_directory;
 
+#[cfg(feature = "migration-parity")]
+pub(crate) use indexes::equality_bitmap::make_legacy_equality_fixture;
 pub(crate) use tenant::envelope::legacy_key_requires_migration;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -60,6 +62,11 @@ const TENANT_KEY_ENVELOPE_READY: &[u8] = b"kv_migration_ready:tenant_key_envelop
 const INDEX_STORAGE_V4_CLEANUP_READY: &[u8] = b"kv_migration_ready:index_storage_v4_cleanup";
 const STORAGE_SCHEMA_VERSION: u64 = 1;
 const STORAGE_SCHEMA_COMPLETE: &[u8] = b"storage_schema_complete:v1";
+
+#[cfg(test)]
+pub(crate) fn storage_schema_complete_key_for_tests(scope: DataScope) -> Bytes {
+    scoped_metadata_key(scope, STORAGE_SCHEMA_COMPLETE)
+}
 const LEGACY_DYNAMIC_INDEX_CATALOG_METADATA: [&[u8]; 3] = [
     b"dynamic_index_catalog_blob",
     b"dynamic_index_catalog_token",
@@ -1254,6 +1261,28 @@ pub(crate) fn stage_tenant_key_envelope_ready(transaction: &DbTransaction) -> Re
         Bytes::from_static(b"1"),
     )?;
     Ok(())
+}
+
+/// Stages the complete current storage-schema marker tuple in one transaction.
+pub(crate) fn stage_current_storage_schema_ready(transaction: &DbTransaction) -> Result<()> {
+    for marker in [
+        GRAPH_FORMAT_V1_READY,
+        INDEX_V2_MIGRATION_READY,
+        STORAGE_SCHEMA_COMPLETE,
+    ] {
+        transaction.put(
+            scoped_metadata_key(DataScope::LegacyUnscoped, marker),
+            Bytes::from_static(b"1"),
+        )?;
+    }
+    stage_tenant_key_envelope_ready(transaction)
+}
+
+#[cfg(test)]
+pub(crate) fn stage_reader_compatible_storage_schema_for_tests(
+    transaction: &DbTransaction,
+) -> Result<()> {
+    stage_current_storage_schema_ready(transaction)
 }
 
 /// Stages V4 cleanup completion in the caller's existing transaction.
@@ -4158,6 +4187,7 @@ mod tests {
     use crate::encoding::property;
     use crate::encoding::v1::values;
     use crate::encoding::v2::legacy::edge_property_pair::LegacyEdgePropertyPairKey as EdgePropertyPairKey;
+    use crate::error::WriterMigrationRequirement;
     use crate::{DbConfig, HelixDB};
 
     fn migration_test_config() -> DbConfig {
@@ -4178,6 +4208,15 @@ mod tests {
                     )
                     .with_worker_mode(config::MigrationWorkerMode::Disabled),
             )
+    }
+
+    async fn all_test_rows(read: &(impl DbReadOps + Send + Sync)) -> Vec<(Bytes, Bytes)> {
+        let mut rows = read.scan(..).await.expect("migration test scans");
+        let mut collected = Vec::new();
+        while let Some(row) = rows.next().await.expect("migration test row reads") {
+            collected.push((row.key, row.value));
+        }
+        collected
     }
 
     fn edge_delta(op: u8, node_id: NodeId) -> Bytes {
@@ -4816,7 +4855,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reader_requires_tenant_migration_without_mutating_bootstrap_metadata() {
+    async fn reader_rejects_incomplete_tenant_migration_without_mutating_storage() {
         let root = tempfile::tempdir().expect("temporary object-store root");
         let database = "reader-requires-migration";
         let object_store = Arc::new(
@@ -4839,6 +4878,7 @@ mod tests {
         )
         .await
         .expect("legacy tenant row writes");
+        let legacy_rows = all_test_rows(&raw).await;
         raw.close().await.expect("raw pre-migration db closes");
         let source = crate::HelixDbSource::Disk {
             root: root.path().to_path_buf(),
@@ -4846,12 +4886,12 @@ mod tests {
         };
 
         let Err(error) = HelixDB::open_reader(source.clone()).await else {
-            panic!("pre-migration reader requires blocking writer startup");
+            panic!("incomplete tenant migration must not become query-routable")
         };
         assert!(matches!(
             error,
             HelixDbError::WriterMigrationRequired {
-                requirement: crate::error::WriterMigrationRequirement::IncompleteStorageSchema,
+                requirement: WriterMigrationRequirement::IncompleteStorageSchema,
             }
         ));
 
@@ -4863,6 +4903,7 @@ mod tests {
             .build()
             .await
             .expect("raw pre-migration db reopens");
+        assert_eq!(all_test_rows(&raw).await, legacy_rows);
         assert!(
             !tenant_key_envelope_ready(&raw)
                 .await
@@ -4885,16 +4926,27 @@ mod tests {
             .await
             .expect("writer bootstrap tuple commits");
         raw.flush().await.expect("bootstrap tuple flushes");
+        let tuple_rows = all_test_rows(&raw).await;
         raw.close().await.expect("raw tuple-only db closes");
         let Err(error) = HelixDB::open_reader(source.clone()).await else {
-            panic!("tuple-only bootstrap must not make a reader ready");
+            panic!("tuple-only storage must not become query-routable")
         };
         assert!(matches!(
             error,
             HelixDbError::WriterMigrationRequired {
-                requirement: crate::error::WriterMigrationRequirement::IncompleteStorageSchema,
+                requirement: WriterMigrationRequirement::IncompleteStorageSchema,
             }
         ));
+        let object_store = Arc::new(
+            slatedb::object_store::local::LocalFileSystem::new_with_prefix(root.path())
+                .expect("local object store reopens after tuple rejection"),
+        );
+        let raw = Db::builder(database, object_store)
+            .build()
+            .await
+            .expect("raw tuple-only db reopens");
+        assert_eq!(all_test_rows(&raw).await, tuple_rows);
+        raw.close().await.expect("raw tuple-only db closes again");
 
         let writer = HelixDB::open_with_config(source.clone(), migration_test_config())
             .await
@@ -5265,32 +5317,32 @@ pub(crate) mod production_contracts {
             .expect("complete current schema is reader-ready");
 
         fixture
-            .put(
-                global(GlobalKey::StorageVersion),
-                encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
-                    IndexStorageVersion::new(0x0002).expect("version two is nonzero"),
-                )),
-            )
+            .delete(scoped_metadata_key(
+                DataScope::LegacyUnscoped,
+                INDEX_STORAGE_V4_CLEANUP_READY,
+            ))
             .await
-            .expect("version-two marker writes");
-        let error =
-            crate::index_lifecycle::repository::require_reader_bootstrap_or_legacy(&fixture)
+            .expect("legacy fixture clears the V4 cleanup marker");
+        for legacy_version in [2, 3] {
+            fixture
+                .put(
+                    global(GlobalKey::StorageVersion),
+                    encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
+                        IndexStorageVersion::new(legacy_version)
+                            .expect("legacy reader version is nonzero"),
+                    )),
+                )
                 .await
-                .expect_err("complete version-two storage requires a writer");
-        let HelixDbError::WriterMigrationRequired { requirement } = error else {
-            panic!("complete version-two storage must remain typed: {error}")
-        };
-        assert_eq!(
-            requirement,
-            crate::error::WriterMigrationRequirement::StorageVersion {
-                found: 2,
-                target: 4,
-            }
-        );
-        assert_eq!(
-            requirement.to_string(),
-            "storage version 2 must be upgraded to 4"
-        );
+                .expect("legacy storage marker writes");
+            let before = all_rows(&fixture).await;
+            assert_eq!(
+                crate::index_lifecycle::repository::require_reader_bootstrap_or_legacy(&fixture)
+                    .await
+                    .expect("complete versions two and three are explicitly reader-compatible"),
+                crate::index_lifecycle::repository::ReaderStorageCompatibility::LegacyEqualityUnion
+            );
+            assert_eq!(all_rows(&fixture).await, before);
+        }
         fixture.close().await.expect("fixture closes");
     }
 
@@ -5304,6 +5356,15 @@ pub(crate) mod production_contracts {
             .build()
             .await
             .expect("migration contract raw database opens")
+    }
+
+    async fn all_rows(read: &(impl DbReadOps + Send + Sync)) -> Vec<(Bytes, Bytes)> {
+        let mut rows = read.scan(..).await.expect("migration contract scans");
+        let mut collected = Vec::new();
+        while let Some(row) = rows.next().await.expect("migration contract row reads") {
+            collected.push((row.key, row.value));
+        }
+        collected
     }
 
     fn global(key: GlobalKey) -> Bytes {

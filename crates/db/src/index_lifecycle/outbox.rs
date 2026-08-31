@@ -28,6 +28,7 @@ use crate::encoding::v2::values::{
     encode_operation_record,
 };
 use crate::error::{HelixDbError, Result};
+use crate::execution_control;
 
 use super::failpoints::{self, IndexOutboxFailpoint};
 use super::{
@@ -1145,7 +1146,10 @@ pub(crate) async fn execute_claimed_step_with_evidence(
             IndexOperationStepResult::TransientFailure => return Ok(None),
         };
         failpoints::trip(IndexOutboxFailpoint::CheckpointStagingAfter)?;
-        failpoints::trip(IndexOutboxFailpoint::CommitBefore)?;
+        failpoints::trip_for_operation(
+            IndexOutboxFailpoint::CommitBefore,
+            operation.operation_id(),
+        )?;
         Ok(Some(StagedOperationStep {
             transaction,
             index,
@@ -1202,7 +1206,7 @@ pub(crate) async fn execute_claimed_step_with_evidence(
     driver
         .after_commit(claimed.scope, &index, &operation, committed)
         .await;
-    failpoints::trip(IndexOutboxFailpoint::CommitAfter)?;
+    failpoints::trip_for_operation(IndexOutboxFailpoint::CommitAfter, operation.operation_id())?;
     Ok(CommittedOperationStepEvidence {
         outcome: committed,
         before_stage,
@@ -1285,7 +1289,9 @@ pub(crate) async fn retry_blocked_operation(
     scope: DataScope,
     operation_id: IndexOperationId,
     expected_revision: IndexOperationRevision,
+    execution_control: &execution_control::ExecutionControl,
 ) -> Result<Option<IndexOperationRecord>> {
+    execution_control.check()?;
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
     let operation_key = scoped_operation_key(scope, operation_id);
     let Some(value) = transaction.get(&operation_key).await? else {
@@ -1319,7 +1325,10 @@ pub(crate) async fn retry_blocked_operation(
                 global_operation_key(operation_id),
                 encode_metadata_value(&IndexV2MetadataValue::OperationQueuePointer(pointer)),
             )?;
-            transaction.commit().await?;
+            transaction
+                .commit()
+                .await
+                .map_err(HelixDbError::from_storage_commit)?;
             Ok(Some(next))
         }
         IndexOperationExecutionState::Queued { .. } | IndexOperationExecutionState::Claimed(_) => {
@@ -1376,10 +1385,27 @@ pub(crate) async fn read_operation(
 
 /// Convergently ensures a retained operation is runnable and returns its
 /// resulting public status source record.
+#[cfg(any(
+    test,
+    feature = "production-coverage",
+    feature = "migration-parity",
+    feature = "index-lifecycle-testing"
+))]
 pub(crate) async fn retry_operation(
     db: &Db,
     scope: DataScope,
     operation_id: IndexOperationId,
+) -> Result<IndexOperationRecord> {
+    let execution_control = execution_control::ExecutionControl::unlimited();
+    retry_operation_with_control(db, scope, operation_id, &execution_control).await
+}
+
+/// Requeues one request-owned blocked operation at its durable boundary.
+pub(crate) async fn retry_operation_with_control(
+    db: &Db,
+    scope: DataScope,
+    operation_id: IndexOperationId,
+    execution_control: &execution_control::ExecutionControl,
 ) -> Result<IndexOperationRecord> {
     loop {
         let snapshot = db.snapshot().await?;
@@ -1393,8 +1419,14 @@ pub(crate) async fn retry_operation(
         ) {
             return Ok(current);
         }
-        let Some(next) =
-            retry_blocked_operation(db, scope, operation_id, current.operation_revision()).await?
+        let Some(next) = retry_blocked_operation(
+            db,
+            scope,
+            operation_id,
+            current.operation_revision(),
+            execution_control,
+        )
+        .await?
         else {
             continue;
         };
@@ -1404,11 +1436,29 @@ pub(crate) async fn retry_operation(
 
 /// Converts a constructing BUILD into abort cleanup, or converges on an
 /// already-aborting/aborted BUILD with the same operation ID.
+#[cfg(any(
+    test,
+    feature = "production-coverage",
+    feature = "migration-parity",
+    feature = "index-lifecycle-testing"
+))]
 pub(crate) async fn abort_operation(
     db: &Db,
     scope: DataScope,
     operation_id: IndexOperationId,
 ) -> Result<IndexOperationRecord> {
+    let execution_control = execution_control::ExecutionControl::unlimited();
+    abort_operation_with_control(db, scope, operation_id, &execution_control).await
+}
+
+/// Aborts one request-owned constructing operation at its durable boundary.
+pub(crate) async fn abort_operation_with_control(
+    db: &Db,
+    scope: DataScope,
+    operation_id: IndexOperationId,
+    execution_control: &execution_control::ExecutionControl,
+) -> Result<IndexOperationRecord> {
+    execution_control.check()?;
     let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
     let operation_key = scoped_operation_key(scope, operation_id);
     let Some(operation_value) = transaction.get(&operation_key).await? else {
@@ -1448,7 +1498,10 @@ pub(crate) async fn abort_operation(
                 pointer_key,
                 encode_metadata_value(&IndexV2MetadataValue::OperationQueuePointer(next_pointer)),
             )?;
-            transaction.commit().await?;
+            transaction
+                .commit()
+                .await
+                .map_err(HelixDbError::from_storage_commit)?;
             Ok(next_operation)
         }
         (IndexStateV2::Aborting { .. }, super::IndexOperationKind::Build, _)
@@ -1510,9 +1563,9 @@ async fn release_transient_claim(
         encode_metadata_value(&IndexV2MetadataValue::OperationQueuePointer(pointer)),
     )?;
     failpoints::trip(IndexOutboxFailpoint::CheckpointStagingAfter)?;
-    failpoints::trip(IndexOutboxFailpoint::CommitBefore)?;
+    failpoints::trip_for_operation(IndexOutboxFailpoint::CommitBefore, operation.operation_id())?;
     transaction.commit().await?;
-    failpoints::trip(IndexOutboxFailpoint::CommitAfter)?;
+    failpoints::trip_for_operation(IndexOutboxFailpoint::CommitAfter, operation.operation_id())?;
     Ok(())
 }
 
@@ -2678,7 +2731,7 @@ mod tests {
                 ))
             ));
             assert_eq!(
-                abort_operation(&db, DataScope::LegacyUnscoped, operation.operation_id(),)
+                abort_operation(&db, DataScope::LegacyUnscoped, operation.operation_id())
                     .await
                     .unwrap(),
                 aborted

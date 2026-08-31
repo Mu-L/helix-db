@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import types
 import unittest
@@ -24,6 +25,7 @@ from helixdb import (
     read_batch,
     write_batch,
 )
+from helixdb._client_common import remote_error
 
 
 def public_api_members(type_: type) -> set[str]:
@@ -167,6 +169,31 @@ def fake_native_module() -> types.SimpleNamespace:
 
 
 class ClientTests(unittest.TestCase):
+    def test_lost_response_gateway_probe(self) -> None:
+        base_url = os.environ.get("HELIX_LOST_RESPONSE_GATEWAY_URL")
+        if base_url is None:
+            self.skipTest("real lost-response gateway fixture is not configured")
+        probe_id = os.environ["HELIX_LOST_RESPONSE_PROBE_ID"]
+        request = QueryRequest.write(
+            write_batch()
+            .var_as(
+                "created",
+                g().add_n("LostResponseProbe", {"business_id": probe_id}),
+            )
+            .returning(["created"])
+        )
+
+        with self.assertRaises(HelixError) as ctx:
+            Client(
+                base_url,
+                api_key=os.environ.get("HELIX_LOST_RESPONSE_API_KEY"),
+            ).query(request)
+
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(ctx.exception.code, "WRITE_OUTCOME_UNKNOWN")
+        self.assertIs(ctx.exception.retryable, False)
+        self.assertFalse(ctx.exception.is_retryable())
+
     def test_public_client_api_is_explicitly_accounted_for(self) -> None:
         self.assertEqual(
             public_api_members(Client),
@@ -277,6 +304,61 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(ctx.exception.details, "conflict")
         self.assertIsNone(ctx.exception.code)
+        self.assertIsNone(ctx.exception.retryable)
+        self.assertFalse(ctx.exception.is_retryable())
+
+    def test_unknown_write_outcome_is_terminal_and_sent_once(self) -> None:
+        request = QueryRequest.write(
+            write_batch()
+            .var_as("created", g().add_n("User", {"name": "Ada"}))
+            .returning(["created"])
+        )
+        cases = [
+            (
+                b'{"error":"writer_fenced_commit_outcome_unknown",'
+                b'"msg":"write outcome is unknown","retryable":false}',
+                "writer_fenced_commit_outcome_unknown",
+            ),
+            (
+                b'{"code":"WRITE_OUTCOME_UNKNOWN",'
+                b'"error":"write outcome is unknown","retryable":false}',
+                "WRITE_OUTCOME_UNKNOWN",
+            ),
+        ]
+        for body, expected_code in cases:
+            with self.subTest(expected_code=expected_code):
+                calls = 0
+
+                def fake_urlopen(req):
+                    nonlocal calls
+                    calls += 1
+                    raise HTTPError(
+                        req.full_url,
+                        503,
+                        "Service Unavailable",
+                        hdrs={},
+                        fp=BytesIO(body),
+                    )
+
+                with patch("helixdb.client.urlopen", fake_urlopen):
+                    with self.assertRaises(HelixError) as ctx:
+                        Client("http://127.0.0.1:6969").query(request)
+
+                self.assertEqual(calls, 1)
+                self.assertEqual(ctx.exception.code, expected_code)
+                self.assertIs(ctx.exception.retryable, False)
+                self.assertFalse(ctx.exception.is_retryable())
+
+    def test_retryability_requires_explicit_boolean_true(self) -> None:
+        cases = [
+            (b'{"error":"busy","retryable":true}', True),
+            (b'{"error":"unknown","retryable":false}', False),
+            (b'{"error":"malformed","retryable":"true"}', False),
+            (b'{"error":"missing"}', False),
+        ]
+        for body, expected in cases:
+            with self.subTest(body=body):
+                self.assertIs(remote_error(body, "fallback").is_retryable(), expected)
 
     def test_warm_no_content_is_success(self) -> None:
         request = QueryRequest.read(read_batch())
