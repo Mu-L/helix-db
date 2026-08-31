@@ -33,14 +33,14 @@ use crate::encoding::v2::values::{
 };
 use crate::error::{HelixDbError, Result};
 
+#[cfg(feature = "migration-parity")]
+use crate::index_lifecycle::IndexElementKind;
 use crate::index_lifecycle::{
     self, IndexOperationExecutionState, IndexOperationProgress, IndexOperationRecord, IndexStateV2,
     IndexStorageVersion, IndexV2MetadataValue, OperationCounters, OperationQueuePointerValue,
     PhysicalGeneration, SecondaryBuildProgress, SecondaryBuildStage, SourceScanProgress,
     ValidatedDynamicIndexDefinition, ValidatedSecondaryIndexDefinition,
 };
-#[cfg(feature = "migration-parity")]
-use crate::index_lifecycle::IndexElementKind;
 #[cfg(test)]
 use crate::migrations::tenant::envelope as tenant_envelope_migration;
 
@@ -217,7 +217,7 @@ pub(crate) async fn make_legacy_equality_fixture(db: &Db, version: u16) -> Resul
     }
     let marker = db
         .get(
-            Key::Global {
+            ManagedIndexKey::Global {
                 kind: GlobalKey::StorageVersion,
             }
             .to_bytes(),
@@ -252,7 +252,7 @@ pub(crate) async fn make_legacy_equality_fixture(db: &Db, version: u16) -> Resul
         b"\xFFkv_migration_ready:index_storage_v4_cleanup",
     ))?;
     transaction.put(
-        Key::Global {
+        ManagedIndexKey::Global {
             kind: GlobalKey::StorageVersion,
         }
         .to_bytes(),
@@ -269,10 +269,10 @@ async fn copy_bitmap_generation_to_legacy_entries(
 ) -> Result<()> {
     let mut rows = db.scan_prefix(bitmap_prefix(generation), ..).await?;
     while let Some(row) = rows.next().await? {
-        let Key::Data {
+        let ManagedIndexKey::Data {
             scope,
             kind: ScopedKey::SecondaryEqualityBitmap(key),
-        } = Key::parse_from_slice(generation.scope, &row.key)?
+        } = ManagedIndexKey::parse_from_slice(generation.scope, &row.key)?
         else {
             return Err(corruption("V4 equality prefix yielded another key kind"));
         };
@@ -299,9 +299,9 @@ async fn copy_bitmap_generation_to_legacy_entries(
             }
             let transaction = db.begin(IsolationLevel::SerializableSnapshot).await?;
             for entity_id in batch {
-                let entity_id = super::IndexEntityId::new(entity_id);
+                let entity_id = index_lifecycle::IndexEntityId::new(entity_id);
                 transaction.put(
-                    Key::Data {
+                    ManagedIndexKey::Data {
                         scope: generation.scope,
                         kind: ScopedKey::SecondaryEntry(SecondaryEntryKey::try_new(
                             generation.index_id,
@@ -312,7 +312,7 @@ async fn copy_bitmap_generation_to_legacy_entries(
                         )?),
                     }
                     .to_bytes(),
-                    encode_secondary_entry(&super::work::SecondaryEntryValue {
+                    encode_secondary_entry(&index_lifecycle::work::SecondaryEntryValue {
                         index_id: generation.index_id,
                         generation: generation.generation,
                         lane,
@@ -804,15 +804,16 @@ mod tests {
     use crate::config::SecondaryIndexDefinition;
     use crate::encoding::property::{encode_properties, Property};
     use crate::encoding::v2::keys::{
-        CanonicalSecondaryValue, SecondaryEntryKey, SecondaryEntryLane,
+        CanonicalSecondaryValue, EdgePropertyByIdKey, SecondaryEntryKey, SecondaryEntryLane,
     };
     use crate::encoding::v2::keys::{DataKey as GraphKey, DataKeyKind, NodePropertyKey};
     use crate::encoding::v2::values::{
         decode_metadata_value, encode_index_record, encode_secondary_entry,
     };
+    use crate::index_lifecycle::repository::ReaderStorageCompatibility;
     use crate::index_lifecycle::work::SecondaryEntryValue;
     use crate::index_lifecycle::{
-        IndexGenerationId, IndexId, IndexOperationFamily, IndexOperationKind,
+        IndexEntityId, IndexGenerationId, IndexId, IndexOperationFamily, IndexOperationKind,
         IndexOperationRevision, IndexRecordV2, IndexRevision, LogicalIndexIdWatermark,
         PrefixScanProgress, VectorPhysicalIdWatermark, VectorPhysicalIndexId,
     };
@@ -1067,7 +1068,7 @@ mod tests {
         entity_id: u64,
         kind: &str,
     ) {
-        let entity_id = super::super::IndexEntityId::new(entity_id);
+        let entity_id = IndexEntityId::new(entity_id);
         let lane = SecondaryEntryLane::EdgeEquality;
         let key = tenant_envelope_migration::legacy_data_key(
             generation.scope,
@@ -1204,7 +1205,7 @@ mod tests {
             .expect("complete V2/V3 storage opens in explicit union mode");
             assert_eq!(
                 reader.reader_storage_compatibility_for_tests(),
-                super::super::repository::ReaderStorageCompatibility::LegacyEqualityUnion
+                ReaderStorageCompatibility::LegacyEqualityUnion
             );
             assert_node_and_edge_reader_queries(&reader).await;
             reader.close().await.unwrap();
@@ -1254,7 +1255,7 @@ mod tests {
                 .is_none());
             assert!(!db
                 .scan_prefix(
-                    Key::data_prefix(
+                    ManagedIndexKey::data_prefix(
                         generation.scope,
                         ScopedKey::generation_prefix(
                             RecordKind::SecondaryEntry,
@@ -1285,7 +1286,7 @@ mod tests {
                 loop {
                     assert_reader_queries(&reader).await;
                     if reader.reader_storage_compatibility_for_tests()
-                        == super::super::repository::ReaderStorageCompatibility::Current
+                        == ReaderStorageCompatibility::Current
                     {
                         break;
                     }
@@ -1334,7 +1335,7 @@ mod tests {
                 .expect("complete V3 storage opens in union mode");
         assert_eq!(
             reader.reader_storage_compatibility_for_tests(),
-            super::super::repository::ReaderStorageCompatibility::LegacyEqualityUnion
+            ReaderStorageCompatibility::LegacyEqualityUnion
         );
         assert_reader_queries(&reader).await;
 
@@ -1350,7 +1351,7 @@ mod tests {
             loop {
                 assert_reader_queries(&reader).await;
                 if reader.reader_storage_compatibility_for_tests()
-                    == super::super::repository::ReaderStorageCompatibility::Current
+                    == ReaderStorageCompatibility::Current
                 {
                     break;
                 }

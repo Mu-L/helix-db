@@ -17,9 +17,9 @@ mod vector_retirement;
 mod vector_scale;
 mod vector_simhash_directory;
 
-pub(crate) use tenant::envelope::legacy_key_requires_migration;
 #[cfg(feature = "migration-parity")]
 pub(crate) use indexes::equality_bitmap::make_legacy_equality_fixture;
+pub(crate) use tenant::envelope::legacy_key_requires_migration;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;

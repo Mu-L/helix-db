@@ -1092,7 +1092,6 @@ impl HelixDB {
             } => {
                 migrations::startup::bootstrap_managed_writer(&db).await?;
                 index_lifecycle::outbox::reconcile_operation_queue(&db).await?;
-                HelixWriter::new(Arc::clone(&db), config.id_lease_size())
             }
             WriterOpenMode::Managed {
                 intent: ManagedWriterOpenIntent::Failover,
@@ -1100,7 +1099,6 @@ impl HelixDB {
             } => {
                 migrations::startup::require_current_managed_writer(&db).await?;
                 index_lifecycle::outbox::reconcile_operation_queue(&db).await?;
-                HelixWriter::new(Arc::clone(&db), config.id_lease_size())
             }
             WriterOpenMode::Managed {
                 intent: ManagedWriterOpenIntent::ControlledMigration(authorization),
