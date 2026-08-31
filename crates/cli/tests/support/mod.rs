@@ -77,6 +77,31 @@ impl CliFixture {
         }
     }
 
+    /// Points the runtime seam at a path that does not exist, so every runtime
+    /// command fails to spawn exactly as it does on a host without Docker.
+    #[allow(dead_code)]
+    pub fn with_missing_runtime(mut self) -> Self {
+        self.test_runtime_bin = Some(self.root.join("bin").join("missing-runtime"));
+        self
+    }
+
+    /// Points the runtime seam at a file that exists but cannot be executed, so
+    /// spawning fails for a reason other than the runtime being absent.
+    #[cfg(unix)]
+    #[allow(dead_code)]
+    pub fn with_unspawnable_runtime(mut self) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = self.root.join("bin");
+        fs::create_dir_all(&directory).expect("create runtime fixture directory");
+        let binary = directory.join("unspawnable-runtime");
+        fs::write(&binary, "not an executable\n").expect("write runtime fixture");
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o644))
+            .expect("drop execute permission on runtime fixture");
+        self.test_runtime_bin = Some(binary);
+        self
+    }
+
     #[allow(dead_code)]
     pub fn with_http_base(mut self, base_url: impl Into<String>) -> Self {
         self.http_base_url = Some(base_url.into());
