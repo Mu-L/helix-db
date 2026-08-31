@@ -173,14 +173,14 @@ async fn group_and_group_count_return_property_rows() {
         result,
         ExecutionValue::Scalars(vec![
             ExecutionScalar::Object(BTreeMap::from([
+                ("status".to_string(), DbPropertyValue::Null,),
+                ("count".to_string(), DbPropertyValue::I64(1)),
+            ])),
+            ExecutionScalar::Object(BTreeMap::from([
                 (
                     "status".to_string(),
                     DbPropertyValue::String("closed".to_string()),
                 ),
-                ("count".to_string(), DbPropertyValue::I64(1)),
-            ])),
-            ExecutionScalar::Object(BTreeMap::from([
-                ("status".to_string(), DbPropertyValue::Null,),
                 ("count".to_string(), DbPropertyValue::I64(1)),
             ])),
             ExecutionScalar::Object(BTreeMap::from([
@@ -222,6 +222,14 @@ async fn group_and_group_count_return_property_rows() {
         result,
         ExecutionValue::Scalars(vec![
             ExecutionScalar::Object(BTreeMap::from([
+                ("status".to_string(), DbPropertyValue::Null),
+                ("count".to_string(), DbPropertyValue::I64(1)),
+                (
+                    "ids".to_string(),
+                    DbPropertyValue::I64Array(vec![missing as i64])
+                ),
+            ])),
+            ExecutionScalar::Object(BTreeMap::from([
                 (
                     "status".to_string(),
                     DbPropertyValue::String("closed".to_string()),
@@ -230,14 +238,6 @@ async fn group_and_group_count_return_property_rows() {
                 (
                     "ids".to_string(),
                     DbPropertyValue::I64Array(vec![closed as i64])
-                ),
-            ])),
-            ExecutionScalar::Object(BTreeMap::from([
-                ("status".to_string(), DbPropertyValue::Null),
-                ("count".to_string(), DbPropertyValue::I64(1)),
-                (
-                    "ids".to_string(),
-                    DbPropertyValue::I64Array(vec![missing as i64])
                 ),
             ])),
             ExecutionScalar::Object(BTreeMap::from([
@@ -250,6 +250,70 @@ async fn group_and_group_count_return_property_rows() {
                     "ids".to_string(),
                     DbPropertyValue::I64Array(vec![open_1 as i64, open_2 as i64])
                 ),
+            ])),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn group_identity_is_canonical_and_typed() {
+    let db = test_support::open_db("stream-group-canonical-identity").await;
+    let as_i64 = test_support::add_node_with_properties(
+        &db,
+        "Ticket",
+        vec![("age", PropertyValue::I64(42))],
+    )
+    .await;
+    let as_f64 = test_support::add_node_with_properties(
+        &db,
+        "Ticket",
+        vec![("age", PropertyValue::F64(42.0))],
+    )
+    .await;
+    let as_string = test_support::add_node_with_properties(
+        &db,
+        "Ticket",
+        vec![("age", PropertyValue::from("42"))],
+    )
+    .await;
+    let ids = [as_i64, as_f64, as_string];
+    let ids_param = name("ids");
+    let access_id = exec::ExecStepId::new(1).expect("positive step id");
+    let plan = test_support::executable(
+        ir::PlanKind::Read,
+        vec![
+            node_access_step(1, ids_param.clone()),
+            test_support::step(
+                2,
+                vec![access_id],
+                exec::ExecOp::Aggregate {
+                    aggregate: ir::AggregatePlan::GroupCount(name("age")),
+                },
+            ),
+        ],
+        2,
+    );
+
+    let result = db
+        .execute(
+            &plan,
+            context::ParamBindings::default().with_value(ids_param, ids_value(&ids)),
+        )
+        .await
+        .expect("group count executes")
+        .last
+        .expect("aggregate step returns a value");
+
+    assert_eq!(
+        result,
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::Object(BTreeMap::from([
+                ("age".to_string(), DbPropertyValue::I64(42)),
+                ("count".to_string(), DbPropertyValue::I64(2)),
+            ])),
+            ExecutionScalar::Object(BTreeMap::from([
+                ("age".to_string(), DbPropertyValue::String("42".to_string())),
+                ("count".to_string(), DbPropertyValue::I64(1)),
             ])),
         ])
     );

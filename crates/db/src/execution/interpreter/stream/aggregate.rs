@@ -1,11 +1,37 @@
 //! Runtime aggregate execution contracts.
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use helix_ast::traversal::AggregateFunction;
 
 use super::values::scalar_items;
 use super::*;
+
+/// Group identity is storage total order: CanonicalNumber for numerics, typed
+/// otherwise. Display strings are not an identity.
+#[derive(Clone)]
+struct GroupKey(DbPropertyValue);
+
+impl PartialEq for GroupKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.total_order(&other.0) == Ordering::Equal
+    }
+}
+
+impl Eq for GroupKey {}
+
+impl PartialOrd for GroupKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for GroupKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.total_order(&other.0)
+    }
+}
 
 impl<'db> ExecutionContext<'db> {
     pub(in crate::execution::interpreter) async fn aggregate(
@@ -34,7 +60,7 @@ impl<'db> ExecutionContext<'db> {
         };
         match aggregate {
             ir::AggregatePlan::Group(property) => {
-                let mut groups = BTreeMap::<String, (Option<DbPropertyValue>, Vec<i64>)>::new();
+                let mut groups = BTreeMap::<GroupKey, (Option<DbPropertyValue>, Vec<i64>)>::new();
                 for row in &rows {
                     self.check_execution_deadline()?;
                     let element_id = row
@@ -50,11 +76,7 @@ impl<'db> ExecutionContext<'db> {
                         .unwrap_or(i64::MAX);
                     let value = self.row_property(row, property).await?;
                     let entry = groups
-                        .entry(
-                            value
-                                .as_ref()
-                                .map_or_else(|| "null".to_string(), ToString::to_string),
-                        )
+                        .entry(GroupKey(value.clone().unwrap_or(DbPropertyValue::Null)))
                         .or_insert_with(|| (value.clone(), Vec::new()));
                     if entry.0.is_none() {
                         entry.0 = value;
@@ -78,7 +100,7 @@ impl<'db> ExecutionContext<'db> {
                 ))
             }
             ir::AggregatePlan::GroupCount(property) => {
-                let mut groups = BTreeMap::<String, (Option<DbPropertyValue>, i64)>::new();
+                let mut groups = BTreeMap::<GroupKey, (Option<DbPropertyValue>, i64)>::new();
                 for row in &rows {
                     self.check_execution_deadline()?;
                     if row.current.is_none() {
@@ -88,11 +110,7 @@ impl<'db> ExecutionContext<'db> {
                     }
                     let value = self.row_property(row, property).await?;
                     let entry = groups
-                        .entry(
-                            value
-                                .as_ref()
-                                .map_or_else(|| "null".to_string(), ToString::to_string),
-                        )
+                        .entry(GroupKey(value.clone().unwrap_or(DbPropertyValue::Null)))
                         .or_insert_with(|| (value.clone(), 0));
                     if entry.0.is_none() {
                         entry.0 = value;
