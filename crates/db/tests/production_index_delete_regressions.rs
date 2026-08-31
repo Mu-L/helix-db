@@ -115,7 +115,12 @@ impl DeleteCase {
                 tenant_partitioned: true,
             } => Some(512),
             Self::NodeVector { .. } | Self::EdgeVector { .. } => Some(2),
-            _ => None,
+            Self::NodeEquality { .. }
+            | Self::EdgeEquality
+            | Self::NodeRange { .. }
+            | Self::EdgeRange { .. }
+            | Self::NodeText { .. }
+            | Self::EdgeText { .. } => None,
         }
     }
 
