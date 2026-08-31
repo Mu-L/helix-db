@@ -229,7 +229,7 @@ fn validate_bootstrap_values(
     }
     match version.get() {
         0x0002 | 0x0003 => Ok(ValidatedReaderBootstrap::LegacyEqualityUnion),
-        0x0004 => Ok(ValidatedReaderBootstrap::Current),
+        0x0004 | 0x0005 => Ok(ValidatedReaderBootstrap::Current),
         _ => unreachable!("unsupported storage versions returned before compatibility dispatch"),
     }
 }
@@ -1142,11 +1142,8 @@ mod tests {
     use crate::migrations::startup::bootstrap_writer;
 
     #[test]
-    fn storage_version_four_is_current() {
+    fn storage_versions_with_v4_equality_are_current() {
         assert_eq!(IndexStorageVersion::CURRENT.get(), 0x0004);
-        let marker = encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
-            IndexStorageVersion::CURRENT,
-        ));
         let logical = encode_metadata_value(&IndexV2MetadataValue::LogicalIndexIdWatermark(
             LogicalIndexIdWatermark {
                 next_id: IndexId::initial(),
@@ -1157,11 +1154,17 @@ mod tests {
                 next_id: VectorPhysicalIndexId::initial(),
             },
         ));
-        assert_eq!(
-            validate_bootstrap_values(&marker, Some(&logical), Some(&vector))
-                .expect("storage version 4 is accepted"),
-            ValidatedReaderBootstrap::Current
-        );
+        for current in [
+            IndexStorageVersion::CURRENT,
+            IndexStorageVersion::DISJOINT_MEMBERSHIP,
+        ] {
+            let marker = encode_metadata_value(&IndexV2MetadataValue::StorageVersion(current));
+            assert_eq!(
+                validate_bootstrap_values(&marker, Some(&logical), Some(&vector))
+                    .expect("storage with V4 equality encoding is accepted"),
+                ValidatedReaderBootstrap::Current
+            );
+        }
         for legacy in [0x0002, 0x0003] {
             let marker = encode_metadata_value(&IndexV2MetadataValue::StorageVersion(
                 IndexStorageVersion::new(legacy).unwrap(),
