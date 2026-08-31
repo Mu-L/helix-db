@@ -13,7 +13,9 @@ impl<'db> ExecutionContext<'db> {
         _input: ExecutionValue,
         plan: &ir::IndexDdlPlan,
     ) -> Result<ExecutionValue> {
-        self.discard_pending_catalog_freshness();
+        if plan.requires_isolated_catalog_transaction() {
+            self.discard_pending_catalog_freshness();
+        }
         let operation_id = |operation_id: &ir::IndexOperationId| {
             let uuid = uuid::Uuid::parse_str(operation_id.as_str()).map_err(|error| {
                 HelixDbError::InvariantViolation(format!(

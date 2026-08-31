@@ -394,6 +394,12 @@ async fn interpreter_request_modes_preserve_isolated_mutation_ownership() {
     db::production_coverage::interpreter_request_mode_and_isolated_mutation_contracts().await;
 }
 
+/// Proves GetOperation does not commit or disable an open graph write.
+#[tokio::test]
+async fn interpreter_get_operation_keeps_open_graph_write() {
+    db::production_coverage::interpreter_get_operation_keeps_open_graph_write().await;
+}
+
 /// Proves coalescing order, multigraph topology, rollback, and conflict semantics.
 #[tokio::test]
 async fn interpreter_topology_mutations_preserve_transactional_semantics() {

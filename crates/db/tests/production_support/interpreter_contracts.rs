@@ -214,6 +214,147 @@ pub async fn run_request_mode_and_isolated_mutation_contracts() {
     db.close().await.expect("isolated mutation fixture closes");
 }
 
+/// Proves index status stays on the open graph write and does not publish it.
+pub async fn run_get_operation_keeps_open_graph_write() {
+    let status = exec::ExecOp::IndexDdl {
+        plan: ir::IndexDdlPlan::GetOperation {
+            operation_id: ir::IndexOperationId::try_new("07070707-0707-0707-0707-070707070707")
+                .expect("canonical lowercase operation ID"),
+        },
+    };
+    let first = exec::ExecStepId::new(1).expect("positive step id");
+    let plan = test_support::executable(
+        ir::PlanKind::Write,
+        vec![
+            test_support::step(
+                1,
+                Vec::new(),
+                exec::ExecOp::Mutation {
+                    plan: exec::ExecMutationPlan::AddNodeSource {
+                        label: test_support::name("User"),
+                        properties: test_support::assignments(Vec::new()),
+                    },
+                },
+            ),
+            test_support::step(2, vec![first], status.clone()),
+        ],
+        2,
+    );
+    assert_eq!(
+        RequestSideEffects::operation(&status),
+        RequestSideEffects::None
+    );
+    assert_eq!(
+        RequestExecutionMode::try_from(&plan).expect("status is a graph-write companion"),
+        RequestExecutionMode::GraphWrite
+    );
+
+    let db = test_support::open_db("production-get-op-keeps-write").await;
+    let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
+    let created = context
+        .execute_step(&test_support::step(
+            1,
+            Vec::new(),
+            exec::ExecOp::IndexDdl {
+                plan: ir::IndexDdlPlan::Create {
+                    spec: ir::IndexDdlCreateSpec::NodeEquality {
+                        key: catalog::ScopedPropertyKey::try_new("User", "email")
+                            .expect("scoped key"),
+                        uniqueness: catalog::IndexUniqueness::NonUnique,
+                    },
+                    mode: ir::IndexCreateMode::ErrorIfExists,
+                },
+            },
+        ))
+        .await
+        .expect("create enqueues a durable operation");
+    let ExecutionValue::IndexDdlReceipt(crate::index_lifecycle::IndexDdlReceipt::Accepted {
+        operation_id,
+        ..
+    }) = created
+    else {
+        panic!("new index create must be accepted");
+    };
+    let operation_id = ir::IndexOperationId::try_new(operation_id.as_uuid().to_string())
+        .expect("receipt UUID is a canonical lowercase operation ID");
+
+    context
+        .enable_request_write_scope()
+        .await
+        .expect("request write opens");
+    let added = context
+        .execute_step(&test_support::step(
+            2,
+            Vec::new(),
+            exec::ExecOp::Mutation {
+                plan: exec::ExecMutationPlan::AddNodeSource {
+                    label: test_support::name("User"),
+                    properties: test_support::assignments(vec![(
+                        "email",
+                        AstPropertyValue::from("uncommitted@example.com"),
+                    )]),
+                },
+            },
+        ))
+        .await
+        .expect("graph write stays on the request transaction");
+    let ExecutionValue::Stream(rows) = added else {
+        panic!("node write should return a stream");
+    };
+    let Some(ExecutionRow {
+        current: Some(ElementRef::Node(id)),
+        ..
+    }) = rows.first()
+    else {
+        panic!("node write should return a node row");
+    };
+    let node_key = DataKey::Data {
+        scope: DataScope::LegacyUnscoped,
+        kind: DataKeyKind::NodeProperty(NodePropertyKey::new(*id)),
+    }
+    .to_bytes();
+    assert!(
+        writer_db(&db).get(&node_key).await.expect("peek").is_none(),
+        "uncommitted graph write must not be visible on a snapshot"
+    );
+
+    let got = context
+        .execute_step(&test_support::step(
+            3,
+            Vec::new(),
+            exec::ExecOp::IndexDdl {
+                plan: ir::IndexDdlPlan::GetOperation { operation_id },
+            },
+        ))
+        .await
+        .expect("status read stays on the open graph write");
+    assert!(matches!(got, ExecutionValue::IndexOperationStatus(_)));
+    assert!(context.has_request_write_scope());
+    assert!(writer_db(&db).get(&node_key).await.expect("peek").is_none());
+
+    let missing = context
+        .execute_step(&test_support::step(4, Vec::new(), status))
+        .await
+        .expect_err("unknown operation ID is a status miss, not a commit");
+    assert!(matches!(
+        missing,
+        HelixDbError::IndexOperationNotFound { .. }
+    ));
+    assert!(context.has_request_write_scope());
+    assert!(writer_db(&db).get(&node_key).await.expect("peek").is_none());
+
+    context
+        .commit_request_write_scope()
+        .await
+        .expect("request write commits");
+    assert!(writer_db(&db)
+        .get(&node_key)
+        .await
+        .expect("committed read")
+        .is_some());
+    db.close().await.expect("production get-op fixture closes");
+}
+
 /// Encodes one unscoped V2 logical key through the canonical V1 boundary.
 fn scoped_key(logical: index_keys::ScopedKey) -> Bytes {
     index_keys::ManagedIndexKey::Data {
