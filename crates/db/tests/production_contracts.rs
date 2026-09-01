@@ -4234,8 +4234,15 @@ async fn public_query_boundary_covers_predicate_sets_and_stream_operators_contra
     db.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn public_query_boundary_covers_projection_expressions_and_row_bindings() {
+#[test]
+fn public_query_boundary_covers_projection_expressions_and_row_bindings() {
+    run_high_stack_contract(
+        "public-projection-expressions-row-bindings",
+        public_query_boundary_covers_projection_expressions_and_row_bindings_contract,
+    );
+}
+
+async fn public_query_boundary_covers_projection_expressions_and_row_bindings_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-projection-bindings".to_owned(),
     })
