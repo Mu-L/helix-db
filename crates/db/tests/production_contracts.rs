@@ -3680,8 +3680,15 @@ async fn public_query_boundary_covers_dynamic_foreach_and_batch_conditions_contr
     db.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn public_execute_boundary_covers_typed_foreach_parameter_frames() {
+#[test]
+fn public_execute_boundary_covers_typed_foreach_parameter_frames() {
+    run_high_stack_contract(
+        "public-typed-foreach-parameter-frames",
+        public_execute_boundary_covers_typed_foreach_parameter_frames_contract,
+    );
+}
+
+async fn public_execute_boundary_covers_typed_foreach_parameter_frames_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-typed-foreach".to_owned(),
     })
