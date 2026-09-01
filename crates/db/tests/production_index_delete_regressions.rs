@@ -3,7 +3,7 @@
 //! Every fixture creates graph data before its dynamic index, waits for retroactive
 //! activation, and then deletes a label-matching entity that has no indexed property.
 
-use std::{num::NonZeroUsize, time::Duration};
+use std::{future::Future, num::NonZeroUsize, time::Duration};
 
 use db::{HelixDB, HelixDbSource, MembershipDeltaWriteMode};
 use helix_ast::batch;
@@ -25,6 +25,26 @@ const BULK_DELETE_TARGETS: usize = 513;
 const BULK_DELETE_PROPERTY: &str = "delete_group";
 const BULK_DELETE_VALUE: &str = "bulk";
 const BULK_SEED_BATCH: usize = 64;
+
+fn run_high_stack_contract<F, Fut>(name: &'static str, contract: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + 'static,
+{
+    std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("index delete contract runtime builds")
+                .block_on(contract());
+        })
+        .expect("index delete contract thread starts")
+        .join()
+        .expect("index delete contract thread completes");
+}
 
 /// Every valid public index shape with a behaviorally distinct delete path.
 #[derive(Debug, Clone, Copy)]
@@ -761,8 +781,15 @@ async fn deletes_edge_omitted_from_tenant_text_index() {
     .await;
 }
 
-#[tokio::test]
-async fn active_node_text_index_ignores_unindexed_bulk_delete_limit() {
+#[test]
+fn active_node_text_index_ignores_unindexed_bulk_delete_limit() {
+    run_high_stack_contract(
+        "active-node-text-delete",
+        active_node_text_index_ignores_unindexed_bulk_delete_limit_contract,
+    );
+}
+
+async fn active_node_text_index_ignores_unindexed_bulk_delete_limit_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-index-delete-text-node-bulk".to_owned(),
     })
@@ -816,21 +843,10 @@ async fn active_node_text_index_ignores_unindexed_bulk_delete_limit() {
 
 #[test]
 fn active_tenant_edge_text_index_ignores_unindexed_bulk_delete_limit() {
-    std::thread::Builder::new()
-        .name("active-tenant-edge-text-delete".to_string())
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("tenant edge text delete runtime builds")
-                .block_on(
-                    active_tenant_edge_text_index_ignores_unindexed_bulk_delete_limit_contract(),
-                );
-        })
-        .expect("tenant edge text delete thread starts")
-        .join()
-        .expect("tenant edge text delete thread completes");
+    run_high_stack_contract(
+        "active-tenant-edge-text-delete",
+        active_tenant_edge_text_index_ignores_unindexed_bulk_delete_limit_contract,
+    );
 }
 
 async fn active_tenant_edge_text_index_ignores_unindexed_bulk_delete_limit_contract() {
