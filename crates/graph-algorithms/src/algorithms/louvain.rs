@@ -386,6 +386,52 @@ mod tests {
     use super::*;
     use crate::{Edge, GraphKind, Node};
 
+    /// The local move phase is a greedy optimiser of `modularity`, so every move
+    /// it accepts must raise that same quantity. Self loops are the shape most
+    /// likely to break the agreement: `modularity` counts them as internal
+    /// weight because source and target share a community by definition, while
+    /// `LevelGraph::new` keeps them out of `adjacency` so the gain formula never
+    /// sees them.
+    #[test]
+    fn local_move_never_lowers_modularity_on_graphs_with_self_loops() {
+        let mut seed = 0x5eed_u64;
+        for trial in 0..48_usize {
+            let node_ids: Vec<String> = (0..7).map(|index| format!("n{index}")).collect();
+            let mut edges = Vec::new();
+            for index in 0..12_usize {
+                let source = (next_random(&mut seed) % 7) as usize;
+                let target = (next_random(&mut seed) % 7) as usize;
+                let weight = 1.0 + (next_random(&mut seed) % 4) as f64;
+                edges.push(
+                    Edge::new(
+                        format!("e{trial}_{index}"),
+                        node_ids[source].clone(),
+                        node_ids[target].clone(),
+                    )
+                    .with_weight(weight),
+                );
+            }
+            let graph = Graph::new(
+                GraphKind::MultiGraph,
+                node_ids.iter().map(|id| Node::new(id.clone())),
+                edges,
+            )
+            .expect("random graph should build");
+
+            let level = LevelGraph::from_original(&graph);
+            let initial: Vec<usize> = (0..graph.node_count()).collect();
+            let before = modularity(graph.node_count(), &level.edges, &initial, 1.0);
+            let mut move_seed = seed;
+            let (assignment, _) = level.local_move(&initial, 1.0, &mut move_seed, usize::MAX);
+            let after = modularity(graph.node_count(), &level.edges, &assignment, 1.0);
+
+            assert!(
+                after >= before - 1e-9,
+                "trial {trial}: local move lowered modularity from {before} to {after}"
+            );
+        }
+    }
+
     fn bridged_triangles() -> Graph {
         Graph::new(
             GraphKind::Graph,
