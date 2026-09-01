@@ -7,6 +7,7 @@
 //! keep the active physical generation synchronized.
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::time::Duration;
 
@@ -24,6 +25,26 @@ use helix_ast::query::QueryRequest;
 use helix_ast::traversal;
 use helix_ast::value::PropertyValue;
 use helix_planner::{catalog, context, cost, exec, ir, properties, trace};
+
+fn run_high_stack_contract<F, Fut>(name: &'static str, contract: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + 'static,
+{
+    std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("vector planner contract runtime builds")
+                .block_on(contract());
+        })
+        .expect("vector planner contract thread starts")
+        .join()
+        .expect("vector planner contract thread completes");
+}
 
 /// Constructs a non-empty planner identifier used by the executable fixtures.
 fn name(value: &str) -> ir::NonEmptyString {
@@ -1124,8 +1145,15 @@ fn blocked_vector_limit_config() -> DbConfig {
 }
 
 /// Drives every vector lifecycle action against one brute-force model.
-#[tokio::test]
-async fn public_vector_lifecycle_matches_reference_model() {
+#[test]
+fn public_vector_lifecycle_matches_reference_model() {
+    run_high_stack_contract(
+        "public-vector-lifecycle-model",
+        public_vector_lifecycle_matches_reference_model_contract,
+    );
+}
+
+async fn public_vector_lifecycle_matches_reference_model_contract() {
     let mut machine = VectorMachine::open().await;
     for action in [
         VectorAction::Insert {
@@ -1285,8 +1313,15 @@ async fn public_managed_search_executes_every_active_vector_metric() {
     db.close().await.expect("writer closes");
 }
 
-#[tokio::test]
-async fn public_managed_vector_search_enforces_tenant_partitions() {
+#[test]
+fn public_managed_vector_search_enforces_tenant_partitions() {
+    run_high_stack_contract(
+        "public-vector-tenant-partitions",
+        public_managed_vector_search_enforces_tenant_partitions_contract,
+    );
+}
+
+async fn public_managed_vector_search_enforces_tenant_partitions_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-vector-tenant-partitions".to_owned(),
     })
