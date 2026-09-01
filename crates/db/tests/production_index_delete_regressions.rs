@@ -814,8 +814,26 @@ async fn active_node_text_index_ignores_unindexed_bulk_delete_limit() {
     db.close().await.expect("bulk node database closes");
 }
 
-#[tokio::test]
-async fn active_tenant_edge_text_index_ignores_unindexed_bulk_delete_limit() {
+#[test]
+fn active_tenant_edge_text_index_ignores_unindexed_bulk_delete_limit() {
+    std::thread::Builder::new()
+        .name("active-tenant-edge-text-delete".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tenant edge text delete runtime builds")
+                .block_on(
+                    active_tenant_edge_text_index_ignores_unindexed_bulk_delete_limit_contract(),
+                );
+        })
+        .expect("tenant edge text delete thread starts")
+        .join()
+        .expect("tenant edge text delete thread completes");
+}
+
+async fn active_tenant_edge_text_index_ignores_unindexed_bulk_delete_limit_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-index-delete-text-edge-bulk".to_owned(),
     })
