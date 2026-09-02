@@ -58,6 +58,30 @@ fn literal_in_values_dedupes_and_rejects_non_reflexive_collections() {
     );
     assert_eq!(
         literal_in_values(&Predicate::is_in(
+            "age",
+            PropertyValue::array([
+                PropertyValue::from(20),
+                PropertyValue::from(20.0),
+                PropertyValue::from(30),
+            ])
+        )),
+        Some((
+            "age".to_owned(),
+            vec![PropertyValue::from(20), PropertyValue::from(30)]
+        ))
+    );
+    assert_eq!(
+        literal_in_values(&Predicate::is_in(
+            "age",
+            PropertyValue::array([PropertyValue::from(20), PropertyValue::from("20")])
+        )),
+        Some((
+            "age".to_owned(),
+            vec![PropertyValue::from(20), PropertyValue::from("20")]
+        ))
+    );
+    assert_eq!(
+        literal_in_values(&Predicate::is_in(
             "score",
             PropertyValue::F64Array(vec![1.0, f64::NAN])
         )),

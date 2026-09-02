@@ -34,6 +34,48 @@ fn static_predicate_values_cover_constant_boolean_contracts() {
         }),
         None
     );
+    assert_eq!(
+        static_predicate_value(&Predicate::Eq {
+            left: constant(42),
+            right: constant(42.0),
+        }),
+        Some(true)
+    );
+    assert_eq!(
+        static_predicate_value(&Predicate::Eq {
+            left: constant(42),
+            right: constant("42"),
+        }),
+        Some(false)
+    );
+    assert_eq!(
+        static_predicate_value(&Predicate::Lt {
+            left: constant(42),
+            right: constant(43.0),
+        }),
+        Some(true)
+    );
+    assert_eq!(
+        static_predicate_value(&Predicate::Gt {
+            left: constant(42),
+            right: constant("42"),
+        }),
+        None
+    );
+    assert_eq!(
+        static_predicate_value(&Predicate::IsIn {
+            value: constant(42.0),
+            values: Expr::Constant(PropertyValue::array([1, 42, 5])),
+        }),
+        Some(true)
+    );
+    assert_eq!(
+        static_predicate_value(&Predicate::IsIn {
+            value: constant("42"),
+            values: Expr::Constant(PropertyValue::array([1, 42, 5])),
+        }),
+        Some(false)
+    );
 
     assert_eq!(
         static_predicate_value(&Predicate::Gt {
