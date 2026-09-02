@@ -1920,8 +1920,26 @@ mod tests {
         assert_eq!(empty_returns.to_json_bytes().unwrap(), br#"{}"#);
     }
 
-    #[tokio::test]
-    async fn query_response_uses_the_shape_of_the_binding_that_executed() {
+    #[test]
+    fn query_response_uses_the_shape_of_the_binding_that_executed() {
+        std::thread::Builder::new()
+            .name("query-service-return-shape".to_string())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("query service test runtime builds")
+                    .block_on(
+                        query_response_uses_the_shape_of_the_binding_that_executed_contract(),
+                    );
+            })
+            .expect("query service test thread starts")
+            .join()
+            .expect("query service test thread completes");
+    }
+
+    async fn query_response_uses_the_shape_of_the_binding_that_executed_contract() {
         let db = Arc::new(
             HelixDB::open(HelixDbSource::InMemory {
                 database: "query-service-runtime-return-shape".to_string(),

@@ -708,8 +708,26 @@ fn lifecycle_db_config() -> DbConfig {
 }
 
 /// Drives the complete text lifecycle against its independent reference model.
-#[tokio::test]
-async fn public_text_lifecycle_matches_reference_and_durable_row_models() {
+#[test]
+fn public_text_lifecycle_matches_reference_and_durable_row_models() {
+    std::thread::Builder::new()
+        .name("public-text-lifecycle-model".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("text lifecycle test runtime builds")
+                .block_on(
+                    public_text_lifecycle_matches_reference_and_durable_row_models_contract(),
+                );
+        })
+        .expect("text lifecycle test thread starts")
+        .join()
+        .expect("text lifecycle test thread completes");
+}
+
+async fn public_text_lifecycle_matches_reference_and_durable_row_models_contract() {
     let mut machine = TextMachine::open().await;
     for action in [
         TextAction::Insert {

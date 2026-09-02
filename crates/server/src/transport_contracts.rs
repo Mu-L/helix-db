@@ -391,6 +391,50 @@ fn vector_input_errors_are_client_failures_but_physical_errors_are_internal() {
     }
 }
 
+#[test]
+fn query_service_control_errors_preserve_public_classification() {
+    let deadline = QueryServiceError::Db(db::error::HelixDbError::QueryDeadlineExceeded);
+    assert!(deadline.is_deadline_exceeded());
+    assert!(!deadline.is_cancelled_by_reader_retirement());
+    assert_eq!(
+        deadline.error_code(),
+        helix_ast::error_code::QueryErrorCode::QueryDeadlineExceeded
+    );
+    assert_eq!(deadline.index_error_code(), None);
+    let deadline: db::error::HelixDbError = deadline.into();
+    assert!(matches!(
+        deadline,
+        db::error::HelixDbError::QueryDeadlineExceeded
+    ));
+
+    let cancelled =
+        QueryServiceError::Db(db::error::HelixDbError::QueryCancelledByReaderRetirement);
+    assert!(cancelled.is_cancelled_by_reader_retirement());
+    assert!(!cancelled.is_deadline_exceeded());
+    assert_eq!(
+        cancelled.error_code(),
+        helix_ast::error_code::QueryErrorCode::QueryCancelledByReaderRetirement
+    );
+
+    let conflict = QueryServiceError::Db(db::error::HelixDbError::TransactionConflict(
+        "retry the transaction".to_string(),
+    ));
+    assert!(conflict.is_transaction_conflict());
+    assert_eq!(
+        conflict.error_code(),
+        helix_ast::error_code::QueryErrorCode::TransactionConflict
+    );
+
+    let invalid = QueryServiceError::InvalidRequest("missing query".to_string());
+    assert_eq!(
+        invalid.error_code(),
+        helix_ast::error_code::QueryErrorCode::InvalidRequest
+    );
+    assert_eq!(invalid.index_error_code(), None);
+    let invalid: db::error::HelixDbError = invalid.into();
+    assert!(matches!(invalid, db::error::HelixDbError::Query(_)));
+}
+
 #[tokio::test]
 async fn fenced_commit_outcome_crosses_http_once_and_is_terminal_to_the_rust_sdk() {
     let object_store = Arc::new(slatedb::object_store::memory::InMemory::new());

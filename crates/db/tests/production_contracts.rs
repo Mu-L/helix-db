@@ -5,7 +5,10 @@
 //! metadata DTOs, and the direct HNSW facade are exercised by the feature-gated
 //! internal production-contract target instead of being kept public for tests.
 
-use std::{cmp::Ordering, collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{
+    cmp::Ordering, collections::BTreeMap, future::Future, num::NonZeroUsize, sync::Arc,
+    time::Duration,
+};
 
 use db::config::{self, VectorIndexDefinition};
 use db::encoding::v2::values::indexes::vector::{decode_layer0_neighbors, encode_layer0_neighbors};
@@ -31,6 +34,26 @@ use helix_ast::traversal;
 use helix_ast::value::{PropertyInput, PropertyValue};
 use helix_planner::{catalog, context, cost, exec, ir, planning, properties, trace};
 use slatedb::object_store::memory::InMemory;
+
+fn run_high_stack_contract<F, Fut>(name: &'static str, contract: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + 'static,
+{
+    std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("production contract runtime builds")
+                .block_on(contract());
+        })
+        .expect("production contract thread starts")
+        .join()
+        .expect("production contract thread completes");
+}
 
 #[test]
 fn current_layer0_neighbor_bytes_are_stable_through_the_public_codec() {
@@ -636,8 +659,15 @@ async fn public_query_boundary_covers_source_fed_mutations() {
     db.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn public_query_boundary_covers_expand_predicate_and_branch_control() {
+#[test]
+fn public_query_boundary_covers_expand_predicate_and_branch_control() {
+    run_high_stack_contract(
+        "public-expand-predicate-branch-control",
+        public_query_boundary_covers_expand_predicate_and_branch_control_contract,
+    );
+}
+
+async fn public_query_boundary_covers_expand_predicate_and_branch_control_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-graph-control".to_owned(),
     })
@@ -1218,8 +1248,15 @@ async fn public_write_boundary_covers_topology_read_your_writes() {
     db.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn public_query_boundary_covers_branch_partition_edges() {
+#[test]
+fn public_query_boundary_covers_branch_partition_edges() {
+    run_high_stack_contract(
+        "public-branch-partition-edges",
+        public_query_boundary_covers_branch_partition_edges_contract,
+    );
+}
+
+async fn public_query_boundary_covers_branch_partition_edges_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-branch-partitions".to_owned(),
     })
@@ -2563,8 +2600,15 @@ async fn public_query_boundary_covers_active_range_index_access_and_mutation() {
     db.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn public_query_boundary_covers_active_text_index_mutations() {
+#[test]
+fn public_query_boundary_covers_active_text_index_mutations() {
+    run_high_stack_contract(
+        "public-active-text-index-mutations",
+        public_query_boundary_covers_active_text_index_mutations_contract,
+    );
+}
+
+async fn public_query_boundary_covers_active_text_index_mutations_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-text-index".to_owned(),
     })
@@ -3321,8 +3365,15 @@ async fn await_index_operation_success(db: &HelixDB, operation_id: &str, descrip
     .unwrap_or_else(|_| panic!("{description} activates within thirty seconds"));
 }
 
-#[tokio::test]
-async fn public_query_boundary_covers_dynamic_foreach_and_batch_conditions() {
+#[test]
+fn public_query_boundary_covers_dynamic_foreach_and_batch_conditions() {
+    run_high_stack_contract(
+        "public-dynamic-foreach-conditions",
+        public_query_boundary_covers_dynamic_foreach_and_batch_conditions_contract,
+    );
+}
+
+async fn public_query_boundary_covers_dynamic_foreach_and_batch_conditions_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-foreach".to_owned(),
     })
@@ -3629,8 +3680,15 @@ async fn public_query_boundary_covers_dynamic_foreach_and_batch_conditions() {
     db.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn public_execute_boundary_covers_typed_foreach_parameter_frames() {
+#[test]
+fn public_execute_boundary_covers_typed_foreach_parameter_frames() {
+    run_high_stack_contract(
+        "public-typed-foreach-parameter-frames",
+        public_execute_boundary_covers_typed_foreach_parameter_frames_contract,
+    );
+}
+
+async fn public_execute_boundary_covers_typed_foreach_parameter_frames_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-typed-foreach".to_owned(),
     })
@@ -3729,8 +3787,15 @@ async fn public_execute_boundary_covers_typed_foreach_parameter_frames() {
     db.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn public_query_boundary_covers_predicate_sets_and_stream_operators() {
+#[test]
+fn public_query_boundary_covers_predicate_sets_and_stream_operators() {
+    run_high_stack_contract(
+        "public-predicate-stream-operators",
+        public_query_boundary_covers_predicate_sets_and_stream_operators_contract,
+    );
+}
+
+async fn public_query_boundary_covers_predicate_sets_and_stream_operators_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-predicate-streams".to_owned(),
     })
@@ -4169,8 +4234,15 @@ async fn public_query_boundary_covers_predicate_sets_and_stream_operators() {
     db.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn public_query_boundary_covers_projection_expressions_and_row_bindings() {
+#[test]
+fn public_query_boundary_covers_projection_expressions_and_row_bindings() {
+    run_high_stack_contract(
+        "public-projection-expressions-row-bindings",
+        public_query_boundary_covers_projection_expressions_and_row_bindings_contract,
+    );
+}
+
+async fn public_query_boundary_covers_projection_expressions_and_row_bindings_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-projection-bindings".to_owned(),
     })
@@ -4852,8 +4924,15 @@ async fn public_query_boundary_covers_mutation_rollback_and_graph_cleanup() {
     db.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn public_query_boundary_covers_active_secondary_index_families() {
+#[test]
+fn public_query_boundary_covers_active_secondary_index_families() {
+    run_high_stack_contract(
+        "public-secondary-index-families",
+        public_query_boundary_covers_active_secondary_index_families_contract,
+    );
+}
+
+async fn public_query_boundary_covers_active_secondary_index_families_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-secondary-indexes".to_owned(),
     })
@@ -7439,8 +7518,15 @@ async fn public_executable_plan_boundary_covers_merge_and_dependency_shapes() {
     db.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn public_query_boundary_covers_active_vector_index_mutations() {
+#[test]
+fn public_query_boundary_covers_active_vector_index_mutations() {
+    run_high_stack_contract(
+        "public-active-vector-index-mutations",
+        public_query_boundary_covers_active_vector_index_mutations_contract,
+    );
+}
+
+async fn public_query_boundary_covers_active_vector_index_mutations_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-interpreter-vector-index".to_owned(),
     })

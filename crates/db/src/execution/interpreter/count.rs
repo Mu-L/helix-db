@@ -1926,8 +1926,27 @@ mod tests {
         );
     }
 
-    #[cfg_attr(test, tokio::test)]
-    async fn direct_non_search_count_families_match_materialized_sources() {
+    #[cfg(test)]
+    #[test]
+    fn direct_non_search_count_families_match_materialized_sources() {
+        std::thread::Builder::new()
+            .name("direct-count-source-matrix".to_string())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("direct count test runtime builds")
+                    .block_on(
+                        direct_non_search_count_families_match_materialized_sources_contract(),
+                    );
+            })
+            .expect("direct count test thread starts")
+            .join()
+            .expect("direct count test thread completes");
+    }
+
+    async fn direct_non_search_count_families_match_materialized_sources_contract() {
         let db = test_support::open_db_with_config(
             test_support::in_memory_config("count-direct-source-matrix")
                 .with_equality_index("User", "status")
@@ -4969,7 +4988,7 @@ mod tests {
     pub(super) async fn run_production_contracts() {
         test_support::run_production_contracts().await;
         evaluated_windows_and_index_identity_validation_cover_boundaries();
-        direct_non_search_count_families_match_materialized_sources().await;
+        direct_non_search_count_families_match_materialized_sources_contract().await;
         dynamic_equality_runtime_classification_covers_every_named_case().await;
         every_direct_storage_count_propagates_its_own_read_failure().await;
         direct_and_cursor_authoritative_counts_propagate_each_predicate_failure().await;
