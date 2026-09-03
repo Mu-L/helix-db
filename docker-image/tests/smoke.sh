@@ -261,8 +261,19 @@ run_signal_test() {
   fi
 }
 
+run_concurrent_membership_test() {
+  local port=$((base_port + 7))
+  local container="helixdb-image-concurrent-membership-$resource_suffix"
+
+  log "Testing concurrent shared label, equality, adjacency, and cascade membership"
+  start_container "$container" "$port"
+  wait_for_http "http://127.0.0.1:${port}/readyz" "$container"
+  python3 "$script_dir/concurrent_membership.py" --url "http://127.0.0.1:${port}"
+}
+
 run_memory_test
 run_native_disk_test
+run_concurrent_membership_test
 run_invalid_configuration_tests
 run_signal_test
 log "Docker image runtime smoke tests passed"
