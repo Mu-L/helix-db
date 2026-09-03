@@ -26,7 +26,9 @@ development-only compatibility boundary, not an automatic upgrade protocol.
 
 New databases initialize at version 4. Existing supported version-4 databases open
 without conversion. Experimental version-5 databases return the existing
-unsupported-version error; startup must not lower or remove their marker. The
+unsupported-version error on reader, embedded-writer, and managed-failover open;
+startup must not lower or remove their marker. Managed bootstrap still refuses
+any nonempty store before version dispatch. The
 retired activation key tag `0x0C` and value tag `0x08` are not reused. Malformed
 metadata checks, managed-writer fencing, and existing version-2/3 migrations to
 version 4 remain in place.

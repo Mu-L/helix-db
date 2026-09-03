@@ -3596,13 +3596,15 @@ mod tests {
                         assert_eq!(writer.query(read()).await.unwrap()["users"], 2);
                         writer.query(write()).await.unwrap();
                         assert_eq!(writer.query(read()).await.unwrap()["users"], 3);
+                        writer.flush_writer().await.unwrap();
                         let reader = HelixDB::open_reader(HelixDbSource::InMemoryToken {
                             token: token.clone(),
                         })
                         .await
                         .unwrap();
-                        // Keep this reader open while the membership row becomes empty and is recreated.
-                        // Publication is bounded by storage sequence, not by guessed replay sleeps.
+                        assert_eq!(reader.query(read()).await.unwrap()["users"], 3);
+                        // Keep the ordinary reader open while the membership row becomes empty
+                        // and is recreated. Allow three default manifest polling intervals.
                         for expected in [0, 1] {
                             if expected == 0 {
                                 writer
@@ -3618,13 +3620,19 @@ mod tests {
                             }
                             assert_eq!(writer.query(read()).await.unwrap()["users"], expected);
                             let published = writer.flush_writer().await.unwrap();
-                            tokio::time::timeout(Duration::from_secs(10), async {
+                            let replay = tokio::time::timeout(Duration::from_secs(30), async {
                                 while reader.visible_sequence().await.unwrap() < published {
                                     tokio::time::sleep(Duration::from_millis(10)).await;
                                 }
                             })
-                            .await
-                            .expect("reader replays the membership commit");
+                            .await;
+                            assert!(
+                                replay.is_ok(),
+                                "reader sequence {:?}, published {:?}, rows {:?}",
+                                reader.visible_sequence().await.unwrap(),
+                                published,
+                                reader.query(read()).await.unwrap()
+                            );
                             assert_eq!(reader.query(read()).await.unwrap()["users"], expected);
                         }
                         reader.close().await.unwrap();
