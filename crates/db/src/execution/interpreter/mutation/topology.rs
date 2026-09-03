@@ -1449,6 +1449,12 @@ mod tests {
             runtime.add_node_label(DataScope::LegacyUnscoped, "User", 1),
             Err(HelixDbError::InvariantViolation(_))
         ));
+        assert!(matches!(
+            runtime.flush(&transaction).await,
+            Err(HelixDbError::InvariantViolation(_))
+        ));
+        // A rejected extra flush must retain the prepared state for commit.
+        runtime.consume_prepared().unwrap();
     }
 
     #[derive(Debug, Clone, Copy)]
