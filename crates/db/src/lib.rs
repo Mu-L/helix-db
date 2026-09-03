@@ -3519,113 +3519,133 @@ mod tests {
         raw.close().await.expect("raw reader closes");
     }
 
-    #[tokio::test]
-    async fn storage_version_four_reopens_without_membership_activation() {
-        use crate::encoding::v2::{keys, values};
-        use crate::index_lifecycle::{IndexStorageVersion, IndexV2MetadataValue};
+    #[test]
+    fn storage_version_four_reopens_without_membership_activation() {
+        // Public cascade queries have large debug futures. Use the same dedicated
+        // stack as the production deletion contracts; do not change runtime limits.
+        std::thread::Builder::new()
+            .name("default-membership-reopen".to_string())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        use crate::encoding::v2::{keys, values};
+                        use crate::index_lifecycle::{IndexStorageVersion, IndexV2MetadataValue};
 
-        let token = ProcessLocalDatabaseToken::new("facade-default-membership").unwrap();
-        let write = || {
-            QueryRequest::write(
-                write_batch()
-                    .var_as(
-                        "created",
-                        g().add_n("User", vec![("name", PropertyInput::from("Ada"))])
-                            .count(),
-                    )
-                    .returning(["created"]),
-            )
-        };
-        let read = || {
-            QueryRequest::read(
-                read_batch()
-                    .var_as("users", g().n_with_label("User").count())
-                    .returning(["users"]),
-            )
-        };
-        let version_key = keys::ManagedIndexKey::Global {
-            kind: keys::GlobalKey::StorageVersion,
-        }
-        .to_bytes();
-        let writer = HelixDB::open(HelixDbSource::InMemoryToken {
-            token: token.clone(),
-        })
-        .await
-        .unwrap();
-        writer.query(write()).await.unwrap();
-        writer.query(write()).await.unwrap();
-        assert_eq!(writer.query(read()).await.unwrap()["users"], 2);
-        assert_eq!(
-            values::decode_metadata_value(
-                &writer.inner_db().get(&version_key).await.unwrap().unwrap()
-            )
-            .unwrap(),
-            IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
-        );
-        writer.inner_db().flush().await.unwrap();
-        writer.close().await.unwrap();
+                        let token =
+                            ProcessLocalDatabaseToken::new("facade-default-membership").unwrap();
+                        let write = || {
+                            QueryRequest::write(
+                                write_batch()
+                                    .var_as(
+                                        "created",
+                                        g().add_n(
+                                            "User",
+                                            vec![("name", PropertyInput::from("Ada"))],
+                                        )
+                                        .count(),
+                                    )
+                                    .returning(["created"]),
+                            )
+                        };
+                        let read = || {
+                            QueryRequest::read(
+                                read_batch()
+                                    .var_as("users", g().n_with_label("User").count())
+                                    .returning(["users"]),
+                            )
+                        };
+                        let version_key = keys::ManagedIndexKey::Global {
+                            kind: keys::GlobalKey::StorageVersion,
+                        }
+                        .to_bytes();
+                        let writer = HelixDB::open(HelixDbSource::InMemoryToken {
+                            token: token.clone(),
+                        })
+                        .await
+                        .unwrap();
+                        writer.query(write()).await.unwrap();
+                        writer.query(write()).await.unwrap();
+                        assert_eq!(writer.query(read()).await.unwrap()["users"], 2);
+                        assert_eq!(
+                            values::decode_metadata_value(
+                                &writer.inner_db().get(&version_key).await.unwrap().unwrap()
+                            )
+                            .unwrap(),
+                            IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
+                        );
+                        writer.inner_db().flush().await.unwrap();
+                        writer.close().await.unwrap();
 
-        let reader = HelixDB::open_reader(HelixDbSource::InMemoryToken {
-            token: token.clone(),
-        })
-        .await
-        .expect("a reader accepts default storage without activation");
-        assert_eq!(reader.query(read()).await.unwrap()["users"], 2);
-        reader.close().await.unwrap();
+                        let reader = HelixDB::open_reader(HelixDbSource::InMemoryToken {
+                            token: token.clone(),
+                        })
+                        .await
+                        .expect("a reader accepts default storage without activation");
+                        assert_eq!(reader.query(read()).await.unwrap()["users"], 2);
+                        reader.close().await.unwrap();
 
-        let writer = HelixDB::open(HelixDbSource::InMemoryToken {
-            token: token.clone(),
-        })
-        .await
-        .expect("a writer reopens without format activation");
-        assert_eq!(writer.query(read()).await.unwrap()["users"], 2);
-        writer.query(write()).await.unwrap();
-        assert_eq!(writer.query(read()).await.unwrap()["users"], 3);
-        let reader = HelixDB::open_reader(HelixDbSource::InMemoryToken {
-            token: token.clone(),
-        })
-        .await
-        .unwrap();
-        // Keep this reader open while the membership row becomes empty and is recreated.
-        // Publication is bounded by storage sequence, not by guessed replay sleeps.
-        for expected in [0, 1] {
-            if expected == 0 {
-                writer
-                    .query(QueryRequest::write(
-                        write_batch()
-                            .var_as("deleted", g().n_with_label("User").drop())
-                            .returning(Vec::<String>::new()),
-                    ))
-                    .await
-                    .unwrap();
-            } else {
-                writer.query(write()).await.unwrap();
-            }
-            assert_eq!(writer.query(read()).await.unwrap()["users"], expected);
-            let published = writer.flush_writer().await.unwrap();
-            tokio::time::timeout(Duration::from_secs(10), async {
-                while reader.visible_sequence().await.unwrap() < published {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
+                        let writer = HelixDB::open(HelixDbSource::InMemoryToken {
+                            token: token.clone(),
+                        })
+                        .await
+                        .expect("a writer reopens without format activation");
+                        assert_eq!(writer.query(read()).await.unwrap()["users"], 2);
+                        writer.query(write()).await.unwrap();
+                        assert_eq!(writer.query(read()).await.unwrap()["users"], 3);
+                        let reader = HelixDB::open_reader(HelixDbSource::InMemoryToken {
+                            token: token.clone(),
+                        })
+                        .await
+                        .unwrap();
+                        // Keep this reader open while the membership row becomes empty and is recreated.
+                        // Publication is bounded by storage sequence, not by guessed replay sleeps.
+                        for expected in [0, 1] {
+                            if expected == 0 {
+                                writer
+                                    .query(QueryRequest::write(
+                                        write_batch()
+                                            .var_as("deleted", g().n_with_label("User").drop())
+                                            .returning(Vec::<String>::new()),
+                                    ))
+                                    .await
+                                    .unwrap();
+                            } else {
+                                writer.query(write()).await.unwrap();
+                            }
+                            assert_eq!(writer.query(read()).await.unwrap()["users"], expected);
+                            let published = writer.flush_writer().await.unwrap();
+                            tokio::time::timeout(Duration::from_secs(10), async {
+                                while reader.visible_sequence().await.unwrap() < published {
+                                    tokio::time::sleep(Duration::from_millis(10)).await;
+                                }
+                            })
+                            .await
+                            .expect("reader replays the membership commit");
+                            assert_eq!(reader.query(read()).await.unwrap()["users"], expected);
+                        }
+                        reader.close().await.unwrap();
+                        assert_eq!(
+                            values::decode_metadata_value(
+                                &writer.inner_db().get(&version_key).await.unwrap().unwrap()
+                            )
+                            .unwrap(),
+                            IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
+                        );
+                        writer.close().await.unwrap();
+                        let reopened = HelixDB::open(HelixDbSource::InMemoryToken { token })
+                            .await
+                            .unwrap();
+                        assert_eq!(reopened.query(read()).await.unwrap()["users"], 1);
+                        reopened.close().await.unwrap();
+                    });
             })
-            .await
-            .expect("reader replays the membership commit");
-            assert_eq!(reader.query(read()).await.unwrap()["users"], expected);
-        }
-        reader.close().await.unwrap();
-        assert_eq!(
-            values::decode_metadata_value(
-                &writer.inner_db().get(&version_key).await.unwrap().unwrap()
-            )
-            .unwrap(),
-            IndexV2MetadataValue::StorageVersion(IndexStorageVersion::CURRENT)
-        );
-        writer.close().await.unwrap();
-        let reopened = HelixDB::open(HelixDbSource::InMemoryToken { token })
-            .await
+            .unwrap()
+            .join()
             .unwrap();
-        assert_eq!(reopened.query(read()).await.unwrap()["users"], 1);
-        reopened.close().await.unwrap();
     }
 
     #[tokio::test]
