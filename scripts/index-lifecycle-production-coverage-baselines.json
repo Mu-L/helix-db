@@ -2,8 +2,8 @@
   "schema_version": 1,
   "uncovered_test_required_positions": {
     "lines": {
-      "count": 1236,
-      "sha256": "2b0117c2919407faede3ab89e97c731dace8bfba1421a8bdf9ebf5d8bf9384c4"
+      "count": 1234,
+      "sha256": "5e0c67da3d0aa27a4986a734167accda416f119015065aad45464a04359522db"
     },
     "functions": {
       "count": 111,
