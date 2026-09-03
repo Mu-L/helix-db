@@ -10,10 +10,27 @@ import urllib.request
 
 NODE_LABEL = "ConcurrentEvent"
 EDGE_LABEL = "CONCURRENT_EVENT_LINK"
+ANCHOR_LABEL = "ConcurrentAnchor"
 SEVERITY = "info"
 
 
-def query(url, payload):
+def entry(name, root):
+    return {"query": {"name": name, "root": root}}
+
+
+def batch(kind, entries, returns=(), parameters=None, parameter_types=None):
+    payload = {
+        "request_type": kind,
+        "query": {kind: {"entries": entries, "returns": list(returns)}},
+    }
+    if parameters is not None:
+        payload["parameters"] = parameters
+    if parameter_types is not None:
+        payload["parameter_types"] = parameter_types
+    return payload
+
+
+def post(url, payload):
     request = urllib.request.Request(
         f"{url.rstrip('/')}/v2/query",
         data=json.dumps(payload).encode(),
@@ -29,55 +46,34 @@ def query(url, payload):
 
 
 def create_index(url, spec):
-    response = query(
+    response = post(
         url,
-        {
-            "request_type": "write",
-            "query": {
-                "write": {
-                    "entries": [
-                        {
-                            "query": {
-                                "name": "operation",
-                                "root": {
-                                    "create_index": {
-                                        "spec": spec,
-                                        "if_not_exists": True,
-                                    }
-                                },
-                            }
-                        }
-                    ],
-                    "returns": ["operation"],
-                }
-            },
-        },
+        batch(
+            "write",
+            [
+                entry(
+                    "operation",
+                    {"create_index": {"spec": spec, "if_not_exists": True}},
+                )
+            ],
+            ["operation"],
+        ),
     )
     operation_id = response["operation"]["operation_id"]
     deadline = time.monotonic() + 30
     while True:
-        status = query(
+        status = post(
             url,
-            {
-                "request_type": "read",
-                "query": {
-                    "read": {
-                        "entries": [
-                            {
-                                "query": {
-                                    "name": "status",
-                                    "root": {
-                                        "get_index_operation": {
-                                            "operation_id": operation_id
-                                        }
-                                    },
-                                }
-                            }
-                        ],
-                        "returns": ["status"],
-                    }
-                },
-            },
+            batch(
+                "read",
+                [
+                    entry(
+                        "status",
+                        {"get_index_operation": {"operation_id": operation_id}},
+                    )
+                ],
+                ["status"],
+            ),
         )["status"]["status"]
         if status == "succeeded":
             return
@@ -89,303 +85,149 @@ def create_index(url, spec):
 
 
 def add_anchor(url):
-    response = query(
+    response = post(
         url,
-        {
-            "request_type": "write",
-            "query": {
-                "write": {
-                    "entries": [
-                        {
-                            "query": {
-                                "name": "anchor",
-                                "root": {
-                                    "id": {
-                                        "input": {
-                                            "add_n": {
-                                                "label": "ConcurrentAnchor",
-                                                "properties": [],
-                                            }
-                                        }
-                                    }
-                                },
+        batch(
+            "write",
+            [
+                entry(
+                    "anchor",
+                    {
+                        "id": {
+                            "input": {
+                                "add_n": {"label": ANCHOR_LABEL, "properties": []}
                             }
                         }
-                    ],
-                    "returns": ["anchor"],
-                }
-            },
-        },
+                    },
+                )
+            ],
+            ["anchor"],
+        ),
     )
     return response["anchor"][0]
 
 
 def insert_batch(url, anchor_id, offset, size):
-    data = [{"key": f"event-{index}"} for index in range(offset, offset + size)]
-    return query(
-        url,
-        {
-            "request_type": "write",
-            "query": {
-                "write": {
-                    "entries": [
-                        {
-                            "for_each": {
-                                "param": "data",
-                                "body": [
-                                    {
-                                        "query": {
-                                            "name": "created",
-                                            "root": {
-                                                "add_n": {
-                                                    "label": NODE_LABEL,
-                                                    "properties": [
-                                                        [
-                                                            "severity",
-                                                            {
-                                                                "value": {
-                                                                    "string": SEVERITY
-                                                                }
-                                                            },
-                                                        ],
-                                                        [
-                                                            "key",
-                                                            {"expr": {"param": "key"}},
-                                                        ],
-                                                    ],
-                                                }
-                                            },
-                                        }
-                                    },
-                                    {
-                                        "query": {
-                                            "name": "linked",
-                                            "root": {
-                                                "add_e": {
-                                                    "input": {
-                                                        "nodes": {
-                                                            "reference": {
-                                                                "var": "created"
-                                                            }
-                                                        }
-                                                    },
-                                                    "label": EDGE_LABEL,
-                                                    "to": {"ids": [anchor_id]},
-                                                    "properties": [
-                                                        [
-                                                            "severity",
-                                                            {
-                                                                "value": {
-                                                                    "string": SEVERITY
-                                                                }
-                                                            },
-                                                        ]
-                                                    ],
-                                                }
-                                            },
-                                        }
-                                    },
-                                ],
-                            }
-                        }
+    body = [
+        entry(
+            "created",
+            {
+                "add_n": {
+                    "label": NODE_LABEL,
+                    "properties": [
+                        ["severity", {"value": {"string": SEVERITY}}],
+                        ["key", {"expr": {"param": "key"}}],
                     ],
-                    "returns": [],
                 }
             },
-            "parameters": {"data": data},
-            "parameter_types": {"data": {"array": "object"}},
-        },
+        ),
+        entry(
+            "linked",
+            {
+                "add_e": {
+                    "input": {"nodes": {"reference": {"var": "created"}}},
+                    "label": EDGE_LABEL,
+                    "to": {"ids": [anchor_id]},
+                    "properties": [["severity", {"value": {"string": SEVERITY}}]],
+                }
+            },
+        ),
+    ]
+    data = [{"key": f"event-{index}"} for index in range(offset, offset + size)]
+    return post(
+        url,
+        batch(
+            "write",
+            [{"for_each": {"param": "data", "body": body}}],
+            parameters={"data": data},
+            parameter_types={"data": {"array": "object"}},
+        ),
     )
 
 
 def delete_batch(url, ids):
-    return query(
+    root = {"drop": {"input": {"nodes": {"reference": {"param": "ids"}}}}}
+    return post(
         url,
-        {
-            "request_type": "write",
-            "query": {
-                "write": {
-                    "entries": [
-                        {
-                            "query": {
-                                "name": "deleted",
-                                "root": {
-                                    "drop": {
-                                        "input": {
-                                            "nodes": {"reference": {"param": "ids"}}
-                                        }
-                                    }
-                                },
-                            }
-                        }
-                    ],
-                    "returns": [],
-                }
-            },
-            "parameters": {"ids": ids},
-            "parameter_types": {"ids": {"array": "i64"}},
-        },
+        batch(
+            "write",
+            [entry("deleted", root)],
+            parameters={"ids": ids},
+            parameter_types={"ids": {"array": "i64"}},
+        ),
     )
 
 
-def label_predicate(label):
+def equals(property_name, value):
     return {
         "eq": {
-            "left": {"property": "$label"},
-            "right": {"constant": {"string": label}},
+            "left": {"property": property_name},
+            "right": {"constant": {"string": value}},
         }
     }
+
+
+def label_predicate(label):
+    return equals("$label", label)
 
 
 def indexed_predicate(label):
     return {
-        "and": {
-            "predicates": [
-                label_predicate(label),
-                {
-                    "eq": {
-                        "left": {"property": "severity"},
-                        "right": {"constant": {"string": SEVERITY}},
-                    }
-                },
-            ]
-        }
+        "and": {"predicates": [label_predicate(label), equals("severity", SEVERITY)]}
     }
 
 
+def source(kind, predicate):
+    return {kind: {"predicate": predicate}}
+
+
+def count(input_root):
+    return {"count": {"input": input_root}}
+
+
 def read_state(url, anchor_id):
-    response = query(
-        url,
-        {
-            "request_type": "read",
-            "query": {
-                "read": {
-                    "entries": [
-                        {
-                            "query": {
-                                "name": "node_ids",
-                                "root": {
-                                    "id": {
-                                        "input": {
-                                            "nodes_where": {
-                                                "predicate": label_predicate(NODE_LABEL)
-                                            }
-                                        }
-                                    }
-                                },
-                            }
-                        },
-                        {
-                            "query": {
-                                "name": "node_index_count",
-                                "root": {
-                                    "count": {
-                                        "input": {
-                                            "nodes_where": {
-                                                "predicate": indexed_predicate(
-                                                    NODE_LABEL
-                                                )
-                                            }
-                                        }
-                                    }
-                                },
-                            }
-                        },
-                        {
-                            "query": {
-                                "name": "edge_label_count",
-                                "root": {
-                                    "count": {
-                                        "input": {
-                                            "edges_where": {
-                                                "predicate": label_predicate(EDGE_LABEL)
-                                            }
-                                        }
-                                    }
-                                },
-                            }
-                        },
-                        {
-                            "query": {
-                                "name": "edge_index_count",
-                                "root": {
-                                    "count": {
-                                        "input": {
-                                            "edges_where": {
-                                                "predicate": indexed_predicate(
-                                                    EDGE_LABEL
-                                                )
-                                            }
-                                        }
-                                    }
-                                },
-                            }
-                        },
-                        {
-                            "query": {
-                                "name": "adjacency_count",
-                                "root": {
-                                    "count": {
-                                        "input": {
-                                            "in_e": {
-                                                "input": {
-                                                    "nodes": {
-                                                        "reference": {
-                                                            "ids": [anchor_id]
-                                                        }
-                                                    }
-                                                },
-                                                "label": EDGE_LABEL,
-                                            }
-                                        }
-                                    }
-                                },
-                            }
-                        },
-                        {
-                            "query": {
-                                "name": "anchor_count",
-                                "root": {
-                                    "count": {
-                                        "input": {
-                                            "nodes_where": {
-                                                "predicate": {
-                                                    "eq": {
-                                                        "left": {"property": "$label"},
-                                                        "right": {
-                                                            "constant": {
-                                                                "string": "ConcurrentAnchor"
-                                                            }
-                                                        },
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                },
-                            }
-                        },
-                    ],
-                    "returns": [
-                        "node_ids",
-                        "node_index_count",
-                        "edge_label_count",
-                        "edge_index_count",
-                        "adjacency_count",
-                        "anchor_count",
-                    ],
+    names_and_roots = [
+        (
+            "node_ids",
+            {"id": {"input": source("nodes_where", label_predicate(NODE_LABEL))}},
+        ),
+        (
+            "node_index_count",
+            count(source("nodes_where", indexed_predicate(NODE_LABEL))),
+        ),
+        (
+            "edge_label_count",
+            count(source("edges_where", label_predicate(EDGE_LABEL))),
+        ),
+        (
+            "edge_index_count",
+            count(source("edges_where", indexed_predicate(EDGE_LABEL))),
+        ),
+        (
+            "adjacency_count",
+            count(
+                {
+                    "in_e": {
+                        "input": {"nodes": {"reference": {"ids": [anchor_id]}}},
+                        "label": EDGE_LABEL,
+                    }
                 }
-            },
-        },
+            ),
+        ),
+        (
+            "anchor_count",
+            count(source("nodes_where", label_predicate(ANCHOR_LABEL))),
+        ),
+    ]
+    response = post(
+        url,
+        batch(
+            "read",
+            [entry(name, root) for name, root in names_and_roots],
+            [name for name, _ in names_and_roots],
+        ),
     )
-    return (
-        response["node_ids"],
-        response["node_index_count"],
-        response["edge_label_count"],
-        response["edge_index_count"],
-        response["adjacency_count"],
-        response["anchor_count"],
-    )
+    return tuple(response[name] for name, _ in names_and_roots)
 
 
 def run_concurrently(tasks):
@@ -409,8 +251,8 @@ def chunks(values, count):
 
 
 def assert_state(url, anchor_id, expected):
-    counts = read_state(url, anchor_id)
-    node_ids, node_index, edge_label, edge_index, adjacency, anchor_count = counts
+    state = read_state(url, anchor_id)
+    node_ids, node_index, edge_label, edge_index, adjacency, anchor_count = state
     if (
         len(node_ids) != expected
         or node_index != expected
@@ -427,7 +269,7 @@ def assert_state(url, anchor_id, expected):
             f"expected memberships={expected} anchor=1"
         )
     if len(set(node_ids)) != len(node_ids):
-        raise RuntimeError("node equality index returned duplicate IDs")
+        raise RuntimeError("node label row returned duplicate IDs")
     return node_ids
 
 
@@ -473,9 +315,9 @@ def main():
     node_ids = assert_state(args.url, anchor_id, expected)
 
     half = args.clients // 2
-    deleted_groups = chunks(node_ids[: expected // 2], half)
     mixed_tasks = [
-        lambda ids=ids: delete_batch(args.url, ids) for ids in deleted_groups
+        lambda ids=ids: delete_batch(args.url, ids)
+        for ids in chunks(node_ids[: expected // 2], half)
     ] + [
         lambda index=index: insert_batch(
             args.url,
