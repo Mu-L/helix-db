@@ -2610,10 +2610,6 @@ fn increment_count(counts: &mut BTreeMap<String, u64>, name: &str) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use slatedb::object_store::memory::InMemory;
-
     use super::*;
     use crate::encoding::v1::keys::NodePropertyKey;
     use crate::encoding::v1::property::equality_value::{
