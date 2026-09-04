@@ -42,7 +42,7 @@ pub(super) mod kernel_agreement {
             self.0 ^= self.0 << 13;
             self.0 ^= self.0 >> 7;
             self.0 ^= self.0 << 17;
-            ((self.0 >> 40) as f32 / 8_388_608.0) * 2.0 - 1.0
+            ((self.0 >> 40) as f32 / 8_388_608.0) - 1.0
         }
 
         pub fn vector(&mut self, dimension: usize) -> Vec<f32> {
