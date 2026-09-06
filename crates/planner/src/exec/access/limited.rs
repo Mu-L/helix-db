@@ -136,9 +136,16 @@ fn tightest_limit(
     left: properties::PositiveUsize,
     right: properties::PositiveUsize,
 ) -> properties::PositiveUsize {
-    if left <= right {
-        left
-    } else {
-        right
-    }
+    if left <= right { left } else { right }
+}
+
+/// A planner-selected access bound. Dynamic bounds must be evaluated before
+/// access and must never be removed using a static cardinality estimate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecAccessLimit {
+    /// A positive literal bound.
+    Static(properties::PositiveUsize),
+    /// A runtime expression, including a bound that may resolve to zero.
+    Dynamic(crate::ir::StreamBoundExprPlan),
 }
