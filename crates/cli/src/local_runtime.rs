@@ -1325,6 +1325,7 @@ mod tests {
         assert!(!hint.contains("Start it"));
         assert!(!hint.to_lowercase().contains("docker"));
     }
+    #[cfg(unix)]
     #[test]
     fn status_command_timeout_kills_a_wedged_probe() {
         let mut command = Command::new("sh");
