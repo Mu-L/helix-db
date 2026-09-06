@@ -146,12 +146,16 @@ impl<'db> ExecutionContext<'db> {
                     for filter in filters {
                         allowed &= self.node_secondary_ids(filter, None).await?.into_bitmap();
                     }
-                    let read = self.node_range_index_ids(&driver.key, &driver.range, None);
-                    let ordered = read
-                        .await?
-                        .into_iter()
-                        .filter(|id| allowed.contains(*id))
-                        .collect();
+                    let ordered = self
+                        .range_index_ids(
+                            crate::index_lifecycle::IndexElementKind::Node,
+                            &driver.key,
+                            &driver.range,
+                            helix_planner::ir::RangeScanIteration::Forward,
+                            core::slice::from_ref(&allowed),
+                            range_limit,
+                        )
+                        .await?;
                     Ok(SecondaryIds::Ordered(ordered))
                 }
             }
@@ -244,12 +248,16 @@ impl<'db> ExecutionContext<'db> {
                     for filter in filters {
                         allowed &= self.edge_secondary_ids(filter, None).await?.into_bitmap();
                     }
-                    let read = self.edge_range_index_ids(&driver.key, &driver.range, None);
-                    let ordered = read
-                        .await?
-                        .into_iter()
-                        .filter(|id| allowed.contains(*id))
-                        .collect();
+                    let ordered = self
+                        .range_index_ids(
+                            crate::index_lifecycle::IndexElementKind::Edge,
+                            &driver.key,
+                            &driver.range,
+                            helix_planner::ir::RangeScanIteration::Forward,
+                            core::slice::from_ref(&allowed),
+                            range_limit,
+                        )
+                        .await?;
                     Ok(SecondaryIds::Ordered(ordered))
                 }
             }

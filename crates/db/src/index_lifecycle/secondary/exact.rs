@@ -2,6 +2,11 @@
 
 use super::*;
 
+mod ordered;
+pub(crate) use ordered::{
+    scan_active_range_generation_ordered, ExactRangeScanProgress, UnobservedRangeScan,
+};
+
 #[async_trait]
 trait ExactRangeRows {
     async fn next_exact(
@@ -452,6 +457,12 @@ async fn consume_active_range_rows<A: ExactRangeAccumulator>(
         let key_value = key
             .range_value()
             .expect("the validated range lane always carries a range value");
+        if !membership
+            .iter()
+            .all(|bitmap| bitmap.contains(value_owner.get()))
+        {
+            continue;
+        }
         if !authoritative_range_matches(
             reader,
             handle.scope(),
@@ -460,14 +471,9 @@ async fn consume_active_range_rows<A: ExactRangeAccumulator>(
             direction,
             key_value,
             query,
+            &UnobservedRangeScan,
         )
         .await?
-        {
-            continue;
-        }
-        if !membership
-            .iter()
-            .all(|bitmap| bitmap.contains(value_owner.get()))
         {
             continue;
         }
@@ -1018,3 +1024,6 @@ mod tests {
         db.close().await.unwrap();
     }
 }
+
+#[cfg(test)]
+pub(crate) use ordered::RangeScanCounters;
