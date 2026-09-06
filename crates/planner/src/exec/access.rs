@@ -7,6 +7,11 @@
 mod edge;
 mod limited;
 mod node;
+mod ordering;
+pub(crate) use ordering::{
+    access_delivers_order, edge_range_ordering, executable_range_ordering, node_range_ordering,
+    range_access_can_push_limit,
+};
 
 pub(in crate::exec) use edge::{exact_edge_equality, ExecEdgeEqualityAccessPlan};
 pub use edge::{ExecEdgeAccessPlan, ExecEdgeSecondaryRangePlan, ExecEdgeSecondarySetPlan};

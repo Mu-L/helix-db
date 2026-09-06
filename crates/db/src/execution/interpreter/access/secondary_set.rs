@@ -119,7 +119,14 @@ impl<'db> ExecutionContext<'db> {
                     .map(SecondaryIds::Unordered)
                 }
                 exec::ExecNodeSecondarySetPlan::Range(range) => self
-                    .node_range_index_ids(&range.key, &range.range, range_limit)
+                    .range_index_ids(
+                        crate::index_lifecycle::IndexElementKind::Node,
+                        &range.key,
+                        &range.range,
+                        range.iteration,
+                        &[],
+                        range_limit,
+                    )
                     .await
                     .map(SecondaryIds::Ordered),
                 exec::ExecNodeSecondarySetPlan::Intersect { driver, rest } => {
@@ -151,7 +158,7 @@ impl<'db> ExecutionContext<'db> {
                             crate::index_lifecycle::IndexElementKind::Node,
                             &driver.key,
                             &driver.range,
-                            helix_planner::ir::RangeScanIteration::Forward,
+                            driver.iteration,
                             core::slice::from_ref(&allowed),
                             range_limit,
                         )
@@ -221,7 +228,14 @@ impl<'db> ExecutionContext<'db> {
                     .map(SecondaryIds::Unordered)
                 }
                 exec::ExecEdgeSecondarySetPlan::Range(range) => self
-                    .edge_range_index_ids(&range.key, &range.range, range_limit)
+                    .range_index_ids(
+                        crate::index_lifecycle::IndexElementKind::Edge,
+                        &range.key,
+                        &range.range,
+                        range.iteration,
+                        &[],
+                        range_limit,
+                    )
                     .await
                     .map(SecondaryIds::Ordered),
                 exec::ExecEdgeSecondarySetPlan::Intersect { driver, rest } => {
@@ -253,7 +267,7 @@ impl<'db> ExecutionContext<'db> {
                             crate::index_lifecycle::IndexElementKind::Edge,
                             &driver.key,
                             &driver.range,
-                            helix_planner::ir::RangeScanIteration::Forward,
+                            driver.iteration,
                             core::slice::from_ref(&allowed),
                             range_limit,
                         )

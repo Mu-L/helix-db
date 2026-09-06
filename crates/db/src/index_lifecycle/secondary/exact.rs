@@ -794,6 +794,9 @@ pub(crate) async fn run_production_contracts() {
 }
 
 #[cfg(test)]
+pub(crate) use ordered::RangeScanCounters;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1024,6 +1027,3 @@ mod tests {
         db.close().await.unwrap();
     }
 }
-
-#[cfg(test)]
-pub(crate) use ordered::RangeScanCounters;

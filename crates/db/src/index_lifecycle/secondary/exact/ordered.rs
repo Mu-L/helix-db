@@ -143,8 +143,11 @@ impl<R: DbReadOps + Sync> RangeScan<'_, R> {
                     Bound::Included(value.entity_key_suffix(u64::MAX)),
                 );
                 let mut rows = self.reader.scan_prefix(prefix, bounds).await?;
-                while let Some(row) = rows.next().await? {
+                loop {
                     self.progress.checkpoint()?;
+                    let Some(row) = rows.next().await? else {
+                        break;
+                    };
                     let entry = self.checked_entry(row)?;
                     if &entry.value != value {
                         return Err(corruption("secondary tie recovery escaped its exact value"));
@@ -234,9 +237,12 @@ pub(crate) async fn scan_active_range_generation_ordered(
     let mut retained = VecDeque::new();
     let mut discarded = false;
     let maximum = limit.unwrap_or(usize::MAX);
-    while let Some(row) = rows.next().await? {
-        // Checking each entry also covers long runs of rejected membership IDs.
+    loop {
+        // Check before each storage read, including long runs of non-members.
         progress.checkpoint()?;
+        let Some(row) = rows.next().await? else {
+            break;
+        };
         let entry = scan.checked_entry(row)?;
         if iteration == RangeScanIteration::Forward {
             if scan.contains(entry.owner) && scan.verify(entry.owner, &entry.value).await? {
