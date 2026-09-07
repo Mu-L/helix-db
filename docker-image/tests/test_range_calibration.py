@@ -4,7 +4,7 @@ import io
 import unittest
 from unittest import mock
 
-import dalton_benchmark as benchmark
+import range_benchmark as benchmark
 
 
 class RangeCalibrationTests(unittest.TestCase):

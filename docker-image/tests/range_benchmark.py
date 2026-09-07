@@ -79,7 +79,7 @@ def prepare(port, rows):
 
 
 def fixture_rows(size, raw_bytes, tied, full_properties=False):
-    projection = json.loads((FIXTURES / 'dalton-find-resources-by-type.json').read_text())['query']['read']['entries'][0]['query']['root']['value_map']['properties']
+    projection = json.loads((FIXTURES / 'ordered-range-wide-projection.json').read_text())['query']['read']['entries'][0]['query']['root']['value_map']['properties']
     rows = []
     for i in range(size * 5):
         # Exactly 20% belong to the target; matching IDs are interleaved.
@@ -103,7 +103,7 @@ def percentile(values, percentile):
 
 
 def calibrate(port, size, samples):
-    payload = json.loads((FIXTURES / 'dalton-find-resource-dedup-keys-by-type.json').read_text())
+    payload = json.loads((FIXTURES / 'ordered-range-narrow-projection.json').read_text())
     payload['parameters']['limit'] = size
     order = payload['query']['read']['entries'][0]['query']['root']['value_map']['input']['limit']['input']['order_by']
     timings = {'asc': [], 'desc': []}
@@ -140,8 +140,8 @@ def run(args):
             prepare(port, rows)
     report = {'size': args.size, 'raw_bytes': args.raw_bytes, 'tied': args.tied,
               'samples': args.samples, 'full_properties': args.full_properties, 'mode': 'warm', 'workers': args.workers, 'churn': args.churn, 'cases': []}
-    for path in [FIXTURES / 'dalton-find-resources-by-type.json',
-                 FIXTURES / 'dalton-find-resource-dedup-keys-by-type.json']:
+    for path in [FIXTURES / 'ordered-range-wide-projection.json',
+                 FIXTURES / 'ordered-range-narrow-projection.json']:
         for window in (['broad', 'narrow'] if args.window == 'both' else [args.window]):
             payload = json.loads(path.read_text())
             cutoff = CUTOFF if window == 'broad' else CUTOFF + len(rows) - min(100, len(rows))

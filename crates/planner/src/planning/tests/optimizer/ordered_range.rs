@@ -1,7 +1,7 @@
 use crate::planning::tests::support::*;
 
 #[test]
-fn dalton_supplied_queries_use_reverse_range_and_runtime_limit() {
+fn ordered_range_queries_use_reverse_range_and_runtime_limit() {
     let indexes = IndexCatalogSnapshot::default()
         .with_node_eq(ScopedPropertyKey::try_new("Resource", "tenant").unwrap())
         .with_node_eq(ScopedPropertyKey::try_new("Resource", "type").unwrap())
@@ -10,27 +10,72 @@ fn dalton_supplied_queries_use_reverse_range_and_runtime_limit() {
                 .unwrap(),
         );
     for request in [
-        include_str!("../../../../../../docker-image/tests/fixtures/dalton-find-resources-by-type.json"),
-        include_str!("../../../../../../docker-image/tests/fixtures/dalton-find-resource-dedup-keys-by-type.json"),
+        include_str!(
+            "../../../../../../docker-image/tests/fixtures/ordered-range-wide-projection.json"
+        ),
+        include_str!(
+            "../../../../../../docker-image/tests/fixtures/ordered-range-narrow-projection.json"
+        ),
     ] {
         let json: serde_json::Value = serde_json::from_str(request).unwrap();
-        let root: AstNode = serde_json::from_value(json["query"]["read"]["entries"][0]["query"]["root"].clone()).unwrap();
-        for stats in [StatsSnapshot::default(), StatsSnapshot::default()
-            .with_node_label_cardinality(NonEmptyString::new("Resource").unwrap(), 100_000)
-            .with_node_eq_cardinality(ScopedPropertyKey::try_new("Resource", "tenant").unwrap(), 20_000)
-            .with_node_eq_cardinality(ScopedPropertyKey::try_new("Resource", "type").unwrap(), 10_000)
-            .with_node_range_cardinality(ScopedPropertyDirectionKey::try_new("Resource", "last_seen", RangeIndexDirection::Asc).unwrap(), 100_000)] {
-        let context = PlannerContext { stats, ..ctx(indexes.clone()) };
-        let plan = executable_ast(root.clone(), context.clone());
-        let diagnostics = crate::diagnostics::analyze(&plan, &context);
-        assert_eq!(diagnostics.statistics.node_accesses.reverse_range_index_scans, 1, "{plan:#?}");
-        assert_eq!(diagnostics.statistics.node_accesses.dynamic_bounded_accesses, 1);
-        assert_no_exec_op_family(&plan, ExecOpFamily::Order);
-        let access = first_exec_access(&plan);
-        assert!(matches!(access, ExecAccessPlan::Limited(limited) if matches!(limited.limit(), crate::exec::ExecAccessLimit::Dynamic(_))), "{access:#?}");
-        assert!(matches!(unwrapped_first_exec_access(&plan), ExecAccessPlan::Node(ExecNodeAccessPlan::SecondarySet { set: crate::exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, filters } })
+        let root: AstNode =
+            serde_json::from_value(json["query"]["read"]["entries"][0]["query"]["root"].clone())
+                .unwrap();
+        for stats in [
+            StatsSnapshot::default(),
+            StatsSnapshot::default()
+                .with_node_label_cardinality(NonEmptyString::new("Resource").unwrap(), 100_000)
+                .with_node_eq_cardinality(
+                    ScopedPropertyKey::try_new("Resource", "tenant").unwrap(),
+                    20_000,
+                )
+                .with_node_eq_cardinality(
+                    ScopedPropertyKey::try_new("Resource", "type").unwrap(),
+                    10_000,
+                )
+                .with_node_range_cardinality(
+                    ScopedPropertyDirectionKey::try_new(
+                        "Resource",
+                        "last_seen",
+                        RangeIndexDirection::Asc,
+                    )
+                    .unwrap(),
+                    100_000,
+                ),
+        ] {
+            let context = PlannerContext {
+                stats,
+                ..ctx(indexes.clone())
+            };
+            let plan = executable_ast(root.clone(), context.clone());
+            let diagnostics = crate::diagnostics::analyze(&plan, &context);
+            assert_eq!(
+                diagnostics
+                    .statistics
+                    .node_accesses
+                    .reverse_range_index_scans,
+                1,
+                "{plan:#?}"
+            );
+            assert_eq!(
+                diagnostics
+                    .statistics
+                    .node_accesses
+                    .dynamic_bounded_accesses,
+                1
+            );
+            assert_no_exec_op_family(&plan, ExecOpFamily::Order);
+            let access = first_exec_access(&plan);
+            assert!(
+                matches!(access, ExecAccessPlan::Limited(limited) if matches!(limited.limit(), crate::exec::ExecAccessLimit::Dynamic(_))),
+                "{access:#?}"
+            );
+            assert!(
+                matches!(unwrapped_first_exec_access(&plan), ExecAccessPlan::Node(ExecNodeAccessPlan::SecondarySet { set: crate::exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, filters } })
             if driver.key.property == "last_seen" && driver.key.direction == RangeIndexDirection::Asc
-                && driver.iteration == crate::ir::RangeScanIteration::Reverse && filters.len() == 2), "{plan:#?}");
+                && driver.iteration == crate::ir::RangeScanIteration::Reverse && filters.len() == 2),
+                "{plan:#?}"
+            );
         }
     }
 }

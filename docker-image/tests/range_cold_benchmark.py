@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-import dalton_benchmark as bench
+import range_benchmark as bench
 
 HELPER = 'busybox@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0'
 
@@ -29,8 +29,8 @@ def memory(container, reset=False):
 
 
 def restart(container, port):
-    if not container.startswith('dalton-'):
-        raise ValueError('Only disposable dalton-* containers may be restarted')
+    if not container.startswith('range-benchmark-'):
+        raise ValueError('Only disposable range-benchmark-* containers may be restarted')
     subprocess.run(['docker', 'restart', container], check=True, stdout=subprocess.DEVNULL)
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
@@ -46,7 +46,7 @@ def run(args):
     rows = bench.fixture_rows(args.size, args.raw_bytes, False)
     expected_rows = sorted((row for row in rows if row['tenant'] == bench.TENANT), key=lambda row: -row['last_seen'])[:1000]
     cases = []
-    for fixture in ['dalton-find-resources-by-type.json', 'dalton-find-resource-dedup-keys-by-type.json']:
+    for fixture in ['ordered-range-wide-projection.json', 'ordered-range-narrow-projection.json']:
         payload = json.loads((bench.FIXTURES / fixture).read_text())
         projection = payload['query']['read']['entries'][0]['query']['root']['value_map']['properties']
         expected = [{key: row[key] for key in projection if key in row} for row in expected_rows]
@@ -79,8 +79,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline', type=int, default=18196)
     parser.add_argument('--candidate', type=int, default=18197)
-    parser.add_argument('--baseline-container', default='dalton-disk-baseline')
-    parser.add_argument('--candidate-container', default='dalton-disk-candidate')
+    parser.add_argument('--baseline-container', default='range-benchmark-disk-baseline')
+    parser.add_argument('--candidate-container', default='range-benchmark-disk-candidate')
     parser.add_argument('--size', type=int, default=2000)
     parser.add_argument('--raw-bytes', type=int, default=4096)
     parser.add_argument('--samples', type=int, default=20)
