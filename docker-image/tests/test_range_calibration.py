@@ -8,13 +8,16 @@ import dalton_benchmark as benchmark
 
 
 class RangeCalibrationTests(unittest.TestCase):
-    def run_calibration(self, descending):
+    def run_calibration(self, descending, reverse_ascending_ties=False):
         ascending = [
             {"id": "a", "last_seen": 1},
             {"id": "b", "last_seen": 1},
             {"id": "c", "last_seen": 2},
             {"id": "d", "last_seen": 2},
         ]
+
+        if reverse_ascending_ties:
+            ascending = [ascending[1], ascending[0], ascending[3], ascending[2]]
 
         def request(_port, payload):
             order = payload["query"]["read"]["entries"][0]["query"]["root"]["value_map"]["input"]["limit"]["input"]["order_by"]["order"]
@@ -45,3 +48,10 @@ class RangeCalibrationTests(unittest.TestCase):
                     {"id": "c", "last_seen": 2}, {"id": "d", "last_seen": 2},
                     {"id": "a", "last_seen": 1}, last,
                 ])
+
+    def test_shared_tie_order_bug_is_rejected(self):
+        with self.assertRaises(AssertionError):
+            self.run_calibration([
+                {"id": "d", "last_seen": 2}, {"id": "c", "last_seen": 2},
+                {"id": "b", "last_seen": 1}, {"id": "a", "last_seen": 1},
+            ], reverse_ascending_ties=True)

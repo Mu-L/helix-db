@@ -16,7 +16,6 @@ import statistics
 import time
 import urllib.error
 import urllib.request
-from itertools import groupby
 from pathlib import Path
 
 FIXTURES = Path(__file__).parent / 'fixtures'
@@ -118,9 +117,12 @@ def calibrate(port, size, samples):
             assert len(results[direction]) == size
             if sample >= 3:
                 timings[direction].append(elapsed)
-        groups = [list(group) for _, group in groupby(
-            results['desc'], key=lambda row: row['last_seen'])]
-        assert results['asc'] == [row for group in reversed(groups) for row in group]
+        # Fixture IDs sort in insertion/entity-ID order. Build both orderings
+        # independently so a shared tie-order bug cannot pass calibration.
+        ascending = sorted(results['asc'], key=lambda row: (row['last_seen'], row['id']))
+        descending = sorted(ascending, key=lambda row: -row['last_seen'])
+        assert results['asc'] == ascending
+        assert results['desc'] == descending
     forward = statistics.median(timings['asc'])
     reverse = statistics.median(timings['desc'])
     result = {'forward_p50_s': forward, 'reverse_p50_s': reverse,
