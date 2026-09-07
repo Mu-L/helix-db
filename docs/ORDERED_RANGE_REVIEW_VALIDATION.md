@@ -27,3 +27,9 @@ ARM64 image `helixdb:ordered-range-review`, ID `sha256:c018d1f14b735331deb44f730
 Archive inspection, secret scanning, memory-mode round trip, native-volume persistence, membership deletion/restart/reinsertion, and MinIO/S3-compatible Compose smoke tests passed. The actual corrected calibration function also passed against this image with 500 interleaved resources, 100 matching resources, and all timestamps equal.
 
 No deployment is included. Hosted CI must validate the updated PR head separately.
+
+## CI fingerprint correction
+
+The Linux ARM production job for PR head `4c56a9cd6` passed all tests and every coverage floor, but its exact uncovered-line fingerprint differed from the local run above: **10,424** lines, SHA-256 `7343bd9430f31b4ac627ccf2c98aee62b62023270172b089c516718d5c1733b2`. The gate failed only on this mismatch. The baseline now uses that CI result; thresholds, exclusions, and runtime code are unchanged.
+
+[CI evidence](https://github.com/HelixDB/helix-db/actions/runs/34118643886/job/101731282205). The checked-in coverage report above remains the historical local measurement. The CI job did not retain its full LLVM report, so the precise four-line difference has not been attributed to a specific platform or compiler behavior. A fresh CI run must confirm the updated fingerprint.
