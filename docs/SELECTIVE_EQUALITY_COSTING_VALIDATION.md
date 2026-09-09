@@ -221,3 +221,45 @@ all 32 query-service tests, 23 Python tests, workspace and planner all-target
 Clippy with warnings denied, and formatting. Coverage includes missing shared
 and branch indexes, retained residual filters, absent shared conjuncts, branch
 limits and unsupported shared predicates.
+
+### Follow-up image comparison
+
+The candidate image uses production code from `1e90d1d7` and has local image ID
+`sha256:62070fd5b84bde4427d0a330cbad77c13bce89b7f9e4d2a961750d90b1f8b8cc`.
+The verified baseline is the same `cb893050` image (`sha256:7c71a70a2e43dfef1a771d94683b8448a0dc21fc89958d6ac92e0fa04e408860`)
+used in the original comparison. Its relevant Cargo artifacts were explicitly
+cleaned before rebuilding archived source, preventing stale build-cache reuse.
+
+The fixture and complete-response oracles are unchanged. The added OR/AND source
+returns all 2,000 matching IDs; this tests the reported source shape, not the
+customer's full `covered_workloads` traversal. All read/churn oracles passed.
+
+| Case | Samples per image | Baseline p50 / p95 / max ms | Candidate p50 / p95 / max ms |
+| --- | ---: | --- | --- |
+| rare (warm, quiet) | 50 | 44.689 / 51.943 / 59.046 | 1.771 / 2.968 / 5.984 |
+| empty (warm, quiet) | 50 | 44.211 / 46.048 / 46.437 | 1.502 / 2.187 / 3.841 |
+| covered_workloads_source (warm, quiet) | 50 | 54.732 / 56.983 / 57.338 | 9.300 / 9.924 / 10.609 |
+| rare (4 readers + churn) | 120 | 75.013 / 82.025 / 84.609 | 3.058 / 4.513 / 4.966 |
+| empty (4 readers + churn) | 120 | 76.112 / 84.662 / 99.095 | 2.326 / 4.939 / 6.724 |
+| covered_workloads_source (4 readers + churn) | 120 | 90.164 / 94.661 / 100.198 | 14.220 / 17.496 / 20.042 |
+| ordered-range-wide-projection.json:broad (ordered confirmation) | 300 | 17.642 / 20.126 / 28.970 | 17.537 / 19.678 / 33.199 |
+| ordered-range-wide-projection.json:narrow (ordered confirmation) | 300 | 3.445 / 3.806 / 4.360 | 3.358 / 3.723 / 4.598 |
+| ordered-range-narrow-projection.json:broad (ordered confirmation) | 300 | 15.985 / 17.154 / 28.645 | 15.816 / 16.734 / 28.002 |
+| ordered-range-narrow-projection.json:narrow (ordered confirmation) | 300 | 3.375 / 3.773 / 5.509 | 3.317 / 3.655 / 4.176 |
+
+The first 100-sample ordered comparison had a 0.52 ms higher candidate p95 in
+the shortest wide-projection case. A 300-sample quiet confirmation found no
+p50 or p95 regression across either projection/window; occasional maximum-latency
+outliers remain visible in the table. The confirmation ran after concurrent
+writers and local tests finished, on the same post-churn fixture. The initial
+and confirmation runs are both retained in
+[`selective_equality_or_benchmark_results.json`](selective_equality_or_benchmark_results.json).
+
+The prior ordered-storage suite passes all 18 tests, covering reverse ties,
+bounded retention, membership-first verification, cancellation and snapshot
+versions/tombstones. All 38 server unit/transport tests and 2 image-fixture tests
+pass with loopback sockets enabled. The new image passes the full smoke suite,
+including writes, persistence, restart, concurrent membership and MinIO/Compose.
+The exact `service_workload_map` query was not found in the accessible GitHub
+search results, so no matched benchmark claim is made for that full query.
+API-key handling is outside the changed engine paths and was not deployed.
