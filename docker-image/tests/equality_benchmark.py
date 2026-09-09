@@ -3,8 +3,8 @@
 
 Checks every complete response against the fixture oracle. Empty and rare
 matches use the same three indexed predicates and ordinary bound parameters.
-Run range_benchmark.py --no-seed afterwards to check both ordered projections
-on the same fixture. Timings are measurements; planner estimates are not work
+Run with --no-seed --ordered to check both ordered projections on the same
+fixture. Timings are measurements; planner estimates are not work
 counters and are deliberately not reported as measured I/O.
 """
 

@@ -71,6 +71,10 @@ fn selective_equality_uses_three_bitmaps_with_empty_or_populated_statistics() {
                     assert_eq!(plan.metrics().selected_cost.object_reads, 3);
                     assert_eq!(plan.metrics().selected_cost.range_nexts, 0);
                     assert_eq!(plan.metrics().selected_cost.parallel_width, 1);
+                    if deletion_rows.is_none() {
+                        // Full selected plan: serial memberships plus projection.
+                        assert_eq!(plan.metrics().selected_cost.latency.as_micros(), 16_220);
+                    }
                     let diagnostics = crate::diagnostics::analyze(&plan, &context);
                     assert!(diagnostics.insights.iter().all(|insight| !matches!(
                         insight,

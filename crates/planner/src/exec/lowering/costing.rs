@@ -433,3 +433,112 @@ pub(in crate::exec) fn predicate_cost_for_rows(
     let rows = rows.unwrap_or_else(|| profile.default_unknown_scan_rows.as_rows());
     profile.predicate_eval(cost::EstimatedRows::rows(rows))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selective_equality_lowering_costs_scan_and_bitmap_work_consistently() {
+        let profile = cost::StorageCostProfile::default();
+        let label = ir::NonEmptyString::new("Resource").unwrap();
+        let key = catalog::ScopedPropertyKey::try_new("Resource", "deleted").unwrap();
+        let value = ir::IndexValue::Literal(
+            ir::SecondaryIndexLiteral::new(helix_ast::value::PropertyValue::Bool(true)).unwrap(),
+        );
+        let exec::ExecNodeAccessPlan::Bitmap { bitmap: node } =
+            exec::ExecNodeAccessPlan::exact_equality(
+                catalog::NodeEqualityIndexMeta::try_new("node-deleted").unwrap(),
+                key.clone(),
+                value.clone(),
+            )
+        else {
+            panic!("non-unique equality uses a bitmap")
+        };
+        let exec::ExecEdgeAccessPlan::Bitmap { bitmap: edge } =
+            exec::ExecEdgeAccessPlan::exact_equality(
+                catalog::EdgeEqualityIndexMeta::try_new("edge-deleted").unwrap(),
+                key,
+                value,
+            )
+        else {
+            panic!("non-unique equality uses a bitmap")
+        };
+        let lookup = profile.bitmap_equality_lookup(profile.default_equality_index_rows);
+        let expected_ids = lookup
+            .serial(lookup)
+            .serial(profile.secondary_set_operation(cost::EstimatedRows::rows(20)));
+        for (node, edge, expected_rows) in [
+            (
+                exec::ExecNodeBitmapExpr::Intersect {
+                    driver: Box::new(node.clone()),
+                    rest: ir::AtLeast::from_one(node.clone()),
+                },
+                exec::ExecEdgeBitmapExpr::Intersect {
+                    driver: Box::new(edge.clone()),
+                    rest: ir::AtLeast::from_one(edge.clone()),
+                },
+                10,
+            ),
+            (
+                exec::ExecNodeBitmapExpr::Union {
+                    driver: Box::new(node.clone()),
+                    rest: ir::AtLeast::from_one(node.clone()),
+                },
+                exec::ExecEdgeBitmapExpr::Union {
+                    driver: Box::new(edge.clone()),
+                    rest: ir::AtLeast::from_one(edge.clone()),
+                },
+                20,
+            ),
+        ] {
+            assert_eq!(
+                node_bitmap_cost(&node, &profile),
+                (expected_ids, cost::EstimatedRows::rows(expected_rows))
+            );
+            assert_eq!(
+                edge_bitmap_cost(&edge, &profile),
+                (expected_ids, cost::EstimatedRows::rows(expected_rows))
+            );
+        }
+        let node = exec::ExecNodeSecondarySetPlan::Intersect {
+            driver: Box::new(exec::ExecNodeSecondarySetPlan::Bitmap(node)),
+            rest: ir::AtLeast::from_one(exec::ExecNodeSecondarySetPlan::Empty),
+        };
+        let edge = exec::ExecEdgeSecondarySetPlan::Intersect {
+            driver: Box::new(exec::ExecEdgeSecondarySetPlan::Bitmap(edge)),
+            rest: ir::AtLeast::from_one(exec::ExecEdgeSecondarySetPlan::Empty),
+        };
+        let expected_ids =
+            lookup.serial(profile.secondary_set_operation(profile.default_equality_index_rows));
+        assert_eq!(
+            node_secondary_set_cost(&node, &profile),
+            (expected_ids, cost::EstimatedRows::ZERO)
+        );
+        assert_eq!(
+            edge_secondary_set_cost(&edge, &profile),
+            (expected_ids, cost::EstimatedRows::ZERO)
+        );
+        assert_eq!(
+            node_access_cost(
+                &ir::NodeAccessPlan::LabelScan {
+                    label: label.clone()
+                },
+                &profile
+            ),
+            profile.label_scan(profile.default_unknown_scan_rows)
+        );
+        assert_eq!(
+            edge_access_cost(&ir::EdgeAccessPlan::LabelScan { label }, &profile),
+            profile.label_scan(profile.default_unknown_scan_rows)
+        );
+        assert_eq!(
+            node_access_cost(&ir::NodeAccessPlan::AllScan, &profile),
+            profile.element_scan(profile.default_unknown_scan_rows)
+        );
+        assert_eq!(
+            edge_access_cost(&ir::EdgeAccessPlan::AllScan, &profile),
+            profile.element_scan(profile.default_unknown_scan_rows)
+        );
+    }
+}
