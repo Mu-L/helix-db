@@ -53,10 +53,12 @@ pub(in crate::exec) fn node_access_cost(
                 profile,
                 contracts::node_access_hard_upper_bound(source).map(|rows| rows as u64),
             )),
+        ir::NodeAccessPlan::AllScan => profile.element_scan(profile.default_unknown_scan_rows),
+        ir::NodeAccessPlan::LabelScan { .. } => {
+            profile.label_scan(profile.default_unknown_scan_rows)
+        }
         ir::NodeAccessPlan::FromParam { .. }
         | ir::NodeAccessPlan::FromVar { .. }
-        | ir::NodeAccessPlan::AllScan
-        | ir::NodeAccessPlan::LabelScan { .. }
         | ir::NodeAccessPlan::VectorSearch { .. }
         | ir::NodeAccessPlan::TextSearch { .. } => scan_cost_for_rows(
             profile,
@@ -89,10 +91,12 @@ pub(in crate::exec) fn edge_access_cost(
                 profile,
                 contracts::edge_access_hard_upper_bound(source).map(|rows| rows as u64),
             )),
+        ir::EdgeAccessPlan::AllScan => profile.element_scan(profile.default_unknown_scan_rows),
+        ir::EdgeAccessPlan::LabelScan { .. } => {
+            profile.label_scan(profile.default_unknown_scan_rows)
+        }
         ir::EdgeAccessPlan::FromParam { .. }
         | ir::EdgeAccessPlan::FromVar { .. }
-        | ir::EdgeAccessPlan::AllScan
-        | ir::EdgeAccessPlan::LabelScan { .. }
         | ir::EdgeAccessPlan::VectorSearch { .. }
         | ir::EdgeAccessPlan::TextSearch { .. } => scan_cost_for_rows(
             profile,
@@ -123,6 +127,12 @@ fn bitmap_expr_cost(
         return (cost, rows);
     }
     let children = children.into_iter().collect::<Vec<_>>();
+    let input_rows = cost::EstimatedRows::rows(
+        children
+            .iter()
+            .map(|(_, rows)| rows.as_rows())
+            .fold(0_u64, u64::saturating_add),
+    );
     let rows = if intersect {
         children
             .iter()
@@ -141,7 +151,7 @@ fn bitmap_expr_cost(
         .into_iter()
         .map(|(cost, _)| cost)
         .fold(cost::CostVector::ZERO, cost::CostVector::serial)
-        .serial(profile.secondary_set_operation(rows));
+        .serial(profile.secondary_set_operation(input_rows));
     (cost, rows)
 }
 
@@ -266,11 +276,17 @@ fn node_secondary_set_cost(
                 .map(|(_, rows)| *rows)
                 .min()
                 .expect("secondary intersection has children");
+            let input_rows = cost::EstimatedRows::rows(
+                children
+                    .iter()
+                    .map(|(_, rows)| rows.as_rows())
+                    .fold(0_u64, u64::saturating_add),
+            );
             let cost = children
                 .into_iter()
                 .map(|(cost, _)| cost)
                 .fold(cost::CostVector::ZERO, cost::CostVector::serial)
-                .serial(profile.secondary_set_operation(rows));
+                .serial(profile.secondary_set_operation(input_rows));
             (cost, rows)
         }
         exec::ExecNodeSecondarySetPlan::Union { driver, rest } => {
@@ -357,11 +373,17 @@ fn edge_secondary_set_cost(
                 .map(|(_, rows)| *rows)
                 .min()
                 .expect("secondary intersection has children");
+            let input_rows = cost::EstimatedRows::rows(
+                children
+                    .iter()
+                    .map(|(_, rows)| rows.as_rows())
+                    .fold(0_u64, u64::saturating_add),
+            );
             let cost = children
                 .into_iter()
                 .map(|(cost, _)| cost)
                 .fold(cost::CostVector::ZERO, cost::CostVector::serial)
-                .serial(profile.secondary_set_operation(rows));
+                .serial(profile.secondary_set_operation(input_rows));
             (cost, rows)
         }
         exec::ExecEdgeSecondarySetPlan::Union { driver, rest } => {
