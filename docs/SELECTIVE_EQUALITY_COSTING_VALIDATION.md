@@ -106,8 +106,8 @@ Measurements taken 2026-09-09 with canonical `Dockerfile`, Rust 1.97.1,
 | Baseline (already includes ordered-read optimization) | `cb893050927a193444c9cbfb93209f8efee47ec8` | `sha256:7c71a70a2e43dfef1a771d94683b8448a0dc21fc89958d6ac92e0fa04e408860` |
 | Candidate | `a1fbe5d54a1d4395f6b63d247be4dffb030804ef` | `sha256:5f8fbfbedebf0294e4da6b5d5febee303b4dd2ae827a6db5e07a15dc7d58cb96` |
 
-Subsequent commits add tests and this report; production Rust code is identical
-to the candidate image source. These local image IDs are not deployed digests.
+These images capture the initial three-equality fix. The customer follow-up below
+extends it for OR/AND sources. These local image IDs are not deployed digests.
 
 The fixture has 10,000 resources, 4 KiB raw data per row, interleaved tenant/type
 values, three rare deleted matches and an empty control. Each request's complete
@@ -184,3 +184,40 @@ python3 docker-image/tests/equality_benchmark.py --no-seed --churn --workers 4 -
 Production acceptance still requires the exact request/catalog/image identity,
 explicitly authorized deployment, and follow-up p50/p95/max and work measurements.
 This change has not been deployed to a live tenant.
+
+## Customer follow-up: covered_workloads
+
+The customer's ab1–ab4 probes report that `tenant+type`, `type+deleted`, and
+`deleted` alone remain fast, while combining all three takes 2.1 seconds with
+`unbounded_scan`. This agrees with the three-equality reproduction above.
+
+The additional `OR(type=...) AND tenant` source exposed a second issue in the
+initial fix. The access extractor distributed shared predicates into each OR
+branch, producing `(tenant AND type=A) OR (tenant AND type=B)`. Serial costing
+then correctly charged the repeated tenant lookup: 20,320 estimated microseconds
+for indexed access versus 18,050 for label scan plus filter. Both candidates
+survived exploration; the scan won even with the corrected scan costs.
+
+The extension preserves `tenant AND (type=A OR type=B)` explicitly. A typed plan
+variant requires a nonempty shared conjunction and at least two nonempty union
+branches; the existing union branch limit still applies. Shared lookup work is
+performed once, and the same-property type union can use the existing batch read.
+The selected access costs 6,020 microseconds: 5,060 for tenant, 920 for the batched
+type union, 30 membership work and 10 final row construction. The scan alternative
+stays at 18,050. Measured latency is recorded separately below.
+
+The reproducer is committed in `6231944f` and fails before this extension. Tests
+cover 2, 3 and 8 type alternatives, constants and bound parameters, both conjunct
+orders, node and edge paths, and complete DB results from two tenant catalogs
+with an absent OR branch. Missing-index diagnostics include both the shared and
+branch properties. Unsupported predicates and branch limits retain safe fallbacks.
+
+The previous ordered-read fix is retained. No changes were made to the executor,
+reverse traversal calibration, ordered range rules, dynamic limits, tie handling,
+write path or API-key handling.
+
+Local validation after the extension passes 1,262 planner tests, 200 doctests,
+all 32 query-service tests, 23 Python tests, workspace and planner all-target
+Clippy with warnings denied, and formatting. Coverage includes missing shared
+and branch indexes, retained residual filters, absent shared conjuncts, branch
+limits and unsupported shared predicates.

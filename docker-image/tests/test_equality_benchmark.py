@@ -5,6 +5,14 @@ import equality_benchmark as benchmark
 
 
 class EqualityBenchmarkTests(unittest.TestCase):
+    def test_covered_workloads_envelope_keeps_tenant_outside_the_type_union(self):
+        request = benchmark.covered_workloads_lookup(["pod", "missing"])
+        self.assertEqual(request["parameters"], {"tenant": benchmark.bench.TENANT, "type-0": "pod", "type-1": "missing"})
+        source = request["query"]["read"]["entries"][0]["query"]["root"]["values"]["input"]
+        terms = source["nodes_where"]["predicate"]["and"]["predicates"]
+        self.assertEqual(terms[2]["eq"]["left"], {"property": "tenant"})
+        self.assertEqual([term["eq"]["left"] for term in terms[1]["or"]["predicates"]], [{"property": "type"}] * 2)
+
     def test_oracle_selects_all_and_only_matching_fixture_rows(self):
         rows = benchmark.fixture_rows(2000, 1)
         self.assertEqual(benchmark.expected_ids(rows, "pod"), [

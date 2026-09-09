@@ -102,6 +102,42 @@ async fn selective_equality_preserves_tenant_snapshot_and_churn_results() {
     }
     // Cluster-scoped inventory must not stand in for the tenant's catalog.
     assert!(db.index_catalog_snapshot().node_eq.is_empty());
+    // The customer's second source shape: OR(type=...) AND tenant. An absent
+    // branch must not erase matches, and another tenant's ordinals must not leak.
+    for (scope_index, scope) in scopes.into_iter().enumerate() {
+        let predicate = expr::Predicate::and(vec![
+            expr::Predicate::or(vec![
+                expr::Predicate::eq("type", "pod"),
+                expr::Predicate::eq("type", "missing"),
+            ]),
+            expr::Predicate::eq("tenant", "one"),
+        ]);
+        for traversal in [
+            traversal::g()
+                .n_with_label_where("Resource", predicate.clone())
+                .values(vec!["ordinal"]),
+            traversal::g()
+                .e_with_label_where("Resource", predicate)
+                .values(vec!["ordinal"]),
+        ] {
+            let result = db
+                .query_scoped(
+                    query::QueryRequest::read(
+                        batch::read_batch()
+                            .var_as("result", traversal)
+                            .returning(["result"]),
+                    ),
+                    scope,
+                )
+                .await
+                .unwrap();
+            let expected = (0..32)
+                .step_by(2)
+                .map(|ordinal| serde_json::json!({"ordinal": ordinal + scope_index * 100}))
+                .collect::<Vec<_>>();
+            assert_eq!(result["result"], serde_json::json!(expected));
+        }
+    }
     let predicate = expr::Predicate::and(vec![
         expr::Predicate::eq("tenant", "one"),
         expr::Predicate::eq("type", "pod"),

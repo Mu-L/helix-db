@@ -42,6 +42,20 @@ def fixture_rows(size, raw_bytes):
     return rows
 
 
+def covered_workloads_lookup(resource_types):
+    request = bench.batch("read", [{"values": {
+        "input": {"nodes_where": {"predicate": {"and": {"predicates": [
+            {"eq": {"left": {"property": "$label"}, "right": {"constant": {"string": "Resource"}}}},
+            {"or": {"predicates": [{"eq": {"left": {"property": "type"}, "right": {"param": f"type-{index}"}}}
+                                    for index in range(len(resource_types))]}},
+            {"eq": {"left": {"property": "tenant"}, "right": {"param": "tenant"}}},
+        ]}}}}, "properties": ["id"],
+    }}])
+    request["parameters"] = {"tenant": bench.TENANT, **{f"type-{index}": value for index, value in enumerate(resource_types)}}
+    request["query_name"] = "covered_workloads_source"
+    return request
+
+
 def prepare(port, rows):
     for prop in ["tenant", "type", "deleted", "last_seen"]:
         family = "node_range" if prop == "last_seen" else "node_equality"
@@ -89,6 +103,8 @@ def run(args):
               "mode": "warm", "workers": args.workers, "churn": args.churn, "cases": []}
     cases = [("rare" if resource_type == "pod" else "empty", lookup(resource_type), expected_ids(rows, resource_type))
              for resource_type in ["pod", "no-matching-type"]]
+    cases.append(("covered_workloads_source", covered_workloads_lookup(["pod", "no-matching-type"]),
+                  sorted(row["id"] for row in rows if row["tenant"] == bench.TENANT and row["type"] == "pod")))
     if args.ordered:
         cases = []
         for fixture in ["ordered-range-wide-projection.json", "ordered-range-narrow-projection.json"]:

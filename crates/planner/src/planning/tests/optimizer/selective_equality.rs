@@ -3,6 +3,37 @@
 use crate::planning::tests::support::*;
 
 #[test]
+fn selective_equality_type_union_preserves_unindexed_residuals() {
+    for indexed_property in ["tenant", "type"] {
+        let key = ScopedPropertyKey::try_new("Resource", indexed_property).unwrap();
+        let context = ctx(IndexCatalogSnapshot::default()
+            .with_node_eq(key.clone())
+            .with_edge_eq(key));
+        let predicate = Predicate::and(vec![
+            Predicate::eq("tenant", "one"),
+            Predicate::or(vec![
+                Predicate::eq("type", "pod"),
+                Predicate::eq("type", "service"),
+            ]),
+        ]);
+        for traversal in [
+            g().n_with_label_where("Resource", predicate.clone())
+                .values(vec!["id"]),
+            g().e_with_label_where("Resource", predicate)
+                .values(vec!["id"]),
+        ] {
+            let plan = executable_traversal(traversal, context.clone());
+            assert!(has_exec_op_family(&plan, ExecOpFamily::Filter));
+            assert_eq!(
+                plan.metrics().selected_cost.object_reads,
+                if indexed_property == "tenant" { 1 } else { 2 }
+            );
+            assert_eq!(plan.metrics().selected_cost.authoritative_graph_reads, 0);
+        }
+    }
+}
+
+#[test]
 fn selective_equality_type_union_keeps_the_tenant_intersection() {
     let indexes = ["tenant", "type"].into_iter().fold(
         IndexCatalogSnapshot::default(),
@@ -13,7 +44,10 @@ fn selective_equality_type_union_keeps_the_tenant_intersection() {
     );
     for type_count in [2, 3, 8] {
         for parameterized in [false, true] {
-            let mut params = ParamBindings::default();
+            let mut params = ParamBindings::default().with_value(
+                NonEmptyString::new("tenant").unwrap(),
+                PropertyValue::from("one"),
+            );
             let alternatives = (0..type_count)
                 .map(|index| {
                     let value = format!("workload-{index}");
@@ -29,9 +63,16 @@ fn selective_equality_type_union_keeps_the_tenant_intersection() {
                     }
                 })
                 .collect::<Vec<_>>();
-            let context = PlannerContext { params, ..ctx(indexes.clone()) };
+            let context = PlannerContext {
+                params,
+                ..ctx(indexes.clone())
+            };
             for union_first in [false, true] {
-                let tenant = Predicate::eq("tenant", "one");
+                let tenant = if parameterized {
+                    Predicate::eq_param("tenant", "tenant")
+                } else {
+                    Predicate::eq("tenant", "one")
+                };
                 let types = Predicate::or(alternatives.clone());
                 let predicate = Predicate::and(if union_first {
                     vec![types, tenant]
@@ -39,19 +80,32 @@ fn selective_equality_type_union_keeps_the_tenant_intersection() {
                     vec![tenant, types]
                 });
                 for traversal in [
-                    g().n_with_label_where("Resource", predicate.clone()).values(vec!["id"]),
-                    g().e_with_label_where("Resource", predicate).values(vec!["id"]),
+                    g().n_with_label_where("Resource", predicate.clone())
+                        .values(vec!["id"]),
+                    g().e_with_label_where("Resource", predicate)
+                        .values(vec!["id"]),
                 ] {
                     let plan = executable_traversal(traversal, context.clone());
-                    assert!(matches!(first_exec_access(&plan),
-                        ExecAccessPlan::Node(ExecNodeAccessPlan::SecondarySet { set: crate::exec::ExecNodeSecondarySetPlan::Intersect { .. } })
-                        | ExecAccessPlan::Edge(ExecEdgeAccessPlan::SecondarySet { set: crate::exec::ExecEdgeSecondarySetPlan::Intersect { .. } })
-                    ), "type_count={type_count}, parameterized={parameterized}: {:#?}", plan.steps());
+                    assert!(
+                        matches!(
+                            first_exec_access(&plan),
+                            ExecAccessPlan::Node(ExecNodeAccessPlan::SecondarySet {
+                                set: crate::exec::ExecNodeSecondarySetPlan::Intersect { .. }
+                            }) | ExecAccessPlan::Edge(ExecEdgeAccessPlan::SecondarySet {
+                                set: crate::exec::ExecEdgeSecondarySetPlan::Intersect { .. }
+                            })
+                        ),
+                        "type_count={type_count}, parameterized={parameterized}: {:#?}",
+                        plan.steps()
+                    );
                     assert_no_exec_op_family(&plan, ExecOpFamily::Filter);
                     assert_eq!(plan.metrics().selected_cost.range_nexts, 0);
+                    assert_eq!(plan.metrics().selected_cost.object_reads, type_count + 1);
+                    assert_eq!(plan.metrics().selected_cost.multi_get_calls, 1);
                     let diagnostics = crate::diagnostics::analyze(&plan, &context);
                     assert!(diagnostics.insights.iter().all(|insight| !matches!(
-                        insight, crate::diagnostics::PlannerInsight::UnboundedScan(_)
+                        insight,
+                        crate::diagnostics::PlannerInsight::UnboundedScan(_)
                     )));
                 }
             }

@@ -5,32 +5,57 @@ fn selective_equality_type_union_retains_full_cost_competition() {
     let rules = SeedRuleSet::default();
     let indexes = ["tenant", "type"].into_iter().fold(
         catalog::IndexCatalogSnapshot::default(),
-        |indexes, property| indexes.with_node_eq(
-            catalog::ScopedPropertyKey::try_new("Resource", property).unwrap(),
-        ),
+        |indexes, property| {
+            indexes.with_node_eq(catalog::ScopedPropertyKey::try_new("Resource", property).unwrap())
+        },
     );
     let config = optimizer::OptimizerConfig::from_context(&crate::context::PlannerContext {
-        indexes, ..Default::default()
+        indexes,
+        ..Default::default()
     });
     let expr = node_access_filter_expr(
-        ir::NodeAccessPlan::LabelScan { label: name("Resource") },
+        ir::NodeAccessPlan::LabelScan {
+            label: name("Resource"),
+        },
         ir::PredicatePlan::new(helix_ast::expr::Predicate::and(vec![
             helix_ast::expr::Predicate::eq("tenant", "one"),
             helix_ast::expr::Predicate::or(vec![
                 helix_ast::expr::Predicate::eq("type", "pod"),
                 helix_ast::expr::Predicate::eq("type", "service"),
             ]),
-        ])).unwrap(),
+        ]))
+        .unwrap(),
     );
     let result = optimize(&rules.optimizer(), expr, &config);
     assert_eq!(result.guardrail(), None);
-    let candidates = result.physical().iter().flat_map(|group| &group.alternatives).collect::<Vec<_>>();
+    let candidates = result
+        .physical()
+        .iter()
+        .flat_map(|group| &group.alternatives)
+        .collect::<Vec<_>>();
     assert_eq!(candidates.len(), 2);
     for entry in &candidates {
-        eprintln!("type union candidate: {:?} cost={:?}", entry.alternative.expr, entry.alternative.cost);
+        eprintln!(
+            "type union candidate: {:?} cost={:?}",
+            entry.alternative.expr, entry.alternative.cost
+        );
     }
-    let indexed = candidates.iter().find(|entry| matches!(entry.alternative.expr, physical::PhysicalExpr::Access { .. })).unwrap();
-    assert_eq!(result.best_alternative(result.root()).unwrap(), &indexed.alternative);
+    let indexed = candidates
+        .iter()
+        .find(|entry| {
+            matches!(
+                entry.alternative.expr,
+                physical::PhysicalExpr::Access { .. }
+            )
+        })
+        .unwrap();
+    assert_eq!(indexed.alternative.cost.latency.as_micros(), 6_020);
+    assert_eq!(indexed.alternative.cost.object_reads, 3);
+    assert_eq!(indexed.alternative.cost.multi_get_calls, 1);
+    assert_eq!(
+        result.best_alternative(result.root()).unwrap(),
+        &indexed.alternative
+    );
 }
 
 #[test]
