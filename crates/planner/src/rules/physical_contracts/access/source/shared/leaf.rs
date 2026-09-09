@@ -67,7 +67,7 @@ where
     AccessPhysicalContract::new(
         unbounded_range_access(F::all_scan_keyspace()),
         super::super::super::super::support::access_delivered(element),
-        storage.range_scan(storage.default_unknown_scan_rows),
+        storage.element_scan(storage.default_unknown_scan_rows),
         storage.default_unknown_scan_rows,
     )
 }
@@ -81,7 +81,7 @@ pub(super) fn label_scan_contract(
     AccessPhysicalContract::new(
         physical::PhysicalAccess::LabelScan,
         access_delivered_close(element),
-        storage.range_scan(rows),
+        storage.label_scan(rows),
         rows,
     )
 }

@@ -67,7 +67,13 @@ pub(super) fn access_set_contract(
                     .position(|child| child.range_iteration().is_some())
             })
             .flatten();
-        let scanned = driver.map_or(rows, |index| children[index].estimated_rows);
+        // Unordered set algebra consumes membership inputs, even when the
+        // intersection is estimated empty. Output cardinality only controls
+        // final row construction. Ordered drivers retain their visited budget.
+        let scanned = driver.map_or_else(
+            || set_union_estimated_rows(&child_estimates),
+            |index| children[index].estimated_rows,
+        );
         children
             .iter()
             .zip(secondary_costs)

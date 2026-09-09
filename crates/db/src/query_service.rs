@@ -684,6 +684,9 @@ impl QueryResponse {
 }
 
 #[cfg(test)]
+mod selective_equality_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use helix_ast::batch::{read_batch, write_batch, BatchCondition};
