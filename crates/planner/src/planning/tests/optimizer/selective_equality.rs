@@ -3,6 +3,63 @@
 use crate::planning::tests::support::*;
 
 #[test]
+fn selective_equality_type_union_keeps_the_tenant_intersection() {
+    let indexes = ["tenant", "type"].into_iter().fold(
+        IndexCatalogSnapshot::default(),
+        |indexes, property| {
+            let key = ScopedPropertyKey::try_new("Resource", property).unwrap();
+            indexes.with_node_eq(key.clone()).with_edge_eq(key)
+        },
+    );
+    for type_count in [2, 3, 8] {
+        for parameterized in [false, true] {
+            let mut params = ParamBindings::default();
+            let alternatives = (0..type_count)
+                .map(|index| {
+                    let value = format!("workload-{index}");
+                    let parameter = format!("type-{index}");
+                    params = params.clone().with_value(
+                        NonEmptyString::new(&parameter).unwrap(),
+                        PropertyValue::from(value.clone()),
+                    );
+                    if parameterized {
+                        Predicate::eq_param("type", parameter)
+                    } else {
+                        Predicate::eq("type", value)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let context = PlannerContext { params, ..ctx(indexes.clone()) };
+            for union_first in [false, true] {
+                let tenant = Predicate::eq("tenant", "one");
+                let types = Predicate::or(alternatives.clone());
+                let predicate = Predicate::and(if union_first {
+                    vec![types, tenant]
+                } else {
+                    vec![tenant, types]
+                });
+                for traversal in [
+                    g().n_with_label_where("Resource", predicate.clone()).values(vec!["id"]),
+                    g().e_with_label_where("Resource", predicate).values(vec!["id"]),
+                ] {
+                    let plan = executable_traversal(traversal, context.clone());
+                    assert!(matches!(first_exec_access(&plan),
+                        ExecAccessPlan::Node(ExecNodeAccessPlan::SecondarySet { set: crate::exec::ExecNodeSecondarySetPlan::Intersect { .. } })
+                        | ExecAccessPlan::Edge(ExecEdgeAccessPlan::SecondarySet { set: crate::exec::ExecEdgeSecondarySetPlan::Intersect { .. } })
+                    ), "type_count={type_count}, parameterized={parameterized}: {:#?}", plan.steps());
+                    assert_no_exec_op_family(&plan, ExecOpFamily::Filter);
+                    assert_eq!(plan.metrics().selected_cost.range_nexts, 0);
+                    let diagnostics = crate::diagnostics::analyze(&plan, &context);
+                    assert!(diagnostics.insights.iter().all(|insight| !matches!(
+                        insight, crate::diagnostics::PlannerInsight::UnboundedScan(_)
+                    )));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn selective_equality_uses_three_bitmaps_with_empty_or_populated_statistics() {
     let indexes = ["tenant", "type", "deleted"].into_iter().fold(
         IndexCatalogSnapshot::default(),
