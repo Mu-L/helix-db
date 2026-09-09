@@ -1,269 +1,63 @@
-# Selective equality costing regression (HEL-850)
+# Selective equality costing validation
 
-## Reproduction and scope
+With empty statistics, three selective equality predicates can lose to a label
+scan after intersection children are costed serially. Both candidates survive
+exploration. The comparison must include the label bitmap, graph-row hydration,
+row construction, and residual evaluation.
 
-The serial-child-cost change in [#1081](https://github.com/HelixDB/helix-db/pull/1081)
-reproduces the plan-selection flip with empty statistics. Both access candidates
-survive exploration; the regression is their cost comparison, not pruning or a
-missing index. This is a controlled reproduction of the suspected trigger in
-[HEL-850](https://linear.app/helix-db/issue/HEL-850), initially separate from production request capture. The authorized production
-follow-up below now includes the recovered ASTs and rollout identity.
+## Complete cost comparison
 
-GitHub delivery evidence is [Hyperscale #313](https://github.com/HelixDB/helix-hyperscale/pull/313):
-the new engine pin is `57877a76b307b6838ebd950c5f05dab4b7767d7e`, and its previous
-pin is `1402bd27980a722d8d740cfe1aa87a5358a0523c`. The production rollout record subsequently confirmed observed image digest
-`sha256:70b49b435a0960330bbd6097f2c57571b77c8c448ec5ded4c02903ec75309e8b`,
-which ECR maps to Hyperscale source `26c64acaf921a1b938d983db86a3d5668074c0ad`
-and this engine pin. See [production validation](SELECTIVE_EQUALITY_PRODUCTION_VALIDATION.md).
+The synthetic fixture uses three indexed equalities, 1,000 estimated scan rows,
+and 10 estimated rows per equality. Values below are estimated microseconds,
+not measured query latency.
 
-The planner fixture uses `Resource` with active, non-unique equality indexes on
-`tenant`, `type`, and `deleted`, and this traversal:
-
-```text
-Resource WHERE tenant = "one" AND type = "pod" AND deleted = true
-  VALUES ["id"]
-```
-
-Statistics are `StatsSnapshot::default()`: 1,000 estimated scan rows and 10
-estimated rows for each equality. Parameters and tenant catalog are held constant.
-The HTTP benchmark generates a complete equivalent envelope in
-`docker-image/tests/equality_benchmark.py::lookup` and binds all three predicates.
-
-## Captured plans and complete comparison
-
-The initial reproducer is commit `a25c2d57`. At that commit, the empty-statistics
-plan assertion fails. Replacing only
-`crates/planner/src/rules/physical_contracts/access/sets.rs` with the version from
-`ad79300bb359b0728e30d0966e9d0d02fa524305^` makes it pass. Everything else remains
-at the same checkout. This isolates the costing trigger rather than presenting a
-mixed checkout as a historical deployed binary. The replacement was reverted
-before implementing the fix.
-
-Compact executable plan captures:
-
-```text
-Previous set costing:
-  Intersect(Bitmap(tenant), Bitmap(type), Bitmap(deleted)) -> Values(id)
-Current main before this fix:
-  LabelScan(Resource) -> Filter(tenant AND type AND deleted) -> Values(id)
-Fixed costing:
-  Intersect(Bitmap(tenant), Bitmap(type), Bitmap(deleted)) -> Values(id)
-```
-
-All numbers below are estimated microseconds, not measured latency.
-
-| Cost | Previous set costing | Current main | Fixed |
+| Cost | Previous parallel costing | Serial costing before fix | Fixed |
 | --- | ---: | ---: | ---: |
-| Equality child reads/decode | 5,135 (parallel, including 75 scheduling) | 15,180 (serial) | 15,180 (serial) |
+| Equality child reads/decode | 5,135 | 15,180 | 15,180 |
 | Intersection membership work | 10 | 10 | 30 |
 | Final access-row construction | 10 | 10 | 10 |
-| Complete indexed access candidate | 5,155 | 15,200 | 15,220 |
-| Complete label access + residual candidate | 13,000 | 13,000 | 18,050 |
+| Complete indexed access | 5,155 | 15,200 | 15,220 |
+| Label access plus residual | 13,000 | 13,000 | 18,050 |
 | Projection, either candidate | 1,000 | 1,000 | 1,000 |
 | Selected full plan | 6,155 indexed | 14,000 scan | 16,220 indexed |
 
-The fixed label candidate is 5,050 bitmap setup + 1,000 bitmap decode + 10,000
-graph-row read/decode + 1,000 row construction + 1,000 residual evaluation. The
-complete alternative with projection is 19,050. Projection retains the existing
-conservative unknown-row estimate; changing it is not necessary for this fix.
+The fixed label candidate includes 5,050 bitmap setup, 1,000 bitmap decode,
+10,000 graph-row read/decode, 1,000 row construction, and 1,000 residual
+evaluation. Including projection, the scan alternative costs 19,050.
 
-Captured access-candidate work vectors:
+For a shared equality intersected with a two-value equality union, factoring
+out the shared lookup costs 6,020. Distributing and charging that lookup in
+every branch costs 20,320, incorrectly favoring the 18,050 scan alternative.
 
-| Candidate | Object reads | Graph reads | Range seeks / nexts | CPU units | Bytes | Peak bytes | Parallel width |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Original label + filter | 0 | 0 | 1 / 1,000 | 1,000 | 256,000 | 0 | 1 |
-| Original serial intersection | 3 | 0 | 0 / 0 | 50 | 2,800 | 2,560 | 1 |
-| Fixed label + filter | 1,001 | 1,000 | 0 / 0 | 4,000 | 520,000 | 256,000 | 1 |
-| Fixed serial intersection | 3 | 0 | 0 / 0 | 70 | 2,800 | 2,560 | 1 |
+## Preserved contracts
 
-`selective_equality_retains_full_cost_competition -- --nocapture` prints the two
-retained alternatives and asserts their complete costs and selected winner.
+Serial child execution costing remains in place. Unordered set membership
+work uses all input cardinalities, including when estimated output is zero;
+final row construction uses output cardinality once. Saturating sums preserve
+the cost domain. Physical candidate costing and executable lowering agree.
+Populated statistics can still make a small label scan the cheaper choice.
 
-## Cost-model contracts
+Ordered range drivers retain visited-entry costing, membership-first
+verification, reverse iteration, dynamic limits, and tie semantics.
 
-Label access reads a label bitmap, then reads graph rows before emitting them.
-It now includes this work rather than pricing itself as a bare range scan.
-All-element access likewise includes graph-row reads and row construction.
-These formulas use the existing tunable verification/read/decode budget; they do
-not introduce a new measured latency constant. Residual evaluation stays separate.
+## Validation
 
-Unordered intersections consume all input memberships, even when their estimated
-output is zero. Input cardinalities determine set-work cost; output cardinality
-determines the single final row-construction cost. Saturating sums preserve the
-cost-domain invariant. Physical candidate costing and executable lowering use
-the same accounting. Small populated label statistics can still make a scan win.
+Synthetic regression coverage includes node and edge equality indexes, empty
+and populated statistics, parameter bindings, nested conjunctions, shared
+predicates with disjunctions, unindexed residuals, tenant catalog isolation,
+retained snapshots, and concurrent storage changes. The benchmark oracle
+checks complete responses and rejects missing, duplicate, or foreign rows.
+Existing ordered-storage tests and paired built-image checks cover both wide
+and narrow ordered projections.
 
-Ordered range drivers keep their existing visited-entry cost, membership-first
-verification, reverse iteration, dynamic-limit handling, and tie semantics.
-No executor behavior, index identity, snapshot contract, or encoding changes.
+Local checks completed for planner unit tests and doctests, query-service and
+database contracts, ordered storage, Python benchmark oracles, Clippy,
+formatting, coverage, and built-image smoke and persistence behavior.
 
-## Matched built-image results
-
-Measurements taken 2026-09-09 with canonical `Dockerfile`, Rust 1.97.1,
-`linux/arm64`, disposable localhost containers, and default in-memory storage:
-
-| Image | Source revision | Local image ID |
-| --- | --- | --- |
-| Baseline (already includes ordered-read optimization) | `cb893050927a193444c9cbfb93209f8efee47ec8` | `sha256:7c71a70a2e43dfef1a771d94683b8448a0dc21fc89958d6ac92e0fa04e408860` |
-| Candidate | `a1fbe5d54a1d4395f6b63d247be4dffb030804ef` | `sha256:5f8fbfbedebf0294e4da6b5d5febee303b4dd2ae827a6db5e07a15dc7d58cb96` |
-
-These images capture the initial three-equality fix. The customer follow-up below
-extends it for OR/AND sources. These local image IDs are not deployed digests.
-
-The fixture has 10,000 resources, 4 KiB raw data per row, interleaved tenant/type
-values, three rare deleted matches and an empty control. Each request's complete
-response is compared to independently computed fixture results, including order
-for ordered reads. There are three unmeasured warmups and alternating image order.
-No concurrent local compilation or smoke suite ran during these final timings.
-
-| Case | Samples per image | Baseline p50 / p95 / max ms | Candidate p50 / p95 / max ms |
-| --- | ---: | --- | --- |
-| Rare equality (3 rows) | 50 | 43.131 / 45.117 / 50.242 | 1.684 / 2.131 / 3.599 |
-| Empty equality | 50 | 42.329 / 44.285 / 45.361 | 1.394 / 1.787 / 2.016 |
-| Rare equality, 4 readers + churn | 120 | 72.612 / 79.183 / 81.168 | 2.943 / 6.081 / 11.929 |
-| Empty equality, 4 readers + churn | 120 | 70.485 / 76.250 / 85.586 | 2.537 / 3.917 / 5.670 |
-| Wide ordered projection, broad window (1,000 rows) | 100 | 17.305 / 18.142 / 19.905 | 16.175 / 17.549 / 19.645 |
-| Wide ordered projection, narrow window (20 rows) | 100 | 2.965 / 3.567 / 4.070 | 1.780 / 2.072 / 2.234 |
-| Narrow ordered projection, broad window (1,000 rows) | 100 | 15.807 / 16.744 / 17.130 | 14.927 / 15.791 / 17.701 |
-| Narrow ordered projection, narrow window (20 rows) | 100 | 2.935 / 3.475 / 4.435 | 1.702 / 2.591 / 3.649 |
-
-Churn completed 17 insert/update/delete cycles of 20 entities on each image.
-The full precision results and image provenance are in
-[`selective_equality_benchmark_results.json`](selective_equality_benchmark_results.json).
-This demonstrates recovery to millisecond reads and retained ordered-read gains
-for the controlled workload; it does not reproduce production storage latency.
-
-Measured DB-test secondary counters are three bitmap point reads, zero secondary
-scans and zero secondary verification reads for both node and edge intersections.
-These counters exclude projection property reads. Global visited-row and property
-decode counters are not exposed by the stock HTTP image, so the image measurements
-above do not claim those counters. The plan's estimated work vectors are separate
-evidence, not substitutes for measured I/O. The production follow-up adds exact ASTs, planner diagnostics and observed cache
-hits. Runtime parameter values and complete storage work counters are not logged.
-
-## Verification and reproduction
-
-- 1,256 planner unit tests and 200 planner doctests pass.
-- Empty/populated statistics, literal/bound predicates, nested intersections,
-  zero/rare estimates, node/edge symmetry, and a cheaper small-label control pass.
-- A real DB test creates two tenant catalogs, retains a prepared read snapshot,
-  changes deletion-state memberships, checks every original match in that
-  snapshot, then checks that a fresh read is empty. All 32 query-service tests pass.
-- 45 DB production-contract tests and the independent graph semantic oracle pass.
-- 22 Python image/benchmark tests pass.
-- Workspace Clippy with `-D warnings`, planner all-target Clippy, formatting and
-  diff whitespace checks pass on stable Rust 1.97.1.
-- LLVM coverage: shared physical set contracts 132/132 lines; shared access leaves
-  142/142 lines; cost formulas 251/255 lines; executable costing 387/440 lines.
-  New executable bitmap/node/edge paths are exercised by a dedicated lowering test.
-- The final image passes packaging checks, memory, native volume, restart,
-  concurrent membership, MinIO, and persisted Compose replacement smoke checks.
-
-Local commands (use stable Rust 1.97.1):
+Focused reproduction commands:
 
 ```sh
-cargo test -p helix-planner
-cargo test -p db --lib query_service
-cargo test -p db --test production_contracts
-cargo test -p helix-db-testkit --test planner_semantic_oracle
-cargo llvm-cov -p helix-planner --lib
-cargo clippy --workspace -- -D warnings
-cargo clippy -p helix-planner --all-targets -- -D warnings
-cargo fmt --all -- --check
-docker-image/test.sh --platform linux/arm64 --image helixdb:hel-850-final
+cargo test -p helix-planner --lib selective_equality
+cargo test -p db --lib selective_equality
+python3 -m unittest discover -s docker-image/tests -p 'test_equality_benchmark.py'
 ```
-
-For paired images, build the baseline revision separately, run it on localhost
-18250 and the candidate on 18251, then use disposable empty databases:
-
-```sh
-python3 docker-image/tests/equality_benchmark.py --samples 50
-python3 docker-image/tests/equality_benchmark.py --no-seed --ordered --samples 100
-python3 docker-image/tests/equality_benchmark.py --no-seed --churn --workers 4 --samples 30
-```
-
-Production acceptance still requires an explicitly authorized deployment and
-follow-up p50/p95/max and work measurements. The follow-up records the incident
-image identity and ASTs; parameter values and a complete catalog snapshot remain
-unavailable from the stored diagnostics.
-This change has not been deployed to a live tenant.
-
-## Customer follow-up: covered_workloads
-
-The customer's ab1–ab4 probes report that `tenant+type`, `type+deleted`, and
-`deleted` alone remain fast, while combining all three takes 2.1 seconds with
-`unbounded_scan`. This agrees with the three-equality reproduction above.
-
-The additional `OR(type=...) AND tenant` source exposed a second issue in the
-initial fix. The access extractor distributed shared predicates into each OR
-branch, producing `(tenant AND type=A) OR (tenant AND type=B)`. Serial costing
-then correctly charged the repeated tenant lookup: 20,320 estimated microseconds
-for indexed access versus 18,050 for label scan plus filter. Both candidates
-survived exploration; the scan won even with the corrected scan costs.
-
-The extension preserves `tenant AND (type=A OR type=B)` explicitly. A typed plan
-variant requires a nonempty shared conjunction and at least two nonempty union
-branches; the existing union branch limit still applies. Shared lookup work is
-performed once, and the same-property type union can use the existing batch read.
-The selected access costs 6,020 microseconds: 5,060 for tenant, 920 for the batched
-type union, 30 membership work and 10 final row construction. The scan alternative
-stays at 18,050. Measured latency is recorded separately below.
-
-The reproducer is committed in `6231944f` and fails before this extension. Tests
-cover 2, 3 and 8 type alternatives, constants and bound parameters, both conjunct
-orders, node and edge paths, and complete DB results from two tenant catalogs
-with an absent OR branch. Missing-index diagnostics include both the shared and
-branch properties. Unsupported predicates and branch limits retain safe fallbacks.
-
-The previous ordered-read fix is retained. No changes were made to the executor,
-reverse traversal calibration, ordered range rules, dynamic limits, tie handling,
-write path or API-key handling.
-
-Local validation after the extension passes 1,262 planner tests, 200 doctests,
-all 32 query-service tests, 23 Python tests, workspace and planner all-target
-Clippy with warnings denied, and formatting. Coverage includes missing shared
-and branch indexes, retained residual filters, absent shared conjuncts, branch
-limits and unsupported shared predicates.
-
-### Follow-up image comparison
-
-The candidate image uses production code from `1e90d1d7` and has local image ID
-`sha256:62070fd5b84bde4427d0a330cbad77c13bce89b7f9e4d2a961750d90b1f8b8cc`.
-The verified baseline is the same `cb893050` image (`sha256:7c71a70a2e43dfef1a771d94683b8448a0dc21fc89958d6ac92e0fa04e408860`)
-used in the original comparison. Its relevant Cargo artifacts were explicitly
-cleaned before rebuilding archived source, preventing stale build-cache reuse.
-
-The fixture and complete-response oracles are unchanged. The added OR/AND source
-returns all 2,000 matching IDs; this tests the reported source shape, not the
-customer's full `covered_workloads` traversal. All read/churn oracles passed.
-
-| Case | Samples per image | Baseline p50 / p95 / max ms | Candidate p50 / p95 / max ms |
-| --- | ---: | --- | --- |
-| rare (warm, quiet) | 50 | 44.689 / 51.943 / 59.046 | 1.771 / 2.968 / 5.984 |
-| empty (warm, quiet) | 50 | 44.211 / 46.048 / 46.437 | 1.502 / 2.187 / 3.841 |
-| covered_workloads_source (warm, quiet) | 50 | 54.732 / 56.983 / 57.338 | 9.300 / 9.924 / 10.609 |
-| rare (4 readers + churn) | 120 | 75.013 / 82.025 / 84.609 | 3.058 / 4.513 / 4.966 |
-| empty (4 readers + churn) | 120 | 76.112 / 84.662 / 99.095 | 2.326 / 4.939 / 6.724 |
-| covered_workloads_source (4 readers + churn) | 120 | 90.164 / 94.661 / 100.198 | 14.220 / 17.496 / 20.042 |
-| ordered-range-wide-projection.json:broad (ordered confirmation) | 300 | 17.642 / 20.126 / 28.970 | 17.537 / 19.678 / 33.199 |
-| ordered-range-wide-projection.json:narrow (ordered confirmation) | 300 | 3.445 / 3.806 / 4.360 | 3.358 / 3.723 / 4.598 |
-| ordered-range-narrow-projection.json:broad (ordered confirmation) | 300 | 15.985 / 17.154 / 28.645 | 15.816 / 16.734 / 28.002 |
-| ordered-range-narrow-projection.json:narrow (ordered confirmation) | 300 | 3.375 / 3.773 / 5.509 | 3.317 / 3.655 / 4.176 |
-
-The first 100-sample ordered comparison had a 0.52 ms higher candidate p95 in
-the shortest wide-projection case. A 300-sample quiet confirmation found no
-p50 or p95 regression across either projection/window; occasional maximum-latency
-outliers remain visible in the table. The confirmation ran after concurrent
-writers and local tests finished, on the same post-churn fixture. The initial
-and confirmation runs are both retained in
-[`selective_equality_or_benchmark_results.json`](selective_equality_or_benchmark_results.json).
-
-The prior ordered-storage suite passes all 18 tests, covering reverse ties,
-bounded retention, membership-first verification, cancellation and snapshot
-versions/tombstones. All 38 server unit/transport tests and 2 image-fixture tests
-pass with loopback sockets enabled. The new image passes the full smoke suite,
-including writes, persistence, restart, concurrent membership and MinIO/Compose.
-The subsequent [production validation](SELECTIVE_EQUALITY_PRODUCTION_VALIDATION.md)
-replays the recovered full `service_workload_map` query and both actual ordered
-queries, including their named-candidate binding and injection.
-API-key handling is outside the changed engine paths and was not deployed.

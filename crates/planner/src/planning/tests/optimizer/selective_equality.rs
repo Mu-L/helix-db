@@ -1,4 +1,4 @@
-//! End-to-end coverage of the HEL-850 empty-statistics plan regression.
+//! End-to-end coverage of empty-statistics equality plan selection.
 
 use crate::planning::tests::support::*;
 

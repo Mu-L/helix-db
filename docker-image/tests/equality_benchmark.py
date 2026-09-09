@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paired HEL-850 reproduction on disposable localhost images.
+"""Synthetic equality benchmark on disposable localhost images.
 
 Checks every complete response against the fixture oracle. Empty and rare
 matches use the same three indexed predicates and ordinary bound parameters.
@@ -31,7 +31,7 @@ def lookup(resource_type="pod"):
         "input": {"nodes_where": {"predicate": predicate}}, "properties": ["id"],
     }}])
     request["parameters"] = {"tenant": bench.TENANT, "type": resource_type, "deleted": True}
-    request["query_name"] = "selective_deleted_resources"
+    request["query_name"] = "equality_intersection"
     return request
 
 
@@ -42,7 +42,7 @@ def fixture_rows(size, raw_bytes):
     return rows
 
 
-def covered_workloads_lookup(resource_types):
+def type_union_lookup(resource_types):
     request = bench.batch("read", [{"values": {
         "input": {"nodes_where": {"predicate": {"and": {"predicates": [
             {"eq": {"left": {"property": "$label"}, "right": {"constant": {"string": "Resource"}}}},
@@ -52,7 +52,7 @@ def covered_workloads_lookup(resource_types):
         ]}}}}, "properties": ["id"],
     }}])
     request["parameters"] = {"tenant": bench.TENANT, **{f"type-{index}": value for index, value in enumerate(resource_types)}}
-    request["query_name"] = "covered_workloads_source"
+    request["query_name"] = "equality_type_union"
     return request
 
 
@@ -103,7 +103,7 @@ def run(args):
               "mode": "warm", "workers": args.workers, "churn": args.churn, "cases": []}
     cases = [("rare" if resource_type == "pod" else "empty", lookup(resource_type), expected_ids(rows, resource_type))
              for resource_type in ["pod", "no-matching-type"]]
-    cases.append(("covered_workloads_source", covered_workloads_lookup(["pod", "no-matching-type"]),
+    cases.append(("equality_type_union", type_union_lookup(["pod", "no-matching-type"]),
                   sorted(row["id"] for row in rows if row["tenant"] == bench.TENANT and row["type"] == "pod")))
     if args.ordered:
         cases = []

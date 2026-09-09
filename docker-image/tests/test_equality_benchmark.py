@@ -5,8 +5,8 @@ import equality_benchmark as benchmark
 
 
 class EqualityBenchmarkTests(unittest.TestCase):
-    def test_covered_workloads_envelope_keeps_tenant_outside_the_type_union(self):
-        request = benchmark.covered_workloads_lookup(["pod", "missing"])
+    def test_type_union_envelope_keeps_tenant_outside_the_type_union(self):
+        request = benchmark.type_union_lookup(["pod", "missing"])
         self.assertEqual(request["parameters"], {"tenant": benchmark.bench.TENANT, "type-0": "pod", "type-1": "missing"})
         source = request["query"]["read"]["entries"][0]["query"]["root"]["values"]["input"]
         terms = source["nodes_where"]["predicate"]["and"]["predicates"]

@@ -102,8 +102,8 @@ async fn selective_equality_preserves_tenant_snapshot_and_churn_results() {
     }
     // Cluster-scoped inventory must not stand in for the tenant's catalog.
     assert!(db.index_catalog_snapshot().node_eq.is_empty());
-    // The customer's second source shape: OR(type=...) AND tenant. An absent
-    // branch must not erase matches, and another tenant's ordinals must not leak.
+    // An empty union branch must not erase matches, and another tenant's
+    // ordinals must not leak through the shared equality predicate.
     for (scope_index, scope) in scopes.into_iter().enumerate() {
         let predicate = expr::Predicate::and(vec![
             expr::Predicate::or(vec![
