@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn selective_equality_retains_full_cost_competition() {
+    let rules = SeedRuleSet::default();
+    let indexes = ["tenant", "type", "deleted"].into_iter().fold(
+        catalog::IndexCatalogSnapshot::default(),
+        |indexes, property| indexes.with_node_eq(catalog::ScopedPropertyKey::try_new("Resource", property).unwrap()),
+    );
+    let config = optimizer::OptimizerConfig::from_context(&crate::context::PlannerContext {
+        indexes,
+        ..Default::default()
+    });
+    let expr = node_access_filter_expr(
+        ir::NodeAccessPlan::LabelScan { label: name("Resource") },
+        ir::PredicatePlan::new(helix_ast::expr::Predicate::and(vec![
+            helix_ast::expr::Predicate::eq("tenant", "one"),
+            helix_ast::expr::Predicate::eq("type", "pod"),
+            helix_ast::expr::Predicate::eq("deleted", true),
+        ])).unwrap(),
+    );
+    let result = optimize(&rules.optimizer(), expr, &config);
+    assert_eq!(result.guardrail(), None);
+    for group in result.physical() {
+        for entry in &group.alternatives {
+            eprintln!("candidate {:?}: {:?} cost={:?}", entry.id, entry.alternative.expr, entry.alternative.cost);
+        }
+    }
+    eprintln!("best: {:?}", result.best_alternative(result.root()).unwrap());
+    assert!(result.physical().iter().flat_map(|group| &group.alternatives).count() >= 2);
+}
+
+#[test]
 fn seed_rule_set_explores_access_filter_before_access_implementation() {
     let rules = SeedRuleSet::default();
     let optimizer = rules.optimizer();
