@@ -24,9 +24,6 @@ use crate::execution::interpreter::{
 use crate::execution_control::ExecutionControl;
 use crate::HelixDB;
 
-#[cfg(test)]
-mod selective_equality_tests;
-
 /// Shared request executor used by server transports.
 #[derive(Clone)]
 pub struct HelixQueryService {
@@ -685,6 +682,9 @@ impl QueryResponse {
         }
     }
 }
+
+#[cfg(test)]
+mod selective_equality_tests;
 
 #[cfg(test)]
 mod tests {
