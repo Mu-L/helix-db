@@ -1,0 +1,192 @@
+{
+  "fixture_rows": 10700,
+  "fixture_edges": 900,
+  "samples": 100,
+  "cases": [
+    {
+      "query": "ab1_tenant_type",
+      "window": "default",
+      "rows": 2100,
+      "baseline": {
+        "p50_ms": 9.835812499996877,
+        "p95_ms": 10.426832999996805,
+        "max_ms": 11.499166000000116
+      },
+      "candidate": {
+        "p50_ms": 9.795791500003759,
+        "p95_ms": 10.376374999999882,
+        "max_ms": 12.404500000002372
+      }
+    },
+    {
+      "query": "ab2_tenant_type_deleted",
+      "window": "default",
+      "rows": 3,
+      "baseline": {
+        "p50_ms": 47.127771499997806,
+        "p95_ms": 49.39424999999886,
+        "max_ms": 50.621874999997374
+      },
+      "candidate": {
+        "p50_ms": 1.8042710000010231,
+        "p95_ms": 2.2114590000015255,
+        "max_ms": 2.712416999997913
+      }
+    },
+    {
+      "query": "ab3_type_deleted",
+      "window": "default",
+      "rows": 5,
+      "baseline": {
+        "p50_ms": 1.0464790000028756,
+        "p95_ms": 1.4344579999985285,
+        "max_ms": 1.5585840000014173
+      },
+      "candidate": {
+        "p50_ms": 1.0517295000020965,
+        "p95_ms": 1.4218749999983515,
+        "max_ms": 1.727457999997739
+      }
+    },
+    {
+      "query": "ab4_deleted_only",
+      "window": "default",
+      "rows": 11,
+      "baseline": {
+        "p50_ms": 0.642166500000485,
+        "p95_ms": 1.0564589999972895,
+        "max_ms": 1.626999999999157
+      },
+      "candidate": {
+        "p50_ms": 0.6753750000001446,
+        "p95_ms": 0.9833330000006413,
+        "max_ms": 2.37762500000116
+      }
+    },
+    {
+      "query": "covered_workloads",
+      "window": "default",
+      "rows": 100,
+      "baseline": {
+        "p50_ms": 57.919458000000645,
+        "p95_ms": 60.637166999995884,
+        "max_ms": 64.21874999999488
+      },
+      "candidate": {
+        "p50_ms": 3.7527295000003846,
+        "p95_ms": 4.28291699999761,
+        "max_ms": 5.250749999994753
+      }
+    },
+    {
+      "query": "find_deleted_resource_ids_by_type",
+      "window": "default",
+      "rows": 3,
+      "baseline": {
+        "p50_ms": 46.60858300000115,
+        "p95_ms": 48.671749999996905,
+        "max_ms": 50.153667000003566
+      },
+      "candidate": {
+        "p50_ms": 1.8161250000012785,
+        "p95_ms": 2.3169159999980593,
+        "max_ms": 2.6154999999974393
+      }
+    },
+    {
+      "query": "find_resource_dedup_keys_by_type",
+      "window": "broad",
+      "rows": 1000,
+      "baseline": {
+        "p50_ms": 19.637124999999145,
+        "p95_ms": 20.978625000005025,
+        "max_ms": 21.364334000004703
+      },
+      "candidate": {
+        "p50_ms": 19.81152099999761,
+        "p95_ms": 20.854040999999768,
+        "max_ms": 21.76854199999667
+      }
+    },
+    {
+      "query": "find_resource_dedup_keys_by_type",
+      "window": "narrow",
+      "rows": 14,
+      "baseline": {
+        "p50_ms": 8.670270500001465,
+        "p95_ms": 9.083750000002055,
+        "max_ms": 9.356500000002654
+      },
+      "candidate": {
+        "p50_ms": 8.598437500001666,
+        "p95_ms": 9.176291999999364,
+        "max_ms": 9.648832999999968
+      }
+    },
+    {
+      "query": "find_resources_by_type",
+      "window": "broad",
+      "rows": 1000,
+      "baseline": {
+        "p50_ms": 22.149333499999813,
+        "p95_ms": 23.343375000003164,
+        "max_ms": 33.61645799999735
+      },
+      "candidate": {
+        "p50_ms": 22.17522950000017,
+        "p95_ms": 23.203833000003726,
+        "max_ms": 33.690416000005996
+      }
+    },
+    {
+      "query": "find_resources_by_type",
+      "window": "narrow",
+      "rows": 14,
+      "baseline": {
+        "p50_ms": 8.824582999992003,
+        "p95_ms": 9.432707999998513,
+        "max_ms": 11.019582999992394
+      },
+      "candidate": {
+        "p50_ms": 8.741479500002924,
+        "p95_ms": 9.23483400001146,
+        "max_ms": 10.067457999994645
+      }
+    },
+    {
+      "query": "service_workload_map",
+      "window": "default",
+      "rows": 150,
+      "baseline": {
+        "p50_ms": 8.81054149999727,
+        "p95_ms": 9.572582999993529,
+        "max_ms": 10.771250000004784
+      },
+      "candidate": {
+        "p50_ms": 8.80927100000406,
+        "p95_ms": 9.657707999991771,
+        "max_ms": 11.329582999991317
+      }
+    }
+  ],
+  "baseline": {
+    "revision": "cb893050927a193444c9cbfb93209f8efee47ec8",
+    "image_id": "sha256:7c71a70a2e43dfef1a771d94683b8448a0dc21fc89958d6ac92e0fa04e408860"
+  },
+  "candidate": {
+    "production_revision": "34f32c032744631c430309819a3b7db808b4d48a",
+    "image_id": "sha256:e7ead9065a443f60f257558e06e84aad6ec87d6b1fdfc8bdd5ae914b2aaefcd0"
+  },
+  "conditions": {
+    "platform": "linux/arm64",
+    "storage": "in-memory",
+    "raw_bytes_per_node": 4096,
+    "warmups": 3,
+    "order": "alternating baseline/candidate",
+    "query_asts": "production insights",
+    "parameters_and_data": "synthetic",
+    "writers_during_timings": 0,
+    "local_compilation_during_timings": false,
+    "oracle": "complete projected rows, traversal filters, distinctness, ordered sort/cutoff/limit"
+  }
+}

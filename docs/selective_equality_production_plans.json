@@ -1,0 +1,4206 @@
+{
+  "baseline_revision": "cb893050927a193444c9cbfb93209f8efee47ec8",
+  "candidate_production_revision": "34f32c032744631c430309819a3b7db808b4d48a",
+  "statistics": "empty",
+  "cost_units": "estimated microseconds, not measured latency",
+  "query_fixture": "docker-image/tests/fixtures/hel850-production-queries.json",
+  "plans": {
+    "ab1_tenant_type": {
+      "baseline": {
+        "root": 3,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:tenant",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "tenant"
+                                },
+                                "value": {
+                                  "string": "fixture-tenant"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:type",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "type"
+                                  },
+                                  "value": {
+                                    "string": "pod"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10140,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 40,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 11150,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1050,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "root": 3,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:tenant",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "tenant"
+                                },
+                                "value": {
+                                  "string": "fixture-tenant"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:type",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "type"
+                                  },
+                                  "value": {
+                                    "string": "pod"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10150,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 50,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 11160,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1060,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          }
+        ]
+      }
+    },
+    "ab2_tenant_type_deleted": {
+      "baseline": {
+        "root": 4,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "label_scan": {
+                      "label": "Resource"
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 12000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 1,
+              "range_nexts": 1000,
+              "cpu_units": 0,
+              "bytes": 256000,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "and": {
+                    "predicates": [
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "tenant"
+                          },
+                          "right": {
+                            "constant": {
+                              "string": "fixture-tenant"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "type"
+                          },
+                          "right": {
+                            "constant": {
+                              "string": "pod"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "deleted"
+                          },
+                          "right": {
+                            "constant": {
+                              "bool": true
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 4,
+            "dependencies": [
+              3
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 15000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 1,
+              "range_nexts": 1000,
+              "cpu_units": 3000,
+              "bytes": 256000,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "root": 3,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:tenant",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "tenant"
+                                },
+                                "value": {
+                                  "string": "fixture-tenant"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:type",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "type"
+                                  },
+                                  "value": {
+                                    "string": "pod"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:deleted",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "deleted"
+                                  },
+                                  "value": {
+                                    "bool": true
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 15220,
+              "object_reads": 3,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 70,
+              "bytes": 2800,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 16230,
+              "object_reads": 3,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1080,
+              "bytes": 2800,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          }
+        ]
+      }
+    },
+    "ab3_type_deleted": {
+      "baseline": {
+        "root": 3,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:type",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "type"
+                                },
+                                "value": {
+                                  "string": "pod"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:deleted",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "deleted"
+                                  },
+                                  "value": {
+                                    "bool": true
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10140,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 40,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 11150,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1050,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "root": 3,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:type",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "type"
+                                },
+                                "value": {
+                                  "string": "pod"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:deleted",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "deleted"
+                                  },
+                                  "value": {
+                                    "bool": true
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10150,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 50,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 11160,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1060,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          }
+        ]
+      }
+    },
+    "ab4_deleted_only": {
+      "baseline": {
+        "root": 3,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "bitmap": {
+                      "bitmap": {
+                        "point_read": {
+                          "index": {
+                            "index_id": "node_eq:Resource:deleted",
+                            "uniqueness": "non_unique"
+                          },
+                          "key": {
+                            "label": "Resource",
+                            "property": "deleted"
+                          },
+                          "value": {
+                            "bool": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 5070,
+              "object_reads": 1,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 20,
+              "bytes": 2640,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 6080,
+              "object_reads": 1,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1030,
+              "bytes": 2640,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "root": 3,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "bitmap": {
+                      "bitmap": {
+                        "point_read": {
+                          "index": {
+                            "index_id": "node_eq:Resource:deleted",
+                            "uniqueness": "non_unique"
+                          },
+                          "key": {
+                            "label": "Resource",
+                            "property": "deleted"
+                          },
+                          "value": {
+                            "bool": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 5070,
+              "object_reads": 1,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 20,
+              "bytes": 2640,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 6080,
+              "object_reads": 1,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1030,
+              "bytes": 2640,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          }
+        ]
+      }
+    },
+    "covered_workloads": {
+      "baseline": {
+        "root": 6,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "label_scan": {
+                      "label": "Resource"
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 12000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 1,
+              "range_nexts": 1000,
+              "cpu_units": 0,
+              "bytes": 256000,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "and": {
+                    "predicates": [
+                      {
+                        "or": {
+                          "predicates": [
+                            {
+                              "eq": {
+                                "left": {
+                                  "property": "type"
+                                },
+                                "right": {
+                                  "constant": {
+                                    "string": "deployment"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "eq": {
+                                "left": {
+                                  "property": "type"
+                                },
+                                "right": {
+                                  "constant": {
+                                    "string": "statefulset"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "eq": {
+                                "left": {
+                                  "property": "type"
+                                },
+                                "right": {
+                                  "constant": {
+                                    "string": "daemonset"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "eq": {
+                                "left": {
+                                  "property": "type"
+                                },
+                                "right": {
+                                  "constant": {
+                                    "string": "replicaset"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "eq": {
+                                "left": {
+                                  "property": "type"
+                                },
+                                "right": {
+                                  "constant": {
+                                    "string": "job"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "tenant"
+                          },
+                          "right": {
+                            "constant": {
+                              "string": "fixture-tenant"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "variable": {
+                "op": {
+                  "stream": {
+                    "bind": "w"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 4,
+            "dependencies": [
+              3
+            ],
+            "op": {
+              "expand": {
+                "plan": {
+                  "direction": "out",
+                  "output": "nodes",
+                  "label": {
+                    "label": "HAS_VULNERABILITY"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 5,
+            "dependencies": [
+              4
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "and": {
+                    "predicates": [
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "tenant"
+                          },
+                          "right": {
+                            "constant": {
+                              "string": "fixture-tenant"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "severity"
+                          },
+                          "right": {
+                            "constant": {
+                              "string": "critical"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 6,
+            "dependencies": [
+              5
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "project_bindings": {
+                    "projections": [
+                      {
+                        "property": {
+                          "target": {
+                            "binding": "w"
+                          },
+                          "source": "id",
+                          "alias": "wid"
+                        }
+                      }
+                    ],
+                    "dedup": "distinct"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 17000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 1,
+              "range_nexts": 1000,
+              "cpu_units": 5000,
+              "bytes": 256000,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "root": 5,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:tenant",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "tenant"
+                                },
+                                "value": {
+                                  "string": "fixture-tenant"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "batched_union_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:type",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "type"
+                                  },
+                                  "values": [
+                                    {
+                                      "string": "deployment"
+                                    },
+                                    {
+                                      "string": "statefulset"
+                                    },
+                                    {
+                                      "string": "daemonset"
+                                    },
+                                    {
+                                      "string": "replicaset"
+                                    },
+                                    {
+                                      "string": "job"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 6305,
+              "object_reads": 6,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 1,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 130,
+              "bytes": 4320,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "variable": {
+                "op": {
+                  "stream": {
+                    "bind": "w"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "expand": {
+                "plan": {
+                  "direction": "out",
+                  "output": "nodes",
+                  "label": {
+                    "label": "HAS_VULNERABILITY"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 4,
+            "dependencies": [
+              3
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "and": {
+                    "predicates": [
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "tenant"
+                          },
+                          "right": {
+                            "constant": {
+                              "string": "fixture-tenant"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "severity"
+                          },
+                          "right": {
+                            "constant": {
+                              "string": "critical"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 5,
+            "dependencies": [
+              4
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "project_bindings": {
+                    "projections": [
+                      {
+                        "property": {
+                          "target": {
+                            "binding": "w"
+                          },
+                          "source": "id",
+                          "alias": "wid"
+                        }
+                      }
+                    ],
+                    "dedup": "distinct"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 7335,
+              "object_reads": 6,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 1,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1160,
+              "bytes": 4320,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          }
+        ]
+      }
+    },
+    "find_deleted_resource_ids_by_type": {
+      "baseline": {
+        "root": 4,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "label_scan": {
+                      "label": "Resource"
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 12000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 1,
+              "range_nexts": 1000,
+              "cpu_units": 0,
+              "bytes": 256000,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "and": {
+                    "predicates": [
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "tenant"
+                          },
+                          "right": {
+                            "constant": {
+                              "string": "fixture-tenant"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "type"
+                          },
+                          "right": {
+                            "constant": {
+                              "string": "pod"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "eq": {
+                          "left": {
+                            "property": "deleted"
+                          },
+                          "right": {
+                            "constant": {
+                              "bool": true
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 4,
+            "dependencies": [
+              3
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 15000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 1,
+              "range_nexts": 1000,
+              "cpu_units": 3000,
+              "bytes": 256000,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "root": 3,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:tenant",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "tenant"
+                                },
+                                "value": {
+                                  "string": "fixture-tenant"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:type",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "type"
+                                  },
+                                  "value": {
+                                    "string": "pod"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:deleted",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "deleted"
+                                  },
+                                  "value": {
+                                    "bool": true
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 15220,
+              "object_reads": 3,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 70,
+              "bytes": 2800,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 16230,
+              "object_reads": 3,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1080,
+              "bytes": 2800,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          }
+        ]
+      }
+    },
+    "find_resource_dedup_keys_by_type": {
+      "baseline": {
+        "root": 6,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:tenant",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "tenant"
+                                },
+                                "value": {
+                                  "string": "fixture-tenant"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:type",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "type"
+                                  },
+                                  "value": {
+                                    "string": "pod"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10140,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 40,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "variable": {
+                "op": {
+                  "source_inject": {
+                    "variable": "candidates"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 5,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "gt": {
+                    "left": {
+                      "property": "last_seen"
+                    },
+                    "right": {
+                      "constant": {
+                        "i64": 0
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 4,
+            "dependencies": [
+              3
+            ],
+            "op": {
+              "order": {
+                "plan": {
+                  "explicit_sort": [
+                    {
+                      "property": "last_seen",
+                      "order": "desc"
+                    }
+                  ]
+                }
+              }
+            },
+            "cost": {
+              "latency": 2100,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 256000,
+              "peak_memory": 256000,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 5,
+            "dependencies": [
+              4
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 14105,
+              "object_reads": 1000,
+              "authoritative_graph_reads": 1000,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 4001,
+              "bytes": 512000,
+              "peak_memory": 256000,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 6,
+            "dependencies": [
+              5
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id",
+                      "cluster_id",
+                      "namespace",
+                      "name",
+                      "last_seen"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "root": 6,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:tenant",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "tenant"
+                                },
+                                "value": {
+                                  "string": "fixture-tenant"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:type",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "type"
+                                  },
+                                  "value": {
+                                    "string": "pod"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10150,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 50,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "variable": {
+                "op": {
+                  "source_inject": {
+                    "variable": "candidates"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 5,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "gt": {
+                    "left": {
+                      "property": "last_seen"
+                    },
+                    "right": {
+                      "constant": {
+                        "i64": 0
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 4,
+            "dependencies": [
+              3
+            ],
+            "op": {
+              "order": {
+                "plan": {
+                  "explicit_sort": [
+                    {
+                      "property": "last_seen",
+                      "order": "desc"
+                    }
+                  ]
+                }
+              }
+            },
+            "cost": {
+              "latency": 2100,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 256000,
+              "peak_memory": 256000,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 5,
+            "dependencies": [
+              4
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 14105,
+              "object_reads": 1000,
+              "authoritative_graph_reads": 1000,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 4001,
+              "bytes": 512000,
+              "peak_memory": 256000,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 6,
+            "dependencies": [
+              5
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id",
+                      "cluster_id",
+                      "namespace",
+                      "name",
+                      "last_seen"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          }
+        ]
+      }
+    },
+    "find_resources_by_type": {
+      "baseline": {
+        "root": 6,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:tenant",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "tenant"
+                                },
+                                "value": {
+                                  "string": "fixture-tenant"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:type",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "type"
+                                  },
+                                  "value": {
+                                    "string": "pod"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10140,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 40,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "variable": {
+                "op": {
+                  "source_inject": {
+                    "variable": "candidates"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 5,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "gt": {
+                    "left": {
+                      "property": "last_seen"
+                    },
+                    "right": {
+                      "constant": {
+                        "i64": 0
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 4,
+            "dependencies": [
+              3
+            ],
+            "op": {
+              "order": {
+                "plan": {
+                  "explicit_sort": [
+                    {
+                      "property": "last_seen",
+                      "order": "desc"
+                    }
+                  ]
+                }
+              }
+            },
+            "cost": {
+              "latency": 2100,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 256000,
+              "peak_memory": 256000,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 5,
+            "dependencies": [
+              4
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 14105,
+              "object_reads": 1000,
+              "authoritative_graph_reads": 1000,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 4001,
+              "bytes": 512000,
+              "peak_memory": 256000,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 6,
+            "dependencies": [
+              5
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id",
+                      "name",
+                      "type",
+                      "namespace",
+                      "category",
+                      "source",
+                      "tenant",
+                      "cluster_id",
+                      "uid",
+                      "phase",
+                      "image",
+                      "sha",
+                      "selector",
+                      "labels",
+                      "owner_references",
+                      "volume_mounts",
+                      "services",
+                      "metrics",
+                      "tags",
+                      "kube_namespace",
+                      "status",
+                      "severity",
+                      "env_vars",
+                      "env_refs",
+                      "service_account_name",
+                      "owned",
+                      "internet_exposed",
+                      "is_hub_service",
+                      "storage_class",
+                      "volume_name",
+                      "volumeName",
+                      "involved_object",
+                      "regarding_kind",
+                      "regarding_name",
+                      "regarding_namespace",
+                      "event_type",
+                      "reason",
+                      "message",
+                      "timestamp",
+                      "api_group",
+                      "kind",
+                      "node",
+                      "references",
+                      "deleted",
+                      "code_linked",
+                      "mesh_observed",
+                      "security_scanned",
+                      "last_seen",
+                      "created_at",
+                      "checksum",
+                      "archived_at",
+                      "updated_at",
+                      "relationship_count",
+                      "previous_relationship_count",
+                      "count",
+                      "has_embedding"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "root": 6,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:tenant",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "tenant"
+                                },
+                                "value": {
+                                  "string": "fixture-tenant"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:type",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "type"
+                                  },
+                                  "value": {
+                                    "string": "pod"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10150,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 50,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "variable": {
+                "op": {
+                  "source_inject": {
+                    "variable": "candidates"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 5,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "gt": {
+                    "left": {
+                      "property": "last_seen"
+                    },
+                    "right": {
+                      "constant": {
+                        "i64": 0
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 4,
+            "dependencies": [
+              3
+            ],
+            "op": {
+              "order": {
+                "plan": {
+                  "explicit_sort": [
+                    {
+                      "property": "last_seen",
+                      "order": "desc"
+                    }
+                  ]
+                }
+              }
+            },
+            "cost": {
+              "latency": 2100,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 256000,
+              "peak_memory": 256000,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 5,
+            "dependencies": [
+              4
+            ],
+            "op": {
+              "limit": {
+                "count": {
+                  "expr": {
+                    "param": "limit"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 14105,
+              "object_reads": 1000,
+              "authoritative_graph_reads": 1000,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 4001,
+              "bytes": 512000,
+              "peak_memory": 256000,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 6,
+            "dependencies": [
+              5
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "value_map": {
+                    "selected": [
+                      "id",
+                      "name",
+                      "type",
+                      "namespace",
+                      "category",
+                      "source",
+                      "tenant",
+                      "cluster_id",
+                      "uid",
+                      "phase",
+                      "image",
+                      "sha",
+                      "selector",
+                      "labels",
+                      "owner_references",
+                      "volume_mounts",
+                      "services",
+                      "metrics",
+                      "tags",
+                      "kube_namespace",
+                      "status",
+                      "severity",
+                      "env_vars",
+                      "env_refs",
+                      "service_account_name",
+                      "owned",
+                      "internet_exposed",
+                      "is_hub_service",
+                      "storage_class",
+                      "volume_name",
+                      "volumeName",
+                      "involved_object",
+                      "regarding_kind",
+                      "regarding_name",
+                      "regarding_namespace",
+                      "event_type",
+                      "reason",
+                      "message",
+                      "timestamp",
+                      "api_group",
+                      "kind",
+                      "node",
+                      "references",
+                      "deleted",
+                      "code_linked",
+                      "mesh_observed",
+                      "security_scanned",
+                      "last_seen",
+                      "created_at",
+                      "checksum",
+                      "archived_at",
+                      "updated_at",
+                      "relationship_count",
+                      "previous_relationship_count",
+                      "count",
+                      "has_embedding"
+                    ]
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          }
+        ]
+      }
+    },
+    "service_workload_map": {
+      "baseline": {
+        "root": 8,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:type",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "type"
+                                },
+                                "value": {
+                                  "string": "service"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:tenant",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "tenant"
+                                  },
+                                  "value": {
+                                    "string": "fixture-tenant"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10140,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 40,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "variable": {
+                "op": {
+                  "stream": {
+                    "bind": "svc"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "expand": {
+                "plan": {
+                  "direction": "out",
+                  "output": "nodes",
+                  "label": {
+                    "label": "ROUTES_TO"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 4,
+            "dependencies": [
+              3
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "eq": {
+                    "left": {
+                      "property": "tenant"
+                    },
+                    "right": {
+                      "constant": {
+                        "string": "fixture-tenant"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 5,
+            "dependencies": [
+              4
+            ],
+            "op": {
+              "expand": {
+                "plan": {
+                  "direction": "in",
+                  "output": "nodes",
+                  "label": {
+                    "label": "MANAGES"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 6,
+            "dependencies": [
+              5
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "eq": {
+                    "left": {
+                      "property": "tenant"
+                    },
+                    "right": {
+                      "constant": {
+                        "string": "fixture-tenant"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10190,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 90,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 7,
+            "dependencies": [
+              6
+            ],
+            "op": {
+              "branch": {
+                "plan": {
+                  "union": [
+                    {
+                      "steps": [
+                        {
+                          "id": 1,
+                          "dependencies": [],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "variable": {
+                              "op": {
+                                "source_inject": {
+                                  "variable": "$context"
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": null,
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "unknown"
+                          },
+                          "cost": {
+                            "latency": 5,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 2,
+                          "dependencies": [
+                            1
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "filter": {
+                              "predicate": {
+                                "eq": {
+                                  "left": {
+                                    "property": "type"
+                                  },
+                                  "right": {
+                                    "constant": {
+                                      "string": "replicaset"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": null,
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "unknown"
+                          },
+                          "cost": {
+                            "latency": 1000,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1000,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 3,
+                          "dependencies": [
+                            2
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "expand": {
+                              "plan": {
+                                "direction": "in",
+                                "output": "nodes",
+                                "label": {
+                                  "label": "CREATES"
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": "node",
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "close"
+                          },
+                          "cost": {
+                            "latency": 1000,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1000,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 4,
+                          "dependencies": [
+                            3
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "filter": {
+                              "predicate": {
+                                "and": {
+                                  "predicates": [
+                                    {
+                                      "eq": {
+                                        "left": {
+                                          "property": "type"
+                                        },
+                                        "right": {
+                                          "constant": {
+                                            "string": "deployment"
+                                          }
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "eq": {
+                                        "left": {
+                                          "property": "tenant"
+                                        },
+                                        "right": {
+                                          "constant": {
+                                            "string": "fixture-tenant"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": "node",
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "close"
+                          },
+                          "cost": {
+                            "latency": 1000,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1000,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 5,
+                          "dependencies": [
+                            4
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "variable": {
+                              "op": {
+                                "stream": {
+                                  "bind": "workload"
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": "node",
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "close"
+                          },
+                          "cost": {
+                            "latency": 4005,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 4001,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        }
+                      ],
+                      "root": 5
+                    },
+                    {
+                      "steps": [
+                        {
+                          "id": 1,
+                          "dependencies": [],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "variable": {
+                              "op": {
+                                "source_inject": {
+                                  "variable": "$context"
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": null,
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "unknown"
+                          },
+                          "cost": {
+                            "latency": 5,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 2,
+                          "dependencies": [
+                            1
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "filter": {
+                              "predicate": {
+                                "is_in": {
+                                  "value": {
+                                    "property": "type"
+                                  },
+                                  "values": {
+                                    "constant": {
+                                      "string_array": [
+                                        "deployment",
+                                        "statefulset",
+                                        "daemonset"
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": null,
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "unknown"
+                          },
+                          "cost": {
+                            "latency": 1000,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1000,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 3,
+                          "dependencies": [
+                            2
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "variable": {
+                              "op": {
+                                "stream": {
+                                  "bind": "workload"
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": null,
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "unknown"
+                          },
+                          "cost": {
+                            "latency": 2005,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 2001,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        }
+                      ],
+                      "root": 3
+                    }
+                  ]
+                }
+              }
+            },
+            "cost": {
+              "latency": 50,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 8,
+            "dependencies": [
+              7
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "project_bindings": {
+                    "projections": [
+                      {
+                        "property": {
+                          "target": {
+                            "binding": "svc"
+                          },
+                          "source": "id",
+                          "alias": "service_id"
+                        }
+                      },
+                      {
+                        "property": {
+                          "target": {
+                            "binding": "workload"
+                          },
+                          "source": "id",
+                          "alias": "workload_id"
+                        }
+                      },
+                      {
+                        "property": {
+                          "target": {
+                            "binding": "workload"
+                          },
+                          "source": "type",
+                          "alias": "workload_type"
+                        }
+                      }
+                    ],
+                    "dedup": "distinct"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "root": 8,
+        "steps": [
+          {
+            "id": 1,
+            "dependencies": [],
+            "op": {
+              "access": {
+                "plan": {
+                  "node": {
+                    "secondary_set": {
+                      "set": {
+                        "intersect": {
+                          "driver": {
+                            "bitmap": {
+                              "point_read": {
+                                "index": {
+                                  "index_id": "node_eq:Resource:type",
+                                  "uniqueness": "non_unique"
+                                },
+                                "key": {
+                                  "label": "Resource",
+                                  "property": "type"
+                                },
+                                "value": {
+                                  "string": "service"
+                                }
+                              }
+                            }
+                          },
+                          "rest": [
+                            {
+                              "bitmap": {
+                                "point_read": {
+                                  "index": {
+                                    "index_id": "node_eq:Resource:tenant",
+                                    "uniqueness": "non_unique"
+                                  },
+                                  "key": {
+                                    "label": "Resource",
+                                    "property": "tenant"
+                                  },
+                                  "value": {
+                                    "string": "fixture-tenant"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10150,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 50,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 2,
+            "dependencies": [
+              1
+            ],
+            "op": {
+              "variable": {
+                "op": {
+                  "stream": {
+                    "bind": "svc"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 3,
+            "dependencies": [
+              2
+            ],
+            "op": {
+              "expand": {
+                "plan": {
+                  "direction": "out",
+                  "output": "nodes",
+                  "label": {
+                    "label": "ROUTES_TO"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 4,
+            "dependencies": [
+              3
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "eq": {
+                    "left": {
+                      "property": "tenant"
+                    },
+                    "right": {
+                      "constant": {
+                        "string": "fixture-tenant"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 5,
+            "dependencies": [
+              4
+            ],
+            "op": {
+              "expand": {
+                "plan": {
+                  "direction": "in",
+                  "output": "nodes",
+                  "label": {
+                    "label": "MANAGES"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 6,
+            "dependencies": [
+              5
+            ],
+            "op": {
+              "filter": {
+                "predicate": {
+                  "eq": {
+                    "left": {
+                      "property": "tenant"
+                    },
+                    "right": {
+                      "constant": {
+                        "string": "fixture-tenant"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 10200,
+              "object_reads": 2,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 100,
+              "bytes": 2720,
+              "peak_memory": 2560,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 7,
+            "dependencies": [
+              6
+            ],
+            "op": {
+              "branch": {
+                "plan": {
+                  "union": [
+                    {
+                      "steps": [
+                        {
+                          "id": 1,
+                          "dependencies": [],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "variable": {
+                              "op": {
+                                "source_inject": {
+                                  "variable": "$context"
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": null,
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "unknown"
+                          },
+                          "cost": {
+                            "latency": 5,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 2,
+                          "dependencies": [
+                            1
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "filter": {
+                              "predicate": {
+                                "eq": {
+                                  "left": {
+                                    "property": "type"
+                                  },
+                                  "right": {
+                                    "constant": {
+                                      "string": "replicaset"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": null,
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "unknown"
+                          },
+                          "cost": {
+                            "latency": 1000,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1000,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 3,
+                          "dependencies": [
+                            2
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "expand": {
+                              "plan": {
+                                "direction": "in",
+                                "output": "nodes",
+                                "label": {
+                                  "label": "CREATES"
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": "node",
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "close"
+                          },
+                          "cost": {
+                            "latency": 1000,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1000,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 4,
+                          "dependencies": [
+                            3
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "filter": {
+                              "predicate": {
+                                "and": {
+                                  "predicates": [
+                                    {
+                                      "eq": {
+                                        "left": {
+                                          "property": "type"
+                                        },
+                                        "right": {
+                                          "constant": {
+                                            "string": "deployment"
+                                          }
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "eq": {
+                                        "left": {
+                                          "property": "tenant"
+                                        },
+                                        "right": {
+                                          "constant": {
+                                            "string": "fixture-tenant"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": "node",
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "close"
+                          },
+                          "cost": {
+                            "latency": 1000,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1000,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 5,
+                          "dependencies": [
+                            4
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "variable": {
+                              "op": {
+                                "stream": {
+                                  "bind": "workload"
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": "node",
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "close"
+                          },
+                          "cost": {
+                            "latency": 4005,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 4001,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        }
+                      ],
+                      "root": 5
+                    },
+                    {
+                      "steps": [
+                        {
+                          "id": 1,
+                          "dependencies": [],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "variable": {
+                              "op": {
+                                "source_inject": {
+                                  "variable": "$context"
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": null,
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "unknown"
+                          },
+                          "cost": {
+                            "latency": 5,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 2,
+                          "dependencies": [
+                            1
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "filter": {
+                              "predicate": {
+                                "is_in": {
+                                  "value": {
+                                    "property": "type"
+                                  },
+                                  "values": {
+                                    "constant": {
+                                      "string_array": [
+                                        "deployment",
+                                        "statefulset",
+                                        "daemonset"
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": null,
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "unknown"
+                          },
+                          "cost": {
+                            "latency": 1000,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 1000,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        },
+                        {
+                          "id": 3,
+                          "dependencies": [
+                            2
+                          ],
+                          "output": "discard",
+                          "condition": "always",
+                          "op": {
+                            "variable": {
+                              "op": {
+                                "stream": {
+                                  "bind": "workload"
+                                }
+                              }
+                            }
+                          },
+                          "schedule": "pipeline",
+                          "delivered": {
+                            "element": null,
+                            "ordering": "unordered",
+                            "cardinality": {
+                              "lower": 0,
+                              "upper": null
+                            },
+                            "materialization": "streaming",
+                            "effect": "pure",
+                            "key_locality": "unknown"
+                          },
+                          "cost": {
+                            "latency": 2005,
+                            "object_reads": 0,
+                            "authoritative_graph_reads": 0,
+                            "multi_get_calls": 0,
+                            "range_seeks": 0,
+                            "range_nexts": 0,
+                            "cpu_units": 2001,
+                            "bytes": 0,
+                            "peak_memory": 0,
+                            "parallel_width": 1
+                          }
+                        }
+                      ],
+                      "root": 3
+                    }
+                  ]
+                }
+              }
+            },
+            "cost": {
+              "latency": 50,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          },
+          {
+            "id": 8,
+            "dependencies": [
+              7
+            ],
+            "op": {
+              "project": {
+                "projection": {
+                  "project_bindings": {
+                    "projections": [
+                      {
+                        "property": {
+                          "target": {
+                            "binding": "svc"
+                          },
+                          "source": "id",
+                          "alias": "service_id"
+                        }
+                      },
+                      {
+                        "property": {
+                          "target": {
+                            "binding": "workload"
+                          },
+                          "source": "id",
+                          "alias": "workload_id"
+                        }
+                      },
+                      {
+                        "property": {
+                          "target": {
+                            "binding": "workload"
+                          },
+                          "source": "type",
+                          "alias": "workload_type"
+                        }
+                      }
+                    ],
+                    "dedup": "distinct"
+                  }
+                }
+              }
+            },
+            "cost": {
+              "latency": 1000,
+              "object_reads": 0,
+              "authoritative_graph_reads": 0,
+              "multi_get_calls": 0,
+              "range_seeks": 0,
+              "range_nexts": 0,
+              "cpu_units": 1000,
+              "bytes": 0,
+              "peak_memory": 0,
+              "parallel_width": 1
+            }
+          }
+        ]
+      }
+    }
+  }
+}

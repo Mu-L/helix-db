@@ -6,14 +6,15 @@ The serial-child-cost change in [#1081](https://github.com/HelixDB/helix-db/pull
 reproduces the plan-selection flip with empty statistics. Both access candidates
 survive exploration; the regression is their cost comparison, not pruning or a
 missing index. This is a controlled reproduction of the suspected trigger in
-[HEL-850](https://linear.app/helix-db/issue/HEL-850), not a capture of the production request.
+[HEL-850](https://linear.app/helix-db/issue/HEL-850), initially separate from production request capture. The authorized production
+follow-up below now includes the recovered ASTs and rollout identity.
 
 GitHub delivery evidence is [Hyperscale #313](https://github.com/HelixDB/helix-hyperscale/pull/313):
 the new engine pin is `57877a76b307b6838ebd950c5f05dab4b7767d7e`, and its previous
-pin is `1402bd27980a722d8d740cfe1aa87a5358a0523c`. Searching the linked changes and
-the Hyperscale source did not locate the exact affected request envelope, tenant
-catalog snapshot, or running image digest. Image builder code records digests at
-runtime; the GitHub source pin alone does not establish what the tenant ran.
+pin is `1402bd27980a722d8d740cfe1aa87a5358a0523c`. The production rollout record subsequently confirmed observed image digest
+`sha256:70b49b435a0960330bbd6097f2c57571b77c8c448ec5ded4c02903ec75309e8b`,
+which ECR maps to Hyperscale source `26c64acaf921a1b938d983db86a3d5668074c0ad`
+and this engine pin. See [production validation](SELECTIVE_EQUALITY_PRODUCTION_VALIDATION.md).
 
 The planner fixture uses `Resource` with active, non-unique equality indexes on
 `tenant`, `type`, and `deleted`, and this traversal:
@@ -137,8 +138,8 @@ scans and zero secondary verification reads for both node and edge intersections
 These counters exclude projection property reads. Global visited-row and property
 decode counters are not exposed by the stock HTTP image, so the image measurements
 above do not claim those counters. The plan's estimated work vectors are separate
-evidence, not substitutes for measured I/O. Complete production work counters and
-the exact affected request remain a follow-up diagnostic requirement.
+evidence, not substitutes for measured I/O. The production follow-up adds exact ASTs, planner diagnostics and observed cache
+hits. Runtime parameter values and complete storage work counters are not logged.
 
 ## Verification and reproduction
 
@@ -181,8 +182,10 @@ python3 docker-image/tests/equality_benchmark.py --no-seed --ordered --samples 1
 python3 docker-image/tests/equality_benchmark.py --no-seed --churn --workers 4 --samples 30
 ```
 
-Production acceptance still requires the exact request/catalog/image identity,
-explicitly authorized deployment, and follow-up p50/p95/max and work measurements.
+Production acceptance still requires an explicitly authorized deployment and
+follow-up p50/p95/max and work measurements. The follow-up records the incident
+image identity and ASTs; parameter values and a complete catalog snapshot remain
+unavailable from the stored diagnostics.
 This change has not been deployed to a live tenant.
 
 ## Customer follow-up: covered_workloads
@@ -260,6 +263,7 @@ bounded retention, membership-first verification, cancellation and snapshot
 versions/tombstones. All 38 server unit/transport tests and 2 image-fixture tests
 pass with loopback sockets enabled. The new image passes the full smoke suite,
 including writes, persistence, restart, concurrent membership and MinIO/Compose.
-The exact `service_workload_map` query was not found in the accessible GitHub
-search results, so no matched benchmark claim is made for that full query.
+The subsequent [production validation](SELECTIVE_EQUALITY_PRODUCTION_VALIDATION.md)
+replays the recovered full `service_workload_map` query and both actual ordered
+queries, including their named-candidate binding and injection.
 API-key handling is outside the changed engine paths and was not deployed.
