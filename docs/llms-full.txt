@@ -4207,8 +4207,8 @@ being collapsed or rejected.
 ## Other query boundaries
 
 For gRPC, the status message remains human-readable and the same static code is
-attached as ASCII metadata under `helix-error-code`. gRPC status classes are
-unchanged.
+attached as ASCII metadata under `helix-error-code`. Active-text mutation admission
+failures use `InvalidArgument`, matching their HTTP 400 classification.
 
 Embedded Rust errors expose `error_code()`. UniFFI errors carry two explicit
 fields named `error` and `msg`; generated Python, Node, and Go bindings pass
@@ -4300,13 +4300,35 @@ to address the failure. Statuses list the current HTTP behavior; `400/503` and
 | `vector_component_magnitude_exceeded` | A component exceeds the score-safe magnitude. | 400 | After normalizing the vector | Yes |
 | `zero_norm_cosine_vector` | A cosine vector has zero norm. | 400 | After supplying a nonzero vector | Yes |
 
+### Active-text mutation limits
+
+`active_text_mutation_limit_exceeded` reports a deterministic rejection before the
+write transaction commits. The request's graph changes are not committed. The error
+is caller-correctable and uses HTTP 400, gRPC `InvalidArgument`, or the embedded
+`InvalidRequest` binding category. It is not a transient rate limit or an unknown
+write outcome; retrying the identical mutation does not resolve the limit.
+
+For example, the HTTP query service returns:
+
+```json
+{
+  "error": "active_text_mutation_limit_exceeded",
+  "msg": "db error: Active text mutation exceeds entities: observed 513, limit 512. This is a hard mutation-batch limit; reduce the number or size of mutations."
+}
+```
+
+Branch on `error`, not the wording in `msg`. The diagnostic identifies the resource,
+observed usage and configured limit. See [active-text admission limits](/database/helix-cloud/operate/limits#active-text-mutation-admission)
+for the default bounds and how entities are counted. The same engine policy applies
+to standalone databases; embedded configurations may override it.
+
 ### Index lifecycle
 
 | Code | Meaning | HTTP | Retry | Correctable |
 | --- | --- | --- | --- | --- |
 | `index_lifecycle_unavailable` | The required lifecycle authority is unavailable. | 500 | After authority recovery | Operational |
 | `secondary_lifecycle_stepping_requires_disabled_mode` | Explicit secondary stepping requires disabled worker mode. | 500 | After changing worker mode | Operational |
-| `active_text_mutation_limit_exceeded` | An active text mutation exceeded an admission limit. | 500 | With a smaller mutation | Yes |
+| `active_text_mutation_limit_exceeded` | An active text mutation exceeded a hard admission limit. | 400 | Reduce the mutation before retrying | Yes |
 | `invalid_index_source_data` | Existing graph data violates an index source contract. | 500 | After correcting source data | Yes |
 | `invalid_index_model` | A value violates the current index model. | 500 | After fixing model or value | Yes |
 | `invalid_secondary_index_value` | A value violates a secondary-index contract. | 500 | After fixing the value | Yes |
@@ -5205,6 +5227,43 @@ Page type: Reference
 Current constraints and practical limits. These reflect the current implementation, not
 fundamental architectural boundaries.
 
+## Active-text mutation admission
+
+The engine bounds foreground mutations that affect full-text indexes. These limits
+apply to Cloud and standalone HelixDB. Exceeding a bound rejects the write transaction
+before commit with HTTP 400 and code `active_text_mutation_limit_exceeded`; it does
+not partially commit graph changes. The diagnostic reports the measured resource,
+observed usage and configured limit.
+
+The default entity ceiling is **512 distinct text-relevant graph entities per
+collecting/flush epoch**. Repeated changes to the same entity coalesce within an
+epoch. Both nodes and edges can count when a text index observes their changes;
+unrelated entities do not count. Consequently, the number of input IDs alone does
+not establish whether a request fits. Internal text reads can flush an epoch, but
+ordinary bulk deletes accumulate changes until their final text preparation.
+
+Additional active-text defaults remain in force even below 512 entities:
+
+| Resource | Default ceiling |
+| --- | ---: |
+| Retained/input bytes and text analysis | 64 MiB |
+| Output key/value operations | 32,768 |
+| Output key/value bytes | 8 MiB |
+| Individual split payload and retained split payload budget | 64 MiB |
+| Encoded manifest page | 4 MiB |
+
+Admission accounts for complete retained before/after property rows as well as text
+index work. Large properties, multiple indexes, or tenant partitions can therefore
+hit another bound with fewer entities. These are runtime policy limits, not storage
+format maxima; embedded configurations can supply a different validated policy.
+
+Reduce the number or size of mutations before retrying. If the application splits
+one request into several, each new request is a separate atomic transaction. The
+service does not automatically replay the rejected write. There is no time-based
+`Retry-After`: waiting without changing the mutation does not resolve a hard limit.
+See [Error handling](/database/helix-cloud/operate/error-handling) for the response
+contract. HTTP 429 rate limiting below is a separate mechanism.
+
 ## Helix Cloud request rate limits
 
 Helix Cloud applies a distributed token bucket to `POST /v2/query`. The bucket is
@@ -5386,6 +5445,7 @@ Helix Cloud query failures use one JSON envelope:
 |  400 | `invalid_request`        | A request-specific diagnostic                                               | A required header or request option is missing, malformed, or invalid.    | Fix the request.                                                         |
 |  400 | `tenant_id_required`     | `x-helix-tenant-id or x-helix-database-id is required in GA mode`           | A Cloud request did not identify its database.                            | Use the correct database-scoped Cloud endpoint and configuration.        |
 |  400 | `tenant_id_not_allowed`  | `x-helix-tenant-id and x-helix-database-id are not allowed in cluster mode` | A tenant/database header was sent to an endpoint that does not accept it. | Remove the header or use the correct endpoint.                           |
+|  400 | `active_text_mutation_limit_exceeded` | `db error: Active text mutation exceeds <resource>: observed <usage>, limit <bound>. This is a hard mutation-batch limit; reduce the number or size of mutations.` | A mutation exceeds a hard engine admission limit; graph changes are not committed. | Reduce the mutation before retrying; see [Limits](/database/helix-cloud/operate/limits#active-text-mutation-admission). |
 |  401 | `unauthorized`           | `unauthorized`                                                              | The supplied API key is unknown or no longer active.                      | Refresh or replace the key.                                              |
 |  402 | `tenant_disabled`        | `tenant query processing is disabled because credit is exhausted`           | Query processing is disabled because the tenant has exhausted its credit. | Resolve the account state before retrying.                               |
 |  403 | `forbidden`              | `forbidden`                                                                 | The key is valid but cannot perform this operation.                       | Use a key with the required permission.                                  |
