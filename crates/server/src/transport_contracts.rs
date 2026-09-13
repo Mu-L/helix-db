@@ -643,10 +643,12 @@ async fn missing_text_index_preserves_the_public_error_code() {
     let error = service.execute_query(request).await.unwrap_err();
     assert_eq!(error.index_error_code(), Some("index_not_found"));
     let db_error: db::error::HelixDbError = error.into();
-    assert!(matches!(
-        db_error,
-        db::error::HelixDbError::IndexNotFound(_)
-    ));
+    assert!(matches!(db_error, db::error::HelixDbError::Planner(_)));
+    assert_eq!(
+        db_error.error_code(),
+        helix_ast::error_code::QueryErrorCode::IndexNotFound
+    );
+    assert_eq!(db_error.index_error_code(), Some("index_not_found"));
     db.close().await.unwrap();
 }
 

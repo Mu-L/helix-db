@@ -660,13 +660,8 @@ impl From<QueryServiceError> for HelixDbError {
     fn from(value: QueryServiceError) -> Self {
         match value {
             QueryServiceError::Db(error) => error,
-            QueryServiceError::Planner(error)
-                if error.error_code() == helix_ast::error_code::QueryErrorCode::IndexNotFound =>
-            {
-                HelixDbError::IndexNotFound(error.to_string())
-            }
+            QueryServiceError::Planner(error) => HelixDbError::Planner(error),
             other @ (QueryServiceError::InvalidRequest(_)
-            | QueryServiceError::Planner(_)
             | QueryServiceError::JsonSerialize(_)
             | QueryServiceError::Serialize(_)) => HelixDbError::Query(other.to_string()),
         }
@@ -2264,10 +2259,17 @@ mod tests {
         let planner = QueryServiceError::Planner(
             helix_planner::error::PlannerError::UnsupportedEdgeAllTarget,
         );
+        let expected_message = planner.to_string();
+        let converted = HelixDbError::from(planner);
         assert!(matches!(
-            HelixDbError::from(planner),
-            HelixDbError::Query(_)
+            converted,
+            HelixDbError::Planner(helix_planner::error::PlannerError::UnsupportedEdgeAllTarget)
         ));
+        assert_eq!(
+            converted.error_code(),
+            helix_ast::error_code::QueryErrorCode::UnsupportedEdgeAllTarget
+        );
+        assert_eq!(converted.to_string(), expected_message);
 
         let json =
             execution_scalar_to_json(ExecutionScalar::Value(PropertyValue::DateTime(i64::MAX)))
