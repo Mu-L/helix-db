@@ -35,7 +35,7 @@ Full walkthrough: https://docs.helix-db.com/database/helix-db/start-here/quickst
 - [Introduction](https://docs.helix-db.com/database/helix-db/start-here/introduction) — Page type: Concept
 - [Get Started](https://docs.helix-db.com/database/helix-db/start-here/quickstart): Initialize HelixDB, start a local instance, run the generated query, and stop it — Page type: Tutorial
 - [Deployment options](https://docs.helix-db.com/database/helix-db/start-here/run-modes): Compare Cloud, local server, and embedded execution — Page type: Concept
-- [Local server](https://docs.helix-db.com/database/helix-db/start-here/local-development/local-server): Start HelixDB locally with ephemeral memory or persistent object storage — Page type: Guide
+- [Local server](https://docs.helix-db.com/database/helix-db/start-here/local-development/local-server): Start HelixDB locally with memory, a persistent directory, or S3-compatible storage — Page type: Guide
 - [Embedded database](https://docs.helix-db.com/database/helix-db/start-here/local-development/embedded-database): Open HelixDB directly inside your process with explicit storage and cache settings — Page type: Guide
 - [SDK setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/overview): Choose a HelixDB SDK and connect it to a local or Cloud server — Page type: Guide
 - [Rust SDK](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/rust-project-setup): Build typed HelixDB queries and execute them over HTTP or an embedded engine — Page type: Guide
