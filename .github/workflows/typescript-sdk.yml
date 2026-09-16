@@ -36,11 +36,14 @@ jobs:
           cache-dependency-path: sdks/typescript/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: sdks/typescript
-      - name: Validate source and coverage
+      - name: Validate source
         working-directory: sdks/typescript
-        run: |
-          npm run check
-          npm run test:coverage
+        run: npm run check
+      - name: Enforce coverage thresholds
+        # Node 20 runs the full suite above but lacks the coverage threshold flags.
+        if: matrix.node == 24
+        working-directory: sdks/typescript
+        run: npm run test:coverage
       - name: Pack release artifact
         run: |
           mkdir npm-dist
