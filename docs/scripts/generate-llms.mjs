@@ -157,7 +157,16 @@ function build() {
     if (optSection) sections.push(optSection);
   }
 
-  const lines = [TITLE, "", SUMMARY, "", QUICKSTART, "", DEVELOPER_RESOURCES, ""];
+  const lines = [
+    TITLE,
+    "",
+    SUMMARY,
+    "",
+    QUICKSTART,
+    "",
+    DEVELOPER_RESOURCES,
+    "",
+  ];
   for (const s of sections) {
     lines.push(s, "");
   }
