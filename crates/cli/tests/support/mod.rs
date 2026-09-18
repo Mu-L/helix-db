@@ -320,6 +320,17 @@ if /I "%1"=="%HELIX_TEST_RUNTIME_FAIL_COMMAND%" (
   echo simulated runtime failure 1>&2
   exit /b 42
 )
+if "%1"=="image" (
+  if "%HELIX_TEST_RUNTIME_IMAGE_MISSING%"=="1" (
+    if not exist "%HELIX_TEST_RUNTIME_LOG%.pulled" exit /b 1
+  )
+  echo sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  exit /b 0
+)
+if "%1"=="pull" (
+  if "%2"=="%HELIX_TEST_RUNTIME_FAIL_IMAGE%" exit /b 42
+  type nul > "%HELIX_TEST_RUNTIME_LOG%.pulled"
+)
 if "%1"=="info" exit /b 0
 if "%1"=="ps" (
   if defined HELIX_TEST_RUNTIME_PS_OUTPUT echo %HELIX_TEST_RUNTIME_PS_OUTPUT%
@@ -386,6 +397,15 @@ if [ "$1" = "$HELIX_TEST_RUNTIME_FAIL_COMMAND" ]; then
   exit 42
 fi
 case "$1" in
+  image)
+    if [ "$HELIX_TEST_RUNTIME_IMAGE_MISSING" = "1" ] && [ ! -f "$HELIX_TEST_RUNTIME_LOG.pulled" ]; then exit 1; fi
+    echo sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    exit 0
+    ;;
+  pull)
+    if [ "$2" = "$HELIX_TEST_RUNTIME_FAIL_IMAGE" ]; then exit 42; fi
+    touch "$HELIX_TEST_RUNTIME_LOG.pulled"; exit 0 ;;
+
   info) exit 0 ;;
   ps)
     if [ -n "$HELIX_TEST_RUNTIME_PS_OUTPUT" ]; then
