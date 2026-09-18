@@ -29,9 +29,7 @@ pub async fn run(
         config.s3 = None;
     }
     apply_s3_overrides(&mut config, &s3)?;
-    if let Some(version) = image.image_version {
-        config.tag = version;
-    }
+    config.tag = image.image_version.unwrap_or(config.tag);
     config.pull = image.pull.or(config.pull);
 
     let op = Operation::new(if foreground { "Running" } else { "Starting" }, &instance);

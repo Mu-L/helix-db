@@ -211,9 +211,7 @@ async fn image_selection_and_pull_policy_matrix() {
             )).unwrap();
             let mut command = fixture.command();
             command.current_dir(&project).args(["start", "dev"]);
-            if let Some(policy) = policy {
-                command.args(["--pull", policy]);
-            }
+            command.args(policy.into_iter().flat_map(|policy| ["--pull", policy]));
             if !cached {
                 command.env("HELIX_TEST_RUNTIME_IMAGE_MISSING", "1");
             }
