@@ -162,9 +162,7 @@ mod tests {
     #[test]
     fn read_email_from_rejects_eof_before_valid_input() {
         let mut reader = Cursor::new(Vec::new());
-        let error = read_email_from(&mut reader)
-            .unwrap_err()
-            .to_string();
+        let error = read_email_from(&mut reader).unwrap_err().to_string();
         assert!(error.contains("email input ended"));
     }
 
