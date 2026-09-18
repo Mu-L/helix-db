@@ -11,6 +11,7 @@ pub async fn run(
     port: Option<u16>,
     disk: bool,
     s3: crate::S3StorageArgs,
+    image: crate::image::ImageArgs,
     persist: bool,
 ) -> Result<()> {
     let mut project = ProjectContext::find_and_load(None)?;
@@ -28,6 +29,10 @@ pub async fn run(
         config.s3 = None;
     }
     apply_s3_overrides(&mut config, &s3)?;
+    if let Some(version) = image.image_version {
+        config.tag = version;
+    }
+    config.pull = image.pull.or(config.pull);
 
     let op = Operation::new(if foreground { "Running" } else { "Starting" }, &instance);
 
@@ -41,7 +46,7 @@ pub async fn run(
         project
             .config
             .save_to_file(&project.root.join("helix.toml"))?;
-        crate::output::info("Saved port/storage settings to helix.toml.");
+        crate::output::info("Saved port, storage, and image settings to helix.toml.");
     }
 
     warn_about_storage(&project, &instance, &config);

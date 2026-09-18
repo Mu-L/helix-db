@@ -122,7 +122,9 @@ pub struct LocalInstanceConfig {
     #[serde(default = "default_local_image")]
     pub image: String,
     #[serde(default = "default_local_image_tag")]
-    pub tag: String,
+    pub tag: crate::image::ImageVersion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull: Option<crate::image::PullPolicy>,
     #[serde(default, skip_serializing_if = "is_default_local_storage")]
     pub storage: LocalStorageMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -346,8 +348,10 @@ fn default_local_image() -> String {
     DEFAULT_LOCAL_IMAGE.to_string()
 }
 
-fn default_local_image_tag() -> String {
-    DEFAULT_LOCAL_IMAGE_TAG.to_string()
+fn default_local_image_tag() -> crate::image::ImageVersion {
+    DEFAULT_LOCAL_IMAGE_TAG
+        .parse()
+        .expect("valid default image tag")
 }
 
 fn default_s3_region() -> String {
@@ -390,7 +394,8 @@ impl Default for LocalInstanceConfig {
         Self {
             port: DEFAULT_LOCAL_PORT,
             image: DEFAULT_LOCAL_IMAGE.to_string(),
-            tag: DEFAULT_LOCAL_IMAGE_TAG.to_string(),
+            tag: default_local_image_tag(),
+            pull: None,
             storage: LocalStorageMode::Memory,
             s3: None,
         }
@@ -399,7 +404,7 @@ impl Default for LocalInstanceConfig {
 
 impl LocalInstanceConfig {
     pub fn image_ref(&self) -> String {
-        format!("{}:{}", self.image, self.tag)
+        self.tag.reference(&self.image)
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::config::{ContainerRuntime, LocalInstanceConfig};
 use crate::errors::CliError;
+use crate::image;
 use crate::output::Step;
 use crate::project::ProjectContext;
 use crate::utils::command_exists;
@@ -179,44 +180,67 @@ impl LocalRuntime {
         format!("helix-{}-{}", self.project_name, instance_name)
     }
 
-    pub fn pull_image(&self, config: &LocalInstanceConfig) -> Result<()> {
-        self.pull_image_ref(&config.image_ref())
+    /// Resolve all required images before replacing any running containers.
+    /// Run Helix by immutable image ID so a concurrent tag update cannot change it.
+    pub fn pull_image(&self, config: &LocalInstanceConfig) -> Result<String> {
+        let reference = config.image_ref();
+        let policy = config
+            .pull
+            .unwrap_or_else(|| config.tag.default_pull_policy());
+        let id = self.pull_image_ref(&reference, policy)?;
+        if config.storage.is_disk() {
+            let dependency_policy = config.pull.unwrap_or(image::PullPolicy::Missing);
+            self.pull_image_ref(MINIO_IMAGE, dependency_policy)?;
+            self.pull_image_ref(MINIO_MC_IMAGE, dependency_policy)?;
+        }
+        crate::output::info(&format!("Image: {reference} ({id})"));
+        Ok(id)
     }
 
-    fn pull_image_ref(&self, image: &str) -> Result<()> {
+    fn pull_image_ref(&self, image: &str, policy: image::PullPolicy) -> Result<String> {
+        if policy != image::PullPolicy::Always {
+            match self.inspect_image(image) {
+                Ok(id) => return Ok(id),
+                Err(error) if policy == image::PullPolicy::Never => {
+                    return Err(error.wrap_err(format!("Cannot use {image} with --pull never")));
+                }
+                Err(_) => {}
+            }
+        }
         Step::verbose_substep(&format!("Pulling {image}"));
         let output = self
             .runtime_command()
             .args(["pull", image])
             .output()
             .map_err(|e| eyre!("Failed to pull {image}: {e}"))?;
-
         if !output.status.success() {
-            if self.image_exists(image) {
-                Step::verbose_substep(&format!("Using local image {image}"));
-                return Ok(());
-            }
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(eyre!("Failed to pull {image}:\n{stderr}"));
         }
-
-        Ok(())
+        self.inspect_image(image)
     }
 
-    fn image_exists(&self, image: &str) -> bool {
-        self.runtime_command()
-            .args(["image", "inspect", image])
+    fn inspect_image(&self, image: &str) -> Result<String> {
+        let output = self
+            .runtime_command()
+            .args(["image", "inspect", "--format", "{{.Id}}", image])
             .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+            .map_err(|e| eyre!("Failed to inspect image {image}: {e}"))?;
+        let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if !output.status.success() || id.is_empty() {
+            return Err(eyre!(
+                "Cannot inspect local image {image}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(id)
     }
 
     pub fn run_detached(&self, instance_name: &str, config: &LocalInstanceConfig) -> Result<()> {
         Self::check_available(self.runtime)?;
-        self.pull_image(config)?;
+        let image = self.pull_image(config)?;
 
         let name = self.container_name(instance_name);
-        let image = config.image_ref();
         let _ = self.remove_container(&name);
         let (network, mut env) = if config.storage.is_disk() {
             let resources = self.start_disk_dependencies(instance_name)?;
@@ -253,10 +277,9 @@ impl LocalRuntime {
         config: &LocalInstanceConfig,
     ) -> Result<()> {
         Self::check_available(self.runtime)?;
-        self.pull_image(config)?;
+        let image = self.pull_image(config)?;
 
         let name = self.container_name(instance_name);
-        let image = config.image_ref();
         let _ = self.remove_container(&name);
         let (network, mut env) = if config.storage.is_disk() {
             let resources = self.start_disk_dependencies(instance_name)?;
@@ -323,10 +346,6 @@ impl LocalRuntime {
     }
 
     pub fn restart(&self, instance_name: &str, config: &LocalInstanceConfig) -> Result<()> {
-        if config.storage.is_disk() || config.storage.is_s3() {
-            return self.run_detached(instance_name, config);
-        }
-
         Self::check_available(self.runtime)?;
         let name = self.container_name(instance_name);
         let output = self
@@ -340,7 +359,7 @@ impl LocalRuntime {
             return Ok(());
         }
 
-        self.run_detached(instance_name, config)
+        Err(eyre!("Failed to restart {name}: {}\nUse 'helix start {instance_name}' to create a container.", String::from_utf8_lossy(&output.stderr)))
     }
 
     // No upfront `is_installed`-style preflight here: `spawn_failed_because_runtime_missing`
@@ -450,8 +469,6 @@ impl LocalRuntime {
 
     fn start_disk_dependencies(&self, instance_name: &str) -> Result<DiskRuntimeResources> {
         let resources = self.disk_resources(instance_name);
-        self.pull_image_ref(MINIO_IMAGE)?;
-        self.pull_image_ref(MINIO_MC_IMAGE)?;
         self.ensure_network(&resources.network)?;
         self.ensure_volume(&resources.volume)?;
         let _ = self.remove_container(&resources.minio_container);
