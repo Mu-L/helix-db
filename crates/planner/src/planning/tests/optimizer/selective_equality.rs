@@ -3,6 +3,36 @@
 use crate::planning::tests::support::*;
 
 #[test]
+fn unique_membership_keeps_bounded_index_access_without_statistics() {
+    for count in [1, 2, 3, 4, 5, 8, 16, 64] {
+        for label_rows in [None, Some(1_000), Some(100_000)] {
+            let mut context = PlannerContext::default();
+            context.indexes.node_eq.insert(
+                ScopedPropertyKey::try_new("Fixture", "external_key").unwrap(),
+                crate::catalog::NodeEqualityIndexMeta::try_new("fixture-key")
+                    .unwrap()
+                    .with_uniqueness(crate::catalog::IndexUniqueness::Unique),
+            );
+            if let Some(rows) = label_rows {
+                context.stats = context.stats.with_node_label_cardinality(
+                    NonEmptyString::new("Fixture").unwrap(), rows,
+                );
+            }
+            let values = (0..count).map(|n| format!("value-{n}")).collect();
+            let plan = executable_traversal(
+                g().n_with_label_where("Fixture", Predicate::is_in(
+                    "external_key", PropertyValue::StringArray(values),
+                )).values(vec!["external_key"]), context.clone(),
+            );
+            let diagnostics = crate::diagnostics::analyze(&plan, &context);
+            assert_eq!(diagnostics.statistics.node_accesses.label_scans, 0,
+                "count={count}, label_rows={label_rows:?}");
+            assert_eq!(diagnostics.statistics.node_accesses.equality_index_lookups, count);
+        }
+    }
+}
+
+#[test]
 fn selective_equality_type_union_preserves_unindexed_residuals() {
     for indexed_property in ["tenant", "type"] {
         let key = ScopedPropertyKey::try_new("Resource", indexed_property).unwrap();
