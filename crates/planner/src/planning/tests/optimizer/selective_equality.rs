@@ -14,20 +14,51 @@ fn unique_membership_keeps_bounded_index_access_without_statistics() {
                     .with_uniqueness(crate::catalog::IndexUniqueness::Unique),
             );
             if let Some(rows) = label_rows {
-                context.stats = context.stats.with_node_label_cardinality(
-                    NonEmptyString::new("Fixture").unwrap(), rows,
-                );
+                context.stats = context
+                    .stats
+                    .with_node_label_cardinality(NonEmptyString::new("Fixture").unwrap(), rows);
             }
-            let values = (0..count).map(|n| format!("value-{n}")).collect();
-            let plan = executable_traversal(
-                g().n_with_label_where("Fixture", Predicate::is_in(
-                    "external_key", PropertyValue::StringArray(values),
-                )).values(vec!["external_key"]), context.clone(),
-            );
-            let diagnostics = crate::diagnostics::analyze(&plan, &context);
-            assert_eq!(diagnostics.statistics.node_accesses.label_scans, 0,
-                "count={count}, label_rows={label_rows:?}");
-            assert_eq!(diagnostics.statistics.node_accesses.equality_index_lookups, count);
+            for parameterized in [false, true] {
+                for nested in [false, true] {
+                    let values = PropertyValue::StringArray(
+                        (0..count)
+                            .chain(0..1)
+                            .map(|n| format!("value-{n}"))
+                            .collect(),
+                    );
+                    let predicate = if parameterized {
+                        context.params = ParamBindings::default()
+                            .with_value(NonEmptyString::new("keys").unwrap(), values);
+                        Predicate::is_in_param("external_key", "keys")
+                    } else {
+                        Predicate::is_in("external_key", values)
+                    };
+                    let source = if nested {
+                        g().n_where(Predicate::and(vec![
+                            Predicate::eq("$label", "Fixture"),
+                            Predicate::and(vec![predicate]),
+                        ]))
+                    } else {
+                        g().n_with_label_where("Fixture", predicate)
+                    };
+                    let plan =
+                        executable_traversal(source.values(vec!["external_key"]), context.clone());
+                    let diagnostics = crate::diagnostics::analyze(&plan, &context);
+                    assert_eq!(diagnostics.statistics.node_accesses.label_scans, 0,
+                        "count={count}, label_rows={label_rows:?}, parameterized={parameterized}, nested={nested}");
+                    assert_eq!(
+                        diagnostics.statistics.node_accesses.equality_index_lookups,
+                        count
+                    );
+                    if count > 1 {
+                        assert_eq!(plan.metrics().selected_cost.multi_get_calls, 1);
+                        assert_eq!(
+                            plan.metrics().selected_cost.authoritative_graph_reads,
+                            count as u64
+                        );
+                    }
+                }
+            }
         }
     }
 }
@@ -60,6 +91,38 @@ fn selective_equality_type_union_preserves_unindexed_residuals() {
             );
             assert_eq!(plan.metrics().selected_cost.authoritative_graph_reads, 0);
         }
+    }
+}
+
+#[test]
+fn unique_membership_respects_union_limits_and_small_label_costs() {
+    let mut context = PlannerContext::default();
+    context.indexes.node_eq.insert(
+        ScopedPropertyKey::try_new("Fixture", "key").unwrap(),
+        crate::catalog::NodeEqualityIndexMeta::try_new("fixture-key")
+            .unwrap()
+            .with_uniqueness(crate::catalog::IndexUniqueness::Unique),
+    );
+    for (count, known_rows) in [(65, None), (64, Some(1))] {
+        context.stats = known_rows.map_or_else(StatsSnapshot::default, |rows| {
+            StatsSnapshot::default()
+                .with_node_label_cardinality(NonEmptyString::new("Fixture").unwrap(), rows)
+        });
+        let plan = executable_traversal(
+            g().n_with_label_where(
+                "Fixture",
+                Predicate::is_in("key", PropertyValue::I64Array((0..count).collect())),
+            )
+            .values(vec!["key"]),
+            context.clone(),
+        );
+        assert_eq!(
+            crate::diagnostics::analyze(&plan, &context)
+                .statistics
+                .node_accesses
+                .label_scans,
+            1
+        );
     }
 }
 
