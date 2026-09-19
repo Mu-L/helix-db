@@ -9,6 +9,8 @@ mod control;
 mod count;
 mod ddl;
 mod dependencies;
+#[cfg(test)]
+mod early_termination_tests;
 mod dispatch;
 mod mutation;
 pub(crate) mod read_view;
