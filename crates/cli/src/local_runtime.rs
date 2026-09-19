@@ -1257,11 +1257,7 @@ fn helix_run_args(
     args
 }
 
-fn minio_run_args(
-    resources: &DiskRuntimeResources,
-    image: &str,
-    identity: &str,
-) -> Vec<String> {
+fn minio_run_args(resources: &DiskRuntimeResources, image: &str, identity: &str) -> Vec<String> {
     vec![
         "run".to_string(),
         "-d".to_string(),
