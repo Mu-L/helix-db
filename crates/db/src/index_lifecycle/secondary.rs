@@ -92,7 +92,7 @@ pub(crate) use exact::{
     count_active_range_generation_with_membership,
     lookup_active_equality_literal_batch_with_compatibility,
     lookup_active_equality_point_literal_with_compatibility, record_equality_graph_read,
-    scan_active_range_generation_ordered, ExactRangeScanProgress,
+    scan_active_range_generation_ordered, ExactRangeScanProgress, OrderedRangeCursor,
 };
 #[cfg(test)]
 pub(crate) use exact::{

@@ -61,6 +61,6 @@ fn count_scalar(count: usize) -> ExecutionScalar {
     ExecutionScalar::Value(DbPropertyValue::I64(count.try_into().unwrap_or(i64::MAX)))
 }
 
-fn scalar_key(value: &ExecutionScalar) -> String {
+pub(in crate::execution::interpreter) fn scalar_key(value: &ExecutionScalar) -> String {
     format!("{value:?}")
 }
