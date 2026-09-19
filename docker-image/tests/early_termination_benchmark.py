@@ -105,7 +105,7 @@ def seed(args):
     print(json.dumps({"fixture": str(args.fixture), "edges": len(records)}), flush=True)
 
 
-def case(fixture, take, selectivity, root_count, projection="id"):
+def case(fixture, take, selectivity, root_count, projection="id", sort=False):
     roots = fixture["roots"][:root_count]
     accepted = {
         "dense": lambda row: row.get("kind") in {f"k{i}" for i in range(8)},
@@ -127,6 +127,9 @@ def case(fixture, take, selectivity, root_count, projection="id"):
             for root in {row["$from"], row["$to"]} & adjacent.keys():
                 adjacent[root].append(row)
     rows = [row for root in roots for row in sorted(adjacent[root], key=lambda r: r["$id"])]
+    if sort:
+        traversal = {"order_by": {"input": traversal, "property": "$id", "order": "desc"}}
+        rows.sort(key=lambda row: row["$id"], reverse=True)
     if take is not None:
         traversal = {"limit": {"input": traversal, "count": {"literal": take}}}
         rows = rows[:take]
@@ -207,7 +210,7 @@ def compare(args):
     for roots in sorted({1, len(fixtures[0]["roots"])}):
         for selectivity in ("dense", "sparse", "late", "none"):
             for take in (0, 1, 10, 100, None):
-                runs = [case(f, take, selectivity, roots, args.projection) for f in fixtures]
+                runs = [case(f, take, selectivity, roots, args.projection, args.sort) for f in fixtures]
                 timings = [[], []]
                 first = [[], []]
                 for iteration in range(args.samples + 2):
@@ -224,7 +227,7 @@ def compare(args):
                 medians = [statistics.median(values) for values in timings]
                 print(json.dumps({"selectivity": selectivity, "take": take, "roots": roots,
                     "degree": fixtures[0]["degree"], "payload_bytes": fixtures[0]["payload"],
-                    "projection": args.projection, "workers": args.workers,
+                    "projection": args.projection, "workers": args.workers, "full_input_sort": args.sort,
                     "baseline_p50_ms": medians[0], "candidate_p50_ms": medians[1],
                     "speedup": medians[0] / medians[1], "samples_ms": timings,
                     "p95_ms": [sorted(values)[math.ceil(0.95 * len(values)) - 1] for values in timings],
@@ -252,6 +255,7 @@ if __name__ == "__main__":
     comparison = commands.add_parser("compare")
     comparison.add_argument("--baseline", type=Path, required=True)
     comparison.add_argument("--candidate", type=Path, required=True)
+    comparison.add_argument("--sort", action="store_true", help="sort the complete filtered input before limiting")
     comparison.add_argument("--samples", type=int, default=7)
     comparison.add_argument("--workers", type=int, default=1)
     comparison.add_argument("--projection", choices=("id", "edge_properties"), default="id")

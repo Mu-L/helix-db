@@ -22,6 +22,9 @@ class OracleTests(unittest.TestCase):
         self.assertEqual(expected, {"q0": [4, 6, 9, 6]})
         _, expected = benchmark.case(fixture, None, "late", 2)
         self.assertEqual(expected, {"q0": [2, 3]})
+        payload, expected = benchmark.case(fixture, 3, "dense", 2, sort=True)
+        self.assertEqual(expected, {"q0": [9, 6, 6]})
+        self.assertIn("order_by", payload["query"]["read"]["entries"][0]["query"]["root"]["id"]["input"]["limit"]["input"])
         for take, empty in [(0, None), (1, None), (10, []), (None, [])]:
             _, expected = benchmark.case(fixture, take, "none", 2)
             self.assertEqual(expected, {"q0": empty})
