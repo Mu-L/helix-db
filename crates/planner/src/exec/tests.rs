@@ -387,11 +387,14 @@ mod selected_lowering;
 fn pull_regions_preserve_shared_inputs_captures_and_conditions() {
     let mut captured = step(1, vec![], ExecSchedule::Pipeline);
     captured.output = ir::BatchOutputPlan::Bind(name("saved"));
-    let nodes = vec![
+    let mut nodes = vec![
         captured,
         step(2, vec![id(1)], ExecSchedule::Pipeline),
         step(3, vec![id(2)], ExecSchedule::Pipeline),
     ];
+    nodes.last_mut().unwrap().op = ExecOp::Limit {
+        count: ir::StreamBoundPlan::Literal(1),
+    };
     let plan = executable(ir::AtLeast::try_from_vec(nodes).unwrap(), id(3)).unwrap();
     assert!(!plan.execution_program().is_absorbed(id(1)));
     assert_eq!(
@@ -403,11 +406,14 @@ fn pull_regions_preserve_shared_inputs_captures_and_conditions() {
     let decoded: ExecutablePlan = serde_json::from_value(encoded).unwrap();
     assert_eq!(plan.execution_program(), decoded.execution_program());
 
-    let nodes = vec![
+    let mut nodes = vec![
         step(1, vec![], ExecSchedule::Pipeline),
         step(2, vec![id(1)], ExecSchedule::Pipeline),
         step(3, vec![id(1), id(2)], ExecSchedule::Pipeline),
     ];
+    nodes.last_mut().unwrap().op = ExecOp::Limit {
+        count: ir::StreamBoundPlan::Literal(1),
+    };
     let plan = executable(ir::AtLeast::try_from_vec(nodes).unwrap(), id(3)).unwrap();
     assert!(!plan.execution_program().is_absorbed(id(1)));
     assert!(plan.execution_program().is_absorbed(id(2)));
@@ -425,12 +431,15 @@ fn pull_regions_include_exclusive_merge_children_but_stop_at_effect_barriers() {
     merge.op = ExecOp::Merge {
         mode: ExecMergeMode::Concat,
     };
-    let nodes = vec![
+    let mut nodes = vec![
         step(1, vec![], ExecSchedule::Pipeline),
         step(2, vec![], ExecSchedule::Pipeline),
         merge,
         step(4, vec![id(3)], ExecSchedule::Pipeline),
     ];
+    nodes.last_mut().unwrap().op = ExecOp::Limit {
+        count: ir::StreamBoundPlan::Literal(1),
+    };
     let plan = executable(ir::AtLeast::try_from_vec(nodes).unwrap(), id(4)).unwrap();
     assert_eq!(
         plan.execution_program().region(id(4)).unwrap().steps(),
@@ -441,13 +450,28 @@ fn pull_regions_include_exclusive_merge_children_but_stop_at_effect_barriers() {
     barrier.op = ExecOp::Barrier {
         name: name("effects"),
     };
-    let nodes = vec![
+    let mut nodes = vec![
         step(1, vec![], ExecSchedule::Pipeline),
         barrier,
         step(3, vec![id(2)], ExecSchedule::Pipeline),
     ];
+    nodes.last_mut().unwrap().op = ExecOp::Limit {
+        count: ir::StreamBoundPlan::Literal(1),
+    };
     let plan = executable(ir::AtLeast::try_from_vec(nodes).unwrap(), id(3)).unwrap();
     for n in 1..=3 {
         assert!(!plan.execution_program().is_absorbed(id(n)));
     }
+}
+
+#[test]
+fn unbounded_pure_subplans_remain_eligible_for_enclosing_branch_demand() {
+    let nodes = vec![
+        step(1, vec![], ExecSchedule::Pipeline),
+        step(2, vec![id(1)], ExecSchedule::Pipeline),
+    ];
+    let plan = executable(ir::AtLeast::try_from_vec(nodes.clone()).unwrap(), id(2)).unwrap();
+    assert_eq!(plan.execution_program().regions().count(), 0);
+    let child = ExecutableSubplan::new(ir::AtLeast::try_from_vec(nodes).unwrap(), id(2)).unwrap();
+    assert!(ExecPullCapability::pure_subplan(&child));
 }

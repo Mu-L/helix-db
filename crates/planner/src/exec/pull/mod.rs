@@ -115,17 +115,21 @@ impl ExecPullCapability {
     /// A pure, exclusively consumed tree can suspend without exposing a frame's
     /// partial results or skipping effects. Other subplans remain boundaries.
     pub fn pure_subplan(plan: &super::ExecutableSubplan) -> bool {
-        let exclusive = plan.steps().len() == 1
-            || plan
-                .execution_program()
-                .region(plan.root())
-                .is_some_and(|region| region.steps().len() == plan.steps().len());
-        exclusive
-            && plan.steps().iter().all(|step| {
-                matches!(step.condition, ExecCondition::Always)
-                    && matches!(step.output, ir::BatchOutputPlan::Discard)
-                    && Self::of(&step.op) != Self::Boundary
-            })
+        let mut uses = BTreeMap::<ExecStepId, usize>::new();
+        for step in plan.steps() {
+            for dependency in &step.dependencies {
+                *uses.entry(*dependency).or_default() += 1;
+            }
+        }
+        *uses.entry(plan.root()).or_default() += 1;
+        // Purity is independent of whether this subplan itself has a window:
+        // an enclosing branch can supply demand to an exclusive child tree.
+        plan.steps().iter().all(|step| {
+            uses.get(&step.id) == Some(&1)
+                && matches!(step.condition, ExecCondition::Always)
+                && matches!(step.output, ir::BatchOutputPlan::Discard)
+                && Self::of(&step.op) != Self::Boundary
+        })
     }
 }
 
@@ -211,7 +215,21 @@ impl ExecProgram {
                     }
                 }
             }
-            if members.len() > 1 {
+            // Without a window or terminal cardinality consumer, ordinary
+            // whole-value operators avoid per-row polling overhead. Their
+            // existing implementations also serve effect/materialization edges.
+            let needs_demand = members.iter().any(|id| {
+                matches!(
+                    by_id[id].op,
+                    ExecOp::Limit { .. }
+                        | ExecOp::Range { .. }
+                        | ExecOp::Count { .. }
+                        | ExecOp::Project {
+                            projection: ir::ProjectionPlan::Exists
+                        }
+                )
+            });
+            if members.len() > 1 && needs_demand {
                 let steps = order.step_ids().filter(|id| members.contains(id)).collect();
                 members.remove(&id);
                 program.absorbed.extend(members);
