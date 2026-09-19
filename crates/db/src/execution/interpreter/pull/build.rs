@@ -4,7 +4,7 @@ use super::*;
 impl<'a> Cursor<'a> {
     pub(super) fn materialized(value: ExecutionValue) -> Result<Self> {
         Ok(Self {
-            shape: Shape::of(&value)?,
+            shape: Shape::of(&value),
             node: Node::Items(Items::new(value)),
             produced_rows: 0,
             row_mode: false,
@@ -15,6 +15,11 @@ impl<'a> Cursor<'a> {
     pub(super) fn concat(mut inputs: Vec<Self>) -> Result<Self> {
         if inputs.len() == 1 {
             return Ok(inputs.pop().expect("one input"));
+        }
+        if inputs.iter().any(|input| input.shape == Shape::Lifecycle) {
+            return Err(HelixDbError::Query(
+                "cannot concatenate index lifecycle dependency outputs".into(),
+            ));
         }
         if inputs.iter().any(|input| input.shape == Shape::Folded) {
             return Err(HelixDbError::Query(
@@ -326,7 +331,7 @@ impl<'a> Cursor<'a> {
                         op:
                             exec::ExecVariableOp::SourceInject { variable }
                             | exec::ExecVariableOp::Stream(ir::StreamVariableOp::Select(variable)),
-                    } => Shape::of(ctx.variable_value(variable)?)?,
+                    } => Shape::of(ctx.variable_value(variable)?),
                     exec::ExecOp::Expand { .. }
                     | exec::ExecOp::Filter { .. }
                     | exec::ExecOp::Limit { .. }

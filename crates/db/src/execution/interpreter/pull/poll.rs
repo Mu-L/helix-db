@@ -497,9 +497,16 @@ impl<'a> Cursor<'a> {
         Box::pin(async move {
             let mut out = self.shape.empty();
             while let Some(item) = self.next(ctx).await? {
-                value::append(&mut out, item)?;
+                match &mut out {
+                    Some(out) => value::append(out, item)?,
+                    None => out = Some(item),
+                }
             }
-            Ok(out)
+            out.ok_or_else(|| {
+                HelixDbError::InvariantViolation(
+                    "lifecycle cursor did not produce its terminal value".into(),
+                )
+            })
         })
     }
 }

@@ -366,6 +366,16 @@ async fn count_and_exists_stop_their_filtered_input() {
             },
             ExecutionValue::Count(1),
         ),
+        (
+            exec::ExecOp::Count {
+                plan: Box::new(exec::ExecCountPlan::Stream(exec::ExecCountStreamPlan {
+                    cursor: exec::ExecCountCursorPlan::InputRows,
+                    window: exec::ExecCountWindowPlan::identity()
+                        .then_limit(exec::ExecUsizeExpr::literal(1)),
+                })),
+            },
+            ExecutionValue::Count(1),
+        ),
     ];
     for (terminal, expected) in terminals {
         let mut ctx = ExecutionContext::new(&db, parameters(&ids));
@@ -380,26 +390,31 @@ async fn count_and_exists_stop_their_filtered_input() {
         );
         assert_eq!(ctx.projection_read_snapshot().property_gets, 2);
     }
-    let predicate = ir::PredicatePlan::new(Predicate::eq("name", "match")).unwrap();
-    let cursor = exec::ExecCountCursorPlan::Filter {
-        input: Box::new(exec::ExecCountCursorPlan::NodeRuntimeInput(
-            exec::ExecRuntimeInputPlan::Param(test_support::name("ids")),
+    for input in [
+        exec::ExecCountCursorPlan::NodeRuntimeInput(exec::ExecRuntimeInputPlan::Param(
+            test_support::name("ids"),
         )),
-        predicate,
-    };
-    let plan = linear(vec![exec::ExecOp::Count {
-        plan: Box::new(exec::ExecCountPlan::Stream(exec::ExecCountStreamPlan {
-            cursor,
-            window: exec::ExecCountWindowPlan::identity()
-                .then_limit(exec::ExecUsizeExpr::literal(1)),
-        })),
-    }]);
-    let mut ctx = ExecutionContext::new(&db, parameters(&ids));
-    assert_eq!(
-        run(&mut ctx, &plan).await.unwrap(),
-        ExecutionValue::Count(1)
-    );
-    assert_eq!(ctx.projection_read_snapshot().property_gets, 2);
+        exec::ExecCountCursorPlan::NodeFullScan,
+    ] {
+        let predicate = ir::PredicatePlan::new(Predicate::eq("name", "match")).unwrap();
+        let cursor = exec::ExecCountCursorPlan::Filter {
+            input: Box::new(input),
+            predicate,
+        };
+        let plan = linear(vec![exec::ExecOp::Count {
+            plan: Box::new(exec::ExecCountPlan::Stream(exec::ExecCountStreamPlan {
+                cursor,
+                window: exec::ExecCountWindowPlan::identity()
+                    .then_limit(exec::ExecUsizeExpr::literal(1)),
+            })),
+        }]);
+        let mut ctx = ExecutionContext::new(&db, parameters(&ids));
+        assert_eq!(
+            run(&mut ctx, &plan).await.unwrap(),
+            ExecutionValue::Count(1)
+        );
+        assert_eq!(ctx.projection_read_snapshot().property_gets, 2);
+    }
     db.close().await.unwrap();
 }
 

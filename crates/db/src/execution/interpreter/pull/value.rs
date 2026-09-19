@@ -8,34 +8,39 @@ pub(super) enum Shape {
     Count,
     Bool,
     Folded,
+    Lifecycle,
 }
 
 impl Shape {
-    pub(super) fn of(value: &ExecutionValue) -> Result<Self> {
+    pub(super) fn of(value: &ExecutionValue) -> Self {
         match value {
-            ExecutionValue::Stream(_) => Ok(Self::Rows),
-            ExecutionValue::Scalars(_) => Ok(Self::Scalars),
-            ExecutionValue::Count(_) => Ok(Self::Count),
-            ExecutionValue::Bool(_) => Ok(Self::Bool),
-            ExecutionValue::FoldedStream(_) => Ok(Self::Folded),
-            ExecutionValue::IndexDdlReceipt(_) | ExecutionValue::IndexOperationStatus(_) => Err(
-                HelixDbError::Query("cannot concatenate index lifecycle dependency outputs".into()),
-            ),
+            ExecutionValue::Stream(_) => Self::Rows,
+            ExecutionValue::Scalars(_) => Self::Scalars,
+            ExecutionValue::Count(_) => Self::Count,
+            ExecutionValue::Bool(_) => Self::Bool,
+            ExecutionValue::FoldedStream(_) => Self::Folded,
+            ExecutionValue::IndexDdlReceipt(_) | ExecutionValue::IndexOperationStatus(_) => {
+                Self::Lifecycle
+            }
         }
     }
 
-    pub(super) fn empty(self) -> ExecutionValue {
-        match self {
+    pub(super) fn empty(self) -> Option<ExecutionValue> {
+        Some(match self {
             Self::Rows => ExecutionValue::Stream(Vec::new()),
             Self::Scalars => ExecutionValue::Scalars(Vec::new()),
             Self::Count => ExecutionValue::Count(0),
             Self::Bool => ExecutionValue::Bool(false),
             Self::Folded => ExecutionValue::FoldedStream(FoldedStream::new(Vec::new())),
-        }
+            Self::Lifecycle => return None,
+        })
     }
 
     pub(super) fn window(self, operation: &str) -> Result<Self> {
         match self {
+            Self::Lifecycle => Err(HelixDbError::Query(format!(
+                "{operation} cannot consume an index lifecycle value"
+            ))),
             Self::Rows => Ok(Self::Rows),
             Self::Scalars | Self::Count | Self::Bool => Ok(Self::Scalars),
             Self::Folded => Err(HelixDbError::Query(format!(

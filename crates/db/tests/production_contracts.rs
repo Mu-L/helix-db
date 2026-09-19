@@ -5199,6 +5199,28 @@ async fn public_query_boundary_covers_active_secondary_index_families_contract()
         .expect("already-active lifecycle value is observable")
         .last
         .expect("already-active lifecycle plan returns its receipt");
+    let passthrough = lifecycle_plan(exec::ExecOp::Noop, false);
+    let mut steps = passthrough.steps().to_vec();
+    let mut terminal = steps.last().unwrap().clone();
+    terminal.id = exec::ExecStepId::new(3).unwrap();
+    terminal.dependencies = vec![passthrough.root()];
+    steps.push(terminal);
+    let passthrough = exec::ExecutablePlan::new(
+        ir::PlanKind::Write,
+        ir::ReturnPlan::None,
+        ir::AtLeast::try_from_vec(steps).unwrap(),
+        exec::ExecStepId::new(3).unwrap(),
+        trace::PlanningTrace::default(),
+        exec::PlannerMetrics::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        db.execute(&passthrough, context::ParamBindings::default())
+            .await
+            .unwrap()
+            .last,
+        Some(lifecycle_value.clone())
+    );
     let error = db
         .execute(
             &lifecycle_plan(
