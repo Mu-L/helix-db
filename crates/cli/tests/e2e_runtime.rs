@@ -344,3 +344,43 @@ fn disk_runtime_persists_data_across_stop_and_start() {
         .assert()
         .success();
 }
+
+#[test]
+#[ignore = "requires Docker and a Helix server image"]
+fn restart_keeps_non_persisted_port_override() {
+    let fixture = CliFixture::new();
+    let port = free_port();
+    let project = fixture
+        .root()
+        .join(format!("restart-port-{}-{port}", std::process::id()));
+    fixture
+        .command()
+        .args(["init", "--path"])
+        .arg(&project)
+        .args(["local", "--no-skills"])
+        .assert()
+        .success();
+    select_test_image(&project);
+    let _cleanup = RuntimeCleanup {
+        fixture: &fixture,
+        project: project.clone(),
+    };
+    let original = fs::read_to_string(project.join("helix.toml")).unwrap();
+    fixture
+        .command()
+        .current_dir(&project)
+        .args(["start", "dev", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .success();
+    fixture
+        .command()
+        .current_dir(&project)
+        .args(["restart", "dev"])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(project.join("helix.toml")).unwrap(),
+        original
+    );
+}

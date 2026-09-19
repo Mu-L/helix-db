@@ -36,6 +36,9 @@ pub async fn run(
 
     project.ensure_instance_dir(&instance)?;
 
+    let runtime = LocalRuntime::new(&project);
+    let prepared = runtime.prepare_start(&config)?;
+
     if persist {
         project
             .config
@@ -49,13 +52,12 @@ pub async fn run(
 
     warn_about_storage(&project, &instance, &config);
 
-    let runtime = LocalRuntime::new(&project);
     if foreground {
         crate::output::info("Running in foreground. Press Ctrl-C to stop.");
-        runtime.run_foreground(&instance, &config).await?;
+        runtime.run_foreground(&instance, prepared).await?;
         op.success();
     } else {
-        runtime.run_detached(&instance, &config)?;
+        runtime.run_detached(&instance, prepared)?;
         op.success();
         if Verbosity::current().show_normal() {
             Operation::print_details(&[

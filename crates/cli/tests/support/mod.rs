@@ -320,9 +320,21 @@ if /I "%1"=="%HELIX_TEST_RUNTIME_FAIL_COMMAND%" (
   echo simulated runtime failure 1>&2
   exit /b 42
 )
+if "%1"=="port" (
+  if defined HELIX_TEST_RUNTIME_PORT_OUTPUT echo %HELIX_TEST_RUNTIME_PORT_OUTPUT%
+  exit /b 0
+)
 if "%1"=="image" (
   if "%HELIX_TEST_RUNTIME_IMAGE_MISSING%"=="1" (
     if not exist "%HELIX_TEST_RUNTIME_LOG%.pulled" exit /b 1
+  )
+  if "%5"=="minio/minio:latest" (
+    echo sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    exit /b 0
+  )
+  if "%5"=="minio/mc:latest" (
+    echo sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+    exit /b 0
   )
   echo sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   exit /b 0
@@ -397,8 +409,13 @@ if [ "$1" = "$HELIX_TEST_RUNTIME_FAIL_COMMAND" ]; then
   exit 42
 fi
 case "$1" in
+  port) printf '%s\n' "$HELIX_TEST_RUNTIME_PORT_OUTPUT"; exit 0 ;;
   image)
     if [ "$HELIX_TEST_RUNTIME_IMAGE_MISSING" = "1" ] && [ ! -f "$HELIX_TEST_RUNTIME_LOG.pulled" ]; then exit 1; fi
+    case "$5" in
+      minio/minio:latest) echo sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc; exit 0 ;;
+      minio/mc:latest) echo sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd; exit 0 ;;
+    esac
     echo sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     exit 0
     ;;

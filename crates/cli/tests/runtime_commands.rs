@@ -70,6 +70,10 @@ async fn disk_runtime_commands_cover_resource_reuse_status_cleanup_and_errors() 
         .command()
         .current_dir(&project)
         .args(["restart", "dev"])
+        .env(
+            "HELIX_TEST_RUNTIME_PORT_OUTPUT",
+            format!("127.0.0.1:{}", server.address().port()),
+        )
         .env("HELIX_TEST_RUNTIME_RESOURCES_EXIST", "1")
         .assert()
         .success();
@@ -322,7 +326,10 @@ async fn restart_keeps_existing_image_for_all_storage_modes_and_never_falls_back
                 "[project]\nname = \"restart-project\"\n[local.dev]\nport = {}\ntag = \"latest\"\nstorage = \"{storage}\"\n{s3}", server.address().port()
             )).unwrap();
             let mut command = fixture.command();
-            command.current_dir(&project).args(["restart", "dev"]);
+            command.current_dir(&project).args(["restart", "dev"]).env(
+                "HELIX_TEST_RUNTIME_PORT_OUTPUT",
+                format!("127.0.0.1:{}", server.address().port()),
+            );
             if fails {
                 command.env("HELIX_TEST_RUNTIME_FAIL_COMMAND", "restart");
             }
@@ -442,4 +449,172 @@ fn unresolved_image_after_pull_never_replaces_a_container() {
     assert!(!log
         .lines()
         .any(|line| line.starts_with("rm ") || line.starts_with("run ")));
+}
+
+#[test]
+fn failed_image_resolution_with_persist_preserves_config_and_containers() {
+    for foreground in [false, true] {
+        for (policy, missing, failed_command, failed_image) in [
+            ("always", false, "pull", ""),
+            ("never", true, "", ""),
+            ("missing", true, "pull", ""),
+            ("always", false, "image", ""),
+            ("always", false, "", "minio/minio:latest"),
+            ("always", false, "", "minio/mc:latest"),
+        ] {
+            let fixture = CliFixture::new_with_fake_runtime();
+            let project = fixture.root().join("persist-failure");
+            std::fs::create_dir(&project).unwrap();
+            let original =
+                "# preserve comments too\n[project]\nname = \"persist-failure\"\n[local.dev]\n";
+            let path = project.join("helix.toml");
+            std::fs::write(&path, original).unwrap();
+            let mut command = fixture.command();
+            command
+                .current_dir(&project)
+                .args([
+                    "start",
+                    "dev",
+                    "--persist",
+                    "--image-version",
+                    "unavailable",
+                    "--pull",
+                    policy,
+                    "--disk",
+                    "--port",
+                    "12345",
+                ])
+                .env("HELIX_TEST_RUNTIME_FAIL_COMMAND", failed_command)
+                .env("HELIX_TEST_RUNTIME_FAIL_IMAGE", failed_image);
+            if missing {
+                command.env("HELIX_TEST_RUNTIME_IMAGE_MISSING", "1");
+            }
+            if foreground {
+                command.arg("--foreground");
+            }
+            command.assert().failure();
+            assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+            assert!(!fixture
+                .runtime_log()
+                .lines()
+                .any(|line| line.starts_with("run ") || line.starts_with("rm ")));
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_disk_container_uses_its_resolved_image_without_resolving_again() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    for foreground in [false, true] {
+        let fixture = CliFixture::new_with_fake_runtime();
+        let project = fixture.root().join("resolved-images");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::write(project.join("helix.toml"), format!("[project]\nname = \"resolved-images\"\n[local.dev]\nport = {}\nstorage = \"disk\"\n", server.address().port())).unwrap();
+        let mut command = fixture.command();
+        command
+            .current_dir(&project)
+            .args(["start", "dev", "--persist"]);
+        if foreground {
+            command.arg("--foreground");
+        }
+        command.assert().success();
+        let log = fixture.runtime_log();
+        let lines: Vec<_> = log.lines().collect();
+        let first_removal = lines
+            .iter()
+            .position(|line| line.starts_with("rm "))
+            .unwrap();
+        let inspections: Vec<_> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.starts_with("image inspect "))
+            .collect();
+        assert_eq!(inspections.len(), 3);
+        assert!(inspections.iter().all(|(index, _)| *index < first_removal));
+        let runs: Vec<_> = lines
+            .iter()
+            .filter(|line| line.starts_with("run "))
+            .collect();
+        assert_eq!(runs.len(), 3);
+        for (run, byte) in runs.iter().zip(['c', 'd', 'a']) {
+            assert!(
+                run.contains(&format!("sha256:{}", byte.to_string().repeat(64))),
+                "{run}"
+            );
+            assert!(
+                !run.contains(":latest"),
+                "mutable tags must not be used: {run}"
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_probes_the_retained_port_instead_of_current_config() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/healthz"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(2)
+        .mount(&server)
+        .await;
+    for address in ["127.0.0.1", "[::]"] {
+        let fixture = CliFixture::new_with_fake_runtime();
+        let project = fixture.root().join("retained-port");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::write(
+            project.join("helix.toml"),
+            "[project]\nname = \"retained-port\"\n[local.dev]\nport = 1\n",
+        )
+        .unwrap();
+        fixture
+            .command()
+            .current_dir(&project)
+            .args(["restart", "dev"])
+            .env(
+                "HELIX_TEST_RUNTIME_PORT_OUTPUT",
+                format!("{address}:{}", server.address().port()),
+            )
+            .assert()
+            .success();
+        assert!(fixture
+            .runtime_log()
+            .contains("port helix-retained-port-dev 8080/tcp"));
+    }
+}
+
+#[test]
+fn restart_rejects_unavailable_or_invalid_published_ports() {
+    for (published, fail) in [
+        ("", false),
+        ("garbage", false),
+        ("127.0.0.1:0", false),
+        ("127.0.0.1:65536", false),
+        ("127.0.0.1:abc", false),
+        ("", true),
+    ] {
+        let fixture = CliFixture::new_with_fake_runtime();
+        let project = fixture.root().join("invalid-port");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::write(
+            project.join("helix.toml"),
+            "[project]\nname = \"invalid-port\"\n[local.dev]\n",
+        )
+        .unwrap();
+        let mut command = fixture.command();
+        command
+            .current_dir(&project)
+            .args(["restart", "dev"])
+            .env("HELIX_TEST_RUNTIME_PORT_OUTPUT", published);
+        if fail {
+            command.env("HELIX_TEST_RUNTIME_FAIL_COMMAND", "port");
+        }
+        assert!(stderr(command.assert().failure()).contains("published port"));
+        assert!(!fixture.runtime_log().contains("run "));
+    }
 }
