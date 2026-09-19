@@ -1,5 +1,6 @@
 use crate::config::{ContainerRuntime, LocalInstanceConfig};
 use crate::errors::CliError;
+use crate::image;
 use crate::output::Step;
 use crate::project::ProjectContext;
 use crate::utils::command_exists;
@@ -44,6 +45,21 @@ pub struct LocalStatus {
     pub container_name: String,
     pub status: String,
     pub ports: String,
+}
+
+/// A start configuration whose required images have all been resolved.
+/// Private fields keep image selection tied to the configuration used to resolve it.
+#[derive(Debug)]
+pub struct PreparedStart {
+    config: LocalInstanceConfig,
+    image: String,
+    disk_images: Option<DiskImages>,
+}
+
+#[derive(Debug)]
+struct DiskImages {
+    minio: String,
+    mc: String,
 }
 
 #[derive(Debug, Clone)]
@@ -179,55 +195,95 @@ impl LocalRuntime {
         format!("helix-{}-{}", self.project_name, instance_name)
     }
 
-    pub fn pull_image(&self, config: &LocalInstanceConfig) -> Result<()> {
-        self.pull_image_ref(&config.image_ref())
+    /// Resolve all required images before replacing any running containers.
+    /// Run Helix by immutable image ID so a concurrent tag update cannot change it.
+    pub fn prepare_start(&self, config: &LocalInstanceConfig) -> Result<PreparedStart> {
+        Self::check_available(self.runtime)?;
+        let reference = config.image_ref();
+        let policy = config
+            .pull
+            .unwrap_or_else(|| config.tag.default_pull_policy());
+        let id = self.pull_image_ref(&reference, policy)?;
+        let disk_images = if config.storage.is_disk() {
+            let dependency_policy = config.pull.unwrap_or(image::PullPolicy::Missing);
+            Some(DiskImages {
+                minio: self.pull_image_ref(MINIO_IMAGE, dependency_policy)?,
+                mc: self.pull_image_ref(MINIO_MC_IMAGE, dependency_policy)?,
+            })
+        } else {
+            None
+        };
+        crate::output::info(&format!("Image: {reference} ({id})"));
+        Ok(PreparedStart {
+            config: config.clone(),
+            image: id,
+            disk_images,
+        })
     }
 
-    fn pull_image_ref(&self, image: &str) -> Result<()> {
+    fn pull_image_ref(&self, image: &str, policy: image::PullPolicy) -> Result<String> {
+        if policy != image::PullPolicy::Always {
+            match self.inspect_image(image) {
+                Ok(id) => return Ok(id),
+                Err(error) if policy == image::PullPolicy::Never => {
+                    return Err(error.wrap_err(format!("Cannot use {image} with --pull never")));
+                }
+                Err(_) => {}
+            }
+        }
         Step::verbose_substep(&format!("Pulling {image}"));
         let output = self
             .runtime_command()
             .args(["pull", image])
             .output()
             .map_err(|e| eyre!("Failed to pull {image}: {e}"))?;
-
         if !output.status.success() {
-            if self.image_exists(image) {
-                Step::verbose_substep(&format!("Using local image {image}"));
-                return Ok(());
-            }
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(eyre!("Failed to pull {image}:\n{stderr}"));
         }
-
-        Ok(())
+        self.inspect_image(image)
     }
 
-    fn image_exists(&self, image: &str) -> bool {
-        self.runtime_command()
-            .args(["image", "inspect", image])
+    fn inspect_image(&self, image: &str) -> Result<String> {
+        let output = self
+            .runtime_command()
+            .args(["image", "inspect", "--format", "{{.Id}}", image])
             .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+            .map_err(|e| eyre!("Failed to inspect image {image}: {e}"))?;
+        let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if !output.status.success() || id.is_empty() {
+            return Err(eyre!(
+                "Cannot inspect local image {image}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(id)
     }
 
-    pub fn run_detached(&self, instance_name: &str, config: &LocalInstanceConfig) -> Result<()> {
-        Self::check_available(self.runtime)?;
-        self.pull_image(config)?;
+    pub fn run_detached(&self, instance_name: &str, prepared: PreparedStart) -> Result<()> {
+        let PreparedStart {
+            config,
+            image,
+            disk_images,
+        } = prepared;
 
         let name = self.container_name(instance_name);
-        let image = config.image_ref();
         let _ = self.remove_container(&name);
-        let (network, mut env) = if config.storage.is_disk() {
-            let resources = self.start_disk_dependencies(instance_name)?;
-            let env = disk_env(&resources);
-            (Some(resources.network), env)
-        } else if config.storage.is_s3() {
-            let _ = self.remove_disk_resources(instance_name, false);
-            (None, s3_env(config)?)
-        } else {
-            let _ = self.remove_disk_resources(instance_name, false);
-            (None, Vec::new())
+        let (network, mut env) = match disk_images {
+            Some(images) => {
+                let resources = self.start_disk_dependencies(instance_name, &images)?;
+                let env = disk_env(&resources);
+                (Some(resources.network), env)
+            }
+            None => {
+                let _ = self.remove_disk_resources(instance_name, false);
+                let env = if config.storage.is_s3() {
+                    s3_env(&config)?
+                } else {
+                    Vec::new()
+                };
+                (None, env)
+            }
         };
         env.extend(telemetry_env());
 
@@ -247,27 +303,30 @@ impl LocalRuntime {
         Ok(())
     }
 
-    pub async fn run_foreground(
-        &self,
-        instance_name: &str,
-        config: &LocalInstanceConfig,
-    ) -> Result<()> {
-        Self::check_available(self.runtime)?;
-        self.pull_image(config)?;
+    pub async fn run_foreground(&self, instance_name: &str, prepared: PreparedStart) -> Result<()> {
+        let PreparedStart {
+            config,
+            image,
+            disk_images,
+        } = prepared;
 
         let name = self.container_name(instance_name);
-        let image = config.image_ref();
         let _ = self.remove_container(&name);
-        let (network, mut env) = if config.storage.is_disk() {
-            let resources = self.start_disk_dependencies(instance_name)?;
-            let env = disk_env(&resources);
-            (Some(resources.network), env)
-        } else if config.storage.is_s3() {
-            let _ = self.remove_disk_resources(instance_name, false);
-            (None, s3_env(config)?)
-        } else {
-            let _ = self.remove_disk_resources(instance_name, false);
-            (None, Vec::new())
+        let (network, mut env) = match disk_images {
+            Some(images) => {
+                let resources = self.start_disk_dependencies(instance_name, &images)?;
+                let env = disk_env(&resources);
+                (Some(resources.network), env)
+            }
+            None => {
+                let _ = self.remove_disk_resources(instance_name, false);
+                let env = if config.storage.is_s3() {
+                    s3_env(&config)?
+                } else {
+                    Vec::new()
+                };
+                (None, env)
+            }
         };
         env.extend(telemetry_env());
         let args = helix_run_args(&name, &image, config.port, false, network.as_deref(), &env);
@@ -322,11 +381,7 @@ impl LocalRuntime {
         Ok(removed_helix || removed_disk_resources)
     }
 
-    pub fn restart(&self, instance_name: &str, config: &LocalInstanceConfig) -> Result<()> {
-        if config.storage.is_disk() || config.storage.is_s3() {
-            return self.run_detached(instance_name, config);
-        }
-
+    pub fn restart(&self, instance_name: &str) -> Result<()> {
         Self::check_available(self.runtime)?;
         let name = self.container_name(instance_name);
         let output = self
@@ -336,11 +391,30 @@ impl LocalRuntime {
             .map_err(|e| eyre!("Failed to restart {name}: {e}"))?;
 
         if output.status.success() {
-            self.wait_ready(config.port)?;
+            let published = self
+                .runtime_command()
+                .args(["port", &name, "8080/tcp"])
+                .output()
+                .map_err(|e| eyre!("Failed to inspect published port for {name}: {e}"))?;
+            if !published.status.success() {
+                return Err(eyre!(
+                    "Failed to inspect published port for {name}: {}",
+                    String::from_utf8_lossy(&published.stderr)
+                ));
+            }
+            let ports = String::from_utf8_lossy(&published.stdout);
+            let port = ports
+                .lines()
+                .next()
+                .and_then(|line| line.rsplit_once(':'))
+                .and_then(|(_, port)| port.parse::<u16>().ok())
+                .filter(|port| *port != 0)
+                .ok_or_else(|| eyre!("No valid published port for {name} on 8080/tcp"))?;
+            self.wait_ready(port)?;
             return Ok(());
         }
 
-        self.run_detached(instance_name, config)
+        Err(eyre!("Failed to restart {name}: {}\nUse 'helix start {instance_name}' to create a container.", String::from_utf8_lossy(&output.stderr)))
     }
 
     // No upfront `is_installed`-style preflight here: `spawn_failed_because_runtime_missing`
@@ -448,15 +522,17 @@ impl LocalRuntime {
         }
     }
 
-    fn start_disk_dependencies(&self, instance_name: &str) -> Result<DiskRuntimeResources> {
+    fn start_disk_dependencies(
+        &self,
+        instance_name: &str,
+        images: &DiskImages,
+    ) -> Result<DiskRuntimeResources> {
         let resources = self.disk_resources(instance_name);
-        self.pull_image_ref(MINIO_IMAGE)?;
-        self.pull_image_ref(MINIO_MC_IMAGE)?;
         self.ensure_network(&resources.network)?;
         self.ensure_volume(&resources.volume)?;
         let _ = self.remove_container(&resources.minio_container);
 
-        let args = minio_run_args(&resources);
+        let args = minio_run_args(&resources, &images.minio);
         let output = self
             .runtime_command()
             .args(&args)
@@ -471,7 +547,7 @@ impl LocalRuntime {
             ));
         }
 
-        self.ensure_minio_bucket(&resources)?;
+        self.ensure_minio_bucket(&resources, &images.mc)?;
         Ok(resources)
     }
 
@@ -517,9 +593,9 @@ impl LocalRuntime {
         Ok(())
     }
 
-    fn ensure_minio_bucket(&self, resources: &DiskRuntimeResources) -> Result<()> {
+    fn ensure_minio_bucket(&self, resources: &DiskRuntimeResources, image: &str) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(30);
-        let args = minio_bucket_init_args(resources);
+        let args = minio_bucket_init_args(resources, image);
         let mut last_stderr = String::new();
 
         while Instant::now() < deadline {
@@ -1064,7 +1140,7 @@ fn helix_run_args(
     args
 }
 
-fn minio_run_args(resources: &DiskRuntimeResources) -> Vec<String> {
+fn minio_run_args(resources: &DiskRuntimeResources, image: &str) -> Vec<String> {
     vec![
         "run".to_string(),
         "-d".to_string(),
@@ -1080,7 +1156,7 @@ fn minio_run_args(resources: &DiskRuntimeResources) -> Vec<String> {
         format!("MINIO_ROOT_PASSWORD={MINIO_SECRET_KEY}"),
         "-v".to_string(),
         format!("{}:/data", resources.volume),
-        MINIO_IMAGE.to_string(),
+        image.to_string(),
         "server".to_string(),
         "/data".to_string(),
         "--console-address".to_string(),
@@ -1088,7 +1164,7 @@ fn minio_run_args(resources: &DiskRuntimeResources) -> Vec<String> {
     ]
 }
 
-fn minio_bucket_init_args(resources: &DiskRuntimeResources) -> Vec<String> {
+fn minio_bucket_init_args(resources: &DiskRuntimeResources, image: &str) -> Vec<String> {
     let endpoint = format!("http://{}:9000", resources.minio_container);
     let command = format!(
         "mc alias set local {} {} {} && mc mb --ignore-existing local/{}",
@@ -1105,7 +1181,7 @@ fn minio_bucket_init_args(resources: &DiskRuntimeResources) -> Vec<String> {
         resources.network.clone(),
         "--entrypoint".to_string(),
         "/bin/sh".to_string(),
-        MINIO_MC_IMAGE.to_string(),
+        image.to_string(),
         "-c".to_string(),
         command,
     ]
@@ -1527,7 +1603,7 @@ mod tests {
     #[test]
     fn minio_args_include_persistent_volume() {
         let resources = disk_resources();
-        let args = minio_run_args(&resources);
+        let args = minio_run_args(&resources, "sha256:minio");
 
         assert!(has_pair(&args, "--network", "helix-demo-dev-net"));
         assert!(args.contains(&"MINIO_ROOT_USER=minioadmin".to_string()));
@@ -1538,10 +1614,10 @@ mod tests {
     #[test]
     fn minio_bucket_init_uses_shell_entrypoint() {
         let resources = disk_resources();
-        let args = minio_bucket_init_args(&resources);
+        let args = minio_bucket_init_args(&resources, "sha256:mc");
 
         assert!(has_pair(&args, "--entrypoint", "/bin/sh"));
-        assert!(args.contains(&"minio/mc:latest".to_string()));
+        assert!(args.contains(&"sha256:mc".to_string()));
         assert!(args.iter().any(|arg| arg.contains("mc alias set local")));
     }
 
