@@ -767,7 +767,12 @@ pub(crate) async fn run_scheduler_and_projection_contracts() {
     ));
     let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
     context
-        .execute_steps(plan.steps(), plan.execution_order(), plan.root())
+        .execute_steps(
+            plan.steps(),
+            plan.execution_order(),
+            plan.root(),
+            plan.execution_program(),
+        )
         .await
         .expect("fan-out/fan-in plan executes");
     assert!(context.step_outputs.get(&id(4)).is_some());
@@ -789,7 +794,12 @@ pub(crate) async fn run_scheduler_and_projection_contracts() {
     .expect("wide scheduler plan validates");
     let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
     context
-        .execute_steps(plan.steps(), plan.execution_order(), plan.root())
+        .execute_steps(
+            plan.steps(),
+            plan.execution_order(),
+            plan.root(),
+            plan.execution_program(),
+        )
         .await
         .expect("wide scheduler plan executes");
     assert!(context.step_outputs.get(&id(6)).is_some());
