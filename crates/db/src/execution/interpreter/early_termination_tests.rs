@@ -855,3 +855,256 @@ async fn terminal_adapters_reject_invalid_input_shapes() {
     }
     db.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn bounded_control_flow_matches_complete_execution_at_every_emit_position() {
+    let db = test_support::open_db("pull-control-window-matrix").await;
+    let first = test_support::add_user(&db, "match").await;
+    let second = test_support::add_user(&db, "other").await;
+    let exec::ExecOp::Filter { predicate } = filter_name("match") else {
+        unreachable!()
+    };
+    let identity = child(vec![context_source()]);
+    let empty = child(vec![context_source(), filter_name("absent")]);
+    let mut controls = Vec::new();
+    for body in [identity.clone(), empty.clone()] {
+        for emit in [
+            ir::RepeatEmitPlan::None,
+            ir::RepeatEmitPlan::Before,
+            ir::RepeatEmitPlan::After,
+            ir::RepeatEmitPlan::All,
+            ir::RepeatEmitPlan::AfterIf {
+                predicate: predicate.clone(),
+            },
+        ] {
+            for stop in [
+                ir::RepeatStopPlan::MaxDepthOnly,
+                ir::RepeatStopPlan::Times {
+                    count: std::num::NonZeroUsize::new(2).unwrap(),
+                },
+                ir::RepeatStopPlan::Until {
+                    predicate: predicate.clone(),
+                },
+                ir::RepeatStopPlan::TimesOrUntil {
+                    count: std::num::NonZeroUsize::new(2).unwrap(),
+                    predicate: predicate.clone(),
+                },
+            ] {
+                controls.push(exec::ExecOp::Repeat {
+                    plan: exec::ExecRepeatPlan {
+                        body: Box::new(body.clone()),
+                        emit: emit.clone(),
+                        stop,
+                        max_depth: std::num::NonZeroUsize::new(3).unwrap(),
+                    },
+                });
+            }
+        }
+    }
+    for branch in [
+        exec::ExecBranchPlan::Union(
+            ir::AtLeast::try_from_vec(vec![identity.clone(), identity.clone()]).unwrap(),
+        ),
+        exec::ExecBranchPlan::Coalesce(
+            ir::AtLeast::try_from_vec(vec![empty.clone(), identity.clone()]).unwrap(),
+        ),
+        exec::ExecBranchPlan::Coalesce(
+            ir::AtLeast::try_from_vec(vec![empty.clone(), empty.clone()]).unwrap(),
+        ),
+        exec::ExecBranchPlan::Optional(Box::new(empty)),
+        exec::ExecBranchPlan::Choose {
+            condition: predicate.clone(),
+            then_plan: Box::new(identity.clone()),
+        },
+        exec::ExecBranchPlan::ChooseElse {
+            condition: predicate,
+            then_plan: Box::new(identity.clone()),
+            else_plan: Box::new(identity),
+        },
+    ] {
+        controls.push(exec::ExecOp::Branch { plan: branch });
+    }
+    for control in controls {
+        for take in [0, 1, 2, 3, 100] {
+            let plan = linear(vec![source(), control.clone(), limit(take)]);
+            let mut eager = ExecutionContext::new(&db, parameters(&[first, second]));
+            eager
+                .execute_steps(
+                    plan.steps(),
+                    plan.execution_order(),
+                    plan.root(),
+                    &exec::ExecProgram::default(),
+                )
+                .await
+                .unwrap();
+            let expected = eager
+                .finish(plan.root(), &exec::ExecutableReturns::None)
+                .unwrap()
+                .last
+                .unwrap();
+            let mut pull = ExecutionContext::new(&db, parameters(&[first, second]));
+            pull.variables
+                .insert(test_support::name("$context"), ExecutionValue::Count(99));
+            pull.execute_steps(
+                plan.steps(),
+                plan.execution_order(),
+                plan.root(),
+                plan.execution_program(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                pull.variables.get(&test_support::name("$context")),
+                Some(&ExecutionValue::Count(99))
+            );
+            assert_eq!(
+                pull.finish(plan.root(), &exec::ExecutableReturns::None)
+                    .unwrap()
+                    .last
+                    .unwrap(),
+                expected,
+                "take={take}, control={control:?}"
+            );
+        }
+    }
+    db.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn bounded_membership_injection_and_merges_preserve_duplicates_and_order() {
+    let db = test_support::open_db("pull-membership-window-matrix").await;
+    let first = test_support::add_user(&db, "first").await;
+    let second = test_support::add_user(&db, "second").await;
+    let input = [first, second, first];
+    for operation in [
+        ir::StreamVariableOp::Within(test_support::name("members")),
+        ir::StreamVariableOp::Without(test_support::name("members")),
+        ir::StreamVariableOp::Inject(test_support::name("members")),
+    ] {
+        for take in [0, 1, 4, 10] {
+            let plan = linear(vec![
+                source(),
+                exec::ExecOp::Variable {
+                    op: exec::ExecVariableOp::Stream(operation.clone()),
+                },
+                limit(take),
+            ]);
+            let mut outputs = Vec::new();
+            for program in [&exec::ExecProgram::default(), plan.execution_program()] {
+                let mut ctx = ExecutionContext::new(&db, parameters(&input));
+                ctx.variables.insert(
+                    test_support::name("members"),
+                    ExecutionValue::Stream(vec![ExecutionRow::current(ElementRef::Node(first))]),
+                );
+                ctx.execute_steps(plan.steps(), plan.execution_order(), plan.root(), program)
+                    .await
+                    .unwrap();
+                outputs.push(
+                    ctx.finish(plan.root(), &exec::ExecutableReturns::None)
+                        .unwrap()
+                        .last,
+                );
+            }
+            assert_eq!(
+                outputs[0], outputs[1],
+                "take={take}, operation={operation:?}"
+            );
+        }
+    }
+    for mode in [
+        exec::ExecMergeMode::Concat,
+        exec::ExecMergeMode::Union,
+        exec::ExecMergeMode::Intersect,
+    ] {
+        for take in [0, 1, 4, 10] {
+            let id = |n| exec::ExecStepId::new(n).unwrap();
+            let plan = test_support::executable(
+                ir::PlanKind::Read,
+                vec![
+                    test_support::step(1, vec![], source()),
+                    test_support::step(2, vec![], source()),
+                    test_support::step(3, vec![id(1), id(2)], exec::ExecOp::Merge { mode }),
+                    test_support::step(4, vec![id(3)], limit(take)),
+                ],
+                4,
+            );
+            let mut eager = ExecutionContext::new(&db, parameters(&input));
+            eager
+                .execute_steps(
+                    plan.steps(),
+                    plan.execution_order(),
+                    plan.root(),
+                    &exec::ExecProgram::default(),
+                )
+                .await
+                .unwrap();
+            let expected = eager
+                .finish(plan.root(), &exec::ExecutableReturns::None)
+                .unwrap()
+                .last
+                .unwrap();
+            let mut pull = ExecutionContext::new(&db, parameters(&input));
+            assert_eq!(
+                run(&mut pull, &plan).await.unwrap(),
+                expected,
+                "take={take}, mode={mode:?}"
+            );
+        }
+    }
+    db.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn bounded_union_reports_mixed_bound_rows_only_when_consumed() {
+    let db = test_support::open_db("pull-union-bound-row-error").await;
+    let node = test_support::add_user(&db, "node").await;
+    let edge = test_support::add_edge(&db, node, node, "LINK").await;
+    let bind = exec::ExecOp::Variable {
+        op: exec::ExecVariableOp::Stream(ir::StreamVariableOp::Bind(test_support::name("item"))),
+    };
+    let branch = exec::ExecOp::Branch {
+        plan: exec::ExecBranchPlan::Union(
+            ir::AtLeast::try_from_vec(vec![
+                child(vec![context_source(), bind.clone()]),
+                child(vec![
+                    exec::ExecOp::Access {
+                        plan: Box::new(exec::ExecAccessPlan::Edge(
+                            exec::ExecEdgeAccessPlan::FromParam {
+                                param: test_support::name("edges"),
+                            },
+                        )),
+                    },
+                    bind,
+                ]),
+            ])
+            .unwrap(),
+        ),
+    };
+    for (take, should_fail) in [(1, false), (100, true)] {
+        let params = parameters(&[node]).with_value(
+            test_support::name("edges"),
+            helix_ast::value::PropertyValue::I64Array(vec![edge as i64]),
+        );
+        let mut ctx = ExecutionContext::new(&db, params);
+        let result = run(
+            &mut ctx,
+            &linear(vec![source(), branch.clone(), limit(take)]),
+        )
+        .await;
+        if should_fail {
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("mixed current element types"));
+        } else {
+            let ExecutionValue::Stream(rows) = result.unwrap() else {
+                panic!("union returns rows")
+            };
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].current, Some(ElementRef::Node(node)));
+            assert!(!rows[0].bindings.is_empty());
+        }
+        assert!(ctx.variable_value(&test_support::name("$context")).is_err());
+    }
+    db.close().await.unwrap();
+}
