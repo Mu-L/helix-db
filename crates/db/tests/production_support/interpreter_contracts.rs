@@ -1214,7 +1214,7 @@ pub(crate) async fn run_request_read_view_guards() {
                 key: range_key.clone(),
                 range: ir::IndexRange::All,
             }),
-            "node secondary range lookup escaped its request read view",
+            "range cursor escaped request read view",
         ),
         (
             exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::RangeIndex {
@@ -1225,7 +1225,7 @@ pub(crate) async fn run_request_read_view_guards() {
                 key: range_key,
                 range: ir::IndexRange::All,
             }),
-            "edge secondary range lookup escaped its request read view",
+            "range cursor escaped request read view",
         ),
     ] {
         let error = context
