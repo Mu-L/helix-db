@@ -41,7 +41,7 @@ helix start [INSTANCE] [OPTIONS]
 
 - Defaults to `ghcr.io/helixdb/helixdb:v0.0.5`. Flags override the image tag and pull policy in `[local.<instance>]`.
 - `always` requires a successful pull; `missing` uses a cached image when available; `never` fails if the image is not cached. A failed pull never silently selects an older cached image.
-- Resolves all required images before replacing containers, displays the selected reference and immutable image ID, and starts Helix by that ID.
+- Resolves all required images before saving overrides or replacing containers. Failed image resolution leaves `helix.toml` unchanged. Helix and disk-mode dependencies start by their resolved immutable image IDs.
 - Disk-mode MinIO images default to `missing` unless a pull policy is explicitly configured.
 - Names the container `helix-<project>-<instance>` and publishes the configured port to container port `8080`.
 - Uses Docker or Podman based on `[project] container_runtime` in `helix.toml`.

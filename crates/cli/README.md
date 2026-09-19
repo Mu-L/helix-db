@@ -42,8 +42,9 @@ a successful pull, `--pull missing` permits cached images, and `--pull never`
 requires cached images. Explicit pull policies also apply to disk-mode MinIO
 images; their default is `missing`.
 
-Start resolves all required images before replacing containers, displays the
-selected reference and immutable image ID, and starts Helix by that ID.
+Start resolves all required images before saving overrides or replacing containers.
+A failed image resolution leaves `helix.toml` unchanged. Helix, MinIO, and the
+bucket initializer start by their resolved immutable image IDs.
 `helix restart dev` restarts the existing container with its existing image and
-settings. It fails if no container exists. Use `helix start dev` to apply new
+settings and checks readiness on the container's published port. It fails if no container exists. Use `helix start dev` to apply new
 image or configuration settings. Restarting in-memory storage clears its data.

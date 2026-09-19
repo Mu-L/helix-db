@@ -6490,7 +6490,7 @@ Page type: Reference
 
 <div className="flex flex-wrap gap-2"><Badge color="gray" size="sm">Reference</Badge></div>
 
-Restart an existing background local instance in place, using its current image and container settings. Restart never pulls an image or creates a replacement container. If the container has been removed, the command fails. Use [`helix start`](/cli/command-reference/start) to create a container or apply new image or configuration settings.
+Restart an existing background local instance in place, using its current image and container settings. Readiness is checked on the existing container's published port, including a temporary `helix start --port` override. Restart never pulls an image or creates a replacement container. If the container has been removed, the command fails. Use [`helix start`](/cli/command-reference/start) to create a container or apply new image or configuration settings.
 
 Default local data is in-memory and is wiped by every restart. Disk-mode instances preserve data in their local MinIO volume.
 
@@ -6616,7 +6616,7 @@ helix start [INSTANCE] [OPTIONS]
 
 - Defaults to `ghcr.io/helixdb/helixdb:v0.0.5`. Flags override the image tag and pull policy in `[local.<instance>]`.
 - `always` requires a successful pull; `missing` uses a cached image when available; `never` fails if the image is not cached. A failed pull never silently selects an older cached image.
-- Resolves all required images before replacing containers, displays the selected reference and immutable image ID, and starts Helix by that ID.
+- Resolves all required images before saving overrides or replacing containers. Failed image resolution leaves `helix.toml` unchanged. Helix and disk-mode dependencies start by their resolved immutable image IDs.
 - Disk-mode MinIO images default to `missing` unless a pull policy is explicitly configured.
 - Names the container `helix-<project>-<instance>` and publishes the configured port to container port `8080`.
 - Uses Docker or Podman based on `[project] container_runtime` in `helix.toml`.
