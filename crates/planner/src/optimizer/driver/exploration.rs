@@ -3,7 +3,7 @@
 mod state;
 
 use super::CascadesOptimizer;
-use crate::{ir, logical, memo, optimizer};
+use crate::{ir, logical, memo, optimizer, rules};
 
 use self::state::{ExplorationRun, ExplorationSeed};
 
@@ -18,12 +18,23 @@ pub(super) fn optimize_many(
         ExplorationSeed::Finished(result) => return Ok(result),
     };
 
+    // The wall-clock budget bounds exploration only. Once it expires no further
+    // logical alternatives are explored, but implementation rules still run for
+    // every expression already queued so each memo group keeps the physical
+    // alternatives selection needs. Stopping outright could leave a root group
+    // with no physical alternative and fail an otherwise plannable request.
+    let mut time_guardrail = None;
     while let Some(task) = run.pop_task() {
-        if let Some(guardrail) = run.time_guardrail(config) {
-            return Ok(run.finish(Some(guardrail)));
+        if time_guardrail.is_none() {
+            time_guardrail = run.time_guardrail(config);
         }
 
         for optimizer_rule in optimizer.rules.rules_for_expr(&task.expr) {
+            if time_guardrail.is_some()
+                && optimizer_rule.metadata().kind != rules::RuleKind::Implementation
+            {
+                continue;
+            }
             if let Some(guardrail) = run.rule_budget_guardrail(config) {
                 return Ok(run.finish(Some(guardrail)));
             }
@@ -65,5 +76,5 @@ pub(super) fn optimize_many(
         }
     }
 
-    Ok(run.finish(None))
+    Ok(run.finish(time_guardrail))
 }

@@ -22,6 +22,27 @@ impl optimizer::OptimizerRule for SleepAndExploreRule {
     }
 }
 
+struct SleepAndImplementRule;
+
+impl optimizer::OptimizerRule for SleepAndImplementRule {
+    fn metadata(&self) -> &rules::RuleMetadata {
+        static METADATA: std::sync::OnceLock<rules::RuleMetadata> = std::sync::OnceLock::new();
+        METADATA.get_or_init(|| {
+            rules::RuleMetadata::new(
+                rules::RuleId::new("sleep_and_implement").unwrap(),
+                rules::RuleKind::Implementation,
+            )
+        })
+    }
+
+    fn apply(&self, _input: optimizer::RuleInput<'_>) -> optimizer::RuleResult {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        optimizer::RuleResult::Applied(optimizer::RuleEffect::Physical(
+            ir::AtLeast::<_, 1>::from_one(support::alternative(7)),
+        ))
+    }
+}
+
 #[test]
 fn cascades_optimizer_explores_logical_rules_and_collects_best_physical_alternative() {
     let exploration = support::StaticRule::new(
@@ -216,6 +237,41 @@ fn cascades_optimizer_stops_on_time_budget_between_tasks() {
         result.guardrail(),
         Some(optimizer::OptimizerGuardrail::TimeBudget)
     );
+}
+
+#[test]
+fn cascades_optimizer_keeps_a_physical_alternative_for_every_root_after_time_budget() {
+    // A one-millisecond budget is exhausted either by seeding the memo (debug
+    // builds already spend longer than that on two roots) or, on faster
+    // builds, by the first root's implementation rule, which sleeps past the
+    // whole budget. Either way at least one root is popped after the budget
+    // has expired. Stopping there must not leave that root without any
+    // physical alternative: selection would otherwise fail with
+    // `SelectionError::NoPhysicalAlternatives`, which callers see as
+    // "selected optimizer result did not contain a best physical alternative".
+    let mut config = support::config();
+    config.limits.optimization_micros = properties::PositiveUsize::new(1_000).unwrap();
+    let optimizer = support::optimizer(vec![&SleepAndImplementRule]);
+
+    let result = support::optimize_many(
+        &optimizer,
+        ir::AtLeast::<_, 1>::from_one_and_rest(support::source(), vec![support::edge_source()]),
+        &config,
+    );
+
+    assert_eq!(
+        result.guardrail(),
+        Some(optimizer::OptimizerGuardrail::TimeBudget)
+    );
+    for root in result.roots().iter() {
+        let selected = result.best_plan(*root);
+        assert!(
+            selected.is_ok(),
+            "root group {} has no physical alternative after the time budget expired: {:?}",
+            root.get(),
+            selected.err()
+        );
+    }
 }
 
 #[test]
