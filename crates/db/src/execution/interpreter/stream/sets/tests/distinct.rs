@@ -94,3 +94,71 @@ fn distinct_rows_use_current_element_and_preserve_first_row_payload() {
         Some(&ElementRef::Node(1))
     );
 }
+
+/// DISTINCT must use the engine's numeric identity (`PropertyValue::total_order`, the
+/// same identity `WHERE`, `ORDER BY`, GROUP BY and secondary indexes use), not the
+/// `Debug` rendering of the storage variant. The SDKs store integral JSON numbers as
+/// I64 and fractional ones as F64, so mixed-variant columns arise without any tuning.
+#[tokio::test]
+async fn distinct_scalars_unify_numerically_equal_values_across_storage_variants() {
+    use std::cmp::Ordering;
+
+    use crate::encoding::property::property_value::PropertyValue;
+
+    let db = test_support::open_db("stream-sets-distinct-numeric-identity").await;
+    let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+
+    // The engine's own identity says these are one value.
+    assert_eq!(
+        PropertyValue::I64(42).total_order(&PropertyValue::F64(42.0)),
+        Ordering::Equal
+    );
+    assert_eq!(
+        PropertyValue::I64(42).total_order(&PropertyValue::F32(42.0)),
+        Ordering::Equal
+    );
+
+    let values = ExecutionValue::Scalars(vec![
+        ExecutionScalar::Value(PropertyValue::I64(42)),
+        ExecutionScalar::Value(PropertyValue::F64(42.0)),
+        ExecutionScalar::Value(PropertyValue::F32(42.0)),
+        ExecutionScalar::Value(PropertyValue::I64(7)),
+    ]);
+    assert_eq!(
+        ctx.distinct(values).unwrap(),
+        ExecutionValue::Scalars(vec![
+            ExecutionScalar::Value(PropertyValue::I64(42)),
+            ExecutionScalar::Value(PropertyValue::I64(7)),
+        ]),
+        "DISTINCT over scalars must collapse numerically equal I64/F64/F32 values"
+    );
+}
+
+/// Same contract for `value_map(...).dedup()`, which dedups `ExecutionScalar::Object`.
+#[tokio::test]
+async fn distinct_objects_unify_numerically_equal_property_values() {
+    use std::collections::BTreeMap;
+
+    use crate::encoding::property::property_value::PropertyValue;
+
+    let db = test_support::open_db("stream-sets-distinct-numeric-identity-objects").await;
+    let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+
+    let object = |value: PropertyValue| {
+        ExecutionScalar::Object(BTreeMap::from([("score".to_string(), value)]))
+    };
+    let values = ExecutionValue::Scalars(vec![
+        object(PropertyValue::I64(42)),
+        object(PropertyValue::F64(42.0)),
+        object(PropertyValue::F32(42.0)),
+        object(PropertyValue::I64(7)),
+    ]);
+    assert_eq!(
+        ctx.distinct(values).unwrap(),
+        ExecutionValue::Scalars(vec![
+            object(PropertyValue::I64(42)),
+            object(PropertyValue::I64(7)),
+        ]),
+        "DISTINCT over value_map objects must collapse numerically equal I64/F64/F32 values"
+    );
+}
