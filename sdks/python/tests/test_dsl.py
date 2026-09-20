@@ -49,7 +49,6 @@ def parsed(value: object) -> object:
     return json.loads(stringify_json(value))
 
 
-
 class EdgeDropTests(unittest.TestCase):
     def test_drop_preserves_element_state(self):
         dropped = g().e([1, 2]).drop()
