@@ -607,6 +607,56 @@ mod tests {
                 db.inner_db().delete(key).await.unwrap();
                 let key = catalog::ScopedPropertyDirectionKey::try_new(label, "score", direction)
                     .unwrap();
+                // Exercise node and edge secondary-set access in a request
+                // snapshot, not just the shared preparation helper.
+                let family = match keyspace {
+                    exec::ElementKeyspace::NodeProperty => "node_range",
+                    exec::ElementKeyspace::EdgeEndpoints => "edge_range",
+                };
+                let index_name =
+                    test_support::name(&format!("{family}:{label}:score:{direction:?}"));
+                let access = match keyspace {
+                    exec::ElementKeyspace::NodeProperty => {
+                        exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::SecondarySet {
+                            set: exec::ExecNodeSecondarySetPlan::Range(
+                                exec::ExecNodeSecondaryRangePlan {
+                                    index: catalog::NodeRangeIndexMeta::new(index_name),
+                                    key: key.clone(),
+                                    range: ir::IndexRange::All,
+                                    iteration: ir::RangeScanIteration::Reverse,
+                                },
+                            ),
+                        })
+                    }
+                    exec::ElementKeyspace::EdgeEndpoints => {
+                        exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::SecondarySet {
+                            set: exec::ExecEdgeSecondarySetPlan::Range(
+                                exec::ExecEdgeSecondaryRangePlan {
+                                    index: catalog::EdgeRangeIndexMeta::new(index_name),
+                                    key: key.clone(),
+                                    range: ir::IndexRange::All,
+                                    iteration: ir::RangeScanIteration::Reverse,
+                                },
+                            ),
+                        })
+                    }
+                }
+                .limited_by(exec::ExecAccessLimit::Static(
+                    properties::PositiveUsize::new(1).unwrap(),
+                ));
+                let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+                ctx.enable_request_read_view().await.unwrap();
+                let result = ctx.execute_access(&access).await.unwrap();
+                ctx.close_request_read_view().unwrap();
+                assert_eq!(
+                    ctx.stream_rows(result, "test").unwrap()[0]
+                        .current
+                        .as_ref()
+                        .unwrap()
+                        .id(),
+                    ids[1]
+                );
+                assert!(ctx.range_reads.peak.load(Ordering::Relaxed) <= 1);
                 for membership in [
                     Vec::new(),
                     vec![ids
