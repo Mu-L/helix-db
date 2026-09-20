@@ -974,3 +974,56 @@ async fn project_rejects_folded_stream_inputs() {
         .to_string()
         .contains("project expected stream input, got folded stream"));
 }
+
+/// Distinct binding projections use the engine's numeric identity (`total_order`, the
+/// same identity `WHERE`, `ORDER BY` and GROUP BY use), so a property stored as I64
+/// `42` and one stored as F64 `42.0` project to one distinct row.
+#[tokio::test]
+async fn binding_projection_distinct_unifies_numerically_equal_property_values() {
+    let db = test_support::open_db("projection-binding-distinct-numeric-identity").await;
+    let mut ids = Vec::new();
+    for score in [
+        PropertyValue::I64(42),
+        PropertyValue::F64(42.0),
+        PropertyValue::I64(7),
+    ] {
+        ids.push(test_support::add_node_with_properties(&db, "Metric", vec![("score", score)]).await);
+    }
+    let binding = name("metric");
+    let rows = ids
+        .into_iter()
+        .map(|id| {
+            let mut row = ExecutionRow::empty();
+            row.bindings.insert(binding.clone(), ElementRef::Node(id));
+            row
+        })
+        .collect();
+    let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+
+    let result = ctx
+        .project(
+            ExecutionValue::Stream(rows),
+            &ir::ProjectionPlan::ProjectBindings {
+                projections: binding_projection_items(vec![ir::BindingProjectionPlan::Property {
+                    target: ir::BindingTargetPlan::Binding(binding),
+                    source: name("score"),
+                    alias: name("score"),
+                }]),
+                dedup: ir::ProjectionDedupMode::Distinct,
+            },
+        )
+        .await
+        .expect("binding projection succeeds");
+
+    let score_row = |value: DbPropertyValue| {
+        ExecutionScalar::Object(BTreeMap::from([("score".to_string(), value)]))
+    };
+    assert_eq!(
+        result,
+        ExecutionValue::Scalars(vec![
+            score_row(DbPropertyValue::I64(42)),
+            score_row(DbPropertyValue::I64(7)),
+        ]),
+        "distinct binding projection must collapse I64(42) and F64(42.0) into one row"
+    );
+}
