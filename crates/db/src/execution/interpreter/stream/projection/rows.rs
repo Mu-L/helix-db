@@ -1,8 +1,8 @@
 //! Stream-row projection contracts.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use super::super::values::DistinctKey;
+use super::super::values::distinct_scalars;
 use super::*;
 
 impl<'db> ExecutionContext<'db> {
@@ -137,7 +137,6 @@ impl<'db> ExecutionContext<'db> {
         dedup: ir::ProjectionDedupMode,
     ) -> Result<ExecutionValue> {
         let mut scalars = Vec::with_capacity(rows.len());
-        let mut seen = BTreeSet::new();
         for row in rows {
             self.check_execution_deadline()?;
             let mut resolver = eval::RowValueResolver::new(self);
@@ -151,15 +150,12 @@ impl<'db> ExecutionContext<'db> {
                     object.insert(alias, value);
                 }
             }
-            let scalar = ExecutionScalar::Object(object);
-            if matches!(dedup, ir::ProjectionDedupMode::Distinct)
-                && !seen.insert(DistinctKey::from(&scalar))
-            {
-                continue;
-            }
-            scalars.push(scalar);
+            scalars.push(ExecutionScalar::Object(object));
         }
-        Ok(ExecutionValue::Scalars(scalars))
+        Ok(ExecutionValue::Scalars(match dedup {
+            ir::ProjectionDedupMode::Distinct => distinct_scalars(scalars),
+            ir::ProjectionDedupMode::All => scalars,
+        }))
     }
 
     async fn project_labels(&self, rows: &[ExecutionRow]) -> Result<ExecutionValue> {
