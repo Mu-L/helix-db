@@ -508,6 +508,52 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn drop_mixed_elements_deduplicates_and_preserves_other_nodes() {
+        let db = test_support::open_db("drop-mixed-elements").await;
+        let from = test_support::add_user(&db, "source").await;
+        let to = test_support::add_user(&db, "target").await;
+        let edge = test_support::add_edge(&db, from, to, "LINK").await;
+        let other = test_support::add_edge(&db, from, to, "LINK").await;
+        // Node and edge IDs occupy independent namespaces.
+        assert_eq!(from, edge);
+        let mut context = ExecutionContext::new(&db, context::ParamBindings::default());
+        let result = context
+            .execute_mutation(
+                ExecutionValue::Stream(vec![
+                    ExecutionRow::current(ElementRef::Node(from)),
+                    ExecutionRow::current(ElementRef::Edge(edge)),
+                    ExecutionRow::current(ElementRef::Edge(edge)),
+                    ExecutionRow::current(ElementRef::Node(from)),
+                    ExecutionRow::empty(),
+                ]),
+                &exec::ExecMutationPlan::Drop,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result, ExecutionValue::Stream(Vec::new()));
+        for edge_id in [edge, other] {
+            let result = db
+                .query(helix_ast::query::QueryRequest::read(
+                    helix_ast::batch::read_batch()
+                        .var_as("edges", helix_ast::traversal::g().e(edge_id).count())
+                        .returning(["edges"]),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(result, serde_json::json!({"edges": 0}));
+        }
+        let response = db
+            .query(helix_ast::query::QueryRequest::read(
+                helix_ast::batch::read_batch()
+                    .var_as("nodes", helix_ast::traversal::g().n(to).count())
+                    .returning(["nodes"]),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response, serde_json::json!({"nodes": 1}));
+    }
+
+    #[tokio::test]
     async fn executable_mutation_rejects_direct_edge_label_changes() {
         let db = test_support::open_db("mutation-edge-label-change").await;
         let from = test_support::add_user(&db, "alice").await;

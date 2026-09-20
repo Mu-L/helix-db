@@ -49,6 +49,16 @@ def parsed(value: object) -> object:
     return json.loads(stringify_json(value))
 
 
+
+class EdgeDropTests(unittest.TestCase):
+    def test_drop_preserves_element_state(self):
+        dropped = g().e([1, 2]).drop()
+        self.assertEqual(dropped.state, "edges")
+        self.assertEqual(dropped.mode, "write")
+        self.assertEqual(g().n(1).drop().state, "nodes")
+        self.assertEqual(dropped.into_ast(), {"drop": {"input": g().e([1, 2]).into_ast()}})
+
+
 class DslAstTests(unittest.TestCase):
     def test_parameter_and_batch_states_are_factory_created_and_immutable(self) -> None:
         for constructor, args in [
