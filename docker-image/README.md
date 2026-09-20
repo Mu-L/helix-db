@@ -107,4 +107,24 @@ Archive and secret-scanner unit tests can be run without Docker:
 python3 -m unittest discover -s docker-image/tests -p 'test_*.py'
 ```
 
-Pull requests and main-branch pushes build and run this suite natively for both amd64 and arm64. CI does not log in to GHCR or publish an image.
+Pull requests and main-branch pushes build and run this suite natively for both amd64 and arm64. Automatic CI runs do not log in to GHCR or publish an image.
+
+
+## Release
+
+Run the `Docker image` workflow manually from `main` with `release_version`
+set to a new version tag matching `DEFAULT_LOCAL_IMAGE_TAG` in the CLI.
+An empty version runs tests only. The release waits for workspace quality and
+both native image suites, then loads their tested archives without rebuilding.
+It publishes both architectures to GHCR, creates the versioned index, checks its
+platforms, and updates `latest`. An existing version tag or registry lookup error
+stops publication. Only the publication job has package write permission.
+
+```text
+native amd64 + arm64 build/test → tested archives
+workspace checks + tested archives → versioned image → latest
+published image → CLI release → fresh-install verification
+```
+
+Publish the Docker image before dispatching `cli.yml` so the new CLI default
+is available when binaries are released. Keep the previous version tag for rollback.

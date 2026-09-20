@@ -705,7 +705,7 @@ async fn configured_policy_applies_to_foreground_and_dependency_failures_preserv
                 result.failure();
             }
             let log = fixture.runtime_log();
-            assert!(log.contains("pull ghcr.io/helixdb/helixdb:v0.0.5"));
+            assert!(log.contains("pull ghcr.io/helixdb/helixdb:v0.0.6"));
             assert!(log.contains("pull quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"));
             if !failed_image.is_empty() {
                 assert!(

@@ -20,7 +20,7 @@ The CLI defaults to its tested image version. `latest` is opt-in:
 
 ```bash
 helix start dev --image-version latest
-helix start dev --image-version v0.0.5 --persist
+helix start dev --image-version v0.0.6 --persist
 helix start dev --pull never
 ```
 
@@ -32,7 +32,7 @@ apply only to that invocation.
 ```toml
 [local.dev]
 image = "ghcr.io/helixdb/helixdb"
-tag = "v0.0.5"
+tag = "v0.0.6"
 pull = "missing"
 ```
 
