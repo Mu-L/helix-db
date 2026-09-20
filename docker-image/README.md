@@ -88,6 +88,19 @@ docker-image/test.sh \
 
 The suite inspects the saved image metadata and filesystem, scans it for credential material, exercises memory and native-volume behavior, rejects invalid configuration, checks clean `SIGTERM` shutdown, and verifies S3-compatible persistence with digest-pinned MinIO images. It creates only `helixdb-image-*` Docker resources and removes them on exit.
 
+MinIO and `mc` use the upstream `quay.io/minio` repositories. The server
+`RELEASE.2025-09-07T16-13-09Z` and client `RELEASE.2025-08-13T08-35-41Z`
+are pinned to multi-platform index digests shared with the CLI disk runtime.
+These are the same digests previously used through Docker Hub, whose MinIO
+repositories no longer allow anonymous pulls. Both pins contain Linux amd64
+and arm64 images. The Compose suite explicitly pulls both dependencies for the
+requested platform before startup and fails if either pull fails, even when
+images are cached. It does not remove or retag cached images.
+
+When updating a pin, keep the Compose fixture, object-check client in
+`compose-smoke.sh`, CLI defaults, CLI test fixtures, and local-server docs aligned.
+Verify anonymous pulls and run the full suite on both platforms.
+
 Archive and secret-scanner unit tests can be run without Docker:
 
 ```bash

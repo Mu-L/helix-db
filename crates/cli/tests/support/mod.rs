@@ -328,11 +328,11 @@ if "%1"=="image" (
   if "%HELIX_TEST_RUNTIME_IMAGE_MISSING%"=="1" (
     if not exist "%HELIX_TEST_RUNTIME_LOG%.pulled" exit /b 1
   )
-  if "%5"=="minio/minio:latest" (
+  if "%5"=="quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e" (
     echo sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
     exit /b 0
   )
-  if "%5"=="minio/mc:latest" (
+  if "%5"=="quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727" (
     echo sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
     exit /b 0
   )
@@ -464,8 +464,8 @@ case "$1" in
   image)
     if [ "$HELIX_TEST_RUNTIME_IMAGE_MISSING" = "1" ] && [ ! -f "$HELIX_TEST_RUNTIME_LOG.pulled" ]; then exit 1; fi
     case "$5" in
-      minio/minio:latest) echo sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc; exit 0 ;;
-      minio/mc:latest) echo sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd; exit 0 ;;
+      quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e) echo sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc; exit 0 ;;
+      quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727) echo sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd; exit 0 ;;
     esac
     echo sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     exit 0
