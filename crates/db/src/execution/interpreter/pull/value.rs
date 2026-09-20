@@ -1,7 +1,7 @@
 //! Materialized boundary values and their incremental item representation.
 use super::*;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Shape {
     Rows,
     Scalars,
@@ -33,6 +33,54 @@ impl Shape {
             Self::Bool => ExecutionValue::Bool(false),
             Self::Folded => ExecutionValue::FoldedStream(FoldedStream::new(Vec::new())),
             Self::Lifecycle => return None,
+        })
+    }
+
+    /// Row-only operations reject incompatible values even when no item is
+    /// produced. Validation belongs to the operator contract, not its loop.
+    pub(super) fn require_rows(self, operation: &str) -> Result<()> {
+        let kind = match self {
+            Self::Rows => return Ok(()),
+            Self::Scalars => "scalar items",
+            Self::Count => "count",
+            Self::Bool => "boolean",
+            Self::Folded => "folded stream; use unfold first",
+            Self::Lifecycle => "index lifecycle value",
+        };
+        Err(HelixDbError::Query(format!(
+            "{operation} expected stream input, got {kind}"
+        )))
+    }
+
+    /// The output shape is independent of cardinality for every projection.
+    pub(super) fn projection(self, projection: &ir::ProjectionPlan) -> Result<Self> {
+        match self {
+            Self::Lifecycle => return Err(HelixDbError::Query(
+                "project cannot consume an index lifecycle value".into(),
+            )),
+            Self::Folded => self.require_rows("project")?,
+            Self::Rows => {},
+            Self::Scalars | Self::Count | Self::Bool => match projection {
+                ir::ProjectionPlan::Id | ir::ProjectionPlan::Exists => {},
+                ir::ProjectionPlan::Values(_)
+                | ir::ProjectionPlan::ValueMap(_)
+                | ir::ProjectionPlan::Project(_)
+                | ir::ProjectionPlan::ProjectBindings { .. }
+                | ir::ProjectionPlan::Label
+                | ir::ProjectionPlan::EdgeProperties => return Err(HelixDbError::Query(format!(
+                    "project {projection:?} expected element stream input, got scalar terminal input"
+                ))),
+            },
+        }
+        Ok(match projection {
+            ir::ProjectionPlan::Exists => Self::Bool,
+            ir::ProjectionPlan::Id
+            | ir::ProjectionPlan::Values(_)
+            | ir::ProjectionPlan::ValueMap(_)
+            | ir::ProjectionPlan::Project(_)
+            | ir::ProjectionPlan::ProjectBindings { .. }
+            | ir::ProjectionPlan::Label
+            | ir::ProjectionPlan::EdgeProperties => Self::Scalars,
         })
     }
 
@@ -98,4 +146,89 @@ pub(super) fn append(out: &mut ExecutionValue, item: ExecutionValue) -> Result<(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn projection_shape_contract_matches_runtime_for_every_value_kind() {
+        let db = test_support::open_db("projection-shape-contract").await;
+        let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+        let name = test_support::name("value");
+        let projections = [
+            ir::ProjectionPlan::Id,
+            ir::ProjectionPlan::Exists,
+            ir::ProjectionPlan::Label,
+            ir::ProjectionPlan::EdgeProperties,
+            ir::ProjectionPlan::Values(
+                ir::PropertyNames::new(ir::AtLeast::from_one(name.clone())).unwrap(),
+            ),
+            ir::ProjectionPlan::ValueMap(ir::PropertySelection::All),
+            ir::ProjectionPlan::Project(
+                ir::ProjectionItems::new(ir::AtLeast::from_one(ir::ProjectionItem::Property {
+                    source: name.clone(),
+                    alias: name.clone(),
+                }))
+                .unwrap(),
+            ),
+            ir::ProjectionPlan::ProjectBindings {
+                projections: ir::BindingProjectionItems::new(ir::AtLeast::from_one(
+                    ir::BindingProjectionPlan::Property {
+                        target: ir::BindingTargetPlan::Current,
+                        source: name.clone(),
+                        alias: name,
+                    },
+                ))
+                .unwrap(),
+                dedup: ir::ProjectionDedupMode::Distinct,
+            },
+        ];
+        for shape in [
+            Shape::Rows,
+            Shape::Scalars,
+            Shape::Count,
+            Shape::Bool,
+            Shape::Folded,
+            Shape::Lifecycle,
+        ] {
+            assert_eq!(shape.require_rows("test").is_ok(), shape == Shape::Rows);
+            for projection in &projections {
+                let actual = shape.projection(projection);
+                let Some(value) = shape.empty() else {
+                    assert!(actual.is_err());
+                    continue;
+                };
+                let expected = ctx
+                    .project(value, projection)
+                    .await
+                    .map(|value| Shape::of(&value));
+                assert_eq!(
+                    actual.map_err(|error| error.to_string()),
+                    expected.map_err(|error| error.to_string())
+                );
+            }
+        }
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_non_row_merge_inputs_are_rejected_before_polling() {
+        for mode in [
+            exec::ExecMergeMode::Concat,
+            exec::ExecMergeMode::Union,
+            exec::ExecMergeMode::Intersect,
+        ] {
+            for value in [
+                ExecutionValue::Scalars(Vec::new()),
+                ExecutionValue::Count(0),
+                ExecutionValue::Bool(false),
+                ExecutionValue::FoldedStream(FoldedStream::new(Vec::new())),
+            ] {
+                let cursor = Cursor::materialized(value).unwrap();
+                assert!(Cursor::merge(vec![cursor], mode).is_err());
+            }
+        }
+    }
 }

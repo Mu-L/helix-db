@@ -14,10 +14,6 @@ impl<'a> Cursor<'a> {
                 ctx.check_execution_deadline()?;
                 let item = match &mut self.node {
                     Node::Items(items) => items.next(),
-                    Node::RowsOnly(input) => match input.next(ctx).await? {
-                        Some(item) => Some(ExecutionValue::Stream(ctx.stream_rows(item, "merge")?)),
-                        None => None,
-                    },
                     Node::StreamCount { plan, input } => {
                         let Some(input) = input.take() else {
                             return Ok(None);

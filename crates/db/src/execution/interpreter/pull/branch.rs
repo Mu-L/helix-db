@@ -97,7 +97,9 @@ impl<'a> Branch<'a> {
                 .as_ref()
                 .expect("branch has a parent")
                 .clone()]);
-            self.current = Some(Box::new(Cursor::scoped_subplan(ctx, branch, context)?));
+            let child = Cursor::scoped_subplan(ctx, branch, context)?;
+            child.shape.require_rows(name)?;
+            self.current = Some(Box::new(child));
         }
     }
 }

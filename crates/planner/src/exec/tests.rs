@@ -475,3 +475,74 @@ fn unbounded_pure_subplans_remain_eligible_for_enclosing_branch_demand() {
     let child = ExecutableSubplan::new(ir::AtLeast::try_from_vec(nodes).unwrap(), id(2)).unwrap();
     assert!(ExecPullCapability::pure_subplan(&child));
 }
+
+#[test]
+fn conditional_value_boundaries_preserve_child_demand_after_serialization() {
+    let mut limited = step(2, vec![id(1)], ExecSchedule::Pipeline);
+    limited.op = ExecOp::Limit {
+        count: ir::StreamBoundPlan::Literal(1),
+    };
+    let child = ExecutableSubplan::new(
+        ir::AtLeast::try_from_vec(vec![step(1, vec![], ExecSchedule::Pipeline), limited]).unwrap(),
+        id(2),
+    )
+    .unwrap();
+    assert!(child.execution_program().is_absorbed(id(1)));
+    for branch in [
+        ExecBranchPlan::Choose {
+            condition: predicate(),
+            then_plan: Box::new(child.clone()),
+        },
+        ExecBranchPlan::ChooseElse {
+            condition: predicate(),
+            then_plan: Box::new(child.clone()),
+            else_plan: Box::new(child.clone()),
+        },
+    ] {
+        let mut conditional = step(2, vec![id(1)], ExecSchedule::Pipeline);
+        conditional.op = ExecOp::Branch { plan: branch };
+        assert_eq!(
+            ExecPullCapability::of(&conditional.op),
+            ExecPullCapability::Boundary
+        );
+        let nested = ExecutableSubplan::new(
+            ir::AtLeast::try_from_vec(vec![
+                step(1, vec![], ExecSchedule::Pipeline),
+                conditional.clone(),
+            ])
+            .unwrap(),
+            id(2),
+        )
+        .unwrap();
+        assert!(!ExecPullCapability::pure_subplan(&nested));
+        let mut limit = step(3, vec![id(2)], ExecSchedule::Pipeline);
+        limit.op = ExecOp::Limit {
+            count: ir::StreamBoundPlan::Literal(1),
+        };
+        let plan = executable(
+            ir::AtLeast::try_from_vec(vec![
+                step(1, vec![], ExecSchedule::Pipeline),
+                conditional,
+                limit,
+            ])
+            .unwrap(),
+            id(3),
+        )
+        .unwrap();
+        let decoded: ExecutablePlan =
+            serde_json::from_value(serde_json::to_value(&plan).unwrap()).unwrap();
+        for plan in [plan, decoded] {
+            assert!(!plan.execution_program().is_absorbed(id(2)));
+            assert!(plan.execution_program().region(id(2)).is_none());
+            let ExecOp::Branch { plan } = &plan.steps()[1].op else {
+                unreachable!()
+            };
+            let (ExecBranchPlan::Choose { then_plan, .. }
+            | ExecBranchPlan::ChooseElse { then_plan, .. }) = plan
+            else {
+                unreachable!()
+            };
+            assert!(then_plan.execution_program().is_absorbed(id(1)));
+        }
+    }
+}

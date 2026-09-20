@@ -13,7 +13,7 @@ pub enum ExecPullCapability {
     Prepared,
     /// Any demanded output needs the complete input.
     FullInput,
-    /// Observable effects or scope require ordinary execution.
+    /// Effects, scope or a data-dependent value kind require whole-value execution.
     Boundary,
 }
 
@@ -76,24 +76,14 @@ impl ExecPullCapability {
                         branches.as_ref().iter().all(Self::pure_subplan)
                     }
                     super::ExecBranchPlan::Optional(branch) => Self::pure_subplan(branch),
-                    super::ExecBranchPlan::Choose { then_plan, .. } => {
-                        Self::pure_subplan(then_plan)
-                    }
-                    super::ExecBranchPlan::ChooseElse {
-                        then_plan,
-                        else_plan,
-                        ..
-                    } => Self::pure_subplan(then_plan) && Self::pure_subplan(else_plan),
+                    // A conditional can return rows, scalars, a count or a
+                    // folded value depending on which child is selected. Keep
+                    // that whole-value boundary; each child's own program can
+                    // still satisfy demand internally.
+                    super::ExecBranchPlan::Choose { .. }
+                    | super::ExecBranchPlan::ChooseElse { .. } => return Self::Boundary,
                 };
-                if pure
-                    && matches!(
-                        plan,
-                        super::ExecBranchPlan::Choose { .. }
-                            | super::ExecBranchPlan::ChooseElse { .. }
-                    )
-                {
-                    Self::FullInput
-                } else if pure {
+                if pure {
                     Self::Prepared
                 } else {
                     Self::Boundary

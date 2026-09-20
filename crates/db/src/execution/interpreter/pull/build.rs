@@ -51,16 +51,9 @@ impl<'a> Cursor<'a> {
     pub(super) fn merge(mut inputs: Vec<Self>, mode: exec::ExecMergeMode) -> Result<Self> {
         // Merge consumes row streams; ordinary dependency concatenation also
         // supports scalar terminals and is a separate contract.
-        inputs = inputs
-            .into_iter()
-            .map(|input| Self {
-                shape: Shape::Rows,
-                node: Node::RowsOnly(Box::new(input)),
-                produced_rows: 0,
-                row_mode: false,
-                name: "merge()",
-            })
-            .collect();
+        for input in &inputs {
+            input.shape.require_rows("merge")?;
+        }
         match mode {
             exec::ExecMergeMode::Concat => Self::concat(inputs),
             exec::ExecMergeMode::Union => {
@@ -101,6 +94,20 @@ impl<'a> Cursor<'a> {
     pub(super) fn wrap(self, ctx: &ExecutionContext<'_>, op: &'a exec::ExecOp) -> Result<Self> {
         if let exec::ExecOp::Count { plan } = op {
             cardinality::validate_bounds(ctx, plan)?;
+            if matches!(plan.as_ref(), exec::ExecCountPlan::InputRows { .. })
+                && self.shape != Shape::Rows
+            {
+                return Err(HelixDbError::InvariantViolation(
+                    "count plan expected rows".into(),
+                ));
+            }
+            if matches!(plan.as_ref(), exec::ExecCountPlan::InputScalars { .. })
+                && !matches!(self.shape, Shape::Scalars | Shape::Count | Shape::Bool)
+            {
+                return Err(HelixDbError::InvariantViolation(
+                    "count plan expected scalar items".into(),
+                ));
+            }
         }
         let mut shape = self.shape;
         let input = Box::new(self);
@@ -118,7 +125,7 @@ impl<'a> Cursor<'a> {
                 }
             }
             exec::ExecOp::Repeat { plan } => {
-                shape = Shape::Rows;
+                shape.require_rows("repeat")?;
                 Node::Repeat(repeat::Repeat::new(plan, input))
             }
             exec::ExecOp::Count { plan }
@@ -142,7 +149,7 @@ impl<'a> Cursor<'a> {
             exec::ExecOp::Variable {
                 op: exec::ExecVariableOp::Stream(ir::StreamVariableOp::Inject(variable)),
             } => {
-                shape = Shape::Rows;
+                shape.require_rows("inject")?;
                 Node::Inject {
                     input,
                     variable,
@@ -156,17 +163,20 @@ impl<'a> Cursor<'a> {
                         ir::StreamVariableOp::Within(variable)
                         | ir::StreamVariableOp::Without(variable),
                     ),
-            } => Node::Membership {
-                input,
-                variable,
-                exclude: matches!(
-                    op,
-                    exec::ExecOp::Variable {
-                        op: exec::ExecVariableOp::Stream(ir::StreamVariableOp::Without(_))
-                    }
-                ),
-                members: None,
-            },
+            } => {
+                shape.require_rows("membership")?;
+                Node::Membership {
+                    input,
+                    variable,
+                    exclude: matches!(
+                        op,
+                        exec::ExecOp::Variable {
+                            op: exec::ExecVariableOp::Stream(ir::StreamVariableOp::Without(_))
+                        }
+                    ),
+                    members: None,
+                }
+            }
             exec::ExecOp::Branch { plan }
                 if matches!(
                     plan,
@@ -175,7 +185,7 @@ impl<'a> Cursor<'a> {
                         | exec::ExecBranchPlan::Optional(_)
                 ) =>
             {
-                shape = Shape::Rows;
+                shape.require_rows("branch")?;
                 Node::Branch(branch::Branch::new(plan, input))
             }
             exec::ExecOp::Access { plan } => {
@@ -228,11 +238,11 @@ impl<'a> Cursor<'a> {
             exec::ExecOp::Project {
                 projection: ir::ProjectionPlan::Exists,
             } => {
-                shape = Shape::Bool;
+                shape = shape.projection(&ir::ProjectionPlan::Exists)?;
                 Node::Exists(Some(input))
             }
             exec::ExecOp::Expand { plan } => {
-                shape = Shape::Rows;
+                shape.require_rows("expand")?;
                 Node::Expand {
                     plan,
                     input,
@@ -242,18 +252,12 @@ impl<'a> Cursor<'a> {
                 }
             }
             exec::ExecOp::Filter { predicate } => {
-                shape = Shape::Rows;
+                shape.require_rows("filter")?;
                 Node::Filter { predicate, input }
             }
             exec::ExecOp::Project { .. } | exec::ExecOp::Noop => {
-                if matches!(op, exec::ExecOp::Project { .. }) {
-                    shape = Shape::Scalars;
-                }
-                if matches!(
-                    op,
-                    exec::ExecOp::Expand { .. } | exec::ExecOp::Filter { .. }
-                ) {
-                    shape = Shape::Rows;
+                if let exec::ExecOp::Project { projection } = op {
+                    shape = shape.projection(projection)?;
                 }
                 let distinct = matches!(
                     op,
@@ -283,12 +287,15 @@ impl<'a> Cursor<'a> {
             }
             | exec::ExecOp::Variable {
                 op: exec::ExecVariableOp::Stream(ir::StreamVariableOp::Bind(_)),
-            } => Node::Map {
-                op,
-                input,
-                pending: Items::Rows(Vec::new().into_iter()),
-                distinct: None,
-            },
+            } => {
+                shape.require_rows(row_mode::op_name(op))?;
+                Node::Map {
+                    op,
+                    input,
+                    pending: Items::Rows(Vec::new().into_iter()),
+                    distinct: None,
+                }
+            }
             exec::ExecOp::Count { .. }
             | exec::ExecOp::VectorSearch { .. }
             | exec::ExecOp::TextSearch { .. }

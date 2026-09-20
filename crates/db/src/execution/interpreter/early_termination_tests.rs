@@ -1108,3 +1108,312 @@ async fn bounded_union_reports_mixed_bound_rows_only_when_consumed() {
     }
     db.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn conditional_value_shapes_match_complete_execution() {
+    let db = test_support::open_db("conditional-value-shapes").await;
+    let yes = test_support::add_user(&db, "match").await;
+    let no = test_support::add_user(&db, "other").await;
+    let exec::ExecOp::Filter { predicate } = filter_name("match") else {
+        unreachable!()
+    };
+    let outputs = [
+        exec::ExecOp::Noop,
+        exec::ExecOp::Count {
+            plan: Box::new(exec::ExecCountPlan::InputRows {
+                window: exec::ExecCountWindowPlan::identity(),
+            }),
+        },
+        exec::ExecOp::Project {
+            projection: ir::ProjectionPlan::Id,
+        },
+        exec::ExecOp::Project {
+            projection: ir::ProjectionPlan::Exists,
+        },
+        exec::ExecOp::Reserved {
+            op: ir::ReservedOp::Fold,
+        },
+    ];
+    let consumers = [
+        vec![limit(0)],
+        vec![limit(1)],
+        vec![limit(3)],
+        vec![exec::ExecOp::Project {
+            projection: ir::ProjectionPlan::Id,
+        }],
+        vec![exec::ExecOp::Project {
+            projection: ir::ProjectionPlan::Exists,
+        }],
+        vec![exec::ExecOp::Count {
+            plan: Box::new(exec::ExecCountPlan::InputRows {
+                window: exec::ExecCountWindowPlan::identity(),
+            }),
+        }],
+        vec![exec::ExecOp::Count {
+            plan: Box::new(exec::ExecCountPlan::InputScalars {
+                window: exec::ExecCountWindowPlan::identity(),
+            }),
+        }],
+        vec![
+            exec::ExecOp::Reserved {
+                op: ir::ReservedOp::Unfold,
+            },
+            limit(1),
+        ],
+    ];
+    for output in outputs {
+        let then_plan = child(vec![context_source(), output.clone()]);
+        for branch in [
+            exec::ExecBranchPlan::Choose {
+                condition: predicate.clone(),
+                then_plan: Box::new(then_plan.clone()),
+            },
+            exec::ExecBranchPlan::ChooseElse {
+                condition: predicate.clone(),
+                then_plan: Box::new(then_plan.clone()),
+                else_plan: Box::new(then_plan.clone()),
+            },
+            exec::ExecBranchPlan::ChooseElse {
+                condition: predicate.clone(),
+                then_plan: Box::new(then_plan),
+                else_plan: Box::new(child(vec![context_source()])),
+            },
+        ] {
+            for input in [vec![], vec![yes], vec![no], vec![yes, no]] {
+                for consumer in &consumers {
+                    let plan = linear(
+                        [
+                            vec![
+                                source(),
+                                exec::ExecOp::Branch {
+                                    plan: branch.clone(),
+                                },
+                            ],
+                            consumer.clone(),
+                        ]
+                        .concat(),
+                    );
+                    let mut eager = ExecutionContext::new(&db, parameters(&input));
+                    let expected = match eager
+                        .execute_steps(
+                            plan.steps(),
+                            plan.execution_order(),
+                            plan.root(),
+                            &exec::ExecProgram::default(),
+                        )
+                        .await
+                    {
+                        Ok(()) => eager
+                            .finish(plan.root(), &exec::ExecutableReturns::None)
+                            .map(|result| result.last.unwrap()),
+                        Err(error) => Err(error),
+                    };
+                    let mut pull = ExecutionContext::new(&db, parameters(&input));
+                    let actual = run(&mut pull, &plan).await;
+                    match (actual, expected) {
+                        (Ok(actual), Ok(expected)) => {
+                            assert_eq!(actual, expected, "{output:?} {consumer:?} {input:?}")
+                        }
+                        (Err(actual), Err(expected)) => assert_eq!(
+                            std::mem::discriminant(&actual),
+                            std::mem::discriminant(&expected),
+                            "{actual} vs {expected}"
+                        ),
+                        (actual, expected) => {
+                            panic!("{output:?} {consumer:?} {input:?}: {actual:?} vs {expected:?}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    db.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn empty_scalar_inputs_cannot_bypass_row_operator_contracts() {
+    let db = test_support::open_db("empty-scalar-contracts").await;
+    let id = test_support::add_user(&db, "match").await;
+    for input in [vec![], vec![id]] {
+        for op in [
+            filter_name("match"),
+            exec::ExecOp::Expand {
+                plan: ir::ExpandPlan {
+                    direction: ir::ExpandDirection::Both,
+                    output: ir::ExpandOutput::Nodes,
+                    label: ir::ExpandLabelPlan::Any,
+                },
+            },
+            exec::ExecOp::Project {
+                projection: ir::ProjectionPlan::Label,
+            },
+            exec::ExecOp::Reserved {
+                op: ir::ReservedOp::Path,
+            },
+            exec::ExecOp::Reserved {
+                op: ir::ReservedOp::SimplePath,
+            },
+            exec::ExecOp::Reserved {
+                op: ir::ReservedOp::WithSack(helix_ast::value::PropertyValue::I64(1)),
+            },
+            exec::ExecOp::Reserved {
+                op: ir::ReservedOp::SackGet,
+            },
+            exec::ExecOp::Variable {
+                op: exec::ExecVariableOp::Stream(ir::StreamVariableOp::Bind(test_support::name(
+                    "item",
+                ))),
+            },
+            exec::ExecOp::Branch {
+                plan: exec::ExecBranchPlan::Optional(Box::new(child(vec![context_source()]))),
+            },
+            exec::ExecOp::Repeat {
+                plan: exec::ExecRepeatPlan {
+                    body: Box::new(child(vec![context_source()])),
+                    emit: ir::RepeatEmitPlan::Before,
+                    stop: ir::RepeatStopPlan::MaxDepthOnly,
+                    max_depth: std::num::NonZeroUsize::new(1).unwrap(),
+                },
+            },
+        ] {
+            for take in [0, 1] {
+                let plan = linear(vec![
+                    source(),
+                    exec::ExecOp::Project {
+                        projection: ir::ProjectionPlan::Id,
+                    },
+                    op.clone(),
+                    limit(take),
+                ]);
+                let mut ctx = ExecutionContext::new(&db, parameters(&input));
+                assert!(
+                    run(&mut ctx, &plan).await.is_err(),
+                    "{op:?}, input={input:?}, take={take}"
+                );
+            }
+        }
+    }
+    // An opened row-only child must reject an empty scalar result as well.
+    for branch in [
+        exec::ExecBranchPlan::Optional(Box::new(child(vec![
+            context_source(),
+            filter_name("absent"),
+            exec::ExecOp::Project {
+                projection: ir::ProjectionPlan::Id,
+            },
+        ]))),
+        exec::ExecBranchPlan::Coalesce(ir::AtLeast::from_one(child(vec![
+            context_source(),
+            filter_name("absent"),
+            exec::ExecOp::Project {
+                projection: ir::ProjectionPlan::Id,
+            },
+        ]))),
+    ] {
+        let plan = linear(vec![
+            source(),
+            exec::ExecOp::Branch { plan: branch },
+            limit(1),
+        ]);
+        let mut ctx = ExecutionContext::new(&db, parameters(&[id]));
+        assert!(run(&mut ctx, &plan).await.is_err());
+    }
+    db.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn empty_scalar_projection_keeps_type_error() {
+    let db = test_support::open_db("review-empty-scalar").await;
+    let plan = linear(vec![
+        source(),
+        exec::ExecOp::Project {
+            projection: ir::ProjectionPlan::Id,
+        },
+        exec::ExecOp::Project {
+            projection: ir::ProjectionPlan::Label,
+        },
+        limit(1),
+    ]);
+    let mut eager = ExecutionContext::new(&db, parameters(&[]));
+    let expected = eager
+        .execute_steps(
+            plan.steps(),
+            plan.execution_order(),
+            plan.root(),
+            &exec::ExecProgram::default(),
+        )
+        .await;
+    assert!(expected.is_err());
+    let mut pull = ExecutionContext::new(&db, parameters(&[]));
+    let actual = run(&mut pull, &plan).await;
+    assert!(actual.is_err(), "eager={expected:?}, pull={actual:?}");
+    db.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn reverse_limit_retains_bounded_ties() {
+    use helix_planner::{catalog, properties};
+    let db = test_support::open_db_with_config(
+        test_support::in_memory_config("review-range-ties").with_range_index("User", "score"),
+    )
+    .await;
+    for _ in 0..128 {
+        test_support::add_node_with_properties(
+            &db,
+            "User",
+            vec![("score", helix_ast::value::PropertyValue::I64(10))],
+        )
+        .await;
+    }
+    let key = catalog::ScopedPropertyDirectionKey::try_new(
+        "User",
+        "score",
+        helix_ast::index::RangeIndexDirection::Asc,
+    )
+    .unwrap();
+    let eager = ExecutionContext::new(&db, context::ParamBindings::default());
+    let expected = eager
+        .range_index_ids(
+            crate::index_lifecycle::IndexElementKind::Node,
+            &key,
+            &ir::IndexRange::All,
+            ir::RangeScanIteration::Reverse,
+            &[],
+            properties::PositiveUsize::new(1),
+        )
+        .await
+        .unwrap();
+    let old_peak = eager
+        .range_reads
+        .peak
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let access = exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::RangeIndex {
+        index: catalog::NodeRangeIndexMeta::new(test_support::name("node_range:User:score:asc")),
+        key,
+        range: ir::IndexRange::All,
+        iteration: ir::RangeScanIteration::Reverse,
+    })
+    .limited_by(exec::ExecAccessLimit::Static(
+        properties::PositiveUsize::new(1).unwrap(),
+    ));
+    let mut pull = ExecutionContext::new(&db, context::ParamBindings::default());
+    let actual = pull.execute_access(&access).await.unwrap();
+    assert_eq!(
+        actual,
+        ExecutionValue::Stream(
+            expected
+                .into_iter()
+                .map(|id| ExecutionRow::current(ElementRef::Node(id)))
+                .collect()
+        )
+    );
+    let new_peak = pull
+        .range_reads
+        .peak
+        .load(std::sync::atomic::Ordering::Relaxed);
+    db.close().await.unwrap();
+    assert_eq!(
+        new_peak, old_peak,
+        "known LIMIT 1: previous peak={old_peak}, new peak={new_peak}"
+    );
+}

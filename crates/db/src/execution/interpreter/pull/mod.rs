@@ -26,7 +26,6 @@ struct Cursor<'a> {
 
 enum Node<'a> {
     Items(Items),
-    RowsOnly(Box<Cursor<'a>>),
     StreamCount {
         plan: &'a exec::ExecCountStreamPlan,
         input: Option<Box<Cursor<'a>>>,

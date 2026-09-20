@@ -231,32 +231,30 @@ impl<'a> Source<'a> {
             }
             Plan::Access(A::Node(N::SecondarySet {
                 set: exec::ExecNodeSecondarySetPlan::Range(driver),
-            })) => Ok(State::Range {
-                cursor: Box::new(
-                    ctx.open_range_cursor(
-                        crate::index_lifecycle::IndexElementKind::Node,
-                        &driver.key,
-                        &driver.range,
-                        driver.iteration,
-                    )
-                    .await?,
-                ),
-                keyspace: K::NodeProperty,
-            }),
+            })) => {
+                self.open_range(
+                    ctx,
+                    K::NodeProperty,
+                    &driver.key,
+                    &driver.range,
+                    driver.iteration,
+                    Vec::new(),
+                )
+                .await
+            }
             Plan::Access(A::Edge(E::SecondarySet {
                 set: exec::ExecEdgeSecondarySetPlan::Range(driver),
-            })) => Ok(State::Range {
-                cursor: Box::new(
-                    ctx.open_range_cursor(
-                        crate::index_lifecycle::IndexElementKind::Edge,
-                        &driver.key,
-                        &driver.range,
-                        driver.iteration,
-                    )
-                    .await?,
-                ),
-                keyspace: K::EdgeEndpoints,
-            }),
+            })) => {
+                self.open_range(
+                    ctx,
+                    K::EdgeEndpoints,
+                    &driver.key,
+                    &driver.range,
+                    driver.iteration,
+                    Vec::new(),
+                )
+                .await
+            }
             Plan::Access(A::Node(N::SecondarySet {
                 set: exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, filters },
             })) => {
@@ -269,19 +267,15 @@ impl<'a> Source<'a> {
                             .collect(),
                     );
                 }
-                Ok(State::Range {
-                    cursor: Box::new(
-                        ctx.open_range_cursor(
-                            crate::index_lifecycle::IndexElementKind::Node,
-                            &driver.key,
-                            &driver.range,
-                            driver.iteration,
-                        )
-                        .await?
-                        .with_membership(membership),
-                    ),
-                    keyspace: K::NodeProperty,
-                })
+                self.open_range(
+                    ctx,
+                    K::NodeProperty,
+                    &driver.key,
+                    &driver.range,
+                    driver.iteration,
+                    membership,
+                )
+                .await
             }
             Plan::Access(A::Edge(E::SecondarySet {
                 set: exec::ExecEdgeSecondarySetPlan::OrderedIntersect { driver, filters },
@@ -295,19 +289,15 @@ impl<'a> Source<'a> {
                             .collect(),
                     );
                 }
-                Ok(State::Range {
-                    cursor: Box::new(
-                        ctx.open_range_cursor(
-                            crate::index_lifecycle::IndexElementKind::Edge,
-                            &driver.key,
-                            &driver.range,
-                            driver.iteration,
-                        )
-                        .await?
-                        .with_membership(membership),
-                    ),
-                    keyspace: K::EdgeEndpoints,
-                })
+                self.open_range(
+                    ctx,
+                    K::EdgeEndpoints,
+                    &driver.key,
+                    &driver.range,
+                    driver.iteration,
+                    membership,
+                )
+                .await
             }
             Plan::Access(A::Node(
                 N::SecondarySet { .. } | N::VectorSearch { .. } | N::TextSearch { .. },
@@ -335,35 +325,19 @@ impl<'a> Source<'a> {
                 range,
                 iteration,
                 ..
-            })) => Ok(State::Range {
-                cursor: Box::new(
-                    ctx.open_range_cursor(
-                        crate::index_lifecycle::IndexElementKind::Node,
-                        key,
-                        range,
-                        *iteration,
-                    )
-                    .await?,
-                ),
-                keyspace: K::NodeProperty,
-            }),
+            })) => {
+                self.open_range(ctx, K::NodeProperty, key, range, *iteration, Vec::new())
+                    .await
+            }
             Plan::Access(A::Edge(E::RangeIndex {
                 key,
                 range,
                 iteration,
                 ..
-            })) => Ok(State::Range {
-                cursor: Box::new(
-                    ctx.open_range_cursor(
-                        crate::index_lifecycle::IndexElementKind::Edge,
-                        key,
-                        range,
-                        *iteration,
-                    )
-                    .await?,
-                ),
-                keyspace: K::EdgeEndpoints,
-            }),
+            })) => {
+                self.open_range(ctx, K::EdgeEndpoints, key, range, *iteration, Vec::new())
+                    .await
+            }
             Plan::Access(A::Limited(_)) => unreachable!("bounds resolved when source is activated"),
             Plan::Kv(exec::KvReadPlan::RangeScan {
                 keyspace,
@@ -392,6 +366,51 @@ impl<'a> Source<'a> {
                 State::Rows(Items::new(Box::pin(ctx.execute_kv_read(plan)).await?)),
             ),
         }
+    }
+
+    /// Known reverse bounds use the native bounded tie-group preparation.
+    /// Unknown demand (for example a residual filter) keeps the resumable
+    /// cursor. Both paths use the same request view and authoritative checks.
+    async fn open_range(
+        &self,
+        ctx: &ExecutionContext<'_>,
+        keyspace: exec::ElementKeyspace,
+        key: &helix_planner::catalog::ScopedPropertyDirectionKey,
+        range: &ir::IndexRange,
+        iteration: ir::RangeScanIteration,
+        membership: Vec<roaring::RoaringTreemap>,
+    ) -> Result<State> {
+        let element = match keyspace {
+            exec::ElementKeyspace::NodeProperty => crate::index_lifecycle::IndexElementKind::Node,
+            exec::ElementKeyspace::EdgeEndpoints => crate::index_lifecycle::IndexElementKind::Edge,
+        };
+        if let Demand::Take(limit) = self.remaining
+            && iteration == ir::RangeScanIteration::Reverse
+        {
+            let ids = ctx
+                .range_index_ids(
+                    element,
+                    key,
+                    range,
+                    iteration,
+                    &membership,
+                    properties::PositiveUsize::new(limit.get()),
+                )
+                .await?;
+            return Ok(State::Ids {
+                ids: ids.into_iter(),
+                keyspace,
+                verified: true,
+            });
+        }
+        Ok(State::Range {
+            cursor: Box::new(
+                ctx.open_range_cursor(element, key, range, iteration)
+                    .await?
+                    .with_membership(membership),
+            ),
+            keyspace,
+        })
     }
 
     async fn scan(ctx: &ExecutionContext<'_>, keyspace: exec::ElementKeyspace) -> Result<State> {
@@ -517,6 +536,126 @@ impl<'a> Source<'a> {
                 self.remaining.consume();
             }
             return Ok(Some(ExecutionValue::Stream(vec![row])));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[tokio::test]
+    async fn bounded_reverse_ranges_preserve_retention_membership_and_stale_refill() {
+        use crate::encoding::keys;
+        use helix_ast::{index::RangeIndexDirection, value::PropertyValue};
+        use helix_planner::catalog;
+        for direction in [RangeIndexDirection::Asc, RangeIndexDirection::Desc] {
+            let config = test_support::in_memory_config("bounded-reverse-range");
+            let config = match direction {
+                RangeIndexDirection::Asc => config
+                    .with_range_index("User", "score")
+                    .with_edge_range_index("LINK", "score"),
+                RangeIndexDirection::Desc => config
+                    .with_range_desc_index("User", "score")
+                    .with_edge_range_desc_index("LINK", "score"),
+            };
+            let db = test_support::open_db_with_config(config).await;
+            let mut nodes = Vec::new();
+            let mut edges = Vec::new();
+            for _ in 0..16 {
+                nodes.push(
+                    test_support::add_node_with_properties(
+                        &db,
+                        "User",
+                        vec![("score", PropertyValue::I64(10))],
+                    )
+                    .await,
+                );
+            }
+            for _ in 0..16 {
+                edges.push(
+                    test_support::add_edge_with_properties(
+                        &db,
+                        nodes[0],
+                        nodes[1],
+                        "LINK",
+                        vec![("score", PropertyValue::I64(10))],
+                    )
+                    .await,
+                );
+            }
+            for (keyspace, label, ids) in [
+                (exec::ElementKeyspace::NodeProperty, "User", nodes),
+                (exec::ElementKeyspace::EdgeEndpoints, "LINK", edges),
+            ] {
+                // Leave a stale index entry at the first ascending-ID tie.
+                let key = keys::DataKey::Data {
+                    scope: keys::scope::DataScope::LegacyUnscoped,
+                    kind: match keyspace {
+                        exec::ElementKeyspace::NodeProperty => {
+                            keys::DataKeyKind::NodeProperty(keys::NodePropertyKey::new(ids[0]))
+                        }
+                        exec::ElementKeyspace::EdgeEndpoints => {
+                            keys::DataKeyKind::EdgePropertyById(keys::EdgePropertyByIdKey::new(
+                                ids[0],
+                            ))
+                        }
+                    },
+                }
+                .to_bytes();
+                db.inner_db().delete(key).await.unwrap();
+                let key = catalog::ScopedPropertyDirectionKey::try_new(label, "score", direction)
+                    .unwrap();
+                for membership in [
+                    Vec::new(),
+                    vec![ids
+                        .iter()
+                        .step_by(2)
+                        .copied()
+                        .collect::<roaring::RoaringTreemap>()],
+                    vec![roaring::RoaringTreemap::new()],
+                ] {
+                    for take in [1, 3, 20] {
+                        let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+                        let mut source = Source {
+                            plan: Plan::Prepared,
+                            state: State::Done,
+                            remaining: Demand::take(take),
+                        };
+                        source.state = source
+                            .open_range(
+                                &ctx,
+                                keyspace,
+                                &key,
+                                &ir::IndexRange::All,
+                                ir::RangeScanIteration::Reverse,
+                                membership.clone(),
+                            )
+                            .await
+                            .unwrap();
+                        let mut actual = Vec::new();
+                        while let Some(value) = source.next(&mut ctx).await.unwrap() {
+                            actual.extend(
+                                ctx.stream_rows(value, "test")
+                                    .unwrap()
+                                    .into_iter()
+                                    .map(|row| row.current.unwrap().id()),
+                            );
+                        }
+                        let expected = ids
+                            .iter()
+                            .skip(1)
+                            .copied()
+                            .filter(|id| membership.iter().all(|set| set.contains(*id)))
+                            .take(take)
+                            .collect::<Vec<_>>();
+                        assert_eq!(actual, expected);
+                        assert!(ctx.range_reads.peak.load(Ordering::Relaxed) <= take);
+                    }
+                }
+            }
+            db.close().await.unwrap();
         }
     }
 }
