@@ -165,7 +165,7 @@ jobs:
           echo "::add-mask::$registry_token"
           status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
             -H "Authorization: Bearer $registry_token" \
-            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
             "https://ghcr.io/v2/helixdb/helixdb/manifests/$RELEASE_VERSION")
           [[ "$status" == 404 ]] || { echo "Release tag is not confirmed absent (HTTP $status)" >&2; exit 1; }
       - uses: actions/download-artifact@v4
@@ -187,6 +187,7 @@ jobs:
             ref="$IMAGE_REPOSITORY:release-$GITHUB_SHA-$GITHUB_RUN_ID-$arch"
             docker tag "$IMAGE_REPOSITORY:ci-$arch" "$ref"
             docker push "$ref"
+            # Formatted .Manifest is the descriptor (with digest), unlike --raw.
             digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -er '.digest')
             refs+=("$IMAGE_REPOSITORY@$digest")
           done
