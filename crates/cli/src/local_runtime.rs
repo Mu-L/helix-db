@@ -29,8 +29,8 @@ const RUNTIME_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const RUNTIME_INFO_TIMEOUT: Duration = Duration::from_secs(1);
 /// Poll cadence for the bounded advisory daemon probe.
 const RUNTIME_INFO_POLL_INTERVAL: Duration = Duration::from_millis(10);
-const MINIO_IMAGE: &str = "minio/minio:latest";
-const MINIO_MC_IMAGE: &str = "minio/mc:latest";
+const MINIO_IMAGE: &str = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e";
+const MINIO_MC_IMAGE: &str = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727";
 const MINIO_ACCESS_KEY: &str = "minioadmin";
 const MINIO_SECRET_KEY: &str = "minioadmin";
 const LOCAL_S3_BUCKET: &str = "helix-db";
