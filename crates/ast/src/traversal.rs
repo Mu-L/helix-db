@@ -506,7 +506,7 @@ pub enum AstNode {
         /// Property name.
         name: String,
     },
-    /// Delete current nodes and their incident edges, returning an empty stream.
+    /// Delete current edges, or nodes and their incident edges, returning an empty stream.
     Drop { input: Box<AstNode> },
     /// Drop edges between current nodes and targets.
     DropEdge {
