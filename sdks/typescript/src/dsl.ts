@@ -2381,8 +2381,9 @@ export class Traversal<S extends TraversalState = "nodes", M extends MutationMod
   removeProperty(name: string): Traversal<"nodes", "write"> {
     return this.push(Step.removeProperty(name), "nodes", "write") as Traversal<"nodes", "write">;
   }
-  drop(): Traversal<"nodes", "write"> {
-    return this.push(Step.drop(), "nodes", "write") as Traversal<"nodes", "write">;
+  /** Delete current edges, or current nodes and their incident edges. Returns an empty stream. */
+  drop(): Traversal<S, "write"> {
+    return this.push(Step.drop(), this.state, "write") as Traversal<S, "write">;
   }
   dropEdge(to: NodeRef | NodeId | NodeId[] | string): Traversal<"nodes", "write"> {
     return this.push(Step.dropEdge(NodeRef.from(to)), "nodes", "write") as Traversal<"nodes", "write">;
