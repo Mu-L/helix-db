@@ -76,7 +76,7 @@ def run(args):
             "docker", "run", "--rm", "--name", trace_name,
             "--network", f"{args.project}_default", "--entrypoint", "/bin/sh", args.mc_image,
             "-c", "mc alias set local http://minio:9000 minioadmin minioadmin >/dev/null && "
-            "mc admin trace --json --all local",
+            "mc admin trace --json --verbose --all local",
         ], stdout=trace_file, stderr=subprocess.STDOUT)
         try:
             time.sleep(2)
@@ -91,9 +91,15 @@ def run(args):
                     if time.monotonic() >= deadline:
                         raise
                     time.sleep(0.2)
-            assert query(args.port, search) == expected
-            time.sleep(15)
-            warm_end = os.fstat(trace_file.fileno()).st_size
+            # Measure the SST ranges used by catalog/operation reads separately.
+            # Never run vector search here: it could conceal redundant hydration.
+            time.sleep(12)
+            metadata_start = os.fstat(trace_file.fileno()).st_size
+            query(args.port, dsl.read_batch().var_as(
+                "operation", dsl.g().get_index_operation(receipt["operation_id"]),
+            ).returning(["operation"]))
+            time.sleep(0.25)  # Allow the metadata trace records to reach stdout.
+            metadata_end = os.fstat(trace_file.fileno()).st_size
             time.sleep(17)  # At least three five-second refresh intervals, with no clients.
             assert trace.poll() is None, "trace exited during the idle interval"
         finally:
@@ -103,23 +109,30 @@ def run(args):
         # while mc runs can overwrite the trace or split a UTF-8/JSON record.
         trace_file.seek(0)
         captured = trace_file.read()
-        boundary = captured.rfind(b"\n", 0, warm_end) + 1
+        warm_end = captured.rfind(b"\n", 0, metadata_start) + 1
+        idle_start = captured.rfind(b"\n", 0, metadata_end) + 1
         complete_end = captured.rfind(b"\n") + 1
-        warm = captured[:boundary].decode()
-        idle = captured[boundary:complete_end].decode()
-        def sst_gets(raw):
-            events = []
-            for line in raw.splitlines():
+
+        def sst_ranges(raw):
+            ranges = []
+            for line in raw.decode().splitlines():
                 # Docker/mc may print startup notices before the JSON stream.
                 if not line.startswith("{"):
                     continue
                 event = json.loads(line)
-                if "s3.GetObject" in line and "/compacted/" in line:
-                    events.append(event)
-            return events
-        assert sst_gets(warm), f"warm phase must read SSTs; fixture cannot pass on WAL-only data: {warm[:2000]}"
-        assert not sst_gets(idle), f"idle refresh fetched SSTs: {sst_gets(idle)[:3]}"
+                if event["api"] == "s3.GetObject" and "/compacted/" in event["path"]:
+                    ranges.append((event["path"], event["request"]["headers"]["Range"]))
+            return ranges
 
+        warm = set(sst_ranges(captured[:warm_end]))
+        metadata = set(sst_ranges(captured[warm_end:idle_start]))
+        idle = sst_ranges(captured[idle_start:complete_end])
+        assert warm - metadata, "warm phase must read SST ranges outside the catalog"
+        unexpected = set(idle) - metadata
+        assert not unexpected, f"idle refresh fetched non-catalog SST ranges: {unexpected}"
+        print(f"Idle trace: {len(idle)} catalog SST GETs, zero vector-data SST GETs")
+
+    assert query(args.port, search) == expected
     query(args.port, dsl.write_batch().var_as("node", dsl.g().add_n("IdleVectorFixture", {
         "ordinal": 512, "embedding": [-1.0, 1.0, 0.0],
     })))
@@ -129,7 +142,7 @@ def run(args):
     assert query(args.port, updated_search) == {"hits": [{"ordinal": 512}]}
     time.sleep(6)
     assert query(args.port, updated_search) == {"hits": [{"ordinal": 512}]}
-    print("Vector idle regression passed: zero SST GETs across three refresh intervals; searches pass before and after a write")
+    print("Vector idle regression passed: zero vector-data SST GETs across three refresh intervals; searches pass before and after a write")
 
 
 if __name__ == "__main__":

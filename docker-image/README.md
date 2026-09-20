@@ -86,7 +86,7 @@ docker-image/test.sh \
   --image ghcr.io/helixdb/helixdb:local-amd64
 ```
 
-The suite inspects the saved image metadata and filesystem, scans it for credential material, exercises memory and native-volume behavior, rejects invalid configuration, checks clean `SIGTERM` shutdown, and verifies S3-compatible persistence with digest-pinned MinIO images. It creates only `helixdb-image-*` Docker resources and removes them on exit. The MinIO test also seeds a vector index, reopens flushed data, and checks that three idle refresh intervals produce no SST GETs while search remains correct before and after a write.
+The suite inspects the saved image metadata and filesystem, scans it for credential material, exercises memory and native-volume behavior, rejects invalid configuration, checks clean `SIGTERM` shutdown, and verifies S3-compatible persistence with digest-pinned MinIO images. It creates only `helixdb-image-*` Docker resources and removes them on exit. The MinIO test also seeds a vector index, reopens flushed data, and checks that three idle refresh intervals produce no vector-data SST GETs (catalog polling is measured separately) while search remains correct before and after a write.
 
 MinIO and `mc` use the upstream `quay.io/minio` repositories. The server
 `RELEASE.2025-09-07T16-13-09Z` and client `RELEASE.2025-08-13T08-35-41Z`
