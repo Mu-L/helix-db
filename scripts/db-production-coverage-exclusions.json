@@ -49,7 +49,7 @@
   },
   {
     "path": "crates/db/src/search/vector/cache/hydration.rs",
-    "line": 261,
+    "line": 264,
     "reason": "The immutable Unavailable hydration variant is handled by an earlier match and continues before any storage load, so it cannot reach completion dispatch.",
     "evidence": "vector_hydration_exercises_active_generation_boundaries"
   },
