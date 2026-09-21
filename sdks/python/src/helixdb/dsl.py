@@ -3047,7 +3047,8 @@ class Traversal:
         return self._push(Step.remove_property(name), "nodes", "write")
 
     def drop(self) -> "Traversal":
-        return self._push(Step.drop(), "nodes", "write")
+        """Delete current edges, or nodes and their incident edges; return an empty stream."""
+        return self._push(Step.drop(), self.state, "write")
 
     def drop_edge(self, to: NodeRef | NodeId | Iterable[NodeId] | str) -> "Traversal":
         return self._push(Step.drop_edge(NodeRef.from_value(to)), "nodes", "write")
