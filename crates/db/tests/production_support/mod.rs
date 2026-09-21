@@ -587,3 +587,8 @@ pub async fn vector_migration_scale_1m() {
 pub async fn vector_migration_scale_10m() {
     crate::migrations::run_vector_migration_scale_contract(10_000_000).await;
 }
+
+/// Verifies unique batched reads validate inputs and owners and propagate storage errors.
+pub async fn secondary_unique_batch_contracts() {
+    crate::index_lifecycle::secondary::run_unique_batch_production_contracts().await;
+}
