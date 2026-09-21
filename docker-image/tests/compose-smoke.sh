@@ -153,4 +153,6 @@ compose down >/dev/null
 compose up -d >/dev/null
 wait_for_http "http://127.0.0.1:${port}/readyz"
 assert_users_nonempty "$(post_json dynamic-read.json)"
+log "Checking idle vector refresh and post-write search"
+python3 "$script_dir/vector_idle_refresh.py" --port "$port" --project "$project" --mc-image "$mc_image"
 log "S3-compatible Compose smoke test passed"
