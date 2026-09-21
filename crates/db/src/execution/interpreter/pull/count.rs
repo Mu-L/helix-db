@@ -169,20 +169,26 @@ impl<'a> Program<'a> {
             }
             Self::Apply { input, op } => {
                 input.validate_contract(ctx)?;
-                // Referenced operand types are known before demand can suppress polling.
+                // Each saved operand keeps its ordinary variable-operation contract.
                 let exec::ExecOp::Variable {
-                    op:
-                        exec::ExecVariableOp::Stream(
-                            ir::StreamVariableOp::Select(variable)
-                            | ir::StreamVariableOp::Inject(variable)
-                            | ir::StreamVariableOp::Within(variable)
-                            | ir::StreamVariableOp::Without(variable),
-                        ),
+                    op: exec::ExecVariableOp::Stream(op),
                 } = op.as_ref()
                 else {
                     return Ok(());
                 };
-                Shape::of(ctx.variable_value(variable)?).require_rows("count cursor")?;
+                match op {
+                    ir::StreamVariableOp::Select(variable)
+                    | ir::StreamVariableOp::Inject(variable) => {
+                        Shape::of(ctx.variable_value(variable)?).require_rows("count cursor")?;
+                    }
+                    ir::StreamVariableOp::Within(variable)
+                    | ir::StreamVariableOp::Without(variable) => {
+                        Shape::of(ctx.variable_value(variable)?).require_membership()?;
+                    }
+                    ir::StreamVariableOp::As(_)
+                    | ir::StreamVariableOp::Store(_)
+                    | ir::StreamVariableOp::Bind(_) => {}
+                }
             }
             Self::OrderedDistinct(input) => input.validate_contract(ctx)?,
             Self::Set { inputs, .. } => {
@@ -405,7 +411,7 @@ mod tests {
             skip: exec::ExecUsizeExpr::Literal(0),
             take: exec::ExecCountTake::AtMost(exec::ExecUsizeExpr::Literal(0)),
         };
-        let mut plans = vec![
+        let mut plans = [
             select.clone(),
             C::Window {
                 input: Box::new(select.clone()),
@@ -426,22 +432,33 @@ mod tests {
             C::RuntimeInput(exec::ExecRuntimeInputPlan::Variable(saved.clone())),
             C::NodeRuntimeInput(exec::ExecRuntimeInputPlan::Variable(saved.clone())),
             C::EdgeRuntimeInput(exec::ExecRuntimeInputPlan::Variable(saved.clone())),
-        ];
+        ]
+        .into_iter()
+        .map(|plan| (plan, false))
+        .collect::<Vec<_>>();
         for op in [
             helix_planner::logical::PureStreamVariableOp::Inject(saved.clone()),
             helix_planner::logical::PureStreamVariableOp::Within(saved.clone()),
             helix_planner::logical::PureStreamVariableOp::Without(saved.clone()),
         ] {
+            let accepts_folded = matches!(
+                op,
+                helix_planner::logical::PureStreamVariableOp::Within(_)
+                    | helix_planner::logical::PureStreamVariableOp::Without(_)
+            );
             for input in [C::EmptyRows, C::InputRows] {
                 let variable = C::Variable {
                     input: Box::new(input),
                     op: op.clone(),
                 };
-                plans.push(variable.clone());
-                plans.push(C::Window {
-                    input: Box::new(variable),
-                    window: zero.clone(),
-                });
+                plans.push((variable.clone(), accepts_folded));
+                plans.push((
+                    C::Window {
+                        input: Box::new(variable),
+                        window: zero.clone(),
+                    },
+                    accepts_folded,
+                ));
             }
         }
         for value in [
@@ -450,6 +467,9 @@ mod tests {
             ExecutionValue::Count(0),
             ExecutionValue::Bool(false),
             ExecutionValue::FoldedStream(FoldedStream::new(Vec::new())),
+            ExecutionValue::FoldedStream(FoldedStream::new(vec![ExecutionRow::current(
+                access::kv::element_ref(exec::ElementKeyspace::NodeProperty, 1),
+            )])),
             ExecutionValue::Stream(Vec::new()),
             ExecutionValue::Stream(vec![ExecutionRow::current(access::kv::element_ref(
                 exec::ElementKeyspace::NodeProperty,
@@ -464,7 +484,8 @@ mod tests {
         .map(Some)
         .chain(std::iter::once(None))
         {
-            let valid = matches!(value, Some(ExecutionValue::Stream(_)));
+            let rows_valid = matches!(value, Some(ExecutionValue::Stream(_)));
+            let folded = matches!(value, Some(ExecutionValue::FoldedStream(_)));
             for op in [
                 ir::StreamVariableOp::Inject(saved.clone()),
                 ir::StreamVariableOp::Within(saved.clone()),
@@ -474,6 +495,12 @@ mod tests {
                 value.iter().for_each(|value| {
                     ctx.variables.insert(saved.clone(), value.clone());
                 });
+                let valid = rows_valid
+                    || (folded
+                        && matches!(
+                            op,
+                            ir::StreamVariableOp::Within(_) | ir::StreamVariableOp::Without(_)
+                        ));
                 let op = exec::ExecOp::Variable {
                     op: exec::ExecVariableOp::Stream(op),
                 };
@@ -494,7 +521,8 @@ mod tests {
                     assert_eq!(ctx.pull_work.snapshot().source_visits, 0);
                 }
             }
-            for plan in &plans {
+            for (plan, accepts_folded) in &plans {
+                let valid = rows_valid || (folded && *accepts_folded);
                 let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
                 value.iter().for_each(|value| {
                     ctx.variables.insert(saved.clone(), value.clone());
@@ -543,6 +571,133 @@ mod tests {
                             .is_ok(),
                         valid
                     );
+                }
+            }
+        }
+        db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn folded_membership_matches_eager_rows_and_counts() {
+        let db = test_support::open_db("folded-membership-contract").await;
+        let saved = test_support::name("saved");
+        let node = ExecutionRow::current(access::kv::element_ref(
+            exec::ElementKeyspace::NodeProperty,
+            1,
+        ));
+        let edge = ExecutionRow::current(access::kv::element_ref(
+            exec::ElementKeyspace::EdgeEndpoints,
+            1,
+        ));
+        let other = ExecutionRow::current(access::kv::element_ref(
+            exec::ElementKeyspace::NodeProperty,
+            2,
+        ));
+        for operand_rows in [
+            vec![],
+            vec![node.clone()],
+            vec![edge.clone(), edge.clone(), ExecutionRow::empty()],
+        ] {
+            for folded in [false, true] {
+                let value = if folded {
+                    ExecutionValue::FoldedStream(FoldedStream::new(operand_rows.clone()))
+                } else {
+                    ExecutionValue::Stream(operand_rows.clone())
+                };
+                for rows in [
+                    vec![],
+                    vec![
+                        node.clone(),
+                        edge.clone(),
+                        other.clone(),
+                        node.clone(),
+                        ExecutionRow::empty(),
+                    ],
+                ] {
+                    for op in [
+                        helix_planner::logical::PureStreamVariableOp::Within(saved.clone()),
+                        helix_planner::logical::PureStreamVariableOp::Without(saved.clone()),
+                    ] {
+                        let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+                        ctx.variables.insert(saved.clone(), value.clone());
+                        let input = ExecutionValue::Stream(rows.clone());
+                        let variable = exec::ExecOp::Variable {
+                            op: exec::ExecVariableOp::Stream(op.to_stream_op()),
+                        };
+                        let expected_value = ctx
+                            .variable(
+                                input.clone(),
+                                &exec::ExecVariableOp::Stream(op.to_stream_op()),
+                            )
+                            .unwrap();
+                        let expected = ctx.stream_rows(expected_value, "test").unwrap();
+                        let plan = exec::ExecCountCursorPlan::Variable {
+                            input: Box::new(exec::ExecCountCursorPlan::InputRows),
+                            op,
+                        };
+                        assert_eq!(
+                            ctx.pull_count_rows(&plan, &mut Some(input.clone()))
+                                .await
+                                .unwrap(),
+                            expected
+                        );
+                        for take in [Some(0), Some(1), None] {
+                            let cursor = Cursor::materialized(input.clone())
+                                .unwrap()
+                                .wrap(&ctx, &variable)
+                                .unwrap();
+                            let limit = exec::ExecOp::Limit {
+                                count: ir::StreamBoundPlan::Literal(take.unwrap_or(usize::MAX)),
+                            };
+                            let actual = cursor
+                                .wrap(&ctx, &limit)
+                                .unwrap()
+                                .drain(&mut ctx)
+                                .await
+                                .unwrap();
+                            let limit = take.unwrap_or(usize::MAX);
+                            assert_eq!(
+                                ctx.stream_rows(actual, "test").unwrap(),
+                                expected.iter().take(limit).cloned().collect::<Vec<_>>()
+                            );
+                            for skip in [0, 1] {
+                                let expected_count = expected.iter().skip(skip).take(limit).count();
+                                assert_eq!(
+                                    ctx.pull_count_cardinality(
+                                        &plan,
+                                        &mut Some(input.clone()),
+                                        skip,
+                                        take
+                                    )
+                                    .await
+                                    .unwrap(),
+                                    expected_count
+                                );
+                                let window = exec::ExecCountWindowPlan {
+                                    skip: exec::ExecUsizeExpr::Literal(skip),
+                                    take: take.map_or(exec::ExecCountTake::All, |take| {
+                                        exec::ExecCountTake::AtMost(exec::ExecUsizeExpr::Literal(
+                                            take,
+                                        ))
+                                    }),
+                                };
+                                let stream_plan = exec::ExecCountStreamPlan {
+                                    cursor: plan.clone(),
+                                    window,
+                                };
+                                let result = stream(
+                                    &mut ctx,
+                                    &stream_plan,
+                                    Cursor::materialized(input.clone()).unwrap(),
+                                )
+                                .await
+                                .unwrap();
+                                assert!(
+                                    matches!(result, ExecutionValue::Count(count) if count == expected_count)
+                                );
+                            }
+                        }
+                        assert_eq!(ctx.pull_work.snapshot().source_visits, 0);
+                    }
                 }
             }
         }

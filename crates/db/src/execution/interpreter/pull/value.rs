@@ -52,6 +52,17 @@ impl Shape {
         )))
     }
 
+    /// Membership reads elements from either ordinary rows or a folded row
+    /// collection. Validate only the shape here; build the set when polled.
+    pub(super) fn require_membership(self) -> Result<()> {
+        match self {
+            Self::Rows | Self::Folded => Ok(()),
+            Self::Scalars | Self::Count | Self::Bool | Self::Lifecycle => {
+                self.require_rows("membership operand")
+            }
+        }
+    }
+
     /// The output shape is independent of cardinality for every projection.
     pub(super) fn projection(self, projection: &ir::ProjectionPlan) -> Result<Self> {
         match self {

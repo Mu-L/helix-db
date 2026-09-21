@@ -166,7 +166,7 @@ impl<'a> Cursor<'a> {
                     ),
             } => {
                 shape.require_rows("membership")?;
-                Shape::of(ctx.variable_value(variable)?).require_rows("membership")?;
+                Shape::of(ctx.variable_value(variable)?).require_membership()?;
                 Node::Membership {
                     input,
                     variable,
