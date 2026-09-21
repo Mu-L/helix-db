@@ -155,6 +155,18 @@ pub(super) fn edge_source() -> logical::LogicalExpr {
     })
 }
 
+pub(super) fn node_access(plan: ir::NodeAccessPlan) -> logical::LogicalExpr {
+    logical::LogicalExpr::AccessPath(logical::AccessPath::Node(logical::NodeAccessPath::new(
+        ir::NodeAccessSourcePlan::new(plan).unwrap(),
+    )))
+}
+
+pub(super) fn edge_access(plan: ir::EdgeAccessPlan) -> logical::LogicalExpr {
+    logical::LogicalExpr::AccessPath(logical::AccessPath::Edge(logical::EdgeAccessPath::new(
+        ir::EdgeAccessSourcePlan::new(plan).unwrap(),
+    )))
+}
+
 pub(super) fn limit() -> logical::LogicalExpr {
     logical::LogicalExpr::Pure(logical::PureLogicalOp::Limit {
         count: ir::StreamBoundPlan::Literal(1),

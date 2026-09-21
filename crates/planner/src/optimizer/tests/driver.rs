@@ -1,5 +1,5 @@
 use super::support;
-use crate::{cost, ir, optimizer, properties, rules};
+use crate::{cost, ir, logical, optimizer, physical, properties, rules};
 
 struct SleepAndExploreRule;
 
@@ -272,6 +272,77 @@ fn cascades_optimizer_keeps_a_physical_alternative_for_every_root_after_time_bud
             selected.err()
         );
     }
+}
+
+fn assert_empty_access_selected_after_time_budget(
+    result: &optimizer::OptimizationResult,
+    element: properties::ElementKind,
+) {
+    assert_eq!(
+        result.guardrail(),
+        Some(optimizer::OptimizerGuardrail::TimeBudget)
+    );
+    let selected = result.best_plan(result.root());
+    assert!(
+        selected.is_ok(),
+        "root group {} has no physical alternative after the time budget expired: {:?}",
+        result.root().get(),
+        selected.err()
+    );
+    assert!(matches!(
+        &selected.unwrap().entry.alternative.expr,
+        physical::PhysicalExpr::Access {
+            element: delivered,
+            access: physical::PhysicalAccess::Empty,
+        } if *delivered == element
+    ));
+}
+
+#[test]
+fn cascades_optimizer_implements_empty_input_root_branch_after_time_budget() {
+    // A root branch over an empty access path is routed only to the
+    // `root_control_flow_empty` rewrite; the branch implementation rule never
+    // matches it. Seeding memoizes the input and body before the root, so the
+    // root is the third popped task and a one-microsecond budget has expired
+    // long before then. The rewrite must still run after the budget so the
+    // root ends with the empty physical access instead of failing selection
+    // with `SelectionError::NoPhysicalAlternatives`.
+    let rules = rules::SeedRuleSet::default();
+    let optimizer = rules.optimizer();
+    let mut config = support::config();
+    config.limits.optimization_micros = properties::PositiveUsize::new(1).unwrap();
+    let root = logical::LogicalExpr::RootBranch(logical::RootBranch::new(
+        support::node_access(ir::NodeAccessPlan::Empty),
+        ir::BranchPlan::Optional(Box::new(support::node_access(ir::NodeAccessPlan::AllScan))),
+    ));
+
+    let result = support::optimize(&optimizer, root, &config);
+
+    assert_empty_access_selected_after_time_budget(&result, properties::ElementKind::Node);
+}
+
+#[test]
+fn cascades_optimizer_implements_empty_input_root_repeat_after_time_budget() {
+    // Same contract as the root branch case: an empty-input root repeat is
+    // only implementable through the `root_control_flow_empty` rewrite, which
+    // must survive the expired budget.
+    let rules = rules::SeedRuleSet::default();
+    let optimizer = rules.optimizer();
+    let mut config = support::config();
+    config.limits.optimization_micros = properties::PositiveUsize::new(1).unwrap();
+    let root = logical::LogicalExpr::RootRepeat(logical::RootRepeat::new(
+        support::edge_access(ir::EdgeAccessPlan::Empty),
+        ir::RepeatPlan {
+            body: Box::new(support::edge_access(ir::EdgeAccessPlan::AllScan)),
+            stop: ir::RepeatStopPlan::MaxDepthOnly,
+            emit: ir::RepeatEmitPlan::None,
+            max_depth: std::num::NonZeroUsize::new(2).unwrap(),
+        },
+    ));
+
+    let result = support::optimize(&optimizer, root, &config);
+
+    assert_empty_access_selected_after_time_budget(&result, properties::ElementKind::Edge);
 }
 
 #[test]

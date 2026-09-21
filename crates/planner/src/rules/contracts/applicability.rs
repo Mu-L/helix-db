@@ -226,6 +226,14 @@ impl RuleApplicability {
         Self::RootRepeatImplementationCandidate
     }
 
+    /// Whether this rule's rewrite is the only implementable form of the
+    /// expressions it matches. Implementation candidates exclude those
+    /// shapes, so the optimizer must keep applying the rewrite even after
+    /// the time budget has stopped optional exploration.
+    pub const fn is_required_rewrite(&self) -> bool {
+        matches!(self, Self::RootControlFlowEmptyInputCandidate)
+    }
+
     /// Match one access source kind.
     pub fn access_source_only(kind: logical::AccessSourceKind) -> Self {
         Self::AccessSourceKinds(RuleAccessSourceKinds::one(kind))

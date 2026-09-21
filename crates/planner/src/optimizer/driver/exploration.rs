@@ -18,10 +18,13 @@ pub(super) fn optimize_many(
         ExplorationSeed::Finished(result) => return Ok(result),
     };
 
-    // The wall-clock budget bounds exploration only. Once it expires no further
-    // logical alternatives are explored, but implementation rules still run for
-    // every expression already queued so each memo group keeps the physical
-    // alternatives selection needs. Stopping outright could leave a root group
+    // The wall-clock budget bounds optional exploration only. Once it expires
+    // no further optional logical alternatives are explored, but required
+    // rewrites and implementation rules still run for every expression already
+    // queued so each memo group keeps the physical alternatives selection
+    // needs. A required rewrite (collapsing an empty-input root branch or
+    // repeat) is the only route to a physical alternative for the shapes it
+    // matches, so skipping it, or stopping outright, could leave a root group
     // with no physical alternative and fail an otherwise plannable request.
     let mut time_guardrail = None;
     while let Some(task) = run.pop_task() {
@@ -30,8 +33,10 @@ pub(super) fn optimize_many(
         }
 
         for optimizer_rule in optimizer.rules.rules_for_expr(&task.expr) {
+            let metadata = optimizer_rule.metadata();
             if time_guardrail.is_some()
-                && optimizer_rule.metadata().kind != rules::RuleKind::Implementation
+                && metadata.kind != rules::RuleKind::Implementation
+                && !metadata.applicability.is_required_rewrite()
             {
                 continue;
             }
@@ -60,8 +65,7 @@ pub(super) fn optimize_many(
                     }
                 }
                 optimizer::RuleResult::Applied(optimizer::RuleEffect::Physical(alternatives)) => {
-                    let provenance =
-                        optimizer::RuleProvenance::from_metadata(optimizer_rule.metadata());
+                    let provenance = optimizer::RuleProvenance::from_metadata(metadata);
                     if let Some(guardrail) = run.apply_physical_effect(
                         task.group,
                         task.source_expr,
