@@ -211,10 +211,13 @@ class DateTime:
 
     @classmethod
     def parse_rfc3339(cls, value: str) -> "DateTime":
-        if re.fullmatch(
-            r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})",
-            value,
-        ) is None:
+        if (
+            re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)",
+                value,
+            )
+            is None
+        ):
             raise TypeError(f"invalid RFC3339 datetime: {value}")
         text = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
         try:
@@ -3044,7 +3047,8 @@ class Traversal:
         return self._push(Step.remove_property(name), "nodes", "write")
 
     def drop(self) -> "Traversal":
-        return self._push(Step.drop(), "nodes", "write")
+        """Delete current edges, or nodes and their incident edges; return an empty stream."""
+        return self._push(Step.drop(), self.state, "write")
 
     def drop_edge(self, to: NodeRef | NodeId | Iterable[NodeId] | str) -> "Traversal":
         return self._push(Step.drop_edge(NodeRef.from_value(to)), "nodes", "write")

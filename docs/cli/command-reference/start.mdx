@@ -39,7 +39,7 @@ helix start [INSTANCE] [OPTIONS]
 
 ## Behavior
 
-- Defaults to `ghcr.io/helixdb/helixdb:v0.0.5`. Flags override the image tag and pull policy in `[local.<instance>]`.
+- Defaults to `ghcr.io/helixdb/helixdb:v0.0.6`. Flags override the image tag and pull policy in `[local.<instance>]`.
 - `always` requires a successful pull; `missing` uses a cached image when available; `never` fails if the image is not cached. A failed pull never silently selects an older cached image.
 - Resolves all required images before saving overrides or replacing containers. Failed image resolution leaves `helix.toml` unchanged. Helix and disk-mode dependencies start by their resolved immutable image IDs.
 - Disk-mode MinIO images default to `missing` unless a pull policy is explicitly configured.
@@ -77,7 +77,7 @@ helix start dev --disk
 helix start dev --image-version latest
 
 # Save a specific image version
-helix start dev --image-version v0.0.5 --persist
+helix start dev --image-version v0.0.6 --persist
 
 # Start using cached images only
 helix start dev --pull never

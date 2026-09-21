@@ -428,3 +428,9 @@ fn process_local_runtime_dependencies_preserve_identity_and_readiness() {
     assert!(debug.contains("production-runtime-dependencies"));
     assert!(!debug.contains("object_store"));
 }
+
+/// Exercises the production unique batch reader, including its failure boundaries.
+#[tokio::test]
+async fn secondary_unique_batch_validates_inputs_storage_and_owners() {
+    db::production_coverage::secondary_unique_batch_contracts().await;
+}

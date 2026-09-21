@@ -7740,3 +7740,9 @@ use test_read_counters::{
     ThreadLocalCounter, BENCHMARK_GRAPH_READS, BENCHMARK_MULTI_GETS, BENCHMARK_POINT_READS,
     BENCHMARK_SCANS,
 };
+
+#[cfg(all(feature = "production-coverage", not(test)))]
+#[path = "../../tests/production_support/secondary_unique_batch.rs"]
+mod unique_batch_contracts;
+#[cfg(all(feature = "production-coverage", not(test)))]
+pub(crate) use unique_batch_contracts::run as run_unique_batch_production_contracts;

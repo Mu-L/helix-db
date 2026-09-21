@@ -465,3 +465,11 @@ assert.deepEqual(
     },
   },
 );
+
+const droppedEdges = g().e([1, 2]).drop();
+const droppedEdgeState: "edges" = droppedEdges.state;
+const droppedEdgeMode: "write" = droppedEdges.mode;
+assert.equal(droppedEdgeState, "edges");
+assert.equal(droppedEdgeMode, "write");
+assert.deepEqual(parsed(droppedEdges.intoAst()), { drop: { input: parsed(g().e([1, 2]).intoAst()) } });
+assert.equal(g().n(1).drop().state, "nodes");
