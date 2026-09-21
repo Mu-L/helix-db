@@ -1,8 +1,8 @@
 //! Stream-row projection contracts.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::values::distinct_scalars;
+use super::super::values::DistinctKey;
 use super::*;
 
 impl<'db> ExecutionContext<'db> {
@@ -137,6 +137,9 @@ impl<'db> ExecutionContext<'db> {
         dedup: ir::ProjectionDedupMode,
     ) -> Result<ExecutionValue> {
         let mut scalars = Vec::with_capacity(rows.len());
+        // DISTINCT drops duplicates as rows are projected so only the first
+        // occurrence of each object is retained, never every duplicate payload.
+        let mut seen = BTreeSet::new();
         for row in rows {
             self.check_execution_deadline()?;
             let mut resolver = eval::RowValueResolver::new(self);
@@ -150,12 +153,15 @@ impl<'db> ExecutionContext<'db> {
                     object.insert(alias, value);
                 }
             }
-            scalars.push(ExecutionScalar::Object(object));
+            let scalar = ExecutionScalar::Object(object);
+            if matches!(dedup, ir::ProjectionDedupMode::Distinct)
+                && !seen.insert(DistinctKey(scalar.clone()))
+            {
+                continue;
+            }
+            scalars.push(scalar);
         }
-        Ok(ExecutionValue::Scalars(match dedup {
-            ir::ProjectionDedupMode::Distinct => distinct_scalars(scalars),
-            ir::ProjectionDedupMode::All => scalars,
-        }))
+        Ok(ExecutionValue::Scalars(scalars))
     }
 
     async fn project_labels(&self, rows: &[ExecutionRow]) -> Result<ExecutionValue> {

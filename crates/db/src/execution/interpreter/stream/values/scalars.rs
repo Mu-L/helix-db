@@ -1,5 +1,6 @@
 //! Scalar terminal sequence contracts.
 
+use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
@@ -75,23 +76,28 @@ fn count_scalar(count: usize) -> ExecutionScalar {
 /// value), projected objects compare entry-wise the same way, ids and strings compare
 /// structurally. This is the identity `WHERE`, `ORDER BY`, GROUP BY and secondary
 /// indexes already use. Debug strings are not an identity.
-struct DistinctKey<'a>(&'a ExecutionScalar);
+///
+/// The key wraps either a borrowed scalar (dedup over an existing sequence) or an
+/// owned one (dedup while producing a sequence, retaining only first occurrences).
+pub(in crate::execution::interpreter::stream) struct DistinctKey<T>(
+    pub(in crate::execution::interpreter::stream) T,
+);
 
-impl PartialEq for DistinctKey<'_> {
+impl<T: Borrow<ExecutionScalar>> PartialEq for DistinctKey<T> {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
-impl Eq for DistinctKey<'_> {}
+impl<T: Borrow<ExecutionScalar>> Eq for DistinctKey<T> {}
 
-impl PartialOrd for DistinctKey<'_> {
+impl<T: Borrow<ExecutionScalar>> PartialOrd for DistinctKey<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for DistinctKey<'_> {
+impl<T: Borrow<ExecutionScalar>> Ord for DistinctKey<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         let rank = |value: &ExecutionScalar| match value {
             ExecutionScalar::NodeId(_) => 0_u8,
@@ -100,9 +106,10 @@ impl Ord for DistinctKey<'_> {
             ExecutionScalar::Value(_) => 3,
             ExecutionScalar::Object(_) => 4,
         };
-        rank(self.0)
-            .cmp(&rank(other.0))
-            .then_with(|| match (self.0, other.0) {
+        let (this, that) = (self.0.borrow(), other.0.borrow());
+        rank(this)
+            .cmp(&rank(that))
+            .then_with(|| match (this, that) {
                 (ExecutionScalar::NodeId(left), ExecutionScalar::NodeId(right))
                 | (ExecutionScalar::EdgeId(left), ExecutionScalar::EdgeId(right)) => {
                     left.cmp(right)
