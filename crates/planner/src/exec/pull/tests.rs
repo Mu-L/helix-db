@@ -130,6 +130,34 @@ fn components_match_reference_across_conditions_captures_and_shared_outputs() {
             &reference_derive(plan.steps(), &plan.execution_order(), plan.root()),
             "seed {seed}"
         );
+        // Stable IDs need not follow dependency order. Reverse the IDs while
+        // preserving the same validated topology and observable boundaries.
+        let remap = |old: ExecStepId| id(25 - old.get());
+        let mut reversed = plan.steps().to_vec();
+        for step in &mut reversed {
+            step.id = remap(step.id);
+            step.dependencies
+                .iter_mut()
+                .for_each(|dependency| *dependency = remap(*dependency));
+            let ExecCondition::PreviousStepNotEmpty { dependency } = &mut step.condition else {
+                continue;
+            };
+            *dependency = remap(*dependency);
+        }
+        let order = ExecExecutionOrder::new(
+            ir::AtLeast::try_from_vec(
+                plan.execution_order()
+                    .step_ids()
+                    .map(|old| ExecExecutionStage::Single(remap(old)))
+                    .collect(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            ExecProgram::derive(&reversed, &order, remap(plan.root())),
+            reference_derive(&reversed, &order, remap(plan.root())),
+            "reversed seed {seed}"
+        );
     }
 }
 
