@@ -6,11 +6,15 @@ import urllib.error
 import urllib.request
 
 
-def query(port, root):
+def query(port, root, saved=None):
     payload = {"request_type": "read", "query": {"read": {
         "entries": [{"query": {"name": "result", "root": root}}],
         "returns": ["result"],
     }}}
+    if saved is not None:
+        payload["query"]["read"]["entries"].insert(0, {
+            "query": {"name": "saved", "root": saved},
+        })
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/v2/query",
         data=json.dumps(payload).encode(),
@@ -56,6 +60,46 @@ def check(port):
                 else:
                     raise AssertionError(f"{operator} accepted a scalar input with limit {take}")
 
+    # Saved operands must be validated before any window can stop polling.
+    for operator in ("inject", "within", "without"):
+        for input_rows in (empty, source):
+            for saved_rows in (empty, source):
+                for take in (0, 1, count + 1):
+                    window = {"limit": {"input": {operator: {
+                        "input": input_rows, "variable": "saved",
+                    }}, "count": {"literal": take}}}
+                    for terminal in ("id", "count", "exists"):
+                        root = {terminal: {"input": window}}
+                        try:
+                            query(port, root, saved={"id": {"input": saved_rows}})
+                        except urllib.error.HTTPError as error:
+                            body = json.loads(error.read())
+                            assert body.get("error") == "invalid_query", body
+                        else:
+                            raise AssertionError(
+                                f"{operator} accepted scalar saved operand with limit {take} and {terminal}"
+                            )
+                        # Valid row operands preserve ordering and duplicate semantics.
+                        left = ids if input_rows == source else []
+                        right = ids if saved_rows == source else []
+                        if operator == "inject":
+                            expected = left + right
+                        elif operator == "within":
+                            expected = [item for item in left if item in right]
+                        else:
+                            expected = [item for item in left if item not in right]
+                        expected = expected[:take]
+                        if terminal == "count":
+                            expected = len(expected)
+                        elif terminal == "exists":
+                            expected = bool(expected)
+                        actual = query(port, root, saved=saved_rows)
+                        # Existing empty scalar projections can serialize as
+                        # null for a known-empty plan or [] for a drained plan.
+                        if terminal == "id" and actual is None:
+                            actual = []
+                        assert actual == expected, (root, actual, expected)
+
     # Enter the repeat body with a large frontier before satisfying LIMIT 1.
     large = {"nodes": {"reference": {"ids": ids[:1]}}}
     for _ in range(12):
@@ -68,7 +112,7 @@ def check(port):
     }}}
     assert query(port, {"id": {"input": {"limit": {"input": repeat,
                     "count": {"literal": 1}}}}}) == ids[:1]
-    print("early-termination conditional values and input type contracts passed")
+    print("early-termination conditional values and saved-operand type contracts passed")
 
 
 if __name__ == "__main__":
