@@ -1417,3 +1417,170 @@ async fn reverse_limit_retains_bounded_ties() {
         "known LIMIT 1: previous peak={old_peak}, new peak={new_peak}"
     );
 }
+
+#[tokio::test]
+async fn large_repeat_frontier_matches_complete_execution_after_entering_body() {
+    let db = test_support::open_db("pull-large-repeat").await;
+    let id = test_support::add_user(&db, "match").await;
+    let ids = vec![id; 8192];
+    let exec::ExecOp::Filter { predicate } = filter_name("absent") else {
+        unreachable!()
+    };
+    for emit in [
+        ir::RepeatEmitPlan::None,
+        ir::RepeatEmitPlan::After,
+        ir::RepeatEmitPlan::AfterIf { predicate },
+    ] {
+        let plan = linear(vec![
+            source(),
+            exec::ExecOp::Repeat {
+                plan: exec::ExecRepeatPlan {
+                    body: Box::new(child(vec![context_source()])),
+                    emit,
+                    stop: ir::RepeatStopPlan::Times {
+                        count: std::num::NonZeroUsize::new(1).unwrap(),
+                    },
+                    max_depth: std::num::NonZeroUsize::new(1).unwrap(),
+                },
+            },
+            limit(1),
+        ]);
+        let mut eager = ExecutionContext::new(&db, parameters(&ids));
+        eager
+            .execute_steps(
+                plan.steps(),
+                plan.execution_order(),
+                plan.root(),
+                &exec::ExecProgram::default(),
+            )
+            .await
+            .unwrap();
+        let expected = eager
+            .finish(plan.root(), &exec::ExecutableReturns::None)
+            .unwrap()
+            .last
+            .unwrap();
+        let mut ctx = ExecutionContext::new(&db, parameters(&ids));
+        assert_eq!(run(&mut ctx, &plan).await.unwrap(), expected);
+        assert!(ctx.variable_value(&test_support::name("$context")).is_err());
+    }
+    db.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn full_input_adapters_reject_invalid_shapes_under_zero_demand() {
+    let db = test_support::open_db("pull-full-type-validation").await;
+    let id = test_support::add_user(&db, "match").await;
+    let index = ir::SearchIndexPlan {
+        index_id: test_support::name("unused"),
+        tenant: ir::SearchTenantPlan::Unscoped,
+    };
+    let key = helix_planner::catalog::NodeSearchIndexKey::try_new("User", "name").unwrap();
+    let k = ir::SearchLimitPlan::Literal(std::num::NonZeroUsize::new(1).unwrap());
+    let operators = [
+        exec::ExecOp::Count {
+            plan: Box::new(exec::ExecCountPlan::Stream(exec::ExecCountStreamPlan {
+                cursor: exec::ExecCountCursorPlan::InputRows,
+                window: exec::ExecCountWindowPlan::identity(),
+            })),
+        },
+        exec::ExecOp::Aggregate {
+            aggregate: ir::AggregatePlan::AggregateBy {
+                function: helix_ast::traversal::AggregateFunction::Count,
+                property: test_support::name("name"),
+            },
+        },
+        exec::ExecOp::VectorSearch {
+            plan: Box::new(ir::RestrictedVectorSearchPlan::Nodes {
+                key: key.clone(),
+                index: index.clone(),
+                k: k.clone(),
+                query_vector: ir::VectorQueryInputPlan::Vector(
+                    ir::SearchVector::new(vec![1.0]).unwrap(),
+                ),
+            }),
+        },
+        exec::ExecOp::TextSearch {
+            plan: Box::new(ir::RestrictedTextSearchPlan::Nodes {
+                key,
+                index,
+                k,
+                query_text: ir::TextQueryInputPlan::Text(test_support::name("text")),
+            }),
+        },
+        exec::ExecOp::Reserved {
+            op: ir::ReservedOp::Unfold,
+        },
+        exec::ExecOp::Reserved {
+            op: ir::ReservedOp::Fold,
+        },
+        exec::ExecOp::Order {
+            plan: ir::OrderPlan::ExplicitSort(ir::OrderKeys::from(ir::OrderKey {
+                property: test_support::name("name"),
+                order: helix_ast::traversal::Order::Asc,
+            })),
+        },
+        exec::ExecOp::Aggregate {
+            aggregate: ir::AggregatePlan::Group(test_support::name("name")),
+        },
+        exec::ExecOp::Aggregate {
+            aggregate: ir::AggregatePlan::GroupCount(test_support::name("name")),
+        },
+        exec::ExecOp::Aggregate {
+            aggregate: ir::AggregatePlan::AggregateBy {
+                function: helix_ast::traversal::AggregateFunction::Sum,
+                property: test_support::name("name"),
+            },
+        },
+    ];
+    let prefixes = [
+        exec::ExecOp::Project {
+            projection: ir::ProjectionPlan::Id,
+        },
+        exec::ExecOp::Project {
+            projection: ir::ProjectionPlan::Exists,
+        },
+        exec::ExecOp::Count {
+            plan: Box::new(exec::ExecCountPlan::InputRows {
+                window: exec::ExecCountWindowPlan::identity(),
+            }),
+        },
+        exec::ExecOp::Reserved {
+            op: ir::ReservedOp::Fold,
+        },
+    ];
+    for ids in [vec![], vec![id]] {
+        for prefix in &prefixes {
+            for op in &operators {
+                for take in [0, 1] {
+                    let plan = linear(vec![source(), prefix.clone(), op.clone(), limit(take)]);
+                    let mut eager = ExecutionContext::new(&db, parameters(&ids));
+                    let expected = eager
+                        .execute_steps(
+                            plan.steps(),
+                            plan.execution_order(),
+                            plan.root(),
+                            &exec::ExecProgram::default(),
+                        )
+                        .await
+                        .and_then(|()| eager.finish(plan.root(), &exec::ExecutableReturns::None))
+                        .map(|result| result.last.unwrap());
+                    let mut ctx = ExecutionContext::new(&db, parameters(&ids));
+                    let actual = run(&mut ctx, &plan).await;
+                    match (actual, expected) {
+                        (Ok(actual), Ok(expected)) => assert_eq!(actual, expected),
+                        (Err(actual), Err(expected)) => assert_eq!(
+                            std::mem::discriminant(&actual),
+                            std::mem::discriminant(&expected),
+                            "{op:?}: {actual}"
+                        ),
+                        (actual, expected) => panic!(
+                            "{prefix:?} -> {op:?} -> limit({take}): {actual:?} != {expected:?}"
+                        ),
+                    }
+                }
+            }
+        }
+    }
+    db.close().await.unwrap();
+}

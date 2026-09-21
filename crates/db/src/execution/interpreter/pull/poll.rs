@@ -95,7 +95,7 @@ impl<'a> Cursor<'a> {
                     Node::Branch(branch) => Box::pin(branch.next(ctx)).await?,
                     Node::Repeat(repeat) => Box::pin(repeat.next(ctx)).await?,
                     Node::Scoped { input, context } => {
-                        let scope = scope::Scope::new(ctx, context.clone());
+                        let scope = scope::Scope::new(ctx, context);
                         input.next(scope.context).await?
                     }
                     Node::CountLeaf {

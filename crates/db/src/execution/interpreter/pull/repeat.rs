@@ -114,7 +114,7 @@ impl<'a> Repeat<'a> {
                             let row = &self.frontier[self.after_index];
                             self.after_index += 1;
                             let accepted = {
-                                let scope = scope::Scope::new(ctx, self.frame_context.clone());
+                                let scope = scope::Scope::new(ctx, &mut self.frame_context);
                                 scope
                                     .context
                                     .eval_predicate(row, predicate.predicate())
@@ -134,7 +134,7 @@ impl<'a> Repeat<'a> {
                 }
                 Phase::Stop => {
                     let stop = {
-                        let scope = scope::Scope::new(ctx, self.frame_context.clone());
+                        let scope = scope::Scope::new(ctx, &mut self.frame_context);
                         scope
                             .context
                             .repeat_should_stop(&self.frontier, &self.plan.stop)

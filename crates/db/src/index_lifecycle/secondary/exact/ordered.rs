@@ -346,6 +346,11 @@ pub(crate) struct OrderedRangeCursor {
 
 impl OrderedRangeCursor {
     pub(crate) fn with_membership(mut self, membership: Vec<roaring::RoaringTreemap>) -> Self {
+        if membership.iter().any(roaring::RoaringTreemap::is_empty) {
+            self.rows = None;
+            self.pending.clear();
+            self.lookahead = None;
+        }
         self.membership = membership;
         self
     }

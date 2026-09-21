@@ -380,6 +380,9 @@ impl<'a> Source<'a> {
         iteration: ir::RangeScanIteration,
         membership: Vec<roaring::RoaringTreemap>,
     ) -> Result<State> {
+        if membership.iter().any(roaring::RoaringTreemap::is_empty) {
+            return Ok(State::Done);
+        }
         let element = match keyspace {
             exec::ElementKeyspace::NodeProperty => crate::index_lifecycle::IndexElementKind::Node,
             exec::ElementKeyspace::EdgeEndpoints => crate::index_lifecycle::IndexElementKind::Edge,
@@ -657,6 +660,58 @@ mod tests {
                     ids[1]
                 );
                 assert!(ctx.range_reads.peak.load(Ordering::Relaxed) <= 1);
+                // Empty intersections must not visit or buffer even one range entry.
+                for iteration in [
+                    ir::RangeScanIteration::Forward,
+                    ir::RangeScanIteration::Reverse,
+                ] {
+                    for remaining in [Demand::All, Demand::take(1)] {
+                        let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+                        ctx.enable_request_read_view().await.unwrap();
+                        let mut source = Source {
+                            plan: Plan::Prepared,
+                            state: State::Done,
+                            remaining,
+                        };
+                        source.state = source
+                            .open_range(
+                                &ctx,
+                                keyspace,
+                                &key,
+                                &ir::IndexRange::All,
+                                iteration,
+                                vec![
+                                    ids.iter().copied().collect(),
+                                    roaring::RoaringTreemap::new(),
+                                ],
+                            )
+                            .await
+                            .unwrap();
+                        assert!(matches!(source.state, State::Done));
+                        assert!(source.next(&mut ctx).await.unwrap().is_none());
+                        let element = match keyspace {
+                            exec::ElementKeyspace::NodeProperty => {
+                                crate::index_lifecycle::IndexElementKind::Node
+                            }
+                            exec::ElementKeyspace::EdgeEndpoints => {
+                                crate::index_lifecycle::IndexElementKind::Edge
+                            }
+                        };
+                        let mut cursor = ctx
+                            .open_range_cursor(element, &key, &ir::IndexRange::All, iteration)
+                            .await
+                            .unwrap()
+                            .with_membership(vec![roaring::RoaringTreemap::new()]);
+                        // Also cover direct cursor users and repeated polls of an exhausted cursor.
+                        for _ in 0..2 {
+                            assert!(ctx.next_range_cursor(&mut cursor).await.unwrap().is_none());
+                        }
+                        assert_eq!(ctx.range_reads.entries.load(Ordering::Relaxed), 0);
+                        assert_eq!(ctx.range_reads.reads.load(Ordering::Relaxed), 0);
+                        assert_eq!(ctx.range_reads.peak.load(Ordering::Relaxed), 0);
+                        ctx.close_request_read_view().unwrap();
+                    }
+                }
                 for membership in [
                     Vec::new(),
                     vec![ids

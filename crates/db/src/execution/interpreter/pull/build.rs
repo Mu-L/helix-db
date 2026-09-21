@@ -94,20 +94,58 @@ impl<'a> Cursor<'a> {
     pub(super) fn wrap(self, ctx: &ExecutionContext<'_>, op: &'a exec::ExecOp) -> Result<Self> {
         if let exec::ExecOp::Count { plan } = op {
             cardinality::validate_bounds(ctx, plan)?;
-            if matches!(plan.as_ref(), exec::ExecCountPlan::InputRows { .. })
+            if matches!(plan.dependency(), Ok(exec::ExecCountDependency::Rows))
                 && self.shape != Shape::Rows
             {
                 return Err(HelixDbError::InvariantViolation(
                     "count plan expected rows".into(),
                 ));
             }
-            if matches!(plan.as_ref(), exec::ExecCountPlan::InputScalars { .. })
+            if matches!(plan.dependency(), Ok(exec::ExecCountDependency::Scalars))
                 && !matches!(self.shape, Shape::Scalars | Shape::Count | Shape::Bool)
             {
                 return Err(HelixDbError::InvariantViolation(
                     "count plan expected scalar items".into(),
                 ));
             }
+        }
+        // Full-input adapters can remain unpolled under LIMIT 0. Their input
+        // types must still be checked before the output shape is assigned.
+        match op {
+            exec::ExecOp::Order { .. }
+            | exec::ExecOp::VectorSearch { .. }
+            | exec::ExecOp::TextSearch { .. }
+            | exec::ExecOp::Reserved {
+                op: ir::ReservedOp::Fold,
+            } => {
+                self.shape.require_rows(row_mode::op_name(op))?;
+            }
+            exec::ExecOp::Reserved {
+                op: ir::ReservedOp::Unfold,
+            } => {
+                if !matches!(self.shape, Shape::Rows | Shape::Folded) {
+                    return Err(HelixDbError::Query(
+                        "unfold expected stream or folded stream input".into(),
+                    ));
+                }
+            }
+            exec::ExecOp::Aggregate { aggregate } => {
+                self.shape.window("aggregate")?;
+                if self.shape != Shape::Rows
+                    && !matches!(
+                        aggregate,
+                        ir::AggregatePlan::AggregateBy {
+                            function: helix_ast::traversal::AggregateFunction::Count,
+                            ..
+                        }
+                    )
+                {
+                    return Err(HelixDbError::Query(format!(
+                        "aggregate {aggregate:?} expected element stream input, got scalar terminal input"
+                    )));
+                }
+            }
+            _ => {}
         }
         let mut shape = self.shape;
         let input = Box::new(self);
