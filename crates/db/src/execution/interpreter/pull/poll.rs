@@ -133,24 +133,19 @@ impl<'a> Cursor<'a> {
                                 ))
                             }
                             exec::ExecCountCursorPlan::NodeLabelBitmap(label) => {
-                                Some(source::Source::ids(
+                                Some(source::Source::bitmap(
                                     ctx.lookup_equality_index_set(
                                         "$label",
                                         &DbPropertyValue::String(label.to_string()),
                                     )
-                                    .await?
-                                    .into_iter()
-                                    .collect(),
+                                    .await?,
                                     exec::ElementKeyspace::NodeProperty,
                                     true,
                                 ))
                             }
                             exec::ExecCountCursorPlan::EdgeLabelBitmap(label) => {
-                                Some(source::Source::ids(
-                                    ctx.lookup_global_edge_label_index(label.as_ref())
-                                        .await?
-                                        .into_iter()
-                                        .collect(),
+                                Some(source::Source::bitmap(
+                                    ctx.lookup_global_edge_label_index(label.as_ref()).await?,
                                     exec::ElementKeyspace::EdgeEndpoints,
                                     true,
                                 ))

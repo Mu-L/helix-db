@@ -17,10 +17,26 @@ pub(super) struct Source<'a> {
     remaining: Demand,
 }
 
+enum Ids {
+    Values(std::vec::IntoIter<u64>),
+    Bitmap(Box<roaring::treemap::IntoIter>),
+}
+
+impl Iterator for Ids {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Values(ids) => ids.next(),
+            Self::Bitmap(ids) => ids.next(),
+        }
+    }
+}
+
 enum State {
     Unopened,
     Ids {
-        ids: std::vec::IntoIter<u64>,
+        ids: Ids,
         keyspace: exec::ElementKeyspace,
         verified: bool,
     },
@@ -37,11 +53,28 @@ enum State {
 }
 
 impl<'a> Source<'a> {
+    /// Retain compressed membership and expand only requested identifiers.
+    pub(super) fn bitmap(
+        ids: roaring::RoaringTreemap,
+        keyspace: exec::ElementKeyspace,
+        verified: bool,
+    ) -> Self {
+        Self {
+            plan: Plan::Prepared,
+            state: State::Ids {
+                ids: Ids::Bitmap(Box::new(ids.into_iter())),
+                keyspace,
+                verified,
+            },
+            remaining: Demand::All,
+        }
+    }
+
     pub(super) fn ids(ids: Vec<u64>, keyspace: exec::ElementKeyspace, verified: bool) -> Self {
         Self {
             plan: Plan::Prepared,
             state: State::Ids {
-                ids: ids.into_iter(),
+                ids: Ids::Values(ids.into_iter()),
                 keyspace,
                 verified,
             },
@@ -90,10 +123,11 @@ impl<'a> Source<'a> {
             ExecNodeAccessPlan as N,
         };
         let ids = |ids: Vec<u64>, keyspace, verified| State::Ids {
-            ids: ids.into_iter(),
+            ids: Ids::Values(ids.into_iter()),
             keyspace,
             verified,
         };
+        let bitmap_ids = |ids, keyspace, verified| Self::bitmap(ids, keyspace, verified).state;
         match self.plan {
             Plan::Prepared => unreachable!("prepared IDs already have source state"),
             Plan::Access(A::Node(N::Empty)) | Plan::Access(A::Edge(E::Empty)) => Ok(State::Done),
@@ -127,32 +161,27 @@ impl<'a> Source<'a> {
                     set: exec::ExecEdgeSecondarySetPlan::AuthoritativeScan(_),
                 },
             )) => Self::scan(ctx, K::EdgeEndpoints).await,
-            Plan::Access(A::Node(N::LabelScan { label })) => Ok(ids(
+            Plan::Access(A::Node(N::LabelScan { label })) => Ok(bitmap_ids(
                 ctx.lookup_equality_index_set(
                     "$label",
                     &DbPropertyValue::String(label.to_string()),
                 )
-                .await?
-                .into_iter()
-                .collect(),
+                .await?,
                 K::NodeProperty,
                 false,
             )),
-            Plan::Access(A::Edge(E::LabelScan { label })) => Ok(ids(
-                ctx.lookup_global_edge_label_index(label.as_ref())
-                    .await?
-                    .into_iter()
-                    .collect(),
+            Plan::Access(A::Edge(E::LabelScan { label })) => Ok(bitmap_ids(
+                ctx.lookup_global_edge_label_index(label.as_ref()).await?,
                 K::EdgeEndpoints,
                 false,
             )),
-            Plan::Access(A::Node(N::Bitmap { bitmap })) => Ok(ids(
-                ctx.node_bitmap(bitmap).await?.into_iter().collect(),
+            Plan::Access(A::Node(N::Bitmap { bitmap })) => Ok(bitmap_ids(
+                ctx.node_bitmap(bitmap).await?,
                 K::NodeProperty,
                 true,
             )),
-            Plan::Access(A::Edge(E::Bitmap { bitmap })) => Ok(ids(
-                ctx.edge_bitmap(bitmap).await?.into_iter().collect(),
+            Plan::Access(A::Edge(E::Bitmap { bitmap })) => Ok(bitmap_ids(
+                ctx.edge_bitmap(bitmap).await?,
                 K::EdgeEndpoints,
                 true,
             )),
@@ -170,15 +199,13 @@ impl<'a> Source<'a> {
             Plan::Access(A::Node(N::DynamicEquality { index, key, param })) => {
                 count::validate_node_equality_index(&index.index_id, key)?;
                 let value = ctx.index_value(&ir::IndexValue::Param(param.clone()))?;
-                Ok(ids(
+                Ok(bitmap_ids(
                     ctx.lookup_managed_equality_union(
                         crate::index_lifecycle::IndexElementKind::Node,
                         key,
                         &[value],
                     )
-                    .await?
-                    .into_iter()
-                    .collect(),
+                    .await?,
                     K::NodeProperty,
                     true,
                 ))
@@ -186,45 +213,39 @@ impl<'a> Source<'a> {
             Plan::Access(A::Edge(E::DynamicEquality { index, key, param })) => {
                 count::validate_edge_equality_index(&index.index_id, key)?;
                 let value = ctx.index_value(&ir::IndexValue::Param(param.clone()))?;
-                Ok(ids(
+                Ok(bitmap_ids(
                     ctx.lookup_managed_equality_union(
                         crate::index_lifecycle::IndexElementKind::Edge,
                         key,
                         &[value],
                     )
-                    .await?
-                    .into_iter()
-                    .collect(),
+                    .await?,
                     K::EdgeEndpoints,
                     true,
                 ))
             }
             Plan::Access(A::Node(N::DynamicMembership { index, key, values })) => {
                 count::validate_node_equality_index(&index.index_id, key)?;
-                Ok(ids(
+                Ok(bitmap_ids(
                     ctx.dynamic_membership_ids(
                         crate::index_lifecycle::IndexElementKind::Node,
                         key,
                         values,
                     )
-                    .await?
-                    .into_iter()
-                    .collect(),
+                    .await?,
                     K::NodeProperty,
                     true,
                 ))
             }
             Plan::Access(A::Edge(E::DynamicMembership { index, key, values })) => {
                 count::validate_edge_equality_index(&index.index_id, key)?;
-                Ok(ids(
+                Ok(bitmap_ids(
                     ctx.dynamic_membership_ids(
                         crate::index_lifecycle::IndexElementKind::Edge,
                         key,
                         values,
                     )
-                    .await?
-                    .into_iter()
-                    .collect(),
+                    .await?,
                     K::EdgeEndpoints,
                     true,
                 ))
@@ -401,7 +422,7 @@ impl<'a> Source<'a> {
                 )
                 .await?;
             return Ok(State::Ids {
-                ids: ids.into_iter(),
+                ids: Ids::Values(ids.into_iter()),
                 keyspace,
                 verified: true,
             });
@@ -548,6 +569,258 @@ mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
 
+    #[tokio::test]
+    async fn bitmap_sources_keep_compressed_iterators_for_bounded_and_unknown_demand() {
+        use helix_ast::value::PropertyValue;
+        use helix_planner::catalog;
+        let db = test_support::open_db_with_config(
+            test_support::in_memory_config("pull-bitmap-retention")
+                .with_equality_index("User", "kind")
+                .with_edge_equality_index("LINK", "kind"),
+        )
+        .await;
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        for _ in 0..128 {
+            nodes.push(
+                test_support::add_node_with_properties(
+                    &db,
+                    "User",
+                    vec![("kind", PropertyValue::from("match"))],
+                )
+                .await,
+            );
+        }
+        for _ in 0..128 {
+            edges.push(
+                test_support::add_edge_with_properties(
+                    &db,
+                    nodes[0],
+                    nodes[1],
+                    "LINK",
+                    vec![("kind", PropertyValue::from("match"))],
+                )
+                .await,
+            );
+        }
+        let key = catalog::ScopedPropertyKey::try_new("User", "kind").unwrap();
+        let edge_key = catalog::ScopedPropertyKey::try_new("LINK", "kind").unwrap();
+        let index = catalog::NodeEqualityIndexMeta::new(test_support::name("node_eq:User:kind"));
+        let edge_index =
+            catalog::EdgeEqualityIndexMeta::new(test_support::name("edge_eq:LINK:kind"));
+        let param = test_support::name("kind");
+        let values =
+            ir::RuntimeEqualitySet::new(param.clone(), std::num::NonZeroUsize::new(2).unwrap());
+        let value = exec::ExecIndexedEqualityValue::try_from(
+            ir::SecondaryIndexLiteral::new(PropertyValue::from("match")).unwrap(),
+        )
+        .unwrap();
+        let plans = [
+            (
+                exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::LabelScan {
+                    label: test_support::name("User"),
+                }),
+                &nodes,
+            ),
+            (
+                exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::LabelScan {
+                    label: test_support::name("LINK"),
+                }),
+                &edges,
+            ),
+            (
+                exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::Bitmap {
+                    bitmap: exec::ExecNodeBitmapExpr::PointRead {
+                        index: index.clone().try_into().unwrap(),
+                        key: key.clone(),
+                        value: value.clone(),
+                    },
+                }),
+                &nodes,
+            ),
+            (
+                exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::Bitmap {
+                    bitmap: exec::ExecEdgeBitmapExpr::PointRead {
+                        index: exec::ExecEdgeNonUniqueEqualityIndex::new(edge_index.clone()),
+                        key: edge_key.clone(),
+                        value,
+                    },
+                }),
+                &edges,
+            ),
+            (
+                exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::DynamicEquality {
+                    index: index.clone(),
+                    key: key.clone(),
+                    param: param.clone(),
+                }),
+                &nodes,
+            ),
+            (
+                exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::DynamicEquality {
+                    index: edge_index.clone(),
+                    key: edge_key.clone(),
+                    param: param.clone(),
+                }),
+                &edges,
+            ),
+            (
+                exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::DynamicMembership {
+                    index,
+                    key,
+                    values: values.clone(),
+                }),
+                &nodes,
+            ),
+            (
+                exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::DynamicMembership {
+                    index: edge_index,
+                    key: edge_key,
+                    values,
+                }),
+                &edges,
+            ),
+        ];
+        for (plan, expected) in plans {
+            let membership = matches!(
+                plan,
+                exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::DynamicMembership { .. })
+                    | exec::ExecAccessPlan::Edge(
+                        exec::ExecEdgeAccessPlan::DynamicMembership { .. }
+                    )
+            );
+            for take in [0, 1, 7, 256] {
+                let params = context::ParamBindings::default().with_value(
+                    param.clone(),
+                    if membership {
+                        PropertyValue::StringArray(vec!["match".into()])
+                    } else {
+                        PropertyValue::from("match")
+                    },
+                );
+                let mut ctx = ExecutionContext::new(&db, params);
+                ctx.enable_request_read_view().await.unwrap();
+                let limit = properties::PositiveUsize::new(take)
+                    .map_or(exec::ExecAccessLimit::Zero, exec::ExecAccessLimit::Static);
+                let access = plan.clone().limited_by(limit);
+                let mut source = Source::new(&ctx, Plan::Access(&access)).unwrap();
+                let mut actual = Vec::new();
+                while let Some(value) = source.next(&mut ctx).await.unwrap() {
+                    assert!(matches!(
+                        source.state,
+                        State::Ids {
+                            ids: Ids::Bitmap(_),
+                            ..
+                        }
+                    ));
+                    actual.extend(
+                        ctx.stream_rows(value, "test")
+                            .unwrap()
+                            .into_iter()
+                            .map(|row| row.current.unwrap().id()),
+                    );
+                }
+                assert_eq!(
+                    actual,
+                    expected.iter().take(take).copied().collect::<Vec<_>>()
+                );
+                assert_eq!(
+                    ctx.pull_work.snapshot().source_visits,
+                    expected.len().min(take)
+                );
+                // Unknown downstream demand must retain the same compressed
+                // representation; stopping after one item must not expand it.
+                let mut source = Source::new(&ctx, Plan::Access(&plan)).unwrap();
+                assert!(source.next(&mut ctx).await.unwrap().is_some());
+                assert!(matches!(
+                    source.state,
+                    State::Ids {
+                        ids: Ids::Bitmap(_),
+                        ..
+                    }
+                ));
+                let count =
+                    match &plan {
+                        exec::ExecAccessPlan::Node(exec::ExecNodeAccessPlan::DynamicEquality {
+                            index,
+                            key,
+                            param,
+                        }) => Some(exec::ExecCountCursorPlan::NodeDynamicEquality {
+                            index: index.clone(),
+                            key: key.clone(),
+                            param: param.clone(),
+                        }),
+                        exec::ExecAccessPlan::Edge(exec::ExecEdgeAccessPlan::DynamicEquality {
+                            index,
+                            key,
+                            param,
+                        }) => Some(exec::ExecCountCursorPlan::EdgeDynamicEquality {
+                            index: index.clone(),
+                            key: key.clone(),
+                            param: param.clone(),
+                        }),
+                        exec::ExecAccessPlan::Node(
+                            exec::ExecNodeAccessPlan::DynamicMembership { index, key, values },
+                        ) => Some(exec::ExecCountCursorPlan::NodeDynamicMembership {
+                            index: index.clone(),
+                            key: key.clone(),
+                            values: values.clone(),
+                        }),
+                        exec::ExecAccessPlan::Edge(
+                            exec::ExecEdgeAccessPlan::DynamicMembership { index, key, values },
+                        ) => Some(exec::ExecCountCursorPlan::EdgeDynamicMembership {
+                            index: index.clone(),
+                            key: key.clone(),
+                            values: values.clone(),
+                        }),
+                        exec::ExecAccessPlan::Node(_)
+                        | exec::ExecAccessPlan::Edge(_)
+                        | exec::ExecAccessPlan::Limited(_) => None,
+                    };
+                let before = ctx.pull_work.snapshot().source_visits;
+                let Some(count) = count else {
+                    ctx.close_request_read_view().unwrap();
+                    continue;
+                };
+                assert_eq!(
+                    ctx.pull_count_cardinality(&count, &mut None, 0, Some(take))
+                        .await
+                        .unwrap(),
+                    expected.len().min(take)
+                );
+                assert_eq!(
+                    ctx.pull_work.snapshot().source_visits - before,
+                    expected.len().min(take)
+                );
+                ctx.close_request_read_view().unwrap();
+            }
+        }
+        for plan in [
+            exec::ExecCountCursorPlan::NodeLabelBitmap(test_support::name("User")),
+            exec::ExecCountCursorPlan::EdgeLabelBitmap(test_support::name("LINK")),
+        ] {
+            let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+            ctx.enable_request_read_view().await.unwrap();
+            assert_eq!(
+                ctx.pull_count_cardinality(&plan, &mut None, 0, Some(1))
+                    .await
+                    .unwrap(),
+                1
+            );
+            assert_eq!(ctx.pull_work.snapshot().source_visits, 1);
+            ctx.close_request_read_view().unwrap();
+        }
+        for keyspace in [
+            exec::ElementKeyspace::NodeProperty,
+            exec::ElementKeyspace::EdgeEndpoints,
+        ] {
+            let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+            let mut source = Source::bitmap(roaring::RoaringTreemap::new(), keyspace, false);
+            assert!(source.next(&mut ctx).await.unwrap().is_none());
+            assert_eq!(ctx.pull_work.snapshot().source_visits, 0);
+        }
+        db.close().await.unwrap();
+    }
     #[tokio::test]
     async fn bounded_reverse_ranges_preserve_retention_membership_and_stale_refill() {
         use crate::encoding::keys;

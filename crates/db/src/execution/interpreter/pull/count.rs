@@ -62,6 +62,34 @@ impl<'a> Program<'a> {
                     bitmap: bitmap.clone(),
                 },
             )),
+            C::NodeDynamicEquality { index, key, param } => source(exec::ExecAccessPlan::Node(
+                exec::ExecNodeAccessPlan::DynamicEquality {
+                    index: index.clone(),
+                    key: key.clone(),
+                    param: param.clone(),
+                },
+            )),
+            C::NodeDynamicMembership { index, key, values } => source(exec::ExecAccessPlan::Node(
+                exec::ExecNodeAccessPlan::DynamicMembership {
+                    index: index.clone(),
+                    key: key.clone(),
+                    values: values.clone(),
+                },
+            )),
+            C::EdgeDynamicEquality { index, key, param } => source(exec::ExecAccessPlan::Edge(
+                exec::ExecEdgeAccessPlan::DynamicEquality {
+                    index: index.clone(),
+                    key: key.clone(),
+                    param: param.clone(),
+                },
+            )),
+            C::EdgeDynamicMembership { index, key, values } => source(exec::ExecAccessPlan::Edge(
+                exec::ExecEdgeAccessPlan::DynamicMembership {
+                    index: index.clone(),
+                    key: key.clone(),
+                    values: values.clone(),
+                },
+            )),
             C::Filter { input, predicate } => apply(
                 input,
                 exec::ExecOp::Filter {
@@ -129,29 +157,49 @@ impl<'a> Program<'a> {
             | C::NodeVectorSearch { .. }
             | C::EdgeVectorSearch { .. }
             | C::NodeTextSearch { .. }
-            | C::EdgeTextSearch { .. }
-            | C::NodeDynamicEquality { .. }
-            | C::EdgeDynamicEquality { .. }
-            | C::NodeDynamicMembership { .. }
-            | C::EdgeDynamicMembership { .. } => Self::Leaf(plan),
+            | C::EdgeTextSearch { .. } => Self::Leaf(plan),
         }
     }
 
-    fn validate_bounds(&self, ctx: &ExecutionContext<'_>) -> Result<()> {
+    fn validate_contract(&self, ctx: &ExecutionContext<'_>) -> Result<()> {
         match self {
             Self::Window { input, window } => {
-                input.validate_bounds(ctx)?;
+                input.validate_contract(ctx)?;
                 ctx.count_window(window)?;
             }
-            Self::Apply { input, .. } | Self::OrderedDistinct(input) => {
-                input.validate_bounds(ctx)?
+            Self::Apply { input, op } => {
+                input.validate_contract(ctx)?;
+                // Select replaces the input; its type is known without polling.
+                let exec::ExecOp::Variable {
+                    op: exec::ExecVariableOp::Stream(ir::StreamVariableOp::Select(variable)),
+                } = op.as_ref()
+                else {
+                    return Ok(());
+                };
+                Shape::of(ctx.variable_value(variable)?).require_rows("count cursor")?;
             }
+            Self::OrderedDistinct(input) => input.validate_contract(ctx)?,
             Self::Set { inputs, .. } => {
                 for input in inputs {
-                    input.validate_bounds(ctx)?;
+                    input.validate_contract(ctx)?;
                 }
             }
-            Self::Empty | Self::Input | Self::Leaf(_) => {}
+            Self::Leaf(plan) => {
+                let (exec::ExecCountCursorPlan::NodeRuntimeInput(
+                    exec::ExecRuntimeInputPlan::Variable(variable),
+                )
+                | exec::ExecCountCursorPlan::EdgeRuntimeInput(
+                    exec::ExecRuntimeInputPlan::Variable(variable),
+                )
+                | exec::ExecCountCursorPlan::RuntimeInput(
+                    exec::ExecRuntimeInputPlan::Variable(variable),
+                )) = plan
+                else {
+                    return Ok(());
+                };
+                Shape::of(ctx.variable_value(variable)?).require_rows("count cursor")?;
+            }
+            Self::Empty | Self::Input => {}
         }
         Ok(())
     }
@@ -199,7 +247,11 @@ impl<'a> Program<'a> {
                         | exec::ExecAccessPlan::Limited(_) => {}
                     }
                 }
-                return input.cursor(ctx, dependency)?.wrap(ctx, op);
+                let cursor = input.cursor(ctx, dependency)?.wrap(ctx, op)?;
+                // Recursive count programs consume rows at every adapter, not
+                // just at their terminal. Windows must not hide scalar shapes.
+                cursor.shape.require_rows("count cursor")?;
+                return Ok(cursor);
             }
             Self::Window { input, window } => {
                 let input = input.cursor(ctx, dependency)?;
@@ -248,6 +300,7 @@ impl ExecutionContext<'_> {
         dependency: &mut Option<ExecutionValue>,
     ) -> Result<Vec<ExecutionRow>> {
         let program = Program::new(plan);
+        program.validate_contract(self)?;
         let mut input = dependency.take().map(Cursor::materialized).transpose()?;
         let mut cursor = program.cursor(self, &mut input)?;
         let value = cursor.drain(self).await?;
@@ -262,6 +315,7 @@ impl ExecutionContext<'_> {
         take: Option<usize>,
     ) -> Result<usize> {
         let program = Program::new(plan);
+        program.validate_contract(self)?;
         let mut dependency = dependency.take().map(Cursor::materialized).transpose()?;
         let input = program.cursor(self, &mut dependency)?;
         let mut cursor = Cursor {
@@ -291,6 +345,7 @@ pub(super) async fn stream<'a>(
     input: Cursor<'a>,
 ) -> Result<ExecutionValue> {
     let program = Program::new(&plan.cursor);
+    program.validate_contract(ctx)?;
     let mut dependency = Some(input);
     let input = program.cursor(ctx, &mut dependency)?;
     let window = ctx.count_window(&plan.window)?;
@@ -314,15 +369,117 @@ pub(super) async fn stream<'a>(
     Ok(ExecutionValue::Count(count))
 }
 
-pub(in crate::execution::interpreter) fn validate_bounds(
+pub(in crate::execution::interpreter) fn validate_contract(
     ctx: &ExecutionContext<'_>,
     plan: &exec::ExecCountPlan,
 ) -> Result<()> {
     if let exec::ExecCountPlan::Stream(plan) = plan {
-        Program::new(&plan.cursor).validate_bounds(ctx)?;
+        Program::new(&plan.cursor).validate_contract(ctx)?;
     }
     if let Some(window) = count::count_plan_window(plan) {
         ctx.count_window(window)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn recursive_count_adapters_reject_non_rows_before_polling() {
+        use exec::ExecCountCursorPlan as C;
+        let db = test_support::open_db("recursive-count-row-types").await;
+        let saved = test_support::name("saved");
+        let select = C::Variable {
+            input: Box::new(C::EmptyRows),
+            op: helix_planner::logical::PureStreamVariableOp::Select(saved.clone()),
+        };
+        let zero = exec::ExecCountWindowPlan {
+            skip: exec::ExecUsizeExpr::Literal(0),
+            take: exec::ExecCountTake::AtMost(exec::ExecUsizeExpr::Literal(0)),
+        };
+        let plans = [
+            select.clone(),
+            C::Window {
+                input: Box::new(select.clone()),
+                window: zero.clone(),
+            },
+            C::Distinct {
+                input: Box::new(select.clone()),
+                plan: exec::ExecCountDistinctPlan::OrderedRows,
+            },
+            C::Union {
+                driver: Box::new(C::EmptyRows),
+                rest: ir::AtLeast::from_one(select.clone()),
+            },
+            C::Intersect {
+                driver: Box::new(C::EmptyRows),
+                rest: ir::AtLeast::from_one(select),
+            },
+            C::RuntimeInput(exec::ExecRuntimeInputPlan::Variable(saved.clone())),
+            C::NodeRuntimeInput(exec::ExecRuntimeInputPlan::Variable(saved.clone())),
+            C::EdgeRuntimeInput(exec::ExecRuntimeInputPlan::Variable(saved.clone())),
+        ];
+        for value in [
+            ExecutionValue::Scalars(Vec::new()),
+            ExecutionValue::Scalars(vec![ExecutionScalar::Value(DbPropertyValue::I64(1))]),
+            ExecutionValue::Count(0),
+            ExecutionValue::Bool(false),
+            ExecutionValue::FoldedStream(FoldedStream::new(Vec::new())),
+            ExecutionValue::Stream(Vec::new()),
+            ExecutionValue::Stream(vec![ExecutionRow::current(access::kv::element_ref(
+                exec::ElementKeyspace::NodeProperty,
+                1,
+            ))]),
+            ExecutionValue::Stream(vec![ExecutionRow::current(access::kv::element_ref(
+                exec::ElementKeyspace::EdgeEndpoints,
+                1,
+            ))]),
+        ] {
+            let valid = matches!(value, ExecutionValue::Stream(_));
+            for plan in &plans {
+                let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+                ctx.variables.insert(saved.clone(), value.clone());
+                assert_eq!(ctx.pull_count_rows(plan, &mut None).await.is_ok(), valid);
+                for take in [Some(0), Some(1), None] {
+                    assert_eq!(
+                        ctx.pull_count_cardinality(plan, &mut None, 0, take)
+                            .await
+                            .is_ok(),
+                        valid
+                    );
+                }
+                for window in [zero.clone(), exec::ExecCountWindowPlan::identity()] {
+                    let plan = exec::ExecCountStreamPlan {
+                        cursor: plan.clone(),
+                        window,
+                    };
+                    assert_eq!(
+                        stream(
+                            &mut ctx,
+                            &plan,
+                            Cursor::materialized(ExecutionValue::Stream(Vec::new())).unwrap()
+                        )
+                        .await
+                        .is_ok(),
+                        valid
+                    );
+                    let op = exec::ExecOp::Count {
+                        plan: Box::new(exec::ExecCountPlan::Stream(plan)),
+                    };
+                    // This is the constructor used even when an outer LIMIT 0
+                    // suppresses the entire count node's polling.
+                    assert_eq!(
+                        Cursor::materialized(ExecutionValue::Stream(Vec::new()))
+                            .unwrap()
+                            .wrap(&ctx, &op)
+                            .is_ok(),
+                        valid
+                    );
+                }
+            }
+        }
+        db.close().await.unwrap();
+    }
 }

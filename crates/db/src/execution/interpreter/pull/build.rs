@@ -93,7 +93,7 @@ impl<'a> Cursor<'a> {
 
     pub(super) fn wrap(self, ctx: &ExecutionContext<'_>, op: &'a exec::ExecOp) -> Result<Self> {
         if let exec::ExecOp::Count { plan } = op {
-            cardinality::validate_bounds(ctx, plan)?;
+            cardinality::validate_contract(ctx, plan)?;
             if matches!(plan.dependency(), Ok(exec::ExecCountDependency::Rows))
                 && self.shape != Shape::Rows
             {

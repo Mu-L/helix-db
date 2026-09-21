@@ -145,7 +145,7 @@ impl<'db> ExecutionContext<'db> {
         plan.validate().map_err(|error| {
             HelixDbError::InvariantViolation(format!("invalid count program: {error:?}"))
         })?;
-        pull::cardinality::validate_bounds(self, plan)?;
+        pull::cardinality::validate_contract(self, plan)?;
         let evaluated_window = count_plan_window(plan)
             .map(|window| self.count_window(window))
             .transpose()?;
