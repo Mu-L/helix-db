@@ -34,9 +34,7 @@ impl<'db> ExecutionContext<'db> {
             exec::ExecMutationPlan::RemoveProperty { name } => {
                 self.remove_property(input, name).await
             }
-            // Keep the combined edge/node deletion future out of every enclosing
-            // query future so ordinary batches fit on the default thread stack.
-            exec::ExecMutationPlan::Drop => Box::pin(self.drop_elements(input)).await,
+            exec::ExecMutationPlan::Drop => self.drop_elements(input).await,
             exec::ExecMutationPlan::DropEdge { to } => {
                 self.drop_edges_between(input, to, None).await
             }
