@@ -64,10 +64,10 @@ def check(port):
     for operator in ("inject", "within", "without"):
         for input_rows in (empty, source):
             for saved_rows in (empty, source):
-                for take in (0, 1, count + 1):
-                    window = {"limit": {"input": {operator: {
-                        "input": input_rows, "variable": "saved",
-                    }}, "count": {"literal": take}}}
+                for take in (None, 0, 1, count + 1):
+                    window = {operator: {"input": input_rows, "variable": "saved"}}
+                    if take is not None:
+                        window = {"limit": {"input": window, "count": {"literal": take}}}
                     for terminal in ("id", "count", "exists"):
                         root = {terminal: {"input": window}}
                         try:
@@ -99,6 +99,25 @@ def check(port):
                         if terminal == "id" and actual is None:
                             actual = []
                         assert actual == expected, (root, actual, expected)
+                        folded = {"fold": {"input": saved_rows}}
+                        if operator == "inject":
+                            try:
+                                query(port, root, saved=folded)
+                            except urllib.error.HTTPError as error:
+                                body = json.loads(error.read())
+                                assert body.get("error") == "invalid_query", body
+                            else:
+                                raise AssertionError(f"inject accepted folded operand with limit {take}")
+                        else:
+                            try:
+                                actual = query(port, root, saved=folded)
+                            except urllib.error.HTTPError as error:
+                                raise AssertionError(
+                                    f"{operator} rejected folded operand with limit {take} and {terminal}"
+                                ) from error
+                            if terminal == "id" and actual is None:
+                                actual = []
+                            assert actual == expected, (root, actual, expected)
 
     # Enter the repeat body with a large frontier before satisfying LIMIT 1.
     large = {"nodes": {"reference": {"ids": ids[:1]}}}
