@@ -150,6 +150,7 @@ impl<'a> Cursor<'a> {
                 op: exec::ExecVariableOp::Stream(ir::StreamVariableOp::Inject(variable)),
             } => {
                 shape.require_rows("inject")?;
+                Shape::of(ctx.variable_value(variable)?).require_rows("inject")?;
                 Node::Inject {
                     input,
                     variable,
@@ -165,6 +166,7 @@ impl<'a> Cursor<'a> {
                     ),
             } => {
                 shape.require_rows("membership")?;
+                Shape::of(ctx.variable_value(variable)?).require_rows("membership")?;
                 Node::Membership {
                     input,
                     variable,

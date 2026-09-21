@@ -169,9 +169,15 @@ impl<'a> Program<'a> {
             }
             Self::Apply { input, op } => {
                 input.validate_contract(ctx)?;
-                // Select replaces the input; its type is known without polling.
+                // Referenced operand types are known before demand can suppress polling.
                 let exec::ExecOp::Variable {
-                    op: exec::ExecVariableOp::Stream(ir::StreamVariableOp::Select(variable)),
+                    op:
+                        exec::ExecVariableOp::Stream(
+                            ir::StreamVariableOp::Select(variable)
+                            | ir::StreamVariableOp::Inject(variable)
+                            | ir::StreamVariableOp::Within(variable)
+                            | ir::StreamVariableOp::Without(variable),
+                        ),
                 } = op.as_ref()
                 else {
                     return Ok(());
@@ -399,7 +405,7 @@ mod tests {
             skip: exec::ExecUsizeExpr::Literal(0),
             take: exec::ExecCountTake::AtMost(exec::ExecUsizeExpr::Literal(0)),
         };
-        let plans = [
+        let mut plans = vec![
             select.clone(),
             C::Window {
                 input: Box::new(select.clone()),
@@ -421,6 +427,23 @@ mod tests {
             C::NodeRuntimeInput(exec::ExecRuntimeInputPlan::Variable(saved.clone())),
             C::EdgeRuntimeInput(exec::ExecRuntimeInputPlan::Variable(saved.clone())),
         ];
+        for op in [
+            helix_planner::logical::PureStreamVariableOp::Inject(saved.clone()),
+            helix_planner::logical::PureStreamVariableOp::Within(saved.clone()),
+            helix_planner::logical::PureStreamVariableOp::Without(saved.clone()),
+        ] {
+            for input in [C::EmptyRows, C::InputRows] {
+                let variable = C::Variable {
+                    input: Box::new(input),
+                    op: op.clone(),
+                };
+                plans.push(variable.clone());
+                plans.push(C::Window {
+                    input: Box::new(variable),
+                    window: zero.clone(),
+                });
+            }
+        }
         for value in [
             ExecutionValue::Scalars(Vec::new()),
             ExecutionValue::Scalars(vec![ExecutionScalar::Value(DbPropertyValue::I64(1))]),
@@ -436,15 +459,58 @@ mod tests {
                 exec::ElementKeyspace::EdgeEndpoints,
                 1,
             ))]),
-        ] {
-            let valid = matches!(value, ExecutionValue::Stream(_));
+        ]
+        .into_iter()
+        .map(Some)
+        .chain(std::iter::once(None))
+        {
+            let valid = matches!(value, Some(ExecutionValue::Stream(_)));
+            for op in [
+                ir::StreamVariableOp::Inject(saved.clone()),
+                ir::StreamVariableOp::Within(saved.clone()),
+                ir::StreamVariableOp::Without(saved.clone()),
+            ] {
+                let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+                value.iter().for_each(|value| {
+                    ctx.variables.insert(saved.clone(), value.clone());
+                });
+                let op = exec::ExecOp::Variable {
+                    op: exec::ExecVariableOp::Stream(op),
+                };
+                for rows in [
+                    Vec::new(),
+                    vec![ExecutionRow::current(access::kv::element_ref(
+                        exec::ElementKeyspace::NodeProperty,
+                        1,
+                    ))],
+                ] {
+                    assert_eq!(
+                        Cursor::materialized(ExecutionValue::Stream(rows))
+                            .unwrap()
+                            .wrap(&ctx, &op)
+                            .is_ok(),
+                        valid
+                    );
+                    assert_eq!(ctx.pull_work.snapshot().source_visits, 0);
+                }
+            }
             for plan in &plans {
                 let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
-                ctx.variables.insert(saved.clone(), value.clone());
-                assert_eq!(ctx.pull_count_rows(plan, &mut None).await.is_ok(), valid);
+                value.iter().for_each(|value| {
+                    ctx.variables.insert(saved.clone(), value.clone());
+                });
+                let dependency = || {
+                    Some(ExecutionValue::Stream(vec![ExecutionRow::current(
+                        access::kv::element_ref(exec::ElementKeyspace::NodeProperty, 1),
+                    )]))
+                };
+                assert_eq!(
+                    ctx.pull_count_rows(plan, &mut dependency()).await.is_ok(),
+                    valid
+                );
                 for take in [Some(0), Some(1), None] {
                     assert_eq!(
-                        ctx.pull_count_cardinality(plan, &mut None, 0, take)
+                        ctx.pull_count_cardinality(plan, &mut dependency(), 0, take)
                             .await
                             .is_ok(),
                         valid
