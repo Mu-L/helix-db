@@ -7253,7 +7253,7 @@ async fn public_executable_plan_boundary_covers_scalar_stream_composition() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Query error: unfold expected stream or folded stream input, got Count(2)"
+        "Query error: unfold expected stream or folded stream input"
     );
 
     let scalar_group = linear_plan(vec![
