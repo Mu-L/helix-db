@@ -263,6 +263,27 @@ async fn pull_and_eager_execution_agree_on_order_duplicates_and_value_shapes() {
     }
     let input = [ids[2], ids[0], ids[2], ids[4], ids[1], ids[3]];
     let middle = vec![
+        vec![exec::ExecOp::Aggregate {
+            aggregate: ir::AggregatePlan::Group(test_support::name("name")),
+        }],
+        vec![exec::ExecOp::Aggregate {
+            aggregate: ir::AggregatePlan::GroupCount(test_support::name("name")),
+        }],
+        vec![exec::ExecOp::Aggregate {
+            aggregate: ir::AggregatePlan::AggregateBy {
+                function: helix_ast::traversal::AggregateFunction::Count,
+                property: test_support::name("name"),
+            },
+        }],
+        vec![exec::ExecOp::ShortestPath {
+            plan: ir::ShortestPathPlan {
+                source: helix_ast::graph::NodeRef::id(ids[0]),
+                target: helix_ast::graph::NodeRef::id(ids[0]),
+                label: None,
+                direction: helix_ast::traversal::ShortestPathDirection::Out,
+                max_depth: std::num::NonZeroUsize::new(1).unwrap(),
+            },
+        }],
         vec![exec::ExecOp::Noop],
         vec![filter_name("a")],
         vec![exec::ExecOp::Distinct],
