@@ -40,20 +40,34 @@ def check(port):
                 actual = query(port, root)
                 assert actual == (expected if matches or has_else else None), (root, actual)
 
-    # Label must reject scalar input even when the scalar sequence is empty.
+    # Full-input operators must reject scalar input even under zero demand.
     empty = {"has_label": {"input": {"nodes": {"reference": "all"}},
                            "label": "MissingEarlyTerminationFixture"}}
     for input_rows in (empty, source):
-        root = {"limit": {"input": {"label": {"input": {"id": {"input": input_rows}}}},
-                          "count": {"literal": 1}}}
-        try:
-            query(port, root)
-        except urllib.error.HTTPError as error:
-            body = json.loads(error.read())
-            assert body.get("error") == "invalid_query", body
-            assert "scalar terminal input" in body.get("msg", ""), body
-        else:
-            raise AssertionError("Label accepted a scalar input")
+        for operator in ("label", "fold", "unfold"):
+            for take in (0, 1):
+                root = {"limit": {"input": {operator: {"input": {"id": {"input": input_rows}}}},
+                                  "count": {"literal": take}}}
+                try:
+                    query(port, root)
+                except urllib.error.HTTPError as error:
+                    body = json.loads(error.read())
+                    assert body.get("error") == "invalid_query", body
+                else:
+                    raise AssertionError(f"{operator} accepted a scalar input with limit {take}")
+
+    # Enter the repeat body with a large frontier before satisfying LIMIT 1.
+    large = {"nodes": {"reference": {"ids": ids[:1]}}}
+    for _ in range(12):
+        large = {"union": {"input": large, "traversals": [
+            {"root": "context"}, {"root": "context"},
+        ]}}
+    assert query(port, {"count": {"input": large}}) == 4096
+    repeat = {"repeat": {"input": large, "config": {
+        "traversal": {"root": "context"}, "times": 1, "emit": "after", "max_depth": 1,
+    }}}
+    assert query(port, {"id": {"input": {"limit": {"input": repeat,
+                    "count": {"literal": 1}}}}}) == ids[:1]
     print("early-termination conditional values and input type contracts passed")
 
 
