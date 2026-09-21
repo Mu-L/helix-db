@@ -143,12 +143,23 @@ pub struct ExecProgram {
     absorbed: BTreeSet<ExecStepId>,
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static DERIVATION_VISITS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
 impl ExecProgram {
     pub(in crate::exec) fn derive(
         steps: &[ExecStep],
         order: &ExecExecutionOrder,
         root: ExecStepId,
     ) -> Self {
+        #[cfg(test)]
+        DERIVATION_VISITS.set((0, 0));
+        let capabilities = steps
+            .iter()
+            .map(|step| (step.id, ExecPullCapability::of(&step.op)))
+            .collect::<BTreeMap<_, _>>();
         let by_id = steps
             .iter()
             .map(|step| (step.id, step))
@@ -169,7 +180,7 @@ impl ExecProgram {
         let mut epoch = 0usize;
         for id in order.step_ids() {
             let step = by_id[&id];
-            if ExecPullCapability::of(&step.op) == ExecPullCapability::Boundary {
+            if capabilities[&id] == ExecPullCapability::Boundary {
                 epoch += 1;
             }
             epochs.insert(id, epoch);
@@ -179,24 +190,43 @@ impl ExecProgram {
         }
         let mut program = Self::default();
         let ids = order.step_ids().collect::<Vec<_>>();
+        let positions = ids
+            .iter()
+            .enumerate()
+            .map(|(position, id)| (*id, position))
+            .collect::<BTreeMap<_, _>>();
+        // Eligible edges have one consumer, so components do not overlap.
+        // Rejected components contain no demand anywhere in their ancestry and
+        // need not be reconsidered for each of their remaining steps.
+        let mut examined = BTreeSet::new();
         for id in ids.into_iter().rev() {
-            if program.absorbed.contains(&id) {
+            if examined.contains(&id) {
                 continue;
             }
             let terminal = by_id[&id];
-            if ExecPullCapability::of(&terminal.op) == ExecPullCapability::Boundary {
+            if capabilities[&id] == ExecPullCapability::Boundary {
                 continue;
             }
             let mut members = BTreeSet::from([id]);
             let mut pending = vec![id];
             while let Some(current) = pending.pop() {
+                #[cfg(test)]
+                DERIVATION_VISITS.with(|visits| {
+                    let (nodes, edges) = visits.get();
+                    visits.set((nodes + 1, edges));
+                });
                 for dependency in &by_id[&current].dependencies {
+                    #[cfg(test)]
+                    DERIVATION_VISITS.with(|visits| {
+                        let (nodes, edges) = visits.get();
+                        visits.set((nodes, edges + 1));
+                    });
                     let parent = by_id[dependency];
                     if uses[dependency] != 1
                         || !matches!(parent.output, ir::BatchOutputPlan::Discard)
                         || parent.condition != terminal.condition
                         || epochs[dependency] != epochs[&id]
-                        || ExecPullCapability::of(&parent.op) == ExecPullCapability::Boundary
+                        || capabilities[dependency] == ExecPullCapability::Boundary
                     {
                         continue;
                     }
@@ -205,6 +235,7 @@ impl ExecProgram {
                     }
                 }
             }
+            examined.extend(members.iter().copied());
             // Without a window or terminal cardinality consumer, ordinary
             // whole-value operators avoid per-row polling overhead. Their
             // existing implementations also serve effect/materialization edges.
@@ -220,7 +251,8 @@ impl ExecProgram {
                 )
             });
             if members.len() > 1 && needs_demand {
-                let steps = order.step_ids().filter(|id| members.contains(id)).collect();
+                let mut steps = members.iter().copied().collect::<Vec<_>>();
+                steps.sort_unstable_by_key(|id| positions[id]);
                 members.remove(&id);
                 program.absorbed.extend(members);
                 program.regions.insert(id, ExecPullRegion { steps });
@@ -245,3 +277,6 @@ impl ExecProgram {
         self.regions.get(&id)
     }
 }
+
+#[cfg(test)]
+mod tests;

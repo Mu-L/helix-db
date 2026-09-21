@@ -8,11 +8,11 @@ use helix_ast::value::{PropertyInput, PropertyValue};
 
 use crate::{memo, rules};
 
-fn id(value: usize) -> ExecStepId {
+pub(super) fn id(value: usize) -> ExecStepId {
     ExecStepId::new(value).unwrap()
 }
 
-fn name(value: &str) -> ir::NonEmptyString {
+pub(super) fn name(value: &str) -> ir::NonEmptyString {
     ir::NonEmptyString::new(value).unwrap()
 }
 
@@ -65,7 +65,11 @@ fn literal_search_limit(value: usize) -> ir::SearchLimitPlan {
     ir::SearchLimitPlan::Literal(NonZeroUsize::new(value).unwrap())
 }
 
-fn step(value: usize, dependencies: Vec<ExecStepId>, schedule: ExecSchedule) -> ExecStep {
+pub(super) fn step(
+    value: usize,
+    dependencies: Vec<ExecStepId>,
+    schedule: ExecSchedule,
+) -> ExecStep {
     ExecStep {
         id: id(value),
         dependencies,
@@ -97,7 +101,7 @@ fn key(space: ElementKeyspace, id: u64) -> KvKey {
     space.point_key(id)
 }
 
-fn executable(
+pub(super) fn executable(
     steps: ir::AtLeast<ExecStep, 1>,
     root: ExecStepId,
 ) -> Result<ExecutablePlan, ExecPlanError> {
