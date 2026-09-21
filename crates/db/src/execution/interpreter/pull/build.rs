@@ -109,44 +109,6 @@ impl<'a> Cursor<'a> {
                 ));
             }
         }
-        // Full-input adapters can remain unpolled under LIMIT 0. Their input
-        // types must still be checked before the output shape is assigned.
-        match op {
-            exec::ExecOp::Order { .. }
-            | exec::ExecOp::VectorSearch { .. }
-            | exec::ExecOp::TextSearch { .. }
-            | exec::ExecOp::Reserved {
-                op: ir::ReservedOp::Fold,
-            } => {
-                self.shape.require_rows(row_mode::op_name(op))?;
-            }
-            exec::ExecOp::Reserved {
-                op: ir::ReservedOp::Unfold,
-            } => {
-                if !matches!(self.shape, Shape::Rows | Shape::Folded) {
-                    return Err(HelixDbError::Query(
-                        "unfold expected stream or folded stream input".into(),
-                    ));
-                }
-            }
-            exec::ExecOp::Aggregate { aggregate } => {
-                self.shape.window("aggregate")?;
-                if self.shape != Shape::Rows
-                    && !matches!(
-                        aggregate,
-                        ir::AggregatePlan::AggregateBy {
-                            function: helix_ast::traversal::AggregateFunction::Count,
-                            ..
-                        }
-                    )
-                {
-                    return Err(HelixDbError::Query(format!(
-                        "aggregate {aggregate:?} expected element stream input, got scalar terminal input"
-                    )));
-                }
-            }
-            _ => {}
-        }
         let mut shape = self.shape;
         let input = Box::new(self);
         let node = match op {
@@ -348,11 +310,15 @@ impl<'a> Cursor<'a> {
             | exec::ExecOp::Reserved { .. }
             | exec::ExecOp::ForEach { .. }
             | exec::ExecOp::Barrier { .. } => {
+                // Validate full-input contracts even if zero demand prevents polling.
                 shape = match op {
-                    exec::ExecOp::Access { .. }
-                    | exec::ExecOp::KvRead(_)
-                    | exec::ExecOp::VectorSearch { .. }
-                    | exec::ExecOp::TextSearch { .. } => Shape::Rows,
+                    exec::ExecOp::Access { .. } | exec::ExecOp::KvRead(_) => Shape::Rows,
+                    exec::ExecOp::VectorSearch { .. }
+                    | exec::ExecOp::TextSearch { .. }
+                    | exec::ExecOp::Order { .. } => {
+                        shape.require_rows(row_mode::op_name(op))?;
+                        Shape::Rows
+                    }
                     exec::ExecOp::Count { .. } => Shape::Count,
                     exec::ExecOp::Aggregate {
                         aggregate:
@@ -363,15 +329,32 @@ impl<'a> Cursor<'a> {
                     } if matches!(shape, Shape::Scalars | Shape::Count | Shape::Bool) => {
                         Shape::Count
                     }
-                    exec::ExecOp::Aggregate { .. } | exec::ExecOp::ShortestPath { .. } => {
+                    exec::ExecOp::Aggregate { aggregate } => {
+                        shape.window("aggregate")?;
+                        if shape != Shape::Rows {
+                            return Err(HelixDbError::Query(format!(
+                                "aggregate {aggregate:?} expected element stream input, got scalar terminal input"
+                            )));
+                        }
                         Shape::Scalars
                     }
+                    exec::ExecOp::ShortestPath { .. } => Shape::Scalars,
                     exec::ExecOp::Reserved {
                         op: ir::ReservedOp::Fold,
-                    } => Shape::Folded,
+                    } => {
+                        shape.require_rows("fold")?;
+                        Shape::Folded
+                    }
                     exec::ExecOp::Reserved {
                         op: ir::ReservedOp::Unfold,
-                    } => Shape::Rows,
+                    } => {
+                        if !matches!(shape, Shape::Rows | Shape::Folded) {
+                            return Err(HelixDbError::Query(
+                                "unfold expected stream or folded stream input".into(),
+                            ));
+                        }
+                        Shape::Rows
+                    }
                     exec::ExecOp::Variable {
                         op:
                             exec::ExecVariableOp::SourceInject { variable }
@@ -383,7 +366,6 @@ impl<'a> Cursor<'a> {
                     | exec::ExecOp::Skip { .. }
                     | exec::ExecOp::Range { .. }
                     | exec::ExecOp::Distinct
-                    | exec::ExecOp::Order { .. }
                     | exec::ExecOp::Project { .. }
                     | exec::ExecOp::Variable { .. }
                     | exec::ExecOp::Branch { .. }
