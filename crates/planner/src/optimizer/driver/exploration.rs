@@ -22,10 +22,14 @@ pub(super) fn optimize_many(
     // no further optional logical alternatives are explored, but required
     // rewrites and implementation rules still run for every expression already
     // queued so each memo group keeps the physical alternatives selection
-    // needs. A required rewrite (collapsing an empty-input root branch or
-    // repeat) is the only route to a physical alternative for the shapes it
-    // matches, so skipping it, or stopping outright, could leave a root group
-    // with no physical alternative and fail an otherwise plannable request.
+    // needs. A required rewrite is one whose paired implementation rule
+    // rejects the shapes the rewrite matches (see
+    // `RuleApplicability::is_required_rewrite`), so it is the only route to a
+    // physical alternative; skipping it, or stopping outright, could leave a
+    // root group with no physical alternative and fail an otherwise plannable
+    // request. Rewritten expressions are re-queued into the same group and the
+    // loop keeps draining, so multi-step simplifications such as collapsing
+    // several adjacent distinct operators still reach an implementable form.
     let mut time_guardrail = None;
     while let Some(task) = run.pop_task() {
         if time_guardrail.is_none() {

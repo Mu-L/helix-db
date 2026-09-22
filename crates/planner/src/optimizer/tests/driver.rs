@@ -1,5 +1,5 @@
 use super::support;
-use crate::{cost, ir, logical, optimizer, physical, properties, rules};
+use crate::{cost, exec, ir, logical, memo, optimizer, physical, properties, rules};
 
 struct SleepAndExploreRule;
 
@@ -274,28 +274,40 @@ fn cascades_optimizer_keeps_a_physical_alternative_for_every_root_after_time_bud
     }
 }
 
-fn assert_empty_access_selected_after_time_budget(
+fn selected_expr_after_time_budget(
     result: &optimizer::OptimizationResult,
-    element: properties::ElementKind,
-) {
+    group: memo::MemoGroupId,
+) -> physical::PhysicalExpr {
     assert_eq!(
         result.guardrail(),
         Some(optimizer::OptimizerGuardrail::TimeBudget)
     );
-    let selected = result.best_plan(result.root());
+    let selected = result.best_plan(group);
     assert!(
         selected.is_ok(),
         "root group {} has no physical alternative after the time budget expired: {:?}",
-        result.root().get(),
+        group.get(),
         selected.err()
     );
-    assert!(matches!(
-        &selected.unwrap().entry.alternative.expr,
-        physical::PhysicalExpr::Access {
-            element: delivered,
-            access: physical::PhysicalAccess::Empty,
-        } if *delivered == element
-    ));
+    selected.unwrap().entry.alternative.expr.clone()
+}
+
+fn assert_empty_access_selected_after_time_budget(
+    result: &optimizer::OptimizationResult,
+    group: memo::MemoGroupId,
+    element: properties::ElementKind,
+) {
+    let selected = selected_expr_after_time_budget(result, group);
+    assert!(
+        matches!(
+            &selected,
+            physical::PhysicalExpr::Access {
+                element: delivered,
+                access: physical::PhysicalAccess::Empty,
+            } if *delivered == element
+        ),
+        "expected an empty {element:?} access after the time budget expired, got {selected:?}"
+    );
 }
 
 #[test]
@@ -318,7 +330,11 @@ fn cascades_optimizer_implements_empty_input_root_branch_after_time_budget() {
 
     let result = support::optimize(&optimizer, root, &config);
 
-    assert_empty_access_selected_after_time_budget(&result, properties::ElementKind::Node);
+    assert_empty_access_selected_after_time_budget(
+        &result,
+        result.root(),
+        properties::ElementKind::Node,
+    );
 }
 
 #[test]
@@ -342,7 +358,140 @@ fn cascades_optimizer_implements_empty_input_root_repeat_after_time_budget() {
 
     let result = support::optimize(&optimizer, root, &config);
 
-    assert_empty_access_selected_after_time_budget(&result, properties::ElementKind::Edge);
+    assert_empty_access_selected_after_time_budget(
+        &result,
+        result.root(),
+        properties::ElementKind::Edge,
+    );
+}
+
+/// Optimize `target` with the production rule set after the time budget has
+/// already expired.
+///
+/// A leading all-scan root is popped and implemented first, and a
+/// one-microsecond budget has expired by the time that is done, so `target`
+/// is always popped after the budget. `target` is a shape whose
+/// implementation rule defers to a required rewrite, so its group only keeps
+/// a physical alternative if that rewrite still runs. Returns the result and
+/// the memo group of `target`.
+fn optimize_after_time_budget(
+    target: logical::LogicalExpr,
+) -> (optimizer::OptimizationResult, memo::MemoGroupId) {
+    let rules = rules::SeedRuleSet::default();
+    let optimizer = rules.optimizer();
+    let mut config = support::config();
+    config.limits.optimization_micros = properties::PositiveUsize::new(1).unwrap();
+
+    let result = support::optimize_many(
+        &optimizer,
+        ir::AtLeast::<_, 1>::from_one_and_rest(
+            support::node_access(ir::NodeAccessPlan::AllScan),
+            vec![target],
+        ),
+        &config,
+    );
+    let group = result.roots().as_ref()[1];
+    (result, group)
+}
+
+#[test]
+fn cascades_optimizer_folds_empty_window_root_after_time_budget() {
+    // `SeedAccessWindow` rejects a foldable window such as `limit(0)` and
+    // leaves it to the `access_window` rewrite, which folds it into an empty
+    // access path. That rewrite is the only route to a physical alternative,
+    // so it must still run after the budget has expired.
+    let root = logical::LogicalExpr::AccessWindow(logical::AccessWindow::new(
+        support::node_access_path(ir::NodeAccessPlan::AllScan),
+        logical::AccessWindowRange::new(0, Some(0)).unwrap(),
+    ));
+
+    let (result, group) = optimize_after_time_budget(root);
+
+    assert_empty_access_selected_after_time_budget(&result, group, properties::ElementKind::Node);
+}
+
+#[test]
+fn cascades_optimizer_elides_point_id_distinct_root_after_time_budget() {
+    // `SeedAccessDistinct` rejects a distinct over point IDs, whose rows are
+    // unique by construction, and leaves it to the `access_distinct` rewrite,
+    // which drops the distinct and keeps the access path. After the budget
+    // the root must still select the bare point read, with no distinct
+    // operator, rather than fail selection.
+    let root = logical::LogicalExpr::AccessDistinct(logical::AccessDistinct::new(
+        support::node_access_path(ir::NodeAccessPlan::PointIds {
+            ids: ir::ElementIds::new(ir::AtLeast::<_, 1>::from_one_and_rest(7, vec![9])).unwrap(),
+        }),
+    ));
+
+    let (result, group) = optimize_after_time_budget(root);
+
+    let selected = selected_expr_after_time_budget(&result, group);
+    assert!(
+        matches!(
+            &selected,
+            physical::PhysicalExpr::Access {
+                element: properties::ElementKind::Node,
+                access: physical::PhysicalAccess::Kv(exec::KvReadPlan::MultiGet(_)),
+            }
+        ),
+        "expected a bare point read after the time budget expired, got {selected:?}"
+    );
+}
+
+#[test]
+fn cascades_optimizer_collapses_adjacent_distinct_pipeline_root_after_time_budget() {
+    // `SeedAccessPipeline` rejects a pipeline with adjacent distinct operators
+    // and leaves it to the `access_pipeline_simplification` rewrite, which
+    // removes one redundant distinct per firing. Three distincts need two
+    // firings, each re-queued into the same group, before the implementation
+    // rule accepts the pipeline; the whole chain must run after the budget.
+    let root = logical::LogicalExpr::AccessPipeline(
+        logical::AccessPipeline::new(
+            support::node_access_path(ir::NodeAccessPlan::AllScan),
+            ir::AtLeast::<_, 1>::from_one_and_rest(
+                logical::StreamPipelineOp::Distinct,
+                vec![
+                    logical::StreamPipelineOp::Distinct,
+                    logical::StreamPipelineOp::Distinct,
+                ],
+            ),
+        )
+        .unwrap(),
+    );
+
+    let (result, group) = optimize_after_time_budget(root);
+
+    let selected = selected_expr_after_time_budget(&result, group);
+    let physical::PhysicalExpr::Pipeline(pipeline) = &selected else {
+        panic!("expected a physical pipeline after the time budget expired, got {selected:?}");
+    };
+    assert!(
+        matches!(
+            pipeline.ops(),
+            [
+                physical::PhysicalPipelineOp::Access { .. },
+                physical::PhysicalPipelineOp::Stream(physical::PhysicalStreamOp::Distinct),
+            ]
+        ),
+        "expected a single distinct over the scan after the time budget expired, got {:?}",
+        pipeline.ops()
+    );
+}
+
+#[test]
+fn cascades_optimizer_drops_filter_over_empty_access_root_after_time_budget() {
+    // `SeedAccessFilter` rejects a filter over a direct empty access path and
+    // leaves it to the `access_filter_simplification` rewrite, which replaces
+    // the filter with the empty access. Same contract as the window case: the
+    // rewrite is the only route to a physical alternative for this shape.
+    let root = logical::LogicalExpr::AccessFilter(logical::AccessFilter::new(
+        support::node_access_path(ir::NodeAccessPlan::Empty),
+        ir::PredicatePlan::new(helix_ast::expr::Predicate::eq("active", true)).unwrap(),
+    ));
+
+    let (result, group) = optimize_after_time_budget(root);
+
+    assert_empty_access_selected_after_time_budget(&result, group, properties::ElementKind::Node);
 }
 
 #[test]

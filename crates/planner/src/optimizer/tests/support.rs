@@ -155,10 +155,14 @@ pub(super) fn edge_source() -> logical::LogicalExpr {
     })
 }
 
-pub(super) fn node_access(plan: ir::NodeAccessPlan) -> logical::LogicalExpr {
-    logical::LogicalExpr::AccessPath(logical::AccessPath::Node(logical::NodeAccessPath::new(
+pub(super) fn node_access_path(plan: ir::NodeAccessPlan) -> logical::AccessPath {
+    logical::AccessPath::Node(logical::NodeAccessPath::new(
         ir::NodeAccessSourcePlan::new(plan).unwrap(),
-    )))
+    ))
+}
+
+pub(super) fn node_access(plan: ir::NodeAccessPlan) -> logical::LogicalExpr {
+    logical::LogicalExpr::AccessPath(node_access_path(plan))
 }
 
 pub(super) fn edge_access(plan: ir::EdgeAccessPlan) -> logical::LogicalExpr {
