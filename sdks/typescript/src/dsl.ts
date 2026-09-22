@@ -286,7 +286,9 @@ function dateTimeToRfc3339(value: DateTime, path: string): string {
   const millis = value.millis();
   const asNumber = Number(millis);
   if (!Number.isSafeInteger(asNumber)) throw QueryError.invalidDatetime(path, millis);
-  return new Date(asNumber).toISOString();
+  const date = new Date(asNumber);
+  if (Number.isNaN(date.getTime())) throw QueryError.invalidDatetime(path, millis);
+  return date.toISOString();
 }
 
 class I64Literal {
