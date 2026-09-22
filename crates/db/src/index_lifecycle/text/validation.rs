@@ -256,21 +256,24 @@ async fn select_page(
     )
     .await?;
     if scan.rows.is_empty() {
-        let result = if progress.partition().is_some() {
-            IndexOperationStepResult::Blocked(IndexOperationBlocker::InvariantViolation)
-        } else {
-            progressed(TextBuildStage::ValidateManifests(
-                TextManifestValidationProgress::Roots(PrefixScanProgress {
-                    cursor: None,
-                    counters: progress.counters(),
-                }),
-            ))
-        };
+        if progress.partition().is_some() {
+            return Ok(blocked_database(
+                operation,
+                "page_sequence",
+                vec![scan.range_through(0)],
+                Vec::new(),
+            ));
+        }
         return Ok(ValidationSelection::Database(PreparedDatabaseValidation {
             diagnostic: ValidationDiagnostic::new(operation),
             ranges: vec![scan.range_through(0)],
             observations: Vec::new(),
-            result,
+            result: progressed(TextBuildStage::ValidateManifests(
+                TextManifestValidationProgress::Roots(PrefixScanProgress {
+                    cursor: None,
+                    counters: progress.counters(),
+                }),
+            )),
         }));
     }
 

@@ -1195,10 +1195,33 @@ async fn page_validation_checks_partition_progress_completion_and_counter_overfl
     .unwrap() else {
         panic!("mismatched partition progress is blocked");
     };
+    assert_eq!(blocked.diagnostic.check, Some("page_sequence"));
     assert!(matches!(
         blocked.stage(&transaction).await.unwrap(),
-        IndexOperationStepResult::Blocked(_)
+        IndexOperationStepResult::Blocked(IndexOperationBlocker::InvariantViolation)
     ));
+
+    let appended_key = scoped_key(
+        scope,
+        index_keys::ScopedKey::TextManifestPage(index_keys::TextManifestPageKey {
+            root: root_typed,
+            page: 1,
+        }),
+    );
+    transaction
+        .put(
+            appended_key.clone(),
+            index_values::encode_manifest_page(&page),
+        )
+        .unwrap();
+    assert!(
+        matches!(
+            blocked.stage(&transaction).await.unwrap(),
+            IndexOperationStepResult::TransientFailure
+        ),
+        "a changed page range must invalidate the missing-page diagnosis"
+    );
+    transaction.delete(appended_key).unwrap();
 
     let overflowing = TextManifestPageValidationProgress::initial(OperationCounters {
         input_bytes: u64::MAX,
