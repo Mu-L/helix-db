@@ -28,12 +28,12 @@ impl<'db> ExecutionContext<'db> {
             return Ok(value);
         }
         let input = self.dependency_input(&step.dependencies)?;
-        let value = self.execute_op(&step.op, input).await?;
+        let value = Box::pin(self.execute_op(&step.op, input)).await?;
         self.check_execution_deadline()?;
         Ok(value)
     }
 
-    async fn execute_op(
+    pub(in crate::execution::interpreter) async fn execute_op(
         &mut self,
         op: &exec::ExecOp,
         input: ExecutionValue,

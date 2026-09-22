@@ -4539,6 +4539,59 @@ async fn public_query_boundary_distinct_binding_projection_uses_storage_value_id
             "distinct": [{ "score": 42 }, { "score": "42" }, { "score": 7 }],
         })
     );
+    // A terminal limit selects pull execution; canonical numeric identity must
+    // still determine which values count toward that limit.
+    let source = traversal::g().n(NodeRef::all());
+    for (root, expected) in [
+        (
+            AstNode::Dedup {
+                input: Box::new(source.clone().values(vec!["score"]).into_ast()),
+            },
+            serde_json::json!([{ "score": 42 }, { "score": "42" }, { "score": 7 }]),
+        ),
+        (
+            AstNode::Dedup {
+                input: Box::new(source.clone().value_map(Some(vec!["score"])).into_ast()),
+            },
+            serde_json::json!([{ "score": 42 }, { "score": "42" }, { "score": 7 }]),
+        ),
+        (
+            source
+                .project_distinct_bindings(vec![BindingProjection::current("score", "score")])
+                .into_ast(),
+            serde_json::json!([{ "score": 42 }, { "score": "42" }, { "score": 7 }]),
+        ),
+    ] {
+        for take in [0, 1, 2, 10] {
+            let request = ReadBatch::try_from_parts(
+                vec![BatchEntry::Query(Box::new(NamedQuery {
+                    name: Some("result".into()),
+                    root: AstNode::Limit {
+                        input: Box::new(root.clone()),
+                        count: StreamBound::Literal(take),
+                    },
+                    condition: None,
+                }))],
+                vec!["result".into()],
+            )
+            .unwrap();
+            let actual = db.query(QueryRequest::read(request)).await.unwrap();
+            let expected = serde_json::json!(expected
+                .as_array()
+                .unwrap()
+                .iter()
+                .take(take)
+                .collect::<Vec<_>>());
+            // Known-empty scalar plans serialize as null; drained ones use [].
+            let actual = if take == 0 && actual["result"].is_null() {
+                serde_json::json!([])
+            } else {
+                actual["result"].clone()
+            };
+            assert_eq!(actual, expected);
+        }
+    }
+
     db.close().await.unwrap();
 }
 
@@ -5361,6 +5414,28 @@ async fn public_query_boundary_covers_active_secondary_index_families_contract()
         .expect("already-active lifecycle value is observable")
         .last
         .expect("already-active lifecycle plan returns its receipt");
+    let passthrough = lifecycle_plan(exec::ExecOp::Noop, false);
+    let mut steps = passthrough.steps().to_vec();
+    let mut terminal = steps.last().unwrap().clone();
+    terminal.id = exec::ExecStepId::new(3).unwrap();
+    terminal.dependencies = vec![passthrough.root()];
+    steps.push(terminal);
+    let passthrough = exec::ExecutablePlan::new(
+        ir::PlanKind::Write,
+        ir::ReturnPlan::None,
+        ir::AtLeast::try_from_vec(steps).unwrap(),
+        exec::ExecStepId::new(3).unwrap(),
+        trace::PlanningTrace::default(),
+        exec::PlannerMetrics::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        db.execute(&passthrough, context::ParamBindings::default())
+            .await
+            .unwrap()
+            .last,
+        Some(lifecycle_value.clone())
+    );
     let error = db
         .execute(
             &lifecycle_plan(
@@ -7393,7 +7468,7 @@ async fn public_executable_plan_boundary_covers_scalar_stream_composition() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Query error: unfold expected stream or folded stream input, got Count(2)"
+        "Query error: unfold expected stream or folded stream input"
     );
 
     let scalar_group = linear_plan(vec![

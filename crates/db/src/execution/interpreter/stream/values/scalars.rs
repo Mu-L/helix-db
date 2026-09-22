@@ -79,8 +79,8 @@ fn count_scalar(count: usize) -> ExecutionScalar {
 ///
 /// The key wraps either a borrowed scalar (dedup over an existing sequence) or an
 /// owned one (dedup while producing a sequence, retaining only first occurrences).
-pub(in crate::execution::interpreter::stream) struct DistinctKey<T>(
-    pub(in crate::execution::interpreter::stream) T,
+pub(in crate::execution::interpreter) struct DistinctKey<T>(
+    pub(in crate::execution::interpreter) T,
 );
 
 impl<T: Borrow<ExecutionScalar>> PartialEq for DistinctKey<T> {

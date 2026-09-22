@@ -34,7 +34,7 @@ impl SecondaryIds {
 }
 
 impl<'db> ExecutionContext<'db> {
-    pub(super) async fn node_secondary_set_ids(
+    pub(in crate::execution::interpreter) async fn node_secondary_set_ids(
         &self,
         set: &exec::ExecNodeSecondarySetPlan,
         limit: Option<properties::PositiveUsize>,
@@ -44,7 +44,7 @@ impl<'db> ExecutionContext<'db> {
             .map(|ids| ids.into_vec(limit))
     }
 
-    pub(super) async fn edge_secondary_set_ids(
+    pub(in crate::execution::interpreter) async fn edge_secondary_set_ids(
         &self,
         set: &exec::ExecEdgeSecondarySetPlan,
         limit: Option<properties::PositiveUsize>,
