@@ -122,6 +122,19 @@ assert.equal(DateTime.parseRfc3339("2026-04-05t12:34:56z").toRfc3339(), "2026-04
 for (const value of ["2026-04-05", "2026-04-05T12:34:56", "2026-02-30T12:00:00Z", "2026-01-01T24:00:00Z"]) {
   assert.throws(() => DateTime.parseRfc3339(value), TypeError);
 }
+assert.equal(DateTime.fromMillis(8_640_000_000_000_000n).toRfc3339(), "+275760-09-13T00:00:00.000Z");
+for (const millis of [8_640_000_000_000_001n, -8_640_000_000_000_001n]) {
+  assert.throws(
+    () => DateTime.fromMillis(millis).toRfc3339(),
+    (error: unknown) => {
+      assert.ok(error instanceof QueryError);
+      assert.equal(error.kind, "InvalidDateTimeParameter");
+      assert.equal(error.path, "datetime");
+      assert.equal(error.millis, millis);
+      return true;
+    },
+  );
+}
 
 assert.deepEqual(parsed(Expr.prop("a").add(Expr.val(1)).neg()), {
   neg: { expr: { add: { left: { property: "a" }, right: { constant: { i64: 1 } } } } },
