@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 use std::ops::Bound;
 #[cfg(any(test, feature = "production-coverage"))]
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{self, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -92,20 +92,21 @@ pub(crate) use exact::{
     count_active_range_generation_with_membership,
     lookup_active_equality_literal_batch_with_compatibility,
     lookup_active_equality_point_literal_with_compatibility, record_equality_graph_read,
+    scan_active_range_generation_ordered, ExactRangeScanProgress, OrderedRangeCursor,
 };
 #[cfg(test)]
 pub(crate) use exact::{
     lookup_active_equality_literal_batch, lookup_active_equality_point_literal,
 };
 
-#[cfg(any(test, feature = "production-coverage"))]
-static BENCHMARK_POINT_READS: AtomicU64 = AtomicU64::new(0);
-#[cfg(any(test, feature = "production-coverage"))]
-static BENCHMARK_MULTI_GETS: AtomicU64 = AtomicU64::new(0);
-#[cfg(any(test, feature = "production-coverage"))]
-static BENCHMARK_SCANS: AtomicU64 = AtomicU64::new(0);
-#[cfg(any(test, feature = "production-coverage"))]
-static BENCHMARK_GRAPH_READS: AtomicU64 = AtomicU64::new(0);
+#[cfg(all(not(test), feature = "production-coverage"))]
+static BENCHMARK_POINT_READS: atomic::AtomicU64 = atomic::AtomicU64::new(0);
+#[cfg(all(not(test), feature = "production-coverage"))]
+static BENCHMARK_MULTI_GETS: atomic::AtomicU64 = atomic::AtomicU64::new(0);
+#[cfg(all(not(test), feature = "production-coverage"))]
+static BENCHMARK_SCANS: atomic::AtomicU64 = atomic::AtomicU64::new(0);
+#[cfg(all(not(test), feature = "production-coverage"))]
+static BENCHMARK_GRAPH_READS: atomic::AtomicU64 = atomic::AtomicU64::new(0);
 
 /// Exact storage operations issued by managed equality serving while the
 /// production-coverage benchmark is measuring it.
@@ -2943,6 +2944,90 @@ async fn lookup_active_equality_generation_with_compatibility(
         .await
 }
 
+/// Read unique owner keys in one batch, then verify their authoritative rows
+/// using the same request reader. This does not change keys, values, or writes.
+pub(crate) async fn lookup_active_unique_equality_batch(
+    reader: &(impl DbReadOps + Sync),
+    handle: &ActiveIndexHandle,
+    values: &[PropertyValue],
+) -> Result<roaring::RoaringTreemap> {
+    let Some(definition @ ValidatedSecondaryIndexDefinition::NodeEquality { unique: true, .. }) =
+        handle.secondary_definition()
+    else {
+        return Err(corruption(
+            "unique equality batch requires an Active unique node index",
+        ));
+    };
+    if values.len() < 2 {
+        return Err(corruption(
+            "unique equality batch requires at least two values",
+        ));
+    }
+    let keys = values
+        .iter()
+        .map(|value| {
+            let canonical = match project_equality_value(value) {
+                EqualityValueProjection::Indexed(value) => CanonicalSecondaryValue::equality(value),
+                EqualityValueProjection::Oversized {
+                    encoded_len,
+                    maximum,
+                } => {
+                    return Err(SecondaryIndexValueError::EncodedKeyTooLarge {
+                        encoded_len,
+                        maximum,
+                    }
+                    .into());
+                }
+                EqualityValueProjection::AuthoritativeNull
+                | EqualityValueProjection::NonReflexive
+                | EqualityValueProjection::Unsupported(_) => {
+                    return Err(corruption(
+                        "unique equality batch requires indexed literals",
+                    ));
+                }
+            };
+            secondary_entry_key(
+                handle.scope(),
+                handle.index_id(),
+                handle.generation(),
+                definition,
+                canonical,
+                IndexEntityId::initial(),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    keys.iter().for_each(|_| record_equality_point_read());
+    #[cfg(any(test, feature = "production-coverage"))]
+    BENCHMARK_MULTI_GETS.fetch_add(1, AtomicOrdering::Relaxed);
+    let entries = reader.multi_get(&keys).await?;
+    if entries.len() != values.len() {
+        return Err(corruption(
+            "unique equality multi-get returned the wrong number of entries",
+        ));
+    }
+    let mut owners = roaring::RoaringTreemap::new();
+    for (entry, value) in entries.into_iter().zip(values) {
+        let Some(bytes) = entry else {
+            continue;
+        };
+        let owner = decode_secondary_entry_value(
+            handle.index_id(),
+            handle.generation(),
+            definition_lane(definition),
+            &bytes,
+        )?;
+        record_equality_graph_read();
+        if !authoritative_equality_matches(reader, handle.scope(), definition, owner, value).await?
+        {
+            return Err(corruption(
+                "unique equality owner disagrees with its authoritative node",
+            ));
+        }
+        owners.insert(owner.get());
+    }
+    Ok(owners)
+}
+
 /// Reads and unions equality values from one exact Active generation.
 ///
 /// Non-unique indexed values use one `multi_get` over their V4 bitmap rows.
@@ -3131,97 +3216,23 @@ pub(crate) enum SecondaryRangeQuery {
 ///
 /// Storage bounds use typed, self-delimiting payloads. Every candidate is then
 /// checked against authoritative graph state before it can consume `limit`.
+#[cfg(any(test, feature = "production-coverage"))]
 pub(crate) async fn scan_active_range_generation(
     reader: &(impl DbReadOps + Sync),
     handle: &ActiveIndexHandle,
     query: Option<&SecondaryRangeQuery>,
     limit: Option<usize>,
 ) -> Result<Vec<u64>> {
-    let Some(definition) = handle.secondary_definition() else {
-        return Err(corruption(
-            "secondary range serving received a non-secondary Active handle",
-        ));
-    };
-    if !matches!(
-        definition,
-        ValidatedSecondaryIndexDefinition::NodeRange { .. }
-            | ValidatedSecondaryIndexDefinition::EdgeRange { .. }
-    ) {
-        return Err(corruption(
-            "secondary range serving received an equality definition",
-        ));
-    }
-
-    let direction = match definition.direction() {
-        RangeIndexDirection::Asc => StorageRangeIndexDirection::Asc,
-        RangeIndexDirection::Desc => StorageRangeIndexDirection::Desc,
-    };
-    let lane = definition_lane(definition);
-    let bounds = match query {
-        Some(query) => match secondary_range_scan_bounds(direction, query)? {
-            Some(bounds) => bounds,
-            None => return Ok(Vec::new()),
-        },
-        None => (Bound::Unbounded, Bound::Unbounded),
-    };
-    let prefix = IndexKey::data_prefix(
-        handle.scope(),
-        ScopedKey::secondary_lane_prefix(handle.index_id(), handle.generation(), lane),
-    );
-    let mut rows = reader.scan_prefix(&prefix, bounds).await?;
-    let mut owners = Vec::new();
-    while let Some(row) = rows.next().await? {
-        let IndexKey::Data {
-            kind: ScopedKey::SecondaryEntry(key),
-            ..
-        } = IndexKey::parse_from_slice(handle.scope(), &row.key)?
-        else {
-            return Err(corruption(
-                "secondary range prefix yielded another key kind",
-            ));
-        };
-        if key.index_id() != handle.index_id()
-            || key.generation() != handle.generation()
-            || key.lane() != lane
-        {
-            return Err(corruption(
-                "secondary range entry escaped its exact serving prefix",
-            ));
-        }
-        let Some(key_owner) = key.entity_id() else {
-            return Err(corruption("secondary range entry omitted its key owner"));
-        };
-        let value_owner =
-            decode_secondary_entry_value(handle.index_id(), handle.generation(), lane, &row.value)?;
-        if key_owner != value_owner {
-            return Err(corruption(
-                "secondary range entry key/value owners disagree",
-            ));
-        }
-        let Some(key_value) = key.range_value() else {
-            return Err(corruption(
-                "secondary range lane contains an equality value",
-            ));
-        };
-        if !authoritative_range_matches(
-            reader,
-            handle.scope(),
-            definition,
-            value_owner,
-            direction,
-            key_value,
-            query,
-        )
-        .await?
-        {
-            continue;
-        }
-        owners.push(value_owner.get());
-        if limit.is_some_and(|limit| owners.len() >= limit) {
-            break;
-        }
-    }
-    Ok(owners)
+    scan_active_range_generation_ordered(
+        reader,
+        handle,
+        query,
+        helix_planner::ir::RangeScanIteration::Forward,
+        limit,
+        &[],
+        &exact::UnobservedRangeScan,
+    )
+    .await
 }
 
 /// Produces suffix bounds for one generation/lane `scan_prefix` call.
@@ -3375,6 +3386,7 @@ fn secondary_range_query_matches(query: &SecondaryRangeQuery, value: &PropertyVa
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn authoritative_range_matches(
     reader: &(impl DbReadOps + Sync),
     scope: DataScope,
@@ -3383,14 +3395,22 @@ async fn authoritative_range_matches(
     direction: StorageRangeIndexDirection,
     key_value: &CanonicalRangeValue,
     query: Option<&SecondaryRangeQuery>,
+    progress: &dyn ExactRangeScanProgress,
 ) -> Result<bool> {
     let entity = IndexEntity {
         kind: definition.element_kind(),
         id: entity_id,
     };
-    let Some(properties) = read_authoritative_properties(reader, scope, entity).await? else {
+    progress.checkpoint()?;
+    progress.authoritative_read();
+    let Some(bytes) = reader
+        .get(authoritative_property_key(scope, entity))
+        .await?
+    else {
         return Ok(false);
     };
+    progress.authoritative_decode();
+    let properties = decode_properties(&bytes)?;
     if !properties_match_definition(definition, &properties) {
         return Ok(false);
     }
@@ -3840,6 +3860,7 @@ mod tests {
     enum ExactReadFailure {
         Get,
         MultiGet,
+        ShortMultiGet,
         Scan,
         Next,
     }
@@ -3872,6 +3893,9 @@ mod tests {
         where
             K: AsRef<[u8]> + Send + Sync,
         {
+            if matches!(self.failure, ExactReadFailure::ShortMultiGet) {
+                return Ok(Vec::new());
+            }
             if matches!(self.failure, ExactReadFailure::MultiGet) {
                 return Err(slatedb::Error::unavailable(
                     "injected exact multi-get failure".to_string(),
@@ -3907,6 +3931,31 @@ mod tests {
             }
             Ok(rows)
         }
+    }
+
+    #[tokio::test]
+    async fn unique_batch_rejects_failed_and_truncated_multi_gets() {
+        let db = test_db("unique-batch-storage-failures").await;
+        let handle = active_read_handle(
+            &db,
+            crate::config::SecondaryIndexDefinition::node_unique_equality("Fixture", "key")
+                .unwrap(),
+        )
+        .await;
+        let values = [
+            PropertyValue::String("first".into()),
+            PropertyValue::String("second".into()),
+        ];
+        for failure in [ExactReadFailure::MultiGet, ExactReadFailure::ShortMultiGet] {
+            assert!(lookup_active_unique_equality_batch(
+                &FailingExactRead { db: &db, failure },
+                &handle,
+                &values
+            )
+            .await
+            .is_err());
+        }
+        db.close().await.unwrap();
     }
 
     #[async_trait::async_trait]
@@ -3953,7 +4002,12 @@ mod tests {
     }
 
     /// Persists one generation-qualified entry matching the fixture handle.
-    async fn put_read_entry(db: &Db, handle: &ActiveIndexHandle, value: &str, entity_id: u64) {
+    pub(super) async fn put_read_entry(
+        db: &Db,
+        handle: &ActiveIndexHandle,
+        value: &str,
+        entity_id: u64,
+    ) {
         let definition = handle
             .secondary_definition()
             .expect("secondary read fixture uses a secondary handle");
@@ -7671,3 +7725,24 @@ mod tests {
 #[cfg(test)]
 #[path = "../../tests/unit/index_lifecycle_secondary_contracts.rs"]
 mod external_contracts;
+
+#[cfg(test)]
+pub(crate) use exact::RangeScanCounters;
+
+#[cfg(test)]
+mod ordered_tests;
+
+#[cfg(test)]
+mod test_read_counters;
+
+#[cfg(test)]
+use test_read_counters::{
+    ThreadLocalCounter, BENCHMARK_GRAPH_READS, BENCHMARK_MULTI_GETS, BENCHMARK_POINT_READS,
+    BENCHMARK_SCANS,
+};
+
+#[cfg(all(feature = "production-coverage", not(test)))]
+#[path = "../../tests/production_support/secondary_unique_batch.rs"]
+mod unique_batch_contracts;
+#[cfg(all(feature = "production-coverage", not(test)))]
+pub(crate) use unique_batch_contracts::run as run_unique_batch_production_contracts;

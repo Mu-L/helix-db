@@ -28,6 +28,7 @@ from helixdb import (
     RepeatConfig,
     ShortestPathDirection,
     SourcePredicate,
+    StreamBound,
     VectorDistanceMetric,
     WhenThen,
     WriteBatch,
@@ -46,6 +47,15 @@ from helixdb import (
 
 def parsed(value: object) -> object:
     return json.loads(stringify_json(value))
+
+
+class EdgeDropTests(unittest.TestCase):
+    def test_drop_preserves_element_state(self):
+        dropped = g().e([1, 2]).drop()
+        self.assertEqual(dropped.state, "edges")
+        self.assertEqual(dropped.mode, "write")
+        self.assertEqual(g().n(1).drop().state, "nodes")
+        self.assertEqual(dropped.into_ast(), {"drop": {"input": g().e([1, 2]).into_ast()}})
 
 
 class DslAstTests(unittest.TestCase):
@@ -242,6 +252,28 @@ class DslAstTests(unittest.TestCase):
             DateTime.parse_rfc3339("1969-12-31T23:59:59.999-00:00").to_rfc3339(),
             "1969-12-31T23:59:59.999Z",
         )
+        self.assertEqual(
+            DateTime.parse_rfc3339("2026-04-05t12:34:56z").to_rfc3339(),
+            "2026-04-05T12:34:56.000Z",
+        )
+        self.assertEqual(
+            DateTime.parse_rfc3339("2026-04-05T12:34:56+23:59").to_rfc3339(),
+            "2026-04-04T12:35:56.000Z",
+        )
+        self.assertEqual(
+            DateTime.parse_rfc3339("2026-04-05T12:34:56-23:59").to_rfc3339(),
+            "2026-04-06T12:33:56.000Z",
+        )
+        for value in [
+            "2026-04-05",
+            "2026-04-05T12:34:56",
+            "2026-04-05T12:34:56+00:60",
+            "2026-04-05T12:34:56-00:60",
+            "2026-04-05T12:34:56+24:00",
+            "2026-04-05T12:34:56-24:00",
+        ]:
+            with self.assertRaisesRegex(TypeError, "invalid RFC3339 datetime"):
+                DateTime.parse_rfc3339(value)
 
         self.assertEqual(
             parsed(Expr.prop("a").add(Expr.val(1)).neg()),
@@ -699,6 +731,12 @@ class DslAstTests(unittest.TestCase):
             read_batch().to_query_json(bytes_params, {"payload": b"abc"})
         with self.assertRaises(TypeError):
             read_batch().var_as("bad", g().add_n("User", {"name": "Alice"}))
+
+    def test_stream_bound_literal(self) -> None:
+        bound = StreamBound.literal(10)
+        self.assertEqual(bound.to_json(), {"literal": 10})
+        with self.assertRaises(ValueError):
+            StreamBound.literal(-1)
 
 
 if __name__ == "__main__":

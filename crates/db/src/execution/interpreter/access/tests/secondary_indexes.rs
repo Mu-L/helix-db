@@ -213,6 +213,7 @@ fn node_range_plan(
         helix_ast::index::RangeIndexDirection::Desc => "desc",
     };
     exec::ExecNodeAccessPlan::RangeIndex {
+        iteration: helix_planner::ir::RangeScanIteration::Forward,
         index: catalog::NodeRangeIndexMeta::new(test_support::name(&format!(
             "node_range:User:{property}:{suffix}"
         ))),
@@ -232,6 +233,7 @@ fn edge_range_plan(
         helix_ast::index::RangeIndexDirection::Desc => "desc",
     };
     exec::ExecEdgeAccessPlan::RangeIndex {
+        iteration: helix_planner::ir::RangeScanIteration::Forward,
         index: catalog::EdgeRangeIndexMeta::new(test_support::name(&format!(
             "edge_range:FOLLOWS:{property}:{suffix}"
         ))),
@@ -342,6 +344,7 @@ async fn managed_secondary_access_uses_active_v2_rows() {
         )
     );
     let node_range_plan = exec::ExecNodeAccessPlan::RangeIndex {
+        iteration: helix_planner::ir::RangeScanIteration::Forward,
         index: catalog::NodeRangeIndexMeta::new(test_support::name("node_range:User:score:asc")),
         key: catalog::ScopedPropertyDirectionKey::try_new(
             "User",
@@ -362,6 +365,7 @@ async fn managed_secondary_access_uses_active_v2_rows() {
     let direction_mismatch = db
         .execute(
             &node_access_ids_plan(exec::ExecNodeAccessPlan::RangeIndex {
+                iteration: helix_planner::ir::RangeScanIteration::Forward,
                 index: catalog::NodeRangeIndexMeta::new(test_support::name(
                     "node_range:User:score:desc",
                 )),
@@ -386,6 +390,7 @@ async fn managed_secondary_access_uses_active_v2_rows() {
         run_edge_access(
             &db,
             exec::ExecEdgeAccessPlan::RangeIndex {
+                iteration: helix_planner::ir::RangeScanIteration::Forward,
                 index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                     "edge_range:FOLLOWS:weight:desc",
                 )),
@@ -699,6 +704,7 @@ async fn unordered_node_secondary_sets_combine_ids_before_materialization() {
         }
     };
     let range = || exec::ExecNodeSecondaryRangePlan {
+        iteration: helix_planner::ir::RangeScanIteration::Forward,
         index: catalog::NodeRangeIndexMeta::new(test_support::name("node_range:User:rank:asc")),
         key: catalog::ScopedPropertyDirectionKey::try_new(
             "User",
@@ -850,6 +856,103 @@ async fn exact_unique_row_access_verifies_present_missing_and_corrupt_owners() {
             scans: 0,
             graph_reads: 1,
         }
+    );
+}
+
+#[tokio::test]
+async fn unique_union_batches_owners_and_rejects_stale_graph_rows() {
+    let db = test_support::open_db("unique-union-batch").await;
+    let first = test_support::add_node_with_properties(
+        &db,
+        "Fixture",
+        vec![("key", PropertyValue::from("first"))],
+    )
+    .await;
+    let second = test_support::add_node_with_properties(
+        &db,
+        "Fixture",
+        vec![("key", PropertyValue::from("second"))],
+    )
+    .await;
+    seed_active_secondary_generation(
+        &db,
+        SecondaryIndexDefinition::node_unique_equality("Fixture", "key").unwrap(),
+        79,
+        &[("first", first), ("second", second), ("stale", second)],
+    )
+    .await;
+    let plan = |values: &[&str]| exec::ExecNodeAccessPlan::SecondarySet {
+        set: exec::ExecNodeSecondarySetPlan::UniqueUnion {
+            index: exec::ExecNodeUniqueEqualityIndex::try_from(
+                catalog::NodeEqualityIndexMeta::new(test_support::name("node_eq:Fixture:key"))
+                    .with_uniqueness(catalog::IndexUniqueness::Unique),
+            )
+            .unwrap(),
+            key: catalog::ScopedPropertyKey::try_new("Fixture", "key").unwrap(),
+            values: ir::AtLeast::try_from_vec(
+                values
+                    .iter()
+                    .map(|value| {
+                        exec::ExecIndexedEqualityValue::try_from(
+                            ir::SecondaryIndexLiteral::new(PropertyValue::from(*value)).unwrap(),
+                        )
+                        .unwrap()
+                    })
+                    .collect(),
+            )
+            .unwrap(),
+        },
+    };
+    crate::index_lifecycle::secondary::reset_equality_read_metrics();
+    let result = run_node_access(&db, plan(&["second", "missing", "first", "first"])).await;
+    let mut ids = vec![first, second];
+    ids.sort_unstable();
+    assert_eq!(
+        result,
+        ExecutionValue::Scalars(ids.into_iter().map(ExecutionScalar::NodeId).collect())
+    );
+    let metrics = crate::index_lifecycle::secondary::equality_read_metrics();
+    assert_eq!(metrics.multi_get_calls, 1);
+    assert_eq!(metrics.scans, 0);
+    assert_eq!(metrics.graph_reads, 3);
+    assert_eq!(
+        run_node_access(&db, plan(&["missing", "absent"])).await,
+        ExecutionValue::Scalars(Vec::new())
+    );
+    let error = db
+        .execute(
+            &node_access_ids_plan(plan(&["first", "stale"])),
+            context::ParamBindings::default(),
+        )
+        .await
+        .expect_err("stale owner must fail closed");
+    assert!(matches!(error, HelixDbError::IndexCatalogCorruption(_)));
+    let key = ManagedKey::Data {
+        scope: DataScope::LegacyUnscoped,
+        kind: ScopedKey::SecondaryEntry(
+            SecondaryEntryKey::try_new(
+                IndexId::new(79).unwrap(),
+                IndexGenerationId::initial(),
+                SecondaryEntryLane::NodeUniqueEquality,
+                CanonicalSecondaryValue::equality_string("first"),
+                None,
+            )
+            .unwrap(),
+        ),
+    }
+    .to_bytes();
+    db.inner_db()
+        .put(key, bytes::Bytes::from_static(b"malformed-owner"))
+        .await
+        .unwrap();
+    assert!(
+        db.execute(
+            &node_access_ids_plan(plan(&["first", "second"])),
+            context::ParamBindings::default()
+        )
+        .await
+        .is_err(),
+        "malformed owners must not become misses"
     );
 }
 
@@ -1254,6 +1357,7 @@ async fn ordered_edge_secondary_intersection_filters_before_applying_limit() {
         )),
     };
     let range = || exec::ExecEdgeSecondaryRangePlan {
+        iteration: helix_planner::ir::RangeScanIteration::Forward,
         index: catalog::EdgeRangeIndexMeta::new(test_support::name(
             "edge_range:FOLLOWS:weight:asc",
         )),
@@ -2031,6 +2135,7 @@ async fn regression_dynamic_range_never_falls_back_to_colliding_legacy_property_
     let edge_result = db
         .execute(
             &edge_access_ids_plan(exec::ExecEdgeAccessPlan::RangeIndex {
+                iteration: helix_planner::ir::RangeScanIteration::Forward,
                 index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                     "edge_range:User:property_36911:asc",
                 )),
@@ -2178,6 +2283,7 @@ async fn managed_secondary_access_propagates_corrupt_canonical_records() {
             ),
         },
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score:asc",
             )),
@@ -2206,6 +2312,7 @@ async fn range_access_rejects_oversized_identity_components() {
     let db = test_support::open_db("access-oversized-range-identity").await;
     let oversized = "x".repeat(crate::index_lifecycle::INDEX_COMPONENT_MAX_LEN + 1);
     let node = exec::ExecNodeAccessPlan::RangeIndex {
+        iteration: helix_planner::ir::RangeScanIteration::Forward,
         index: catalog::NodeRangeIndexMeta::new(test_support::name("oversized-node-range")),
         key: catalog::ScopedPropertyDirectionKey::try_new(
             oversized.clone(),
@@ -2216,6 +2323,7 @@ async fn range_access_rejects_oversized_identity_components() {
         range: ir::IndexRange::All,
     };
     let edge = exec::ExecEdgeAccessPlan::RangeIndex {
+        iteration: helix_planner::ir::RangeScanIteration::Forward,
         index: catalog::EdgeRangeIndexMeta::new(test_support::name("oversized-edge-range")),
         key: catalog::ScopedPropertyDirectionKey::try_new(
             oversized,
@@ -2479,6 +2587,7 @@ async fn node_range_access_uses_configured_directional_index() {
     let asc = run_node_access(
         &db,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score_asc:asc",
             )),
@@ -2495,6 +2604,7 @@ async fn node_range_access_uses_configured_directional_index() {
     let desc = run_node_access(
         &db,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score_desc:desc",
             )),
@@ -2527,6 +2637,7 @@ async fn node_range_access_uses_configured_directional_index() {
     let limited_asc_all = run_limited_node_access(
         &db,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score_asc:asc",
             )),
@@ -2544,6 +2655,7 @@ async fn node_range_access_uses_configured_directional_index() {
     let limited_desc_upper = run_limited_node_access(
         &db,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score_desc:desc",
             )),
@@ -2575,6 +2687,7 @@ async fn node_range_access_uses_configured_directional_index() {
     let asc_between = run_node_access(
         &db,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score_asc:asc",
             )),
@@ -2591,6 +2704,7 @@ async fn node_range_access_uses_configured_directional_index() {
     let desc_between = run_node_access(
         &db,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score_desc:desc",
             )),
@@ -2662,6 +2776,7 @@ async fn node_range_access_resolves_runtime_parameter_bounds() {
     let asc = run_node_access_with_params(
         &db,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score_asc:asc",
             )),
@@ -2679,6 +2794,7 @@ async fn node_range_access_resolves_runtime_parameter_bounds() {
     let desc = run_node_access_with_params(
         &db,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score_desc:desc",
             )),
@@ -2756,6 +2872,7 @@ async fn edge_range_access_uses_global_ordered_index() {
     let asc_all = run_edge_access(
         &db,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight_asc:asc",
             )),
@@ -2772,6 +2889,7 @@ async fn edge_range_access_uses_global_ordered_index() {
     let desc_all = run_edge_access(
         &db,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight_desc:desc",
             )),
@@ -2794,6 +2912,7 @@ async fn edge_range_access_uses_global_ordered_index() {
     let asc = run_edge_access(
         &db,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight_asc:asc",
             )),
@@ -2810,6 +2929,7 @@ async fn edge_range_access_uses_global_ordered_index() {
     let desc = run_edge_access(
         &db,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight_desc:desc",
             )),
@@ -2858,6 +2978,7 @@ async fn edge_range_access_uses_global_ordered_index() {
     let limited_asc_all = run_limited_edge_access(
         &db,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight_asc:asc",
             )),
@@ -2875,6 +2996,7 @@ async fn edge_range_access_uses_global_ordered_index() {
     let limited_desc_upper = run_limited_edge_access(
         &db,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight_desc:desc",
             )),
@@ -2906,6 +3028,7 @@ async fn edge_range_access_uses_global_ordered_index() {
     let asc_between = run_edge_access(
         &db,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight_asc:asc",
             )),
@@ -2922,6 +3045,7 @@ async fn edge_range_access_uses_global_ordered_index() {
     let desc_between = run_edge_access(
         &db,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight_desc:desc",
             )),
@@ -2999,6 +3123,7 @@ async fn edge_range_access_resolves_runtime_parameter_bounds() {
     let asc = run_edge_access_with_params(
         &db,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight_asc:asc",
             )),
@@ -3016,6 +3141,7 @@ async fn edge_range_access_resolves_runtime_parameter_bounds() {
     let desc = run_edge_access_with_params(
         &db,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight_desc:desc",
             )),
@@ -3268,6 +3394,7 @@ async fn reader_range_access_covers_node_and_edge_bound_shapes() {
     let all_nodes = run_node_access(
         &reader,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score:asc",
             )),
@@ -3279,6 +3406,7 @@ async fn reader_range_access_covers_node_and_edge_bound_shapes() {
     let inclusive_lower_nodes = run_node_access(
         &reader,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score:asc",
             )),
@@ -3295,6 +3423,7 @@ async fn reader_range_access_covers_node_and_edge_bound_shapes() {
     let exclusive_lower_nodes = run_node_access(
         &reader,
         exec::ExecNodeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::NodeRangeIndexMeta::new(test_support::name(
                 "node_range:User:score:asc",
             )),
@@ -3311,6 +3440,7 @@ async fn reader_range_access_covers_node_and_edge_bound_shapes() {
     let all_edges = run_edge_access(
         &reader,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight:asc",
             )),
@@ -3322,6 +3452,7 @@ async fn reader_range_access_covers_node_and_edge_bound_shapes() {
     let inclusive_upper_edges = run_edge_access(
         &reader,
         exec::ExecEdgeAccessPlan::RangeIndex {
+            iteration: helix_planner::ir::RangeScanIteration::Forward,
             index: catalog::EdgeRangeIndexMeta::new(test_support::name(
                 "edge_range:FOLLOWS:weight:asc",
             )),

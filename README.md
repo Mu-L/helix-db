@@ -74,7 +74,7 @@ Queries are authored with the Rust, TypeScript, Go, or Python DSL and sent strai
 | SDK | Package | Current release | Setup guide |
 |-----|---------|-----------------|-------------|
 | Rust | [`helix-db`](https://crates.io/crates/helix-db) | `3.0.0` | [Rust setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/rust-project-setup) |
-| TypeScript | [`@helix-db/helix-db`](https://www.npmjs.com/package/@helix-db/helix-db) | `3.0.4` | [TypeScript setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/typescript-project-setup) |
+| TypeScript | [`@helix-db/helix-db`](https://www.npmjs.com/package/@helix-db/helix-db) | `3.1.0` | [TypeScript setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/typescript-project-setup) |
 | Python | [`helix-db`](https://pypi.org/project/helix-db/) | `0.3.4` | [Python setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/python-project-setup) |
 | Go | [`github.com/helixdb/helix-db/sdks/go`](https://pkg.go.dev/github.com/helixdb/helix-db/sdks/go) | `v0.3.1` | [Go setup](https://docs.helix-db.com/database/helix-db/start-here/sdk-setup/go-project-setup) |
 
@@ -116,24 +116,23 @@ pub fn get_user(name: String) -> ReadBatch {
 }
 
 #[tokio::main]
-async fn main() {
-    let client = Client::new(None).unwrap(); // defaults to http://localhost:6969
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new(None)?; // defaults to http://localhost:6969
 
-    // add user
+    // add user — #[query] helpers return Result<QueryRequest, QueryError>
     let new_user: sonic_rs::Value = client
-        .query(add_user("John Doe".to_string()))
+        .query(add_user("John Doe".to_string())?)
         .send()
-        .await
-        .unwrap();
-    println!("new user: {:#}", sonic_rs::to_string_pretty(&new_user).unwrap());
+        .await?;
+    println!("new user: {:#}", sonic_rs::to_string_pretty(&new_user)?);
 
     // get user
     let user: sonic_rs::Value = client
-        .query(get_user("John Doe".to_string()))
+        .query(get_user("John Doe".to_string())?)
         .send()
-        .await
-        .unwrap();
-    println!("user: {:#}", sonic_rs::to_string_pretty(&user).unwrap());
+        .await?;
+    println!("user: {:#}", sonic_rs::to_string_pretty(&user)?);
+    Ok(())
 }
 ```
 
@@ -142,7 +141,7 @@ async fn main() {
 Install the package (Node.js 20+):
 
 ```bash
-npm init -y && npm install @helix-db/helix-db@3.0.4
+npm init -y && npm install @helix-db/helix-db@3.1.0
 ```
 
 Define your queries as functions, then `POST` them to the running instance:

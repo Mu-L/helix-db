@@ -14,7 +14,7 @@ impl<'db> ExecutionContext<'db> {
         eval_stream_bound(count, &self.params)
     }
 
-    pub(in crate::execution::interpreter::stream::bounds) fn stream_range(
+    pub(in crate::execution::interpreter) fn stream_range(
         &self,
         range: &ir::StreamRangePlan,
     ) -> Result<(usize, usize)> {
@@ -28,7 +28,7 @@ impl<'db> ExecutionContext<'db> {
     }
 }
 
-pub(in crate::execution::interpreter::stream) fn eval_stream_bound(
+pub(in crate::execution::interpreter) fn eval_stream_bound(
     count: &ir::StreamBoundPlan,
     params: &context::ParamBindings,
 ) -> Result<usize> {

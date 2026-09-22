@@ -20,6 +20,7 @@ The final inventory reports exactly:
 |---|---|---|---|
 | `db` | `lib` | `crates/db/src/lib.rs` | Unit-test behavior only. Its coverage report includes inline `#[cfg(test)]` code and is never used for production-only thresholds. |
 | `embedded_write_latency` | `bench` | `crates/db/benches/embedded_write_latency.rs` | Measures acknowledged-write latency for in-memory and on-disk embedded storage. |
+| `edge_stream_drop` | `test` | `crates/db/tests/edge_stream_drop.rs` | Exercises edge-stream deletion, empty results, traversal selection, transaction rollback, replacement batches, and node cascades through the public query boundary. |
 | `encoding_only` | `test` | `crates/db/tests/encoding_only.rs` | Unit-style encoding target. It includes `src/encoding` by path under a test crate and bridges production DTO modules rather than copying them, so it is deliberately excluded from production-only coverage. |
 | `fts_prefilter` | `bench` | `crates/db/benches/fts_prefilter.rs` | Measures exact collector-only FTS prefilter latency, allocations, and object-store reads across release fixtures. |
 | `index_lifecycle_contracts` | `test` | `crates/db/tests/index_lifecycle_contracts.rs` | Requires `index-lifecycle-testing` and runs deterministic family-shape, backfill-mutation, concurrent-create, and repeated-recoverable-fault acceptance contracts through the installed production drivers. |
@@ -50,7 +51,7 @@ The final inventory reports exactly:
 
 The vector library also owns the ignored, release-only diagnostic
 `vector_search_scale_gate_reports_recall_and_median_throughput` contract in
-`search/vector/scale_contracts.rs`. It is not a separate Cargo target and is
+`search/vector/hnsw/scale_contracts.rs`. It is not a separate Cargo target and is
 excluded from production-only coverage. Because it constructs a raw
 `VectorIndex` and writes physical rows directly, it is retained only as a
 search-kernel regression and does not satisfy a V2 production lifecycle or

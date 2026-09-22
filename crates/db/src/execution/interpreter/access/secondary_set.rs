@@ -34,7 +34,7 @@ impl SecondaryIds {
 }
 
 impl<'db> ExecutionContext<'db> {
-    pub(super) async fn node_secondary_set_ids(
+    pub(in crate::execution::interpreter) async fn node_secondary_set_ids(
         &self,
         set: &exec::ExecNodeSecondarySetPlan,
         limit: Option<properties::PositiveUsize>,
@@ -44,7 +44,7 @@ impl<'db> ExecutionContext<'db> {
             .map(|ids| ids.into_vec(limit))
     }
 
-    pub(super) async fn edge_secondary_set_ids(
+    pub(in crate::execution::interpreter) async fn edge_secondary_set_ids(
         &self,
         set: &exec::ExecEdgeSecondarySetPlan,
         limit: Option<properties::PositiveUsize>,
@@ -67,6 +67,26 @@ impl<'db> ExecutionContext<'db> {
                 }
                 exec::ExecNodeSecondarySetPlan::Bitmap(bitmap) => {
                     self.node_bitmap(bitmap).await.map(SecondaryIds::Unordered)
+                }
+                exec::ExecNodeSecondarySetPlan::UniqueUnion { index, key, values } => {
+                    super::super::count::validate_node_equality_index(
+                        &index.metadata().index_id,
+                        key,
+                    )?;
+                    let values = values
+                        .iter()
+                        .map(super::super::count::indexed_value)
+                        .collect::<Vec<_>>();
+                    let ids = self
+                        .lookup_managed_equality_batch(
+                            crate::index_lifecycle::IndexElementKind::Node,
+                            key,
+                            &values,
+                            true,
+                        )
+                        .await?;
+                    self.check_execution_deadline()?;
+                    Ok(SecondaryIds::Unordered(ids))
                 }
                 exec::ExecNodeSecondarySetPlan::Unique {
                     lookup,
@@ -119,7 +139,14 @@ impl<'db> ExecutionContext<'db> {
                     .map(SecondaryIds::Unordered)
                 }
                 exec::ExecNodeSecondarySetPlan::Range(range) => self
-                    .node_range_index_ids(&range.key, &range.range, range_limit)
+                    .range_index_ids(
+                        crate::index_lifecycle::IndexElementKind::Node,
+                        &range.key,
+                        &range.range,
+                        range.iteration,
+                        &[],
+                        range_limit,
+                    )
                     .await
                     .map(SecondaryIds::Ordered),
                 exec::ExecNodeSecondarySetPlan::Intersect { driver, rest } => {
@@ -146,12 +173,16 @@ impl<'db> ExecutionContext<'db> {
                     for filter in filters {
                         allowed &= self.node_secondary_ids(filter, None).await?.into_bitmap();
                     }
-                    let read = self.node_range_index_ids(&driver.key, &driver.range, None);
-                    let ordered = read
-                        .await?
-                        .into_iter()
-                        .filter(|id| allowed.contains(*id))
-                        .collect();
+                    let ordered = self
+                        .range_index_ids(
+                            crate::index_lifecycle::IndexElementKind::Node,
+                            &driver.key,
+                            &driver.range,
+                            driver.iteration,
+                            core::slice::from_ref(&allowed),
+                            range_limit,
+                        )
+                        .await?;
                     Ok(SecondaryIds::Ordered(ordered))
                 }
             }
@@ -217,7 +248,14 @@ impl<'db> ExecutionContext<'db> {
                     .map(SecondaryIds::Unordered)
                 }
                 exec::ExecEdgeSecondarySetPlan::Range(range) => self
-                    .edge_range_index_ids(&range.key, &range.range, range_limit)
+                    .range_index_ids(
+                        crate::index_lifecycle::IndexElementKind::Edge,
+                        &range.key,
+                        &range.range,
+                        range.iteration,
+                        &[],
+                        range_limit,
+                    )
                     .await
                     .map(SecondaryIds::Ordered),
                 exec::ExecEdgeSecondarySetPlan::Intersect { driver, rest } => {
@@ -244,12 +282,16 @@ impl<'db> ExecutionContext<'db> {
                     for filter in filters {
                         allowed &= self.edge_secondary_ids(filter, None).await?.into_bitmap();
                     }
-                    let read = self.edge_range_index_ids(&driver.key, &driver.range, None);
-                    let ordered = read
-                        .await?
-                        .into_iter()
-                        .filter(|id| allowed.contains(*id))
-                        .collect();
+                    let ordered = self
+                        .range_index_ids(
+                            crate::index_lifecycle::IndexElementKind::Edge,
+                            &driver.key,
+                            &driver.range,
+                            driver.iteration,
+                            core::slice::from_ref(&allowed),
+                            range_limit,
+                        )
+                        .await?;
                     Ok(SecondaryIds::Ordered(ordered))
                 }
             }

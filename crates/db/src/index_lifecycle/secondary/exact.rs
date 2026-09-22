@@ -2,6 +2,12 @@
 
 use super::*;
 
+mod ordered;
+pub(crate) use ordered::{
+    scan_active_range_generation_ordered, ExactRangeScanProgress, OrderedRangeCursor,
+    UnobservedRangeScan,
+};
+
 #[async_trait]
 trait ExactRangeRows {
     async fn next_exact(
@@ -464,6 +470,12 @@ async fn consume_active_range_rows<A: ExactRangeAccumulator>(
         let key_value = key
             .range_value()
             .expect("the validated range lane always carries a range value");
+        if !membership
+            .iter()
+            .all(|bitmap| bitmap.contains(value_owner.get()))
+        {
+            continue;
+        }
         if !authoritative_range_matches(
             reader,
             handle.scope(),
@@ -472,14 +484,9 @@ async fn consume_active_range_rows<A: ExactRangeAccumulator>(
             direction,
             key_value,
             query,
+            &UnobservedRangeScan,
         )
         .await?
-        {
-            continue;
-        }
-        if !membership
-            .iter()
-            .all(|bitmap| bitmap.contains(value_owner.get()))
         {
             continue;
         }
@@ -797,11 +804,206 @@ pub(crate) async fn run_production_contracts() {
         0
     );
     db.close().await.expect("exact serving database closes");
+
+    // These calls are linked into the production library (not cfg(test)), so
+    // the production coverage gate exercises reverse serving and stale recovery.
+    for direction in [RangeIndexDirection::Asc, RangeIndexDirection::Desc] {
+        for definition in [
+            crate::config::SecondaryIndexDefinition::node_range_with_direction(
+                "Item", "value", direction,
+            )
+            .unwrap(),
+            crate::config::SecondaryIndexDefinition::edge_range_with_direction(
+                "LINK", "value", direction,
+            )
+            .unwrap(),
+        ] {
+            let db = slatedb::Db::builder("ordered-range-production", Arc::new(InMemory::new()))
+                .build()
+                .await
+                .unwrap();
+            let handle = secondary_handle(definition);
+            for (id, value) in [(1, "a"), (2, "b"), (3, "b"), (4, "b"), (5, "c")] {
+                put_entry(&db, &handle, value, id).await;
+            }
+            for iteration in [
+                helix_planner::ir::RangeScanIteration::Forward,
+                helix_planner::ir::RangeScanIteration::Reverse,
+            ] {
+                let expected = if iteration.effective_direction(match direction {
+                    RangeIndexDirection::Asc => helix_ast::index::RangeIndexDirection::Asc,
+                    RangeIndexDirection::Desc => helix_ast::index::RangeIndexDirection::Desc,
+                }) == helix_ast::index::RangeIndexDirection::Asc
+                {
+                    vec![1, 2, 3, 4, 5]
+                } else {
+                    vec![5, 2, 3, 4, 1]
+                };
+                for limit in [None, Some(0), Some(1), Some(3), Some(20)] {
+                    assert_eq!(
+                        scan_active_range_generation_ordered(
+                            &db,
+                            &handle,
+                            None,
+                            iteration,
+                            limit,
+                            &[],
+                            &UnobservedRangeScan
+                        )
+                        .await
+                        .unwrap(),
+                        expected
+                            .iter()
+                            .copied()
+                            .take(limit.unwrap_or(usize::MAX))
+                            .collect::<Vec<_>>()
+                    );
+                }
+                let membership = roaring::RoaringTreemap::from_iter([2, 4]);
+                assert_eq!(
+                    scan_active_range_generation_ordered(
+                        &db,
+                        &handle,
+                        None,
+                        iteration,
+                        Some(2),
+                        &[membership],
+                        &UnobservedRangeScan
+                    )
+                    .await
+                    .unwrap(),
+                    vec![2, 4]
+                );
+            }
+            let query = SecondaryRangeQuery::Between {
+                lower: PropertyValue::String("b".into()),
+                lower_inclusive: true,
+                upper: PropertyValue::String("b".into()),
+                upper_inclusive: true,
+            };
+            // Retained IDs 2 and 3 include a stale row; ID 4 was discarded.
+            // Recovery must replace the provisional prefix and return [2, 4] once.
+            let property_key = |id| {
+                authoritative_property_key(
+                    handle.scope(),
+                    IndexEntity {
+                        kind: handle.secondary_definition().unwrap().element_kind(),
+                        id: IndexEntityId::new(id),
+                    },
+                )
+            };
+            db.delete(property_key(3)).await.unwrap();
+            for (limit, expected) in [
+                (Some(2), vec![2, 4]),
+                (None, vec![2, 4]),
+                (Some(4), vec![2, 4]),
+            ] {
+                assert_eq!(
+                    scan_active_range_generation_ordered(
+                        &db,
+                        &handle,
+                        Some(&query),
+                        helix_planner::ir::RangeScanIteration::Reverse,
+                        limit,
+                        &[],
+                        &UnobservedRangeScan
+                    )
+                    .await
+                    .unwrap(),
+                    expected
+                );
+            }
+            // Exhausted recovery: every discarded candidate is stale too.
+            db.delete(property_key(4)).await.unwrap();
+            assert_eq!(
+                scan_active_range_generation_ordered(
+                    &db,
+                    &handle,
+                    Some(&query),
+                    helix_planner::ir::RangeScanIteration::Reverse,
+                    Some(2),
+                    &[],
+                    &UnobservedRangeScan
+                )
+                .await
+                .unwrap(),
+                vec![2]
+            );
+            // Skipped blobs are not audited, but an attempted decode must fail.
+            db.put(property_key(2), vec![255]).await.unwrap();
+            assert!(scan_active_range_generation_ordered(
+                &db,
+                &handle,
+                Some(&query),
+                helix_planner::ir::RangeScanIteration::Reverse,
+                Some(2),
+                &[],
+                &UnobservedRangeScan
+            )
+            .await
+            .is_err());
+            assert!(scan_active_range_generation_ordered(
+                &db,
+                &handle,
+                Some(&query),
+                helix_planner::ir::RangeScanIteration::Reverse,
+                Some(2),
+                &[roaring::RoaringTreemap::new()],
+                &UnobservedRangeScan
+            )
+            .await
+            .unwrap()
+            .is_empty());
+            db.close().await.unwrap();
+        }
+    }
 }
+
+#[cfg(test)]
+pub(crate) use ordered::RangeScanCounters;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unique_batch_rejects_wrong_lanes_invalid_literals_and_short_batches() {
+        let db = super::super::tests::test_db("unique-batch-invalid-contracts").await;
+        let unique = super::super::tests::active_read_handle(
+            &db,
+            crate::config::SecondaryIndexDefinition::node_unique_equality("Fixture", "key")
+                .unwrap(),
+        )
+        .await;
+        let values = [
+            PropertyValue::String("missing".into()),
+            PropertyValue::String("absent".into()),
+        ];
+        assert!(lookup_active_unique_equality_batch(&db, &unique, &values)
+            .await
+            .unwrap()
+            .is_empty());
+        for values in [&[][..], &values[..1]] {
+            assert!(lookup_active_unique_equality_batch(&db, &unique, values)
+                .await
+                .is_err());
+        }
+        for invalid in [PropertyValue::Null, PropertyValue::F64(f64::NAN),
+            PropertyValue::Array(vec![PropertyValue::Null]), PropertyValue::String("x".repeat(
+                crate::encoding::v2::values::property::equality_index_value::MAX_EQUALITY_CANONICAL_LEN + 1))] {
+            assert!(lookup_active_unique_equality_batch(&db, &unique, &[values[0].clone(), invalid]).await.is_err());
+        }
+        for definition in [
+            crate::config::SecondaryIndexDefinition::node_equality("Other", "key").unwrap(),
+            crate::config::SecondaryIndexDefinition::node_range("Other", "rank").unwrap(),
+        ] {
+            let handle = super::super::tests::active_read_handle(&db, definition).await;
+            assert!(lookup_active_unique_equality_batch(&db, &handle, &values)
+                .await
+                .is_err());
+        }
+        db.close().await.unwrap();
+    }
 
     async fn put_v3_equality_entry(
         db: &slatedb::Db,

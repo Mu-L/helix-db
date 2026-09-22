@@ -50,19 +50,52 @@ pub(super) fn access_set_contract(
             children
                 .iter()
                 .all(|child| child.batchable_equality_identity() == Some(first))
-                .then_some(())
+                .then_some(first.2)
         })
-        .flatten()
-        .is_some();
-    let id_cost = if batchable_equality {
-        storage.bitmap_equality_batch(
-            properties::PositiveUsize::at_least_one(children.len()),
-            rows,
-        )
+        .flatten();
+    let id_cost = if let Some(uniqueness) = batchable_equality {
+        let values = properties::PositiveUsize::at_least_one(children.len());
+        match uniqueness {
+            crate::catalog::IndexUniqueness::Unique => storage.unique_equality_batch(values, rows),
+            crate::catalog::IndexUniqueness::NonUnique => {
+                storage.bitmap_equality_batch(values, rows)
+            }
+        }
     } else {
-        storage
-            .parallel(&secondary_costs, storage.max_parallel_kv_reads)
-            .serial(storage.secondary_set_operation(rows))
+        let driver = (access == physical::PhysicalAccess::SetIntersection)
+            .then(|| {
+                children
+                    .iter()
+                    .position(|child| child.range_iteration().is_some())
+            })
+            .flatten();
+        // Unordered set algebra consumes membership inputs, even when the
+        // intersection is estimated empty. Output cardinality only controls
+        // final row construction. Ordered drivers retain their visited budget.
+        let scanned = driver.map_or_else(
+            || set_union_estimated_rows(&child_estimates),
+            |index| children[index].estimated_rows,
+        );
+        children
+            .iter()
+            .zip(secondary_costs)
+            .enumerate()
+            .map(|(index, (child, cost))| {
+                if Some(index) == driver {
+                    // Only the ordered driver is filtered before verification;
+                    // other ranges are complete membership inputs.
+                    storage
+                        .ordered_range_scan(
+                            child.estimated_rows,
+                            child.range_iteration().expect("selected range driver"),
+                        )
+                        .serial(storage.authoritative_verification(rows))
+                } else {
+                    cost
+                }
+            })
+            .fold(cost::CostVector::ZERO, cost::CostVector::serial)
+            .serial(storage.secondary_set_operation(scanned))
     };
     AccessPhysicalContract::new_secondary(
         access,

@@ -30,7 +30,7 @@ impl<'a> Analyzer<'a> {
 
     pub(super) fn analyze(mut self, plan: &exec::ExecutablePlan) -> PlannerDiagnostics {
         self.copy_planner_work(plan.metrics());
-        self.analyze_steps(plan.steps(), 0, 0);
+        self.analyze_steps(plan.steps(), plan.execution_program(), 0, 0);
         let insights = self.finish_insights();
         PlannerDiagnostics {
             statistics: self.statistics,
@@ -51,9 +51,21 @@ impl<'a> Analyzer<'a> {
     fn analyze_steps(
         &mut self,
         steps: &[exec::ExecStep],
+        program: &exec::ExecProgram,
         base_operator_depth: usize,
         base_traversal_depth: usize,
     ) {
+        for (_, region) in program.regions() {
+            self.statistics.pull_regions += 1;
+            self.statistics.pull_operators += region.steps().len();
+        }
+        for step in steps {
+            match exec::ExecPullCapability::of(&step.op) {
+                exec::ExecPullCapability::FullInput => self.statistics.full_input_operators += 1,
+                exec::ExecPullCapability::Boundary => self.statistics.observable_boundaries += 1,
+                exec::ExecPullCapability::Incremental | exec::ExecPullCapability::Prepared => {}
+            }
+        }
         let steps_by_id = steps
             .iter()
             .map(|step| (step.id, step))
@@ -171,11 +183,16 @@ impl<'a> Analyzer<'a> {
             }
             exec::ExecOp::Repeat { plan } => {
                 self.statistics.repeats = self.statistics.repeats.saturating_add(1);
-                self.analyze_steps(plan.body.steps(), operator_depth, parent_traversal_depth);
+                self.analyze_steps(
+                    plan.body.steps(),
+                    plan.body.execution_program(),
+                    operator_depth,
+                    parent_traversal_depth,
+                );
             }
             exec::ExecOp::ForEach { body, .. } => {
                 self.statistics.for_each = self.statistics.for_each.saturating_add(1);
-                self.analyze_steps(body.steps(), operator_depth, 0);
+                self.analyze_steps(body.steps(), body.execution_program(), operator_depth, 0);
             }
             exec::ExecOp::Distinct
             | exec::ExecOp::VectorSearch { .. }
@@ -203,29 +220,76 @@ impl<'a> Analyzer<'a> {
     ) {
         match plan {
             exec::ExecBranchPlan::Union(plans) => plans.iter().for_each(|plan| {
-                self.analyze_steps(plan.steps(), operator_depth, base_traversal_depth)
+                self.analyze_steps(
+                    plan.steps(),
+                    plan.execution_program(),
+                    operator_depth,
+                    base_traversal_depth,
+                )
             }),
             exec::ExecBranchPlan::Choose { then_plan, .. } => {
-                self.analyze_steps(then_plan.steps(), operator_depth, base_traversal_depth);
+                self.analyze_steps(
+                    then_plan.steps(),
+                    then_plan.execution_program(),
+                    operator_depth,
+                    base_traversal_depth,
+                );
             }
             exec::ExecBranchPlan::ChooseElse {
                 then_plan,
                 else_plan,
                 ..
             } => {
-                self.analyze_steps(then_plan.steps(), operator_depth, base_traversal_depth);
-                self.analyze_steps(else_plan.steps(), operator_depth, base_traversal_depth);
+                self.analyze_steps(
+                    then_plan.steps(),
+                    then_plan.execution_program(),
+                    operator_depth,
+                    base_traversal_depth,
+                );
+                self.analyze_steps(
+                    else_plan.steps(),
+                    else_plan.execution_program(),
+                    operator_depth,
+                    base_traversal_depth,
+                );
             }
             exec::ExecBranchPlan::Coalesce(plans) => plans.iter().for_each(|plan| {
-                self.analyze_steps(plan.steps(), operator_depth, base_traversal_depth)
+                self.analyze_steps(
+                    plan.steps(),
+                    plan.execution_program(),
+                    operator_depth,
+                    base_traversal_depth,
+                )
             }),
             exec::ExecBranchPlan::Optional(plan) => {
-                self.analyze_steps(plan.steps(), operator_depth, base_traversal_depth);
+                self.analyze_steps(
+                    plan.steps(),
+                    plan.execution_program(),
+                    operator_depth,
+                    base_traversal_depth,
+                );
             }
         }
     }
 
     fn analyze_access(&mut self, access: &exec::ExecAccessPlan) {
+        let mut leaf = access;
+        let mut dynamic = false;
+        while let exec::ExecAccessPlan::Limited(limited) = leaf {
+            dynamic |= matches!(limited.limit(), exec::ExecAccessLimit::Dynamic(_));
+            leaf = limited.source();
+        }
+        if dynamic {
+            match leaf {
+                exec::ExecAccessPlan::Node(_) => {
+                    self.statistics.node_accesses.dynamic_bounded_accesses += 1
+                }
+                exec::ExecAccessPlan::Edge(_) => {
+                    self.statistics.edge_accesses.dynamic_bounded_accesses += 1
+                }
+                exec::ExecAccessPlan::Limited(_) => unreachable!("all bound layers were visited"),
+            }
+        }
         match access {
             exec::ExecAccessPlan::Limited(limited) => {
                 self.analyze_access_leaf(limited.source(), true);
@@ -278,7 +342,9 @@ impl<'a> Analyzer<'a> {
                             .equality_index_lookups
                             .saturating_add(values.max_values().get());
                     }
-                    exec::ExecNodeAccessPlan::RangeIndex { .. } => {
+                    exec::ExecNodeAccessPlan::RangeIndex { iteration, .. } => {
+                        self.statistics.node_accesses.reverse_range_index_scans +=
+                            usize::from(*iteration == crate::ir::RangeScanIteration::Reverse);
                         self.statistics.node_accesses.range_index_scans = self
                             .statistics
                             .node_accesses
@@ -346,7 +412,9 @@ impl<'a> Analyzer<'a> {
                             .equality_index_lookups
                             .saturating_add(values.max_values().get());
                     }
-                    exec::ExecEdgeAccessPlan::RangeIndex { .. } => {
+                    exec::ExecEdgeAccessPlan::RangeIndex { iteration, .. } => {
+                        self.statistics.edge_accesses.reverse_range_index_scans +=
+                            usize::from(*iteration == crate::ir::RangeScanIteration::Reverse);
                         self.statistics.edge_accesses.range_index_scans = self
                             .statistics
                             .edge_accesses
@@ -383,6 +451,14 @@ impl<'a> Analyzer<'a> {
 
     fn analyze_node_secondary_set(&mut self, set: &exec::ExecNodeSecondarySetPlan) {
         match set {
+            exec::ExecNodeSecondarySetPlan::UniqueUnion { values, .. } => {
+                self.statistics.unions = self.statistics.unions.saturating_add(1);
+                self.statistics.node_accesses.equality_index_lookups = self
+                    .statistics
+                    .node_accesses
+                    .equality_index_lookups
+                    .saturating_add(values.len());
+            }
             exec::ExecNodeSecondarySetPlan::Empty => {}
             exec::ExecNodeSecondarySetPlan::Bitmap(bitmap) => {
                 self.statistics.node_accesses.equality_index_lookups = self
@@ -407,7 +483,9 @@ impl<'a> Analyzer<'a> {
                     .equality_index_lookups
                     .saturating_add(values.max_values().get());
             }
-            exec::ExecNodeSecondarySetPlan::Range(_) => {
+            exec::ExecNodeSecondarySetPlan::Range(driver) => {
+                self.statistics.node_accesses.reverse_range_index_scans +=
+                    usize::from(driver.iteration == crate::ir::RangeScanIteration::Reverse);
                 self.statistics.node_accesses.range_index_scans = self
                     .statistics
                     .node_accesses
@@ -426,7 +504,9 @@ impl<'a> Analyzer<'a> {
                     .chain(rest.iter())
                     .for_each(|child| self.analyze_node_secondary_set(child));
             }
-            exec::ExecNodeSecondarySetPlan::OrderedIntersect { filters, .. } => {
+            exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver, filters } => {
+                self.statistics.node_accesses.reverse_range_index_scans +=
+                    usize::from(driver.iteration == crate::ir::RangeScanIteration::Reverse);
                 self.statistics.intersections = self.statistics.intersections.saturating_add(1);
                 self.statistics.node_accesses.range_index_scans = self
                     .statistics
@@ -465,7 +545,9 @@ impl<'a> Analyzer<'a> {
                     .equality_index_lookups
                     .saturating_add(values.max_values().get());
             }
-            exec::ExecEdgeSecondarySetPlan::Range(_) => {
+            exec::ExecEdgeSecondarySetPlan::Range(driver) => {
+                self.statistics.edge_accesses.reverse_range_index_scans +=
+                    usize::from(driver.iteration == crate::ir::RangeScanIteration::Reverse);
                 self.statistics.edge_accesses.range_index_scans = self
                     .statistics
                     .edge_accesses
@@ -484,7 +566,9 @@ impl<'a> Analyzer<'a> {
                     .chain(rest.iter())
                     .for_each(|child| self.analyze_edge_secondary_set(child));
             }
-            exec::ExecEdgeSecondarySetPlan::OrderedIntersect { filters, .. } => {
+            exec::ExecEdgeSecondarySetPlan::OrderedIntersect { driver, filters } => {
+                self.statistics.edge_accesses.reverse_range_index_scans +=
+                    usize::from(driver.iteration == crate::ir::RangeScanIteration::Reverse);
                 self.statistics.intersections = self.statistics.intersections.saturating_add(1);
                 self.statistics.edge_accesses.range_index_scans = self
                     .statistics
@@ -1042,7 +1126,8 @@ fn node_secondary_set_label(set: &exec::ExecNodeSecondarySetPlan) -> Option<&ir:
             exec::ExecNodeAuthoritativeScanPredicate::NullEquality { key } => Some(&key.label),
             exec::ExecNodeAuthoritativeScanPredicate::Predicate(_) => None,
         },
-        exec::ExecNodeSecondarySetPlan::DynamicEquality { key, .. }
+        exec::ExecNodeSecondarySetPlan::UniqueUnion { key, .. }
+        | exec::ExecNodeSecondarySetPlan::DynamicEquality { key, .. }
         | exec::ExecNodeSecondarySetPlan::DynamicMembership { key, .. } => Some(&key.label),
         exec::ExecNodeSecondarySetPlan::Range(range)
         | exec::ExecNodeSecondarySetPlan::OrderedIntersect { driver: range, .. } => {
