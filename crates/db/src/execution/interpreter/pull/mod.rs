@@ -95,7 +95,7 @@ enum Node<'a> {
         op: &'a exec::ExecOp,
         input: Box<Cursor<'a>>,
         pending: Items,
-        distinct: Option<BTreeSet<String>>,
+        distinct: Option<BTreeSet<stream::DistinctKey<ExecutionScalar>>>,
     },
     Window {
         input: Box<Cursor<'a>>,
@@ -105,7 +105,7 @@ enum Node<'a> {
     Distinct {
         input: Box<Cursor<'a>>,
         rows: BTreeSet<stream::RowDistinctKey>,
-        scalars: BTreeSet<String>,
+        scalars: BTreeSet<stream::DistinctKey<ExecutionScalar>>,
     },
     Exists(Option<Box<Cursor<'a>>>),
     Filter {

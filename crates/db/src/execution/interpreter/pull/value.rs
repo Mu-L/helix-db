@@ -242,4 +242,109 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test]
+    async fn distinct_matches_eager_numeric_identity_under_limits() {
+        let db = test_support::open_db("pull-distinct-numeric-identity").await;
+        let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+        let numeric = vec![
+            DbPropertyValue::I64(42),
+            DbPropertyValue::F64(42.0),
+            DbPropertyValue::F32(42.0),
+            DbPropertyValue::I64(7),
+            DbPropertyValue::String("42".into()),
+            DbPropertyValue::Bool(true),
+        ];
+        for objects in [false, true] {
+            let mut values = numeric
+                .iter()
+                .cloned()
+                .map(|value| {
+                    if objects {
+                        ExecutionScalar::Object(BTreeMap::from([("score".into(), value)]))
+                    } else {
+                        ExecutionScalar::Value(value)
+                    }
+                })
+                .collect::<Vec<_>>();
+            values.extend([
+                ExecutionScalar::NodeId(42),
+                ExecutionScalar::EdgeId(42),
+                ExecutionScalar::String("42".into()),
+            ]);
+            let input = ExecutionValue::Scalars(values);
+            let expected = ctx.distinct(input.clone()).unwrap();
+            for take in [0, 1, 2, 100] {
+                let bound = ir::StreamBoundPlan::Literal(take);
+                let limit = exec::ExecOp::Limit {
+                    count: bound.clone(),
+                };
+                let actual = Cursor::materialized(input.clone())
+                    .unwrap()
+                    .wrap(&ctx, &exec::ExecOp::Distinct)
+                    .unwrap()
+                    .wrap(&ctx, &limit)
+                    .unwrap()
+                    .drain(&mut ctx)
+                    .await
+                    .unwrap();
+                assert_eq!(actual, ctx.limit(expected.clone(), &bound).unwrap());
+            }
+        }
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn distinct_binding_projection_matches_eager_numeric_identity_under_limits() {
+        let db = test_support::open_db("pull-projection-distinct-numeric-identity").await;
+        let mut rows = Vec::new();
+        for value in [
+            helix_ast::value::PropertyValue::I64(42),
+            helix_ast::value::PropertyValue::F64(42.0),
+            helix_ast::value::PropertyValue::F32(42.0),
+            helix_ast::value::PropertyValue::I64(7),
+        ] {
+            let id =
+                test_support::add_node_with_properties(&db, "Metric", vec![("score", value)]).await;
+            rows.push(ExecutionRow::current(ElementRef::Node(id)));
+        }
+        let projection = ir::ProjectionPlan::ProjectBindings {
+            projections: ir::BindingProjectionItems::new(ir::AtLeast::from_one(
+                ir::BindingProjectionPlan::Property {
+                    target: ir::BindingTargetPlan::Current,
+                    source: test_support::name("score"),
+                    alias: test_support::name("score"),
+                },
+            ))
+            .unwrap(),
+            dedup: ir::ProjectionDedupMode::Distinct,
+        };
+        let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
+        for input in [
+            ExecutionValue::Stream(Vec::new()),
+            ExecutionValue::Stream(rows),
+        ] {
+            let expected = ctx.project(input.clone(), &projection).await.unwrap();
+            let op = exec::ExecOp::Project {
+                projection: projection.clone(),
+            };
+            for take in [0, 1, 2, 100] {
+                let bound = ir::StreamBoundPlan::Literal(take);
+                let limit = exec::ExecOp::Limit {
+                    count: bound.clone(),
+                };
+                let actual = Cursor::materialized(input.clone())
+                    .unwrap()
+                    .wrap(&ctx, &op)
+                    .unwrap()
+                    .wrap(&ctx, &limit)
+                    .unwrap()
+                    .drain(&mut ctx)
+                    .await
+                    .unwrap();
+                assert_eq!(actual, ctx.limit(expected.clone(), &bound).unwrap());
+            }
+        }
+        db.close().await.unwrap();
+    }
 }

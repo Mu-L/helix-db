@@ -111,7 +111,7 @@ async fn disk_runtime_commands_cover_resource_reuse_status_cleanup_and_errors() 
     let log = fixture.runtime_log();
     assert!(log.contains("network create"));
     assert!(log.contains("volume create"));
-    assert!(log.contains("minio/mc:latest"));
+    assert!(log.contains("quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727"));
     assert!(log.contains("logs -f"));
     assert!(log.contains("network inspect"));
 }
@@ -683,7 +683,7 @@ async fn configured_policy_applies_to_foreground_and_dependency_failures_preserv
         .mount(&server)
         .await;
     for foreground in [false, true] {
-        for failed_image in ["", "minio/minio:latest", "minio/mc:latest"] {
+        for failed_image in ["", "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e", "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727"] {
             let fixture = CliFixture::new_with_fake_runtime();
             let project = fixture.root().join("image-project");
             std::fs::create_dir(&project).unwrap();
@@ -705,8 +705,8 @@ async fn configured_policy_applies_to_foreground_and_dependency_failures_preserv
                 result.failure();
             }
             let log = fixture.runtime_log();
-            assert!(log.contains("pull ghcr.io/helixdb/helixdb:v0.0.5"));
-            assert!(log.contains("pull minio/minio:latest"));
+            assert!(log.contains("pull ghcr.io/helixdb/helixdb:v0.0.6"));
+            assert!(log.contains("pull quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"));
             if !failed_image.is_empty() {
                 assert!(
                     !log.lines()
@@ -753,8 +753,8 @@ fn failed_image_resolution_with_persist_preserves_config_and_containers() {
             ("never", true, "", ""),
             ("missing", true, "pull", ""),
             ("always", false, "image", ""),
-            ("always", false, "", "minio/minio:latest"),
-            ("always", false, "", "minio/mc:latest"),
+            ("always", false, "", "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"),
+            ("always", false, "", "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727"),
         ] {
             let fixture = CliFixture::new_with_fake_runtime();
             let project = fixture.root().join("persist-failure");

@@ -22,6 +22,7 @@ use bytes::Bytes;
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::Notify;
 
+use super::store;
 use super::store::{
     VectorMemoryDirtyRows, VectorMemoryPendingDirtyGuard, VectorMemoryPendingDirtyRows,
     VectorMemoryStore,
@@ -132,6 +133,8 @@ struct ResidentVectorCache {
     store: Arc<VectorMemoryStore>,
     active_readers: usize,
     refresh_inflight: bool,
+    admission: store::VectorMemoryAdmissionBudget,
+    hydrated_dirty_generation: u64,
 }
 
 enum VectorCacheEntryState {
@@ -205,13 +208,28 @@ impl VectorMemoryCacheEntry {
         }
     }
 
+    /// Publishes a manually constructed fixture without a storage scan.
+    #[cfg(any(test, feature = "production-coverage"))]
+    pub(crate) fn finish_hydration(&self, store: Arc<VectorMemoryStore>) -> bool {
+        self.publish_initial(
+            store,
+            store::VectorMemoryAdmissionBudget::Unbounded,
+            self.pending_dirty.generation(),
+        )
+    }
+
     /// Publishes a completely hydrated store or discards it after retirement.
     ///
     /// Hydration callers must build the store off-entry and invoke this exactly
     /// once. If drop changed the entry to `Retiring`, the unpublished store is
     /// cleared and retirement is notified instead of exposing partial or stale
     /// rows. Calling this in `Ready` or `Closed` is an invariant violation.
-    pub(crate) fn finish_hydration(&self, store: Arc<VectorMemoryStore>) -> bool {
+    fn publish_initial(
+        &self,
+        store: Arc<VectorMemoryStore>,
+        admission: store::VectorMemoryAdmissionBudget,
+        hydrated_dirty_generation: u64,
+    ) -> bool {
         assert_eq!(store.scope(), self.identity.scope());
         assert_eq!(store.index_id(), self.identity.physical_index_id());
         let published = {
@@ -222,6 +240,8 @@ impl VectorMemoryCacheEntry {
                         store,
                         active_readers: 0,
                         refresh_inflight: false,
+                        admission,
+                        hydrated_dirty_generation,
                     });
                     true
                 }
@@ -266,7 +286,10 @@ impl VectorMemoryCacheEntry {
     }
 
     /// Claims the single immutable refresh slot while readers retain the old store.
-    fn begin_refresh(self: &Arc<Self>) -> Option<VectorCacheRefresh> {
+    fn begin_refresh(
+        self: &Arc<Self>,
+        admission: store::VectorMemoryAdmissionBudget,
+    ) -> Option<VectorCacheRefresh> {
         {
             let mut state = self.state.lock();
             let VectorCacheEntryState::Ready(resident) = &mut *state else {
@@ -280,6 +303,7 @@ impl VectorMemoryCacheEntry {
         Some(VectorCacheRefresh {
             entry: Arc::clone(self),
             observed_dirty_generation: self.pending_dirty.generation(),
+            admission,
             completed: false,
         })
     }
@@ -420,6 +444,7 @@ impl VectorMemoryCacheEntry {
 pub(crate) struct VectorCacheInitialHydration {
     entry: Arc<VectorMemoryCacheEntry>,
     observed_dirty_generation: u64,
+    admission: store::VectorMemoryAdmissionBudget,
     completed: bool,
 }
 
@@ -433,7 +458,9 @@ impl VectorCacheInitialHydration {
             self.completed = true;
             return false;
         }
-        let published = self.entry.finish_hydration(store);
+        let published =
+            self.entry
+                .publish_initial(store, self.admission, self.observed_dirty_generation);
         self.completed = true;
         published
     }
@@ -451,10 +478,38 @@ impl Drop for VectorCacheInitialHydration {
 pub(crate) struct VectorCacheRefresh {
     entry: Arc<VectorMemoryCacheEntry>,
     observed_dirty_generation: u64,
+    admission: store::VectorMemoryAdmissionBudget,
     completed: bool,
 }
 
 impl VectorCacheRefresh {
+    /// Releases this reservation without scanning when the published store still
+    /// matches the fresh snapshot, assigned budget, and committed dirty generation.
+    /// Returns retained resident bytes for the caller's admission accounting.
+    /// The caller must acquire its snapshot after reserving this refresh.
+    pub(crate) async fn retain_if_current(&mut self, snapshot_seq: u64) -> Option<u64> {
+        let _publication = self.entry.pending_dirty.lock_publish().await;
+        let retained_bytes = {
+            let mut state = self.entry.state.lock();
+            let VectorCacheEntryState::Ready(resident) = &mut *state else {
+                return None;
+            };
+            assert!(resident.refresh_inflight);
+            if resident.store.visible_seq() != snapshot_seq
+                || resident.admission != self.admission
+                || resident.hydrated_dirty_generation != self.observed_dirty_generation
+                || self.entry.pending_dirty.generation() != self.observed_dirty_generation
+            {
+                return None;
+            }
+            resident.refresh_inflight = false;
+            resident.store.estimated_bytes()
+        };
+        self.completed = true;
+        self.entry.changed.notify_waiters();
+        Some(retained_bytes)
+    }
+
     /// Atomically publishes a newer immutable store under the commit lock.
     ///
     /// Existing guards keep their previous `Arc`. Equal visibility may replace
@@ -478,6 +533,8 @@ impl VectorCacheRefresh {
                     resident.refresh_inflight = false;
                     if store.visible_seq() >= resident.store.visible_seq() {
                         resident.store = store;
+                        resident.admission = self.admission;
+                        resident.hydrated_dirty_generation = self.observed_dirty_generation;
                         true
                     } else {
                         store.clear();
@@ -686,6 +743,7 @@ impl VectorCacheRegistry {
     pub(crate) fn prepare_hydration(
         &self,
         handle: &ValidatedVectorGenerationHandle,
+        admission: store::VectorMemoryAdmissionBudget,
     ) -> VectorCacheHydration {
         let (entry, owns_initial) = self.entry_for(handle);
         if owns_initial {
@@ -693,10 +751,11 @@ impl VectorCacheRegistry {
             return VectorCacheHydration::Initial(VectorCacheInitialHydration {
                 entry,
                 observed_dirty_generation,
+                admission,
                 completed: false,
             });
         }
-        match entry.begin_refresh() {
+        match entry.begin_refresh(admission) {
             Some(refresh) => VectorCacheHydration::Refresh(refresh),
             None => VectorCacheHydration::Unavailable(entry.lifecycle()),
         }
@@ -877,6 +936,7 @@ pub(crate) mod production_contracts;
 
 #[cfg(test)]
 mod tests {
+
     use std::num::NonZeroU64;
 
     use super::*;
@@ -1180,7 +1240,9 @@ mod tests {
     async fn hydration_reservations_publish_immutable_newer_stores_single_flight() {
         let registry = VectorCacheRegistry::default();
         let handle = validated(1);
-        let initial = match registry.prepare_hydration(&handle) {
+        let initial = match registry
+            .prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded)
+        {
             VectorCacheHydration::Initial(initial) => initial,
             VectorCacheHydration::Refresh(_) | VectorCacheHydration::Unavailable(_) => {
                 panic!("absent identity must grant initial hydration")
@@ -1195,14 +1257,16 @@ mod tests {
         assert!(initial.finish(Arc::clone(&first)).await);
         let old_guard = registry.read_guard_for(&handle).unwrap();
 
-        let refresh = match registry.prepare_hydration(&handle) {
+        let refresh = match registry
+            .prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded)
+        {
             VectorCacheHydration::Refresh(refresh) => refresh,
             VectorCacheHydration::Initial(_) | VectorCacheHydration::Unavailable(_) => {
                 panic!("ready identity must grant one refresh")
             }
         };
         assert!(matches!(
-            registry.prepare_hydration(&handle),
+            registry.prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded),
             VectorCacheHydration::Unavailable(VectorCacheLifecycle::Ready)
         ));
         let second = Arc::new(VectorMemoryStore::new(
@@ -1224,7 +1288,9 @@ mod tests {
             new_guard.store().get_upper_vector(7).unwrap().as_ref(),
             b"second"
         );
-        let equal_refresh = match registry.prepare_hydration(&handle) {
+        let equal_refresh = match registry
+            .prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded)
+        {
             VectorCacheHydration::Refresh(refresh) => refresh,
             VectorCacheHydration::Initial(_) | VectorCacheHydration::Unavailable(_) => {
                 panic!("ready identity must allow an equal-snapshot budget refresh")
@@ -1252,7 +1318,9 @@ mod tests {
     async fn commit_generation_changes_discard_initial_and_refresh_hydration() {
         let registry = VectorCacheRegistry::default();
         let handle = validated(1);
-        let initial = match registry.prepare_hydration(&handle) {
+        let initial = match registry
+            .prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded)
+        {
             VectorCacheHydration::Initial(initial) => initial,
             VectorCacheHydration::Refresh(_) | VectorCacheHydration::Unavailable(_) => {
                 panic!("absent identity must grant initial hydration")
@@ -1269,7 +1337,9 @@ mod tests {
         assert!(unpublished.get_upper_vector(7).is_none());
         assert!(registry.forget_validated_closed(&handle));
 
-        let initial = match registry.prepare_hydration(&handle) {
+        let initial = match registry
+            .prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded)
+        {
             VectorCacheHydration::Initial(initial) => initial,
             VectorCacheHydration::Refresh(_) | VectorCacheHydration::Unavailable(_) => {
                 panic!("forgotten failed hydration must be retryable")
@@ -1282,7 +1352,9 @@ mod tests {
         ));
         resident.insert_upper_vector(7, Bytes::from_static(b"resident"));
         assert!(initial.finish(Arc::clone(&resident)).await);
-        let refresh = match registry.prepare_hydration(&handle) {
+        let refresh = match registry
+            .prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded)
+        {
             VectorCacheHydration::Refresh(refresh) => refresh,
             VectorCacheHydration::Initial(_) | VectorCacheHydration::Unavailable(_) => {
                 panic!("resident identity must grant refresh")
@@ -1307,7 +1379,9 @@ mod tests {
     fn dropped_initial_hydration_closes_and_wakes_the_entry() {
         let registry = VectorCacheRegistry::default();
         let handle = validated(1);
-        let initial = match registry.prepare_hydration(&handle) {
+        let initial = match registry
+            .prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded)
+        {
             VectorCacheHydration::Initial(initial) => initial,
             VectorCacheHydration::Refresh(_) | VectorCacheHydration::Unavailable(_) => {
                 panic!("absent identity must grant initial hydration")
@@ -1316,7 +1390,7 @@ mod tests {
         drop(initial);
 
         assert!(matches!(
-            registry.prepare_hydration(&handle),
+            registry.prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded),
             VectorCacheHydration::Unavailable(VectorCacheLifecycle::Closed)
         ));
         assert!(registry.forget_validated_closed(&handle));
@@ -1326,7 +1400,9 @@ mod tests {
     async fn retirement_waits_for_refresh_and_discards_its_unpublished_store() {
         let registry = VectorCacheRegistry::default();
         let handle = validated(1);
-        let initial = match registry.prepare_hydration(&handle) {
+        let initial = match registry
+            .prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded)
+        {
             VectorCacheHydration::Initial(initial) => initial,
             VectorCacheHydration::Refresh(_) | VectorCacheHydration::Unavailable(_) => {
                 panic!("absent identity must grant initial hydration")
@@ -1338,7 +1414,9 @@ mod tests {
             1,
         ));
         assert!(initial.finish(first).await);
-        let refresh = match registry.prepare_hydration(&handle) {
+        let refresh = match registry
+            .prepare_hydration(&handle, store::VectorMemoryAdmissionBudget::Unbounded)
+        {
             VectorCacheHydration::Refresh(refresh) => refresh,
             VectorCacheHydration::Initial(_) | VectorCacheHydration::Unavailable(_) => {
                 panic!("ready identity must grant refresh")

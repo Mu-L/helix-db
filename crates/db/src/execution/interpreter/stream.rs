@@ -57,4 +57,4 @@ impl<'db> ExecutionContext<'db> {
 pub(in crate::execution::interpreter) use bounds::eval_stream_bound;
 
 pub(in crate::execution::interpreter) use sets::RowDistinctKey;
-pub(in crate::execution::interpreter) use values::scalar_key;
+pub(in crate::execution::interpreter) use values::DistinctKey;

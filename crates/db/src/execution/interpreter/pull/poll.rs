@@ -389,20 +389,26 @@ impl<'a> Cursor<'a> {
                         pending,
                         distinct,
                     } => {
-                        if let Some(item) = pending.next() {
-                            if let Some(seen) = distinct
-                                && !seen.insert(format!("{item:?}"))
-                            {
-                                continue;
-                            }
-                            Some(item)
-                        } else {
+                        let Some(item) = pending.next() else {
                             let Some(item) = input.next(ctx).await? else {
                                 return Ok(None);
                             };
                             *pending = Items::new(Box::pin(ctx.execute_op(op, item)).await?);
                             continue;
+                        };
+                        let fresh = match distinct {
+                            None => true,
+                            Some(seen) => {
+                                let ExecutionValue::Scalars(items) = &item else {
+                                    unreachable!("distinct binding projection emits scalars");
+                                };
+                                seen.insert(stream::DistinctKey(items[0].clone()))
+                            }
+                        };
+                        if !fresh {
+                            continue;
                         }
+                        Some(item)
                     }
                     Node::Distinct {
                         input,
@@ -418,7 +424,7 @@ impl<'a> Cursor<'a> {
                                 rows.insert(stream::RowDistinctKey::from(&row[0]))
                             }
                             ExecutionValue::Scalars(items) => {
-                                scalars.insert(stream::scalar_key(&items[0]))
+                                scalars.insert(stream::DistinctKey(items[0].clone()))
                             }
                             ExecutionValue::FoldedStream(_)
                             | ExecutionValue::Count(_)

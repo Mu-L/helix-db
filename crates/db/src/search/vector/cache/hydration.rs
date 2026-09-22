@@ -186,7 +186,7 @@ pub(crate) async fn hydrate_active_generations(
             }
             None => VectorMemoryAdmissionBudget::Unbounded,
         };
-        let hydration = registry.prepare_hydration(&handle);
+        let mut hydration = registry.prepare_hydration(&handle, admission);
         match &hydration {
             VectorCacheHydration::Unavailable(lifecycle) => {
                 tracing::debug!(
@@ -198,45 +198,45 @@ pub(crate) async fn hydrate_active_generations(
             }
             VectorCacheHydration::Initial(_) | VectorCacheHydration::Refresh(_) => {}
         }
-        if admission == VectorMemoryAdmissionBudget::Bounded(0)
-            && matches!(&hydration, VectorCacheHydration::Initial(_))
-        {
-            drop(hydration);
-            registry.forget_validated_closed(&handle);
-            continue;
-        }
         let snapshot = db.snapshot().await?;
-        let store = Arc::new(VectorMemoryStore::new(
-            handle.scope(),
-            handle.physical_index_id(),
-            snapshot.seq(),
-        ));
-        let loaded = store
-            .load_descriptor_bound_with_budget(
-                snapshot.as_ref(),
-                admission,
-                shutdown.as_deref_mut(),
-            )
-            .await;
-        let summary = match loaded {
-            Ok(summary) => summary,
-            Err(error) => {
-                drop(hydration);
-                registry.forget_validated_closed(&handle);
-                return Err(error);
+        let retained_bytes = match &mut hydration {
+            VectorCacheHydration::Refresh(refresh) => {
+                refresh.retain_if_current(snapshot.seq()).await
+            }
+            VectorCacheHydration::Initial(_) | VectorCacheHydration::Unavailable(_) => None,
+        };
+        let (estimated_bytes, publication) = match retained_bytes {
+            Some(bytes) => (bytes, None),
+            None => {
+                let store = Arc::new(VectorMemoryStore::new(
+                    handle.scope(),
+                    handle.physical_index_id(),
+                    snapshot.seq(),
+                ));
+                let loaded = store
+                    .load_descriptor_bound_with_budget(
+                        snapshot.as_ref(),
+                        admission,
+                        shutdown.as_deref_mut(),
+                    )
+                    .await;
+                let summary = match loaded {
+                    Ok(summary) => summary,
+                    Err(error) => {
+                        drop(hydration);
+                        registry.forget_validated_closed(&handle);
+                        return Err(error);
+                    }
+                };
+                if summary.completion == VectorMemoryStoreLoadCompletion::Shutdown {
+                    drop(hydration);
+                    registry.forget_validated_closed(&handle);
+                    break;
+                }
+                (summary.estimated_bytes, Some((hydration, store)))
             }
         };
-        if summary.completion == VectorMemoryStoreLoadCompletion::Shutdown {
-            drop(hydration);
-            registry.forget_validated_closed(&handle);
-            break;
-        }
-        if summary.loaded_entries == 0 && matches!(&hydration, VectorCacheHydration::Initial(_)) {
-            drop(hydration);
-            registry.forget_validated_closed(&handle);
-            continue;
-        }
-        let Some(next_admitted_bytes) = admitted_bytes.checked_add(summary.estimated_bytes) else {
+        let Some(next_admitted_bytes) = admitted_bytes.checked_add(estimated_bytes) else {
             return Err(HelixDbError::InvariantViolation(
                 "vector cache admitted byte count overflowed u64".to_string(),
             ));
@@ -250,6 +250,9 @@ pub(crate) async fn hydrate_active_generations(
                 "vector cache hydration exceeded its configured budget".to_string(),
             ));
         }
+        let Some((hydration, store)) = publication else {
+            continue;
+        };
         match hydration {
             VectorCacheHydration::Initial(initial) => {
                 initial.finish(store).await;
@@ -267,12 +270,17 @@ pub(crate) async fn hydrate_active_generations(
     Ok(())
 }
 
-#[cfg(feature = "production-coverage")]
+#[cfg(any(test, feature = "production-coverage"))]
 #[path = "../../../../tests/production_support/vector/hydration.rs"]
 pub(crate) mod production_contracts;
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn idle_refresh_and_production_contracts() {
+        super::production_contracts::run().await;
+    }
+
     use bytes::Bytes;
     use slatedb::object_store::memory::InMemory;
     use slatedb::{Db, IsolationLevel};
@@ -531,7 +539,14 @@ mod tests {
         let low = registry.read_guard_for(&low_handle).unwrap();
         assert_eq!(low.store().estimated_bytes(), row_bytes);
         assert_eq!(low.store().get_upper_vector(1).as_deref(), Some(&value[..]));
-        assert!(registry.read_guard_for(&high_handle).is_err());
+        assert_eq!(
+            registry
+                .read_guard_for(&high_handle)
+                .unwrap()
+                .store()
+                .estimated_bytes(),
+            0
+        );
     }
 
     #[tokio::test]
