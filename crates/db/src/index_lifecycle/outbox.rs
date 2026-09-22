@@ -32,6 +32,9 @@ use crate::execution_control;
 
 mod failure;
 
+#[cfg(feature = "production-coverage")]
+pub(crate) use failure::contracts::run as driver_failure_classification_contract;
+
 use super::failpoints::{self, IndexOutboxFailpoint};
 use super::{
     BuildOperationOutcome, ClaimSequence, IndexOperationBlocker, IndexOperationExecutionState,
