@@ -247,7 +247,7 @@ mod tests {
     async fn distinct_matches_eager_numeric_identity_under_limits() {
         let db = test_support::open_db("pull-distinct-numeric-identity").await;
         let mut ctx = ExecutionContext::new(&db, context::ParamBindings::default());
-        let numeric = vec![
+        let numeric = [
             DbPropertyValue::I64(42),
             DbPropertyValue::F64(42.0),
             DbPropertyValue::F32(42.0),

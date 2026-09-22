@@ -68,6 +68,11 @@ pub use v1_migration::{
     V1RetirementFailpointObservation, V1SemanticRow, V1UniqueMigrationObservation,
 };
 
+/// Exercises typed permanent and transient driver failures without test-only code paths.
+pub async fn index_driver_failure_classification_contract() {
+    crate::index_lifecycle::outbox::driver_failure_classification_contract().await;
+}
+
 /// Runs graph-first legacy-definition migration contracts with one-row batches.
 pub async fn migration_definition_contracts() {
     crate::migrations::production_contracts::run_migration_contracts().await;
