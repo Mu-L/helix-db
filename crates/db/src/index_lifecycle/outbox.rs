@@ -30,6 +30,8 @@ use crate::encoding::v2::values::{
 use crate::error::{HelixDbError, Result};
 use crate::execution_control;
 
+mod failure;
+
 use super::failpoints::{self, IndexOutboxFailpoint};
 use super::{
     BuildOperationOutcome, ClaimSequence, IndexOperationBlocker, IndexOperationExecutionState,
@@ -1239,7 +1241,7 @@ async fn record_driver_failure(
     }
     let retryable = error.is_transaction_conflict()
         || matches!(&error, HelixDbError::Storage(storage) if storage.kind() == slatedb::ErrorKind::Unavailable)
-        || matches!(error, HelixDbError::ObjectStore(_));
+        || matches!(&error, HelixDbError::ObjectStore(error) if failure::is_retryable_object_store(error));
     let status = IndexOperationStatus::from_record(&claimed.record);
     tracing::warn!(
         operation_id = %claimed.record.operation_id().as_uuid(),
@@ -1921,10 +1923,13 @@ mod tests {
     enum FailureMode {
         PrepareCorruption,
         PrepareObjectStore,
+        PrepareObjectStoreDenied,
         StorageUnavailable,
         StorageCorruption,
         StageCorruption,
         StageInvariant,
+        StageConfig,
+        StageInvalidObjectRequest,
         Conflict,
         ObjectStore,
     }
@@ -1956,6 +1961,14 @@ mod tests {
                     },
                 ));
             }
+            if matches!(self.mode, FailureMode::PrepareObjectStoreDenied) {
+                return Err(HelixDbError::ObjectStore(
+                    slatedb::object_store::Error::PermissionDenied {
+                        path: "fixture".into(),
+                        source: std::io::Error::other("access denied").into(),
+                    },
+                ));
+            }
             Ok(Box::new(()))
         }
 
@@ -1974,6 +1987,20 @@ mod tests {
                 }
                 FailureMode::StageInvariant => {
                     HelixDbError::InvariantViolation("stage fixture".into())
+                }
+                FailureMode::StageConfig => HelixDbError::Config("invalid configuration".into()),
+                FailureMode::PrepareObjectStoreDenied => {
+                    unreachable!("permission failure occurs during preparation")
+                }
+                FailureMode::StageInvalidObjectRequest => {
+                    HelixDbError::ObjectStore(slatedb::object_store::Error::Generic {
+                        store: "fixture",
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "invalid object request",
+                        )
+                        .into(),
+                    })
                 }
                 FailureMode::Conflict => HelixDbError::TransactionConflict("stage fixture".into()),
                 FailureMode::StorageUnavailable => {
@@ -1994,37 +2021,49 @@ mod tests {
 
     #[tokio::test]
     async fn driver_errors_discard_partial_writes_and_preserve_retry_classification() {
-        for (mode, expected) in [
-            (
-                FailureMode::PrepareObjectStore,
-                CommittedOperationStep::TransientFailure,
-            ),
-            (
-                FailureMode::StorageUnavailable,
-                CommittedOperationStep::TransientFailure,
-            ),
-            (
-                FailureMode::StorageCorruption,
-                CommittedOperationStep::Blocked,
-            ),
-            (
-                FailureMode::PrepareCorruption,
-                CommittedOperationStep::Blocked,
-            ),
-            (
-                FailureMode::StageCorruption,
-                CommittedOperationStep::Blocked,
-            ),
-            (FailureMode::StageInvariant, CommittedOperationStep::Blocked),
-            (
-                FailureMode::Conflict,
-                CommittedOperationStep::TransientFailure,
-            ),
-            (
-                FailureMode::ObjectStore,
-                CommittedOperationStep::TransientFailure,
-            ),
-        ] {
+        for (aborting, mode, expected) in [false, true].into_iter().flat_map(|aborting| {
+            [
+                (
+                    FailureMode::PrepareObjectStore,
+                    CommittedOperationStep::TransientFailure,
+                ),
+                (
+                    FailureMode::StorageUnavailable,
+                    CommittedOperationStep::TransientFailure,
+                ),
+                (
+                    FailureMode::StorageCorruption,
+                    CommittedOperationStep::Blocked,
+                ),
+                (
+                    FailureMode::PrepareCorruption,
+                    CommittedOperationStep::Blocked,
+                ),
+                (
+                    FailureMode::StageCorruption,
+                    CommittedOperationStep::Blocked,
+                ),
+                (FailureMode::StageInvariant, CommittedOperationStep::Blocked),
+                (FailureMode::StageConfig, CommittedOperationStep::Blocked),
+                (
+                    FailureMode::PrepareObjectStoreDenied,
+                    CommittedOperationStep::Blocked,
+                ),
+                (
+                    FailureMode::StageInvalidObjectRequest,
+                    CommittedOperationStep::Blocked,
+                ),
+                (
+                    FailureMode::Conflict,
+                    CommittedOperationStep::TransientFailure,
+                ),
+                (
+                    FailureMode::ObjectStore,
+                    CommittedOperationStep::TransientFailure,
+                ),
+            ]
+            .map(|(mode, expected)| (aborting, mode, expected))
+        }) {
             let db = db("outbox-driver-error").await;
             let (index, operation) = fixture(70);
             let scope = DataScope::LegacyUnscoped;
@@ -2037,9 +2076,11 @@ mod tests {
             )
             .await
             .unwrap();
-            abort_operation(&db, scope, operation.operation_id())
-                .await
-                .unwrap();
+            if aborting {
+                abort_operation(&db, scope, operation.operation_id())
+                    .await
+                    .unwrap();
+            }
             let epoch = WriterEpoch::from_bytes([71; 16]).unwrap();
             let OperationPointerObservation::Eligible(eligible) =
                 observe_operation_pointer(&db, operation.operation_id(), epoch, 0)
@@ -2104,6 +2145,13 @@ mod tests {
                         .await
                         .unwrap();
                     assert_eq!(retried.progress(), retained.progress());
+                    assert!(
+                        db.get(global_operation_key(operation.operation_id()))
+                            .await
+                            .unwrap()
+                            .is_some(),
+                        "explicit retry must recreate the queue pointer"
+                    );
                 }
                 CommittedOperationStep::TransientFailure => {
                     assert!(
