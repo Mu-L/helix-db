@@ -373,7 +373,13 @@ export class PropertyValue implements Encodable {
     return new PropertyValue("String", value);
   }
   static bytes(value: Uint8Array | number[]): PropertyValue {
-    return new PropertyValue("Bytes", Array.from(value));
+    const normalized = Array.from(value);
+    for (const [index, byte] of normalized.entries()) {
+      if (!Number.isInteger(byte) || byte < 0 || byte > 255) {
+        throw new TypeError(`byte at index ${index} must be an integer from 0 to 255: ${byte}`);
+      }
+    }
+    return new PropertyValue("Bytes", normalized);
   }
   static i64Array(values: (number | bigint)[]): PropertyValue {
     return new PropertyValue("I64Array", values.map(intToJson));

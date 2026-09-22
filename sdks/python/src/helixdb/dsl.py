@@ -337,7 +337,12 @@ class PropertyValue:
 
     @classmethod
     def bytes(cls, value: bytes | bytearray | Sequence[int]) -> "PropertyValue":
-        return cls("Bytes", [int(byte) for byte in value])
+        normalized: list[int] = []
+        for index, byte in enumerate(value):
+            if isinstance(byte, bool) or not isinstance(byte, int) or not 0 <= byte <= 255:
+                raise TypeError(f"byte at index {index} must be an integer from 0 to 255: {byte!r}")
+            normalized.append(byte)
+        return cls("Bytes", normalized)
 
     @classmethod
     def i64_array(cls, values: Iterable[int]) -> "PropertyValue":
