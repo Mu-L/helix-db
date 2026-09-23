@@ -21,6 +21,7 @@ import {
   SourcePredicate,
   VectorDistanceMetric,
   WhenThen,
+  bytes,
   defineParams,
   g,
   param,
@@ -107,7 +108,12 @@ assert.deepEqual(parseJson('{"n":9223372036854775807,"nested":[-9223372036854775
 });
 
 assert.deepEqual(parsed(PropertyValue.null()), "null");
-assert.deepEqual(parsed(PropertyValue.bytes(new Uint8Array([1, 2]))), { bytes: [1, 2] });
+assert.deepEqual(parsed(PropertyValue.bytes(new Uint8Array([0, 255]))), { bytes: [0, 255] });
+assert.deepEqual(parsed(PropertyValue.from(bytes([0, 255]))), { bytes: [0, 255] });
+for (const value of [-1, 1.5, 256, "7", true]) {
+  assert.throws(() => PropertyValue.bytes([value] as never), /byte at index 0 must be an integer from 0 to 255/);
+  assert.throws(() => PropertyValue.from(bytes([value] as never)), /byte at index 0 must be an integer from 0 to 255/);
+}
 assert.deepEqual(parsed(PropertyInput.param("limit")), { expr: { param: "limit" } });
 assert.deepEqual(parsed(NodeRef.param("node_ids")), { param: "node_ids" });
 assert.deepEqual(parsed(QueryParamType.array(QueryParamType.array(QueryParamType.f64()))), { array: { array: "f64" } });
