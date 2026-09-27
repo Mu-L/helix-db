@@ -228,11 +228,11 @@ fn install_fake_tools(directory: &Path) {
 fn install_fake_tool(directory: &Path, tool: &str) {
     let script = directory.join(format!("{tool}.cmd"));
     let log_command = if tool == "node" {
-        r#"if "%~1"=="--input-type" if defined HELIX_TEST_TOOL_LOG echo node --input-type=module>>"%HELIX_TEST_TOOL_LOG%"
-if not "%~1"=="--input-type" if defined HELIX_TEST_TOOL_LOG echo node %*>>"%HELIX_TEST_TOOL_LOG%""#
+        r#"if "%~1"=="--input-type" if defined HELIX_TEST_TOOL_LOG >>"%HELIX_TEST_TOOL_LOG%" echo(node --input-type=module
+if not "%~1"=="--input-type" if defined HELIX_TEST_TOOL_LOG >>"%HELIX_TEST_TOOL_LOG%" echo(node %*"#
             .to_owned()
     } else {
-        format!(r#"if defined HELIX_TEST_TOOL_LOG echo {tool} %*>>"%HELIX_TEST_TOOL_LOG%""#)
+        format!(r#"if defined HELIX_TEST_TOOL_LOG >>"%HELIX_TEST_TOOL_LOG%" echo({tool} %*"#)
     };
     fs::write(
         script,
@@ -314,13 +314,22 @@ fn install_fake_docker(bin: &Path) -> PathBuf {
     // parentheses aborts the whole script even when the block is skipped.
     // `exec` forwards an arbitrary in-container command, so it must return
     // before the first block that reads a positional argument past `%1`.
+    //
+    // Nothing may follow `%*` on a line. `cmd` reads a digit that sits between
+    // a delimiter (whitespace, `,`, `;`, or `=`) and `>` as a handle number,
+    // so `echo %*>>log` with a last argument of `-s3.port.lance=0` redirects
+    // stdin (handle 0) to the log and echoes the arguments to stdout instead.
+    // With the redirection first, the arguments end the line just as they
+    // ended the `cmd /C call` line that delivered them, so whatever survived
+    // that line survives this one. `echo(` also prints a first argument such
+    // as `off` or `/?` instead of acting on it. The fake tools log the same way.
     #[cfg(windows)]
     {
         let script = bin.join("docker.cmd");
         fs::write(
             &script,
             r#"@echo off
-if defined HELIX_TEST_RUNTIME_LOG echo %*>>"%HELIX_TEST_RUNTIME_LOG%"
+if defined HELIX_TEST_RUNTIME_LOG >>"%HELIX_TEST_RUNTIME_LOG%" echo(%*
 if /I "%1"=="%HELIX_TEST_RUNTIME_FAIL_COMMAND%" (
   echo simulated runtime failure 1>&2
   exit /b 42
