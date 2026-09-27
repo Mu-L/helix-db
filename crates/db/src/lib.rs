@@ -527,6 +527,14 @@ impl VectorMemoryRefreshTask {
     }
 }
 
+/// Most doublings of the pause after consecutive abandoned reader refreshes.
+///
+/// The pause after `n` consecutive abandoned passes is `2^n` times as long as
+/// the last of them ran, so once the cap is reached a reader that keeps
+/// outrunning its rescans spends at most one part in `2^5 + 1` of its time on
+/// them.
+const READER_VECTOR_REFRESH_MAX_BACKOFF_DOUBLINGS: u32 = 5;
+
 struct VectorMemoryCache {
     registry: Arc<search::vector::VectorCacheRegistry>,
     simhasher_registry: Arc<search::vector::SimHasherRegistry>,
@@ -2650,7 +2658,13 @@ impl HelixDB {
         let interval = Duration::from_secs(settings.poll_interval_secs());
         // Reader snapshots advance only when the poller applies new WAL or
         // manifest state, and exact-sequence stores are attachable only at that
-        // state, so readers also refresh as soon as their status changes.
+        // state, so readers also refresh as soon as their status changes. A
+        // reader pass is abandoned once the reader advances past it, because
+        // its stores could never attach, and every consecutive abandonment
+        // doubles the pause before the next attempt relative to how long the
+        // abandoned pass ran. Rescans the reader keeps outrunning therefore
+        // occupy a shrinking fraction of the node instead of running back to
+        // back, while passes that finish between advances run on every one.
         let mut reader_status = match self.storage() {
             HelixStorage::Reader(reader) => Some(reader.subscribe()),
             HelixStorage::Writer(_) => None,
@@ -2659,6 +2673,7 @@ impl HelixDB {
         let (initial_refresh_tx, initial_refresh) = watch::channel(false);
         let handle = tokio::spawn(async move {
             let mut initial_refresh_tx = Some(initial_refresh_tx);
+            let mut abandoned_passes = 0_u32;
             loop {
                 if *shutdown_rx.borrow() {
                     break;
@@ -2667,19 +2682,38 @@ impl HelixDB {
                     break;
                 };
                 let database = HelixDB { inner };
-                let result = database
-                    .refresh_loaded_vector_memory_caches(budget, Some(&mut shutdown_rx))
-                    .await;
+                let started = tokio::time::Instant::now();
+                let pass =
+                    database.refresh_loaded_vector_memory_caches(budget, Some(&mut shutdown_rx));
+                let result = match reader_status.as_mut() {
+                    Some(status) => {
+                        search::vector::unless_reader_advances(
+                            status,
+                            |status| status.durable_seq,
+                            pass,
+                        )
+                        .await
+                    }
+                    None => pass.await,
+                };
                 drop(database);
-                match result {
-                    Ok(()) => {}
+                let pause = match result {
+                    Ok(()) => {
+                        abandoned_passes = 0;
+                        None
+                    }
                     Err(HelixDbError::RequestReadViewChanged) => {
                         tracing::debug!("reader advanced during vector memory refresh");
+                        abandoned_passes = abandoned_passes
+                            .saturating_add(1)
+                            .min(READER_VECTOR_REFRESH_MAX_BACKOFF_DOUBLINGS);
+                        Some(started.elapsed().saturating_mul(1 << abandoned_passes))
                     }
                     Err(err) => {
                         tracing::warn!(error = %err, "failed to refresh vector memory stores");
+                        None
                     }
-                }
+                };
                 if let Some(initial_refresh_tx) = initial_refresh_tx.take() {
                     let _ = initial_refresh_tx.send(true);
                 }
@@ -2695,13 +2729,22 @@ impl HelixDB {
                         }
                         false
                     }
-                    _ = tokio::time::sleep(interval) => false,
+                    // An abandoned reader pass retries after its pause even if
+                    // the reader has settled meanwhile, so a store is published
+                    // once writes stop.
+                    () = async {
+                        match pause {
+                            Some(pause) => tokio::time::sleep(pause).await,
+                            None => std::future::pending().await,
+                        }
+                    } => false,
+                    _ = tokio::time::sleep(interval), if pause.is_none() => false,
                     changed = async {
                         match reader_status.as_mut() {
                             Some(status) => status.changed().await,
                             None => std::future::pending().await,
                         }
-                    } => changed.is_err(),
+                    }, if pause.is_none() => changed.is_err(),
                 };
                 if reader_status_closed {
                     reader_status = None;

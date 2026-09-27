@@ -54,6 +54,36 @@ impl VectorCacheSnapshotSource<'_> {
     }
 }
 
+/// Runs one reader refresh pass unless the reader applies newer state first.
+///
+/// A reader store attaches only to request snapshots at the exact sequence it
+/// was hydrated at, so a pass the reader outruns can only publish stores that
+/// never serve. The pass is dropped, releasing every reservation and scan it
+/// holds, as soon as `sequence` reports a value above the one observed when it
+/// started, and [`HelixDbError::RequestReadViewChanged`] reports that it was
+/// abandoned. Status changes that keep the sequence, and a closed status
+/// channel, never abandon the pass.
+pub(crate) async fn unless_reader_advances<T>(
+    status: &mut watch::Receiver<T>,
+    sequence: impl Fn(&T) -> u64,
+    pass: impl std::future::Future<Output = Result<()>>,
+) -> Result<()> {
+    let started = sequence(&status.borrow_and_update());
+    let advanced = async {
+        if status
+            .wait_for(|status| sequence(status) > started)
+            .await
+            .is_err()
+        {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::select! {
+        result = pass => result,
+        () = advanced => Err(HelixDbError::RequestReadViewChanged),
+    }
+}
+
 /// Runtime share assigned to one scope after the configured global budget is split.
 ///
 /// A scope may legitimately receive zero bytes when the positive global budget
@@ -954,6 +984,58 @@ mod tests {
 
         assert!(matches!(error, HelixDbError::IndexCatalogCorruption(_)));
         assert!(registry.resident_guard_for(&handle).is_err());
+    }
+
+    #[tokio::test]
+    async fn reader_pass_is_abandoned_once_the_reader_sequence_advances() {
+        let (status, mut observed) = watch::channel(5_u64);
+        let outruns = async {
+            status.send_replace(6);
+            std::future::pending::<Result<()>>().await
+        };
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            unless_reader_advances(&mut observed, |sequence| *sequence, outruns),
+        )
+        .await
+        .expect("an advance abandons a pass that never finishes");
+
+        assert!(matches!(outcome, Err(HelixDbError::RequestReadViewChanged)));
+    }
+
+    #[tokio::test]
+    async fn reader_pass_finishes_across_status_changes_that_keep_the_sequence() {
+        let (status, mut observed) = watch::channel((5_u64, 0_u64));
+        let manifest_only = async {
+            for manifest in 1..=3 {
+                status.send_replace((5, manifest));
+                tokio::task::yield_now().await;
+            }
+            Err(HelixDbError::InvariantViolation("pass result".to_string()))
+        };
+
+        let outcome =
+            unless_reader_advances(&mut observed, |(sequence, _)| *sequence, manifest_only).await;
+
+        assert!(
+            matches!(outcome, Err(HelixDbError::InvariantViolation(message)) if message == "pass result"),
+            "the pass's own outcome is returned unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn reader_pass_finishes_after_its_status_channel_closes() {
+        let (status, mut observed) = watch::channel(5_u64);
+        drop(status);
+
+        let outcome = unless_reader_advances(&mut observed, |sequence| *sequence, async {
+            tokio::task::yield_now().await;
+            Ok(())
+        })
+        .await;
+
+        assert!(outcome.is_ok());
     }
 
     #[tokio::test]
