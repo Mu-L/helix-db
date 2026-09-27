@@ -298,17 +298,20 @@ full-text cache behind.
 | `HELIX_DISK_CACHE_MEMORY_BYTES` | Memory tier of the block cache in bytes; defaults to 640 MiB |
 
 Half of the disk budget caches object-store files, 3/8 caches database blocks,
-and the rest caches full-text search data. Changing the budget usually changes the
-block size, which discards the database-block cache at startup so it refills from
-the object store. The other two caches keep their files and evict down to a smaller
-budget as they admit new data. Full-text search data is cached on demand, once
-searches have used it twice; the server downloads none of it at startup.
+and the rest caches full-text search data. With `S3_BUCKET`, the object-store cache
+also keeps the files the server writes; with `HELIX_DATA_DIR` they are already on
+local disk, so it keeps only the files the server reads. Changing the budget
+usually changes the block size, which discards the database-block cache at startup
+so it refills from the object store. The other two caches keep their files and
+evict down to a smaller budget as they admit new data. Full-text search data is
+cached on demand, once searches have used it twice; the server downloads none of it
+at startup.
 
 The block cache also indexes its disk share in memory, outside
 `HELIX_DISK_CACHE_MEMORY_BYTES`. Once full, the index takes roughly 2–9 MiB of RAM
 per GiB of `HELIX_DISK_CACHE_BYTES` (about 70–280 MiB at the default, 2–9 GiB at
 1 TiB), and a restart briefly needs about twice that while it rebuilds the index.
-Size the container's memory limit for both.
+Size the container's memory limit for this index as well as the memory tier.
 
 The block cache keeps up to 32,768 files open, so the server needs at least 34,792
 open files in the worst case (26,600 at the default budget), plus one per open

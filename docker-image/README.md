@@ -116,7 +116,7 @@ five minutes, so a burst of searches over many splits can exceed the share brief
 | Variable | Purpose |
 | --- | --- |
 | `HELIX_DISK_CACHE_DIR` | Enables the disk cache in this directory, creating it and its `slate/`, `object-store/` and `fts/` subdirectories if needed; unset keeps memory-only caches. Rejected with memory storage. |
-| `HELIX_DISK_CACHE_BYTES` | Total disk budget in bytes, from 64 MiB to 1 TiB; defaults to 32 GiB. Half goes to object-store SST parts (`object-store/`), 3/8 to the SlateDB block cache (`slate/`), and the rest to full-text splits (`fts/`). |
+| `HELIX_DISK_CACHE_BYTES` | Total disk budget in bytes, from 64 MiB to 1 TiB; defaults to 32 GiB. Half goes to object-store SST parts (`object-store/`), 3/8 to the SlateDB block cache (`slate/`), and the rest to full-text splits (`fts/`). With S3, `object-store/` also keeps the SSTs the server writes; with `HELIX_DATA_DIR` those are already on local disk, so it keeps only SSTs the server reads. |
 | `HELIX_DISK_CACHE_MEMORY_BYTES` | Memory tier of the SlateDB block cache in bytes; defaults to 640 MiB, the memory-only default. |
 
 Size the container's memory for more than `HELIX_DISK_CACHE_MEMORY_BYTES`: the block
