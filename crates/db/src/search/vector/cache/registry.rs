@@ -785,55 +785,62 @@ impl VectorCachePendingCommit {
     /// earlier commit was evicted from it too. Nothing is republished here: a
     /// later snapshot either uses the evicted store, whose absent rows fall
     /// back to storage, or an independently hydrated store.
+    ///
+    /// The commit counts as resolved only once its outcome has been applied,
+    /// so a future dropped while it waits for the publication lock falls back
+    /// to the conservative invalidation in `Drop`.
     pub(crate) async fn resolve(mut self, outcome: VectorCacheCommitOutcome) {
-        self.resolved = true;
         match outcome {
             VectorCacheCommitOutcome::Rejected => {}
             VectorCacheCommitOutcome::MaybeApplied => {
                 let _publication = self.fence.lock_publish().await;
-                let Some(entry) = &self.entry else {
-                    // A store first published after preparation recorded the
-                    // pre-advance generation, so it stays unattachable until a
-                    // refresh observes this commit.
-                    self.fence.bump_generation();
-                    return;
-                };
-                let mut state = entry.state.lock();
-                let (VectorCacheEntryState::Ready(resident)
-                | VectorCacheEntryState::Retiring {
-                    resident: Some(resident),
-                    ..
-                }) = &mut *state
-                else {
-                    self.fence.bump_generation();
-                    return;
-                };
-                for node_id in self.dirty_rows.dirty_nodes() {
-                    resident.store.remove_node(node_id);
-                }
-                for (layer, node_id) in self.dirty_rows.dirty_upper_neighbors() {
-                    resident.store.remove_upper_neighbors(layer, node_id);
-                }
-                let replaced = self.fence.bump_generation();
-                if resident.evicted_dirty_generation == replaced {
-                    // Mirrors the wrapping `fetch_add` that advanced the fence.
-                    resident.evicted_dirty_generation = replaced.wrapping_add(1);
+                'evict: {
+                    let Some(entry) = &self.entry else {
+                        // A store first published after preparation recorded
+                        // the pre-advance generation, so it stays unattachable
+                        // until a refresh observes this commit.
+                        self.fence.bump_generation();
+                        break 'evict;
+                    };
+                    let mut state = entry.state.lock();
+                    let (VectorCacheEntryState::Ready(resident)
+                    | VectorCacheEntryState::Retiring {
+                        resident: Some(resident),
+                        ..
+                    }) = &mut *state
+                    else {
+                        self.fence.bump_generation();
+                        break 'evict;
+                    };
+                    for node_id in self.dirty_rows.dirty_nodes() {
+                        resident.store.remove_node(node_id);
+                    }
+                    for (layer, node_id) in self.dirty_rows.dirty_upper_neighbors() {
+                        resident.store.remove_upper_neighbors(layer, node_id);
+                    }
+                    let replaced = self.fence.bump_generation();
+                    if resident.evicted_dirty_generation == replaced {
+                        // Mirrors the wrapping `fetch_add` that advanced the fence.
+                        resident.evicted_dirty_generation = replaced.wrapping_add(1);
+                    }
                 }
             }
         }
+        self.resolved = true;
     }
 }
 
 impl Drop for VectorCachePendingCommit {
-    /// Invalidates conservatively when the storage outcome was never observed.
+    /// Invalidates conservatively when the storage outcome was never applied.
     ///
     /// Advancing the fence without advancing any store's evicted generation
     /// leaves every published store unattachable to commit-fenced reads until
     /// a refresh that observes the advance rehydrates it; guards held already
     /// were granted before this commit was prepared, so their snapshots precede
-    /// it. Production commits resolve through `commit_fenced`, whose detached
-    /// task the caller cannot cancel, so this path follows only a panic or
-    /// runtime shutdown.
+    /// it. This covers a commit dropped before [`Self::resolve`] and a resolve
+    /// cancelled while it waits for the publication lock. Production commits
+    /// resolve through `commit_fenced`, whose detached task the caller cannot
+    /// cancel, so this path follows only a panic or runtime shutdown.
     fn drop(&mut self) {
         if !self.resolved {
             self.fence.bump_generation();
@@ -1981,6 +1988,40 @@ mod tests {
             resident.get_upper_vector(7).as_deref(),
             Some(b"maybe-stale".as_slice()),
             "the superseded store is never attached again"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_cancelled_before_the_publication_lock_invalidates_conservatively() {
+        use futures::FutureExt;
+
+        let registry = VectorCacheRegistry::new(VectorCacheVisibility::CommitFenced);
+        let handle = validated(1);
+        let resident = store_at(&handle, 5, 7, b"pre-commit");
+        assert!(publish_initial(&registry, &handle, Arc::clone(&resident)).await);
+        let applied = prepare_dirty_commit(&registry, &handle, 7);
+        let fence = Arc::clone(&applied.fence);
+
+        let publication = fence.lock_publish().await;
+        assert!(
+            applied
+                .resolve(VectorCacheCommitOutcome::MaybeApplied)
+                .now_or_never()
+                .is_none(),
+            "resolution waits for the held publication lock and is then dropped"
+        );
+        drop(publication);
+
+        assert!(!fence.has_pending_commits());
+        assert_eq!(
+            resident.get_upper_vector(7).as_deref(),
+            Some(b"pre-commit".as_slice()),
+            "the cancelled resolution evicted nothing"
+        );
+        assert_eq!(
+            staleness(&registry, &handle, 9),
+            Some(VectorCacheStaleness::UnevictedCommit),
+            "an applied commit whose eviction never ran must not expose its stale rows"
         );
     }
 
