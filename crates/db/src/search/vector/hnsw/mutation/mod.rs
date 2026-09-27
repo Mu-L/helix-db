@@ -51,13 +51,26 @@ const LAYER0_NEIGHBOR_PREFETCH_MAX_PER_MUTATION: usize = 8;
 pub(in crate::search::vector) const VECTOR_BUILD_ITEM_CACHE_LIMIT: usize = 4_096;
 pub(in crate::search::vector) const VECTOR_BUILD_NEIGHBOR_CACHE_LIMIT: usize = 2_048;
 pub(in crate::search::vector) const VECTOR_BUILD_SIMHASH_CACHE_LIMIT: usize = 4_096;
-/// Conservative per-entry bookkeeping charged against a build session budget.
+/// Bookkeeping charged against a build session budget per retained item.
 ///
-/// Covers the hash-map slot, recency-index entry, and allocation headers that
-/// accompany every retained item, neighbor row, or SimHash, so a session's
-/// resident memory stays near its configured byte budget even when entries
-/// carry tiny payloads such as 8-byte SimHashes.
-const VECTOR_BUILD_SESSION_ENTRY_OVERHEAD_BYTES: usize = 96;
+/// Each per-entry charge covers the entry's hash-map slot, its recency-index
+/// key, and the headers of its heap allocations (an item's shared decoded
+/// value and vector buffer, a neighbor row's one or two neighbor lists), with
+/// slack for partly filled hash tables and B-tree nodes, so a session's
+/// resident memory stays near its byte budget even for tiny payloads such as
+/// 8-byte SimHashes. A unit test pins every charge above the structural size
+/// of the types it covers.
+const VECTOR_BUILD_SESSION_ITEM_OVERHEAD_BYTES: usize = 192;
+/// Bookkeeping charged against a build session budget per retained neighbor row.
+const VECTOR_BUILD_SESSION_NEIGHBOR_OVERHEAD_BYTES: usize = 256;
+/// Bookkeeping charged against a build session budget per retained SimHash.
+const VECTOR_BUILD_SESSION_SIMHASH_OVERHEAD_BYTES: usize = 96;
+/// Budget bytes that admit one retained entry of each class.
+///
+/// Byte charges already bound realistic entries. Capping every class at one
+/// entry per KiB of budget also bounds how many tiny-payload entries, whose
+/// resident bookkeeping the fixed charges only estimate, a session can hold.
+const VECTOR_BUILD_SESSION_BUDGET_BYTES_PER_ENTRY: usize = 1024;
 /// Conservative per-namespace bookkeeping charged against a build session budget.
 ///
 /// Covers one generation namespace's cache struct and hash-map slot, its
@@ -3041,21 +3054,29 @@ impl SessionVictims {
 }
 
 impl<D: Distance> VectorBuildSession<D> {
-    /// Creates one session bounded only by its retained byte budget.
+    /// Creates one session bounded by its retained byte budget.
     ///
-    /// The budget charges every entry its encoded payload plus
-    /// [`VECTOR_BUILD_SESSION_ENTRY_OVERHEAD_BYTES`], and every attached
-    /// namespace [`VECTOR_BUILD_SESSION_NAMESPACE_OVERHEAD_BYTES`]. Class counts
-    /// are not separately capped, so 8-byte SimHashes stay resident for as long
-    /// as the byte budget allows and eviction remains deterministic global LRU.
+    /// The budget charges every entry its encoded payload plus its kind's
+    /// per-entry bookkeeping ([`VECTOR_BUILD_SESSION_ITEM_OVERHEAD_BYTES`],
+    /// [`VECTOR_BUILD_SESSION_NEIGHBOR_OVERHEAD_BYTES`], or
+    /// [`VECTOR_BUILD_SESSION_SIMHASH_OVERHEAD_BYTES`]), and every attached
+    /// namespace [`VECTOR_BUILD_SESSION_NAMESPACE_OVERHEAD_BYTES`]. Each entry
+    /// class is also capped at one entry per
+    /// [`VECTOR_BUILD_SESSION_BUDGET_BYTES_PER_ENTRY`] budget bytes, so the caps
+    /// scale with the budget: 8-byte SimHashes stay resident far beyond the old
+    /// per-step class caps while a large budget is available, yet tiny payloads
+    /// cannot multiply the estimated bookkeeping without bound. Eviction remains
+    /// deterministic global LRU.
     pub(crate) fn new(max_retained_bytes: NonZeroU64) -> Self {
+        let max_payload_bytes = usize::try_from(max_retained_bytes.get()).unwrap_or(usize::MAX);
+        let max_entries = (max_payload_bytes / VECTOR_BUILD_SESSION_BUDGET_BYTES_PER_ENTRY).max(1);
         Self {
             caches: HashMap::new(),
             next_touch: CacheSequence::initial(),
-            max_payload_bytes: usize::try_from(max_retained_bytes.get()).unwrap_or(usize::MAX),
-            max_items: usize::MAX,
-            max_neighbors: usize::MAX,
-            max_simhashes: usize::MAX,
+            max_payload_bytes,
+            max_items: max_entries,
+            max_neighbors: max_entries,
+            max_simhashes: max_entries,
             session_stats: VectorBuildSessionStats::default(),
             entity_changes: BTreeMap::new(),
             footprint: SessionFootprint::default(),
@@ -3447,26 +3468,35 @@ impl<D: Distance> VectorBuildSession<D> {
 
     /// Returns payload plus per-entry and per-namespace bookkeeping charged to the budget.
     pub(crate) fn retained_bytes(&self) -> Result<usize, HelixDbError> {
-        let entries = self
-            .footprint
-            .items
-            .saturating_add(self.footprint.neighbors)
-            .saturating_add(self.footprint.simhashes);
-        let payload_bytes = self.retained_payload_bytes()?;
-        entries
-            .checked_mul(VECTOR_BUILD_SESSION_ENTRY_OVERHEAD_BYTES)
-            .zip(
-                self.caches
-                    .len()
-                    .checked_mul(VECTOR_BUILD_SESSION_NAMESPACE_OVERHEAD_BYTES),
+        [
+            (
+                self.footprint.items,
+                VECTOR_BUILD_SESSION_ITEM_OVERHEAD_BYTES,
+            ),
+            (
+                self.footprint.neighbors,
+                VECTOR_BUILD_SESSION_NEIGHBOR_OVERHEAD_BYTES,
+            ),
+            (
+                self.footprint.simhashes,
+                VECTOR_BUILD_SESSION_SIMHASH_OVERHEAD_BYTES,
+            ),
+            (
+                self.caches.len(),
+                VECTOR_BUILD_SESSION_NAMESPACE_OVERHEAD_BYTES,
+            ),
+        ]
+        .into_iter()
+        .try_fold(self.retained_payload_bytes()?, |total, (count, charge)| {
+            count
+                .checked_mul(charge)
+                .and_then(|charged| total.checked_add(charged))
+        })
+        .ok_or_else(|| {
+            HelixDbError::InvariantViolation(
+                "vector build session byte accounting overflowed".to_string(),
             )
-            .and_then(|(entries, namespaces)| entries.checked_add(namespaces))
-            .and_then(|overhead| overhead.checked_add(payload_bytes))
-            .ok_or_else(|| {
-                HelixDbError::InvariantViolation(
-                    "vector build session byte accounting overflowed".to_string(),
-                )
-            })
+        })
     }
 
     /// Returns retained decoded payload bytes across every namespace.
@@ -4170,7 +4200,7 @@ mod tests {
         use crate::search::vector::distance::Cosine;
 
         let identity = session_identity(DataScope::LegacyUnscoped, 81);
-        let per_simhash = VECTOR_BUILD_SESSION_ENTRY_OVERHEAD_BYTES + core::mem::size_of::<u64>();
+        let per_simhash = VECTOR_BUILD_SESSION_SIMHASH_OVERHEAD_BYTES + core::mem::size_of::<u64>();
         let namespace = VECTOR_BUILD_SESSION_NAMESPACE_OVERHEAD_BYTES;
         let mut session = VectorBuildSession::<Cosine>::new(
             NonZeroU64::new(u64::try_from(namespace + per_simhash * 3).unwrap()).unwrap(),
@@ -4215,28 +4245,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_session_counts_are_bounded_only_by_bytes() {
+    async fn build_session_class_counts_scale_with_the_budget() {
         use crate::encoding::v2::keys::scope::DataScope;
         use crate::search::vector::distance::Cosine;
 
+        let db = session_test_db("vector-build-session-class-counts").await;
+        let transaction = db.begin(IsolationLevel::Snapshot).await.unwrap();
+        let measured = MeasuredVectorTransaction::new(&transaction);
         let identity = session_identity(DataScope::LegacyUnscoped, 82);
-        let mut session = VectorBuildSession::<Cosine>::new(NonZeroU64::new(1 << 20).unwrap());
-        let mut cache = session.take_cache(&identity, 8, 4).unwrap();
         let entries = VECTOR_BUILD_SIMHASH_CACHE_LIMIT + VECTOR_BUILD_ITEM_CACHE_LIMIT;
-        for node_id in 0..u64::try_from(entries).unwrap() {
-            cache.put_simhash(
-                node_id,
-                Some(crate::search::vector::SimHash::from_bits(node_id)),
+        // 16 MiB keeps more SimHashes than the old per-step class cap. 1 MiB
+        // holds their bytes too, but caps the class at one entry per KiB.
+        for (budget, kept) in [(16 << 20, entries), (1 << 20, 1 << 10)] {
+            let mut session = VectorBuildSession::<Cosine>::new(NonZeroU64::new(budget).unwrap());
+            let mut cache = session.take_cache(&identity, 8, 4).unwrap();
+            for node_id in 0..u64::try_from(entries).unwrap() {
+                cache.put_simhash(
+                    node_id,
+                    Some(crate::search::vector::SimHash::from_bits(node_id)),
+                );
+            }
+            session.restore_cache(identity.clone(), cache);
+            assert!(session.retained_bytes().unwrap() <= usize::try_from(budget).unwrap());
+
+            session.enforce_limits(&measured).unwrap();
+
+            assert_eq!(session.simhash_count(), kept);
+            assert_eq!(
+                session.stats().simhash_evictions(),
+                u64::try_from(entries - kept).unwrap()
+            );
+            let cache = session.caches.get(&identity).unwrap();
+            assert!(cache
+                .simhashes
+                .contains_key(&u64::try_from(entries - 1).unwrap()));
+            assert_eq!(
+                cache.simhashes.contains_key(&0),
+                kept == entries,
+                "the least recently used SimHashes go first"
             );
         }
-        session.restore_cache(identity, cache);
-        let db = session_test_db("vector-build-session-uncapped-counts").await;
-        let transaction = db.begin(IsolationLevel::Snapshot).await.unwrap();
-        session
-            .enforce_limits(&MeasuredVectorTransaction::new(&transaction))
-            .unwrap();
-        assert_eq!(session.simhash_count(), entries);
-        assert_eq!(session.stats().simhash_evictions(), 0);
     }
 
     #[test]
@@ -4320,6 +4368,48 @@ mod tests {
     }
 
     #[test]
+    fn build_session_entry_overheads_cover_their_structures() {
+        use crate::search::vector::distance::Cosine;
+        use core::mem::size_of;
+
+        // A hash-map slot holds its key, its value, and one control byte, and a
+        // table is at most seven-eighths full. Every heap allocation carries at
+        // least a 16-byte allocator header.
+        const ALLOCATION_HEADER: usize = 16;
+        let slot = |key: usize, value: usize| (key + value + 1) * 8 / 7;
+        // An item shares one reference-counted decoded value and its vector buffer.
+        let item = slot(size_of::<(u16, NodeId)>(), size_of::<CachedItem<Cosine>>())
+            + size_of::<(CacheSequence, u16, NodeId)>()
+            + 2 * size_of::<usize>()
+            + size_of::<Item<'static, Cosine>>()
+            + 2 * ALLOCATION_HEADER;
+        // A dirty neighbor row holds its original and current neighbor lists.
+        let neighbor = slot(size_of::<NeighborRowId>(), size_of::<CachedNeighbor>())
+            + size_of::<(CacheSequence, NeighborRowId)>()
+            + 2 * ALLOCATION_HEADER;
+        let simhash = slot(size_of::<NodeId>(), size_of::<CachedSimHash>())
+            + size_of::<(CacheSequence, NodeId)>();
+        for (kind, needed, charged) in [
+            ("item", item, VECTOR_BUILD_SESSION_ITEM_OVERHEAD_BYTES),
+            (
+                "neighbor",
+                neighbor,
+                VECTOR_BUILD_SESSION_NEIGHBOR_OVERHEAD_BYTES,
+            ),
+            (
+                "SimHash",
+                simhash,
+                VECTOR_BUILD_SESSION_SIMHASH_OVERHEAD_BYTES,
+            ),
+        ] {
+            assert!(
+                needed <= charged,
+                "a {kind} entry needs {needed} bookkeeping bytes but is charged {charged}"
+            );
+        }
+    }
+
+    #[test]
     fn build_session_namespace_overhead_covers_its_structures() {
         use crate::encoding::v2::keys::scope::DataScope;
         use crate::search::vector::distance::Cosine;
@@ -4372,7 +4462,7 @@ mod tests {
         assert_eq!(session.caches.len(), 3);
         assert_session_bookkeeping(&session);
 
-        let per_simhash = VECTOR_BUILD_SESSION_ENTRY_OVERHEAD_BYTES + core::mem::size_of::<u64>();
+        let per_simhash = VECTOR_BUILD_SESSION_SIMHASH_OVERHEAD_BYTES + core::mem::size_of::<u64>();
         let budget = 2 * VECTOR_BUILD_SESSION_NAMESPACE_OVERHEAD_BYTES + 4 * per_simhash;
         session.max_payload_bytes = budget;
         let db = session_test_db("vector-build-session-global-lru").await;
@@ -4400,7 +4490,7 @@ mod tests {
         const TENANTS: u64 = 2_000;
         const KEPT: u64 = 64;
         let per_namespace = VECTOR_BUILD_SESSION_NAMESPACE_OVERHEAD_BYTES
-            + VECTOR_BUILD_SESSION_ENTRY_OVERHEAD_BYTES
+            + VECTOR_BUILD_SESSION_SIMHASH_OVERHEAD_BYTES
             + core::mem::size_of::<u64>();
         let kept_bytes = usize::try_from(KEPT).unwrap() * per_namespace;
         let mut session = VectorBuildSession::<Cosine>::new(

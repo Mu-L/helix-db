@@ -42,7 +42,30 @@ const DEFAULT_TEXT_COMPACTION_INPUT_BYTES: u64 = 64 * 1024 * 1024;
 const DEFAULT_TEXT_COMPACTION_TEMP_BYTES: u64 = 128 * 1024 * 1024;
 const DEFAULT_TEXT_COMPACTION_OUTPUT_BLOB_BYTES: u64 = 64 * 1024 * 1024;
 const DEFAULT_TEXT_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
-const DEFAULT_VECTOR_BUILD_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Share of the process memory ceiling the default build cache may retain.
+const VECTOR_BUILD_CACHE_MEMORY_DIVISOR: u64 = 8;
+/// Smallest default build cache, kept even on the smallest hosts.
+const MIN_DEFAULT_VECTOR_BUILD_CACHE_BYTES: u64 = 64 * 1024 * 1024;
+/// Largest default build cache, reached from a 16 GiB memory ceiling.
+const MAX_DEFAULT_VECTOR_BUILD_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Default build cache when no memory ceiling is readable: a 2 GiB host's share.
+const FALLBACK_VECTOR_BUILD_CACHE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Sizes the default vector build planning cache from a memory ceiling.
+///
+/// One eighth of the ceiling, clamped to 64 MiB..=2 GiB, keeps the retained
+/// cache a minority of a small container's memory while letting a large host
+/// keep the planning working set of about half a million 768-dimensional
+/// vectors resident.
+fn default_vector_build_cache_bytes(memory_ceiling: Option<u64>) -> NonZeroU64 {
+    let bytes = memory_ceiling.map_or(FALLBACK_VECTOR_BUILD_CACHE_BYTES, |ceiling| {
+        (ceiling / VECTOR_BUILD_CACHE_MEMORY_DIVISOR).clamp(
+            MIN_DEFAULT_VECTOR_BUILD_CACHE_BYTES,
+            MAX_DEFAULT_VECTOR_BUILD_CACHE_BYTES,
+        )
+    });
+    NonZeroU64::new(bytes).expect("default vector build cache bytes are positive")
+}
 
 /// Positive common source and transaction limits for text/vector builders.
 ///
@@ -324,8 +347,9 @@ impl SearchIndexBackfillLimits {
             edge_property_read_batch,
             text_artifacts,
             text_compaction,
-            vector_build_cache_bytes: NonZeroU64::new(DEFAULT_VECTOR_BUILD_CACHE_BYTES)
-                .expect("default vector build cache bytes are positive"),
+            vector_build_cache_bytes: default_vector_build_cache_bytes(
+                super::host_memory::memory_ceiling_bytes(),
+            ),
         })
     }
 
@@ -333,19 +357,27 @@ impl SearchIndexBackfillLimits {
     ///
     /// One vector build retains up to this many bytes of decoded vectors,
     /// neighbor rows, and SimHashes between its committed steps, plus the same
-    /// amount per in-flight vector build task. The cache is process-local and
-    /// never persisted.
+    /// amount per in-flight vector build task. The budget charges each entry's
+    /// payload plus its estimated bookkeeping, and caps each entry class at one
+    /// entry per KiB. The cache is process-local and never persisted.
     ///
-    /// The 2 GiB default keeps the planning working set of a build of roughly
-    /// half a million 768-dimensional vectors resident; once a build outgrows
-    /// the budget, evicted rows are re-read and decoded from storage on every
-    /// insert and throughput falls steeply. Retention is demand-filled, so
-    /// smaller builds hold only what they touch.
+    /// The default is one eighth of the process memory ceiling, clamped to
+    /// 64 MiB..=2 GiB. The ceiling is the tightest cgroup (v2 or v1) memory
+    /// limit of the process, capped by physical memory, and 256 MiB is used
+    /// when neither is readable. A host with 16 GiB or more keeps the planning
+    /// working set of roughly half a million 768-dimensional vectors resident;
+    /// once a build outgrows the budget, evicted rows are re-read and decoded
+    /// from storage on every insert and throughput falls steeply. Retention is
+    /// demand-filled, so smaller builds hold only what they touch. Set the
+    /// budget explicitly for a result that does not depend on the host.
     ///
     /// ```
     /// use std::num::NonZeroU64;
     ///
     /// use db::config::SearchIndexBackfillLimits;
+    ///
+    /// let default = SearchIndexBackfillLimits::default().vector_build_cache_bytes();
+    /// assert!((64 << 20..=2 << 30).contains(&default.get()));
     ///
     /// let budget = NonZeroU64::new(64 * 1024 * 1024).unwrap();
     /// let limits = SearchIndexBackfillLimits::default().with_vector_build_cache_bytes(budget);
@@ -499,8 +531,8 @@ mod tests {
         assert_eq!(limits.batch().max_output_bytes().get(), 8 * 1024 * 1024);
         assert_eq!(limits.edge_property_read_batch(), NonZeroUsize::MIN);
         assert_eq!(
-            limits.vector_build_cache_bytes().get(),
-            2 * 1024 * 1024 * 1024
+            limits.vector_build_cache_bytes(),
+            default_vector_build_cache_bytes(crate::config::host_memory::memory_ceiling_bytes())
         );
         assert!(limits.text_artifacts().max_bytes() <= limits.batch().max_output_bytes());
         assert!(limits.text_compaction().max_manifest_bytes() <= limits.batch().max_output_bytes());
@@ -512,6 +544,28 @@ mod tests {
             limits.active_text_mutation().max_output_bytes(),
             limits.batch().max_output_bytes()
         );
+    }
+
+    #[test]
+    fn vector_build_cache_default_is_an_eighth_of_the_memory_ceiling() {
+        const MIB: u64 = 1024 * 1024;
+        const GIB: u64 = 1024 * MIB;
+        for (ceiling, expected) in [
+            (Some(0), 64 * MIB),
+            (Some(512 * MIB), 64 * MIB),
+            (Some(2 * GIB), 256 * MIB),
+            (Some(3 * GIB), 384 * MIB),
+            (Some(16 * GIB), 2 * GIB),
+            (Some(256 * GIB), 2 * GIB),
+            (Some(u64::MAX), 2 * GIB),
+            (None, 256 * MIB),
+        ] {
+            assert_eq!(
+                default_vector_build_cache_bytes(ceiling).get(),
+                expected,
+                "{ceiling:?}"
+            );
+        }
     }
 
     #[test]

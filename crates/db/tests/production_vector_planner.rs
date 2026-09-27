@@ -1418,7 +1418,7 @@ async fn public_dynamic_vector_ddl_backfills_existing_nodes() {
 /// record build deltas. Retried under a small output-operation budget, both
 /// source-scan and catch-up steps end on an entity whose planned writes no
 /// longer fit; that entity is discarded from the retained planning cache and
-/// replanned by the next step. The 4 KiB cache budget evicts retained rows
+/// replanned by the next step. The 8 KiB cache budget evicts retained rows
 /// between entities throughout the build.
 #[tokio::test]
 async fn public_vector_backfill_splits_scan_and_catch_up_batches_under_small_budgets() {
@@ -1426,7 +1426,7 @@ async fn public_vector_backfill_splits_scan_and_catch_up_batches_under_small_bud
         .expect("fixture token is valid");
     let defaults = SearchIndexBackfillLimits::default();
     let batch = defaults.batch();
-    let cache_bytes = NonZeroU64::new(4 * 1024).expect("fixture cache budget is positive");
+    let cache_bytes = NonZeroU64::new(8 * 1024).expect("fixture cache budget is positive");
     let limits = SearchIndexBackfillLimits::try_new(
         SearchIndexBatchLimits::try_new(
             batch.max_entities(),
