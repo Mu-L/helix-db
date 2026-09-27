@@ -119,6 +119,12 @@ five minutes, so a burst of searches over many splits can exceed the share brief
 | `HELIX_DISK_CACHE_BYTES` | Total disk budget in bytes, from 64 MiB to 1 TiB; defaults to 32 GiB. Half goes to object-store SST parts (`object-store/`), 3/8 to the SlateDB block cache (`slate/`), and the rest to full-text splits (`fts/`). |
 | `HELIX_DISK_CACHE_MEMORY_BYTES` | Memory tier of the SlateDB block cache in bytes; defaults to 640 MiB, the memory-only default. |
 
+Size the container's memory for more than `HELIX_DISK_CACHE_MEMORY_BYTES`: the block
+cache also indexes everything in `slate/` in memory. Once `slate/` fills, that index
+takes roughly 2–9 MiB of RAM per GiB of `HELIX_DISK_CACHE_BYTES`, about 70–280 MiB
+at the 32 GiB default and 2–9 GiB at 1 TiB. A restart rebuilds it from disk before
+the server listens, briefly using about twice as much memory.
+
 The block cache holds one file open per partition: its 3/8 share divided by a
 power-of-two block of 64 KiB to 16 MiB, at most 32,768 files. With 2,024 more for
 the object-store tier and the rest of the server, the minimum is 26,600 open files
