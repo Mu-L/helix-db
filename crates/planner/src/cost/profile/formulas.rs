@@ -291,8 +291,10 @@ impl StorageCostProfile {
     /// concurrently with the set read, and evaluates every row of another
     /// label per row. The planner cannot see which labels an expansion
     /// reaches, so half of the input is charged the stored-record filter as
-    /// the expected share of those rows. A membership bound to a label the
-    /// stream never reaches therefore cannot look cheaper than the filter.
+    /// a heuristic share of those rows. An unscoped membership therefore wins
+    /// only once the stream is large enough to amortize both bitmap reads,
+    /// even though the stream may never reach the label and then evaluates
+    /// every row after reading them.
     ///
     /// ```
     /// use helix_planner::cost::{EstimatedRows, StorageCostProfile};
