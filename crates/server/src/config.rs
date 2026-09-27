@@ -8,7 +8,14 @@ use db::HelixDbSource;
 
 /// Resident bytes for the hybrid SlateDB cache's memory tier when
 /// `HELIX_DISK_CACHE_MEMORY_BYTES` is unset: the block plus metadata budget the
-/// memory-only mode already uses, so enabling the disk tier does not change RSS.
+/// memory-only mode already uses.
+///
+/// The disk tier still adds RSS outside this budget. Foyer indexes every
+/// entry of its `slate/` share in memory, about 50-90 bytes each, and an
+/// entry (a 4 KiB SlateDB block plus its header) takes one or two 4 KiB pages
+/// on disk. Once the share fills that is roughly 2-9 MiB of RAM per GiB of
+/// `HELIX_DISK_CACHE_BYTES`, and a restart briefly needs about twice as much
+/// while it rebuilds the index from disk.
 const DEFAULT_CACHE_MEMORY_BYTES: NonZeroUsize = NonZeroUsize::new(
     (slatedb::db_cache::DEFAULT_BLOCK_CACHE_CAPACITY
         + slatedb::db_cache::DEFAULT_META_CACHE_CAPACITY) as usize,
@@ -22,7 +29,9 @@ const DEFAULT_CACHE_DISK_BYTES: NonZeroUsize =
 /// object-store cache parts.
 const MIN_CACHE_DISK_BYTES: usize = 64 * 1024 * 1024;
 /// Largest disk budget (1 TiB). Its 3/8 block-cache share keeps the block
-/// cache within 32Ki partition files, each held open while the server runs.
+/// cache within 32Ki partition files, each held open while the server runs,
+/// and its full index within roughly 2-9 GiB of RAM (see
+/// [`DEFAULT_CACHE_MEMORY_BYTES`]).
 const MAX_CACHE_DISK_BYTES: usize = 1024 * 1024 * 1024 * 1024;
 /// Open files the server needs besides the two disk-cache tiers: listeners,
 /// connections, WAL and SST reads, and full-text split files.

@@ -580,6 +580,12 @@ the object store. The other two caches keep their files and evict down to a smal
 budget as they admit new data. Full-text search data is cached on demand, once
 searches have used it twice; the server downloads none of it at startup.
 
+The block cache also indexes its disk share in memory, outside
+`HELIX_DISK_CACHE_MEMORY_BYTES`. Once full, the index takes roughly 2–9 MiB of RAM
+per GiB of `HELIX_DISK_CACHE_BYTES` (about 70–280 MiB at the default, 2–9 GiB at
+1 TiB), and a restart briefly needs about twice that while it rebuilds the index.
+Size the container's memory limit for both.
+
 The block cache keeps up to 32,768 files open, so the server needs at least 34,792
 open files in the worst case (26,600 at the default budget), plus one per open
 full-text split. It raises its soft open-file limit to the hard limit at startup.
