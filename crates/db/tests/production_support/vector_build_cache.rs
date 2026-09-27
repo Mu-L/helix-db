@@ -3,7 +3,8 @@
 //! This feature-gated child of the vector lifecycle driver exercises the
 //! driver-owned [`VectorBuildCache`] against canonical operation and index
 //! records written by the production lifecycle entry points. The sessions it
-//! retains hold no rows, so no vector row family is written.
+//! retains hold only fixture SimHashes that mark reuse, so no vector row
+//! family is written.
 
 use std::num::NonZeroU64;
 
@@ -78,6 +79,14 @@ async fn create_build(
     (operation, record)
 }
 
+/// Checks out `checkpoint`'s session and returns the SimHashes it retains.
+async fn checked_out_simhashes<D: Distance>(
+    cache: &VectorBuildCache,
+    checkpoint: &VectorBuildCheckpoint,
+) -> usize {
+    cache.checkout::<D>(checkpoint).await.simhash_count()
+}
+
 /// Proves the retained cache reuses only the exact committed checkpoint.
 ///
 /// A session is released to the next step only for the operation, index
@@ -113,27 +122,25 @@ pub(crate) async fn run() {
     advanced.progress =
         IndexOperationProgress::VectorBuild(VectorBuildProgress::Constructing(catch_up.clone()));
 
-    const FRESH: u64 = 1 << 20;
-    const MARKED: u64 = 4_099;
-    let cache = VectorBuildCache::new(NonZeroU64::new(FRESH).expect("budget is positive"));
+    const BUDGET: u64 = 1 << 20;
+    const MARKED: usize = 3;
+    let cache = VectorBuildCache::new(NonZeroU64::new(BUDGET).expect("budget is positive"));
     let marked = |checkpoint: &VectorBuildCheckpoint| {
         Some(CommittedStepState::VectorBuild(Box::new(
             RetainedVectorBuild {
                 checkpoint: checkpoint.clone(),
-                session: Box::new(VectorBuildSession::<Euclidean>::new(
-                    NonZeroU64::new(MARKED).expect("marker budget is positive"),
+                session: Box::new(VectorBuildSession::<Euclidean>::with_test_simhashes(
+                    NonZeroU64::new(BUDGET).expect("marker budget is positive"),
+                    u64::try_from(MARKED).expect("marker count fits u64"),
                 )),
             },
         )))
     };
-    let checkout_budget = |checkpoint: &VectorBuildCheckpoint| {
-        u64::try_from(cache.checkout::<Euclidean>(checkpoint).max_payload_bytes())
-            .expect("session budget fits u64")
-    };
     let retained_checkpoints = || {
         cache
             .retained
-            .lock()
+            .try_lock()
+            .expect("no commit is trimming the retained sessions")
             .iter()
             .map(|retained| retained.checkpoint.clone())
             .collect::<Vec<_>>()
@@ -145,7 +152,7 @@ pub(crate) async fn run() {
     .retaining(
         &first,
         &first_record,
-        VectorBuildSession::<Euclidean>::new(NonZeroU64::new(MARKED).expect("budget is positive")),
+        VectorBuildSession::<Euclidean>::new(NonZeroU64::new(BUDGET).expect("budget is positive")),
     )
     .into_execution();
     assert!(format!("{execution:?}").contains("CommittedStepState::VectorBuild"));
@@ -163,7 +170,7 @@ pub(crate) async fn run() {
                 &first,
                 &first_record,
                 VectorBuildSession::<Euclidean>::new(
-                    NonZeroU64::new(MARKED).expect("budget is positive"),
+                    NonZeroU64::new(BUDGET).expect("budget is positive"),
                 ),
             )
             .into_execution();
@@ -173,84 +180,115 @@ pub(crate) async fn run() {
         );
     }
 
-    assert_eq!(checkout_budget(&checkpoint), FRESH);
+    assert_eq!(
+        checked_out_simhashes::<Euclidean>(&cache, &checkpoint).await,
+        0
+    );
     for committed in [
         CommittedOperationStep::Blocked,
         CommittedOperationStep::Completed,
         CommittedOperationStep::TransientFailure,
     ] {
-        cache.after_commit(first.operation_id(), committed, marked(&checkpoint));
+        cache
+            .after_commit(first.operation_id(), committed, marked(&checkpoint))
+            .await;
         assert!(retained_checkpoints().is_empty(), "{committed:?}");
     }
 
-    cache.after_commit(
-        first.operation_id(),
-        CommittedOperationStep::Progressed,
-        marked(&checkpoint),
-    );
-    assert_eq!(checkout_budget(&checkpoint), MARKED);
-    assert!(retained_checkpoints().is_empty());
-
-    cache.after_commit(
-        first.operation_id(),
-        CommittedOperationStep::Progressed,
-        marked(&checkpoint),
-    );
-    assert_eq!(
-        u64::try_from(
-            cache
-                .checkout::<vector::distance::Cosine>(&checkpoint)
-                .max_payload_bytes()
+    cache
+        .after_commit(
+            first.operation_id(),
+            CommittedOperationStep::Progressed,
+            marked(&checkpoint),
         )
-        .expect("session budget fits u64"),
-        FRESH
-    );
-
-    cache.after_commit(
-        first.operation_id(),
-        CommittedOperationStep::Progressed,
-        marked(&checkpoint),
-    );
-    assert_eq!(checkout_budget(&other_operation), FRESH);
-    assert_eq!(retained_checkpoints(), vec![checkpoint.clone()]);
-    cache.after_commit(
-        second.operation_id(),
-        CommittedOperationStep::Progressed,
-        None,
-    );
-    assert_eq!(retained_checkpoints(), vec![checkpoint.clone()]);
-
-    assert_eq!(checkout_budget(&advanced), FRESH);
-    assert!(retained_checkpoints().is_empty());
-
-    cache.after_commit(
-        first.operation_id(),
-        CommittedOperationStep::Progressed,
-        marked(&checkpoint),
-    );
-    cache.after_commit(
-        first.operation_id(),
-        CommittedOperationStep::Progressed,
-        None,
+        .await;
+    assert_eq!(
+        checked_out_simhashes::<Euclidean>(&cache, &checkpoint).await,
+        MARKED
     );
     assert!(retained_checkpoints().is_empty());
 
-    cache.after_commit(
-        first.operation_id(),
-        CommittedOperationStep::Progressed,
-        marked(&checkpoint),
+    cache
+        .after_commit(
+            first.operation_id(),
+            CommittedOperationStep::Progressed,
+            marked(&checkpoint),
+        )
+        .await;
+    assert_eq!(
+        checked_out_simhashes::<vector::distance::Cosine>(&cache, &checkpoint).await,
+        0
     );
-    cache.after_commit(
-        second.operation_id(),
-        CommittedOperationStep::Progressed,
-        marked(&other_operation),
+
+    cache
+        .after_commit(
+            first.operation_id(),
+            CommittedOperationStep::Progressed,
+            marked(&checkpoint),
+        )
+        .await;
+    assert_eq!(
+        checked_out_simhashes::<Euclidean>(&cache, &other_operation).await,
+        0
     );
+    assert_eq!(retained_checkpoints(), vec![checkpoint.clone()]);
+    cache
+        .after_commit(
+            second.operation_id(),
+            CommittedOperationStep::Progressed,
+            None,
+        )
+        .await;
+    assert_eq!(retained_checkpoints(), vec![checkpoint.clone()]);
+
+    assert_eq!(
+        checked_out_simhashes::<Euclidean>(&cache, &advanced).await,
+        0
+    );
+    assert!(retained_checkpoints().is_empty());
+
+    cache
+        .after_commit(
+            first.operation_id(),
+            CommittedOperationStep::Progressed,
+            marked(&checkpoint),
+        )
+        .await;
+    cache
+        .after_commit(
+            first.operation_id(),
+            CommittedOperationStep::Progressed,
+            None,
+        )
+        .await;
+    assert!(retained_checkpoints().is_empty());
+
+    cache
+        .after_commit(
+            first.operation_id(),
+            CommittedOperationStep::Progressed,
+            marked(&checkpoint),
+        )
+        .await;
+    cache
+        .after_commit(
+            second.operation_id(),
+            CommittedOperationStep::Progressed,
+            marked(&other_operation),
+        )
+        .await;
     assert_eq!(
         retained_checkpoints(),
         vec![checkpoint.clone(), other_operation.clone()]
     );
-    assert_eq!(checkout_budget(&other_operation), MARKED);
-    assert_eq!(checkout_budget(&checkpoint), MARKED);
+    assert_eq!(
+        checked_out_simhashes::<Euclidean>(&cache, &other_operation).await,
+        MARKED
+    );
+    assert_eq!(
+        checked_out_simhashes::<Euclidean>(&cache, &checkpoint).await,
+        MARKED
+    );
 
     // Planning errors cross the step unchanged, before any session is offered.
     let ValidatedDynamicIndexDefinition::Vector(definition) = first_record.definition() else {

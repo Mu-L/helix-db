@@ -150,25 +150,49 @@ impl<D: Distance> RetainedBuildSession for VectorBuildSession<D> {
 /// committed session whole.
 const MAX_RETAINED_VECTOR_BUILDS: usize = 16;
 
+/// Returns the max-min fair cap of sessions sharing `budget`, or `None` if all fit.
+///
+/// Sessions at or under their fair share keep every byte, and the larger ones
+/// split what remains equally: each is capped at the returned level.
+fn max_min_cap(budget: usize, sizes: impl IntoIterator<Item = usize>) -> Option<usize> {
+    let mut sizes = sizes.into_iter().collect::<Vec<_>>();
+    sizes.sort_unstable();
+    let count = sizes.len();
+    let mut remaining = budget;
+    sizes.into_iter().enumerate().find_map(|(index, size)| {
+        let share = remaining / (count - index);
+        remaining = remaining.saturating_sub(size);
+        (size > share).then_some(share)
+    })
+}
+
 /// Driver-owned build planning sessions retained between committed steps.
 ///
 /// Holds at most one session per operation and [`MAX_RETAINED_VECTOR_BUILDS`]
 /// in total, least recently committed first, so interleaved builds each check
-/// out their own session instead of evicting each other's. Retained sessions
-/// share `budget`: after every commit the largest shrink to one common cap
-/// until all fit, so interleaved builds converge to equal shares. Each
-/// in-flight step owns one more session bounded by `budget`, and dropping a
-/// large session frees its entries off the executor thread.
+/// out their own session instead of evicting each other's. The retained
+/// sessions share `budget` max-min fairly and fit it together once each
+/// commit's trim completes.
+///
+/// No bulk eviction runs on the async executor. A checked-out session is bound
+/// to its max-min share of `budget` beside the other retained sessions, so
+/// per-entity [`VectorBuildSession::enforce_limits`] evicts it incrementally
+/// between the step's awaits instead of letting it grow back to the whole
+/// budget. A commit then only trims what its step added beyond the budget,
+/// which happens when a build joins others already holding it or when steps
+/// run concurrently, and that trim runs on the blocking pool. A dropped large
+/// session frees its entries on a background thread.
 struct VectorBuildCache {
     budget: NonZeroU64,
-    retained: parking_lot::Mutex<Vec<RetainedVectorBuild>>,
+    /// An async lock, because a commit holds it while its trim runs off the executor.
+    retained: Arc<tokio::sync::Mutex<Vec<RetainedVectorBuild>>>,
 }
 
 impl VectorBuildCache {
     fn new(budget: NonZeroU64) -> Self {
         Self {
             budget,
-            retained: parking_lot::Mutex::new(Vec::new()),
+            retained: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -176,21 +200,47 @@ impl VectorBuildCache {
     ///
     /// A retained session for the same operation at any other checkpoint, or
     /// of another metric, is stale and dropped; other operations' sessions stay.
-    fn checkout<D: Distance>(&self, checkpoint: &VectorBuildCheckpoint) -> VectorBuildSession<D> {
-        let retained = {
-            let mut retained = self.retained.lock();
-            retained
+    /// The returned session is bound to its max-min share of the budget, with
+    /// its own demand unbounded, beside the other retained sessions: the whole
+    /// budget when it is the only build. Because the retained sessions fit the
+    /// budget together, a reused session is already within its share.
+    async fn checkout<D: Distance>(
+        &self,
+        checkpoint: &VectorBuildCheckpoint,
+    ) -> VectorBuildSession<D> {
+        let budget = usize::try_from(self.budget.get()).unwrap_or(usize::MAX);
+        let (retained, share) = {
+            let mut retained = self.retained.lock().await;
+            let own = retained
                 .iter()
                 .position(|retained| retained.checkpoint.operation_id == checkpoint.operation_id)
-                .map(|index| retained.remove(index))
+                .map(|index| retained.remove(index));
+            let share = max_min_cap(
+                budget,
+                retained
+                    .iter()
+                    .map(|retained| retained.session.retained_bytes())
+                    .chain(core::iter::once(usize::MAX)),
+            )
+            // Only an unbounded budget fits an unbounded demand.
+            .unwrap_or(budget);
+            (own, share)
         };
+        let share =
+            NonZeroU64::new(u64::try_from(share).unwrap_or(u64::MAX)).unwrap_or(NonZeroU64::MIN);
         let mut session = retained
             .filter(|retained| retained.checkpoint == *checkpoint)
             .and_then(|retained| {
                 let session: Box<dyn Any> = retained.session;
                 session.downcast::<VectorBuildSession<D>>().ok()
             })
-            .map_or_else(|| VectorBuildSession::new(self.budget), |session| *session);
+            .map_or_else(
+                || VectorBuildSession::new(share),
+                |mut session| {
+                    session.set_max_retained_bytes(share);
+                    *session
+                },
+            );
         session.reset_stats();
         session
     }
@@ -199,14 +249,17 @@ impl VectorBuildCache {
     ///
     /// The shared budget is then split max-min fairly: sessions under their
     /// fair share keep every entry, and the rest shrink to the one cap that
-    /// exactly fills what remains. A session that cannot shrink is dropped.
-    fn after_commit(
+    /// exactly fills what remains. Shrinking runs on the blocking pool while
+    /// the lock is held, so no checkout observes a session mid-trim and the
+    /// executor thread never runs the evictions. A session that cannot shrink
+    /// is dropped.
+    async fn after_commit(
         &self,
         operation_id: IndexOperationId,
         committed: CommittedOperationStep,
         state: Option<CommittedStepState>,
     ) {
-        let mut retained = self.retained.lock();
+        let mut retained = Arc::clone(&self.retained).lock_owned().await;
         retained.retain(|retained| retained.checkpoint.operation_id != operation_id);
         let (CommittedOperationStep::Progressed, Some(CommittedStepState::VectorBuild(next))) =
             (committed, state)
@@ -217,23 +270,28 @@ impl VectorBuildCache {
         if retained.len() > MAX_RETAINED_VECTOR_BUILDS {
             retained.remove(0);
         }
-        let mut sizes = retained
-            .iter()
-            .map(|retained| retained.session.retained_bytes())
-            .collect::<Vec<_>>();
-        sizes.sort_unstable();
-        let mut remaining = usize::try_from(self.budget.get()).unwrap_or(usize::MAX);
-        let count = sizes.len();
-        let Some(cap) = sizes.into_iter().enumerate().find_map(|(index, size)| {
-            let share = remaining / (count - index);
-            remaining = remaining.saturating_sub(size);
-            (size > share).then_some(share)
-        }) else {
+        let Some(cap) = max_min_cap(
+            usize::try_from(self.budget.get()).unwrap_or(usize::MAX),
+            retained
+                .iter()
+                .map(|retained| retained.session.retained_bytes()),
+        ) else {
             return;
         };
-        retained.retain_mut(|retained| {
-            retained.session.retained_bytes() <= cap || retained.session.shrink_to(cap).is_ok()
-        });
+        let trimmed = tokio::task::spawn_blocking(move || {
+            retained.retain_mut(|retained| {
+                retained.session.retained_bytes() <= cap || retained.session.shrink_to(cap).is_ok()
+            });
+        })
+        .await;
+        // A trim cancelled by runtime shutdown leaves the sessions whole.
+        let Err(error) = trimmed else {
+            return;
+        };
+        let Ok(panic) = error.try_into_panic() else {
+            return;
+        };
+        std::panic::resume_unwind(panic);
     }
 }
 
@@ -272,7 +330,7 @@ impl VectorIndexDriver {
     /// Bounds the build planning sessions retained across committed steps.
     ///
     /// Every retained session shares this budget, and each in-flight step's
-    /// session is bounded by it too.
+    /// session is bounded by its max-min share of it when checked out.
     pub(crate) fn with_build_cache_bytes(mut self, budget: NonZeroU64) -> Self {
         self.build_cache = VectorBuildCache::new(budget);
         self
@@ -467,7 +525,8 @@ impl IndexOperationDriver for VectorIndexDriver {
         state: Option<CommittedStepState>,
     ) {
         self.build_cache
-            .after_commit(operation.operation_id(), committed, state);
+            .after_commit(operation.operation_id(), committed, state)
+            .await;
         if committed != CommittedOperationStep::Completed
             || !matches!(
                 operation.progress(),
@@ -1318,11 +1377,13 @@ async fn step_build<D: Distance>(
             .await
         }
         VectorBuildStage::Scan(progress) => {
-            let mut session = build_cache.checkout::<D>(&VectorBuildCheckpoint::new(
-                operation,
-                record,
-                operation.progress().clone(),
-            ));
+            let mut session = build_cache
+                .checkout::<D>(&VectorBuildCheckpoint::new(
+                    operation,
+                    record,
+                    operation.progress().clone(),
+                ))
+                .await;
             let step = scan_source::<D>(
                 db,
                 transaction,
@@ -1340,11 +1401,13 @@ async fn step_build<D: Distance>(
             Ok(step.retaining(operation, record, session))
         }
         VectorBuildStage::CatchUp(progress) => {
-            let mut session = build_cache.checkout::<D>(&VectorBuildCheckpoint::new(
-                operation,
-                record,
-                operation.progress().clone(),
-            ));
+            let mut session = build_cache
+                .checkout::<D>(&VectorBuildCheckpoint::new(
+                    operation,
+                    record,
+                    operation.progress().clone(),
+                ))
+                .await;
             let step = catch_up::<D>(
                 db,
                 transaction,

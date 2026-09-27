@@ -3056,7 +3056,28 @@ impl SessionVictims {
 }
 
 impl<D: Distance> VectorBuildSession<D> {
-    /// Creates one session bounded by its retained byte budget.
+    /// Creates one empty session bounded by its retained byte budget.
+    ///
+    /// [`Self::set_max_retained_bytes`] describes how the budget is charged.
+    pub(crate) fn new(max_retained_bytes: NonZeroU64) -> Self {
+        let mut session = Self {
+            caches: HashMap::new(),
+            next_touch: CacheSequence::initial(),
+            max_payload_bytes: 0,
+            max_items: 0,
+            max_neighbors: 0,
+            max_simhashes: 0,
+            session_stats: VectorBuildSessionStats::default(),
+            entity_changes: BTreeMap::new(),
+            footprint: SessionFootprint::default(),
+            victims: SessionVictims::default(),
+            dirty: BTreeSet::new(),
+        };
+        session.set_max_retained_bytes(max_retained_bytes);
+        session
+    }
+
+    /// Rebinds the retained byte budget and the class caps that scale with it.
     ///
     /// The budget charges every entry its encoded payload plus its kind's
     /// per-entry bookkeeping ([`VECTOR_BUILD_SESSION_ITEM_OVERHEAD_BYTES`],
@@ -3069,22 +3090,18 @@ impl<D: Distance> VectorBuildSession<D> {
     /// per-step class caps while a large budget is available, yet tiny payloads
     /// cannot multiply the estimated bookkeeping without bound. Eviction remains
     /// deterministic global LRU.
-    pub(crate) fn new(max_retained_bytes: NonZeroU64) -> Self {
+    ///
+    /// A lifecycle driver rebinds a retained session to its fair share of the
+    /// budget it splits across builds. Nothing is evicted here: entries over
+    /// the new limits go at the next [`Self::enforce_limits`] or
+    /// [`Self::shrink_to`].
+    pub(crate) fn set_max_retained_bytes(&mut self, max_retained_bytes: NonZeroU64) {
         let max_payload_bytes = usize::try_from(max_retained_bytes.get()).unwrap_or(usize::MAX);
         let max_entries = (max_payload_bytes / VECTOR_BUILD_SESSION_BUDGET_BYTES_PER_ENTRY).max(1);
-        Self {
-            caches: HashMap::new(),
-            next_touch: CacheSequence::initial(),
-            max_payload_bytes,
-            max_items: max_entries,
-            max_neighbors: max_entries,
-            max_simhashes: max_entries,
-            session_stats: VectorBuildSessionStats::default(),
-            entity_changes: BTreeMap::new(),
-            footprint: SessionFootprint::default(),
-            victims: SessionVictims::default(),
-            dirty: BTreeSet::new(),
-        }
+        self.max_payload_bytes = max_payload_bytes;
+        self.max_items = max_entries;
+        self.max_neighbors = max_entries;
+        self.max_simhashes = max_entries;
     }
 
     /// Creates a small-limit session for deterministic cache contract tests.
@@ -3109,7 +3126,7 @@ impl<D: Distance> VectorBuildSession<D> {
     ///
     /// Lifecycle driver contracts use it to retain sessions of an exact
     /// charged size: one namespace plus one SimHash charge per entry.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "production-coverage"))]
     pub(crate) fn with_test_simhashes(max_retained_bytes: NonZeroU64, simhashes: u64) -> Self {
         let identity = VectorGenerationIdentity::try_new(
             crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
@@ -4370,6 +4387,34 @@ mod tests {
                 "the least recently used SimHashes go first"
             );
         }
+    }
+
+    #[test]
+    fn build_session_rebinds_its_budget_without_evicting() {
+        use crate::search::vector::distance::Cosine;
+
+        let per_simhash = VECTOR_BUILD_SESSION_SIMHASH_OVERHEAD_BYTES + core::mem::size_of::<u64>();
+        let full = VECTOR_BUILD_SESSION_NAMESPACE_OVERHEAD_BYTES + 10 * per_simhash;
+        let mut session = VectorBuildSession::<Cosine>::with_test_simhashes(
+            NonZeroU64::new(1 << 20).unwrap(),
+            10,
+        );
+        let share = full - per_simhash;
+        session.set_max_retained_bytes(NonZeroU64::new(u64::try_from(share).unwrap()).unwrap());
+        assert_eq!(session.max_payload_bytes(), share);
+        assert_eq!(
+            session.max_simhashes,
+            share / VECTOR_BUILD_SESSION_BUDGET_BYTES_PER_ENTRY,
+            "class caps scale with the rebound budget"
+        );
+        assert_eq!(session.simhash_count(), 10, "rebinding evicts nothing");
+        assert_eq!(session.retained_bytes().unwrap(), full);
+
+        // The next eviction honours the rebound byte budget and class caps.
+        session.shrink_to(usize::MAX).unwrap();
+        assert_eq!(session.simhash_count(), session.max_simhashes);
+        assert!(session.retained_bytes().unwrap() <= share);
+        assert_session_bookkeeping(&session);
     }
 
     #[test]
