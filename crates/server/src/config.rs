@@ -25,14 +25,18 @@ const DEFAULT_CACHE_MEMORY_BYTES: NonZeroUsize = NonZeroUsize::new(
 /// The object-store tier receives half, which is SlateDB's own 16 GiB default.
 const DEFAULT_CACHE_DISK_BYTES: NonZeroUsize =
     NonZeroUsize::new(32 * 1024 * 1024 * 1024).expect("default cache disk budget is nonzero");
-/// Smallest disk budget that still leaves every tier several 4 MiB
-/// object-store cache parts.
+/// Smallest disk budget: its 32 MiB object-store share still holds
+/// [`OBJECT_STORE_MIN_PARTS`] parts of 128 KiB.
 const MIN_CACHE_DISK_BYTES: usize = 64 * 1024 * 1024;
 /// Largest disk budget (1 TiB). Its 3/8 block-cache share keeps the block
 /// cache within 32Ki partition files, each held open while the server runs,
 /// and its full index within roughly 2-9 GiB of RAM (see
 /// [`DEFAULT_CACHE_MEMORY_BYTES`]).
 const MAX_CACHE_DISK_BYTES: usize = 1024 * 1024 * 1024 * 1024;
+/// Fewest parts the object-store tier is split into. A miss fetches and
+/// caches a whole part, so parts shrink below SlateDB's 4 MiB default until
+/// the tier holds this many; budgets from 2 GiB keep the default.
+const OBJECT_STORE_MIN_PARTS: usize = 256;
 /// Open files the server needs besides the two disk-cache tiers: listeners,
 /// connections, WAL and SST reads, and full-text split files.
 const OPEN_FILE_HEADROOM: u64 = 1024;
@@ -381,7 +385,10 @@ impl HybridCache {
             object_store: db::config::SlateObjectStoreCacheSettings::try_new(
                 root.join("object-store"),
                 Some(object_store_bytes),
-                object_store_defaults.part_size_bytes,
+                // A power of two of at least 128 KiB, so a whole number of KiB
+                // as SlateDB requires.
+                (1 << (object_store_bytes / OBJECT_STORE_MIN_PARTS).ilog2())
+                    .min(object_store_defaults.part_size_bytes),
                 false,
                 db::config::ObjectStoreWarmLevel::Off,
                 object_store_defaults.scan_interval,
@@ -939,6 +946,32 @@ mod tests {
                     .required_open_files()
                     .is_some_and(|files| files <= 32_768 + 1000 + 1024),
                 "the block cache stays within 32Ki partitions at the {label} budget"
+            );
+        }
+    }
+
+    #[test]
+    fn small_budgets_split_the_object_store_tier_into_smaller_parts() {
+        let directory = tempfile::tempdir().unwrap();
+        for (disk_bytes, part_bytes) in [
+            (MIN_CACHE_DISK_BYTES, 128 * 1024),
+            (MIN_CACHE_DISK_BYTES * 3 / 2, 128 * 1024),
+            (1024 * MIB, 2 * MIB),
+            (2048 * MIB, 4 * MIB),
+            (MAX_CACHE_DISK_BYTES, 4 * MIB),
+        ] {
+            let options = HybridCache::try_new(
+                directory.path().join(disk_bytes.to_string()),
+                NonZeroUsize::new(MIB).unwrap(),
+                NonZeroUsize::new(disk_bytes).unwrap(),
+            )
+            .unwrap()
+            .object_store
+            .to_slate_options();
+            assert_eq!(options.part_size_bytes, part_bytes, "{disk_bytes}");
+            assert!(
+                options.max_cache_size_bytes.unwrap() / part_bytes >= OBJECT_STORE_MIN_PARTS,
+                "a {disk_bytes}-byte budget leaves the tier at least {OBJECT_STORE_MIN_PARTS} parts"
             );
         }
     }

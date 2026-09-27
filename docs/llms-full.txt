@@ -581,7 +581,10 @@ usually changes the block size, which discards the database-block cache at start
 so it refills from the object store. The other two caches keep their files and
 evict down to a smaller budget as they admit new data. Full-text search data is
 cached on demand, once searches have used it twice; the server downloads none of it
-at startup.
+at startup. Budget at least twice the data the server reads often: the object-store
+cache fetches whole file parts (4 MiB, or smaller under a 2 GiB budget), so once
+that data outgrows half the budget, cold reads fetch more than memory-only caches
+would.
 
 The block cache also indexes its disk share in memory, outside
 `HELIX_DISK_CACHE_MEMORY_BYTES`. Once full, the index takes roughly 2–9 MiB of RAM

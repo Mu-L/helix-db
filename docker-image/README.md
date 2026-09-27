@@ -113,6 +113,12 @@ used it twice, and startup downloads nothing into it. Admitting a split evicts t
 least recently used ones down to the tier's share but keeps any used in the last
 five minutes, so a burst of searches over many splits can exceed the share briefly.
 
+On a miss the object-store tier fetches and keeps a whole part of an SST: 4 MiB, or
+less for budgets under 2 GiB so that the tier always holds at least 256 parts. Budget
+at least twice the data the server reads often. Once that data outgrows half the
+budget, parts keep evicting each other and cold reads fetch more from the object
+store than memory-only caches would.
+
 | Variable | Purpose |
 | --- | --- |
 | `HELIX_DISK_CACHE_DIR` | Enables the disk cache in this directory, creating it and its `slate/`, `object-store/` and `fts/` subdirectories if needed; unset keeps memory-only caches. Rejected with memory storage. |
