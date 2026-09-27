@@ -5,6 +5,7 @@
 //! against a local status stub).
 #![allow(dead_code)]
 
+use std::collections::HashSet;
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -717,19 +718,50 @@ pub async fn candidate_embeddings(
         .collect()
 }
 
-pub fn exact_top_k(candidates: &[(u64, Vec<f32>)], query: &[f32], k: usize) -> Vec<u64> {
-    let mut scored = candidates
+/// Recall@k of `returned` against an exact f64 cosine scan of `candidates`.
+///
+/// A returned id is a hit when its similarity is within
+/// `query.len() * f32::EPSILON` of the k-th best. That bounds how far the
+/// server's f32 cosine over `query.len()` terms can move two scores apart, so
+/// a near-tie the server orders the other way at rank k is not a miss, while
+/// any clearly worse neighbour is. An empty scope or `k = 0` scores 0.
+pub fn recall_at_k(
+    candidates: &[(u64, Vec<f32>)],
+    query: &[f32],
+    k: usize,
+    returned: &HashSet<u64>,
+) -> f64 {
+    let query_norm = query
+        .iter()
+        .map(|value| f64::from(*value).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    let mut ranked = candidates
         .iter()
         .map(|(id, vector)| {
             let dot = vector
                 .iter()
                 .zip(query)
-                .map(|(left, right)| left * right)
-                .sum::<f32>();
-            let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
-            (-(dot / norm), *id)
+                .map(|(left, right)| f64::from(*left) * f64::from(*right))
+                .sum::<f64>();
+            let norm = vector
+                .iter()
+                .map(|value| f64::from(*value).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            (dot / (norm * query_norm), *id)
         })
         .collect::<Vec<_>>();
-    scored.sort_by(|left, right| left.partial_cmp(right).unwrap());
-    scored.into_iter().take(k).map(|(_, id)| id).collect()
+    ranked.sort_by(|left, right| right.0.total_cmp(&left.0));
+    let expected = k.min(ranked.len());
+    let Some(&(kth, _)) = expected.checked_sub(1).and_then(|last| ranked.get(last)) else {
+        return 0.0;
+    };
+    let near_tie = query.len() as f64 * f64::from(f32::EPSILON);
+    let hits = ranked
+        .iter()
+        .take_while(|(similarity, _)| *similarity >= kth - near_tie)
+        .filter(|(_, id)| returned.contains(id))
+        .count();
+    hits as f64 / expected as f64
 }

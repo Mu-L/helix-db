@@ -208,9 +208,7 @@ async fn run_queries(label: &str, backend: &Backend) {
                 .iter()
                 .filter_map(|row| row["id"].as_u64())
                 .collect::<std::collections::HashSet<_>>();
-            let expected = fixture::exact_top_k(candidates, vector, *k);
-            let hits = expected.iter().filter(|id| returned.contains(id)).count();
-            recalls.push(hits as f64 / expected.len().max(1) as f64);
+            recalls.push(fixture::recall_at_k(candidates, vector, *k, &returned));
         }
         if let Some(message) = error {
             println!("{name:<36} ERROR {message}");

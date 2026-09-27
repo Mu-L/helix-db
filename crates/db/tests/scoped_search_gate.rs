@@ -2,7 +2,7 @@
 //! `Group <- Item -> Attribute` graph shaped like a production product graph.
 //!
 //! Every scoped vector shape must stay inside its traversal scope and keep
-//! recall@k against a client-side exact scan, at a floor set by the
+//! tie-aware recall@k against a client-side exact scan, at a floor set by the
 //! restricted strategy it ran. The gate must exercise both strategies: the
 //! kind-B scopes exceed the exact-scan admission limit and take the bounded
 //! filtered graph walk, while the group scopes are scanned exactly. A
@@ -35,9 +35,10 @@ use slatedb::object_store::memory::InMemory;
 use slatedb::object_store::ObjectStore;
 
 const QUERIES: usize = 12;
-/// An exact scan ranks every candidate; the margin only absorbs float
-/// near-ties at rank k between the server and the client-side scan.
-const EXACT_MIN_RECALL: f64 = 0.99;
+/// An exact scan ranks every candidate, so it must return every neighbour.
+/// Recall is tie-aware (see `fixture::recall_at_k`), so a float near-tie the
+/// server orders the other way at rank k is not a miss, even at k = 5.
+const EXACT_MIN_RECALL: f64 = 1.0;
 /// The bounded walk's floor on the default fixture, pinned below its measured
 /// baseline: kind-B recall@50 was 0.942 on each of three runs.
 const WALK_MIN_RECALL: f64 = 0.90;
@@ -103,10 +104,10 @@ async fn scoped_search_keeps_recall_and_exact_filter_semantics() {
                     returned.is_subset(candidate_ids),
                     "{name} returned ids outside its traversal scope"
                 );
-                let expected = fixture::exact_top_k(candidates, vector, k);
-                let recall = expected.iter().filter(|id| returned.contains(id)).count() as f64
-                    / expected.len().max(1) as f64;
-                (strategy, recall)
+                (
+                    strategy,
+                    fixture::recall_at_k(candidates, vector, k, &returned),
+                )
             }
         }))
         .await;
@@ -167,6 +168,30 @@ async fn scoped_search_keeps_recall_and_exact_filter_semantics() {
         .count() as u64;
     assert!(expected > 0, "fixture has kind-B attributes in scope");
     assert_eq!(filtered["r"].as_u64(), Some(expected));
+}
+
+/// Recall counts a returned id that ties the k-th neighbour within float
+/// rounding as a hit, and a clearly worse neighbour as a miss.
+#[test]
+fn recall_counts_a_near_tie_at_rank_k_but_not_a_worse_neighbour() {
+    let query = [1.0, 0.0, 0.0, 0.0];
+    let candidates = vec![
+        (1, vec![1.0, 0.0, 0.0, 0.0]),
+        // Cosine 0.6, the 2nd neighbour.
+        (2, vec![3.0, 4.0, 0.0, 0.0]),
+        // Cosine 0.6 - 1.2e-8: ranked 3rd, within 4 * f32::EPSILON of the 2nd.
+        (3, vec![3.0, 4.0, 0.0, 1e-3]),
+        // Cosine 0.59988: 1.2e-4 below the 2nd.
+        (4, vec![3.0, 4.0, 0.0, 0.1]),
+    ];
+    let recall = |returned: &[u64]| {
+        fixture::recall_at_k(&candidates, &query, 2, &returned.iter().copied().collect())
+    };
+    assert_eq!(recall(&[1, 2]), 1.0);
+    assert_eq!(recall(&[1, 3]), 1.0);
+    assert_eq!(recall(&[1, 4]), 0.5);
+    assert_eq!(recall(&[3, 4]), 0.5);
+    assert_eq!(fixture::recall_at_k(&[], &query, 2, &HashSet::new()), 0.0);
 }
 
 const OPERATION_ID: &str = "00000000-0000-4000-8000-000000000000";
