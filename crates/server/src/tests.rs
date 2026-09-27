@@ -474,7 +474,11 @@ fn files_below(path: &Path) -> BTreeMap<PathBuf, u64> {
         .collect()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+/// Runs on the current thread so the final runner's transports only start
+/// after its immediate shutdown is sent. On worker threads they could start
+/// first or not, and which of their shutdown-wait lines run would vary
+/// between runs, breaking the exact server coverage fingerprint.
+#[tokio::test]
 async fn hybrid_disk_cache_serves_reopened_reads_from_local_disk() {
     const MIB: usize = 1024 * 1024;
     #[cfg(unix)]
