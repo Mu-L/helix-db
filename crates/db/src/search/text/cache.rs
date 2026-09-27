@@ -794,6 +794,10 @@ impl FtsCache {
             }
             self.remove_artifact(split.blob.sha256).await;
         }
+        // No valid copy is published, so an earlier validation of this key,
+        // say before another cache evicted it, vouches for nothing: the
+        // download below must be hashed in full.
+        self.validated.lock().remove(&key);
 
         let final_path = self
             .artifact_path(split.blob.sha256)
@@ -904,6 +908,9 @@ impl FtsCache {
             })?;
             atomic_saturating_sub(&self.disk_artifact_count, 1);
             atomic_saturating_sub(&self.disk_artifact_bytes, entry.size);
+            self.validated
+                .lock()
+                .retain(|key| key.sha256 != entry.sha256);
             if let Some(metadata) = self.metadata_path(entry.sha256) {
                 let _ = tokio_fs::remove_file(metadata).await;
             }
@@ -1552,6 +1559,80 @@ mod tests {
         )
         .await
         .expect("artifact status"));
+    }
+
+    /// Validation is remembered per key, but only while the validated file
+    /// stays published: after an eviction, by this cache or another on the
+    /// same directory, the next copy is hashed in full.
+    #[tokio::test]
+    async fn evicted_splits_are_hashed_in_full_again() {
+        let database = "fts-cache-evicted-rehash";
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (bytes, split) = valid_split(18);
+        let mut corrupt = bytes.clone();
+        // Outside the footer, so only the hash can tell.
+        corrupt[0] ^= 0xff;
+        let disk = tempfile::tempdir().expect("disk cache");
+        let open_cache = || {
+            cache(
+                database,
+                Arc::clone(&store),
+                Some(disk.path().to_path_buf()),
+                split.total_size_bytes,
+                split.total_size_bytes - 1,
+                Duration::from_secs(1),
+            )
+        };
+        let (hydrating, evicting) = (open_cache(), open_cache());
+        let artifact = hydrating
+            .artifact_path(split.blob.sha256)
+            .expect("artifact path");
+        let metadata = hydrating
+            .metadata_path(split.blob.sha256)
+            .expect("metadata path");
+
+        put_split(&store, database, bytes.clone(), &split).await;
+        hydrating
+            .ensure_artifact(&split)
+            .await
+            .expect("first hydration");
+        tokio_fs::remove_file(&metadata)
+            .await
+            .expect("forget the use");
+        evicting.cleanup_disk().await.expect("cleanup");
+        assert_eq!(evicting.snapshot().disk_evictions, 1);
+        put_split(&store, database, corrupt.clone(), &split).await;
+        assert!(
+            hydrating.ensure_artifact(&split).await.is_err(),
+            "a corrupt download is rejected after another cache's eviction"
+        );
+        assert!(!tokio_fs::try_exists(&artifact)
+            .await
+            .expect("artifact status"));
+
+        put_split(&store, database, bytes, &split).await;
+        hydrating
+            .ensure_artifact(&split)
+            .await
+            .expect("second hydration");
+        tokio_fs::remove_file(&metadata)
+            .await
+            .expect("forget the use");
+        hydrating.cleanup_disk().await.expect("cleanup");
+        tokio_fs::write(&artifact, corrupt)
+            .await
+            .expect("corrupt artifact of the same length");
+        let opened = hydrating
+            .get_or_open_split(&split)
+            .await
+            .expect("remote fallback");
+        assert_eq!(opened.total_docs(), 1);
+        let state = hydrating.snapshot();
+        assert_eq!(
+            (state.disk_evictions, state.disk_corruptions),
+            (1, 1),
+            "a file reappearing after this cache's own eviction is hashed"
+        );
     }
 
     #[tokio::test]
