@@ -104,14 +104,16 @@ old database's full-text cache behind.
 
 Changing `HELIX_DISK_CACHE_BYTES` usually changes the block cache's block size, and
 then the whole block tier (`slate/`) is discarded at startup and refills from the
-object store; only budgets that keep the block size keep it. The object-store and
-full-text tiers keep their files and evict down to a smaller budget as they admit
-new data.
+object store; only budgets that keep the block size keep it. The object-store tier
+keeps its files and evicts down to a smaller budget as it admits new data; the
+full-text tier evicts down to its new share at startup.
 
 The full-text tier fills on demand: a split is copied into `fts/` once searches have
-used it twice, and startup downloads nothing into it. Admitting a split evicts the
-least recently used ones down to the tier's share but keeps any used in the last
-five minutes, so a burst of searches over many splits can exceed the share briefly.
+used it twice, and startup downloads nothing into it. Startup and every admission
+evict the least recently used splits down to the tier's share, so it exceeds the
+share only by splits admitted or read in the last second and splits still open in
+running searches or the 64 MiB full-text memory cache. A split larger than the
+whole share is never copied.
 
 On a miss the object-store tier fetches and keeps a whole part of an SST: 4 MiB, or
 less for budgets under 2 GiB so that the tier always holds at least 256 parts. Budget
