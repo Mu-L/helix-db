@@ -2,15 +2,23 @@
 //! `Group <- Item -> Attribute` graph shaped like a production product graph.
 //!
 //! Every scoped vector shape must stay inside its traversal scope and keep
-//! recall@k against a client-side exact scan, and a stored-property filter
-//! after expansion must count exactly the rows a client-side filter keeps.
+//! recall@k against a client-side exact scan, at a floor set by the
+//! restricted strategy it ran. The gate must exercise both strategies: the
+//! kind-B scopes exceed the exact-scan admission limit and take the bounded
+//! filtered graph walk, while the group scopes are scanned exactly. A
+//! stored-property filter after expansion must count exactly the rows a
+//! client-side filter keeps.
 //!
 //! ```text
 //! cargo test --release -p db --features production-scale --test scoped_search_gate -- --ignored --nocapture
 //! ```
 //!
-//! `HELIX_SCOPED_GATE_SCALE` (default 0.02) and `HELIX_SCOPED_GATE_DIM`
-//! (default 768) size the fixture.
+//! `HELIX_SCOPED_GATE_SCALE` (default 0.15, about 47k attributes and a 10k
+//! kind-B scope) and `HELIX_SCOPED_GATE_DIM` (default 768) size the fixture.
+//! A scale small enough that every scope is scanned exactly fails the gate,
+//! because the walk would go unchecked. The vector index is backfilled after
+//! the graph load, because incremental inserts during the load are far slower
+//! at this scale.
 
 #[path = "../examples/scoped_search_bench/fixture.rs"]
 mod fixture;
@@ -20,20 +28,27 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
+use db::production_coverage::{self, RestrictedSearchStrategy};
 use db::{DbConfig, HelixDB};
 use helix_ast::prelude::*;
 use slatedb::object_store::memory::InMemory;
 use slatedb::object_store::ObjectStore;
 
 const QUERIES: usize = 12;
-const MIN_RECALL: f64 = 0.95;
-/// Every index is created on the empty graph, so each build finishes at once.
-const INDEX_DEADLINE: Duration = Duration::from_secs(5 * 60);
+/// An exact scan ranks every candidate; the margin only absorbs float
+/// near-ties at rank k between the server and the client-side scan.
+const EXACT_MIN_RECALL: f64 = 0.99;
+/// The bounded walk's floor on the default fixture, pinned below its measured
+/// baseline: kind-B recall@50 was 0.942 on each of three runs.
+const WALK_MIN_RECALL: f64 = 0.90;
+/// Bounds each index wait; the default fixture's vector backfill takes about
+/// four minutes in a release build.
+const INDEX_DEADLINE: Duration = Duration::from_secs(30 * 60);
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "release-only scoped search recall and filter-semantics gate"]
 async fn scoped_search_keeps_recall_and_exact_filter_semantics() {
-    let scale = fixture::env_or("HELIX_SCOPED_GATE_SCALE", 0.02);
+    let scale = fixture::env_or("HELIX_SCOPED_GATE_SCALE", 0.15);
     let dimension = fixture::env_or("HELIX_SCOPED_GATE_DIM", 768);
     let store = Arc::new(fixture::CountingStore::new(
         Arc::new(InMemory::new()),
@@ -53,7 +68,7 @@ async fn scoped_search_keeps_recall_and_exact_filter_semantics() {
             scale,
             dimension,
             items_per_batch: 4,
-            vector: fixture::VectorBuild::Before,
+            vector: fixture::VectorBuild::After,
             index_deadline: INDEX_DEADLINE,
         },
     )
@@ -61,6 +76,7 @@ async fn scoped_search_keeps_recall_and_exact_filter_semantics() {
 
     let vectors = fixture::query_vectors(QUERIES, dimension);
     let shape_count = fixture::shapes(&vectors[0]).len();
+    let mut strategies = Vec::new();
     for shape_index in 0..shape_count {
         let (name, scope, _) = fixture::shapes(&vectors[0]).swap_remove(shape_index);
         let Some((scope, k)) = scope else {
@@ -68,14 +84,16 @@ async fn scoped_search_keeps_recall_and_exact_filter_semantics() {
         };
         let candidates = fixture::candidate_embeddings(&backend, scope).await;
         let candidate_ids = candidates.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
-        let recall = futures::future::join_all(vectors.iter().map(|vector| {
+        let observed = futures::future::join_all(vectors.iter().map(|vector| {
             let (_, _, request) = fixture::shapes(vector).swap_remove(shape_index);
             let backend = &backend;
             let candidates = &candidates;
             let candidate_ids = &candidate_ids;
             async move {
-                let response = backend.query(request).await.unwrap();
-                let returned = response["r"]
+                let (response, strategy) =
+                    production_coverage::observe_restricted_vector_strategy(backend.query(request))
+                        .await;
+                let returned = response.unwrap()["r"]
                     .as_array()
                     .unwrap()
                     .iter()
@@ -86,15 +104,44 @@ async fn scoped_search_keeps_recall_and_exact_filter_semantics() {
                     "{name} returned ids outside its traversal scope"
                 );
                 let expected = fixture::exact_top_k(candidates, vector, k);
-                expected.iter().filter(|id| returned.contains(id)).count() as f64
-                    / expected.len().max(1) as f64
+                let recall = expected.iter().filter(|id| returned.contains(id)).count() as f64
+                    / expected.len().max(1) as f64;
+                (strategy, recall)
             }
         }))
         .await;
-        let mean = recall.iter().sum::<f64>() / recall.len() as f64;
-        println!("{name}: recall={mean:.3} candidates={}", candidates.len());
-        assert!(mean >= MIN_RECALL, "{name} recall {mean:.3} < {MIN_RECALL}");
+        let Some(strategy) = observed[0].0 else {
+            panic!("{name} ran no restricted vector search");
+        };
+        assert!(
+            observed
+                .iter()
+                .all(|(observed, _)| *observed == Some(strategy)),
+            "{name} changed restricted strategy between queries"
+        );
+        let floor = match strategy {
+            RestrictedSearchStrategy::Exact => EXACT_MIN_RECALL,
+            RestrictedSearchStrategy::FilteredGraph => WALK_MIN_RECALL,
+        };
+        let mean = observed.iter().map(|(_, recall)| recall).sum::<f64>() / observed.len() as f64;
+        println!(
+            "{name}: strategy={strategy:?} recall={mean:.3} candidates={}",
+            candidates.len()
+        );
+        assert!(
+            mean >= floor,
+            "{name} {strategy:?} recall {mean:.3} < {floor}"
+        );
+        strategies.push(strategy);
     }
+    assert!(
+        strategies.contains(&RestrictedSearchStrategy::Exact),
+        "no scoped shape was scanned exactly"
+    );
+    assert!(
+        strategies.contains(&RestrictedSearchStrategy::FilteredGraph),
+        "no scoped shape reached the filtered graph walk; raise HELIX_SCOPED_GATE_SCALE"
+    );
 
     // The post-expansion filter may be answered from index bitmaps; it must
     // agree with filtering the expanded rows client-side.
