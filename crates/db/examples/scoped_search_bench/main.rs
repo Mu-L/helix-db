@@ -11,6 +11,9 @@
 //! Modes: `load` (graph + indexes; `BENCH_VECTOR=before|after|skip`), `index`
 //! (build the vector index by backfill), `query` (default).
 //!
+//! `BENCH_INDEX_TIMEOUT_SECS` (default 14,400) bounds each wait for index
+//! builds; a reference-scale backfill needs a long deadline.
+//!
 //! ```text
 //! BENCH_DIR=/tmp/bench BENCH_SCALE=0.02 cargo run --release -p db --example scoped_search_bench -- load
 //! BENCH_DIR=/tmp/bench cargo run --release -p db --example scoped_search_bench -- query
@@ -32,7 +35,12 @@ fn load_options() -> fixture::LoadOptions {
         dimension: env_or("BENCH_DIM", 768),
         items_per_batch: env_or("BENCH_ITEMS_PER_BATCH", 4),
         vector: vector_build(),
+        index_deadline: index_deadline(),
     }
+}
+
+fn index_deadline() -> Duration {
+    Duration::from_secs(env_or("BENCH_INDEX_TIMEOUT_SECS", 14_400))
 }
 
 fn object_store() -> Arc<CountingStore> {
@@ -239,7 +247,10 @@ async fn main() {
         };
         match mode.as_str() {
             "load" => fixture::load(&backend, load_options()).await,
-            "index" => fixture::build_vector_index(&backend, env_or("BENCH_DIM", 768)).await,
+            "index" => {
+                fixture::build_vector_index(&backend, env_or("BENCH_DIM", 768), index_deadline())
+                    .await
+            }
             _ => run_queries("server", &backend).await,
         }
         return;
@@ -261,7 +272,10 @@ async fn main() {
     if mode == "load" || mode == "index" {
         match mode.as_str() {
             "load" => fixture::load(&backend, load_options()).await,
-            _ => fixture::build_vector_index(&backend, env_or("BENCH_DIM", 768)).await,
+            _ => {
+                fixture::build_vector_index(&backend, env_or("BENCH_DIM", 768), index_deadline())
+                    .await
+            }
         }
         let Backend::Embedded { db, .. } = backend else {
             unreachable!("embedded backend was constructed above")

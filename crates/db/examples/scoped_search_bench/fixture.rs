@@ -1,7 +1,8 @@
 //! Synthetic `Group <- Item -> Attribute` fixture and query shapes shared by
 //! the scoped search benchmark CLI and its regression gate.
 //!
-//! Each consumer uses a subset (the gate never opens S3 or HTTP backends).
+//! Each consumer uses a subset (the gate never opens S3, and uses HTTP only
+//! against a local status stub).
 #![allow(dead_code)]
 
 use std::fmt;
@@ -295,44 +296,64 @@ impl Backend {
     }
 }
 
-pub async fn wait_for_operations(backend: &Backend, receipts: &JsonValue, names: &[&str]) {
-    for name in names {
-        let operation_id = receipts[*name]["operation_id"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        let started = Instant::now();
-        let mut reported = Instant::now();
-        loop {
-            let status = backend
-                .query(QueryRequest::read(
-                    read_batch()
-                        .var_as("op", g().get_index_operation(operation_id.clone()))
-                        .returning(["op"]),
-                ))
-                .await
+/// Waits until every named operation in `receipts` succeeds.
+///
+/// Panics when an operation is blocked or aborted, or when `deadline` passes
+/// first, naming the operation and the last status it reported.
+pub async fn wait_for_operations(
+    backend: &Backend,
+    receipts: &JsonValue,
+    names: &[&str],
+    deadline: Duration,
+) {
+    let started = Instant::now();
+    let mut last = ("", JsonValue::Null);
+    let waited = tokio::time::timeout(deadline, async {
+        for name in names {
+            let operation_id = receipts[*name]["operation_id"]
+                .as_str()
                 .unwrap()
                 .to_string();
-            if status.contains("succeeded") {
-                break;
+            let mut reported = Instant::now();
+            loop {
+                let status = backend
+                    .query(QueryRequest::read(
+                        read_batch()
+                            .var_as("op", g().get_index_operation(operation_id.clone()))
+                            .returning(["op"]),
+                    ))
+                    .await
+                    .unwrap();
+                match status["op"]["status"].as_str() {
+                    Some("succeeded") => break,
+                    Some("blocked" | "aborted") => panic!("index {name} failed: {status}"),
+                    None | Some(_) => {}
+                }
+                last = (*name, status);
+                if reported.elapsed() > Duration::from_secs(60) {
+                    println!(
+                        "waiting for {name} ({:.0}s)",
+                        started.elapsed().as_secs_f64()
+                    );
+                    reported = Instant::now();
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
             }
-            assert!(
-                !status.contains("blocked") && !status.contains("aborted"),
-                "index {name} failed: {status}"
-            );
-            if reported.elapsed() > Duration::from_secs(60) {
-                println!(
-                    "waiting for {name} ({:.0}s)",
-                    started.elapsed().as_secs_f64()
-                );
-                reported = Instant::now();
-            }
-            tokio::time::sleep(Duration::from_millis(250)).await;
         }
-    }
+    })
+    .await;
+    let Ok(()) = waited else {
+        let (name, status) = last;
+        panic!("index {name} did not succeed within {deadline:?}; last status: {status}");
+    };
 }
 
-pub async fn create_indexes(backend: &Backend, names: &[&str], dimension: usize) {
+pub async fn create_indexes(
+    backend: &Backend,
+    names: &[&str],
+    dimension: usize,
+    deadline: Duration,
+) {
     let batch = names.iter().fold(write_batch(), |batch, name| match *name {
         "vector" => batch.var_as(
             "vector",
@@ -362,7 +383,7 @@ pub async fn create_indexes(backend: &Backend, names: &[&str], dimension: usize)
         .query(QueryRequest::write(batch.returning(names.iter().copied())))
         .await
         .unwrap();
-    wait_for_operations(backend, &receipts, names).await;
+    wait_for_operations(backend, &receipts, names, deadline).await;
 }
 
 /// When the vector index is built relative to the graph load (`BENCH_VECTOR`).
@@ -376,9 +397,9 @@ pub enum VectorBuild {
     Skip,
 }
 
-pub async fn build_vector_index(backend: &Backend, dimension: usize) {
+pub async fn build_vector_index(backend: &Backend, dimension: usize, deadline: Duration) {
     let started = Instant::now();
-    create_indexes(backend, &["vector"], dimension).await;
+    create_indexes(backend, &["vector"], dimension, deadline).await;
     println!("vector backfill: {:.0}s", started.elapsed().as_secs_f64());
 }
 
@@ -390,6 +411,8 @@ pub struct LoadOptions {
     pub dimension: usize,
     pub items_per_batch: usize,
     pub vector: VectorBuild,
+    /// How long index builds may take before the load fails.
+    pub index_deadline: Duration,
 }
 
 pub async fn load(backend: &Backend, options: LoadOptions) {
@@ -398,6 +421,7 @@ pub async fn load(backend: &Backend, options: LoadOptions) {
         dimension,
         items_per_batch,
         vector,
+        index_deadline,
     } = options;
     let fixture = Fixture::new(dimension);
     let item_count = (TOTAL_ITEMS * scale).round() as usize;
@@ -407,7 +431,7 @@ pub async fn load(backend: &Backend, options: LoadOptions) {
     if vector == VectorBuild::Before {
         indexes.push("vector");
     }
-    create_indexes(backend, &indexes, dimension).await;
+    create_indexes(backend, &indexes, dimension, index_deadline).await;
     let groups = (0..GROUPS).fold(write_batch(), |batch, group| {
         batch.var_as(
             &format!("g{group}"),
@@ -525,7 +549,7 @@ pub async fn load(backend: &Backend, options: LoadOptions) {
         started.elapsed().as_secs_f64()
     );
     if vector == VectorBuild::After {
-        build_vector_index(backend, dimension).await;
+        build_vector_index(backend, dimension, index_deadline).await;
     }
     if let Backend::Embedded { db, .. } = backend {
         db.flush_writer().await.unwrap();

@@ -16,6 +16,7 @@
 mod fixture;
 
 use std::collections::HashSet;
+use std::io::{Read, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,6 +27,8 @@ use slatedb::object_store::ObjectStore;
 
 const QUERIES: usize = 12;
 const MIN_RECALL: f64 = 0.95;
+/// Every index is created on the empty graph, so each build finishes at once.
+const INDEX_DEADLINE: Duration = Duration::from_secs(5 * 60);
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "release-only scoped search recall and filter-semantics gate"]
@@ -51,6 +54,7 @@ async fn scoped_search_keeps_recall_and_exact_filter_semantics() {
             dimension,
             items_per_batch: 4,
             vector: fixture::VectorBuild::Before,
+            index_deadline: INDEX_DEADLINE,
         },
     )
     .await;
@@ -116,4 +120,40 @@ async fn scoped_search_keeps_recall_and_exact_filter_semantics() {
         .count() as u64;
     assert!(expected > 0, "fixture has kind-B attributes in scope");
     assert_eq!(filtered["r"].as_u64(), Some(expected));
+}
+
+/// A build that never leaves the queue fails the wait at its deadline with
+/// the last status, instead of hanging the gate.
+#[tokio::test(flavor = "multi_thread")]
+#[should_panic(
+    expected = r#"index vector did not succeed within 1s; last status: {"op":{"status":"queued"}}"#
+)]
+async fn index_wait_fails_at_its_deadline_with_the_last_status() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    // Answers every status poll with a build that stays queued.
+    std::thread::spawn(move || {
+        let body = r#"{"op":{"status":"queued"}}"#;
+        for mut stream in listener.incoming().map_while(Result::ok) {
+            let _ = stream.read(&mut [0; 4_096]);
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            let _ = std::io::copy(&mut stream, &mut std::io::sink());
+        }
+    });
+    let backend = fixture::Backend::Http {
+        client: reqwest::Client::builder().no_proxy().build().unwrap(),
+        url,
+    };
+    fixture::wait_for_operations(
+        &backend,
+        &serde_json::json!({ "vector": { "operation_id": "00000000-0000-4000-8000-000000000000" } }),
+        &["vector"],
+        Duration::from_secs(1),
+    )
+    .await;
 }
