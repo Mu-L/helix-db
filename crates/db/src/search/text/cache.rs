@@ -252,7 +252,8 @@ pub struct FtsCacheStateSnapshot {
     pub singleflight_followers: u64,
     /// Full-artifact hydration attempts.
     pub hydration_attempts: u64,
-    /// Successful full-artifact hydrations.
+    /// Successful full-artifact hydrations, each counted after the disk trim
+    /// that follows it.
     pub hydration_completions: u64,
     /// Failed full-artifact hydrations.
     pub hydration_failures: u64,
@@ -467,13 +468,15 @@ impl FtsCache {
                 .fetch_add(1, Ordering::Relaxed);
             match cache.ensure_artifact(&split).await {
                 Ok(_) => {
+                    if let Err(error) = cache.cleanup_disk().await {
+                        tracing::warn!(%error, "FTS disk cleanup failed after demand hydration");
+                    }
+                    // Last, so a completion seen in a snapshot means the
+                    // task, trim included, has finished.
                     cache
                         .stats
                         .hydration_completions
                         .fetch_add(1, Ordering::Relaxed);
-                    if let Err(error) = cache.cleanup_disk().await {
-                        tracing::warn!(%error, "FTS disk cleanup failed after demand hydration");
-                    }
                 }
                 Err(error) => {
                     cache
