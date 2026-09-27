@@ -897,13 +897,24 @@ pub(crate) enum VectorCacheRetirement {
     ClosedResident,
 }
 
-/// Registry keyed by the complete validated vector generation descriptor.
+/// Entries and commit fences of the identities in one data scope.
 #[derive(Default)]
-struct VectorCacheRegistryState {
+struct VectorCacheScopeState {
     entries: HashMap<VectorCacheIdentity, Arc<VectorMemoryCacheEntry>>,
     /// One commit fence per identity, outliving entries so a commit prepared
     /// before an entry exists, or while one is replaced, still fences it.
     fences: HashMap<VectorCacheIdentity, Arc<VectorMemoryPendingDirtyRows>>,
+}
+
+/// Registry keyed by the complete validated vector generation descriptor.
+///
+/// Identities are grouped by their data scope so the per-scope sweep that
+/// every hydration pass runs visits only that scope's entries and fences,
+/// keeping one pass linear in the registry size however many scopes exist. A
+/// scope's state is dropped once it holds neither entries nor fences.
+#[derive(Default)]
+struct VectorCacheRegistryState {
+    scopes: HashMap<DataScope, VectorCacheScopeState>,
     retired_generations: HashSet<VectorCacheGenerationFence>,
 }
 
@@ -927,8 +938,9 @@ impl VectorCacheRegistry {
     pub(crate) fn estimated_bytes(&self) -> u64 {
         self.state
             .read()
-            .entries
+            .scopes
             .values()
+            .flat_map(|scope| scope.entries.values())
             .fold(0_u64, |total, entry| {
                 total.saturating_add(entry.estimated_bytes())
             })
@@ -975,8 +987,9 @@ impl VectorCacheRegistry {
         let identity = VectorCacheIdentity::from_validated(write.handle());
         let (entry, fence) = {
             let mut state = self.state.write();
-            let fence = Arc::clone(state.fences.entry(identity.clone()).or_default());
-            (state.entries.get(&identity).cloned(), fence)
+            let scope = state.scopes.entry(identity.scope()).or_default();
+            let fence = Arc::clone(scope.fences.entry(identity.clone()).or_default());
+            (scope.entries.get(&identity).cloned(), fence)
         };
         let pending_guard = fence.acquire(dirty_rows);
         Some(VectorCachePendingCommit {
@@ -999,7 +1012,14 @@ impl VectorCacheRegistry {
         snapshot_seq: u64,
     ) -> Result<VectorCacheReadGuard, VectorCacheReadGuardError> {
         let identity = VectorCacheIdentity::from_validated(handle);
-        let Some(entry) = self.state.read().entries.get(&identity).cloned() else {
+        let Some(entry) = self
+            .state
+            .read()
+            .scopes
+            .get(&identity.scope())
+            .and_then(|scope| scope.entries.get(&identity))
+            .cloned()
+        else {
             return Err(VectorCacheReadGuardError::Absent);
         };
         entry.acquire_read_guard(self.visibility, snapshot_seq)
@@ -1012,7 +1032,14 @@ impl VectorCacheRegistry {
         handle: &ValidatedVectorGenerationHandle,
     ) -> Result<VectorCacheReadGuard, VectorCacheReadGuardError> {
         let identity = VectorCacheIdentity::from_validated(handle);
-        let Some(entry) = self.state.read().entries.get(&identity).cloned() else {
+        let Some(entry) = self
+            .state
+            .read()
+            .scopes
+            .get(&identity.scope())
+            .and_then(|scope| scope.entries.get(&identity))
+            .cloned()
+        else {
             return Err(VectorCacheReadGuardError::Absent);
         };
         entry.acquire_resident_guard()
@@ -1031,12 +1058,12 @@ impl VectorCacheRegistry {
         let identity = VectorCacheIdentity::from_validated(handle);
         let mut state = self.state.write();
         let VectorCacheRegistryState {
-            entries,
-            fences,
+            scopes,
             retired_generations,
         } = &mut *state;
         let retired =
             retired_generations.contains(&VectorCacheGenerationFence::from_identity(&identity));
+        let VectorCacheScopeState { entries, fences } = scopes.entry(identity.scope()).or_default();
         match entries.entry(identity) {
             hash_map::Entry::Occupied(entry) => (Arc::clone(entry.get()), false),
             hash_map::Entry::Vacant(entry) => {
@@ -1068,9 +1095,8 @@ impl VectorCacheRegistry {
         let identity = VectorCacheIdentity::from_validated(handle);
         let entry = {
             let mut state = self.state.write();
-            let VectorCacheRegistryState {
-                entries, fences, ..
-            } = &mut *state;
+            let VectorCacheScopeState { entries, fences } =
+                state.scopes.entry(identity.scope()).or_default();
             match entries.entry(identity) {
                 hash_map::Entry::Occupied(entry) => Some(Arc::clone(entry.get())),
                 hash_map::Entry::Vacant(entry) => {
@@ -1105,8 +1131,10 @@ impl VectorCacheRegistry {
             let mut state = self.state.write();
             state.retired_generations.insert(fence);
             state
-                .entries
-                .iter()
+                .scopes
+                .get(&fence.scope)
+                .into_iter()
+                .flat_map(|scope| scope.entries.iter())
                 .filter(|(identity, _)| fence.matches(identity))
                 .map(|(_, entry)| Arc::clone(entry))
                 .collect::<Vec<_>>()
@@ -1118,17 +1146,19 @@ impl VectorCacheRegistry {
         count
     }
 
-    /// Releases process-local state that no Active generation or commit needs.
+    /// Releases process-local state of `scope` that no Active generation or
+    /// commit needs.
     ///
     /// With [`VectorCacheSweep::InactiveEntries`] (reader nodes, which never
-    /// run drop or partition retirement) entries of `scope` outside `active`
-    /// are removed first; `Retiring` and `Closed` entries are retirement
-    /// tombstones owned by physical cleanup and are always kept. Removing any
-    /// other entry only causes storage fallback: a retained read guard keeps
-    /// its own entry and store alive until it is dropped. Every sweep then
-    /// drops fences that only this map references: they guard no entry and no
-    /// unresolved commit, and the next commit or entry for that identity
-    /// creates a fresh one.
+    /// run drop or partition retirement) entries outside `active` are removed
+    /// first; `Retiring` and `Closed` entries are retirement tombstones owned
+    /// by physical cleanup and are always kept. Removing any other entry only
+    /// causes storage fallback: a retained read guard keeps its own entry and
+    /// store alive until it is dropped. Every sweep then drops fences that
+    /// only this map references: they guard no entry and no unresolved
+    /// commit, and the next commit or entry for that identity creates a fresh
+    /// one. Only `scope`'s identities are visited, so each loaded scope pays
+    /// for its own state once per pass.
     pub(crate) fn sweep(
         &self,
         scope: DataScope,
@@ -1136,14 +1166,14 @@ impl VectorCacheRegistry {
         sweep: VectorCacheSweep,
     ) {
         let mut state = self.state.write();
-        let VectorCacheRegistryState {
-            entries, fences, ..
-        } = &mut *state;
+        let hash_map::Entry::Occupied(mut scoped) = state.scopes.entry(scope) else {
+            return;
+        };
+        let VectorCacheScopeState { entries, fences } = scoped.get_mut();
         match sweep {
             VectorCacheSweep::OrphanFences => {}
             VectorCacheSweep::InactiveEntries => entries.retain(|identity, entry| {
-                identity.scope() != scope
-                    || active.contains(identity)
+                active.contains(identity)
                     || matches!(
                         entry.lifecycle(),
                         VectorCacheLifecycle::Retiring | VectorCacheLifecycle::Closed
@@ -1153,6 +1183,9 @@ impl VectorCacheRegistry {
         fences.retain(|identity, fence| {
             entries.contains_key(identity) || Arc::strong_count(fence) > 1
         });
+        if entries.is_empty() && fences.is_empty() {
+            scoped.remove();
+        }
     }
 
     /// Removes a generation fence after its terminal durable cleanup commit.
@@ -1166,10 +1199,13 @@ impl VectorCacheRegistry {
         let generation = VectorCacheGenerationFence::from_cleanup(authority);
         let mut state = self.state.write();
         let VectorCacheRegistryState {
-            entries,
-            fences,
+            scopes,
             retired_generations,
         } = &mut *state;
+        let hash_map::Entry::Occupied(mut scoped) = scopes.entry(generation.scope) else {
+            return retired_generations.remove(&generation);
+        };
+        let VectorCacheScopeState { entries, fences } = scoped.get_mut();
         if entries.iter().any(|(identity, entry)| {
             generation.matches(identity) && entry.lifecycle() != VectorCacheLifecycle::Closed
         }) {
@@ -1179,6 +1215,9 @@ impl VectorCacheRegistry {
         fences.retain(|identity, fence| {
             !generation.matches(identity) || Arc::strong_count(fence) > 1
         });
+        if entries.is_empty() && fences.is_empty() {
+            scoped.remove();
+        }
         retired_generations.remove(&generation)
     }
 
@@ -1190,19 +1229,25 @@ impl VectorCacheRegistry {
     /// is released too unless an unresolved commit or retained guard holds it.
     pub(crate) fn forget_closed(&self, identity: &VectorCacheIdentity) -> bool {
         let mut state = self.state.write();
-        let Some(entry) = state.entries.get(identity) else {
+        let hash_map::Entry::Occupied(mut scoped) = state.scopes.entry(identity.scope()) else {
+            return false;
+        };
+        let VectorCacheScopeState { entries, fences } = scoped.get_mut();
+        let Some(entry) = entries.get(identity) else {
             return false;
         };
         if entry.lifecycle() != VectorCacheLifecycle::Closed {
             return false;
         }
-        state.entries.remove(identity);
-        if state
-            .fences
+        entries.remove(identity);
+        if fences
             .get(identity)
             .is_some_and(|fence| Arc::strong_count(fence) == 1)
         {
-            state.fences.remove(identity);
+            fences.remove(identity);
+        }
+        if entries.is_empty() && fences.is_empty() {
+            scoped.remove();
         }
         true
     }
@@ -1376,6 +1421,17 @@ mod tests {
             panic!("a ready identity must grant one refresh");
         };
         refresh
+    }
+
+    /// Returns every identity whose commit fence the registry still holds.
+    fn fenced_identities(registry: &VectorCacheRegistry) -> HashSet<VectorCacheIdentity> {
+        registry
+            .state
+            .read()
+            .scopes
+            .values()
+            .flat_map(|scope| scope.fences.keys().cloned())
+            .collect()
     }
 
     /// Returns the staleness that rejects a guard for `snapshot_seq`, if any.
@@ -1594,6 +1650,46 @@ mod tests {
             "a retained guard keeps its released store usable"
         );
         drop(released_guard);
+    }
+
+    #[tokio::test]
+    async fn sweeps_visit_only_their_own_scope_and_drop_emptied_scopes() {
+        let registry = VectorCacheRegistry::new(VectorCacheVisibility::CommitFenced);
+        let tenant = DataScope::Tenant(crate::encoding::keys::scope::TenantId::from_u128(1));
+        let unscoped = validated(1);
+        let scoped = validated_exact(tenant, 7, 1, 70, 1);
+        for handle in [&unscoped, &scoped] {
+            prepare_dirty_commit(&registry, handle, 7)
+                .resolve(VectorCacheCommitOutcome::Rejected)
+                .await;
+        }
+        assert_eq!(
+            fenced_identities(&registry).len(),
+            2,
+            "resolved commits leave one orphaned fence per scope"
+        );
+
+        registry.sweep(
+            DataScope::LegacyUnscoped,
+            &HashSet::new(),
+            VectorCacheSweep::InactiveEntries,
+        );
+        assert_eq!(
+            fenced_identities(&registry),
+            HashSet::from([VectorCacheIdentity::from_validated(&scoped)]),
+            "a sweep never visits another scope's fences"
+        );
+        assert!(
+            !registry
+                .state
+                .read()
+                .scopes
+                .contains_key(&DataScope::LegacyUnscoped),
+            "a scope left without entries or fences is dropped"
+        );
+
+        registry.sweep(tenant, &HashSet::new(), VectorCacheSweep::OrphanFences);
+        assert!(registry.state.read().scopes.is_empty());
     }
 
     #[tokio::test]
@@ -2206,7 +2302,7 @@ mod tests {
             Err(VectorCacheReadGuardError::Absent)
         ));
         assert!(
-            registry.state.read().fences.contains_key(&identity),
+            fenced_identities(&registry).contains(&identity),
             "an unresolved commit keeps its fence after the entry is released"
         );
         let VectorCacheHydration::Initial(initial) =
@@ -2228,7 +2324,7 @@ mod tests {
             &HashSet::new(),
             VectorCacheSweep::InactiveEntries,
         );
-        assert!(registry.state.read().fences.is_empty());
+        assert!(fenced_identities(&registry).is_empty());
 
         let kept = validated(2);
         assert!(publish_initial(&registry, &kept, store_at(&kept, 1, 7, b"kept")).await);
@@ -2239,7 +2335,7 @@ mod tests {
             &HashSet::new(),
             VectorCacheSweep::OrphanFences,
         );
-        assert_eq!(registry.state.read().fences.len(), 2);
+        assert_eq!(fenced_identities(&registry).len(), 2);
         pending.resolve(VectorCacheCommitOutcome::Rejected).await;
         registry.sweep(
             DataScope::LegacyUnscoped,
@@ -2250,9 +2346,10 @@ mod tests {
             registry.resident_guard_for(&kept).is_ok(),
             "writer sweeps never release entries"
         );
-        let fences = &registry.state.read().fences;
-        assert_eq!(fences.len(), 1);
-        assert!(fences.contains_key(&VectorCacheIdentity::from_validated(&kept)));
+        assert_eq!(
+            fenced_identities(&registry),
+            HashSet::from([VectorCacheIdentity::from_validated(&kept)])
+        );
     }
 
     #[tokio::test]
@@ -2266,7 +2363,7 @@ mod tests {
             VectorCacheRetirement::ClosedEmpty
         );
         assert!(registry.forget_closed(&identity));
-        assert!(registry.state.read().fences.contains_key(&identity));
+        assert!(fenced_identities(&registry).contains(&identity));
         pending.resolve(VectorCacheCommitOutcome::Rejected).await;
 
         assert_eq!(
@@ -2274,13 +2371,13 @@ mod tests {
             VectorCacheRetirement::ClosedEmpty
         );
         assert!(registry.forget_closed(&identity));
-        assert!(registry.state.read().fences.is_empty());
+        assert!(fenced_identities(&registry).is_empty());
 
         let (authority, generation) = cleaning_authority();
         assert!(publish_initial(&registry, &generation, store_at(&generation, 1, 7, b"x")).await);
         assert_eq!(registry.retire_cleanup_generation(&authority).await, 1);
         assert!(registry.forget_cleanup_generation(&authority));
-        assert!(registry.state.read().fences.is_empty());
+        assert!(fenced_identities(&registry).is_empty());
     }
 
     #[tokio::test]
