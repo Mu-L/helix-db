@@ -1643,25 +1643,38 @@ async fn bridge_simhash_reads_stay_within_the_rank_window() {
 }
 
 #[cfg_attr(all(test, not(feature = "production-coverage")), test)]
-fn bridge_batches_double_after_short_rounds_and_halve_back_to_the_floor() {
+fn bridge_batches_grow_from_the_expanded_batch_and_halve_back_to_the_floor() {
     let floor = BridgeBatchSize::FLOOR;
     assert_eq!(floor.get(), BRIDGE_BATCH_SIZE);
-    // Rounds that find fewer candidates than their quota double the batch.
-    let grown = floor.after_round(0, 150).after_round(149, 150);
+    // Rounds that find fewer candidates than their quota double the batch they
+    // expanded, so short rounds grow it geometrically from the floor.
+    let grown = [0, 149].into_iter().fold(floor, |size, eligible| {
+        BridgeBatchSize::after_round(size.get(), eligible, 150)
+    });
     assert_eq!(grown.get(), 4 * BRIDGE_BATCH_SIZE);
+    // A round the queue or the budgets cut short grows from its own length,
+    // not from the size it was allowed.
+    assert_eq!(BridgeBatchSize::after_round(21, 0, 150).get(), 42);
+    assert_eq!(BridgeBatchSize::after_round(1, 0, 150), floor);
     // Rounds that fill their quota halve it, never below the floor.
-    assert_eq!(grown.after_round(150, 150).get(), 2 * BRIDGE_BATCH_SIZE);
     assert_eq!(
-        grown
-            .after_round(150, 150)
-            .after_round(151, 150)
-            .after_round(1_000, 150),
+        BridgeBatchSize::after_round(grown.get(), 150, 150).get(),
+        2 * BRIDGE_BATCH_SIZE
+    );
+    assert_eq!(
+        [150, 151, 1_000].into_iter().fold(grown, |size, eligible| {
+            BridgeBatchSize::after_round(size.get(), eligible, 150)
+        }),
         floor
     );
-    assert_eq!(
-        BridgeBatchSize(usize::MAX).after_round(0, 1).get(),
-        usize::MAX
-    );
+    // No batch exceeds twice the one expanded before it, or the floor.
+    for expanded in 0..=8 * BRIDGE_BATCH_SIZE {
+        for eligible in [0, 149, 150, 151] {
+            let next = BridgeBatchSize::after_round(expanded, eligible, 150).get();
+            assert!(next >= BRIDGE_BATCH_SIZE);
+            assert!(next <= (2 * expanded).max(BRIDGE_BATCH_SIZE));
+        }
+    }
 }
 
 #[cfg_attr(all(test, not(feature = "production-coverage")), tokio::test)]
@@ -1693,9 +1706,12 @@ async fn disconnected_walks_spend_the_bridge_budget_in_logarithmic_rounds() {
         Some(RestrictedSearchTermination::BridgeBudget)
     );
     // One companion-row check for the absent sampled seeds, then bridge rounds
-    // of 1 (the entry), 21 (its whole row), 128, 256, 512, and the last 282.
-    assert_eq!(bridge_budget, 1 + 21 + 128 + 256 + 512 + 282);
-    assert_eq!(stats.neighbor_multi_get_calls, 1 + 6);
+    // of 1 (the entry) and 21 (its whole row). Each later round doubles the one
+    // it follows, so the short second round leads to 42 rather than to a size
+    // inflated by the rounds the queue cut short: 42, 84, 168, 336, and the
+    // last 548 of the budget.
+    assert_eq!(bridge_budget, 1 + 21 + 42 + 84 + 168 + 336 + 548);
+    assert_eq!(stats.neighbor_multi_get_calls, 1 + 7);
     assert!(stats.neighbor_multi_get_calls < bridge_budget / BRIDGE_BATCH_SIZE);
 }
 
@@ -2224,7 +2240,7 @@ pub(crate) async fn run() {
     simhash_guides_one_bounded_bridge_toward_the_relevant_disconnected_region().await;
     simhash_ranks_bridges_even_when_the_nearer_bridge_has_the_higher_id().await;
     bridge_simhash_reads_stay_within_the_rank_window().await;
-    bridge_batches_double_after_short_rounds_and_halve_back_to_the_floor();
+    bridge_batches_grow_from_the_expanded_batch_and_halve_back_to_the_floor();
     disconnected_walks_spend_the_bridge_budget_in_logarithmic_rounds().await;
     beam_completion_waits_for_every_queued_bridge_for_every_metric().await;
     queued_bridges_are_expanded_whatever_their_rank_estimate().await;

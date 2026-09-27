@@ -59,10 +59,10 @@ const DIRECTORY_MAX_ROWS: usize = 65_536;
 const DIRECTORY_MAX_DECODED_BYTES: usize = 4 * 1024 * 1024;
 const DIRECTORY_MAX_CONCURRENT_SCANS: usize = 8;
 const FRONTIER_BATCH_SIZE: usize = 16;
-/// Fewest rejected bridges expanded per round. Dense filters rarely need
-/// bridges, so rounds that fill their scoring quota stay near this floor and
-/// keep layer-zero row reads proportional to useful work; rounds that fall
-/// short grow the batch (see [`BridgeBatchSize`]).
+/// Floor of the rejected-bridge batch expanded per round. Dense filters rarely
+/// need bridges, so rounds that fill their scoring quota halve back to this
+/// floor and keep layer-zero row reads proportional to useful work; rounds that
+/// fall short double the batch they expanded (see [`BridgeBatchSize`]).
 const BRIDGE_BATCH_SIZE: usize = 32;
 const FILTERED_BEAM_PERCENT: usize = 150;
 const FILTERED_BEAM_PERCENT_DENOMINATOR: usize = 100;
@@ -321,11 +321,15 @@ struct RestrictedScoringState<'a> {
 
 /// Bridges expanded per walk round, never below [`BRIDGE_BATCH_SIZE`].
 ///
-/// A round whose discoveries fall short of its scoring quota doubles the next
-/// batch, so sparse or disconnected scopes and large result counts reach new
-/// allowed regions, or spend the bridge budget, in logarithmically many
-/// dependent rounds. A round that fills its quota halves the batch back towards
-/// the floor. Callers still cap each batch by the remaining budgets.
+/// Each size follows from the batch the previous round actually expanded. A
+/// round whose discoveries fall short of its scoring quota doubles that batch,
+/// so sparse or disconnected scopes and large result counts reach new allowed
+/// regions, or spend the bridge budget, in logarithmically many dependent
+/// rounds. A round that fills its quota halves it back towards the floor. A
+/// round cut short by the queue or the budgets therefore grows from its own
+/// length: no batch exceeds twice the one before it or the floor, however many
+/// short rounds precede it. Callers still cap each batch by the remaining
+/// budgets and the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BridgeBatchSize(usize);
 
@@ -336,14 +340,15 @@ impl BridgeBatchSize {
         self.0
     }
 
-    /// Batch for the round after one that found `eligible` unscored allowed
-    /// candidates towards a scoring quota of `quota`.
-    fn after_round(self, eligible: usize, quota: usize) -> Self {
-        if eligible < quota {
-            Self(self.0.saturating_mul(2))
+    /// Batch for the round after one that expanded `expanded` bridges and found
+    /// `eligible` unscored allowed candidates towards a scoring quota of `quota`.
+    fn after_round(expanded: usize, eligible: usize, quota: usize) -> Self {
+        let next = if eligible < quota {
+            expanded.saturating_mul(2)
         } else {
-            Self((self.0 / 2).max(BRIDGE_BATCH_SIZE))
-        }
+            expanded / 2
+        };
+        Self(next.max(BRIDGE_BATCH_SIZE))
     }
 }
 
@@ -1366,7 +1371,8 @@ impl<D: Distance> VectorIndex<D> {
                 .saturating_sub(stats.vector_payload_requests)
                 .min(budgets.ef_filtered);
             if !bridge_batch.is_empty() {
-                bridge_batch_size = bridge_batch_size.after_round(eligible.len(), scoring_quota);
+                bridge_batch_size =
+                    BridgeBatchSize::after_round(bridge_batch.len(), eligible.len(), scoring_quota);
             }
             eligible.truncate(scoring_quota);
             if eligible.is_empty() {
