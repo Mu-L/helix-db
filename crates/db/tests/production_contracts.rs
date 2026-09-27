@@ -195,6 +195,11 @@ fn public_object_store_cache_settings_expose_their_validated_bounds() {
     // A server sizes its open-file limit from this handle budget.
     assert_eq!(settings.max_open_file_handles(), 8);
     assert_eq!(settings.to_slate_options().max_open_file_handles, 8);
+    // A server whose SSTs are already on local disk stops caching its writes.
+    assert!(settings.to_slate_options().cache_puts);
+    let reads_only = settings.clone().with_cache_puts(false);
+    assert!(!reads_only.to_slate_options().cache_puts);
+    assert_eq!(reads_only.with_cache_puts(true), settings);
 }
 
 #[tokio::test]
