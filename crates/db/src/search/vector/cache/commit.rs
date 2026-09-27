@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 
 use super::registry::{VectorCacheCommitOutcome, VectorCacheIdentity, VectorCachePendingCommit};
 use super::store::VectorMemoryDirtyRows;
-use crate::search::vector::{SimHasherRegistry, ValidatedVectorGenerationHandle};
+use crate::search::vector::{SimHasherRegistry, ValidatedVectorGenerationHandle, VectorBatchReads};
 
 /// Commits one storage transaction and resolves its vector cache fences.
 ///
@@ -117,20 +117,36 @@ impl VectorCacheWriteEntry {
 pub(crate) struct VectorCacheWriteSet {
     entries: Mutex<HashMap<VectorCacheIdentity, VectorCacheWriteEntry>>,
     simhasher_registry: Arc<SimHasherRegistry>,
+    batch_reads: VectorBatchReads,
 }
 
 impl VectorCacheWriteSet {
     /// Creates transaction tracking bound to its database's projection owner.
+    ///
+    /// Mutation indexes built from this set issue one `multi_get` per row
+    /// batch until [`Self::with_batch_reads`] applies the database's policy.
     pub(crate) fn new(simhasher_registry: Arc<SimHasherRegistry>) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
             simhasher_registry,
+            batch_reads: VectorBatchReads::Single,
         }
+    }
+
+    /// Applies the database's row-batch fetch policy to mutation indexes.
+    pub(crate) fn with_batch_reads(mut self, batch_reads: VectorBatchReads) -> Self {
+        self.batch_reads = batch_reads;
+        self
     }
 
     /// Clones the projection owner for exact vector-index construction.
     pub(crate) fn simhasher_registry(&self) -> Arc<SimHasherRegistry> {
         Arc::clone(&self.simhasher_registry)
+    }
+
+    /// Returns how mutation indexes fetch row batches from storage.
+    pub(crate) const fn batch_reads(&self) -> VectorBatchReads {
+        self.batch_reads
     }
 
     /// Returns the single dirty tracker for an exact validated generation.

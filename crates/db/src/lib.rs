@@ -530,6 +530,9 @@ impl VectorMemoryRefreshTask {
 struct VectorMemoryCache {
     registry: Arc<search::vector::VectorCacheRegistry>,
     simhasher_registry: Arc<search::vector::SimHasherRegistry>,
+    /// How managed searches and mutations fetch row batches the resident
+    /// cache does not hold, fixed by whether SlateDB has a block cache.
+    batch_reads: search::vector::VectorBatchReads,
     refresh_task: Mutex<Option<VectorMemoryRefreshTask>>,
 }
 
@@ -538,12 +541,14 @@ impl VectorMemoryCache {
     fn new(
         settings: config::VectorMemorySettings,
         visibility: search::vector::VectorCacheVisibility,
+        batch_reads: search::vector::VectorBatchReads,
     ) -> Self {
         Self {
             registry: Arc::new(search::vector::VectorCacheRegistry::new(visibility)),
             simhasher_registry: Arc::new(search::vector::SimHasherRegistry::new(
                 search::vector::SimHasherRegistryLimits::from_config(settings.simhasher_cache()),
             )),
+            batch_reads,
             refresh_task: Mutex::new(None),
         }
     }
@@ -1432,6 +1437,14 @@ impl HelixDB {
             match storage.handle() {
                 HelixStorage::Writer(_) => search::vector::VectorCacheVisibility::CommitFenced,
                 HelixStorage::Reader(_) => search::vector::VectorCacheVisibility::ExactSequence,
+            },
+            // Concurrent chunks repeat SST filter and index reads that only a
+            // SlateDB block cache deduplicates.
+            match config.db().cache().mode() {
+                CacheMode::VectorMemoryOnly => search::vector::VectorBatchReads::Single,
+                CacheMode::Memory { .. } | CacheMode::Hybrid { .. } => {
+                    search::vector::VectorBatchReads::Concurrent
+                }
             },
         );
         let index_scope_gates = Arc::new(index_lifecycle::IndexScopeGates::default());
@@ -2932,6 +2945,11 @@ impl HelixDB {
         &self.inner.caches.vector_memory.simhasher_registry
     }
 
+    /// Returns how managed vector reads fetch row batches on this node.
+    pub(crate) fn vector_batch_reads(&self) -> search::vector::VectorBatchReads {
+        self.inner.caches.vector_memory.batch_reads
+    }
+
     pub(crate) fn runtime_config_snapshot_loaded(&self, scope: DataScope) -> RuntimeIndexCatalog {
         self.inner
             .runtime_state
@@ -4337,6 +4355,7 @@ mod tests {
         let cache = VectorMemoryCache::new(
             settings,
             search::vector::VectorCacheVisibility::ExactSequence,
+            search::vector::VectorBatchReads::Single,
         );
         assert!(cache.simhasher_registry.validate_dimension(3).is_ok());
         assert!(cache.simhasher_registry.validate_dimension(4).is_err());
