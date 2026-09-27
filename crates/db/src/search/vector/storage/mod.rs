@@ -69,13 +69,28 @@ pub(crate) enum VectorBatchReads {
 }
 
 /// Bound physical namespace for every current-format row of one vector index.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Equality is namespace identity: the full physical name, its compact row
+/// namespace, and the tenant scope. The batch-read policy only tunes how this
+/// handle fetches rows, so row tokens stay valid across handles of one
+/// namespace whatever policy each was built with.
+#[derive(Debug, Clone)]
 pub(crate) struct VectorRowKeyspace {
     physical_name: String,
     index_id: u64,
     scope: DataScope,
     batch_reads: VectorBatchReads,
 }
+
+impl PartialEq for VectorRowKeyspace {
+    fn eq(&self, other: &Self) -> bool {
+        self.physical_name == other.physical_name
+            && self.index_id == other.index_id
+            && self.scope == other.scope
+    }
+}
+
+impl Eq for VectorRowKeyspace {}
 
 /// Opaque keyspace-bound identity of one canonical deployed vector payload row.
 ///
@@ -3264,6 +3279,63 @@ mod tests {
             );
         }
         txn.rollback();
+    }
+
+    /// Proves the batch-read policy never distinguishes namespaces: a cleanup
+    /// token scanned through a concurrent handle is deleted through a
+    /// single-fetch handle of the same namespace, while another scope's
+    /// handle still rejects it.
+    #[tokio::test]
+    async fn batch_read_policy_is_not_part_of_keyspace_identity() {
+        let db = database("keyspace-identity").await;
+        let single = VectorRowKeyspace::new("keyspace-identity".into(), DataScope::LegacyUnscoped);
+        let concurrent = single
+            .clone()
+            .with_batch_reads(VectorBatchReads::Concurrent);
+        let foreign = VectorRowKeyspace::new(
+            "keyspace-identity".into(),
+            DataScope::Tenant(TenantId::from_u128(1)),
+        );
+        assert_eq!(single, concurrent);
+        assert_ne!(single, foreign);
+        db.put(
+            single.key(VectorKey::SimHash(VectorSimHashKey::new(
+                single.index_id(),
+                1,
+            ))),
+            encode_simhash(1),
+        )
+        .await
+        .unwrap();
+
+        let transaction = db.begin(IsolationLevel::Snapshot).await.unwrap();
+        let row = VectorRows::new(&transaction, &concurrent)
+            .cleanup_scan()
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap()
+            .expect("the namespace holds one row");
+        let write = MeasuredVectorTransaction::new(&transaction);
+        assert!(matches!(
+            VectorWriteRows::new(&write, &foreign).delete_cleanup_row(&row),
+            Err(HelixDbError::InvariantViolation(_))
+        ));
+        VectorWriteRows::new(&write, &single)
+            .delete_cleanup_row(&row)
+            .expect("a token is valid for every handle of its namespace");
+        transaction.commit().await.unwrap();
+
+        assert!(VectorRows::new(&db, &single)
+            .cleanup_scan()
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap()
+            .is_none());
+        db.close().await.unwrap();
     }
 
     #[tokio::test]
