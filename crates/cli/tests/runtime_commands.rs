@@ -119,8 +119,11 @@ async fn disk_runtime_commands_cover_resource_reuse_status_cleanup_and_errors() 
     assert!(log.contains(&format!(
         "run -d --restart unless-stopped --name {container}-seaweedfs"
     )));
+    assert!(log.contains(&format!(
+        "--network {container}-net --network-alias seaweedfs "
+    )));
     assert!(log.contains(&format!("exec {container}-seaweedfs sh -c")));
-    assert!(log.contains(&format!("AWS_ENDPOINT=http://{container}-seaweedfs:8333")));
+    assert!(log.contains("AWS_ENDPOINT=http://seaweedfs:8333"), "{log}");
     assert!(!log.contains("quay.io/minio"), "{log}");
     assert!(log.contains("logs -f"));
     assert!(log.contains("network inspect"));

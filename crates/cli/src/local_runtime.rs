@@ -34,6 +34,13 @@ const RUNTIME_INFO_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// conditional writes SlateDB relies on from 4.09.
 const SEAWEEDFS_IMAGE: &str = "ghcr.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882";
 const SEAWEEDFS_S3_PORT: u16 = 8333;
+/// Host name Helix uses for the sidecar on the instance's private network.
+///
+/// The container name cannot serve as that host: it is one DNS label, and
+/// resolvers reject labels over 63 bytes, which long or hash-suffixed
+/// project and instance names exceed. Every instance has its own network, so
+/// this fixed alias is unique on it.
+const SEAWEEDFS_NETWORK_ALIAS: &str = "seaweedfs";
 /// Readiness probe attempts inside the sidecar, 500 ms apart.
 const SEAWEEDFS_READY_ATTEMPTS: u32 = 120;
 /// Static credentials for the sidecar's S3 admin identity. The sidecar only
@@ -323,8 +330,7 @@ impl LocalRuntime {
         let (network, mut env) = match seaweedfs_image {
             Some(seaweedfs_image) => {
                 let resources = self.start_disk_dependencies(instance_name, &seaweedfs_image)?;
-                let env = disk_env(&resources);
-                (Some(resources.network), env)
+                (Some(resources.network), disk_env())
             }
             None => {
                 let _ = self.remove_disk_resources(instance_name, false);
@@ -374,8 +380,7 @@ impl LocalRuntime {
         let (network, mut env) = match seaweedfs_image {
             Some(seaweedfs_image) => {
                 let resources = self.start_disk_dependencies(instance_name, &seaweedfs_image)?;
-                let env = disk_env(&resources);
-                (Some(resources.network), env)
+                (Some(resources.network), disk_env())
             }
             None => {
                 let _ = self.remove_disk_resources(instance_name, false);
@@ -1302,6 +1307,8 @@ fn seaweedfs_run_args(
         format!("{IDENTITY_LABEL}={identity}"),
         "--network".to_string(),
         resources.network.clone(),
+        "--network-alias".to_string(),
+        SEAWEEDFS_NETWORK_ALIAS.to_string(),
         "-e".to_string(),
         format!("AWS_ACCESS_KEY_ID={LOCAL_S3_ACCESS_KEY}"),
         "-e".to_string(),
@@ -1347,7 +1354,7 @@ fn seaweedfs_ready_args(resources: &DiskRuntimeResources) -> Vec<String> {
     ]
 }
 
-fn disk_env(resources: &DiskRuntimeResources) -> Vec<ContainerEnv> {
+fn disk_env() -> Vec<ContainerEnv> {
     vec![
         ContainerEnv::Literal("S3_BUCKET", LOCAL_S3_BUCKET.to_string()),
         ContainerEnv::Literal("S3_REGION", LOCAL_S3_REGION.to_string()),
@@ -1356,10 +1363,7 @@ fn disk_env(resources: &DiskRuntimeResources) -> Vec<ContainerEnv> {
         ContainerEnv::Literal("AWS_SECRET_ACCESS_KEY", LOCAL_S3_SECRET_KEY.to_string()),
         ContainerEnv::Literal(
             "AWS_ENDPOINT",
-            format!(
-                "http://{}:{SEAWEEDFS_S3_PORT}",
-                resources.seaweedfs_container
-            ),
+            format!("http://{SEAWEEDFS_NETWORK_ALIAS}:{SEAWEEDFS_S3_PORT}"),
         ),
         ContainerEnv::Literal("AWS_ALLOW_HTTP", "true".to_string()),
     ]
@@ -1856,7 +1860,7 @@ mod tests {
             8080,
             true,
             Some(&resources.network),
-            &disk_env(&resources),
+            &disk_env(),
             "4:demo/dev",
         );
 
@@ -1866,8 +1870,53 @@ mod tests {
         assert!(args.contains(&"DB_PATH=db/".to_string()));
         assert!(args.contains(&"AWS_ACCESS_KEY_ID=helix".to_string()));
         assert!(args.contains(&"AWS_SECRET_ACCESS_KEY=helix-local-secret".to_string()));
-        assert!(args.contains(&"AWS_ENDPOINT=http://helix-demo-dev-seaweedfs:8333".to_string()));
+        assert!(args.contains(&"AWS_ENDPOINT=http://seaweedfs:8333".to_string()));
         assert!(args.contains(&"AWS_ALLOW_HTTP=true".to_string()));
+    }
+
+    /// Helix resolves its S3 endpoint host as one DNS label, and resolvers
+    /// reject labels over 63 bytes before sending a query. This project and
+    /// instance get a hash-suffixed base name whose sidecar container name is
+    /// far past that limit, so the endpoint must name the sidecar's network
+    /// alias, which stays short whatever the project is called.
+    #[test]
+    fn seaweedfs_endpoint_is_a_short_alias_the_sidecar_answers_to() {
+        let resources = runtime_for("My Helix Project").disk_resources("production");
+        assert!(
+            resources.seaweedfs_container.len() > 63,
+            "{}",
+            resources.seaweedfs_container
+        );
+        let args = helix_run_args(
+            "helix-my-helix-project-production",
+            "ghcr.io/helixdb/helixdb:v0.0.6",
+            8080,
+            true,
+            Some(&resources.network),
+            &disk_env(),
+            "16:My Helix Project/production",
+        );
+
+        let Some(endpoint) = args
+            .iter()
+            .find_map(|arg| arg.strip_prefix("AWS_ENDPOINT=http://"))
+        else {
+            panic!("disk mode must set an http AWS_ENDPOINT: {args:?}");
+        };
+        let Some((host, port)) = endpoint.split_once(':') else {
+            panic!("the endpoint must name a port: {endpoint}");
+        };
+        assert_eq!(port, "8333");
+        assert!(
+            (1..=63).contains(&host.len()) && !host.contains('.'),
+            "{host}"
+        );
+        let sidecar = seaweedfs_run_args(&resources, "sha256:seaweedfs", "id");
+        assert!(
+            has_pair(&sidecar, "--network", &resources.network)
+                && has_pair(&sidecar, "--network-alias", host),
+            "the sidecar must answer to {host} on the instance network: {sidecar:?}"
+        );
     }
 
     #[test]
@@ -1969,6 +2018,8 @@ mod tests {
                 "helixdb.identity=4:demo/dev",
                 "--network",
                 "helix-demo-dev-net",
+                "--network-alias",
+                "seaweedfs",
                 "-e",
                 "AWS_ACCESS_KEY_ID=helix",
                 "-e",
