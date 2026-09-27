@@ -135,6 +135,21 @@ fn attributes_where(predicate: expr::Predicate) -> batch::ReadBatch {
         .returning(["result"])
 }
 
+/// `predicate` with its conjuncts scoped to the `Attribute` label.
+fn attribute(predicate: expr::Predicate) -> expr::Predicate {
+    // A nested conjunction would hide its conjuncts from the index split.
+    let conjuncts = if let expr::Predicate::And { predicates } = &predicate {
+        predicates.clone()
+    } else {
+        vec![predicate]
+    };
+    expr::Predicate::and(
+        core::iter::once(expr::Predicate::eq("$label", "Attribute"))
+            .chain(conjuncts)
+            .collect(),
+    )
+}
+
 fn uids(response: &serde_json::Value) -> Vec<String> {
     let mut uids = response["result"]
         .as_array()
@@ -182,18 +197,10 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
     let scope = DataScope::LegacyUnscoped;
     let indexed = seeded("membership-e2e-indexed", scope, true).await;
     let unindexed = seeded("membership-e2e-unindexed", scope, false).await;
-    for (predicate, expected, planned) in [
+    for (unscoped, expected, answered) in [
         (
             expr::Predicate::eq("kind", "B"),
             vec!["a1", "a1", "n1"],
-            true,
-        ),
-        (
-            expr::Predicate::and(vec![
-                expr::Predicate::eq("$label", "Attribute"),
-                expr::Predicate::eq("kind", "B"),
-            ]),
-            vec!["a1", "a1"],
             true,
         ),
         (
@@ -226,23 +233,36 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
             false,
         ),
     ] {
-        let read = attributes_where(predicate.clone());
-        let membership = indexed
-            .query(query::QueryRequest::read(read.clone()))
-            .await
-            .unwrap();
-        let per_row = unindexed
-            .query(query::QueryRequest::read(read.clone()))
-            .await
-            .unwrap();
-        assert_eq!(uids(&membership), expected, "{predicate:?}");
-        assert_eq!(uids(&per_row), expected, "{predicate:?}");
-        assert_eq!(
-            has_membership(&plan(&indexed, &read, scope).await),
-            planned,
-            "{predicate:?}"
-        );
-        assert!(!has_membership(&plan(&unindexed, &read, scope).await));
+        // Without statistics an unscoped predicate cannot prove which label
+        // the expansion reaches, so it keeps the per-row filter; scoped to
+        // `Attribute` it plans membership whenever an index answers it.
+        let attributes = expected
+            .iter()
+            .copied()
+            .filter(|uid| uid.starts_with('a'))
+            .collect::<Vec<_>>();
+        for (predicate, expected, planned) in [
+            (unscoped.clone(), expected, false),
+            (attribute(unscoped), attributes, answered),
+        ] {
+            let read = attributes_where(predicate.clone());
+            let membership = indexed
+                .query(query::QueryRequest::read(read.clone()))
+                .await
+                .unwrap();
+            let per_row = unindexed
+                .query(query::QueryRequest::read(read.clone()))
+                .await
+                .unwrap();
+            assert_eq!(uids(&membership), expected, "{predicate:?}");
+            assert_eq!(uids(&per_row), expected, "{predicate:?}");
+            assert_eq!(
+                has_membership(&plan(&indexed, &read, scope).await),
+                planned,
+                "{predicate:?}"
+            );
+            assert!(!has_membership(&plan(&unindexed, &read, scope).await));
+        }
     }
     indexed.close().await.unwrap();
     unindexed.close().await.unwrap();
@@ -270,7 +290,7 @@ async fn post_expansion_membership_sees_same_request_writes() {
                 .n_with_label_where("Group", expr::Predicate::eq("uid", "g3"))
                 .in_(Some("IN_GROUP"))
                 .out(Some("HAS_ATTRIBUTE"))
-                .where_(expr::Predicate::eq("kind", "B"))
+                .where_(attribute(expr::Predicate::eq("kind", "B")))
                 .values(vec!["uid"]),
         )
         .returning(["result"]);
@@ -289,14 +309,14 @@ async fn post_expansion_membership_sees_same_request_writes() {
     // The pending insert, edge, and label-scoped index move are visible to the
     // membership step before the request commits.
     let response = db.query(query::QueryRequest::write(write)).await.unwrap();
-    assert_eq!(uids(&response), ["a5", "n1"]);
+    assert_eq!(uids(&response), ["a5"]);
     let committed = db
-        .query(query::QueryRequest::read(attributes_where(
+        .query(query::QueryRequest::read(attributes_where(attribute(
             expr::Predicate::eq("kind", "B"),
-        )))
+        ))))
         .await
         .unwrap();
-    assert_eq!(uids(&committed), ["a5", "n1"]);
+    assert_eq!(uids(&committed), ["a5"]);
     db.close().await.unwrap();
 }
 
@@ -324,14 +344,14 @@ async fn post_expansion_membership_uses_each_tenant_catalog() {
     )
     .await
     .unwrap();
-    let read = attributes_where(expr::Predicate::eq("kind", "B"));
+    let read = attributes_where(attribute(expr::Predicate::eq("kind", "B")));
     for (scope, membership) in [(indexed, true), (unindexed, false)] {
         assert_eq!(has_membership(&plan(&db, &read, scope).await), membership);
         let response = db
             .query_scoped(query::QueryRequest::read(read.clone()), scope)
             .await
             .unwrap();
-        assert_eq!(uids(&response), ["a1", "a1", "n1"]);
+        assert_eq!(uids(&response), ["a1", "a1"]);
     }
     db.close().await.unwrap();
 }

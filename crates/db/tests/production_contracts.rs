@@ -6362,20 +6362,11 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
         uids
     };
     let default = context::ParamBindings::default;
-    for (predicate, params, expected, planned) in [
+    for (unscoped, params, expected, indexed) in [
         (
             Predicate::eq("kind", "B"),
             default(),
             vec!["a1", "a1", "n1"],
-            true,
-        ),
-        (
-            Predicate::and(vec![
-                Predicate::eq("$label", "Attribute"),
-                Predicate::eq("kind", "B"),
-            ]),
-            default(),
-            vec!["a1", "a1"],
             true,
         ),
         (
@@ -6522,57 +6513,87 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
             false,
         ),
     ] {
-        let filtered = |group: &str| {
-            traversal::g()
-                .n_with_label_where("Group", Predicate::eq("uid", group))
-                .in_(Some("IN_GROUP"))
-                .out(Some("HAS"))
-                .where_(predicate.clone())
+        // Production planning has no statistics, and an unscoped predicate
+        // cannot prove which label its stream reaches, so it keeps the
+        // per-row filter. Scoped to `Attribute`, the same predicate plans
+        // membership whenever an index answers one of its conjuncts.
+        // A nested conjunction would hide its conjuncts from the index split.
+        let conjuncts = if let Predicate::And { predicates } = &unscoped {
+            predicates.clone()
+        } else {
+            vec![unscoped.clone()]
         };
-        let wide = || {
-            traversal::g()
-                .n_with_label_where("Group", Predicate::eq("uid", "wide"))
-                .out(Some("HAS"))
-                .in_(Some("HAS"))
-                .out(Some("HAS"))
-                .where_(predicate.clone())
-        };
-        for (shape, checked) in [
-            (filtered("g").values(vec!["uid"]), true),
-            (filtered("g").limit(2_usize).values(vec!["uid"]), false),
-            (filtered("g").count(), false),
-            (filtered("empty").values(vec!["uid"]), false),
-            (filtered("empty").limit(2_usize).values(vec!["uid"]), false),
-            (wide().values(vec!["uid"]), false),
-            (wide().count(), false),
-        ] {
-            let read = batch::read_batch()
-                .var_as("result", shape)
-                .returning(["result"]);
-            let membership = planning::plan_read_batch(&read, &with_catalog)
-                .unwrap_or_else(|error| panic!("{predicate:?} plans with the catalog: {error}"));
-            let per_row = planning::plan_read_batch(&read, &without_catalog)
-                .unwrap_or_else(|error| panic!("{predicate:?} plans without the catalog: {error}"));
-            assert!(!per_row.steps().iter().any(is_membership));
-            let membership_rows = db
-                .execute(&membership, params.clone())
-                .await
-                .unwrap_or_else(|error| panic!("{predicate:?} membership executes: {error}"))
-                .last;
-            let per_row_rows = db
-                .execute(&per_row, params.clone())
-                .await
-                .unwrap_or_else(|error| panic!("{predicate:?} per-row filter executes: {error}"))
-                .last;
-            assert_eq!(membership_rows, per_row_rows, "{predicate:?}");
-            if checked {
-                assert_eq!(
-                    membership.steps().iter().any(is_membership),
-                    planned,
-                    "{predicate:?}: {:?}",
-                    membership.steps()
-                );
-                assert_eq!(sorted_uids(&membership_rows), expected, "{predicate:?}");
+        let scoped = Predicate::and(
+            core::iter::once(Predicate::eq("$label", "Attribute"))
+                .chain(conjuncts)
+                .collect(),
+        );
+        let attributes = expected
+            .iter()
+            .copied()
+            .filter(|uid| uid.starts_with('a'))
+            .collect::<Vec<_>>();
+        for (predicate, expected, planned) in
+            [(unscoped, expected, false), (scoped, attributes, indexed)]
+        {
+            let filtered = |group: &str| {
+                traversal::g()
+                    .n_with_label_where("Group", Predicate::eq("uid", group))
+                    .in_(Some("IN_GROUP"))
+                    .out(Some("HAS"))
+                    .where_(predicate.clone())
+            };
+            let wide = || {
+                traversal::g()
+                    .n_with_label_where("Group", Predicate::eq("uid", "wide"))
+                    .out(Some("HAS"))
+                    .in_(Some("HAS"))
+                    .out(Some("HAS"))
+                    .where_(predicate.clone())
+            };
+            for (shape, checked) in [
+                (filtered("g").values(vec!["uid"]), true),
+                (filtered("g").limit(2_usize).values(vec!["uid"]), false),
+                (filtered("g").count(), false),
+                (filtered("empty").values(vec!["uid"]), false),
+                (filtered("empty").limit(2_usize).values(vec!["uid"]), false),
+                (wide().values(vec!["uid"]), false),
+                (wide().count(), false),
+            ] {
+                let read = batch::read_batch()
+                    .var_as("result", shape)
+                    .returning(["result"]);
+                let membership =
+                    planning::plan_read_batch(&read, &with_catalog).unwrap_or_else(|error| {
+                        panic!("{predicate:?} plans with the catalog: {error}")
+                    });
+                let per_row =
+                    planning::plan_read_batch(&read, &without_catalog).unwrap_or_else(|error| {
+                        panic!("{predicate:?} plans without the catalog: {error}")
+                    });
+                assert!(!per_row.steps().iter().any(is_membership));
+                let membership_rows = db
+                    .execute(&membership, params.clone())
+                    .await
+                    .unwrap_or_else(|error| panic!("{predicate:?} membership executes: {error}"))
+                    .last;
+                let per_row_rows = db
+                    .execute(&per_row, params.clone())
+                    .await
+                    .unwrap_or_else(|error| {
+                        panic!("{predicate:?} per-row filter executes: {error}")
+                    })
+                    .last;
+                assert_eq!(membership_rows, per_row_rows, "{predicate:?}");
+                if checked {
+                    assert_eq!(
+                        membership.steps().iter().any(is_membership),
+                        planned,
+                        "{predicate:?}: {:?}",
+                        membership.steps()
+                    );
+                    assert_eq!(sorted_uids(&membership_rows), expected, "{predicate:?}");
+                }
             }
         }
     }
@@ -6970,7 +6991,14 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
 
     // Membership in a write request flushes the request's pending secondary
     // and topology writes first, so it sees a new node, its new edge, and an
-    // index move before the request commits.
+    // index move before the request commits. Only the label-scoped predicate
+    // plans membership without statistics.
+    let attribute_b = || {
+        Predicate::and(vec![
+            Predicate::eq("$label", "Attribute"),
+            Predicate::eq("kind", "B"),
+        ])
+    };
     let write = batch::write_batch()
         .var_as(
             "item",
@@ -6990,7 +7018,7 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
                 .n_with_label_where("Group", Predicate::eq("uid", "g"))
                 .in_(Some("IN_GROUP"))
                 .out(Some("HAS"))
-                .where_(Predicate::eq("kind", "B"))
+                .where_(attribute_b())
                 .values(vec!["uid"]),
         )
         .returning(["result"]);
@@ -7010,7 +7038,7 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
         .map(|row| row["uid"].as_str().expect("row has a uid").to_owned())
         .collect::<Vec<_>>();
     written.sort();
-    assert_eq!(written, ["a5", "n1"]);
+    assert_eq!(written, ["a5"]);
 
     // Past one record batch of node rows the membership resolves its set,
     // which must already hold the request's pending index move and new node.
@@ -7034,7 +7062,7 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
                 .out(Some("HAS"))
                 .in_(Some("HAS"))
                 .out(Some("HAS"))
-                .where_(Predicate::eq("kind", "B"))
+                .where_(attribute_b())
                 .values(vec!["uid"]),
         )
         .returning(["result"]);
@@ -7050,9 +7078,9 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
     let written = response["result"]
         .as_array()
         .expect("write returns result rows");
-    // Five remaining B-valued targets and the new node, each reached through
-    // all 18 targets of `wide`.
-    assert_eq!(written.len(), 6 * 18);
+    // The remaining B-valued attributes `w6` and `w12` and the new node, each
+    // reached through all 18 targets of `wide`.
+    assert_eq!(written.len(), 3 * 18);
     assert!(written.iter().all(|row| row["uid"] != "w0"));
     assert_eq!(
         written.iter().filter(|row| row["uid"] == "w-fresh").count(),

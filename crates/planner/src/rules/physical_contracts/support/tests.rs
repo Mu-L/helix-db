@@ -346,7 +346,7 @@ fn membership_contract_prices_set_and_label_reads_against_record_reads() {
         &logical::StreamPipelineOp::Filter {
             predicate: ir::PredicatePlan::new(helix_ast::expr::Predicate::eq("kind", "B")).unwrap(),
         },
-        delivered,
+        delivered.clone(),
         rows,
         &storage,
         &stats,
@@ -362,12 +362,30 @@ fn membership_contract_prices_set_and_label_reads_against_record_reads() {
         membership_delivered.cardinality,
         properties::CardinalityBounds::zero_to(Some(40))
     );
-    assert_eq!(evaluate.object_reads, 2);
-    assert_eq!(evaluate.authoritative_graph_reads, 0);
+    // The unscoped predicate cannot prove the stream's label, so half of the
+    // stream is charged the per-row filter on top of both bitmap reads.
+    assert_eq!(evaluate.object_reads, 2 + 500);
+    assert_eq!(evaluate.authoritative_graph_reads, 500);
     assert_eq!(reject.object_reads, 1);
-    assert!(reject.latency < evaluate.latency);
-    assert!(evaluate.latency < per_row.latency);
+    assert_eq!(reject.authoritative_graph_reads, 0);
+    assert!(reject.latency < per_row.latency);
+    assert!(evaluate.latency > per_row.latency);
     assert_eq!(per_row.authoritative_graph_reads, 1_000);
+
+    // A larger stream amortizes the bitmap reads for either policy.
+    let large = cost::EstimatedRows::rows(5_000);
+    let (_, _, large_evaluate) =
+        stream_pipeline_op_contract(&unscoped, delivered.clone(), large, &storage, &stats);
+    let (_, _, large_per_row) = stream_pipeline_op_contract(
+        &logical::StreamPipelineOp::Filter {
+            predicate: ir::PredicatePlan::new(helix_ast::expr::Predicate::eq("kind", "B")).unwrap(),
+        },
+        delivered,
+        large,
+        &storage,
+        &stats,
+    );
+    assert!(large_evaluate.latency < large_per_row.latency);
 
     // A huge label bitmap makes membership lose to the same stream.
     let huge_label = crate::context::StatsSnapshot::default()

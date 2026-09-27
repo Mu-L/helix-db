@@ -285,8 +285,14 @@ impl StorageCostProfile {
 
     /// Cost a row-preserving node index membership filter.
     ///
-    /// The secondary set and, when present, the label bitmap are read
-    /// concurrently once; each input row then pays one in-memory probe.
+    /// The secondary set is read once and each input row pays one in-memory
+    /// probe. A label-scoped predicate rejects other labels without reads.
+    /// An unscoped predicate passes the `label_domain` bitmap read, which runs
+    /// concurrently with the set read, and evaluates every row of another
+    /// label per row. The planner cannot see which labels an expansion
+    /// reaches, so half of the input is charged the stored-record filter as
+    /// the expected share of those rows. A membership bound to a label the
+    /// stream never reaches therefore cannot look cheaper than the filter.
     ///
     /// ```
     /// use helix_planner::cost::{EstimatedRows, StorageCostProfile};
@@ -297,7 +303,14 @@ impl StorageCostProfile {
     /// let scoped = profile.index_membership_filter(set, None, rows);
     /// let unscoped = profile.index_membership_filter(set, Some(label), rows);
     /// assert_eq!(scoped.authoritative_graph_reads, 0);
-    /// assert_eq!(unscoped.object_reads, 2);
+    /// assert_eq!(unscoped.authoritative_graph_reads, 500);
+    /// assert_eq!(unscoped.object_reads, 2 + 500);
+    /// assert!(scoped.latency < profile.stored_predicate_filter(rows).latency);
+    /// assert!(unscoped.latency > profile.stored_predicate_filter(rows).latency);
+    ///
+    /// // A larger stream amortizes the bitmap reads.
+    /// let rows = EstimatedRows::rows(5_000);
+    /// let unscoped = profile.index_membership_filter(set, Some(label), rows);
     /// assert!(unscoped.latency < profile.stored_predicate_filter(rows).latency);
     /// ```
     pub fn index_membership_filter(
@@ -306,13 +319,15 @@ impl StorageCostProfile {
         label_domain: Option<CostVector>,
         rows: EstimatedRows,
     ) -> CostVector {
-        let reads = match label_domain {
-            Some(label_domain) => {
-                self.parallel(&[set, label_domain], PositiveUsize::at_least_one(2))
-            }
-            None => set,
-        };
-        reads.serial(self.secondary_set_operation(rows))
+        match label_domain {
+            Some(label_domain) => self
+                .parallel(&[set, label_domain], PositiveUsize::at_least_one(2))
+                .serial(self.secondary_set_operation(rows))
+                .serial(
+                    self.stored_predicate_filter(EstimatedRows::rows(rows.as_rows().div_ceil(2))),
+                ),
+            None => set.serial(self.secondary_set_operation(rows)),
+        }
     }
 
     /// Cost residual predicate evaluation for a row estimate.

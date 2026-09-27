@@ -327,8 +327,12 @@ fn unknown_fan_out_alone_keeps_the_per_row_filter() {
 
 #[test]
 fn post_expansion_membership_feeds_counts_and_variable_pipelines() {
+    // Count cursors price their operators at the unknown-input default, so
+    // only a label-scoped predicate pays for the set read there.
     let count = executable_traversal(
-        attributes_where(Predicate::eq("kind", "B")).count(),
+        attributes_where(Predicate::eq("kind", "B"))
+            .has_label("Attribute")
+            .count(),
         large_ctx(),
     );
     let counted = count
@@ -350,6 +354,8 @@ fn post_expansion_membership_feeds_counts_and_variable_pipelines() {
         "{counted:#?}"
     );
 
+    // A runtime input keeps the unknown-input estimate, which pays for a
+    // label-scoped set read without statistics.
     let batch = read_batch()
         .var_as(
             "groups",
@@ -361,10 +367,62 @@ fn post_expansion_membership_feeds_counts_and_variable_pipelines() {
                 .in_(Some("IN_GROUP"))
                 .out(Some("HAS_ATTRIBUTE"))
                 .where_(Predicate::eq("kind", "B"))
+                .has_label("Attribute")
                 .values(vec!["kind"]),
         )
         .returning(["result"]);
     let plan = crate::planning::plan_read_batch(&batch, &ctx(membership_indexes())).unwrap();
     assert_eq!(only_membership(&plan).label.as_ref(), "Attribute");
     assert!(filter_predicates(&plan).is_empty(), "{:#?}", plan.steps());
+}
+
+#[test]
+fn unscoped_membership_needs_one_indexed_label_and_pays_for_other_labels() {
+    // Without statistics a label scan keeps the unknown-scan estimate. That
+    // pays for a label-scoped set read, but not for an unscoped one, whose
+    // rows of other labels still read their records.
+    let label_scan = |predicate: Predicate| {
+        g().n_with_label("Group")
+            .in_(Some("IN_GROUP"))
+            .out(Some("HAS_ATTRIBUTE"))
+            .where_(predicate)
+            .values(vec!["kind"])
+    };
+    let unscoped = executable_traversal(
+        label_scan(Predicate::eq("kind", "B")),
+        ctx(membership_indexes()),
+    );
+    assert!(memberships(&unscoped).is_empty(), "{:#?}", unscoped.steps());
+    let scoped = executable_traversal(
+        label_scan(Predicate::and(vec![
+            Predicate::eq("$label", "Attribute"),
+            Predicate::eq("kind", "B"),
+        ])),
+        ctx(membership_indexes()),
+    );
+    assert_eq!(
+        only_membership(&scoped).outside_label,
+        crate::ir::NodeMembershipOutsideLabel::Reject
+    );
+
+    // A second label indexing `kind` leaves the expansion's label ambiguous,
+    // so even a large stream keeps the per-row filter unless it is scoped.
+    let mut ambiguous = large_ctx();
+    ambiguous.indexes =
+        membership_indexes().with_node_eq(ScopedPropertyKey::try_new("Note", "kind").unwrap());
+    let plan = executable_traversal(
+        attributes_where(Predicate::eq("kind", "B")).values(vec!["kind"]),
+        ambiguous.clone(),
+    );
+    assert!(memberships(&plan).is_empty(), "{:#?}", plan.steps());
+    assert_eq!(filter_predicates(&plan), [&Predicate::eq("kind", "B")]);
+    let plan = executable_traversal(
+        attributes_where(Predicate::and(vec![
+            Predicate::eq("$label", "Note"),
+            Predicate::eq("kind", "B"),
+        ]))
+        .values(vec!["kind"]),
+        ambiguous,
+    );
+    assert_eq!(only_membership(&plan).label.as_ref(), "Note");
 }
