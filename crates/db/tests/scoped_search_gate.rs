@@ -169,20 +169,21 @@ async fn scoped_search_keeps_recall_and_exact_filter_semantics() {
     assert_eq!(filtered["r"].as_u64(), Some(expected));
 }
 
-/// A build that never leaves the queue fails the wait at its deadline with
-/// the last status, instead of hanging the gate.
-#[tokio::test(flavor = "multi_thread")]
-#[should_panic(
-    expected = r#"index vector did not succeed within 1s; last status: {"op":{"status":"queued"}}"#
-)]
-async fn index_wait_fails_at_its_deadline_with_the_last_status() {
+const OPERATION_ID: &str = "00000000-0000-4000-8000-000000000000";
+
+/// Serves index-operation status polls with `replies` in order, repeating the
+/// last one; a `None` reply accepts its poll and never answers it.
+fn status_stub(replies: &'static [Option<&'static str>]) -> fixture::Backend {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    // Answers every status poll with a build that stays queued.
     std::thread::spawn(move || {
-        let body = r#"{"op":{"status":"queued"}}"#;
-        for mut stream in listener.incoming().map_while(Result::ok) {
+        let mut unanswered = Vec::new();
+        for (poll, mut stream) in listener.incoming().map_while(Result::ok).enumerate() {
             let _ = stream.read(&mut [0; 4_096]);
+            let Some(body) = replies[poll.min(replies.len() - 1)] else {
+                unanswered.push(stream);
+                continue;
+            };
             let _ = write!(
                 stream,
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -192,15 +193,62 @@ async fn index_wait_fails_at_its_deadline_with_the_last_status() {
             let _ = std::io::copy(&mut stream, &mut std::io::sink());
         }
     });
-    let backend = fixture::Backend::Http {
+    fixture::Backend::Http {
         client: reqwest::Client::builder().no_proxy().build().unwrap(),
         url,
-    };
+    }
+}
+
+/// A build that never leaves the queue fails the wait at its deadline with
+/// the last status, instead of hanging the gate.
+#[tokio::test(flavor = "multi_thread")]
+#[should_panic(
+    expected = r#"index vector did not succeed within 1s; last status: {"op":{"status":"queued"}}"#
+)]
+async fn index_wait_fails_at_its_deadline_with_the_last_status() {
+    let backend = status_stub(&[Some(r#"{"op":{"status":"queued"}}"#)]);
     fixture::wait_for_operations(
         &backend,
-        &serde_json::json!({ "vector": { "operation_id": "00000000-0000-4000-8000-000000000000" } }),
+        &serde_json::json!({ "vector": { "operation_id": OPERATION_ID } }),
         &["vector"],
         Duration::from_secs(1),
+    )
+    .await;
+}
+
+/// A status poll that never answers fails at the deadline naming the
+/// operation it was polling, not an earlier one that already succeeded.
+#[tokio::test(flavor = "multi_thread")]
+#[should_panic(expected = "index vector did not succeed within 1s; last status: null")]
+async fn index_wait_deadline_names_the_operation_whose_poll_hangs() {
+    let backend = status_stub(&[
+        Some(r#"{"op":{"status":"queued"}}"#),
+        Some(r#"{"op":{"status":"succeeded"}}"#),
+        None,
+    ]);
+    fixture::wait_for_operations(
+        &backend,
+        &serde_json::json!({
+            "text": { "operation_id": OPERATION_ID },
+            "vector": { "operation_id": OPERATION_ID },
+        }),
+        &["text", "vector"],
+        Duration::from_secs(1),
+    )
+    .await;
+}
+
+/// A status outside the public queued/running/succeeded/blocked/aborted set,
+/// or none at all, fails the wait at once instead of spinning to the deadline.
+#[tokio::test(flavor = "multi_thread")]
+#[should_panic(expected = r#"index vector reported unexpected state None: {"op":null}"#)]
+async fn index_wait_fails_fast_on_an_unexpected_status() {
+    let backend = status_stub(&[Some(r#"{"op":null}"#)]);
+    fixture::wait_for_operations(
+        &backend,
+        &serde_json::json!({ "vector": { "operation_id": OPERATION_ID } }),
+        &["vector"],
+        Duration::from_secs(30),
     )
     .await;
 }

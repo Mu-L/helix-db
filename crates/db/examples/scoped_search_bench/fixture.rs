@@ -298,8 +298,10 @@ impl Backend {
 
 /// Waits until every named operation in `receipts` succeeds.
 ///
-/// Panics when an operation is blocked or aborted, or when `deadline` passes
-/// first, naming the operation and the last status it reported.
+/// Only `queued` and `running` keep waiting. Panics when an operation is
+/// blocked or aborted, reports any other status (or none), or when `deadline`
+/// passes first. The deadline panic names the operation being waited on and
+/// the last status it reported, `null` when none of its polls answered.
 pub async fn wait_for_operations(
     backend: &Backend,
     receipts: &JsonValue,
@@ -310,6 +312,7 @@ pub async fn wait_for_operations(
     let mut last = ("", JsonValue::Null);
     let waited = tokio::time::timeout(deadline, async {
         for name in names {
+            last = (*name, JsonValue::Null);
             let operation_id = receipts[*name]["operation_id"]
                 .as_str()
                 .unwrap()
@@ -326,8 +329,9 @@ pub async fn wait_for_operations(
                     .unwrap();
                 match status["op"]["status"].as_str() {
                     Some("succeeded") => break,
+                    Some("queued" | "running") => {}
                     Some("blocked" | "aborted") => panic!("index {name} failed: {status}"),
-                    None | Some(_) => {}
+                    state => panic!("index {name} reported unexpected state {state:?}: {status}"),
                 }
                 last = (*name, status);
                 if reported.elapsed() > Duration::from_secs(60) {
