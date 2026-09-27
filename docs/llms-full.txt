@@ -578,14 +578,17 @@ and the rest caches full-text search data. With `S3_BUCKET`, the object-store ca
 also keeps the files the server writes; with `HELIX_DATA_DIR` they are already on
 local disk, so it keeps only the files the server reads. Changing the budget
 usually changes the block size, which discards the database-block cache at startup
-so it refills from the object store. The other two caches keep their files and
-evict down to a smaller budget as they admit new data. Full-text search data is
+so it refills from the object store. The object-store cache keeps its files and
+evicts down to a smaller budget as it admits new data. Full-text search data is
 cached on demand, once searches have used it twice; the server downloads none of it
-at startup. Budget at least twice the data the server reads often: the object-store
-cache fetches whole file parts (4 MiB, or smaller under a 2 GiB budget), so once
-that data outgrows half the budget, cold reads fetch more than memory-only caches
-would. The budget must also fit on the cache's filesystem; the server logs a warning
-at startup when it exceeds the free space there plus what the cache already uses.
+at startup. At startup and on every admission the full-text cache evicts down to
+its share, keeping beyond it only data used in the last second or still open, and
+it never caches a split larger than its whole share. Budget at least twice the
+data the server reads often: the object-store cache fetches whole file parts
+(4 MiB, or smaller under a 2 GiB budget), so once that data outgrows half the
+budget, cold reads fetch more than memory-only caches would. The budget must also
+fit on the cache's filesystem; the server logs a warning at startup when it exceeds
+the free space there plus what the cache already uses.
 
 The block cache also indexes its disk share in memory, outside
 `HELIX_DISK_CACHE_MEMORY_BYTES`. Once full, the index takes roughly 2–9 MiB of RAM

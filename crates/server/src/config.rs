@@ -42,6 +42,12 @@ const OBJECT_STORE_MIN_PARTS: usize = 256;
 const OPEN_FILE_HEADROOM: u64 = 1024;
 /// File in the cache root a running server holds an exclusive lock on.
 const CACHE_LOCK_FILE: &str = ".helix-cache.lock";
+/// Seconds after its last use that a full-text split is still exempt from
+/// eviction. The DB default of five minutes lets a burst of admissions keep
+/// the tier over its share that long. One second, the shortest period, is
+/// enough here: the cache lock keeps other servers off the tier, and this
+/// server's own open splits hold leases that eviction already skips.
+const FTS_EVICTION_GRACE_SECS: u64 = 1;
 
 /// Runtime configuration for the standalone server.
 #[derive(Debug, Clone)]
@@ -321,7 +327,9 @@ impl CacheConfig {
 /// | `fts/` | Full-text split cache | the remaining ~1/8 |
 ///
 /// The full-text tier is filled by searches only; startup warms nothing into
-/// it.
+/// it but trims it to its share. Each admission also evicts the least
+/// recently used splits down to the share, sparing only splits used in the
+/// last second or held open by searches and the full-text memory cache.
 ///
 /// With S3 storage the object-store tier also caches SSTs this server flushes
 /// or compacts, so it reads its own writes back from local disk. With
@@ -408,14 +416,14 @@ impl HybridCache {
             // No startup warm: with a disk tier it would download every
             // active split whole, ignoring this tier's share, and re-hash
             // every cached split on each restart. Splits reach `fts/` only
-            // once searches reuse them, and each admission evicts older
-            // splits toward the share.
+            // once searches reuse them; startup and each admission evict
+            // older splits down to the share.
             fts: db::config::FtsHybridCacheConfig::try_new(
                 fts_defaults.memory_bytes(),
                 root.join("fts"),
                 fts_disk_bytes,
                 db::config::FtsWarmConfig::Off,
-                fts_defaults.generation_grace_period().as_secs(),
+                FTS_EVICTION_GRACE_SECS,
             )?,
             root,
             disk_bytes: disk_bytes.get(),
@@ -968,6 +976,11 @@ mod tests {
             fts.warm_mode(),
             db::config::CacheWarmMode::Off,
             "startup never downloads splits into the full-text disk tier"
+        );
+        assert_eq!(
+            fts.generation_grace_period(),
+            std::time::Duration::from_secs(1),
+            "only splits used in the last second may exceed the full-text share"
         );
         assert_eq!(
             fts.memory_bytes(),
