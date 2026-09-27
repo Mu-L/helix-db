@@ -130,7 +130,17 @@ trait RetainedBuildSession: Any + Send {
     fn retained_bytes(&self) -> usize;
 
     /// Evicts least-recently-used entries until at most `max_bytes` are charged.
+    ///
+    /// The session's own byte budget and class caps keep applying, so
+    /// `usize::MAX` evicts exactly what [`Self::exceeds_limits`] reports.
     fn shrink_to(&mut self, max_bytes: usize) -> Result<()>;
+
+    /// Rebinds the session's byte budget and the class caps scaled from it,
+    /// evicting nothing.
+    fn set_max_retained_bytes(&mut self, max_bytes: NonZeroU64);
+
+    /// Returns whether the session holds more than its byte budget or a class cap allows.
+    fn exceeds_limits(&self) -> bool;
 }
 
 impl<D: Distance> RetainedBuildSession for VectorBuildSession<D> {
@@ -141,6 +151,14 @@ impl<D: Distance> RetainedBuildSession for VectorBuildSession<D> {
 
     fn shrink_to(&mut self, max_bytes: usize) -> Result<()> {
         VectorBuildSession::shrink_to(self, max_bytes)
+    }
+
+    fn set_max_retained_bytes(&mut self, max_bytes: NonZeroU64) {
+        VectorBuildSession::set_max_retained_bytes(self, max_bytes);
+    }
+
+    fn exceeds_limits(&self) -> bool {
+        VectorBuildSession::exceeds_limits(self)
     }
 }
 
@@ -178,10 +196,13 @@ fn max_min_cap(budget: usize, sizes: impl IntoIterator<Item = usize>) -> Option<
 /// to its max-min share of `budget` beside the other retained sessions, so
 /// per-entity [`VectorBuildSession::enforce_limits`] evicts it incrementally
 /// between the step's awaits instead of letting it grow back to the whole
-/// budget. A commit then only trims what its step added beyond the budget,
+/// budget. That starts from a session within every limit of its share: a
+/// reused session's bytes already fit it, and when a smaller share lowers its
+/// class caps below what it holds, checkout evicts the excess on the blocking
+/// pool. A commit then only trims what its step added beyond the budget,
 /// which happens when a build joins others already holding it or when steps
-/// run concurrently, and that trim runs on the blocking pool. A dropped large
-/// session frees its entries on a background thread.
+/// run concurrently, and that trim runs on the blocking pool too. A dropped
+/// large session frees its entries on a background thread.
 struct VectorBuildCache {
     budget: NonZeroU64,
     /// An async lock, because a commit holds it while its trim runs off the executor.
@@ -202,14 +223,23 @@ impl VectorBuildCache {
     /// of another metric, is stale and dropped; other operations' sessions stay.
     /// The returned session is bound to its max-min share of the budget, with
     /// its own demand unbounded, beside the other retained sessions: the whole
-    /// budget when it is the only build. Because the retained sessions fit the
-    /// budget together, a reused session is already within its share.
+    /// budget when it is the only build.
+    ///
+    /// The returned session is within every limit of that share. Because the
+    /// retained sessions fit the budget together, a reused session's bytes
+    /// already fit it. Its class caps scale with the share, though, so a share
+    /// smaller than the one it last stepped with can leave it holding more
+    /// entries of a class than it now allows: a session dense in SimHashes or
+    /// low-dimension items, whose count caps bind before its bytes. That excess
+    /// is evicted on the blocking pool before the session is returned, so the
+    /// step's first [`VectorBuildSession::enforce_limits`] evicts only what the
+    /// step itself adds. Like a commit's trim, it is not step telemetry.
     async fn checkout<D: Distance>(
         &self,
         checkpoint: &VectorBuildCheckpoint,
     ) -> VectorBuildSession<D> {
         let budget = usize::try_from(self.budget.get()).unwrap_or(usize::MAX);
-        let (retained, share) = {
+        let (own, share) = {
             let mut retained = self.retained.lock().await;
             let own = retained
                 .iter()
@@ -228,19 +258,34 @@ impl VectorBuildCache {
         };
         let share =
             NonZeroU64::new(u64::try_from(share).unwrap_or(u64::MAX)).unwrap_or(NonZeroU64::MIN);
-        let mut session = retained
-            .filter(|retained| retained.checkpoint == *checkpoint)
-            .and_then(|retained| {
-                let session: Box<dyn Any> = retained.session;
-                session.downcast::<VectorBuildSession<D>>().ok()
+        let Some(RetainedVectorBuild { mut session, .. }) =
+            own.filter(|retained| retained.checkpoint == *checkpoint)
+        else {
+            return VectorBuildSession::new(share);
+        };
+        session.set_max_retained_bytes(share);
+        if session.exceeds_limits() {
+            // Retained sessions are clean, so the shrink needs no transaction.
+            let shrunk = tokio::task::spawn_blocking(move || {
+                session.shrink_to(usize::MAX).map(|()| session)
             })
-            .map_or_else(
-                || VectorBuildSession::new(share),
-                |mut session| {
-                    session.set_max_retained_bytes(share);
-                    *session
+            .await;
+            session = match shrunk {
+                Ok(Ok(session)) => session,
+                // A session that cannot shrink was dropped on the blocking pool.
+                Ok(Err(_)) => return VectorBuildSession::new(share),
+                Err(error) => match error.try_into_panic() {
+                    Ok(panic) => std::panic::resume_unwind(panic),
+                    // A shrink cancelled by runtime shutdown dropped the session.
+                    Err(_) => return VectorBuildSession::new(share),
                 },
-            );
+            };
+        }
+        let session: Box<dyn Any> = session;
+        let Ok(session) = session.downcast::<VectorBuildSession<D>>() else {
+            return VectorBuildSession::new(share);
+        };
+        let mut session = *session;
         session.reset_stats();
         session
     }

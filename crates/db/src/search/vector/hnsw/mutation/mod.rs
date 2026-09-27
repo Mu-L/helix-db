@@ -3092,9 +3092,11 @@ impl<D: Distance> VectorBuildSession<D> {
     /// deterministic global LRU.
     ///
     /// A lifecycle driver rebinds a retained session to its fair share of the
-    /// budget it splits across builds. Nothing is evicted here: entries over
-    /// the new limits go at the next [`Self::enforce_limits`] or
-    /// [`Self::shrink_to`].
+    /// budget it splits across builds. Nothing is evicted here: a smaller
+    /// budget also lowers every class cap, so a session within its old byte
+    /// budget can still hold more entries of a class than the new cap allows.
+    /// [`Self::exceeds_limits`] reports that excess, and it goes at the next
+    /// [`Self::enforce_limits`] or [`Self::shrink_to`].
     pub(crate) fn set_max_retained_bytes(&mut self, max_retained_bytes: NonZeroU64) {
         let max_payload_bytes = usize::try_from(max_retained_bytes.get()).unwrap_or(usize::MAX);
         let max_entries = (max_payload_bytes / VECTOR_BUILD_SESSION_BUDGET_BYTES_PER_ENTRY).max(1);
@@ -3415,6 +3417,28 @@ impl<D: Distance> VectorBuildSession<D> {
         self.evict_until(max_bytes.min(self.max_payload_bytes), None)
     }
 
+    /// Returns whether the byte budget or any class cap is exceeded.
+    ///
+    /// Exactly then does the next [`Self::enforce_limits`] or
+    /// [`Self::shrink_to`] evict. An unmeasurable session exceeds its limits.
+    /// Costs `O(1)`, so a lifecycle driver can check a rebound session and run
+    /// the eviction it needs off the async executor.
+    pub(crate) fn exceeds_limits(&self) -> bool {
+        self.pressure(self.max_payload_bytes)
+            .map_or(true, |pressure| pressure.contains(&true))
+    }
+
+    /// Returns, for items, neighbor rows, and SimHashes in that order, whether
+    /// the class must evict to meet its cap and `max_bytes`.
+    fn pressure(&self, max_bytes: usize) -> Result<[bool; 3], HelixDbError> {
+        let bytes_over = self.retained_bytes()? > max_bytes;
+        Ok([
+            bytes_over || self.footprint.items > self.max_items,
+            bytes_over || self.footprint.neighbors > self.max_neighbors,
+            bytes_over || self.footprint.simhashes > self.max_simhashes,
+        ])
+    }
+
     /// Evicts in global LRU order until every class cap and `max_bytes` hold.
     ///
     /// A dirty neighbor victim is flushed through `txn` first, and is an
@@ -3425,30 +3449,21 @@ impl<D: Distance> VectorBuildSession<D> {
         txn: Option<&MeasuredVectorTransaction<'_>>,
     ) -> Result<(), HelixDbError> {
         loop {
-            let bytes_over = self.retained_bytes()? > max_bytes;
-            let eligible = [
-                (
-                    bytes_over || self.footprint.items > self.max_items,
-                    &self.victims.items,
-                ),
-                (
-                    bytes_over || self.footprint.neighbors > self.max_neighbors,
-                    &self.victims.neighbors,
-                ),
-                (
-                    bytes_over || self.footprint.simhashes > self.max_simhashes,
-                    &self.victims.simhashes,
-                ),
-            ];
-            if eligible.iter().all(|(pressure, _)| !pressure) {
+            let pressure = self.pressure(max_bytes)?;
+            if !pressure.contains(&true) {
                 self.session_stats.max_retained_payload_bytes = self
                     .session_stats
                     .max_retained_payload_bytes
                     .max(u64::try_from(self.footprint.payload_bytes).unwrap_or(u64::MAX));
                 return Ok(());
             }
-            let Some(victim) = eligible
+            let Some(victim) = pressure
                 .into_iter()
+                .zip([
+                    &self.victims.items,
+                    &self.victims.neighbors,
+                    &self.victims.simhashes,
+                ])
                 .filter_map(|(pressure, victims)| victims.first().filter(|_| pressure))
                 .min()
                 .cloned()
@@ -4400,6 +4415,7 @@ mod tests {
             10,
         );
         let share = full - per_simhash;
+        assert!(!session.exceeds_limits());
         session.set_max_retained_bytes(NonZeroU64::new(u64::try_from(share).unwrap()).unwrap());
         assert_eq!(session.max_payload_bytes(), share);
         assert_eq!(
@@ -4409,12 +4425,87 @@ mod tests {
         );
         assert_eq!(session.simhash_count(), 10, "rebinding evicts nothing");
         assert_eq!(session.retained_bytes().unwrap(), full);
+        assert!(session.exceeds_limits());
 
         // The next eviction honours the rebound byte budget and class caps.
         session.shrink_to(usize::MAX).unwrap();
         assert_eq!(session.simhash_count(), session.max_simhashes);
         assert!(session.retained_bytes().unwrap() <= share);
+        assert!(!session.exceeds_limits());
         assert_session_bookkeeping(&session);
+
+        // A budget whose bytes still fit can lower a class cap below the count.
+        let mut session = VectorBuildSession::<Cosine>::with_test_simhashes(
+            NonZeroU64::new(1 << 20).unwrap(),
+            10,
+        );
+        let dense = 8 * VECTOR_BUILD_SESSION_BUDGET_BYTES_PER_ENTRY;
+        assert!(full <= dense);
+        session.set_max_retained_bytes(NonZeroU64::new(u64::try_from(dense).unwrap()).unwrap());
+        assert!(
+            session.exceeds_limits(),
+            "10 SimHashes exceed a cap of 8 within the byte budget"
+        );
+        session.shrink_to(usize::MAX).unwrap();
+        assert_eq!(session.simhash_count(), 8);
+        assert_eq!(session.stats().simhash_evictions(), 2);
+        assert!(!session.exceeds_limits());
+        session.set_max_retained_bytes(NonZeroU64::new(1 << 20).unwrap());
+        assert!(
+            !session.exceeds_limits(),
+            "a larger budget only loosens limits"
+        );
+    }
+
+    #[test]
+    fn build_session_reports_each_exceeded_limit() {
+        use crate::encoding::v2::keys::scope::DataScope;
+        use crate::search::vector::distance::Cosine;
+
+        let identity = session_identity(DataScope::LegacyUnscoped, 87);
+        let session = |max_bytes: usize, max_items, max_neighbors, max_simhashes| {
+            let mut session = VectorBuildSession::<Cosine>::with_test_limits(
+                NonZeroU64::new(u64::try_from(max_bytes).unwrap()).unwrap(),
+                max_items,
+                max_neighbors,
+                max_simhashes,
+            );
+            let mut cache = session.take_cache(&identity, 8, 4).unwrap();
+            for node_id in [1, 2] {
+                cache.put_item(0, node_id, None, 8);
+                cache.put_simhash(node_id, None);
+                cache.install_loaded_neighbor(
+                    MutationOpCache::<Cosine>::node_row_id(0, node_id),
+                    NeighborRowValue::KnownAbsent,
+                );
+            }
+            session.restore_cache(identity.clone(), cache);
+            session
+        };
+        let charged = session(1 << 20, 2, 2, 2).retained_bytes().unwrap();
+
+        for (max_bytes, max_items, max_neighbors, max_simhashes, exceeds) in [
+            (charged, 2, 2, 2, false),
+            (charged - 1, 2, 2, 2, true),
+            (charged, 1, 2, 2, true),
+            (charged, 2, 1, 2, true),
+            (charged, 2, 2, 1, true),
+        ] {
+            let mut session = session(max_bytes, max_items, max_neighbors, max_simhashes);
+            assert_eq!(
+                session.exceeds_limits(),
+                exceeds,
+                "{max_bytes} bytes, caps {max_items}/{max_neighbors}/{max_simhashes}"
+            );
+            // Exactly an exceeded limit makes the next eviction pass evict.
+            session.shrink_to(usize::MAX).unwrap();
+            let stats = session.stats();
+            assert_eq!(
+                stats.item_evictions() + stats.neighbor_evictions() + stats.simhash_evictions() > 0,
+                exceeds
+            );
+            assert!(!session.exceeds_limits());
+        }
     }
 
     #[test]

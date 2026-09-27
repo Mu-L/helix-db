@@ -1055,9 +1055,18 @@ async fn interleaved_builds_step_within_their_max_min_shares() {
     assert_golden(second.finish(&driver).await, "second shared-budget build");
 }
 
+/// Budget bytes that admit one [`ShrinkProbe`] entry.
+const PROBE_BYTES_PER_ENTRY: usize = 100;
+
 /// Retained session of a fixed charged size that records the threads shrinking it.
+///
+/// Like a real session, it caps its one entry class at one entry per
+/// [`PROBE_BYTES_PER_ENTRY`] bytes of its budget, so rebinding it to a smaller
+/// share can leave it over its class cap while its bytes still fit.
 struct ShrinkProbe {
     bytes: usize,
+    entries: usize,
+    max_entries: usize,
     shrunk_on: Arc<parking_lot::Mutex<Vec<std::thread::ThreadId>>>,
 }
 
@@ -1069,8 +1078,39 @@ impl RetainedBuildSession for ShrinkProbe {
     fn shrink_to(&mut self, max_bytes: usize) -> Result<()> {
         self.shrunk_on.lock().push(std::thread::current().id());
         self.bytes = self.bytes.min(max_bytes);
+        self.entries = self.entries.min(self.max_entries);
         Ok(())
     }
+
+    fn set_max_retained_bytes(&mut self, max_bytes: NonZeroU64) {
+        self.max_entries = usize::try_from(max_bytes.get()).expect("probe budget fits usize")
+            / PROBE_BYTES_PER_ENTRY;
+    }
+
+    fn exceeds_limits(&self) -> bool {
+        self.entries > self.max_entries
+    }
+}
+
+/// Wraps a [`ShrinkProbe`] bound to `budget` as a progressed step's committed state.
+fn committed_probe(
+    checkpoint: &VectorBuildCheckpoint,
+    budget: usize,
+    bytes: usize,
+    entries: usize,
+    shrunk_on: &Arc<parking_lot::Mutex<Vec<std::thread::ThreadId>>>,
+) -> Option<CommittedStepState> {
+    Some(CommittedStepState::VectorBuild(Box::new(
+        RetainedVectorBuild {
+            checkpoint: checkpoint.clone(),
+            session: Box::new(ShrinkProbe {
+                bytes,
+                entries,
+                max_entries: budget / PROBE_BYTES_PER_ENTRY,
+                shrunk_on: Arc::clone(shrunk_on),
+            }),
+        },
+    )))
 }
 
 #[tokio::test]
@@ -1084,15 +1124,7 @@ async fn commits_trim_retained_sessions_off_the_executor_thread() {
     let cache = VectorBuildCache::new(NonZeroU64::new(1_000).expect("budget is positive"));
     let shrunk_on = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let probe = |checkpoint: &VectorBuildCheckpoint, bytes| {
-        Some(CommittedStepState::VectorBuild(Box::new(
-            RetainedVectorBuild {
-                checkpoint: checkpoint.clone(),
-                session: Box::new(ShrinkProbe {
-                    bytes,
-                    shrunk_on: Arc::clone(&shrunk_on),
-                }),
-            },
-        )))
+        committed_probe(checkpoint, 1_000, bytes, 0, &shrunk_on)
     };
 
     cache
@@ -1155,6 +1187,255 @@ async fn commits_trim_retained_sessions_off_the_executor_thread() {
         "the only build is bound to the whole budget"
     );
     build.db.close().await.expect("trim thread database closes");
+}
+
+#[tokio::test]
+async fn checkouts_evict_class_cap_excess_off_the_executor_thread() {
+    type Euclidean = vector::distance::Euclidean;
+    const BUDGET: usize = 1_000;
+    let build = GoldenBuild::start("vector-build-cache-checkout-thread").await;
+    let record = read_index(&build.db, build.scope, &build.definition).await;
+    let operation = build.operation().await;
+    let first = VectorBuildCheckpoint::new(&operation, &record, operation.progress().clone());
+    let second = another_operation(&first);
+    let cache = VectorBuildCache::new(
+        NonZeroU64::new(u64::try_from(BUDGET).expect("budget fits u64")).expect("positive"),
+    );
+    let shrunk_on = Arc::new(parking_lot::Mutex::new(Vec::new()));
+
+    // `first` holds 8 of the 10 entries the whole budget allows, in 300 bytes,
+    // and `second` 600 bytes: both fit, so no commit trims.
+    for (checkpoint, bytes, entries) in [(&first, 300, 8), (&second, 600, 0)] {
+        cache
+            .after_commit(
+                checkpoint.operation_id,
+                CommittedOperationStep::Progressed,
+                committed_probe(checkpoint, BUDGET, bytes, entries, &shrunk_on),
+            )
+            .await;
+    }
+    assert!(shrunk_on.lock().is_empty());
+
+    // Its share halves beside `second`, capping it at 5 entries: its bytes
+    // still fit, its entries do not, and checkout evicts them off the executor.
+    assert_eq!(
+        cache
+            .checkout::<Euclidean>(&first)
+            .await
+            .max_payload_bytes(),
+        BUDGET / 2
+    );
+    let threads = shrunk_on.lock().clone();
+    assert_eq!(threads.len(), 1, "checkout evicts the class-cap excess");
+    assert_ne!(
+        threads[0],
+        std::thread::current().id(),
+        "checkout never evicts on the executor thread"
+    );
+
+    // A reused session within its rebound limits is returned untouched.
+    cache
+        .after_commit(
+            first.operation_id,
+            CommittedOperationStep::Progressed,
+            committed_probe(&first, BUDGET, 300, 5, &shrunk_on),
+        )
+        .await;
+    cache.checkout::<Euclidean>(&first).await;
+    assert_eq!(shrunk_on.lock().len(), 1);
+    build
+        .db
+        .close()
+        .await
+        .expect("checkout thread database closes");
+}
+
+#[tokio::test]
+async fn reused_sessions_are_checked_out_within_their_rebound_class_caps() {
+    type Euclidean = vector::distance::Euclidean;
+    const BUDGET: usize = 64 * 1024;
+    let build = GoldenBuild::start("vector-build-cache-rebound-class-caps").await;
+    let record = read_index(&build.db, build.scope, &build.definition).await;
+    let operation = build.operation().await;
+    let first = VectorBuildCheckpoint::new(&operation, &record, operation.progress().clone());
+    let second = another_operation(&first);
+    let cache = VectorBuildCache::new(
+        NonZeroU64::new(u64::try_from(BUDGET).expect("budget fits u64")).expect("positive"),
+    );
+    let simhashes = |budget: usize, simhashes| {
+        VectorBuildSession::<Euclidean>::with_test_simhashes(
+            NonZeroU64::new(u64::try_from(budget).expect("budget fits u64")).expect("positive"),
+            simhashes,
+        )
+    };
+
+    // Under the whole budget `first` holds its cap of 64 SimHashes in about a
+    // sixth of the bytes, and `second` retains most of the rest. Both fit, so
+    // the commits trim nothing.
+    let dense = simhashes(BUDGET, 64);
+    assert!(!dense.exceeds_limits());
+    let dense_bytes = RetainedBuildSession::retained_bytes(&dense);
+    let large = simhashes(1 << 40, 450);
+    let large_bytes = RetainedBuildSession::retained_bytes(&large);
+    assert!(dense_bytes + large_bytes <= BUDGET);
+    for (checkpoint, session) in [(&first, dense), (&second, large)] {
+        cache
+            .after_commit(
+                checkpoint.operation_id,
+                CommittedOperationStep::Progressed,
+                committed_session(checkpoint, session),
+            )
+            .await;
+    }
+
+    // Beside `second`, `first` is rebound to half the budget: its bytes fit,
+    // but its SimHash cap halves to 32.
+    let mut reused = cache.checkout::<Euclidean>(&first).await;
+    assert_eq!(reused.max_payload_bytes(), BUDGET / 2);
+    assert!(dense_bytes <= BUDGET / 2);
+    assert_eq!(
+        reused.simhash_count(),
+        32,
+        "checkout evicts the class-cap excess"
+    );
+    assert!(!reused.exceeds_limits());
+
+    // So the step's first per-entity eviction pass evicts nothing.
+    reused
+        .shrink_to(usize::MAX)
+        .expect("a reused session is clean");
+    assert_eq!(reused.stats().simhash_evictions(), 0);
+    assert_eq!(reused.simhash_count(), 32);
+    build
+        .db
+        .close()
+        .await
+        .expect("rebound class cap database closes");
+}
+
+/// Checks `operation_id`'s retained session out as its next step would, then retains it again.
+///
+/// Asserts that the checked-out session is within every limit of its max-min
+/// share, so the step's first per-entity eviction pass evicts nothing, and
+/// returns whether checkout evicted entries to get it there. Returns `false`
+/// when the operation retains no session.
+async fn check_out_within_limits(
+    driver: &VectorIndexDriver,
+    operation_id: IndexOperationId,
+    budget: usize,
+) -> bool {
+    let Some((checkpoint, held, bytes, others)) = ({
+        let retained = driver
+            .build_cache
+            .retained
+            .try_lock()
+            .expect("no commit is trimming the retained sessions");
+        retained
+            .iter()
+            .find(|retained| retained.checkpoint.operation_id == operation_id)
+            .map(|own| {
+                let session: &dyn Any = own.session.as_ref();
+                let session = session
+                    .downcast_ref::<VectorBuildSession<vector::distance::Euclidean>>()
+                    .expect("golden builds retain Euclidean sessions");
+                (
+                    own.checkpoint.clone(),
+                    (
+                        session.item_count(),
+                        session.neighbor_count(),
+                        session.simhash_count(),
+                    ),
+                    own.session.retained_bytes(),
+                    retained
+                        .iter()
+                        .filter(|other| other.checkpoint.operation_id != operation_id)
+                        .map(|other| other.session.retained_bytes())
+                        .collect::<Vec<_>>(),
+                )
+            })
+    }) else {
+        return false;
+    };
+    let share = max_min_cap(
+        budget,
+        others.into_iter().chain(core::iter::once(usize::MAX)),
+    )
+    .expect("an unbounded demand exceeds a bounded budget");
+    assert!(
+        bytes <= share,
+        "a reused session's bytes already fit its share"
+    );
+
+    let mut session = driver
+        .build_cache
+        .checkout::<vector::distance::Euclidean>(&checkpoint)
+        .await;
+    assert_eq!(session.max_payload_bytes(), share);
+    assert!(
+        !session.exceeds_limits(),
+        "a reused session is checked out within its rebound limits"
+    );
+    let kept = (
+        session.item_count(),
+        session.neighbor_count(),
+        session.simhash_count(),
+    );
+    assert!(kept.0 <= held.0 && kept.1 <= held.1 && kept.2 <= held.2);
+    session
+        .shrink_to(usize::MAX)
+        .expect("a reused session is clean");
+    let stats = session.stats();
+    assert_eq!(
+        stats.item_evictions() + stats.neighbor_evictions() + stats.simhash_evictions(),
+        0,
+        "the step's first per-entity eviction pass evicts nothing"
+    );
+    driver
+        .build_cache
+        .after_commit(
+            operation_id,
+            CommittedOperationStep::Progressed,
+            committed_session(&checkpoint, session),
+        )
+        .await;
+    kept != held
+}
+
+#[tokio::test]
+async fn joining_builds_check_out_class_capped_sessions_within_their_caps() {
+    // Golden sessions reach every class cap well under this budget, so the
+    // caps bind before the bytes do.
+    const BUDGET: usize = 128 * 1024;
+    let driver = driver().with_build_cache_bytes(
+        NonZeroU64::new(u64::try_from(BUDGET).expect("budget fits u64")).expect("positive"),
+    );
+    let mut first = GoldenBuild::start("vector-build-cache-class-caps-first").await;
+    let mut second = GoldenBuild::start("vector-build-cache-class-caps-second").await;
+
+    // `first` steps alone under the whole budget, then `second` joins.
+    for _ in 0..2 {
+        assert!(!check_out_within_limits(&driver, first.operation_id, BUDGET).await);
+        assert_eq!(
+            first.step(&driver).await,
+            CommittedOperationStep::Progressed
+        );
+    }
+    let mut evicted = false;
+    for _ in 0..2 {
+        for build in [&mut second, &mut first] {
+            evicted |= check_out_within_limits(&driver, build.operation_id, BUDGET).await;
+            assert_eq!(
+                build.step(&driver).await,
+                CommittedOperationStep::Progressed
+            );
+        }
+    }
+    assert!(
+        evicted,
+        "a joining build lowered a reused session's class caps below what it held"
+    );
+    assert_golden(first.finish(&driver).await, "first class-capped build");
+    assert_golden(second.finish(&driver).await, "second class-capped build");
 }
 
 #[test]
