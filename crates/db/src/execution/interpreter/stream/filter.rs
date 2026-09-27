@@ -10,7 +10,11 @@
 //! The bitmaps grow with the label and the matching values, not with the
 //! stream, so membership reads them only for streams with more node rows
 //! than one record batch. Narrower streams cost at most one multi-get per
-//! batch and evaluate every row, exactly like the filter they replace.
+//! batch and evaluate every row, exactly like the filter they replace. A
+//! resolved set is reused by later executions of the same plan in the
+//! request, such as branch bodies that run once per parent row.
+
+use std::sync::Arc;
 
 use super::eval::RowValueResolver;
 use super::*;
@@ -43,6 +47,44 @@ pub(in crate::execution::interpreter) enum PreparedIndexMembership {
     },
     /// Indexes cannot serve this execution; every row evaluates the predicate.
     PerRow,
+}
+
+/// Memberships resolved in one request state, reused by later executions.
+///
+/// Branch bodies run their pipeline once per parent row and `ForEach` bodies
+/// once per item, so the same plan can resolve many times per request. The
+/// resolved set depends only on the plan, the request snapshot, and its
+/// parameters, so an entry stays exact until one of them changes: every
+/// mutation, index DDL, and `ForEach` parameter frame clears the cache first.
+/// Entries hold at most one set per distinct plan in the request.
+#[derive(Debug, Default)]
+pub(in crate::execution::interpreter) struct PreparedMemberships(
+    Vec<(
+        exec::ExecNodeIndexMembershipPlan,
+        Arc<PreparedIndexMembership>,
+    )>,
+);
+
+impl PreparedMemberships {
+    /// Forget every resolved set before the state they were read from changes.
+    pub(in crate::execution::interpreter) fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    fn get(
+        &self,
+        plan: &exec::ExecNodeIndexMembershipPlan,
+    ) -> Option<Arc<PreparedIndexMembership>> {
+        self.0
+            .iter()
+            .find(|(cached, _)| cached == plan)
+            .map(|(_, prepared)| Arc::clone(prepared))
+    }
+
+    #[cfg(test)]
+    pub(in crate::execution::interpreter) fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 /// Decision for nodes outside the membership set.
@@ -89,7 +131,7 @@ pub(in crate::execution::interpreter) enum MembershipCursor {
     /// Node rows evaluated so far, at most [`RECORD_BATCH_ROWS`].
     PerRow { node_rows: usize },
     /// Set resolved after the cursor pulled more than one batch of node rows.
-    Prepared(PreparedIndexMembership),
+    Prepared(Arc<PreparedIndexMembership>),
 }
 
 impl Default for MembershipCursor {
@@ -103,7 +145,7 @@ impl MembershipCursor {
     /// more node rows than one record batch.
     pub(in crate::execution::interpreter) async fn decide(
         &mut self,
-        ctx: &ExecutionContext<'_>,
+        ctx: &mut ExecutionContext<'_>,
         plan: &exec::ExecNodeIndexMembershipPlan,
         row: &ExecutionRow,
     ) -> Result<RowDecision> {
@@ -116,7 +158,7 @@ impl MembershipCursor {
                 Ok(RowDecision::Evaluate)
             }
             (Self::PerRow { .. }, Some(ElementRef::Node(_))) => {
-                let prepared = ctx.prepare_index_membership(plan).await?;
+                let prepared = ctx.cached_index_membership(plan).await?;
                 let decision = prepared.decide(row);
                 *self = Self::Prepared(prepared);
                 Ok(decision)
@@ -139,7 +181,7 @@ impl<'db> ExecutionContext<'db> {
     }
 
     pub(in crate::execution::interpreter) async fn index_membership(
-        &self,
+        &mut self,
         input: ExecutionValue,
         plan: &exec::ExecNodeIndexMembershipPlan,
     ) -> Result<ExecutionValue> {
@@ -151,13 +193,32 @@ impl<'db> ExecutionContext<'db> {
             .filter(|row| matches!(row.current, Some(ElementRef::Node(_))))
             .count();
         let prepared = if node_rows > RECORD_BATCH_ROWS {
-            self.prepare_index_membership(plan).await?
+            self.cached_index_membership(plan).await?
         } else {
-            PreparedIndexMembership::PerRow
+            Arc::new(PreparedIndexMembership::PerRow)
         };
         self.retain_rows(rows, plan.predicate.predicate(), |row| prepared.decide(row))
             .await
             .map(ExecutionValue::Stream)
+    }
+
+    /// Resolve `plan` at most once per request state.
+    ///
+    /// See [`PreparedMemberships`] for when a resolved set is reused.
+    pub(in crate::execution::interpreter) async fn cached_index_membership(
+        &mut self,
+        plan: &exec::ExecNodeIndexMembershipPlan,
+    ) -> Result<Arc<PreparedIndexMembership>> {
+        match self.prepared_memberships.get(plan) {
+            Some(prepared) => Ok(prepared),
+            None => {
+                let prepared = Arc::new(self.prepare_index_membership(plan).await?);
+                self.prepared_memberships
+                    .0
+                    .push((plan.clone(), Arc::clone(&prepared)));
+                Ok(prepared)
+            }
+        }
     }
 
     /// Resolve the membership set and label domain for this request.
@@ -165,7 +226,7 @@ impl<'db> ExecutionContext<'db> {
     /// Both reads go through the request snapshot or write transaction and
     /// its Active catalog. A set that needs an authoritative scan, or an index
     /// the catalog no longer serves, falls back to exact per-row evaluation.
-    pub(in crate::execution::interpreter) async fn prepare_index_membership(
+    async fn prepare_index_membership(
         &self,
         plan: &exec::ExecNodeIndexMembershipPlan,
     ) -> Result<PreparedIndexMembership> {

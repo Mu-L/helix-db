@@ -100,6 +100,9 @@ impl<'db> ExecutionContext<'db> {
             // Keep that state off enclosing query futures and their thread stacks.
             exec::ExecOp::Mutation { plan } => Box::pin(self.execute_mutation(input, plan)).await,
             exec::ExecOp::IndexDdl { plan } => {
+                // DDL changes which indexes serve a set and may start a newer
+                // request snapshot.
+                self.prepared_memberships.clear();
                 if plan.requires_isolated_catalog_transaction() {
                     let resume_request_scope = self.has_request_write_scope();
                     self.check_execution_deadline()?;

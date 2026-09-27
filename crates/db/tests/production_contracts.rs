@@ -7059,6 +7059,99 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
         18
     );
 
+    // One request reuses a resolved set across executions of the same plan
+    // until a mutation or a `ForEach` frame changes what it was read from.
+    // `wide` now reaches the B-valued attributes `w6`, `w12`, and `w-fresh`
+    // through each of its 18 targets.
+    let wide_attributes = |kind: Predicate| {
+        traversal::g()
+            .n_with_label_where("Group", Predicate::eq("uid", "wide"))
+            .out(Some("HAS"))
+            .in_(Some("HAS"))
+            .out(Some("HAS"))
+            .where_(Predicate::and(vec![
+                Predicate::eq("$label", "Attribute"),
+                kind,
+            ]))
+    };
+    let rewrite = batch::write_batch()
+        .var_as(
+            "before",
+            wide_attributes(Predicate::eq("kind", "B")).values(vec!["uid"]),
+        )
+        .var_as(
+            "moved",
+            traversal::g()
+                .n_with_label_where("Attribute", Predicate::eq("uid", "w2"))
+                .set_property("kind", "B"),
+        )
+        .var_as(
+            "after",
+            wide_attributes(Predicate::eq("kind", "B")).values(vec!["uid", "kind"]),
+        )
+        .returning(["before", "after"]);
+    assert_eq!(
+        planning::plan_write_batch(&rewrite, &with_catalog)
+            .expect("rewrite plans")
+            .steps()
+            .iter()
+            .filter(|step| is_membership(step))
+            .count(),
+        2
+    );
+    let response = db
+        .query(QueryRequest::write(rewrite))
+        .await
+        .expect("rewrite executes");
+    let rows = |name: &str| {
+        response[name]
+            .as_array()
+            .expect("write returns result rows")
+            .len()
+    };
+    assert_eq!((rows("before"), rows("after")), (3 * 18, 4 * 18));
+
+    // Each frame binds another kind, so the last frame's B-valued attributes
+    // never come from the set the A frame resolved.
+    let frames = batch::read_batch()
+        .for_each_param(
+            "items",
+            batch::read_batch().var_as(
+                "result",
+                wide_attributes(Predicate::eq_param("kind", "kind")).values(vec!["uid"]),
+            ),
+        )
+        .returning(["result"]);
+    assert!(planning::plan_read_batch(&frames, &with_catalog)
+        .expect("frames plan")
+        .steps()
+        .iter()
+        .any(|step| matches!(
+            &step.op,
+            exec::ExecOp::ForEach { body, .. } if body.steps().iter().any(is_membership)
+        )));
+    let item = |kind: &str| {
+        QueryValue::Object(
+            [("kind".to_owned(), QueryValue::String(kind.to_owned()))]
+                .into_iter()
+                .collect(),
+        )
+    };
+    let response = db
+        .query(
+            QueryRequest::read(frames)
+                .with_parameter_value("items", QueryValue::Array(vec![item("A"), item("B")])),
+        )
+        .await
+        .expect("frames execute");
+    let uids = response["result"]
+        .as_array()
+        .expect("frames return result rows");
+    assert_eq!(uids.len(), 4 * 18);
+    assert!(uids
+        .iter()
+        .all(|row| ["w2", "w6", "w12", "w-fresh"].contains(&row["uid"].as_str().unwrap())));
+
     db.close().await.unwrap();
 }
 

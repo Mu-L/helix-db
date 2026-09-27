@@ -123,6 +123,9 @@ impl<'db> ExecutionContext<'db> {
     /// Direct focused mutation calls that did not enable a request scope open an
     /// isolated transaction. Request execution already owns its transaction.
     pub(super) async fn take_or_begin_write_scope(&mut self) -> Result<MutationWriteScope> {
+        // Every mutation enters here, and any of them can change a resolved
+        // membership set.
+        self.prepared_memberships.clear();
         let state = std::mem::replace(
             &mut self.request_write_scope,
             RequestWriteScopeState::Disabled,

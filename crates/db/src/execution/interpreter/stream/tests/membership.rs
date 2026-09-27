@@ -755,6 +755,55 @@ async fn pull_cursors_resolve_membership_after_one_record_batch_of_node_rows() {
 }
 
 #[tokio::test]
+async fn resolved_memberships_are_reused_across_executions_of_one_plan() {
+    let fixture = fixture("membership-reuse").await;
+    let predicate = Predicate::eq("kind", "B");
+    let op = membership(kind_equality(literal("B")), predicate.clone());
+    let exec::ExecOp::IndexMembership { plan } = &op else {
+        unreachable!("the membership helper builds membership");
+    };
+    let other = membership(kind_equality(literal("A")), Predicate::eq("kind", "A"));
+    let mut ctx = ExecutionContext::new(&fixture.db, context::ParamBindings::default());
+    ctx.enable_request_read_view().await.unwrap();
+
+    // A branch body runs the same plan once per parent row; every run after
+    // the first reuses the resolved set.
+    let (expected, _) = run(
+        &fixture,
+        &filter(predicate),
+        traversal_rows(&fixture),
+        context::ParamBindings::default(),
+    )
+    .await;
+    let expected = expected.unwrap();
+    for _ in 0..3 {
+        let rows = ctx
+            .execute_op(&op, ExecutionValue::Stream(traversal_rows(&fixture)))
+            .await
+            .unwrap();
+        assert_eq!(rows, expected);
+    }
+    assert_eq!(ctx.prepared_memberships.len(), 1);
+    let first = ctx.cached_index_membership(plan).await.unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        &first,
+        &ctx.cached_index_membership(plan).await.unwrap()
+    ));
+
+    // Another plan resolves its own set, and clearing forgets both.
+    ctx.execute_op(&other, ExecutionValue::Stream(traversal_rows(&fixture)))
+        .await
+        .unwrap();
+    assert_eq!(ctx.prepared_memberships.len(), 2);
+    ctx.prepared_memberships.clear();
+    assert!(!std::sync::Arc::ptr_eq(
+        &first,
+        &ctx.cached_index_membership(plan).await.unwrap()
+    ));
+    ctx.close_request_read_view().unwrap();
+}
+
+#[tokio::test]
 async fn filter_batches_record_reads_once_per_distinct_element() {
     let fixture = fixture("filter-batched-reads").await;
     let input = [fixture.attribute_b, fixture.note_b, fixture.attribute_a]
