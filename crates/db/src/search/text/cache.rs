@@ -430,7 +430,12 @@ impl FtsCache {
     }
 
     pub(crate) async fn after_successful_search(self: &Arc<Self>, split: TextSplitRef) {
-        if self.config.disk().is_none() {
+        // A split larger than the whole disk tier would only evict the rest.
+        if self
+            .config
+            .disk()
+            .is_none_or(|disk| split.blob.size_bytes > disk.bytes() as u64)
+        {
             return;
         }
         let key = TextSplitCacheKey::from(&split);
@@ -494,7 +499,11 @@ impl FtsCache {
                 let hydrated_bytes = Arc::clone(&hydrated_bytes);
                 let errors = Arc::clone(&errors);
                 async move {
-                    if cache.config.disk().is_some() {
+                    if cache
+                        .config
+                        .disk()
+                        .is_some_and(|disk| split.blob.size_bytes <= disk.bytes() as u64)
+                    {
                         match cache.ensure_artifact(&split).await {
                             Ok(bytes) => {
                                 if bytes > 0 {
@@ -1594,6 +1603,52 @@ mod tests {
         })
         .await
         .expect("second success hydrates");
+        cache.close().await;
+    }
+
+    #[tokio::test]
+    async fn splits_larger_than_the_disk_tier_are_never_admitted() {
+        let database = "fts-cache-oversized-disk";
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (bytes, split) = valid_split(16);
+        put_split(&store, database, bytes, &split).await;
+        let disk = tempfile::tempdir().expect("disk cache");
+        let cache = cache(
+            database,
+            store,
+            Some(disk.path().to_path_buf()),
+            split.total_size_bytes,
+            split.blob.size_bytes - 1,
+            Duration::from_secs(1),
+        );
+
+        for _ in 0..2 {
+            cache.after_successful_search(split.clone()).await;
+        }
+        assert!(
+            cache.tasks.lock().await.is_empty(),
+            "a second search schedules no hydration"
+        );
+        let warmed = cache.warm_splits(1, vec![split.clone()]).await;
+        assert_eq!(
+            (
+                warmed.opened_splits,
+                warmed.hydrated_splits,
+                warmed.warm_errors
+            ),
+            (1, 0, 0),
+            "the warm still opens the split remotely"
+        );
+        let state = cache.snapshot();
+        assert_eq!(state.hydration_attempts, 0);
+        assert_eq!(state.disk_artifact_count, 0);
+        assert!(!tokio_fs::try_exists(
+            cache
+                .artifact_path(split.blob.sha256)
+                .expect("artifact path")
+        )
+        .await
+        .expect("artifact status"));
         cache.close().await;
     }
 
