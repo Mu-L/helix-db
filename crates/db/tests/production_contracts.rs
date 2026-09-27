@@ -6732,7 +6732,7 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
                 5,
                 vec![step_id(4)],
                 exec::ExecOp::Limit {
-                    count: ir::StreamBoundPlan::Literal(64),
+                    count: ir::StreamBoundPlan::Literal(200),
                 },
             ));
         }
@@ -6852,32 +6852,52 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
         )),
         &kind_b_and_uid_a1,
     );
-    let mixed_rows = context::ParamBindings::default()
-        .with_value(
-            ir::NonEmptyString::new("edges").expect("parameter is non-empty"),
-            edges,
-        )
-        .with_value(
-            ir::NonEmptyString::new("nodes").expect("parameter is non-empty"),
-            nodes,
-        );
-    let edge_rows = mixed_rows.clone().with_value(
-        ir::NonEmptyString::new("nodes").expect("parameter is non-empty"),
-        PropertyValue::I64Array(Vec::new()),
-    );
+    // Membership resolves its set only for more node rows than one 256-row
+    // record batch, so the hand-built node rows repeat the six traversal rows
+    // 50 times. A window of 200 still pulls every node row for each shape.
+    let with_nodes = |nodes: &PropertyValue, repeats: usize| {
+        let PropertyValue::I64Array(nodes) = nodes else {
+            panic!("element reads return an ID array");
+        };
+        context::ParamBindings::default()
+            .with_value(
+                ir::NonEmptyString::new("edges").expect("parameter is non-empty"),
+                edges.clone(),
+            )
+            .with_value(
+                ir::NonEmptyString::new("nodes").expect("parameter is non-empty"),
+                PropertyValue::I64Array(
+                    nodes
+                        .iter()
+                        .copied()
+                        .cycle()
+                        .take(nodes.len() * repeats)
+                        .collect(),
+                ),
+            )
+    };
+    let narrow_rows = with_nodes(&nodes, 1);
+    let mixed_rows = with_nodes(&nodes, 50);
+    let edge_rows = with_nodes(&nodes, 0);
     for window in [false, true] {
         for (membership, predicate, rows, kept) in [
             (
                 membership(equality(served.clone(), "kind", "B"), &kind_b),
                 kind_b.clone(),
                 &mixed_rows,
+                1 + 3 * 50,
+            ),
+            (
+                membership(equality(served.clone(), "kind", "B"), &kind_b),
+                kind_b.clone(),
+                &narrow_rows,
                 4,
             ),
             (
                 membership(equality(unserved.clone(), "uid", "a1"), &uid_a1),
                 uid_a1.clone(),
                 &mixed_rows,
-                2,
+                2 * 50,
             ),
             (
                 membership(equality(corrupt.clone(), "kind", "B"), &kind_b),
@@ -6885,9 +6905,32 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
                 &edge_rows,
                 1,
             ),
-            (union.clone(), kind_a_or_rank_9.clone(), &mixed_rows, 4),
-            (intersect.clone(), kind_b_and_uid_a1.clone(), &mixed_rows, 2),
-            (authoritative.clone(), null_kind.clone(), &mixed_rows, 2),
+            // Six node rows stay within one record batch and never resolve
+            // the corrupt identity.
+            (
+                membership(equality(corrupt.clone(), "kind", "B"), &kind_b),
+                kind_b.clone(),
+                &narrow_rows,
+                4,
+            ),
+            (
+                union.clone(),
+                kind_a_or_rank_9.clone(),
+                &mixed_rows,
+                1 + 3 * 50,
+            ),
+            (
+                intersect.clone(),
+                kind_b_and_uid_a1.clone(),
+                &mixed_rows,
+                2 * 50,
+            ),
+            (
+                authoritative.clone(),
+                null_kind.clone(),
+                &mixed_rows,
+                1 + 50,
+            ),
         ] {
             let expected = db
                 .execute(&mixed(filter(predicate.clone()), window), rows.clone())
@@ -6907,7 +6950,8 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
                 "{predicate:?}, window {window}"
             );
         }
-        // Node rows force the corrupt identity to resolve, which fails closed.
+        // More node rows than one record batch force the corrupt identity to
+        // resolve, which fails closed.
         let error = db
             .execute(
                 &mixed(
@@ -6967,6 +7011,53 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
         .collect::<Vec<_>>();
     written.sort();
     assert_eq!(written, ["a5", "n1"]);
+
+    // Past one record batch of node rows the membership resolves its set,
+    // which must already hold the request's pending index move and new node.
+    let wide_write = batch::write_batch()
+        .var_as(
+            "hub",
+            traversal::g().n_with_label_where("Group", Predicate::eq("uid", "wide")),
+        )
+        .var_as("fresh", node("Attribute", "w-fresh", Some("B"), 0))
+        .var_as("link", edge("hub", "HAS", "fresh", None))
+        .var_as(
+            "moved",
+            traversal::g()
+                .n_with_label_where("Attribute", Predicate::eq("uid", "w0"))
+                .set_property("kind", "A"),
+        )
+        .var_as(
+            "result",
+            traversal::g()
+                .n_with_label_where("Group", Predicate::eq("uid", "wide"))
+                .out(Some("HAS"))
+                .in_(Some("HAS"))
+                .out(Some("HAS"))
+                .where_(Predicate::eq("kind", "B"))
+                .values(vec!["uid"]),
+        )
+        .returning(["result"]);
+    assert!(planning::plan_write_batch(&wide_write, &with_catalog)
+        .expect("wide membership write plans")
+        .steps()
+        .iter()
+        .any(is_membership));
+    let response = db
+        .query(QueryRequest::write(wide_write))
+        .await
+        .expect("wide membership write executes");
+    let written = response["result"]
+        .as_array()
+        .expect("write returns result rows");
+    // Five remaining B-valued targets and the new node, each reached through
+    // all 18 targets of `wide`.
+    assert_eq!(written.len(), 6 * 18);
+    assert!(written.iter().all(|row| row["uid"] != "w0"));
+    assert_eq!(
+        written.iter().filter(|row| row["uid"] == "w-fresh").count(),
+        18
+    );
 
     db.close().await.unwrap();
 }

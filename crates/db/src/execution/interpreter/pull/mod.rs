@@ -115,8 +115,9 @@ enum Node<'a> {
     IndexMembership {
         plan: &'a exec::ExecNodeIndexMembershipPlan,
         input: Box<Cursor<'a>>,
-        /// Resolved on the first node row, so node-free streams never read it.
-        prepared: Option<stream::PreparedIndexMembership>,
+        /// Resolved after one record batch of node rows, so short pulls and
+        /// node-free streams never read the set.
+        membership: stream::MembershipCursor,
     },
     Full {
         op: &'a exec::ExecOp,

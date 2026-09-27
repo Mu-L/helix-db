@@ -8,7 +8,16 @@ use helix_ast::expr::Predicate;
 use helix_planner::catalog;
 
 use super::super::super::ExecutionContext;
+use super::super::filter::RECORD_BATCH_ROWS;
 use super::support::*;
+
+/// Repetitions of [`traversal_pattern`], whose eight node rows per copy then
+/// exceed one record batch, so membership resolves its set.
+const TRAVERSAL_REPEATS: usize = RECORD_BATCH_ROWS / 8 + 1;
+
+/// Stored-record batches spanned by [`traversal_rows`]; each batch reads a
+/// distinct element's record at most once.
+const TRAVERSAL_BATCHES: usize = 2;
 
 struct Fixture {
     db: crate::HelixDB,
@@ -108,8 +117,9 @@ fn filter(predicate: Predicate) -> exec::ExecOp {
 }
 
 /// Rows behind a traversal: every node row carries a path through `group`, a
-/// binding, and a sack, and the stream repeats elements.
-fn traversal_rows(fixture: &Fixture) -> Vec<ExecutionRow> {
+/// binding, and a sack, and the stream repeats elements. Its eight node rows
+/// stay within one record batch, so membership evaluates every row.
+fn traversal_pattern(fixture: &Fixture) -> Vec<ExecutionRow> {
     let node = |id| {
         let mut row = ExecutionRow::current(ElementRef::Node(fixture.group));
         row.bindings
@@ -131,6 +141,19 @@ fn traversal_rows(fixture: &Fixture) -> Vec<ExecutionRow> {
         ExecutionRow::empty(),
         node(fixture.note_b),
     ]
+}
+
+/// [`traversal_pattern`] repeated past one record batch of node rows.
+fn traversal_rows(fixture: &Fixture) -> Vec<ExecutionRow> {
+    let pattern = traversal_pattern(fixture);
+    let rows = pattern
+        .iter()
+        .cycle()
+        .take(pattern.len() * TRAVERSAL_REPEATS)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len().div_ceil(RECORD_BATCH_ROWS), TRAVERSAL_BATCHES);
+    rows
 }
 
 async fn run(
@@ -183,8 +206,9 @@ async fn membership_matches_filter_on_mixed_streams_without_label_record_reads()
     )
     .await;
 
+    assert_eq!(rows.len(), 5 * TRAVERSAL_REPEATS);
     assert_eq!(
-        current_ids(&rows),
+        current_ids(&rows[..5]),
         [
             Some(ElementRef::Node(fixture.attribute_b)),
             Some(ElementRef::Node(fixture.note_b)),
@@ -195,8 +219,8 @@ async fn membership_matches_filter_on_mixed_streams_without_label_record_reads()
     );
     assert!(rows[0].bindings.contains_key(&name("group")));
     assert_eq!(rows[0].path.elements().len(), 2);
-    // Only the other-label nodes and the edges read records, once each.
-    assert_eq!(reads, 5);
+    // Only the other-label nodes and the edges read records, once per batch.
+    assert_eq!(reads, 5 * TRAVERSAL_BATCHES);
 
     let (_, reads) = assert_matches_filter(
         &fixture,
@@ -234,15 +258,16 @@ async fn label_scoped_membership_rejects_other_nodes_without_reading_them() {
     )
     .await;
 
+    assert_eq!(rows.len(), 2 * TRAVERSAL_REPEATS);
     assert_eq!(
-        current_ids(&rows),
+        current_ids(&rows[..2]),
         [
             Some(ElementRef::Node(fixture.attribute_b)),
             Some(ElementRef::Node(fixture.attribute_b)),
         ]
     );
     // Only the two edges evaluate the predicate.
-    assert_eq!(reads, 2);
+    assert_eq!(reads, 2 * TRAVERSAL_BATCHES);
 }
 
 #[tokio::test]
@@ -264,7 +289,7 @@ async fn membership_sets_for_in_match_filter() {
         context::ParamBindings::default(),
     )
     .await;
-    assert_eq!(rows.len(), 8);
+    assert_eq!(rows.len(), 8 * TRAVERSAL_REPEATS);
 }
 
 /// Validated plans never carry a range set, but the executable contract is
@@ -312,15 +337,15 @@ async fn range_sets_evaluate_rows_without_scanning_the_range() {
     )
     .await;
     assert_eq!(
-        current_ids(&rows),
+        current_ids(&rows[..3]),
         [
             Some(ElementRef::Node(fixture.attribute_a)),
             Some(ElementRef::Node(fixture.attribute_none)),
             Some(ElementRef::Node(fixture.note_a)),
         ]
     );
-    // Every distinct stream element evaluates the predicate.
-    assert_eq!(reads, 8);
+    // Every distinct stream element evaluates the predicate in each batch.
+    assert_eq!(reads, 8 * TRAVERSAL_BATCHES);
 
     let late_bound = range(
         lower(ir::RangeIndexValue::Param(min.clone())),
@@ -405,7 +430,7 @@ async fn range_sets_evaluate_rows_without_scanning_the_range() {
         let ExecutionValue::Stream(expected) = expected else {
             panic!("filter returns rows");
         };
-        assert_eq!(expected.len(), kept);
+        assert_eq!(expected.len(), kept * TRAVERSAL_REPEATS);
     }
 }
 
@@ -433,7 +458,7 @@ async fn runtime_parameters_needing_authoritative_scans_fall_back_to_rows() {
         bind("B".into()),
     )
     .await;
-    assert_eq!(indexed_reads, 5);
+    assert_eq!(indexed_reads, 5 * TRAVERSAL_BATCHES);
     for value in [
         helix_ast::value::PropertyValue::Null,
         helix_ast::value::PropertyValue::array([helix_ast::value::PropertyValue::from("B")]),
@@ -447,7 +472,7 @@ async fn runtime_parameters_needing_authoritative_scans_fall_back_to_rows() {
         )
         .await;
         // Every distinct stream element, never the unreached label nodes.
-        assert_eq!(reads, 8);
+        assert_eq!(reads, 8 * TRAVERSAL_BATCHES);
     }
     let (_, nan_reads) = assert_matches_filter(
         &fixture,
@@ -457,7 +482,7 @@ async fn runtime_parameters_needing_authoritative_scans_fall_back_to_rows() {
         bind(helix_ast::value::PropertyValue::F64(f64::NAN)),
     )
     .await;
-    assert_eq!(nan_reads, 5);
+    assert_eq!(nan_reads, 5 * TRAVERSAL_BATCHES);
 
     let kinds = name("kinds");
     let domain = membership(
@@ -481,7 +506,7 @@ async fn runtime_parameters_needing_authoritative_scans_fall_back_to_rows() {
             ),
         )
         .await;
-        assert_eq!(actual, reads);
+        assert_eq!(actual, reads * TRAVERSAL_BATCHES);
     }
     let (_, reads) = assert_matches_filter(
         &fixture,
@@ -497,7 +522,7 @@ async fn runtime_parameters_needing_authoritative_scans_fall_back_to_rows() {
         ),
     )
     .await;
-    assert_eq!(reads, 8);
+    assert_eq!(reads, 8 * TRAVERSAL_BATCHES);
 
     let (missing, _) = run(
         &fixture,
@@ -530,7 +555,7 @@ async fn unavailable_indexes_fall_back_and_corrupt_identities_fail_closed() {
         context::ParamBindings::default(),
     )
     .await;
-    assert_eq!(reads, 8);
+    assert_eq!(reads, 8 * TRAVERSAL_BATCHES);
 
     let corrupt = ir::NodeAccessSourcePlan::new(ir::NodeAccessPlan::EqualityIndex {
         index: catalog::NodeEqualityIndexMeta::try_new("not-a-planner-identity").unwrap(),
@@ -551,22 +576,48 @@ async fn unavailable_indexes_fall_back_and_corrupt_identities_fail_closed() {
         Err(crate::error::HelixDbError::IndexCatalogCorruption(_))
     ));
 
-    // Streams without node rows never resolve the (corrupt) set.
+    // Streams without node rows, or with at most one record batch of them,
+    // never resolve the (corrupt) set and evaluate every row instead.
+    let narrow = traversal_pattern(&fixture)
+        .into_iter()
+        .cycle()
+        .filter(|row| matches!(row.current, Some(ElementRef::Node(_))))
+        .take(RECORD_BATCH_ROWS)
+        .collect::<Vec<_>>();
     for input in [
         Vec::new(),
         vec![
             ExecutionRow::current(ElementRef::Edge(fixture.edge_b)),
             ExecutionRow::empty(),
         ],
+        traversal_pattern(&fixture),
+        narrow.clone(),
     ] {
-        let expected = input
-            .iter()
-            .filter(|row| row.current.is_some())
-            .cloned()
-            .collect::<Vec<_>>();
+        let (expected, _) = run(
+            &fixture,
+            &filter(Predicate::eq("kind", "B")),
+            input.clone(),
+            context::ParamBindings::default(),
+        )
+        .await;
         let (result, _) = run(&fixture, &corrupt, input, context::ParamBindings::default()).await;
-        assert_eq!(result.unwrap(), ExecutionValue::Stream(expected));
+        assert_eq!(result.unwrap(), expected.unwrap());
     }
+    // One more node row resolves the set.
+    let (error, _) = run(
+        &fixture,
+        &corrupt,
+        narrow
+            .into_iter()
+            .chain([ExecutionRow::current(ElementRef::Node(fixture.note_a))])
+            .collect(),
+        context::ParamBindings::default(),
+    )
+    .await;
+    assert!(matches!(
+        error,
+        Err(crate::error::HelixDbError::IndexCatalogCorruption(_))
+    ));
 }
 
 #[tokio::test]
@@ -639,6 +690,68 @@ async fn pull_regions_and_count_cursors_share_membership_semantics() {
     );
     let result = fixture.db.execute(&plan, params).await.unwrap();
     assert_eq!(result.last, Some(ExecutionValue::Count(3)));
+}
+
+#[tokio::test]
+async fn pull_cursors_resolve_membership_after_one_record_batch_of_node_rows() {
+    let fixture = fixture("membership-pull-batch").await;
+    // Two of every three node rows match, so 170 matches take 254 node rows
+    // and 200 matches take 299.
+    let ids = [fixture.attribute_b, fixture.note_b, fixture.attribute_a]
+        .into_iter()
+        .cycle()
+        .take(3 * RECORD_BATCH_ROWS)
+        .collect::<Vec<_>>();
+    let params = context::ParamBindings::default().with_value(name("ids"), ids_value(&ids));
+    let corrupt = membership(
+        ir::NodeAccessSourcePlan::new(ir::NodeAccessPlan::EqualityIndex {
+            index: catalog::NodeEqualityIndexMeta::try_new("not-a-planner-identity").unwrap(),
+            key: catalog::ScopedPropertyKey::try_new("Attribute", "kind").unwrap(),
+            value: literal("B"),
+        })
+        .unwrap(),
+        Predicate::eq("kind", "B"),
+    );
+    let limited = |count| {
+        test_support::executable(
+            ir::PlanKind::Read,
+            vec![
+                node_access_step(1, name("ids")),
+                test_support::step(2, vec![exec::ExecStepId::new(1).unwrap()], corrupt.clone()),
+                test_support::step(
+                    3,
+                    vec![exec::ExecStepId::new(2).unwrap()],
+                    exec::ExecOp::Limit {
+                        count: ir::StreamBoundPlan::Literal(count),
+                    },
+                ),
+            ],
+            3,
+        )
+    };
+
+    // The cursor stops within one batch of node rows and never reads the set.
+    let result = fixture
+        .db
+        .execute(&limited(170), params.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        result.last,
+        Some(ExecutionValue::Stream(
+            ids.iter()
+                .filter(|id| **id != fixture.attribute_a)
+                .take(170)
+                .map(|id| ExecutionRow::current(ElementRef::Node(*id)))
+                .collect()
+        ))
+    );
+    // A longer pull resolves the set, and the corrupt identity fails closed.
+    let error = fixture.db.execute(&limited(200), params).await.unwrap_err();
+    assert!(
+        matches!(error, crate::error::HelixDbError::IndexCatalogCorruption(_)),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]

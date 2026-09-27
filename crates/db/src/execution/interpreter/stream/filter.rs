@@ -6,13 +6,19 @@
 //! read per row. Index membership decides nodes of its label from secondary
 //! index bitmaps and evaluates the predicate only for rows the index cannot
 //! decide.
+//!
+//! The bitmaps grow with the label and the matching values, not with the
+//! stream, so membership reads them only for streams with more node rows
+//! than one record batch. Narrower streams cost at most one multi-get per
+//! batch and evaluate every row, exactly like the filter they replace.
 
 use super::eval::RowValueResolver;
 use super::*;
 
 /// Rows evaluated per stored-record batch. This bounds the decoded records a
-/// filter holds at once while amortizing one multi-get over many rows.
-const RECORD_BATCH_ROWS: usize = 256;
+/// filter holds at once while amortizing one multi-get over many rows. Index
+/// membership also resolves its bitmaps only for streams with more node rows.
+pub(super) const RECORD_BATCH_ROWS: usize = 256;
 
 /// Decision for one row of a row-preserving filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +78,54 @@ impl PreparedIndexMembership {
     }
 }
 
+/// Index membership state of one pull cursor.
+///
+/// A cursor cannot see how many rows it will pull, so it evaluates its first
+/// record batch of node rows one by one and resolves the set on the next node
+/// row. A short pull, such as an existence check or a small limit, therefore
+/// never reads the label-sized bitmaps.
+#[derive(Debug)]
+pub(in crate::execution::interpreter) enum MembershipCursor {
+    /// Node rows evaluated so far, at most [`RECORD_BATCH_ROWS`].
+    PerRow { node_rows: usize },
+    /// Set resolved after the cursor pulled more than one batch of node rows.
+    Prepared(PreparedIndexMembership),
+}
+
+impl Default for MembershipCursor {
+    fn default() -> Self {
+        Self::PerRow { node_rows: 0 }
+    }
+}
+
+impl MembershipCursor {
+    /// Decide one pulled row, resolving the set once the cursor has pulled
+    /// more node rows than one record batch.
+    pub(in crate::execution::interpreter) async fn decide(
+        &mut self,
+        ctx: &ExecutionContext<'_>,
+        plan: &exec::ExecNodeIndexMembershipPlan,
+        row: &ExecutionRow,
+    ) -> Result<RowDecision> {
+        match (&mut *self, row.current.as_ref()) {
+            (Self::Prepared(prepared), _) => Ok(prepared.decide(row)),
+            (Self::PerRow { node_rows }, Some(ElementRef::Node(_)))
+                if *node_rows < RECORD_BATCH_ROWS =>
+            {
+                *node_rows += 1;
+                Ok(RowDecision::Evaluate)
+            }
+            (Self::PerRow { .. }, Some(ElementRef::Node(_))) => {
+                let prepared = ctx.prepare_index_membership(plan).await?;
+                let decision = prepared.decide(row);
+                *self = Self::Prepared(prepared);
+                Ok(decision)
+            }
+            (Self::PerRow { .. }, Some(ElementRef::Edge(_)) | None) => Ok(RowDecision::Evaluate),
+        }
+    }
+}
+
 impl<'db> ExecutionContext<'db> {
     pub(in crate::execution::interpreter) async fn filter(
         &self,
@@ -90,11 +144,13 @@ impl<'db> ExecutionContext<'db> {
         plan: &exec::ExecNodeIndexMembershipPlan,
     ) -> Result<ExecutionValue> {
         let rows = self.stream_rows(input, "index membership")?;
-        // A stream without node rows never consults the index.
-        let prepared = if rows
+        // At most one record batch of node rows evaluates every row, which
+        // never reads more than the label-sized bitmaps would.
+        let node_rows = rows
             .iter()
-            .any(|row| matches!(row.current, Some(ElementRef::Node(_))))
-        {
+            .filter(|row| matches!(row.current, Some(ElementRef::Node(_))))
+            .count();
+        let prepared = if node_rows > RECORD_BATCH_ROWS {
             self.prepare_index_membership(plan).await?
         } else {
             PreparedIndexMembership::PerRow

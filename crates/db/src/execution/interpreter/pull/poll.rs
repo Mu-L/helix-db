@@ -454,24 +454,14 @@ impl<'a> Cursor<'a> {
                     Node::IndexMembership {
                         plan,
                         input,
-                        prepared,
+                        membership,
                     } => {
                         let Some(item) = input.next(ctx).await? else {
                             return Ok(None);
                         };
                         let rows = ctx.stream_rows(item, "index membership")?;
                         let row = rows.first().expect("cursor emits one row");
-                        let decision = match (row.current.as_ref(), prepared.as_ref()) {
-                            (Some(ElementRef::Node(_)), None) => {
-                                let resolved = ctx.prepare_index_membership(plan).await?;
-                                prepared.insert(resolved).decide(row)
-                            }
-                            (_, Some(prepared)) => prepared.decide(row),
-                            (Some(ElementRef::Edge(_)) | None, None) => {
-                                stream::RowDecision::Evaluate
-                            }
-                        };
-                        let keep = match decision {
+                        let keep = match membership.decide(ctx, plan, row).await? {
                             stream::RowDecision::Keep => true,
                             stream::RowDecision::Drop => false,
                             stream::RowDecision::Evaluate => {

@@ -262,7 +262,7 @@ impl<'a> Cursor<'a> {
                 Node::IndexMembership {
                     plan,
                     input,
-                    prepared: None,
+                    membership: stream::MembershipCursor::default(),
                 }
             }
             exec::ExecOp::Project { .. } | exec::ExecOp::Noop => {
