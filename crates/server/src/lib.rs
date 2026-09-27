@@ -65,10 +65,7 @@ struct ServerDatabase {
 async fn open_database(config: &ServerConfig) -> ServerResult<ServerDatabase> {
     // Before storage touches the cache, which would delete block-cache
     // partitions another server still has open.
-    let cache_lock = config
-        .hybrid_cache()
-        .map(HybridCache::lock)
-        .transpose()?;
+    let cache_lock = config.hybrid_cache().map(HybridCache::claim).transpose()?;
     #[cfg(unix)]
     config
         .required_open_files()
