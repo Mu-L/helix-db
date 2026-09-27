@@ -29,6 +29,7 @@ use crate::encoding::v2::keys::indexes::vector::{
 };
 use crate::encoding::v2::values::indexes::vector::encode_layer0_neighbors;
 use crate::encoding::v2::values::indexes::vector::markers::encode_simhash_directory_marker_v1;
+use crate::encoding::v2::values::indexes::vector::simhash::encode_simhash;
 use crate::search::vector::distance::{Cosine, Euclidean, Manhattan};
 use crate::search::vector::simhash::{order_code_from_simhash_bits, SimHashCache};
 use crate::search::vector::{encode_item, encode_metadata, VectorIndexConfig, VectorIndexMetadata};
@@ -964,6 +965,96 @@ async fn exact_scan_spans_fetch_batches_and_fails_closed_in_later_batches() {
     assert!(error.to_string().contains(&format!(
         "missing canonical vector payload for node {ENTITY_COUNT}"
     )));
+}
+
+#[cfg_attr(all(test, not(feature = "production-coverage")), tokio::test)]
+async fn wide_payload_sized_exact_scans_fetch_within_the_byte_budget() {
+    // Payload-sized scopes are exact at any width. At 16,384-d the byte budget
+    // holds 384 vectors, so a 385-candidate scope needs a second fetch instead
+    // of holding every payload in one.
+    const DIMENSION: usize = 16_384;
+    const K: usize = 10;
+    const NAME: &str = "restricted-wide-exact-fetch";
+    let per_fetch = EXACT_VECTOR_BYTES_THRESHOLD / (DIMENSION * core::mem::size_of::<f32>()) as u64;
+    assert_eq!(per_fetch, 384);
+    let entity_count = per_fetch + 1;
+    assert!(entity_count <= FILTERED_VECTOR_PAYLOAD_LIMIT as u64);
+
+    let db = Arc::new(
+        slatedb::Db::open(NAME, Arc::new(InMemory::new()))
+            .await
+            .unwrap(),
+    );
+    let index = VectorIndex::<Cosine>::new(NAME);
+    for first in (1..=entity_count).step_by(64) {
+        let txn = db.begin(IsolationLevel::Snapshot).await.unwrap();
+        for entity_id in first..=entity_count.min(first + 63) {
+            // An exact scan only needs each SimHash row to locate its payload,
+            // so a synthetic rank avoids hashing 16,384-d vectors.
+            txn.put(
+                index
+                    .row_keyspace()
+                    .key(VectorKey::SimHash(VectorSimHashKey::new(
+                        index.id(),
+                        entity_id,
+                    ))),
+                encode_simhash(entity_id),
+            )
+            .unwrap();
+            txn.put(
+                index
+                    .row_keyspace()
+                    .key(VectorKey::Vector(VectorItemKey::new(
+                        index.id(),
+                        order_code_from_simhash_bits(entity_id),
+                        entity_id,
+                    ))),
+                encode_item(&Item::<Cosine>::new(vector_for(
+                    entity_id,
+                    entity_count,
+                    DIMENSION,
+                ))),
+            )
+            .unwrap();
+        }
+        txn.commit().await.unwrap();
+    }
+    let txn = db.begin(IsolationLevel::Snapshot).await.unwrap();
+    let mut metadata =
+        VectorIndexMetadata::new(VectorIndexConfig::new(NAME, "embedding", DIMENSION));
+    metadata.entry_point = Some(1);
+    metadata.count = entity_count;
+    txn.put(
+        index
+            .row_keyspace()
+            .key(VectorKey::IndexMetadata(VectorIndexMetadataKey::new(
+                index.id(),
+            ))),
+        encode_metadata(&metadata),
+    )
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let txn = db.begin(IsolationLevel::Snapshot).await.unwrap();
+    let query = vector_for(entity_count / 2, entity_count, DIMENSION);
+    let params = SearchParams::new(K).unwrap();
+    for (candidate_count, fetches) in [(per_fetch, 1), (entity_count, 2)] {
+        let candidates = RestrictedVectorCandidates::from_ids(1..=candidate_count).unwrap();
+        let (results, stats) = index
+            .search_restricted_with_stats(&txn, &query, &params, &candidates)
+            .await
+            .unwrap();
+        assert_eq!(stats.strategy, Some(RestrictedSearchStrategy::Exact));
+        assert_eq!(stats.vector_payload_requests, candidate_count as usize);
+        assert_eq!(stats.vector_multi_get_calls, fetches);
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.entity_id())
+                .collect::<Vec<_>>(),
+            exact_ids(&query, entity_count, DIMENSION, &candidates, K)
+        );
+    }
 }
 
 #[cfg_attr(all(test, not(feature = "production-coverage")), tokio::test)]
@@ -1922,6 +2013,7 @@ pub(crate) async fn run() {
     exact_scan_is_correct_and_tie_stable_for_every_active_metric().await;
     exact_scan_omits_absent_ids_but_rejects_missing_companion_rows().await;
     exact_scan_spans_fetch_batches_and_fails_closed_in_later_batches().await;
+    wide_payload_sized_exact_scans_fetch_within_the_byte_budget().await;
     directory_lifecycle_tracks_insert_upsert_and_delete().await;
     directory_entries_seed_vectors_without_re_reading_point_simhash_rows().await;
     directoryless_acorn_crosses_a_three_edge_filtered_gulf_without_nonmember_vectors().await;

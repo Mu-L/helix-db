@@ -46,9 +46,12 @@ const EXACT_CARDINALITY_THRESHOLD: u64 = 8_192;
 /// The bounded walk cannot rank near-tie bands wider than its payload budget:
 /// on 312k 768-d vectors a 5.5k-candidate scope reached 0.69 recall@50 by
 /// walking and 1.0 by exact scan, which was also faster with object-store
-/// latency. Sets that fit the walk's payload budget are always scanned exactly.
+/// latency. Sets that fit the walk's payload budget are always scanned exactly,
+/// and every exact-scan fetch stays within this footprint whatever the width.
 const EXACT_VECTOR_BYTES_THRESHOLD: u64 = 24 * 1024 * 1024;
-/// Candidates resolved and fetched per exact-scan round trip.
+/// Most candidates resolved and fetched per exact-scan round trip. Vectors
+/// wider than 6,144 dimensions fetch fewer, so one fetch never holds more than
+/// [`EXACT_VECTOR_BYTES_THRESHOLD`] of payloads.
 const FETCH_BATCH_SIZE: usize = 1_024;
 const DIRECTORY_PREFIX_BITS: u32 = 16;
 const DIRECTORY_MAX_PROBES: usize = 64;
@@ -899,11 +902,21 @@ impl<D: Distance> VectorIndex<D> {
         let mut unused_frontier = BinaryHeap::new();
         let mut scored = HashSet::with_capacity(allowed.len() as usize);
         let mut simhash_cache = HashMap::new();
-        let mut batch = Vec::with_capacity(FETCH_BATCH_SIZE);
+        // Payload-sized scopes are exact at any width, so the byte budget also
+        // bounds each fetch: wide vectors split one scope across round trips
+        // instead of holding every payload at once.
+        let batch_len = FETCH_BATCH_SIZE
+            .min(
+                usize::try_from(EXACT_VECTOR_BYTES_THRESHOLD)
+                    .expect("exact byte budget fits usize")
+                    / dimension.get().saturating_mul(core::mem::size_of::<f32>()),
+            )
+            .max(1);
+        let mut batch = Vec::with_capacity(batch_len);
 
         for node_id in allowed.iter() {
             batch.push(node_id);
-            if batch.len() < FETCH_BATCH_SIZE {
+            if batch.len() < batch_len {
                 continue;
             }
             let keyed = self
