@@ -122,7 +122,10 @@ async fn disk_runtime_commands_cover_resource_reuse_status_cleanup_and_errors() 
     assert!(log.contains(&format!(
         "--network {container}-net --network-alias seaweedfs "
     )));
-    assert!(log.contains(&format!("exec {container}-seaweedfs sh -c")));
+    assert!(log.contains(&format!(
+        "exec {container}-seaweedfs curl -fsS -o /dev/null -I --max-time 2 --retry 60 \
+         --retry-delay 1 --retry-max-time 60 --retry-all-errors"
+    )));
     assert!(log.contains("AWS_ENDPOINT=http://seaweedfs:8333"), "{log}");
     assert!(!log.contains("quay.io/minio"), "{log}");
     assert!(log.contains("logs -f"));
@@ -244,7 +247,7 @@ fn seaweedfs_readiness_failure_stops_before_starting_helix() {
         }
         let error = stderr(command.assert().failure());
         assert!(
-            error.contains("local SeaweedFS bucket helix-db did not become ready"),
+            error.contains("local SeaweedFS bucket helix-db did not become ready within 60 s"),
             "{error}"
         );
         assert!(error.contains("simulated runtime failure"), "{error}");

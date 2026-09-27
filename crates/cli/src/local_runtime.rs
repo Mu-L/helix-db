@@ -41,8 +41,10 @@ const SEAWEEDFS_S3_PORT: u16 = 8333;
 /// project and instance names exceed. Every instance has its own network, so
 /// this fixed alias is unique on it.
 const SEAWEEDFS_NETWORK_ALIAS: &str = "seaweedfs";
-/// Readiness probe attempts inside the sidecar, 500 ms apart.
-const SEAWEEDFS_READY_ATTEMPTS: u32 = 120;
+/// Wall-clock budget for the sidecar's bucket to answer a signed HEAD. A
+/// gateway that stalls every request still releases `helix start` one retry
+/// delay and one 2 s attempt after it.
+const SEAWEEDFS_READY_TIMEOUT: Duration = Duration::from_secs(60);
 /// Static credentials for the sidecar's S3 admin identity. The sidecar only
 /// joins the instance's private network and never publishes a host port.
 const LOCAL_S3_ACCESS_KEY: &str = "helix";
@@ -696,10 +698,19 @@ impl LocalRuntime {
             return Ok(());
         }
 
+        // curl prints one error per failed attempt; the last says why it
+        // gave up, and a runtime failure prints only its own.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let last_error = stderr
+            .lines()
+            .map(str::trim)
+            .rfind(|line| !line.is_empty())
+            .unwrap_or_default();
         Err(CliError::new(format!(
-            "local SeaweedFS bucket {LOCAL_S3_BUCKET} did not become ready"
+            "local SeaweedFS bucket {LOCAL_S3_BUCKET} did not become ready within {} s",
+            SEAWEEDFS_READY_TIMEOUT.as_secs()
         ))
-        .with_context(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        .with_context(last_error.to_string())
         .with_hint(format!(
             "check its logs with '{} logs {}'",
             self.runtime.binary(),
@@ -1329,28 +1340,38 @@ fn seaweedfs_run_args(
 }
 
 /// Waits inside the sidecar, which ships `curl`, until a signed HEAD of the
-/// bucket succeeds; a final attempt reports curl's error on failure.
+/// bucket succeeds, and prints curl's error for every failed attempt.
 ///
-/// The script avoids `"` and `%`: the Windows test runtime is a batch file
-/// that would reinterpret them.
+/// curl does the waiting itself. `--retry-all-errors` also retries the
+/// refused connections and 403/404 answers of a gateway that is still
+/// starting, and `--retry-max-time` stops retrying once
+/// [`SEAWEEDFS_READY_TIMEOUT`] has elapsed, however long each attempt took.
+/// `--retry` allows one retry per second of that budget, which the 1 s delay
+/// cannot use up before the budget ends.
 fn seaweedfs_ready_args(resources: &DiskRuntimeResources) -> Vec<String> {
-    let head_bucket = format!(
-        "curl -f -o /dev/null --max-time 2 -I --aws-sigv4 aws:amz:{LOCAL_S3_REGION}:s3 \
-         --user {LOCAL_S3_ACCESS_KEY}:{LOCAL_S3_SECRET_KEY} \
-         http://127.0.0.1:{SEAWEEDFS_S3_PORT}/{LOCAL_S3_BUCKET}"
-    );
-    let script = format!(
-        "for attempt in $(seq {SEAWEEDFS_READY_ATTEMPTS}); do {head_bucket} -s && exit 0; \
-         sleep 0.5; done; \
-         echo bucket {LOCAL_S3_BUCKET} not ready after {SEAWEEDFS_READY_ATTEMPTS} attempts >&2; \
-         {head_bucket} -sS"
-    );
+    let budget_secs = SEAWEEDFS_READY_TIMEOUT.as_secs().to_string();
     vec![
         "exec".to_string(),
         resources.seaweedfs_container.clone(),
-        "sh".to_string(),
-        "-c".to_string(),
-        script,
+        "curl".to_string(),
+        "-fsS".to_string(),
+        "-o".to_string(),
+        "/dev/null".to_string(),
+        "-I".to_string(),
+        "--max-time".to_string(),
+        "2".to_string(),
+        "--retry".to_string(),
+        budget_secs.clone(),
+        "--retry-delay".to_string(),
+        "1".to_string(),
+        "--retry-max-time".to_string(),
+        budget_secs,
+        "--retry-all-errors".to_string(),
+        "--aws-sigv4".to_string(),
+        format!("aws:amz:{LOCAL_S3_REGION}:s3"),
+        "--user".to_string(),
+        format!("{LOCAL_S3_ACCESS_KEY}:{LOCAL_S3_SECRET_KEY}"),
+        format!("http://127.0.0.1:{SEAWEEDFS_S3_PORT}/{LOCAL_S3_BUCKET}"),
     ]
 }
 
@@ -2048,98 +2069,122 @@ mod tests {
     }
 
     #[test]
-    fn seaweedfs_ready_probe_runs_inside_the_sidecar() {
+    fn seaweedfs_ready_probe_is_one_signed_curl_inside_the_sidecar() {
         let args = seaweedfs_ready_args(&disk_resources());
 
-        assert_eq!(args[..4], ["exec", "helix-demo-dev-seaweedfs", "sh", "-c"]);
-        assert_eq!(args.len(), 5);
-        assert!(
-            !args[4].contains(['"', '%']),
-            "the Windows batch test runtime would reinterpret: {}",
-            args[4]
-        );
-    }
-
-    /// Runs the readiness script with fake `curl` and `sleep` so both the
-    /// signed request and the bounded retry are exercised without a runtime.
-    #[cfg(unix)]
-    fn run_ready_probe(statuses: &str) -> (Output, Vec<String>) {
-        use std::os::unix::fs::PermissionsExt;
-
-        let bin = tempfile::tempdir().unwrap();
-        let calls = bin.path().join("calls");
-        let curl = bin.path().join("curl");
-        std::fs::write(
-            &curl,
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FAKE_CURL_CALLS\"\n\
-             count=$(($(wc -l < \"$FAKE_CURL_CALLS\")))\n\
-             status=$(printf '%s\\n' $FAKE_CURL_STATUSES | sed -n \"${count}p\")\n\
-             [ \"$status\" = 200 ] && exit 0\n\
-             case \" $* \" in *' -sS '*) \
-             echo \"curl: (22) The requested URL returned error: $status\" >&2 ;; esac\n\
-             exit 22\n",
-        )
-        .unwrap();
-        let sleep = bin.path().join("sleep");
-        std::fs::write(&sleep, "#!/bin/sh\nexit 0\n").unwrap();
-        for script in [&curl, &sleep] {
-            std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let path = format!(
-            "{}:{}",
-            bin.path().display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-        let args = seaweedfs_ready_args(&disk_resources());
-        let output = Command::new("sh")
-            .args(["-c", &args[4]])
-            .env("PATH", path)
-            .env("FAKE_CURL_CALLS", &calls)
-            .env("FAKE_CURL_STATUSES", statuses)
-            .output()
-            .unwrap();
-        let calls = std::fs::read_to_string(calls)
-            .unwrap_or_default()
-            .lines()
+        assert_eq!(
+            args,
+            vec![
+                "exec",
+                "helix-demo-dev-seaweedfs",
+                "curl",
+                "-fsS",
+                "-o",
+                "/dev/null",
+                "-I",
+                "--max-time",
+                "2",
+                "--retry",
+                "60",
+                "--retry-delay",
+                "1",
+                "--retry-max-time",
+                "60",
+                "--retry-all-errors",
+                "--aws-sigv4",
+                "aws:amz:us-east-1:s3",
+                "--user",
+                "helix:helix-local-secret",
+                "http://127.0.0.1:8333/helix-db",
+            ]
+            .into_iter()
             .map(String::from)
-            .collect();
-        (output, calls)
+            .collect::<Vec<_>>()
+        );
     }
 
+    /// A gateway that accepts connections but never answers makes every
+    /// attempt run to `--max-time`. Retries end once the budget has elapsed,
+    /// not after a number of attempts, so the wait still finishes one delay
+    /// and one attempt after the budget however long each attempt hangs.
+    #[test]
+    fn seaweedfs_ready_probe_is_bounded_by_elapsed_time_not_attempts() {
+        let args = seaweedfs_ready_args(&disk_resources());
+        let seconds = |flag: &str| -> u64 {
+            let Some(position) = args.iter().position(|arg| arg == flag) else {
+                panic!("{flag} is missing: {args:?}");
+            };
+            args[position + 1]
+                .parse()
+                .expect("a whole number of seconds")
+        };
+        let budget = SEAWEEDFS_READY_TIMEOUT.as_secs();
+
+        assert!(args.contains(&"--retry-all-errors".to_string()), "{args:?}");
+        assert_eq!(seconds("--retry-max-time"), budget);
+        assert!(
+            seconds("--retry") * seconds("--retry-delay") >= budget,
+            "the retry count must not end the wait before the budget: {args:?}"
+        );
+        assert!(
+            seconds("--retry-max-time") + seconds("--retry-delay") + seconds("--max-time")
+                <= budget + 5,
+            "{args:?}"
+        );
+    }
+
+    /// Runs the probe's curl arguments with the host's curl against a local
+    /// bucket that answers 404 once, as SeaweedFS does before `-bucket` has
+    /// created it, and then 200.
     #[cfg(unix)]
     #[test]
-    fn seaweedfs_ready_probe_signs_a_bucket_head_until_it_succeeds() {
-        let (output, calls) = run_ready_probe("000 403 404 200");
+    fn seaweedfs_ready_probe_retries_a_missing_bucket_with_signed_heads() {
+        use std::io::Read;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            ["404 Not Found", "200 OK"].map(|status| {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+                String::from_utf8(request).unwrap()
+            })
+        });
+
+        let args = seaweedfs_ready_args(&disk_resources());
+        assert_eq!(args[..3], ["exec", "helix-demo-dev-seaweedfs", "curl"]);
+        let output = Command::new("curl")
+            .arg("-q")
+            .args(&args[3..])
+            .args(["--noproxy", "*", "--connect-to"])
+            .arg(format!("127.0.0.1:8333:127.0.0.1:{port}"))
+            .output()
+            .expect("run the host's curl");
 
         assert!(output.status.success(), "{output:?}");
-        assert!(output.stderr.is_empty(), "{output:?}");
-        assert_eq!(calls.len(), 4, "{calls:?}");
-        for call in calls {
-            assert_eq!(
-                call,
-                "-f -o /dev/null --max-time 2 -I --aws-sigv4 aws:amz:us-east-1:s3 \
-                 --user helix:helix-local-secret http://127.0.0.1:8333/helix-db -s"
+        for request in server.join().unwrap() {
+            assert!(
+                request.starts_with("HEAD /helix-db HTTP/1.1\r\n"),
+                "{request}"
+            );
+            assert!(
+                request.lines().any(|line| {
+                    line.starts_with("Authorization: AWS4-HMAC-SHA256 Credential=helix/")
+                        && line.contains("/us-east-1/s3/aws4_request")
+                }),
+                "{request}"
             );
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn seaweedfs_ready_probe_gives_up_after_its_attempt_budget() {
-        let (output, calls) = run_ready_probe(&"403 ".repeat(200));
-
-        assert!(!output.status.success(), "{output:?}");
-        assert_eq!(calls.len(), SEAWEEDFS_READY_ATTEMPTS as usize + 1);
-        assert!(calls.last().unwrap().ends_with("helix-db -sS"), "{calls:?}");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("bucket helix-db not ready after 120 attempts"),
-            "{stderr}"
-        );
-        assert!(
-            stderr.contains("The requested URL returned error: 403"),
-            "{stderr}"
-        );
     }
 
     fn start_cmd(

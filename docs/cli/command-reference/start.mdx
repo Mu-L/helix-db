@@ -45,7 +45,7 @@ helix start [INSTANCE] [OPTIONS]
 - The disk-mode SeaweedFS image defaults to `missing` unless a pull policy is explicitly configured.
 - Names the container `helix-<project>-<instance>` and publishes the configured port to container port `8080`.
 - Uses Docker or Podman based on `[project] container_runtime` in `helix.toml`.
-- Default storage is in-memory. Passing `--disk` starts a SeaweedFS S3 sidecar (`ghcr.io/chrislusf/seaweedfs:4.47`, pinned by digest) that creates the `helix-db` bucket, waits until the bucket accepts signed requests, and runs `helixdb` with S3-compatible storage environment variables.
+- Default storage is in-memory. Passing `--disk` starts a SeaweedFS S3 sidecar (`ghcr.io/chrislusf/seaweedfs:4.47`, pinned by digest) that creates the `helix-db` bucket, waits up to 60 seconds for the bucket to accept signed requests, and runs `helixdb` with S3-compatible storage environment variables.
 - Background mode (`-d`, `--restart unless-stopped`) waits up to ~30 seconds for `GET /healthz` readiness and prints the URL and container name when ready.
 - Foreground mode (`--rm`) streams the container's stdout/stderr until Ctrl-C, then removes the container.
 
