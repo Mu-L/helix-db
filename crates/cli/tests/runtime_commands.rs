@@ -173,6 +173,20 @@ async fn legacy_minio_sidecars_are_removed_and_their_data_is_kept_until_prune() 
     );
     assert!(started.contains(&format!("now stores data in {base}-seaweedfs-data")));
     assert!(started.contains("#migrate-minio-disk-data"));
+    // Prune would delete everything written since the upgrade too, so the
+    // warning must name the command that removes only the old volume.
+    assert!(
+        started.contains(&format!(
+            "delete only the old volume with 'docker volume rm {base}-minio-data'"
+        )),
+        "{started}"
+    );
+    assert!(
+        started.contains(&format!(
+            "'helix prune dev' would also delete {base}-seaweedfs-data"
+        )),
+        "{started}"
+    );
 
     let log = fixture.runtime_log().replace('\r', "");
     let lines: Vec<_> = log.lines().collect();

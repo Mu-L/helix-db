@@ -87,7 +87,8 @@ struct DiskRuntimeResources {
     /// removed whenever the disk resources are started or removed.
     legacy_minio_container: String,
     /// MinIO data from earlier CLI releases. SeaweedFS cannot read MinIO's
-    /// on-disk format, so the volume is kept until prune deletes it.
+    /// on-disk format, so start and stop leave the volume for the user to
+    /// migrate and remove; prune deletes it together with `volume`.
     legacy_minio_volume: String,
 }
 
@@ -609,12 +610,18 @@ impl LocalRuntime {
         self.ensure_network(&resources.network, &identity)?;
         self.ensure_volume(&resources.volume, &identity)?;
         if self.resource_exists(&["volume", "inspect", &resources.legacy_minio_volume]) {
+            // Name the command that removes only the old volume: prune also
+            // deletes everything written to the new one since the upgrade.
             crate::output::warning(&format!(
-                "Volume {} holds data from a MinIO-based Helix CLI, which SeaweedFS cannot \
-                 read. This instance now stores data in {}. The old volume is kept until \
-                 'helix prune {instance_name}'; to copy its data, see \
-                 https://docs.helix-db.com/cli/workflows/local#migrate-minio-disk-data",
-                resources.legacy_minio_volume, resources.volume
+                "Volume {legacy} holds data from a MinIO-based Helix CLI, which SeaweedFS \
+                 cannot read. This instance now stores data in {current}. To copy the old \
+                 data, see https://docs.helix-db.com/cli/workflows/local#migrate-minio-disk-data. \
+                 Once you no longer need it, delete only the old volume with \
+                 '{runtime} volume rm {legacy}'; 'helix prune {instance_name}' would also \
+                 delete {current}.",
+                legacy = resources.legacy_minio_volume,
+                current = resources.volume,
+                runtime = self.runtime.binary(),
             ));
         }
         let _ = self.remove_container(&resources.seaweedfs_container);

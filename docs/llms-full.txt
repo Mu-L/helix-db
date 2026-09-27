@@ -5979,9 +5979,9 @@ Disk mode starts a SeaweedFS S3 sidecar, creates the `helix-db` bucket, and stor
 
 ## Migrate MinIO disk data
 
-Earlier CLI releases ran disk mode on MinIO. MinIO has withdrawn its community container images, so disk mode now uses SeaweedFS, which cannot read MinIO's on-disk format. When the old `helix-<project>-<instance>-minio-data` volume exists, `helix start` removes the old MinIO sidecar, leaves that volume untouched, starts the instance on a new SeaweedFS volume, and prints a warning. `helix stop` keeps both volumes. `helix prune <instance>` deletes both.
+Earlier CLI releases ran disk mode on MinIO. MinIO has withdrawn its community container images, so disk mode now uses SeaweedFS, which cannot read MinIO's on-disk format. When the old `helix-<project>-<instance>-minio-data` volume exists, `helix start` removes the old MinIO sidecar, leaves that volume untouched, starts the instance on a new SeaweedFS volume, and prints a warning. `helix stop` keeps both volumes. `helix prune <instance>` deletes both, including anything written to the new volume since the upgrade.
 
-Copying the old data needs a MinIO server image that is still cached on your machine. Earlier CLI releases pulled `quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`; `docker image ls --digests quay.io/minio/minio` shows whether it is still cached. Copy the objects into the new volume before Helix writes there. If you already started the instance with the new CLI, the new volume holds a fresh empty database: remove it with the `docker volume rm` line below. Use `podman` in place of `docker` if your project uses Podman.
+Copying the old data needs a MinIO server image that is still cached on your machine. Earlier CLI releases pulled `quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`; `docker image ls --digests quay.io/minio/minio` shows whether it is still cached. Copy the objects into the new volume before Helix writes there. If you already started the instance with the new CLI, the new volume holds a database that began empty at the upgrade. The `docker volume rm` line below deletes it along with anything written to it since then, so export that data first if you need it. Use `podman` in place of `docker` if your project uses Podman.
 
 ```bash
 helix stop dev
@@ -5990,7 +5990,7 @@ minio_image=quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321ef
 seaweedfs_image=ghcr.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
 aws_cli=public.ecr.aws/aws-cli/aws-cli:2.37.4@sha256:fdd8d1fcbea9c371678dee5a40df8b178c7a781b4586605756ee28114c97ead6
 
-docker volume rm "$base-seaweedfs-data"  # only if the new CLI already started it
+docker volume rm "$base-seaweedfs-data"  # only if the new CLI started it; deletes post-upgrade writes
 docker network create helix-migrate
 docker run -d --name helix-migrate-minio --network helix-migrate \
   -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \

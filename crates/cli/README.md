@@ -50,8 +50,10 @@ Disk mode runs SeaweedFS (`ghcr.io/chrislusf/seaweedfs:4.47`, pinned by digest)
 as a private S3 sidecar with the `helix-db` bucket, stored in the
 `helix-<project>-<instance>-seaweedfs-data` volume. Releases before the switch
 used MinIO, whose images are no longer published. On `start`, `stop`, and
-`prune` the CLI removes an old `-minio` sidecar; it keeps the unreadable
-`-minio-data` volume until `helix prune`. See the
+`prune` the CLI removes an old `-minio` sidecar. `start` and `stop` keep the
+unreadable `-minio-data` volume and `start` warns while it exists; remove it
+with `docker volume rm` (or `podman volume rm`) once migrated, because
+`helix prune` also deletes the new SeaweedFS volume. See the
 [local workflow guide](https://docs.helix-db.com/cli/workflows/local#migrate-minio-disk-data)
 to copy that data.
 `helix restart dev` restarts the existing container with its existing image and
