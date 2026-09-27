@@ -10,7 +10,10 @@ import unittest
 PROBE = Path(__file__).with_name("s3_conditional_writes.py")
 
 # Emulates `docker exec <container> curl ...` against an in-memory S3 bucket
-# whose conditional-write behavior is selected by FAKE_S3_MODE.
+# whose conditional-write behavior is selected by FAKE_S3_MODE. A curl call
+# with several `--next` transfers is a race: an atomic store settles racers
+# one at a time, last racer first, so the probe cannot assume the first wins,
+# while a "racy-*" store checks every racer's condition before any writes.
 FAKE_DOCKER = """
 import hashlib
 import json
@@ -18,66 +21,99 @@ import os
 from pathlib import Path
 import sys
 
+VALUE_OPTIONS = (
+    "--parallel-max", "--max-time", "--aws-sigv4", "--user", "-X", "-o", "-w", "--data-binary"
+)
+
 mode = os.environ["FAKE_S3_MODE"]
 if mode == "exec-fails":
     sys.stderr.write("Error response from daemon: container is not running\\n")
     sys.exit(1)
 args = sys.argv[1:]
 assert args[:3] == ["exec", "seaweedfs-test", "curl"], args
-options = {}
+flags, transfers = set(), [{"headers": []}]
 index = 3
-while index < len(args) - 1:
-    if args[index] in ("--max-time", "--aws-sigv4", "--user", "-X", "-o", "-w", "--data-binary"):
-        options[args[index]] = args[index + 1]
-        index += 2
-    elif args[index] == "-H":
-        if not args[index + 1].startswith("Content-Type:"):
-            options["condition"] = args[index + 1]
-        index += 2
-    else:
+while index < len(args):
+    arg = args[index]
+    if arg == "--next":
+        transfers.append({"headers": []})
+    elif arg == "-H":
         index += 1
-assert options["--user"] == "helix:secret", options
-key = args[-1]
-state_path = Path(os.environ["FAKE_S3_STATE"])
-state = json.loads(state_path.read_text()) if state_path.exists() else {}
-current = state.get(key)
-condition = options.get("condition", "")
-method = options["-X"]
-status, etag, payload = 200, "", ""
+        transfers[-1]["headers"].append(args[index])
+    elif arg in VALUE_OPTIONS:
+        index += 1
+        transfers[-1][arg] = args[index]
+    elif arg.startswith("-"):
+        flags.add(arg)
+    else:
+        transfers[-1]["url"] = arg
+    index += 1
+race = len(transfers) > 1
+if race:
+    # Racers must reach the store together, each on its own connection.
+    assert {"--parallel", "--parallel-immediate"} <= flags, flags
+    assert transfers[0]["--parallel-max"] == str(len(transfers)), transfers[0]
+    assert len({transfer["url"] for transfer in transfers}) == 1, transfers
 if mode == "garbled":
     sys.stdout.write("not an HTTP trailer")
     sys.exit(0)
-if mode == "forbidden":
-    status, payload = 403, "<Error><Code>AccessDenied</Code></Error>"
-elif method == "PUT":
-    create_conflict = condition == "If-None-Match: *" and current is not None
-    match_conflict = condition.startswith("If-Match: ") and (
-        current is None or current["etag"] != condition[len("If-Match: "):]
+state_path = Path(os.environ["FAKE_S3_STATE"])
+state = json.loads(state_path.read_text()) if state_path.exists() else {}
+before = dict(state)
+results = []
+for transfer in reversed(transfers):
+    assert transfer["--user"] == "helix:secret", transfer
+    key = transfer["url"]
+    method = transfer["-X"]
+    condition = next(
+        (header for header in transfer["headers"] if not header.startswith("Content-Type:")), ""
     )
-    if mode == "ignore-if-none-match":
-        create_conflict = False
-    if mode == "ignore-if-match":
-        match_conflict = False
-    if mode == "reject-if-match" and condition.startswith("If-Match: "):
-        match_conflict = True
-    if create_conflict or match_conflict:
-        status, payload = 412, "<Error><Code>PreconditionFailed</Code></Error>"
-    if status == 200 or mode == "412-but-writes":
-        body = options["--data-binary"]
-        etag = '"' + hashlib.md5(body.encode()).hexdigest() + '"'
-        state[key] = {"body": body, "etag": etag}
-    if mode == "no-etag" or status != 200:
-        etag = ""
-elif method == "GET":
-    if current is None:
-        status = 404
-    else:
-        etag, payload = current["etag"], current["body"]
-elif method == "DELETE":
-    state.pop(key, None)
-    status = 204
+    kind = (
+        "if-none-match" if condition == "If-None-Match: *"
+        else "if-match" if condition.startswith("If-Match: ")
+        else "unconditional"
+    )
+    current = (before if race and mode == "racy-" + kind else state).get(key)
+    status, etag, payload = 200, "", ""
+    if mode == "forbidden":
+        status, payload = 403, "<Error><Code>AccessDenied</Code></Error>"
+    elif method == "PUT":
+        create_conflict = kind == "if-none-match" and current is not None
+        match_conflict = kind == "if-match" and (
+            current is None or current["etag"] != condition[len("If-Match: "):]
+        )
+        if mode == "ignore-if-none-match":
+            create_conflict = False
+        if mode == "ignore-if-match":
+            match_conflict = False
+        if mode == "reject-if-match" and kind == "if-match":
+            match_conflict = True
+        if create_conflict or match_conflict:
+            status, payload = 412, "<Error><Code>PreconditionFailed</Code></Error>"
+            if race and mode == "race-409":
+                status, payload = 409, "<Error><Code>ConditionalRequestConflict</Code></Error>"
+        if status == 200 or mode == "412-but-writes" or (race and mode == "race-412-but-writes"):
+            body = transfer["--data-binary"]
+            etag = '"' + hashlib.md5(body.encode()).hexdigest() + '"'
+            state[key] = {"body": body, "etag": etag}
+        if mode == "no-etag" or status != 200:
+            etag = ""
+    elif method == "GET":
+        if current is None:
+            status = 404
+        else:
+            etag, payload = current["etag"], current["body"]
+    elif method == "DELETE":
+        state.pop(key, None)
+        status = 204
+    if not (race and mode == "race-drops-a-racer" and transfer is transfers[0]):
+        results.append((transfer, status, etag, payload))
 state_path.write_text(json.dumps(state))
-sys.stdout.write(payload + "\\n" + str(status) + " " + etag)
+for transfer, status, etag, payload in results:
+    if transfer["-o"] == "-":
+        sys.stdout.write(payload)
+    write_out = transfer["-w"].replace("%{http_code}", str(status))
+    sys.stdout.write(write_out.replace("%header{etag}", etag))
 """
 
 
@@ -139,6 +175,27 @@ class ConditionalWriteProbeTests(unittest.TestCase):
         self.assertEqual(
             result.stdout.count("replace with If-Match: <current etag>: HTTP 200"), 2
         )
+        for race in (
+            "(c) 8 concurrent creates with If-None-Match: * on a new key",
+            "(d) 8 concurrent replaces with If-Match: <current etag>",
+        ):
+            self.assertEqual(
+                result.stdout.count(
+                    f"{race}: 1 x HTTP 200, 7 x HTTP 412 (expected 1 x HTTP 200, 7 x HTTP 412)"
+                ),
+                2,
+                result.stdout,
+            )
+        # The fake store lets the last racer win, so the probe follows the
+        # actual winner rather than assuming the first racer's body.
+        for race, winner in (("creates", "create-7"), ("replaces", "replace-7")):
+            self.assertEqual(
+                result.stdout.count(
+                    f"object after concurrent {race}: '{winner}' (expected '{winner}')"
+                ),
+                2,
+                result.stdout,
+            )
         self.assertIn("Conditional write probe passed on 2 endpoint(s)", result.stdout)
 
     def test_ignored_if_none_match_fails(self):
@@ -175,6 +232,35 @@ class ConditionalWriteProbeTests(unittest.TestCase):
 
     def test_unparseable_curl_output_fails(self):
         self.assert_fails_loudly("garbled", "printed no status")
+
+    def test_racing_creates_that_all_succeed_fail(self):
+        self.assert_fails_loudly(
+            "racy-if-none-match",
+            "(c) 8 concurrent creates with If-None-Match: * on a new key returned 8 x HTTP 200,"
+            " expected exactly one HTTP 200 and HTTP 412 for the rest",
+        )
+
+    def test_racing_replaces_that_all_succeed_fail(self):
+        self.assert_fails_loudly(
+            "racy-if-match",
+            "(d) 8 concurrent replaces with If-Match: <current etag> returned 8 x HTTP 200,"
+            " expected exactly one HTTP 200 and HTTP 412 for the rest",
+        )
+
+    def test_race_losers_that_still_write_fail(self):
+        self.assert_fails_loudly(
+            "race-412-but-writes",
+            "object after concurrent creates read 'create-0', expected 'create-7'",
+        )
+
+    def test_race_losers_must_get_412(self):
+        self.assert_fails_loudly(
+            "race-409",
+            "returned 1 x HTTP 200, 7 x HTTP 409, expected exactly one HTTP 200",
+        )
+
+    def test_race_missing_a_racer_fails(self):
+        self.assert_fails_loudly("race-drops-a-racer", "reported 7 of 8 racers")
 
 
 if __name__ == "__main__":

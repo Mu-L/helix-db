@@ -93,7 +93,13 @@ and a startup-created `helix-db` bucket. Before Helix writes anything, it
 probes S3 conditional writes, which SlateDB needs to avoid silent data loss:
 `If-None-Match: *` on an existing key and `If-Match` with a wrong ETag must both
 return HTTP 412 and leave the object unchanged, and the matching create and
-replace must succeed. The probe runs against SeaweedFS directly and through the
+replace must succeed. SlateDB's writer and compactor race to advance the same
+manifest, so the probe then sends eight concurrent creates of one new key, and
+eight concurrent replaces carrying its current ETag, from one parallel curl
+process: each race must end with exactly one HTTP 200, HTTP 412 for the rest,
+and the winner's body stored. A passing race cannot prove the store atomic, but
+a store that checks the condition and then writes without a lock is likely to
+fail it. The probe runs against SeaweedFS directly and through the
 request-logging proxy Helix uses. The stage then seeds a vector index, reopens
 flushed data, and checks that three idle refresh intervals produce no
 vector-data SST GETs (catalog polling is measured separately) while search
