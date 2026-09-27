@@ -3606,10 +3606,44 @@ impl<D: Distance> VectorBuildSession<D> {
     pub(crate) const fn max_payload_bytes(&self) -> usize {
         self.max_payload_bytes
     }
+
+    /// Hands a large session's state to a new thread that frees it.
+    ///
+    /// Everything whose size grows with the entries or attached namespaces
+    /// moves together: the caches, their eviction index, the dirty set, and
+    /// the entity journal. The session is left empty, holding only fixed-size
+    /// state. Each attached namespace is charged only
+    /// [`VECTOR_BUILD_SESSION_NAMESPACE_OVERHEAD_BYTES`], so a large session can
+    /// attach hundreds of thousands of namespaces, each owning up to three
+    /// eviction-index entries with a cloned identity.
+    ///
+    /// Returns the freeing thread, or `None` when the session charges less
+    /// than [`VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES`] and keeps its state,
+    /// or when no thread could be spawned and the state was freed here.
+    fn free_state_in_background(&mut self) -> Option<std::thread::JoinHandle<()>> {
+        if self
+            .retained_bytes()
+            .is_ok_and(|bytes| bytes < VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES)
+        {
+            return None;
+        }
+        let state = (
+            core::mem::take(&mut self.caches),
+            core::mem::take(&mut self.victims),
+            core::mem::take(&mut self.dirty),
+            core::mem::take(&mut self.entity_changes),
+        );
+        self.footprint = SessionFootprint::default();
+        // A failed spawn drops the closure, and the state with it, right here.
+        std::thread::Builder::new()
+            .name("vector-build-session-drop".to_string())
+            .spawn(move || drop(state))
+            .ok()
+    }
 }
 
 impl<D: Distance> Drop for VectorBuildSession<D> {
-    /// Frees a large session's entries on a background thread.
+    /// Frees a large session's state on a background thread.
     ///
     /// A retained session can hold millions of allocations. Freeing them on
     /// the async executor thread that drops the session would stall it, and
@@ -3617,17 +3651,8 @@ impl<D: Distance> Drop for VectorBuildSession<D> {
     /// [`VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES`] frees inline, where a
     /// thread spawn would cost more than the teardown.
     fn drop(&mut self) {
-        if self
-            .retained_bytes()
-            .is_ok_and(|bytes| bytes < VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES)
-        {
-            return;
-        }
-        let caches = core::mem::take(&mut self.caches);
-        // A failed spawn drops the closure, and the caches with it, right here.
-        let _ = std::thread::Builder::new()
-            .name("vector-build-session-drop".to_string())
-            .spawn(move || drop(caches));
+        // The freeing thread runs detached.
+        let _ = self.free_state_in_background();
     }
 }
 
@@ -4567,24 +4592,70 @@ mod tests {
         use crate::encoding::v2::keys::scope::DataScope;
         use crate::search::vector::distance::Cosine;
 
-        let identity = session_identity(DataScope::LegacyUnscoped, 86);
+        const NAMESPACES: u64 = 64;
         let item = Arc::new(Item::<Cosine>::new(vec![1.0, 0.0]));
         let session = |payload_bytes| {
             let mut session = VectorBuildSession::<Cosine>::new(NonZeroU64::new(1 << 40).unwrap());
+            for physical_index_id in 0..NAMESPACES {
+                let identity = session_identity(DataScope::LegacyUnscoped, 86 + physical_index_id);
+                let mut cache = session.take_cache(&identity, 8, 4).unwrap();
+                cache.put_item(0, 1, Some(Arc::clone(&item)), payload_bytes);
+                cache.put_simhash(1, None);
+                session.restore_cache(identity, cache);
+            }
+            session.admit_entity();
+            // One unflushed row and one unadmitted entity in the first namespace.
+            let identity = session_identity(DataScope::LegacyUnscoped, 86);
+            let row = MutationOpCache::<Cosine>::node_row_id(0, 1);
             let mut cache = session.take_cache(&identity, 8, 4).unwrap();
-            cache.put_item(0, 1, Some(Arc::clone(&item)), payload_bytes);
+            cache.install_loaded_neighbor(row, NeighborRowValue::KnownAbsent);
+            cache
+                .stage_loaded_neighbor(row, neighbors(1, vec![2]))
+                .unwrap();
             session.restore_cache(identity.clone(), cache);
+            session.record_entity_changes(&identity, 1, [row]);
+            assert!(session.has_dirty_neighbors());
+            assert_eq!(
+                session.victims.items.len(),
+                usize::try_from(NAMESPACES).unwrap()
+            );
+            assert_session_bookkeeping(&session);
             session
         };
 
-        // A small session frees inline, before `drop` returns.
-        drop(session(8));
+        // A small session keeps its state and frees it inline, before `drop` returns.
+        let mut small = session(8);
+        assert!(small.free_state_in_background().is_none());
+        assert_eq!(small.caches.len(), usize::try_from(NAMESPACES).unwrap());
+        drop(small);
         assert_eq!(Arc::strong_count(&item), 1);
 
-        // A large one hands its entries to a background thread that frees them.
-        let large = session(VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES);
+        // A large one hands its entries, eviction index, dirty set, and entity
+        // journal to another thread, which frees them while the session lives.
+        let mut large = session(VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES);
         assert!(large.retained_bytes().unwrap() >= VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES);
+        let freeing = large
+            .free_state_in_background()
+            .expect("a large session frees on another thread");
+        assert_ne!(freeing.thread().id(), std::thread::current().id());
+        assert!(large.caches.is_empty());
+        assert!(large.victims.items.is_empty());
+        assert!(large.victims.neighbors.is_empty());
+        assert!(large.victims.simhashes.is_empty());
+        assert!(large.dirty.is_empty());
+        assert!(large.entity_changes.is_empty());
+        assert_eq!(large.retained_bytes().unwrap(), 0);
+        assert_session_bookkeeping(&large);
+        freeing.join().unwrap();
+        assert_eq!(
+            Arc::strong_count(&item),
+            1,
+            "the freeing thread dropped every entry"
+        );
         drop(large);
+
+        // Dropping a large session hands its state off the same way.
+        drop(session(VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while Arc::strong_count(&item) > 1 {
             assert!(
