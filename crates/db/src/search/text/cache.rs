@@ -305,6 +305,20 @@ impl Drop for DiskArtifactLease {
     }
 }
 
+/// Removes a hydration's staging file when dropped, which includes an
+/// aborted hydration dropped mid-download. After the rename that publishes
+/// it, the staging name no longer exists and the removal finds nothing.
+///
+/// The unlink is synchronous because `Drop` cannot await, and one unlink is
+/// short enough to run on a runtime thread.
+struct StagingFileGuard(PathBuf);
+
+impl Drop for StagingFileGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 pub(crate) struct FtsCache {
     db_path: String,
     object_store: Arc<dyn ObjectStore>,
@@ -810,6 +824,7 @@ impl FtsCache {
                 sha_hex(split.blob.sha256),
                 uuid::Uuid::new_v4()
             ));
+        let _staging_guard = StagingFileGuard(staging.clone());
         let object_path = blob_object_store_path(&self.db_path, split.blob.sha256);
         let result = async {
             let response = self.object_store.get(&object_path).await?;
@@ -840,7 +855,6 @@ impl FtsCache {
             let published = match tokio_fs::rename(&staging, &final_path).await {
                 Ok(()) => true,
                 Err(error) if tokio_fs::try_exists(&final_path).await.unwrap_or(false) => {
-                    let _ = tokio_fs::remove_file(&staging).await;
                     tracing::debug!(%error, "FTS artifact won publication race");
                     false
                 }
@@ -866,9 +880,6 @@ impl FtsCache {
             Ok(split.blob.size_bytes)
         }
         .await;
-        if result.is_err() {
-            let _ = tokio_fs::remove_file(&staging).await;
-        }
         drop(guard);
         self.hydration_inflight.remove(&split.blob.sha256);
         result
@@ -1188,6 +1199,7 @@ mod tests {
     use super::*;
     use crate::search::text::{build_split_bundle, TextBlobRef};
     use bytes::Bytes;
+    use slatedb::object_store::throttle::{ThrottleConfig, ThrottledStore};
     use slatedb::object_store::{memory::InMemory, PutPayload};
     use tantivy::schema::{
         IndexRecordOption, NumericOptions, Schema, TextFieldIndexing, TextOptions,
@@ -1632,6 +1644,57 @@ mod tests {
             (state.disk_evictions, state.disk_corruptions),
             (1, 1),
             "a file reappearing after this cache's own eviction is hashed"
+        );
+    }
+
+    /// Closing the cache aborts a hydration that is still downloading; the
+    /// partial download must not stay behind in `staging/`.
+    #[tokio::test]
+    async fn aborted_hydration_leaves_no_staging_file() {
+        let database = "fts-cache-aborted-hydration";
+        // Holds each chunk back a second per byte, so the download stalls
+        // once its staging file exists.
+        let store: Arc<dyn ObjectStore> = Arc::new(ThrottledStore::new(
+            InMemory::new(),
+            ThrottleConfig {
+                wait_get_per_byte: Duration::from_secs(1),
+                ..ThrottleConfig::default()
+            },
+        ));
+        let (bytes, split) = valid_split(19);
+        put_split(&store, database, bytes, &split).await;
+        let disk = tempfile::tempdir().expect("disk cache");
+        let cache = cache(
+            database,
+            store,
+            Some(disk.path().to_path_buf()),
+            split.total_size_bytes,
+            split.total_size_bytes * 2,
+            Duration::from_secs(1),
+        );
+        let staging = cache.staging_dir().expect("staging directory");
+        let staged = || fs::read_dir(&staging).expect("staging directory").count();
+
+        for _ in 0..2 {
+            cache.after_successful_search(split.clone()).await;
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while staged() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the download creates its staging file");
+        cache.close().await;
+        assert_eq!(staged(), 0, "closing removed the partial download");
+        let state = cache.snapshot();
+        assert_eq!(
+            (
+                state.hydration_attempts,
+                state.hydration_completions,
+                state.disk_artifact_count
+            ),
+            (1, 0, 0)
         );
     }
 
