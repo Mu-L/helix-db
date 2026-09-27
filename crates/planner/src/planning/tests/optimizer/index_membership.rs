@@ -118,7 +118,7 @@ fn post_expansion_membership_keeps_unindexed_conjuncts_as_a_residual_filter() {
 }
 
 #[test]
-fn post_expansion_membership_covers_in_range_and_multiple_indexed_conjuncts() {
+fn post_expansion_membership_covers_in_and_multiple_indexed_conjuncts_but_not_ranges() {
     let is_in = executable_traversal(
         attributes_where(Predicate::is_in(
             "kind",
@@ -134,15 +134,27 @@ fn post_expansion_membership_covers_in_range_and_multiple_indexed_conjuncts() {
         ) if values.len() == 2
     ));
 
+    // A range set would verify every in-range record of the label, so range
+    // conjuncts keep the per-row filter, alone or behind an equality set.
     let range = executable_traversal(
         attributes_where(Predicate::gte("rank", 3)).values(vec!["kind"]),
         ctx(membership_indexes()),
     );
-    assert!(matches!(
-        &only_membership(&range).set,
-        crate::exec::ExecNodeSecondarySetPlan::Range(range)
-            if range.key.label == "Attribute" && range.key.property == "rank"
-    ));
+    assert!(memberships(&range).is_empty(), "{:#?}", range.steps());
+    assert_eq!(filter_predicates(&range), [&Predicate::gte("rank", 3)]);
+    let ranged = executable_traversal(
+        attributes_where(Predicate::and(vec![
+            Predicate::eq("kind", "B"),
+            Predicate::gte("rank", 3),
+        ]))
+        .values(vec!["kind"]),
+        ctx(membership_indexes()),
+    );
+    assert_eq!(
+        only_membership(&ranged).predicate.predicate(),
+        &Predicate::eq("kind", "B")
+    );
+    assert_eq!(filter_predicates(&ranged), [&Predicate::gte("rank", 3)]);
 
     // Two serial bitmap reads only pay off once the stream is known to be
     // larger than the unknown-fan-out default.
@@ -233,13 +245,26 @@ fn late_bound_parameters_keep_runtime_classified_membership() {
 
     let set = executable_traversal(
         attributes_where(Predicate::is_in_param("kind", "kinds")).values(vec!["kind"]),
-        planner_ctx,
+        planner_ctx.clone(),
     );
     assert!(matches!(
         &only_membership(&set).set,
         crate::exec::ExecNodeSecondarySetPlan::DynamicMembership { values, .. }
             if values.param().as_ref() == "kinds"
     ));
+
+    // Late-bound range bounds may bind values without a range encoding, so
+    // they keep the per-row filter instead of a runtime range scan.
+    planner_ctx.late_bound_params = [NonEmptyString::new("min").unwrap()].into_iter().collect();
+    let range = executable_traversal(
+        attributes_where(Predicate::gte_param("rank", "min")).values(vec!["kind"]),
+        planner_ctx,
+    );
+    assert!(memberships(&range).is_empty(), "{:#?}", range.steps());
+    assert_eq!(
+        filter_predicates(&range),
+        [&Predicate::gte_param("rank", "min")]
+    );
 }
 
 #[test]

@@ -182,14 +182,19 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
     let scope = DataScope::LegacyUnscoped;
     let indexed = seeded("membership-e2e-indexed", scope, true).await;
     let unindexed = seeded("membership-e2e-unindexed", scope, false).await;
-    for (predicate, expected) in [
-        (expr::Predicate::eq("kind", "B"), vec!["a1", "a1", "n1"]),
+    for (predicate, expected, planned) in [
+        (
+            expr::Predicate::eq("kind", "B"),
+            vec!["a1", "a1", "n1"],
+            true,
+        ),
         (
             expr::Predicate::and(vec![
                 expr::Predicate::eq("$label", "Attribute"),
                 expr::Predicate::eq("kind", "B"),
             ]),
             vec!["a1", "a1"],
+            true,
         ),
         (
             expr::Predicate::is_in(
@@ -197,6 +202,7 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
                 value::PropertyValue::StringArray(vec!["A".into(), "B".into()]),
             ),
             vec!["a1", "a1", "a2", "n1", "n2"],
+            true,
         ),
         (
             expr::Predicate::and(vec![
@@ -204,15 +210,20 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
                 expr::Predicate::starts_with("uid", "n"),
             ]),
             vec!["n1"],
+            true,
         ),
+        // A range set would verify the label's whole range, so ranges keep
+        // the per-row filter.
         (
             expr::Predicate::gte("uid", "a2"),
             vec!["a2", "a3", "n1", "n2"],
+            false,
         ),
         // A missing property equals null, so null keeps the per-row filter.
         (
             expr::Predicate::eq("kind", value::PropertyValue::Null),
             vec!["a3"],
+            false,
         ),
     ] {
         let read = attributes_where(predicate.clone());
@@ -228,13 +239,7 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
         assert_eq!(uids(&per_row), expected, "{predicate:?}");
         assert_eq!(
             has_membership(&plan(&indexed, &read, scope).await),
-            !matches!(
-                predicate,
-                expr::Predicate::Eq {
-                    right: expr::Expr::Constant(value::PropertyValue::Null),
-                    ..
-                }
-            ),
+            planned,
             "{predicate:?}"
         );
         assert!(!has_membership(&plan(&unindexed, &read, scope).await));

@@ -15,9 +15,9 @@ use crate::{exec, ir};
 /// * edge and element-free rows evaluate `predicate`.
 ///
 /// When the set cannot be served from indexes alone, including runtime
-/// parameters that bind null or exceed their bound and an index that is no
-/// longer Active, every row evaluates `predicate` instead. The operator never
-/// scans a keyspace.
+/// parameters that bind null or exceed their bound, a range scan, and an
+/// index that is no longer Active, every row evaluates `predicate` instead.
+/// The operator never scans a keyspace or an index range.
 ///
 /// ```
 /// use helix_ast::expr::Predicate;

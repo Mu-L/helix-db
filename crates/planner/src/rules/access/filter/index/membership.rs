@@ -132,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn full_membership_covers_equality_in_range_and_label_scoped_predicates() {
+    fn full_membership_covers_equality_in_and_label_scoped_predicates() {
         for (predicate, outside) in [
             (
                 Predicate::eq("kind", "B"),
@@ -143,10 +143,6 @@ mod tests {
                     "kind",
                     PropertyValue::StringArray(vec!["A".into(), "B".into()]),
                 ),
-                ir::NodeMembershipOutsideLabel::Evaluate,
-            ),
-            (
-                Predicate::gte("rank", 3),
                 ir::NodeMembershipOutsideLabel::Evaluate,
             ),
             (
@@ -214,12 +210,31 @@ mod tests {
             single.residual.unwrap().as_ref(),
             &Predicate::contains("name", "x")
         );
+
+        // A range conjunct would verify the whole label range, so it stays
+        // with the per-row filter behind the equality membership.
+        let ranged = rewrite(Predicate::and(vec![
+            Predicate::eq("kind", "B"),
+            Predicate::gte("rank", 3),
+        ]))
+        .unwrap();
+        assert_eq!(
+            ranged.membership.predicate().as_ref(),
+            &Predicate::eq("kind", "B")
+        );
+        assert_eq!(
+            ranged.residual.unwrap().as_ref(),
+            &Predicate::gte("rank", 3)
+        );
     }
 
     #[test]
-    fn membership_declines_null_unindexed_impossible_and_foreign_label_predicates() {
+    fn membership_declines_null_range_unindexed_impossible_and_foreign_label_predicates() {
         for predicate in [
             Predicate::eq("kind", PropertyValue::Null),
+            Predicate::gte("rank", 3),
+            Predicate::gte_param("rank", "min"),
+            Predicate::or(vec![Predicate::eq("kind", "B"), Predicate::gte("rank", 3)]),
             Predicate::and(vec![
                 Predicate::eq("kind", PropertyValue::Null),
                 Predicate::contains("name", "x"),

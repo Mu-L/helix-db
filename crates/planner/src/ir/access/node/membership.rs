@@ -33,6 +33,9 @@ pub enum NodeIndexMembershipError {
     NoCommonLabel,
     /// A literal null equality needs an authoritative scan, not an index read.
     AuthoritativeNull,
+    /// A range leaf verifies every in-range record with its own authoritative
+    /// read, so its cost follows the label's range instead of the stream.
+    RangeScan,
     /// The predicate requires a label other than the set label.
     LabelMismatch,
 }
@@ -43,6 +46,7 @@ impl std::fmt::Display for NodeIndexMembershipError {
             Self::NotSecondarySet => "membership set must contain only secondary-index leaves",
             Self::NoCommonLabel => "membership set leaves must share one node label",
             Self::AuthoritativeNull => "membership set cannot contain literal null equality",
+            Self::RangeScan => "membership set cannot contain a range scan",
             Self::LabelMismatch => "membership predicate requires a different label",
         })
     }
@@ -129,9 +133,7 @@ impl NodeIndexMembershipPlan {
         if !set.is_secondary_set_eligible() {
             return Err(NodeIndexMembershipError::NotSecondarySet);
         }
-        if requires_authoritative_null(set.as_ref()) {
-            return Err(NodeIndexMembershipError::AuthoritativeNull);
-        }
+        unservable_leaf(set.as_ref()).map_or(Ok(()), Err)?;
         let Some(label) = set.common_label().cloned() else {
             return Err(NodeIndexMembershipError::NoCommonLabel);
         };
@@ -182,15 +184,23 @@ impl From<NodeIndexMembershipPlan> for NodeIndexMembershipPlanUnchecked {
     }
 }
 
-fn requires_authoritative_null(plan: &NodeAccessPlan) -> bool {
+/// First set leaf whose cost is not bounded by index reads alone.
+///
+/// Literal null equality needs an authoritative keyspace scan. A range leaf
+/// verifies each in-range record with its own serial authoritative read, so
+/// it can never beat the batched per-row filter it would replace.
+fn unservable_leaf(plan: &NodeAccessPlan) -> Option<NodeIndexMembershipError> {
     match plan {
         NodeAccessPlan::EqualityIndex {
             value: ir::IndexValue::Literal(value),
             ..
-        } => value.semantics() == ir::LiteralEqualityIndexValueSemantics::AuthoritativeNull,
+        } if value.semantics() == ir::LiteralEqualityIndexValueSemantics::AuthoritativeNull => {
+            Some(NodeIndexMembershipError::AuthoritativeNull)
+        }
+        NodeAccessPlan::RangeIndex { .. } => Some(NodeIndexMembershipError::RangeScan),
         NodeAccessPlan::Union(children) | NodeAccessPlan::Intersect(children) => children
             .iter()
-            .any(|child| requires_authoritative_null(child.as_ref())),
+            .find_map(|child| unservable_leaf(child.as_ref())),
         NodeAccessPlan::Empty
         | NodeAccessPlan::PointIds { .. }
         | NodeAccessPlan::FromParam { .. }
@@ -198,10 +208,9 @@ fn requires_authoritative_null(plan: &NodeAccessPlan) -> bool {
         | NodeAccessPlan::AllScan
         | NodeAccessPlan::LabelScan { .. }
         | NodeAccessPlan::EqualityIndex { .. }
-        | NodeAccessPlan::RangeIndex { .. }
         | NodeAccessPlan::VectorSearch { .. }
         | NodeAccessPlan::TextSearch { .. }
-        | NodeAccessPlan::ScanThenFilter { .. } => false,
+        | NodeAccessPlan::ScanThenFilter { .. } => None,
     }
 }
 
@@ -295,7 +304,7 @@ mod tests {
                     equality("Item", "kind", literal("B")),
                 )))
                 .unwrap(),
-                range("Item", "rank"),
+                equality("Item", "status", literal("live")),
             )))
             .unwrap();
         let plan = NodeIndexMembershipPlan::new(
@@ -305,7 +314,7 @@ mod tests {
                     "kind",
                     PropertyValue::StringArray(vec!["A".into(), "B".into()]),
                 ),
-                Predicate::gte("rank", 1),
+                Predicate::eq("status", "live"),
             ])),
         )
         .unwrap();
@@ -313,6 +322,28 @@ mod tests {
         assert_eq!(plan.set(), &set);
         assert_eq!(plan.label().as_ref(), "Item");
         assert_eq!(plan.outside_label(), NodeMembershipOutsideLabel::Evaluate);
+    }
+
+    #[test]
+    fn membership_rejects_range_leaves_at_any_depth() {
+        let rank = predicate(Predicate::gte("rank", 1));
+        let nested = |children: fn(ir::AtLeast<NodeAccessSourcePlan, 2>) -> NodeAccessPlan| {
+            NodeAccessSourcePlan::new(children(ir::AtLeast::<_, 2>::from_pair(
+                equality("Item", "kind", literal("B")),
+                range("Item", "rank"),
+            )))
+            .unwrap()
+        };
+        for set in [
+            range("Item", "rank"),
+            nested(NodeAccessPlan::Intersect),
+            nested(NodeAccessPlan::Union),
+        ] {
+            assert_eq!(
+                NodeIndexMembershipPlan::new(set, rank.clone()),
+                Err(NodeIndexMembershipError::RangeScan)
+            );
+        }
     }
 
     #[test]
@@ -466,6 +497,7 @@ mod tests {
             NodeIndexMembershipError::NotSecondarySet,
             NodeIndexMembershipError::NoCommonLabel,
             NodeIndexMembershipError::AuthoritativeNull,
+            NodeIndexMembershipError::RangeScan,
             NodeIndexMembershipError::LabelMismatch,
         ] {
             assert!(!error.to_string().is_empty());

@@ -6214,12 +6214,13 @@ fn public_query_boundary_answers_post_expansion_filters_with_index_membership() 
 /// The reference for every shape is the same batch planned without the index
 /// catalog, which keeps the per-row filter, executed on the same database.
 /// Both agree row for row, in order and with duplicates, for literal,
-/// label-scoped, IN, range, intersected, and residual sets; for runtime
+/// label-scoped, IN, intersected, and residual sets; for range predicates,
+/// literal or late-bound, that keep the per-row filter; for runtime
 /// parameters that the index serves or that fall back to per-row evaluation;
 /// through stream, windowed pull, and count execution; for empty streams and
 /// streams wider than one stored-record batch; and for same-request writes.
-/// Hand-built plans add edge rows, an index the catalog does not serve, and a
-/// corrupt index identity.
+/// Hand-built plans add edge rows, an index the catalog does not serve, a
+/// range child, and a corrupt index identity.
 async fn public_query_boundary_answers_post_expansion_filters_with_index_membership_contract() {
     let db = HelixDB::open(HelixDbSource::InMemory {
         database: "production-post-expansion-index-membership".to_owned(),
@@ -6315,7 +6316,7 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
 
     // Runtime parameters stay late-bound so membership classifies them per
     // request, and a two-value domain bound makes a third value authoritative.
-    let late_bound = ["kind", "kinds"]
+    let late_bound = ["kind", "kinds", "min", "max"]
         .map(|name| ir::NonEmptyString::new(name).expect("parameter name is non-empty"))
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>();
@@ -6392,11 +6393,13 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
             vec!["n1"],
             true,
         ),
+        // A range set would verify the label's whole range, so ranges keep
+        // the per-row filter.
         (
             Predicate::gte("rank", 5_i64),
             default(),
             vec!["a2", "a3", "n2"],
-            true,
+            false,
         ),
         (
             Predicate::and(vec![
@@ -6478,6 +6481,45 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
             bind("kinds", strings(&["A", "B", "C"])),
             vec!["a1", "a1", "a2", "n1", "n2"],
             true,
+        ),
+        // Late-bound range bounds keep the per-row filter, so bounds without
+        // a range encoding match nothing instead of failing the request.
+        (
+            Predicate::gte_param("rank", "min"),
+            bind("min", PropertyValue::from(5_i64)),
+            vec!["a2", "a3", "n2"],
+            false,
+        ),
+        (
+            Predicate::gte_param("rank", "min"),
+            bind("min", PropertyValue::Null),
+            Vec::new(),
+            false,
+        ),
+        (
+            Predicate::gte_param("rank", "min"),
+            bind("min", PropertyValue::F64(f64::NAN)),
+            Vec::new(),
+            false,
+        ),
+        (
+            Predicate::gte_param("rank", "min"),
+            bind("min", PropertyValue::from(true)),
+            Vec::new(),
+            false,
+        ),
+        (
+            Predicate::between(
+                "rank",
+                PropertyInput::param("min"),
+                PropertyInput::param("max"),
+            ),
+            bind("min", PropertyValue::from(1_i64)).with_value(
+                ir::NonEmptyString::new("max").expect("parameter name is non-empty"),
+                PropertyValue::from("z"),
+            ),
+            Vec::new(),
+            false,
         ),
     ] {
         let filtered = |group: &str| {
@@ -6749,30 +6791,39 @@ async fn public_query_boundary_answers_post_expansion_filters_with_index_members
         .clone();
     let corrupt = catalog::NodeEqualityIndexMeta::try_new("not-a-planner-identity")
         .expect("identity is non-empty");
-    // An equality and a range child cannot batch, so they stay a set union.
+    // Validated plans never carry a range child, but the executable contract
+    // is serializable; a union with a range child still evaluates rows
+    // instead of scanning and verifying the label's range.
     let kind_a_or_rank_9 = Predicate::or(vec![
         Predicate::eq("kind", "A"),
         Predicate::gte("rank", 9_i64),
     ]);
-    let union = membership(
-        ir::NodeAccessPlan::Union(ir::AtLeast::<_, 2>::from_pair(
-            ir::NodeAccessSourcePlan::new(equality(served.clone(), "kind", "A"))
-                .expect("equality child is a node source"),
-            ir::NodeAccessSourcePlan::new(ir::NodeAccessPlan::RangeIndex {
-                index: with_catalog.indexes.node_range[&rank_key].clone(),
-                key: rank_key,
-                range: ir::IndexRange::Lower {
-                    lower: ir::IndexBound::Inclusive(
-                        ir::RangeIndexValue::literal(9_i64.into())
-                            .expect("range literal validates"),
-                    ),
-                },
-                iteration: ir::RangeScanIteration::Forward,
-            })
-            .expect("range child is a node source"),
-        )),
-        &kind_a_or_rank_9,
-    );
+    let exec::ExecOp::IndexMembership { plan: kind_a } =
+        membership(equality(served.clone(), "kind", "A"), &kind_a_or_rank_9)
+    else {
+        unreachable!("the membership helper builds membership");
+    };
+    let union = exec::ExecOp::IndexMembership {
+        plan: Box::new(exec::ExecNodeIndexMembershipPlan {
+            set: exec::ExecNodeSecondarySetPlan::Union {
+                driver: Box::new(kind_a.set.clone()),
+                rest: ir::AtLeast::<_, 1>::from_one(exec::ExecNodeSecondarySetPlan::Range(
+                    exec::ExecNodeSecondaryRangePlan {
+                        index: with_catalog.indexes.node_range[&rank_key].clone(),
+                        key: rank_key,
+                        range: ir::IndexRange::Lower {
+                            lower: ir::IndexBound::Inclusive(
+                                ir::RangeIndexValue::literal(9_i64.into())
+                                    .expect("range literal validates"),
+                            ),
+                        },
+                        iteration: ir::RangeScanIteration::Forward,
+                    },
+                )),
+            },
+            ..*kind_a
+        }),
+    };
     // Validated plans never carry an authoritative-scan set, but the
     // executable contract is serializable; such a set still evaluates rows
     // instead of scanning the keyspace.

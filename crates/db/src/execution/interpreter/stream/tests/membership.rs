@@ -246,8 +246,8 @@ async fn label_scoped_membership_rejects_other_nodes_without_reading_them() {
 }
 
 #[tokio::test]
-async fn membership_sets_for_in_and_range_match_filter() {
-    let fixture = fixture("membership-in-range").await;
+async fn membership_sets_for_in_match_filter() {
+    let fixture = fixture("membership-in").await;
     let is_in = Predicate::is_in(
         "kind",
         helix_ast::value::PropertyValue::StringArray(vec!["A".into(), "B".into()]),
@@ -265,30 +265,48 @@ async fn membership_sets_for_in_and_range_match_filter() {
     )
     .await;
     assert_eq!(rows.len(), 8);
+}
 
+/// Validated plans never carry a range set, but the executable contract is
+/// serializable. A range set still evaluates every row instead of scanning
+/// and verifying the label's range, and runtime bounds without a range
+/// encoding keep the per-row result instead of failing the request.
+#[tokio::test]
+async fn range_sets_evaluate_rows_without_scanning_the_range() {
+    let fixture = fixture("membership-range").await;
     let key = catalog::ScopedPropertyDirectionKey::try_new(
         "Attribute",
         "rank",
         helix_ast::index::RangeIndexDirection::Asc,
     )
     .unwrap();
-    let range = ir::NodeAccessSourcePlan::new(ir::NodeAccessPlan::RangeIndex {
-        index: catalog::IndexCatalogSnapshot::default()
-            .with_node_range(key.clone())
-            .node_range[&key]
-            .clone(),
-        key,
-        range: ir::IndexRange::Lower {
-            lower: ir::IndexBound::Inclusive(ir::RangeIndexValue::literal(5_i64.into()).unwrap()),
-        },
-        iteration: ir::RangeScanIteration::Forward,
-    })
-    .unwrap();
-    let predicate = Predicate::gte("rank", 5);
+    let range = |range: ir::IndexRange, predicate: Predicate| exec::ExecOp::IndexMembership {
+        plan: Box::new(exec::ExecNodeIndexMembershipPlan {
+            set: exec::ExecNodeSecondarySetPlan::Range(exec::ExecNodeSecondaryRangePlan {
+                index: catalog::IndexCatalogSnapshot::default()
+                    .with_node_range(key.clone())
+                    .node_range[&key]
+                    .clone(),
+                key: key.clone(),
+                range,
+                iteration: ir::RangeScanIteration::Forward,
+            }),
+            label: name("Attribute"),
+            predicate: ir::PredicatePlan::new(predicate).unwrap(),
+            outside_label: ir::NodeMembershipOutsideLabel::Evaluate,
+        }),
+    };
+    let lower = |value: ir::RangeIndexValue| ir::IndexRange::Lower {
+        lower: ir::IndexBound::Inclusive(value),
+    };
+    let min = name("min");
     let (rows, reads) = assert_matches_filter(
         &fixture,
-        &membership(range, predicate.clone()),
-        predicate,
+        &range(
+            lower(ir::RangeIndexValue::literal(5_i64.into()).unwrap()),
+            Predicate::gte("rank", 5),
+        ),
+        Predicate::gte("rank", 5),
         traversal_rows(&fixture),
         context::ParamBindings::default(),
     )
@@ -301,7 +319,94 @@ async fn membership_sets_for_in_and_range_match_filter() {
             Some(ElementRef::Node(fixture.note_a)),
         ]
     );
-    assert_eq!(reads, 5);
+    // Every distinct stream element evaluates the predicate.
+    assert_eq!(reads, 8);
+
+    let late_bound = range(
+        lower(ir::RangeIndexValue::Param(min.clone())),
+        Predicate::gte_param("rank", "min"),
+    );
+    let mixed = range(
+        ir::IndexRange::Between(
+            ir::IndexBetweenRange::new(
+                ir::IndexBound::Inclusive(ir::RangeIndexValue::Param(min.clone())),
+                ir::IndexBound::Inclusive(ir::RangeIndexValue::Param(name("max"))),
+            )
+            .unwrap(),
+        ),
+        Predicate::between(
+            "rank",
+            helix_ast::value::PropertyInput::param("min"),
+            helix_ast::value::PropertyInput::param("max"),
+        ),
+    );
+    for (op, predicate, params, kept) in [
+        (
+            &late_bound,
+            Predicate::gte_param("rank", "min"),
+            context::ParamBindings::default().with_value(min.clone(), 5_i64),
+            3,
+        ),
+        (
+            &late_bound,
+            Predicate::gte_param("rank", "min"),
+            context::ParamBindings::default()
+                .with_value(min.clone(), helix_ast::value::PropertyValue::Null),
+            0,
+        ),
+        (
+            &late_bound,
+            Predicate::gte_param("rank", "min"),
+            context::ParamBindings::default()
+                .with_value(min.clone(), helix_ast::value::PropertyValue::F64(f64::NAN)),
+            0,
+        ),
+        (
+            &late_bound,
+            Predicate::gte_param("rank", "min"),
+            context::ParamBindings::default().with_value(min.clone(), true),
+            0,
+        ),
+        (
+            &mixed,
+            Predicate::between(
+                "rank",
+                helix_ast::value::PropertyInput::param("min"),
+                helix_ast::value::PropertyInput::param("max"),
+            ),
+            context::ParamBindings::default()
+                .with_value(min.clone(), 1_i64)
+                .with_value(name("max"), "z"),
+            0,
+        ),
+    ] {
+        let mut ctx = ExecutionContext::new(&fixture.db, params.clone());
+        ctx.enable_request_read_view().await.unwrap();
+        let actual = ctx
+            .execute_op(op, ExecutionValue::Stream(traversal_rows(&fixture)))
+            .await
+            .unwrap();
+        assert_eq!(
+            ctx.range_reads
+                .entries
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        ctx.close_request_read_view().unwrap();
+        let (expected, _) = run(
+            &fixture,
+            &filter(predicate),
+            traversal_rows(&fixture),
+            params,
+        )
+        .await;
+        let expected = expected.unwrap();
+        assert_eq!(actual, expected);
+        let ExecutionValue::Stream(expected) = expected else {
+            panic!("filter returns rows");
+        };
+        assert_eq!(expected.len(), kept);
+    }
 }
 
 #[tokio::test]
