@@ -740,6 +740,9 @@ impl FtsCache {
         Ok(Some(opened))
     }
 
+    /// Accepts a published artifact whose key this cache has recorded as
+    /// hashed in full, if its length still matches, and otherwise verifies
+    /// it in full and records the key.
     async fn validate_artifact(
         &self,
         path: PathBuf,
@@ -755,39 +758,7 @@ impl FtsCache {
                 return Ok(());
             }
         }
-        tokio::task::spawn_blocking(move || {
-            validate_split_bundle_file(&path, &split)?;
-            let mut file = fs::File::open(&path).map_err(|error| {
-                HelixDbError::Config(format!(
-                    "failed to hash FTS artifact '{}': {error}",
-                    path.display()
-                ))
-            })?;
-            let mut digest = Sha256::new();
-            let mut buffer = [0_u8; 64 * 1024];
-            loop {
-                let read = file.read(&mut buffer).map_err(|error| {
-                    HelixDbError::Config(format!(
-                        "failed to hash FTS artifact '{}': {error}",
-                        path.display()
-                    ))
-                })?;
-                if read == 0 {
-                    break;
-                }
-                digest.update(&buffer[..read]);
-            }
-            let actual: [u8; 32] = digest.finalize().into();
-            if actual != split.blob.sha256 {
-                return Err(HelixDbError::Config(format!(
-                    "cached FTS split '{}' hash mismatch",
-                    path.display()
-                )));
-            }
-            Ok(())
-        })
-        .await
-        .map_err(|error| HelixDbError::Config(format!("FTS validation task failed: {error}")))??;
+        verify_artifact(path, split).await?;
         self.validated.lock().insert(key);
         Ok(())
     }
@@ -823,8 +794,7 @@ impl FtsCache {
             self.remove_artifact(split.blob.sha256).await;
         }
         // No valid copy is published, so an earlier validation of this key,
-        // say before another cache evicted it, vouches for nothing: the
-        // download below must be hashed in full.
+        // say before another cache evicted it, vouches for nothing.
         self.validated.lock().remove(&key);
 
         let final_path = self
@@ -864,8 +834,10 @@ impl FtsCache {
                 ))
             })?;
             drop(file);
-            self.validate_artifact(staging.clone(), split.clone(), key)
-                .await?;
+            // Always hashed in full, never vouched for by `validated`: a
+            // concurrent open may have recorded this key for another
+            // handle's published copy, which says nothing about this file.
+            verify_artifact(staging.clone(), split.clone()).await?;
             let published = match tokio_fs::rename(&staging, &final_path).await {
                 Ok(()) => true,
                 Err(error) if tokio_fs::try_exists(&final_path).await.unwrap_or(false) => {
@@ -882,6 +854,7 @@ impl FtsCache {
             };
             sync_parent(final_path.clone()).await?;
             if published {
+                self.validated.lock().insert(key);
                 let size = tokio_fs::metadata(&final_path)
                     .await
                     .map_err(|error| HelixDbError::Config(error.to_string()))?
@@ -1095,6 +1068,43 @@ fn open_entry_from_directory(
     })
 }
 
+/// Checks a split file's bundle layout and its full SHA-256.
+async fn verify_artifact(path: PathBuf, split: TextSplitRef) -> Result<(), HelixDbError> {
+    tokio::task::spawn_blocking(move || {
+        validate_split_bundle_file(&path, &split)?;
+        let mut file = fs::File::open(&path).map_err(|error| {
+            HelixDbError::Config(format!(
+                "failed to hash FTS artifact '{}': {error}",
+                path.display()
+            ))
+        })?;
+        let mut digest = Sha256::new();
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(|error| {
+                HelixDbError::Config(format!(
+                    "failed to hash FTS artifact '{}': {error}",
+                    path.display()
+                ))
+            })?;
+            if read == 0 {
+                break;
+            }
+            digest.update(&buffer[..read]);
+        }
+        let actual: [u8; 32] = digest.finalize().into();
+        if actual != split.blob.sha256 {
+            return Err(HelixDbError::Config(format!(
+                "cached FTS split '{}' hash mismatch",
+                path.display()
+            )));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| HelixDbError::Config(format!("FTS validation task failed: {error}")))?
+}
+
 fn split_range_cache(size_bytes: u64) -> Result<RangeCache<PathBuf>, HelixDbError> {
     let cache_bytes = usize::try_from(size_bytes)
         .map_err(|_| HelixDbError::Config("text split size exceeds platform limits".into()))?;
@@ -1238,12 +1248,20 @@ mod tests {
     use super::*;
     use crate::search::text::{build_split_bundle, TextBlobRef};
     use bytes::Bytes;
+    use futures::stream::BoxStream;
+    use slatedb::object_store::path::Path as ObjectPath;
     use slatedb::object_store::throttle::{ThrottleConfig, ThrottledStore};
-    use slatedb::object_store::{memory::InMemory, PutPayload};
+    use slatedb::object_store::{
+        memory::InMemory, CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload,
+        ObjectMeta, PutMultipartOptions, PutOptions, PutPayload, PutResult,
+        Result as ObjectStoreResult,
+    };
+    use std::fmt;
     use tantivy::schema::{
         IndexRecordOption, NumericOptions, Schema, TextFieldIndexing, TextOptions,
     };
     use tantivy::{doc, Index};
+    use tokio::sync::{Notify, Semaphore};
 
     fn split(seed: u8) -> TextSplitRef {
         TextSplitRef {
@@ -1347,6 +1365,81 @@ mod tests {
             )
             .await
             .expect("put split");
+    }
+
+    /// Holds every read until the test adds a permit to `gate`, so a
+    /// hydration can be paused mid-download at a known point.
+    #[derive(Debug)]
+    struct GatedStore {
+        inner: InMemory,
+        reading: Notify,
+        gate: Semaphore,
+    }
+
+    impl fmt::Display for GatedStore {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("gated-memory")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ObjectStore for GatedStore {
+        async fn put_opts(
+            &self,
+            location: &ObjectPath,
+            payload: PutPayload,
+            options: PutOptions,
+        ) -> ObjectStoreResult<PutResult> {
+            self.inner.put_opts(location, payload, options).await
+        }
+
+        async fn put_multipart_opts(
+            &self,
+            location: &ObjectPath,
+            options: PutMultipartOptions,
+        ) -> ObjectStoreResult<Box<dyn MultipartUpload>> {
+            self.inner.put_multipart_opts(location, options).await
+        }
+
+        async fn get_opts(
+            &self,
+            location: &ObjectPath,
+            options: GetOptions,
+        ) -> ObjectStoreResult<GetResult> {
+            self.reading.notify_one();
+            let _permit = self.gate.acquire().await.expect("the gate is never closed");
+            self.inner.get_opts(location, options).await
+        }
+
+        fn delete_stream(
+            &self,
+            locations: BoxStream<'static, ObjectStoreResult<ObjectPath>>,
+        ) -> BoxStream<'static, ObjectStoreResult<ObjectPath>> {
+            self.inner.delete_stream(locations)
+        }
+
+        fn list(
+            &self,
+            prefix: Option<&ObjectPath>,
+        ) -> BoxStream<'static, ObjectStoreResult<ObjectMeta>> {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&ObjectPath>,
+        ) -> ObjectStoreResult<ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy_opts(
+            &self,
+            from: &ObjectPath,
+            to: &ObjectPath,
+            options: CopyOptions,
+        ) -> ObjectStoreResult<()> {
+            self.inner.copy_opts(from, to, options).await
+        }
     }
 
     #[test]
@@ -1812,6 +1905,64 @@ mod tests {
             (1, 1),
             "a file reappearing after this cache's own eviction is hashed"
         );
+    }
+
+    /// Another handle on the same directory can publish a split while this
+    /// cache downloads it, and an open here then records the split's key as
+    /// hashed. That record vouches for the other handle's copy only, so the
+    /// download is still hashed in full: a corrupt copy of the same length
+    /// is rejected and the published copy stays.
+    #[tokio::test]
+    async fn downloads_are_hashed_in_full_after_a_concurrent_open() {
+        let database = "fts-cache-staging-rehash";
+        let (bytes, split) = valid_split(21);
+        let mut corrupt = bytes.clone();
+        // Outside the footer, so only the hash can tell.
+        corrupt[0] ^= 0xff;
+        let gated = Arc::new(GatedStore {
+            inner: InMemory::new(),
+            reading: Notify::new(),
+            gate: Semaphore::new(0),
+        });
+        let gated_store: Arc<dyn ObjectStore> = Arc::<GatedStore>::clone(&gated);
+        put_split(&gated_store, database, corrupt, &split).await;
+        let valid_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        put_split(&valid_store, database, bytes.clone(), &split).await;
+        let disk = tempfile::tempdir().expect("disk cache");
+        let open_cache = |store: Arc<dyn ObjectStore>| {
+            cache(
+                database,
+                store,
+                Some(disk.path().to_path_buf()),
+                split.total_size_bytes,
+                split.total_size_bytes * 2,
+                Duration::from_secs(1),
+            )
+        };
+        let (downloading, other_handle) = (open_cache(gated_store), open_cache(valid_store));
+
+        let (download, ()) = tokio::join!(downloading.ensure_artifact(&split), async {
+            gated.reading.notified().await;
+            other_handle
+                .ensure_artifact(&split)
+                .await
+                .expect("the other handle publishes");
+            downloading
+                .get_or_open_split(&split)
+                .await
+                .expect("disk open of the published copy");
+            gated.gate.add_permits(1);
+        });
+        assert!(download.is_err(), "the corrupt download is rejected");
+        let published = tokio_fs::read(
+            downloading
+                .artifact_path(split.blob.sha256)
+                .expect("artifact path"),
+        )
+        .await
+        .expect("published artifact");
+        assert!(published == bytes, "the published copy stays");
+        assert_eq!(downloading.snapshot().disk_hits, 1);
     }
 
     /// Closing the cache aborts a hydration that is still downloading; the
