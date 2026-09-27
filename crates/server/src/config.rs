@@ -40,6 +40,8 @@ const OBJECT_STORE_MIN_PARTS: usize = 256;
 /// Open files the server needs besides the two disk-cache tiers: listeners,
 /// connections, WAL and SST reads, and full-text split files.
 const OPEN_FILE_HEADROOM: u64 = 1024;
+/// File in the cache root a running server holds an exclusive lock on.
+const CACHE_LOCK_FILE: &str = ".helix-cache.lock";
 
 /// Runtime configuration for the standalone server.
 #[derive(Debug, Clone)]
@@ -186,6 +188,11 @@ impl ServerConfig {
     /// assert_eq!(config.required_open_files(), None);
     /// ```
     pub fn required_open_files(&self) -> Option<u64> {
+        self.hybrid_cache().map(HybridCache::required_open_files)
+    }
+
+    /// The hybrid disk cache in front of durable storage, if one is set.
+    pub(crate) fn hybrid_cache(&self) -> Option<&HybridCache> {
         match &self.storage {
             StorageConfig::Memory
             | StorageConfig::Disk {
@@ -203,7 +210,7 @@ impl ServerConfig {
             | StorageConfig::S3 {
                 cache: CacheConfig::Hybrid(cache),
                 ..
-            } => Some(cache.required_open_files()),
+            } => Some(cache),
         }
     }
 }
@@ -319,7 +326,10 @@ impl CacheConfig {
 /// With S3 storage the object-store tier also caches SSTs this server flushes
 /// or compacts, so it reads its own writes back from local disk. With
 /// `HELIX_DATA_DIR` those SSTs are already local, so the tier caches only the
-/// SSTs the server reads. Only one server may use a cache directory at a time.
+/// SSTs the server reads.
+///
+/// Only one server may use a cache directory at a time: while its storage is
+/// open, a server holds an exclusive lock on `.helix-cache.lock` in the root.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HybridCache {
     root: PathBuf,
@@ -416,7 +426,10 @@ impl HybridCache {
         ]
         .into_iter()
         .try_for_each(|directory| {
-            let probe = directory.join(".helix-cache-write-check");
+            // Unique, so servers starting together never remove each
+            // other's probe.
+            let probe =
+                directory.join(format!(".helix-cache-write-check-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(directory)
                 .and_then(|()| std::fs::write(&probe, b""))
                 .and_then(|()| std::fs::remove_file(&probe))
@@ -431,6 +444,35 @@ impl HybridCache {
     /// Cache root directory.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Takes the exclusive lock that keeps every other server off this cache
+    /// directory until the returned file is dropped.
+    ///
+    /// The tiers assume one owner: a second server with a smaller budget
+    /// would delete the block-cache partitions the first still has open. The
+    /// lock is advisory and taken only on the server's open path, so a
+    /// process embedding `db` may still open several databases on one cache.
+    pub(crate) fn lock(&self) -> Result<std::fs::File, ServerConfigError> {
+        let path = self.root.join(CACHE_LOCK_FILE);
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|source| ServerConfigError::CacheDirectory {
+                path: path.clone(),
+                source,
+            })?;
+        file.try_lock().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => ServerConfigError::CacheDirectoryInUse {
+                path: self.root.clone(),
+            },
+            std::fs::TryLockError::Error(source) => {
+                ServerConfigError::CacheDirectory { path, source }
+            }
+        })?;
+        Ok(file)
     }
 
     /// Minimum open files a server with this cache needs: one per
@@ -574,6 +616,15 @@ pub enum ServerConfigError {
         path: PathBuf,
         /// Filesystem error.
         source: std::io::Error,
+    },
+    /// Another server holds the cache directory's lock.
+    #[error(
+        "HELIX_DISK_CACHE_DIR: `{}` is in use by another server; give each running server its own cache directory",
+        .path.display()
+    )]
+    CacheDirectoryInUse {
+        /// Locked cache directory.
+        path: PathBuf,
     },
     /// The DB crate rejected a derived cache tier.
     #[error(
@@ -1085,6 +1136,66 @@ mod tests {
             assert!(error.to_string().starts_with("HELIX_DISK_CACHE_DIR"));
             std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+    }
+
+    #[test]
+    fn caches_validated_together_keep_their_own_write_probes() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("cache");
+        let validate = || {
+            HybridCache::try_new(
+                &root,
+                NonZeroUsize::new(MIB).unwrap(),
+                NonZeroUsize::new(MIN_CACHE_DISK_BYTES).unwrap(),
+            )
+        };
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..50 {
+                        validate().unwrap();
+                    }
+                });
+            }
+        });
+        let mut entries = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        entries.sort();
+        assert_eq!(
+            entries,
+            ["fts", "object-store", "slate"].map(OsString::from),
+            "every probe was removed by the thread that wrote it"
+        );
+    }
+
+    #[test]
+    fn cache_lock_admits_one_holder_until_dropped() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("cache");
+        let cache = HybridCache::try_new(
+            &root,
+            NonZeroUsize::new(MIB).unwrap(),
+            NonZeroUsize::new(MIN_CACHE_DISK_BYTES).unwrap(),
+        )
+        .unwrap();
+
+        let held = cache.lock().unwrap();
+        let error = cache.lock().unwrap_err();
+        assert!(matches!(
+            &error,
+            ServerConfigError::CacheDirectoryInUse { path } if *path == root
+        ));
+        assert!(error.to_string().starts_with("HELIX_DISK_CACHE_DIR"));
+        drop(held);
+        drop(cache.lock().unwrap());
+
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(matches!(
+            cache.lock().unwrap_err(),
+            ServerConfigError::CacheDirectory { path, .. } if path == root.join(CACHE_LOCK_FILE)
+        ));
     }
 
     #[test]

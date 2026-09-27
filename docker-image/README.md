@@ -143,8 +143,10 @@ macOS, the limit is also capped by `sysctl kern.maxfilesperproc`.
 
 Startup also fails with a message naming the variable when a size is not a positive
 integer (including non-UTF-8 text) or is out of range, a size is set without
-`HELIX_DISK_CACHE_DIR`, or the directory or a tier subdirectory cannot be created or
-written.
+`HELIX_DISK_CACHE_DIR`, the directory or a tier subdirectory cannot be created or
+written, or another running server already uses the directory. A server holds a lock
+on `.helix-cache.lock` in the directory until its storage closes, so stop the old
+container before starting its replacement on the same cache.
 
 ## Test
 

@@ -518,7 +518,7 @@ async fn hybrid_disk_cache_serves_reopened_reads_from_local_disk() {
             .returning(["count"]),
     );
 
-    let db = open_database(&config).await.unwrap();
+    let ServerDatabase { db, cache_lock } = open_database(&config).await.unwrap();
     let stats = db.cache_stats();
     assert!(matches!(
         stats.foyer_hybrid_disk.state,
@@ -539,6 +539,7 @@ async fn hybrid_disk_cache_serves_reopened_reads_from_local_disk() {
     assert_eq!(post_query(router, &read).await["count"], 1);
     db.close().await.unwrap();
     drop(db);
+    drop(cache_lock);
 
     // 24 MiB of Foyer disk tier in its minimum 64 KiB partitions.
     assert_eq!(files_below(&cache_root.join("slate")).len(), 384);
@@ -550,11 +551,15 @@ async fn hybrid_disk_cache_serves_reopened_reads_from_local_disk() {
     assert!(cache_root.join("fts").is_dir());
 
     // Reading the flushed SST back caches it on local disk.
-    let reader = open_database(&config).await.unwrap();
+    let ServerDatabase {
+        db: reader,
+        cache_lock,
+    } = open_database(&config).await.unwrap();
     let router = http::router(ServerState::new(Arc::clone(&reader), None));
     assert_eq!(post_query(router, &read).await["count"], 1);
     reader.close().await.unwrap();
     drop(reader);
+    drop(cache_lock);
     let cached = files_below(&cache_root.join("object-store"));
     assert!(
         !cached.is_empty(),
@@ -569,11 +574,15 @@ async fn hybrid_disk_cache_serves_reopened_reads_from_local_disk() {
         .keys()
         .for_each(|sst| std::fs::remove_file(sst).unwrap());
 
-    let reopened = open_database(&config).await.unwrap();
+    let ServerDatabase {
+        db: reopened,
+        cache_lock,
+    } = open_database(&config).await.unwrap();
     let router = http::router(ServerState::new(Arc::clone(&reopened), None));
     assert_eq!(post_query(router, &read).await["count"], 1);
     reopened.close().await.unwrap();
     drop(reopened);
+    drop(cache_lock);
     let after_restart = files_below(&cache_root.join("object-store"));
     assert!(
         cached
@@ -656,7 +665,7 @@ async fn hybrid_disk_cache_admits_full_text_splits_only_on_demand_contract() {
         used_bytes
     };
 
-    let db = open_database(&config).await.unwrap();
+    let ServerDatabase { db, cache_lock } = open_database(&config).await.unwrap();
     let router = http::router(ServerState::new(Arc::clone(&db), None));
     post_query(
         router.clone(),
@@ -713,9 +722,13 @@ async fn hybrid_disk_cache_admits_full_text_splits_only_on_demand_contract() {
     .expect("the text index activates");
     db.close().await.unwrap();
     drop(db);
+    drop(cache_lock);
 
     // The reopened server warms nothing into `fts/`, whatever its share.
-    let reopened = open_database(&config).await.unwrap();
+    let ServerDatabase {
+        db: reopened,
+        cache_lock,
+    } = open_database(&config).await.unwrap();
     reopened.wait_for_startup_cache_warm().await;
     assert_eq!(fts_disk_bytes(&reopened), 0);
     assert!(
@@ -743,6 +756,76 @@ async fn hybrid_disk_cache_admits_full_text_splits_only_on_demand_contract() {
         .is_some_and(|extension| extension == "split")));
     reopened.close().await.unwrap();
     drop(reopened);
+    drop(cache_lock);
+    #[cfg(unix)]
+    rustix::process::setrlimit(rustix::process::Resource::Nofile, original_limit).unwrap();
+}
+
+#[tokio::test]
+async fn a_hybrid_cache_directory_serves_one_server_at_a_time() {
+    const MIB: usize = 1024 * 1024;
+    #[cfg(unix)]
+    let _limit = OPEN_FILE_LIMIT.lock().await;
+    #[cfg(unix)]
+    let original_limit = rustix::process::getrlimit(rustix::process::Resource::Nofile);
+    let directory = tempfile::tempdir().unwrap();
+    let data_root = directory.path().join("data");
+    std::fs::create_dir_all(&data_root).unwrap();
+    let cache_root = directory.path().join("cache");
+    let config = |disk_bytes| ServerConfig {
+        http_addr: "127.0.0.1:0".parse().unwrap(),
+        grpc_addr: "127.0.0.1:0".parse().unwrap(),
+        db_path: "server-cache-lock".to_string(),
+        storage: StorageConfig::Disk {
+            root: data_root.clone(),
+            cache: CacheConfig::Hybrid(Box::new(
+                HybridCache::try_new(
+                    &cache_root,
+                    NonZeroUsize::new(16 * MIB).unwrap(),
+                    NonZeroUsize::new(disk_bytes).unwrap(),
+                )
+                .unwrap(),
+            )),
+        },
+    };
+    let first = open_database(&config(128 * MIB)).await.unwrap();
+    let partitions = files_below(&cache_root.join("slate"));
+    assert_eq!(partitions.len(), 768);
+
+    // A second server with a smaller block cache would delete partitions
+    // 384..768 while the first still has them open. It stops before that.
+    let smaller = config(64 * MIB);
+    let Err(error) = open_database(&smaller).await else {
+        panic!("a second server opened a cache directory in use");
+    };
+    assert!(
+        matches!(
+            error.downcast_ref::<ServerConfigError>(),
+            Some(ServerConfigError::CacheDirectoryInUse { path }) if *path == cache_root
+        ),
+        "{error:?}"
+    );
+    assert!(error.to_string().starts_with("HELIX_DISK_CACHE_DIR"));
+    assert_eq!(files_below(&cache_root.join("slate")), partitions);
+
+    // Closing the first server frees the directory.
+    first.db.close().await.unwrap();
+    drop(first);
+    let ServerDatabase { db, cache_lock } = open_database(&smaller).await.unwrap();
+    assert_eq!(files_below(&cache_root.join("slate")).len(), 384);
+    db.close().await.unwrap();
+    drop(db);
+    drop(cache_lock);
+
+    // The server runners hold the lock until storage has closed.
+    run_with_shutdown(smaller.clone(), async {}).await.unwrap();
+    open_database(&smaller)
+        .await
+        .unwrap()
+        .db
+        .close()
+        .await
+        .unwrap();
     #[cfg(unix)]
     rustix::process::setrlimit(rustix::process::Resource::Nofile, original_limit).unwrap();
 }
