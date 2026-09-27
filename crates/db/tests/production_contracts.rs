@@ -376,6 +376,8 @@ async fn server_open_trims_an_unwarmed_full_text_disk_tier_to_its_budget_contrac
     let db = HelixDB::open_for_server(source(), hybrid(1024 * 1024))
         .await
         .expect("server writer opens with a full-text disk tier");
+    // The startup trim of the empty tier finishes before the searches.
+    db.wait_for_startup_cache_warm().await;
     db.query(QueryRequest::write(
         batch::write_batch()
             .var_as(
@@ -411,14 +413,17 @@ async fn server_open_trims_an_unwarmed_full_text_disk_tier_to_its_budget_contrac
             serde_json::json!({ "ids": [0] })
         );
     }
+    // A completion is counted after the admission's trim, so the whole
+    // hydration task has run before close could abort it.
     tokio::time::timeout(Duration::from_secs(30), async {
-        while db.fts_cache_state().await.unwrap().disk_artifact_count == 0 {
+        while db.fts_cache_state().await.unwrap().hydration_completions == 0 {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
     .expect("a split searched twice reaches the disk tier");
     let admitted = db.fts_cache_state().await.unwrap().disk_artifact_count;
+    assert_eq!(admitted, 1);
     db.close().await.expect("server writer closes");
     // Past the one-second grace that protects recently used splits.
     tokio::time::sleep(Duration::from_millis(1100)).await;
@@ -444,10 +449,14 @@ async fn server_open_trims_an_unwarmed_full_text_disk_tier_to_its_budget_contrac
             serde_json::json!({ "ids": [0] })
         );
     }
+    // A hydration the second search spawned would count its attempt the
+    // first time this single-threaded runtime polls it.
+    tokio::task::yield_now().await;
     let state = db.fts_cache_state().await.unwrap();
     assert_eq!(
         (state.hydration_attempts, state.disk_artifact_count),
-        (0, 0)
+        (0, 0),
+        "a split larger than the whole tier is never admitted"
     );
     db.close().await.expect("server writer closes");
 }
