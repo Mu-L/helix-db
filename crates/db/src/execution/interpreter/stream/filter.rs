@@ -246,7 +246,14 @@ impl<'db> ExecutionContext<'db> {
             }
         };
         match futures::try_join!(self.node_secondary_set_bitmap(&plan.set), outside) {
-            Ok((matches, outside)) => Ok(PreparedIndexMembership::Indexed { matches, outside }),
+            Ok((matches, outside)) => {
+                #[cfg(test)]
+                self.db
+                    .inner
+                    .resolved_index_memberships
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok(PreparedIndexMembership::Indexed { matches, outside })
+            }
             Err(HelixDbError::IndexLifecycleUnavailable { .. }) => {
                 Ok(PreparedIndexMembership::PerRow)
             }

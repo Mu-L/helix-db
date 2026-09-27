@@ -193,6 +193,14 @@ fn current_ids(rows: &[ExecutionRow]) -> Vec<Option<ElementRef>> {
     rows.iter().map(|row| row.current.clone()).collect()
 }
 
+/// Membership sets `db` resolved from secondary indexes. The per-row
+/// fallback keeps the same rows, so only this count shows a set was read.
+fn resolved(db: &crate::HelixDB) -> usize {
+    db.inner
+        .resolved_index_memberships
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[tokio::test]
 async fn membership_matches_filter_on_mixed_streams_without_label_record_reads() {
     let fixture = fixture("membership-mixed-streams").await;
@@ -623,33 +631,49 @@ async fn unavailable_indexes_fall_back_and_corrupt_identities_fail_closed() {
 #[tokio::test]
 async fn pull_regions_and_count_cursors_share_membership_semantics() {
     let fixture = fixture("membership-pull-count").await;
-    let ids = [
+    // Three of every five node rows match. Sixty copies span 300 node rows,
+    // so a pull past the first record batch resolves the set and decides
+    // the remaining rows from it.
+    let pattern = [
         fixture.attribute_a,
         fixture.note_b,
         fixture.attribute_b,
         fixture.attribute_b,
         fixture.note_a,
     ];
+    let ids = pattern
+        .into_iter()
+        .cycle()
+        .take(60 * pattern.len())
+        .collect::<Vec<_>>();
+    let matching = |count| {
+        ExecutionValue::Stream(
+            ids.iter()
+                .filter(|id| ![fixture.attribute_a, fixture.note_a].contains(*id))
+                .take(count)
+                .map(|id| ExecutionRow::current(ElementRef::Node(*id)))
+                .collect(),
+        )
+    };
     let params = context::ParamBindings::default().with_value(name("ids"), ids_value(&ids));
     let predicate = Predicate::eq("kind", "B");
     let op = membership(kind_equality(literal("B")), predicate.clone());
-    for (terminal, expected) in [
-        (
-            exec::ExecOp::Limit {
-                count: ir::StreamBoundPlan::Literal(2),
-            },
-            ExecutionValue::Stream(vec![
-                ExecutionRow::current(ElementRef::Node(fixture.note_b)),
-                ExecutionRow::current(ElementRef::Node(fixture.attribute_b)),
-            ]),
-        ),
+    let limit = |count| exec::ExecOp::Limit {
+        count: ir::StreamBoundPlan::Literal(count),
+    };
+    for (terminal, expected, resolves) in [
+        // Two matches stop within the first batch and never read the set.
+        (limit(2), matching(2), 0),
+        // 170 matches take 283 node rows, 27 of them decided by the set.
+        (limit(170), matching(170), 1),
         (
             exec::ExecOp::Count {
                 plan: Box::new(exec::ExecCountPlan::InputRows {
                     window: exec::ExecCountWindowPlan::identity(),
                 }),
             },
-            ExecutionValue::Count(3),
+            ExecutionValue::Count(180),
+            1,
         ),
     ] {
         let plan = test_support::executable(
@@ -661,8 +685,10 @@ async fn pull_regions_and_count_cursors_share_membership_semantics() {
             ],
             3,
         );
+        let before = resolved(&fixture.db);
         let result = fixture.db.execute(&plan, params.clone()).await.unwrap();
         assert_eq!(result.last, Some(expected));
+        assert_eq!(resolved(&fixture.db) - before, resolves);
     }
 
     let exec::ExecOp::IndexMembership { plan } = op else {
@@ -688,8 +714,10 @@ async fn pull_regions_and_count_cursors_share_membership_semantics() {
         )],
         1,
     );
+    let before = resolved(&fixture.db);
     let result = fixture.db.execute(&plan, params).await.unwrap();
-    assert_eq!(result.last, Some(ExecutionValue::Count(3)));
+    assert_eq!(result.last, Some(ExecutionValue::Count(180)));
+    assert_eq!(resolved(&fixture.db) - before, 1);
 }
 
 #[tokio::test]
@@ -784,11 +812,13 @@ async fn resolved_memberships_are_reused_across_executions_of_one_plan() {
         assert_eq!(rows, expected);
     }
     assert_eq!(ctx.prepared_memberships.len(), 1);
+    assert_eq!(resolved(&fixture.db), 1);
     let first = ctx.cached_index_membership(plan).await.unwrap();
     assert!(std::sync::Arc::ptr_eq(
         &first,
         &ctx.cached_index_membership(plan).await.unwrap()
     ));
+    assert_eq!(resolved(&fixture.db), 1);
 
     // Another plan resolves its own set, and clearing forgets both.
     ctx.execute_op(&other, ExecutionValue::Stream(traversal_rows(&fixture)))
@@ -800,6 +830,7 @@ async fn resolved_memberships_are_reused_across_executions_of_one_plan() {
         &first,
         &ctx.cached_index_membership(plan).await.unwrap()
     ));
+    assert_eq!(resolved(&fixture.db), 3);
     ctx.close_request_read_view().unwrap();
 }
 
