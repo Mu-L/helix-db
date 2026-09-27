@@ -575,6 +575,166 @@ async fn hybrid_disk_cache_serves_reopened_reads_from_local_disk() {
     rustix::process::setrlimit(rustix::process::Resource::Nofile, original_limit).unwrap();
 }
 
+/// Text queries recurse deeper than a test thread's stack allows in debug
+/// builds, so this runs on its own thread with a larger stack.
+#[test]
+fn hybrid_disk_cache_admits_full_text_splits_only_on_demand() {
+    std::thread::Builder::new()
+        .name("hybrid-full-text-cache".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(hybrid_disk_cache_admits_full_text_splits_only_on_demand_contract());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+async fn hybrid_disk_cache_admits_full_text_splits_only_on_demand_contract() {
+    const MIB: usize = 1024 * 1024;
+    #[cfg(unix)]
+    let _limit = OPEN_FILE_LIMIT.lock().await;
+    #[cfg(unix)]
+    let original_limit = rustix::process::getrlimit(rustix::process::Resource::Nofile);
+    let directory = tempfile::tempdir().unwrap();
+    let data_root = directory.path().join("data");
+    std::fs::create_dir_all(&data_root).unwrap();
+    let cache_root = directory.path().join("cache");
+    let fts_root = cache_root.join("fts");
+    let config = ServerConfig {
+        http_addr: "127.0.0.1:0".parse().unwrap(),
+        grpc_addr: "127.0.0.1:0".parse().unwrap(),
+        db_path: "server-hybrid-text-cache".to_string(),
+        storage: StorageConfig::Disk {
+            root: data_root,
+            cache: CacheConfig::Hybrid(Box::new(
+                HybridCache::try_new(
+                    &cache_root,
+                    NonZeroUsize::new(16 * MIB).unwrap(),
+                    NonZeroUsize::new(64 * MIB).unwrap(),
+                )
+                .unwrap(),
+            )),
+        },
+    };
+    let search = query::QueryRequest::read(
+        batch::read_batch()
+            .var_as(
+                "ids",
+                traversal::g()
+                    .text_search_nodes("Document", "body", "alpha", 8, None)
+                    .id(),
+            )
+            .returning(["ids"]),
+    );
+    let fts_disk_bytes = |db: &HelixDB| {
+        let state = db.cache_stats().fts_disk.state;
+        let db::CacheTierState::Ready {
+            used_bytes,
+            capacity_bytes: Some(capacity),
+        } = state
+        else {
+            panic!("the full-text disk tier is ready, got {state:?}");
+        };
+        assert_eq!(capacity, 8 * MIB as u64, "the full-text tier's share");
+        used_bytes
+    };
+
+    let db = open_database(&config).await.unwrap();
+    let router = http::router(ServerState::new(Arc::clone(&db), None));
+    post_query(
+        router.clone(),
+        &query::QueryRequest::write(
+            batch::write_batch()
+                .var_as(
+                    "first",
+                    traversal::g().add_n(
+                        "Document",
+                        vec![("body", value::PropertyInput::from("alpha"))],
+                    ),
+                )
+                .var_as(
+                    "second",
+                    traversal::g().add_n(
+                        "Document",
+                        vec![("body", value::PropertyInput::from("beta"))],
+                    ),
+                )
+                .returning(Vec::<String>::new()),
+        ),
+    )
+    .await;
+    let receipt = post_query(
+        router.clone(),
+        &query::QueryRequest::write(
+            batch::write_batch()
+                .var_as(
+                    "operation",
+                    traversal::g().create_text_index_nodes("Document", "body", None::<String>),
+                )
+                .returning(["operation"]),
+        ),
+    )
+    .await;
+    let status = query::QueryRequest::read(
+        batch::read_batch()
+            .var_as(
+                "status",
+                traversal::g().get_index_operation(
+                    receipt["operation"]["operation_id"]
+                        .as_str()
+                        .expect("the text index build is accepted"),
+                ),
+            )
+            .returning(["status"]),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while post_query(router.clone(), &status).await["status"]["status"] != "succeeded" {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the text index activates");
+    db.close().await.unwrap();
+    drop(db);
+
+    // The reopened server warms nothing into `fts/`, whatever its share.
+    let reopened = open_database(&config).await.unwrap();
+    reopened.wait_for_startup_cache_warm().await;
+    assert_eq!(fts_disk_bytes(&reopened), 0);
+    assert!(
+        files_below(&fts_root).is_empty(),
+        "startup downloads no split into the full-text disk tier"
+    );
+
+    // A split searched twice is admitted to disk in the background.
+    let router = http::router(ServerState::new(Arc::clone(&reopened), None));
+    for _ in 0..2 {
+        assert_eq!(
+            post_query(router.clone(), &search).await["ids"],
+            serde_json::json!([0])
+        );
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while fts_disk_bytes(&reopened) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("a split searched twice reaches the full-text disk tier");
+    assert!(files_below(&fts_root).keys().any(|path| path
+        .extension()
+        .is_some_and(|extension| extension == "split")));
+    reopened.close().await.unwrap();
+    drop(reopened);
+    #[cfg(unix)]
+    rustix::process::setrlimit(rustix::process::Resource::Nofile, original_limit).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn open_file_limit_rises_to_the_hard_limit_or_fails_below_the_minimum() {

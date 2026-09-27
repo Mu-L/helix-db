@@ -295,6 +295,9 @@ impl CacheConfig {
 /// | `slate/` | SlateDB block/metadata hybrid cache | 3/8 |
 /// | `fts/` | Full-text split cache | the remaining ~1/8 |
 ///
+/// The full-text tier is filled by searches only; startup warms nothing into
+/// it.
+///
 /// The object-store tier also caches SSTs this server flushes or compacts, so
 /// a single-process server reads its own writes back from local disk. Only one
 /// server may use a cache directory at a time.
@@ -369,11 +372,16 @@ impl HybridCache {
                 object_store_defaults.scan_interval,
                 object_store_defaults.max_open_file_handles,
             )?,
+            // No startup warm: with a disk tier it would download every
+            // active split whole, ignoring this tier's share, and re-hash
+            // every cached split on each restart. Splits reach `fts/` only
+            // once searches reuse them, and each admission evicts older
+            // splits toward the share.
             fts: db::config::FtsHybridCacheConfig::try_new(
                 fts_defaults.memory_bytes(),
                 root.join("fts"),
                 fts_disk_bytes,
-                fts_defaults.warm().clone(),
+                db::config::FtsWarmConfig::Off,
                 fts_defaults.generation_grace_period().as_secs(),
             )?,
             root,
@@ -821,6 +829,11 @@ mod tests {
         assert_eq!(slate_warm, db::config::SlateWarmConfig::default());
         assert_eq!(fts.disk_root(), root.join("fts"));
         assert_eq!(fts.disk_bytes(), 4 * 1024 * 1024 * 1024);
+        assert_eq!(
+            fts.warm_mode(),
+            db::config::CacheWarmMode::Off,
+            "startup never downloads splits into the full-text disk tier"
+        );
         assert_eq!(
             fts.memory_bytes(),
             db::config::FtsMemoryCacheConfig::default().memory_bytes()
