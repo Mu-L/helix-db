@@ -333,6 +333,7 @@ impl CacheConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HybridCache {
     root: PathBuf,
+    disk_bytes: usize,
     slate_db: db::config::SlateHybridCacheConfig,
     object_store: db::config::SlateObjectStoreCacheSettings,
     fts: db::config::FtsHybridCacheConfig,
@@ -417,6 +418,7 @@ impl HybridCache {
                 fts_defaults.generation_grace_period().as_secs(),
             )?,
             root,
+            disk_bytes: disk_bytes.get(),
         };
         [
             cache.root.as_path(),
@@ -446,14 +448,15 @@ impl HybridCache {
         &self.root
     }
 
-    /// Takes the exclusive lock that keeps every other server off this cache
-    /// directory until the returned file is dropped.
+    /// Claims this cache directory for one server: takes the exclusive lock
+    /// that keeps every other server off it until the returned file is
+    /// dropped, then warns when the disk budget does not fit its filesystem.
     ///
     /// The tiers assume one owner: a second server with a smaller budget
     /// would delete the block-cache partitions the first still has open. The
     /// lock is advisory and taken only on the server's open path, so a
     /// process embedding `db` may still open several databases on one cache.
-    pub(crate) fn lock(&self) -> Result<std::fs::File, ServerConfigError> {
+    pub(crate) fn claim(&self) -> Result<std::fs::File, ServerConfigError> {
         let path = self.root.join(CACHE_LOCK_FILE);
         let file = std::fs::OpenOptions::new()
             .create(true)
@@ -472,7 +475,43 @@ impl HybridCache {
                 ServerConfigError::CacheDirectory { path, source }
             }
         })?;
+        // Only a warning: the budget is still enforced, and free space
+        // changes as the data and other files grow.
+        #[cfg(unix)]
+        match self.disk_shortfall() {
+            Ok(None) => {}
+            Ok(Some(shortfall)) => tracing::warn!(
+                root = %self.root.display(),
+                budget_bytes = self.disk_bytes,
+                shortfall_bytes = shortfall,
+                "HELIX_DISK_CACHE_BYTES exceeds the free space left for the disk cache; it can fill the filesystem, and durable writes fail too if HELIX_DATA_DIR shares it"
+            ),
+            Err(error) => tracing::warn!(
+                root = %self.root.display(),
+                %error,
+                "could not compare HELIX_DISK_CACHE_BYTES with the free space for the disk cache"
+            ),
+        }
         Ok(file)
+    }
+
+    /// Bytes by which the disk budget exceeds the room its filesystem leaves
+    /// the cache, or `None` when it fits. The room is the free space plus the
+    /// space the cache's files already occupy, so a full cache still fits
+    /// after a restart.
+    ///
+    /// This walks every file below the root once, which at the largest
+    /// budget is on the order of 10^5 files.
+    #[cfg(unix)]
+    fn disk_shortfall(&self) -> std::io::Result<Option<u64>> {
+        let filesystem = rustix::fs::statvfs(&self.root)?;
+        let room = filesystem
+            .f_bavail
+            .saturating_mul(filesystem.f_frsize)
+            .saturating_add(allocated_bytes(&self.root)?);
+        Ok((self.disk_bytes as u64)
+            .checked_sub(room)
+            .filter(|&shortfall| shortfall > 0))
     }
 
     /// Minimum open files a server with this cache needs: one per
@@ -546,6 +585,25 @@ fn parse_cache_bytes(
                 })
         })
         .transpose()
+}
+
+/// Disk space the files below `directory` occupy, counting allocated blocks
+/// rather than lengths because block-cache partitions are sparse.
+#[cfg(unix)]
+fn allocated_bytes(directory: &Path) -> std::io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+
+    std::fs::read_dir(directory)?.try_fold(0_u64, |total, entry| {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        let bytes = if metadata.is_dir() {
+            allocated_bytes(&entry.path())?
+        } else {
+            // `st_blocks` counts 512-byte units on every Unix.
+            metadata.blocks() * 512
+        };
+        Ok(total.saturating_add(bytes))
+    })
 }
 
 /// Server configuration errors. Every message names the variable to fix.
@@ -1181,21 +1239,77 @@ mod tests {
         )
         .unwrap();
 
-        let held = cache.lock().unwrap();
-        let error = cache.lock().unwrap_err();
+        let held = cache.claim().unwrap();
+        let error = cache.claim().unwrap_err();
         assert!(matches!(
             &error,
             ServerConfigError::CacheDirectoryInUse { path } if *path == root
         ));
         assert!(error.to_string().starts_with("HELIX_DISK_CACHE_DIR"));
         drop(held);
-        drop(cache.lock().unwrap());
+        drop(cache.claim().unwrap());
 
         std::fs::remove_dir_all(&root).unwrap();
         assert!(matches!(
-            cache.lock().unwrap_err(),
+            cache.claim().unwrap_err(),
             ServerConfigError::CacheDirectory { path, .. } if path == root.join(CACHE_LOCK_FILE)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn allocated_bytes_count_written_blocks_below_the_root_but_not_sparse_lengths() {
+        use std::io::Write;
+
+        let directory = tempfile::tempdir().unwrap();
+        let nested = directory.path().join("object-store").join("db");
+        std::fs::create_dir_all(&nested).unwrap();
+        for path in [directory.path().join("written"), nested.join("written")] {
+            let mut file = std::fs::File::create(path).unwrap();
+            file.write_all(&vec![7_u8; MIB]).unwrap();
+            file.sync_all().unwrap();
+        }
+        let sparse = std::fs::File::create(directory.path().join("sparse")).unwrap();
+        sparse.set_len(64 * MIB as u64).unwrap();
+        sparse.sync_all().unwrap();
+
+        let allocated = allocated_bytes(directory.path()).unwrap();
+        assert!(
+            (2 * MIB as u64..16 * MIB as u64).contains(&allocated),
+            "two written MiB count, a 64 MiB sparse length does not: {allocated}"
+        );
+        assert!(allocated_bytes(&directory.path().join("missing")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disk_budget_shortfall_is_what_exceeds_free_space_plus_the_cache() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut cache = HybridCache::try_new(
+            directory.path().join("cache"),
+            NonZeroUsize::new(MIB).unwrap(),
+            NonZeroUsize::new(MIN_CACHE_DISK_BYTES).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            cache.disk_shortfall().unwrap(),
+            None,
+            "the minimum budget fits the test filesystem"
+        );
+        drop(cache.claim().unwrap());
+
+        cache.disk_bytes = usize::MAX;
+        let filesystem = rustix::fs::statvfs(cache.root()).unwrap();
+        let shortfall = cache.disk_shortfall().unwrap().unwrap();
+        assert!(
+            shortfall >= usize::MAX as u64 - filesystem.f_blocks * filesystem.f_frsize,
+            "no filesystem leaves room for the whole address space"
+        );
+        // Still only a warning.
+        drop(cache.claim().unwrap());
+
+        std::fs::remove_dir_all(cache.root()).unwrap();
+        assert!(cache.disk_shortfall().is_err());
     }
 
     #[test]

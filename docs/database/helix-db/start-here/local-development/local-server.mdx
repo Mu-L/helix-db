@@ -308,7 +308,8 @@ cached on demand, once searches have used it twice; the server downloads none of
 at startup. Budget at least twice the data the server reads often: the object-store
 cache fetches whole file parts (4 MiB, or smaller under a 2 GiB budget), so once
 that data outgrows half the budget, cold reads fetch more than memory-only caches
-would.
+would. The budget must also fit on the cache's filesystem; the server logs a warning
+at startup when it exceeds the free space there plus what the cache already uses.
 
 The block cache also indexes its disk share in memory, outside
 `HELIX_DISK_CACHE_MEMORY_BYTES`. Once full, the index takes roughly 2–9 MiB of RAM

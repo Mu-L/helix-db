@@ -119,6 +119,11 @@ at least twice the data the server reads often. Once that data outgrows half the
 budget, parts keep evicting each other and cold reads fetch more from the object
 store than memory-only caches would.
 
+The budget must also fit on the cache's filesystem. At startup the server logs a
+warning when `HELIX_DISK_CACHE_BYTES` exceeds the free space there plus what the
+cache already occupies: the cache can then fill the filesystem, and if
+`HELIX_DATA_DIR` shares it, durable writes fail too.
+
 | Variable | Purpose |
 | --- | --- |
 | `HELIX_DISK_CACHE_DIR` | Enables the disk cache in this directory, creating it and its `slate/`, `object-store/` and `fts/` subdirectories if needed; unset keeps memory-only caches. Rejected with memory storage. |
