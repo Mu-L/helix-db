@@ -1292,23 +1292,43 @@ mod tests {
     #[test]
     fn allocated_bytes_count_written_blocks_below_the_root_but_not_sparse_lengths() {
         use std::io::Write;
+        use std::os::unix::fs::MetadataExt;
 
         let directory = tempfile::tempdir().unwrap();
         let nested = directory.path().join("object-store").join("db");
         std::fs::create_dir_all(&nested).unwrap();
-        for path in [directory.path().join("written"), nested.join("written")] {
+        // Random bytes, so filesystems that compress (ZFS, btrfs) still
+        // allocate blocks for them.
+        let incompressible = (0..MIB / 16)
+            .flat_map(|_| uuid::Uuid::new_v4().into_bytes())
+            .collect::<Vec<_>>();
+        let files = [
+            directory.path().join("written"),
+            nested.join("written"),
+            directory.path().join("sparse"),
+        ];
+        for path in &files[..2] {
             let mut file = std::fs::File::create(path).unwrap();
-            file.write_all(&vec![7_u8; MIB]).unwrap();
+            file.write_all(&incompressible).unwrap();
             file.sync_all().unwrap();
         }
-        let sparse = std::fs::File::create(directory.path().join("sparse")).unwrap();
+        let sparse = std::fs::File::create(&files[2]).unwrap();
         sparse.set_len(64 * MIB as u64).unwrap();
         sparse.sync_all().unwrap();
 
+        // Some filesystems account written blocks lazily, so compare with
+        // each file's own block count, which only grows, around the walk.
+        let blocks = |path: &PathBuf| std::fs::metadata(path).unwrap().blocks() * 512;
+        let before = files.iter().map(blocks).sum::<u64>();
         let allocated = allocated_bytes(directory.path()).unwrap();
+        let after = files.iter().map(blocks).sum::<u64>();
         assert!(
-            (2 * MIB as u64..16 * MIB as u64).contains(&allocated),
-            "two written MiB count, a 64 MiB sparse length does not: {allocated}"
+            (before..=after).contains(&allocated),
+            "{allocated} is the sum of every file's blocks, {before}..={after}"
+        );
+        assert!(
+            (blocks(&files[2]) + 1..64 * MIB as u64).contains(&allocated),
+            "written blocks count, a 64 MiB sparse length does not: {allocated}"
         );
         assert!(allocated_bytes(&directory.path().join("missing")).is_err());
     }
