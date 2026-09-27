@@ -25,6 +25,13 @@ use crate::search::vector::{SimHasherRegistry, ValidatedVectorGenerationHandle};
 /// unchanged; every other outcome, including an error returned after the batch
 /// may have been applied, evicts their dirty rows. Commits without fences run
 /// inline.
+///
+/// The fences resolve as soon as the batch is applied and visible, before its
+/// WAL upload is durable: request snapshots read the memtable, so holding the
+/// fence through the flush would only detach the store from every newer
+/// snapshot for that long. The caller still returns only once the write is
+/// durable, and a durability failure after the fences resolved is reported
+/// like any other post-apply error, whose rows were already evicted.
 pub(crate) async fn commit_fenced(
     transaction: slatedb::DbTransaction,
     fences: Vec<VectorCachePendingCommit>,
@@ -33,8 +40,13 @@ pub(crate) async fn commit_fenced(
         return transaction.commit().await;
     }
     let commit = tokio::spawn(async move {
-        let committed = transaction.commit().await;
-        let outcome = match &committed {
+        let applied = transaction
+            .commit_with_options(&slatedb::config::WriteOptions {
+                await_durable: false,
+                ..slatedb::config::WriteOptions::default()
+            })
+            .await;
+        let outcome = match &applied {
             Ok(Some(_)) => VectorCacheCommitOutcome::MaybeApplied,
             Ok(None) => VectorCacheCommitOutcome::Rejected,
             Err(error) if error.kind() == slatedb::ErrorKind::Transaction => {
@@ -45,7 +57,10 @@ pub(crate) async fn commit_fenced(
         for fence in fences {
             fence.resolve(outcome).await;
         }
-        committed
+        let Ok(Some(handle)) = applied else {
+            return applied;
+        };
+        handle.await_durable().await.map(|()| Some(handle))
     });
     match commit.await {
         Ok(committed) => committed,
@@ -220,9 +235,7 @@ mod tests {
     use slatedb::{DbTransaction, IsolationLevel};
     use tokio::sync::watch;
 
-    use super::super::registry::{
-        VectorCacheReadGuardError, VectorCacheRegistry, VectorCacheStaleness, VectorCacheVisibility,
-    };
+    use super::super::registry::{VectorCacheRegistry, VectorCacheVisibility};
     use super::super::store::VectorMemoryStore;
     use super::*;
     use crate::encoding::keys::scope::DataScope;
@@ -438,8 +451,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_fenced_commit_keeps_its_fence_until_the_applied_batch_resolves() {
-        let writer = FencedWriter::open("fenced-commit-cancelled").await;
+    async fn fenced_commit_resolves_once_applied_and_returns_once_durable() {
+        let writer = FencedWriter::open("fenced-commit-durable").await;
         let (transaction, fences) = writer.fenced_transaction().await;
         writer.gate.uploads.send_replace(WalUploads::Held);
         let mut commit = Box::pin(commit_fenced(transaction, fences));
@@ -450,35 +463,16 @@ mod tests {
                     result = &mut commit => panic!("a held WAL upload cannot finish: {result:?}"),
                     () = tokio::time::sleep(std::time::Duration::from_millis(5)) => {}
                 }
-                if writer.db.get(b"fenced-key").await.unwrap().is_some() {
+                if !writer.commit_pending() {
                     break;
                 }
             }
         })
         .await
-        .expect("the batch reaches the memtable before its WAL upload");
-        drop(commit);
+        .expect("the fence resolves while the WAL upload is still held");
         let applied_seq = writer.db.snapshot().await.unwrap().seq();
 
-        assert!(matches!(
-            writer.registry.read_guard_for(&writer.handle, applied_seq),
-            Err(VectorCacheReadGuardError::NotCurrent(
-                VectorCacheStaleness::CommitInFlight
-            ))
-        ));
-        assert!(
-            writer.resident.get_upper_vector(7).is_some(),
-            "nothing is evicted before the storage outcome is known"
-        );
-
-        writer.gate.uploads.send_replace(WalUploads::Open);
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            while writer.commit_pending() {
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .expect("the detached commit resolves its fence after the caller is gone");
+        assert!(writer.db.get(b"fenced-key").await.unwrap().is_some());
         let guard = writer
             .registry
             .read_guard_for(&writer.handle, applied_seq)
@@ -486,6 +480,44 @@ mod tests {
         assert!(guard.store().get_upper_vector(7).is_none());
         assert!(guard.store().get_upper_vector(8).is_some());
         drop(guard);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut commit)
+                .await
+                .is_err(),
+            "the caller still waits for the write to become durable"
+        );
+
+        writer.gate.uploads.send_replace(WalUploads::Open);
+        assert!(commit.await.unwrap().is_some());
+        writer.db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelled_fenced_commit_still_resolves_its_fence_on_the_detached_task() {
+        let writer = FencedWriter::open("fenced-commit-cancelled").await;
+        let (transaction, fences) = writer.fenced_transaction().await;
+        writer.gate.uploads.send_replace(WalUploads::Held);
+        let mut commit = Box::pin(commit_fenced(transaction, fences));
+        assert!(futures::poll!(commit.as_mut()).is_pending());
+        drop(commit);
+
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while writer.commit_pending() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the detached commit resolves its fence after the caller is gone");
+        let applied_seq = writer.db.snapshot().await.unwrap().seq();
+        let guard = writer
+            .registry
+            .read_guard_for(&writer.handle, applied_seq)
+            .expect("the evicted store is current for the applied snapshot");
+        assert!(guard.store().get_upper_vector(7).is_none());
+        assert!(guard.store().get_upper_vector(8).is_some());
+        drop(guard);
+
+        writer.gate.uploads.send_replace(WalUploads::Open);
         writer.db.close().await.unwrap();
     }
 
