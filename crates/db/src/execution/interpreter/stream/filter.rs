@@ -56,7 +56,9 @@ pub(in crate::execution::interpreter) enum PreparedIndexMembership {
 /// resolved set depends only on the plan, the request snapshot, and its
 /// parameters, so an entry stays exact until one of them changes: every
 /// mutation, index DDL, and `ForEach` parameter frame clears the cache first.
-/// Entries hold at most one set per distinct plan in the request.
+/// Entries hold at most one set per distinct plan in the request. A plan that
+/// is not equal to itself, because a predicate constant is NaN, is never
+/// stored and resolves on every execution instead.
 #[derive(Debug, Default)]
 pub(in crate::execution::interpreter) struct PreparedMemberships(
     Vec<(
@@ -213,9 +215,19 @@ impl<'db> ExecutionContext<'db> {
             Some(prepared) => Ok(prepared),
             None => {
                 let prepared = Arc::new(self.prepare_index_membership(plan).await?);
-                self.prepared_memberships
-                    .0
-                    .push((plan.clone(), Arc::clone(&prepared)));
+                // A lookup could never find an entry for a plan unequal to
+                // itself, so storing it would only hold its set until the
+                // request ends.
+                #[expect(
+                    clippy::eq_op,
+                    reason = "a NaN constant makes plan equality irreflexive"
+                )]
+                let reusable = plan == plan;
+                if reusable {
+                    self.prepared_memberships
+                        .0
+                        .push((plan.clone(), Arc::clone(&prepared)));
+                }
                 Ok(prepared)
             }
         }
