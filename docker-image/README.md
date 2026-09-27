@@ -105,7 +105,13 @@ old database's full-text cache behind.
 Changing `HELIX_DISK_CACHE_BYTES` usually changes the block cache's block size, and
 then the whole block tier (`slate/`) is discarded at startup and refills from the
 object store; only budgets that keep the block size keep it. The object-store and
-full-text tiers keep their files and evict down to a smaller budget.
+full-text tiers keep their files and evict down to a smaller budget as they admit
+new data.
+
+The full-text tier fills on demand: a split is copied into `fts/` once searches have
+used it twice, and startup downloads nothing into it. Admitting a split evicts the
+least recently used ones down to the tier's share but keeps any used in the last
+five minutes, so a burst of searches over many splits can exceed the share briefly.
 
 | Variable | Purpose |
 | --- | --- |

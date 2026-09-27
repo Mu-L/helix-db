@@ -301,7 +301,8 @@ Half of the disk budget caches object-store files, 3/8 caches database blocks,
 and the rest caches full-text search data. Changing the budget usually changes the
 block size, which discards the database-block cache at startup so it refills from
 the object store. The other two caches keep their files and evict down to a smaller
-budget.
+budget as they admit new data. Full-text search data is cached on demand, once
+searches have used it twice; the server downloads none of it at startup.
 
 The block cache keeps up to 32,768 files open, so the server needs at least 34,792
 open files in the worst case (26,600 at the default budget), plus one per open
