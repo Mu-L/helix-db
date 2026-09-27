@@ -110,10 +110,13 @@ full-text tier evicts down to its new share at startup.
 
 The full-text tier fills on demand: a split is copied into `fts/` once searches have
 used it twice, and startup downloads nothing into it. Startup and every admission
-evict the least recently used splits down to the tier's share, so it exceeds the
-share only by splits admitted or read in the last second and splits still open in
-running searches or the 64 MiB full-text memory cache. A split larger than the
-whole share is never copied.
+trim the tier, evicting the least recently used splits down to its share. A trim
+spares splits admitted or recorded as used in the second before it (a split's use is
+recorded at most once a minute) and splits still open in running searches or the
+64 MiB full-text memory cache, so the tier can stay over its share by those splits
+until the next admission. A split larger than the whole share is never copied.
+After a restart, the first search to use each split in `fts/` reads and checksums
+the whole split, up to 64 MiB, before it answers.
 
 On a miss the object-store tier fetches and keeps a whole part of an SST: 4 MiB, or
 less for budgets under 2 GiB so that the tier always holds at least 256 parts. Budget

@@ -328,8 +328,11 @@ impl CacheConfig {
 ///
 /// The full-text tier is filled by searches only; startup warms nothing into
 /// it but trims it to its share. Each admission also evicts the least
-/// recently used splits down to the share, sparing only splits used in the
-/// last second or held open by searches and the full-text memory cache.
+/// recently used splits down to the share. A trim spares splits admitted or
+/// recorded as used in the second before it, and splits held open by
+/// searches and the full-text memory cache; those keep the tier over its
+/// share until the next admission. After a restart the first search to use
+/// a cached split hashes all of it before answering.
 ///
 /// With S3 storage the object-store tier also caches SSTs this server flushes
 /// or compacts, so it reads its own writes back from local disk. With

@@ -306,9 +306,13 @@ so it refills from the object store. The object-store cache keeps its files and
 evicts down to a smaller budget as it admits new data. Full-text search data is
 cached on demand, once searches have used it twice; the server downloads none of it
 at startup. At startup and on every admission the full-text cache evicts down to
-its share, keeping beyond it only data used in the last second or still open, and
-it never caches a split larger than its whole share. Budget at least twice the
-data the server reads often: the object-store cache fetches whole file parts
+its share. Each of these trims spares data admitted or recorded as used in the
+second before it (use is recorded at most once a minute) and data still open in
+searches or the 64 MiB full-text memory cache, so the cache can stay over its share
+by that data until the next admission. It never caches a split larger than its
+whole share. After a restart, the first search to use each cached split reads and
+checksums the whole split, up to 64 MiB, before it answers. Budget at least twice
+the data the server reads often: the object-store cache fetches whole file parts
 (4 MiB, or smaller under a 2 GiB budget), so once that data outgrows half the
 budget, cold reads fetch more than memory-only caches would. The budget must also
 fit on the cache's filesystem; the server logs a warning at startup when it exceeds
