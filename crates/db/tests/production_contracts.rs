@@ -308,6 +308,146 @@ async fn server_open_prunes_foyer_partitions_a_smaller_hybrid_cache_no_longer_ow
 }
 
 #[test]
+fn server_open_trims_an_unwarmed_full_text_disk_tier_to_its_budget() {
+    run_high_stack_contract(
+        "server-full-text-disk-trim",
+        server_open_trims_an_unwarmed_full_text_disk_tier_to_its_budget_contract,
+    );
+}
+
+async fn server_open_trims_an_unwarmed_full_text_disk_tier_to_its_budget_contract() {
+    let root = tempfile::tempdir().expect("temporary server root");
+    let data_root = root.path().join("data");
+    std::fs::create_dir_all(&data_root).expect("data directory");
+    let source = || HelixDbSource::Disk {
+        root: data_root.clone(),
+        database: "server-full-text-disk-trim".to_owned(),
+    };
+    let hybrid = |fts_disk_bytes| {
+        config::DbConfig::new().with_cache(config::CacheConfig::new(
+            config::VectorMemorySettings::default(),
+            config::CacheMode::Hybrid {
+                slate_db: config::SlateHybridCacheConfig::try_new(
+                    1024 * 1024,
+                    root.path().join("foyer"),
+                    16 * 1024 * 1024,
+                )
+                .expect("valid Slate hybrid cache"),
+                object_store: config::SlateObjectStoreCacheSettings::try_new(
+                    root.path().join("object-store"),
+                    Some(1024 * 1024),
+                    4096,
+                    false,
+                    config::ObjectStoreWarmLevel::Off,
+                    None,
+                    1,
+                )
+                .expect("valid object-store cache"),
+                slate_warm: config::SlateWarmConfig::Off,
+                fts: Some(
+                    config::FtsHybridCacheConfig::try_new(
+                        1024 * 1024,
+                        root.path().join("fts"),
+                        fts_disk_bytes,
+                        config::FtsWarmConfig::Off,
+                        1,
+                    )
+                    .expect("valid full-text hybrid cache"),
+                ),
+            },
+        ))
+    };
+    let search = QueryRequest::read(
+        batch::read_batch()
+            .var_as(
+                "ids",
+                traversal::g()
+                    .text_search_nodes("Document", "body", "alpha", 8, None)
+                    .id(),
+            )
+            .returning(["ids"]),
+    );
+
+    let db = HelixDB::open_for_server(source(), hybrid(1024 * 1024))
+        .await
+        .expect("server writer opens with a full-text disk tier");
+    db.query(QueryRequest::write(
+        batch::write_batch()
+            .var_as(
+                "document",
+                traversal::g().add_n("Document", vec![("body", PropertyInput::from("alpha"))]),
+            )
+            .returning(Vec::<String>::new()),
+    ))
+    .await
+    .unwrap();
+    let receipt = db
+        .query(QueryRequest::write(
+            batch::write_batch()
+                .var_as(
+                    "operation",
+                    traversal::g().create_text_index_nodes("Document", "body", None::<String>),
+                )
+                .returning(["operation"]),
+        ))
+        .await
+        .unwrap();
+    await_index_operation_success(
+        &db,
+        receipt["operation"]["operation_id"]
+            .as_str()
+            .expect("accepted text-index operation has an ID"),
+        "text index",
+    )
+    .await;
+    for _ in 0..2 {
+        assert_eq!(
+            db.query(search.clone()).await.unwrap(),
+            serde_json::json!({ "ids": [0] })
+        );
+    }
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while db.fts_cache_state().await.unwrap().disk_artifact_count == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("a split searched twice reaches the disk tier");
+    let admitted = db.fts_cache_state().await.unwrap().disk_artifact_count;
+    db.close().await.expect("server writer closes");
+    // Past the one-second grace that protects recently used splits.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    // A one-byte budget holds no split, so the reopened writer evicts it at
+    // startup and never admits it again.
+    let db = HelixDB::open_for_server(source(), hybrid(1))
+        .await
+        .expect("server writer reopens with a smaller full-text disk tier");
+    db.wait_for_startup_cache_warm().await;
+    let state = db.fts_cache_state().await.unwrap();
+    assert_eq!(
+        (
+            state.disk_artifact_count,
+            state.disk_artifact_bytes,
+            state.disk_evictions
+        ),
+        (0, 0, admitted)
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            db.query(search.clone()).await.unwrap(),
+            serde_json::json!({ "ids": [0] })
+        );
+    }
+    let state = db.fts_cache_state().await.unwrap();
+    assert_eq!(
+        (state.hydration_attempts, state.disk_artifact_count),
+        (0, 0)
+    );
+    db.close().await.expect("server writer closes");
+}
+
+#[test]
 fn public_query_response_exposes_telemetry_safe_planner_diagnostics() {
     const SECRET_LITERAL: &str = "secret-query-value";
 

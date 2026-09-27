@@ -865,7 +865,9 @@ impl FtsCache {
         result
     }
 
-    async fn cleanup_disk(&self) -> Result<(), HelixDbError> {
+    /// Evicts the least recently used disk artifacts down to the disk budget,
+    /// skipping leased ones and any used within the grace period.
+    pub(crate) async fn cleanup_disk(&self) -> Result<(), HelixDbError> {
         let Some(disk) = self.config.disk() else {
             return Ok(());
         };
