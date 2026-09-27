@@ -1,7 +1,9 @@
 //! End-to-end post-expansion index membership through `HelixDB::query`.
 //!
 //! Every query compares the membership plan with the same data served by a
-//! database without the index, which keeps the per-row filter plan.
+//! database without the index, which keeps the per-row filter plan. A narrow
+//! traversal stays within one record batch of node rows, so its membership
+//! evaluates every row; a wide one exceeds it and resolves the index set.
 
 use helix_ast::{batch, expr, graph, index, query, traversal, value};
 use helix_planner::{context, exec, planning};
@@ -10,6 +12,13 @@ use crate::encoding::keys::scope::{DataScope, TenantId};
 use crate::{HelixDB, HelixDbSource};
 
 const EMBEDDING_DIMENSIONS: usize = 768;
+
+/// Targets of item `iw`. `aw` targets are `Attribute` nodes and `nw` targets
+/// `Note` nodes; every third target has kind `B` and the others kind `A`.
+const WIDE: [&str; 17] = [
+    "aw0", "nw1", "aw2", "nw3", "aw4", "nw5", "aw6", "nw7", "aw8", "nw9", "aw10", "nw11", "aw12",
+    "nw13", "aw14", "nw15", "aw16",
+];
 
 async fn open(name: &str) -> HelixDB {
     HelixDB::open(HelixDbSource::InMemory {
@@ -91,13 +100,15 @@ fn edge(
 
 /// Group `g3` reaches attributes through two items. `a1` is reachable twice,
 /// `n1` is a same-valued node of another label, and `g1` is another group.
+/// Item `iw` belongs to no group and links every [`WIDE`] target.
 fn seed() -> batch::WriteBatch {
-    [
+    let base = [
         ("g3", node("Group", "g3", None)),
         ("g1", node("Group", "g1", None)),
         ("i1", node("Item", "i1", None)),
         ("i2", node("Item", "i2", None)),
         ("i3", node("Item", "i3", None)),
+        ("iw", node("Item", "iw", None)),
         ("a1", node("Attribute", "a1", Some("B"))),
         ("a2", node("Attribute", "a2", Some("A"))),
         ("a3", node("Attribute", "a3", None)),
@@ -118,20 +129,45 @@ fn seed() -> batch::WriteBatch {
     .into_iter()
     .fold(batch::write_batch(), |write, (name, traversal)| {
         write.var_as(name, traversal)
+    });
+    WIDE.iter().enumerate().fold(base, |write, (index, uid)| {
+        let label = if uid.starts_with('a') {
+            "Attribute"
+        } else {
+            "Note"
+        };
+        let kind = if index % 3 == 0 { "B" } else { "A" };
+        write
+            .var_as(uid, node(label, uid, Some(kind)))
+            .var_as(&format!("iw_{uid}"), edge("iw", "HAS_ATTRIBUTE", uid))
     })
 }
 
-fn attributes_where(predicate: expr::Predicate) -> batch::ReadBatch {
+/// `uid`s behind group `g3`'s items: at most one record batch of node rows.
+fn narrow(predicate: expr::Predicate) -> traversal::Traversal<traversal::Terminal> {
+    traversal::g()
+        .n_with_label_where("Group", expr::Predicate::eq("uid", "g3"))
+        .in_(Some("IN_GROUP"))
+        .out(Some("HAS_ATTRIBUTE"))
+        .where_(predicate)
+        .values(vec!["uid"])
+}
+
+/// `uid`s of every target of `iw`, each reached once per target: 289 node
+/// rows with the seed, more than one 256-row record batch.
+fn wide(predicate: expr::Predicate) -> traversal::Traversal<traversal::Terminal> {
+    traversal::g()
+        .n_with_label_where("Item", expr::Predicate::eq("uid", "iw"))
+        .out(Some("HAS_ATTRIBUTE"))
+        .in_(Some("HAS_ATTRIBUTE"))
+        .out(Some("HAS_ATTRIBUTE"))
+        .where_(predicate)
+        .values(vec!["uid"])
+}
+
+fn read_result(result: traversal::Traversal<traversal::Terminal>) -> batch::ReadBatch {
     batch::read_batch()
-        .var_as(
-            "result",
-            traversal::g()
-                .n_with_label_where("Group", expr::Predicate::eq("uid", "g3"))
-                .in_(Some("IN_GROUP"))
-                .out(Some("HAS_ATTRIBUTE"))
-                .where_(predicate)
-                .values(vec!["uid"]),
-        )
+        .var_as("result", result)
         .returning(["result"])
 }
 
@@ -150,8 +186,9 @@ fn attribute(predicate: expr::Predicate) -> expr::Predicate {
     )
 }
 
-fn uids(response: &serde_json::Value) -> Vec<String> {
-    let mut uids = response["result"]
+/// Sorted `uid`s of one returned row array.
+fn uids(rows: &serde_json::Value) -> Vec<String> {
+    let mut uids = rows
         .as_array()
         .unwrap()
         .iter()
@@ -159,6 +196,24 @@ fn uids(response: &serde_json::Value) -> Vec<String> {
         .collect::<Vec<_>>();
     uids.sort();
     uids
+}
+
+/// Sorted `uids`, each reached `times` times.
+fn repeated(uids: &[&'static str], times: usize) -> Vec<&'static str> {
+    let mut repeated = uids
+        .iter()
+        .flat_map(|uid| std::iter::repeat_n(*uid, times))
+        .collect::<Vec<_>>();
+    repeated.sort();
+    repeated
+}
+
+/// Membership sets `db` resolved from secondary indexes. The per-row
+/// fallback keeps the same rows, so only this count shows a set was read.
+fn resolved(db: &HelixDB) -> usize {
+    db.inner
+        .resolved_index_memberships
+        .load(std::sync::atomic::Ordering::Relaxed)
 }
 
 async fn seeded(name: &str, scope: DataScope, indexed: bool) -> HelixDB {
@@ -186,10 +241,11 @@ async fn plan(db: &HelixDB, read: &batch::ReadBatch, scope: DataScope) -> exec::
     planning::plan_read_batch(read, prepared.context()).unwrap()
 }
 
-fn has_membership(plan: &exec::ExecutablePlan) -> bool {
+fn membership_steps(plan: &exec::ExecutablePlan) -> usize {
     plan.steps()
         .iter()
-        .any(|step| matches!(step.op, exec::ExecOp::IndexMembership { .. }))
+        .filter(|step| matches!(step.op, exec::ExecOp::IndexMembership { .. }))
+        .count()
 }
 
 #[tokio::test]
@@ -197,10 +253,11 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
     let scope = DataScope::LegacyUnscoped;
     let indexed = seeded("membership-e2e-indexed", scope, true).await;
     let unindexed = seeded("membership-e2e-unindexed", scope, false).await;
-    for (unscoped, expected, answered) in [
+    for (unscoped, narrow_uids, wide_uids, answered) in [
         (
             expr::Predicate::eq("kind", "B"),
             vec!["a1", "a1", "n1"],
+            vec!["aw0", "nw3", "aw6", "nw9", "aw12", "nw15"],
             true,
         ),
         (
@@ -209,6 +266,7 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
                 value::PropertyValue::StringArray(vec!["A".into(), "B".into()]),
             ),
             vec!["a1", "a1", "a2", "n1", "n2"],
+            WIDE.to_vec(),
             true,
         ),
         (
@@ -217,6 +275,7 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
                 expr::Predicate::starts_with("uid", "n"),
             ]),
             vec!["n1"],
+            vec!["nw3", "nw9", "nw15"],
             true,
         ),
         // A range set would verify the label's whole range, so ranges keep
@@ -224,46 +283,71 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
         (
             expr::Predicate::gte("uid", "a2"),
             vec!["a2", "a3", "n1", "n2"],
+            WIDE.to_vec(),
             false,
         ),
         // A missing property equals null, so null keeps the per-row filter.
         (
             expr::Predicate::eq("kind", value::PropertyValue::Null),
             vec!["a3"],
+            Vec::new(),
             false,
         ),
     ] {
         // Without statistics an unscoped predicate cannot prove which label
         // the expansion reaches, so it keeps the per-row filter; scoped to
         // `Attribute` it plans membership whenever an index answers it.
-        let attributes = expected
-            .iter()
-            .copied()
-            .filter(|uid| uid.starts_with('a'))
-            .collect::<Vec<_>>();
-        for (predicate, expected, planned) in [
-            (unscoped.clone(), expected, false),
-            (attribute(unscoped), attributes, answered),
+        let attributes = |uids: &[&'static str]| {
+            uids.iter()
+                .copied()
+                .filter(|uid| uid.starts_with('a'))
+                .collect::<Vec<_>>()
+        };
+        for (predicate, narrow_uids, wide_uids, planned) in [
+            (
+                unscoped.clone(),
+                narrow_uids.clone(),
+                wide_uids.clone(),
+                false,
+            ),
+            (
+                attribute(unscoped),
+                attributes(&narrow_uids),
+                attributes(&wide_uids),
+                answered,
+            ),
         ] {
-            let read = attributes_where(predicate.clone());
-            let membership = indexed
-                .query(query::QueryRequest::read(read.clone()))
-                .await
-                .unwrap();
-            let per_row = unindexed
-                .query(query::QueryRequest::read(read.clone()))
-                .await
-                .unwrap();
-            assert_eq!(uids(&membership), expected, "{predicate:?}");
-            assert_eq!(uids(&per_row), expected, "{predicate:?}");
-            assert_eq!(
-                has_membership(&plan(&indexed, &read, scope).await),
-                planned,
-                "{predicate:?}"
-            );
-            assert!(!has_membership(&plan(&unindexed, &read, scope).await));
+            // Only the wide stream reads the set its membership plans.
+            for (read, expected, resolves) in [
+                (read_result(narrow(predicate.clone())), narrow_uids, 0),
+                (
+                    read_result(wide(predicate.clone())),
+                    repeated(&wide_uids, WIDE.len()),
+                    usize::from(planned),
+                ),
+            ] {
+                let before = resolved(&indexed);
+                let membership = indexed
+                    .query(query::QueryRequest::read(read.clone()))
+                    .await
+                    .unwrap();
+                assert_eq!(resolved(&indexed) - before, resolves, "{predicate:?}");
+                let per_row = unindexed
+                    .query(query::QueryRequest::read(read.clone()))
+                    .await
+                    .unwrap();
+                assert_eq!(uids(&membership["result"]), expected, "{predicate:?}");
+                assert_eq!(uids(&per_row["result"]), expected, "{predicate:?}");
+                assert_eq!(
+                    membership_steps(&plan(&indexed, &read, scope).await),
+                    usize::from(planned),
+                    "{predicate:?}"
+                );
+                assert_eq!(membership_steps(&plan(&unindexed, &read, scope).await), 0);
+            }
         }
     }
+    assert_eq!(resolved(&unindexed), 0);
     indexed.close().await.unwrap();
     unindexed.close().await.unwrap();
 }
@@ -271,6 +355,9 @@ async fn post_expansion_membership_matches_the_per_row_filter_end_to_end() {
 #[tokio::test]
 async fn post_expansion_membership_sees_same_request_writes() {
     let db = seeded("membership-e2e-own-writes", DataScope::LegacyUnscoped, true).await;
+    let kind_b = || attribute(expr::Predicate::eq("kind", "B"));
+    // Behind `g3` the request adds B-valued `a5` and moves `a1` to A; behind
+    // `iw` it adds B-valued `aw-fresh` and moves `aw0` to A.
     let write = batch::write_batch()
         .var_as(
             "item",
@@ -285,15 +372,20 @@ async fn post_expansion_membership_sees_same_request_writes() {
                 .set_property("kind", "A"),
         )
         .var_as(
-            "result",
-            traversal::g()
-                .n_with_label_where("Group", expr::Predicate::eq("uid", "g3"))
-                .in_(Some("IN_GROUP"))
-                .out(Some("HAS_ATTRIBUTE"))
-                .where_(attribute(expr::Predicate::eq("kind", "B")))
-                .values(vec!["uid"]),
+            "hub",
+            traversal::g().n_with_label_where("Item", expr::Predicate::eq("uid", "iw")),
         )
-        .returning(["result"]);
+        .var_as("wide_fresh", node("Attribute", "aw-fresh", Some("B")))
+        .var_as("wide_link", edge("hub", "HAS_ATTRIBUTE", "wide_fresh"))
+        .var_as(
+            "wide_moved",
+            traversal::g()
+                .n_with_label_where("Attribute", expr::Predicate::eq("uid", "aw0"))
+                .set_property("kind", "A"),
+        )
+        .var_as("narrow", narrow(kind_b()))
+        .var_as("wide", wide(kind_b()))
+        .returning(["narrow", "wide"]);
     let prepared = db
         .planner_context_scoped_prepared(
             context::ParamBindings::default(),
@@ -301,22 +393,32 @@ async fn post_expansion_membership_sees_same_request_writes() {
         )
         .await
         .unwrap();
-    assert!(has_membership(
-        &planning::plan_write_batch(&write, prepared.context()).unwrap()
-    ));
+    assert_eq!(
+        membership_steps(&planning::plan_write_batch(&write, prepared.context()).unwrap()),
+        2
+    );
     drop(prepared);
 
-    // The pending insert, edge, and label-scoped index move are visible to the
-    // membership step before the request commits.
+    // The pending inserts, edges, and label-scoped index moves are visible to
+    // both memberships before the request commits. `iw` now has 18 targets,
+    // so only the wide membership reads the set, which must already hold
+    // the moves.
+    let expected_wide = repeated(&["aw6", "aw12", "aw-fresh"], WIDE.len() + 1);
+    let before = resolved(&db);
     let response = db.query(query::QueryRequest::write(write)).await.unwrap();
-    assert_eq!(uids(&response), ["a5"]);
-    let committed = db
-        .query(query::QueryRequest::read(attributes_where(attribute(
-            expr::Predicate::eq("kind", "B"),
-        ))))
-        .await
-        .unwrap();
-    assert_eq!(uids(&committed), ["a5"]);
+    assert_eq!(resolved(&db) - before, 1);
+    assert_eq!(uids(&response["narrow"]), ["a5"]);
+    assert_eq!(uids(&response["wide"]), expected_wide);
+    for (result, expected) in [
+        (narrow(kind_b()), vec!["a5"]),
+        (wide(kind_b()), expected_wide),
+    ] {
+        let committed = db
+            .query(query::QueryRequest::read(read_result(result)))
+            .await
+            .unwrap();
+        assert_eq!(uids(&committed["result"]), expected);
+    }
     db.close().await.unwrap();
 }
 
@@ -336,22 +438,48 @@ async fn post_expansion_membership_uses_each_tenant_catalog() {
             .await
             .unwrap();
     }
+    // Only the unindexed tenant links another B-valued attribute from `iw`,
+    // so the tenants' wide results differ.
     db.query_scoped(
         query::QueryRequest::write(
-            batch::write_batch().var_as("extra", node("Attribute", "only-unindexed", Some("B"))),
+            batch::write_batch()
+                .var_as(
+                    "hub",
+                    traversal::g().n_with_label_where("Item", expr::Predicate::eq("uid", "iw")),
+                )
+                .var_as("extra", node("Attribute", "only-unindexed", Some("B")))
+                .var_as("link", edge("hub", "HAS_ATTRIBUTE", "extra")),
         ),
         unindexed,
     )
     .await
     .unwrap();
-    let read = attributes_where(attribute(expr::Predicate::eq("kind", "B")));
-    for (scope, membership) in [(indexed, true), (unindexed, false)] {
-        assert_eq!(has_membership(&plan(&db, &read, scope).await), membership);
-        let response = db
-            .query_scoped(query::QueryRequest::read(read.clone()), scope)
-            .await
-            .unwrap();
-        assert_eq!(uids(&response), ["a1", "a1"]);
+    let kind_b = attribute(expr::Predicate::eq("kind", "B"));
+    let narrow_read = read_result(narrow(kind_b.clone()));
+    let wide_read = read_result(wide(kind_b));
+    // The indexed tenant decides its wide rows from its own set alone, so a
+    // set read from another tenant's keys would drop them.
+    for (scope, planned, wide_uids) in [
+        (indexed, 1, repeated(&["aw0", "aw6", "aw12"], WIDE.len())),
+        (
+            unindexed,
+            0,
+            repeated(&["aw0", "aw6", "aw12", "only-unindexed"], WIDE.len() + 1),
+        ),
+    ] {
+        for (read, expected, resolves) in [
+            (&narrow_read, vec!["a1", "a1"], 0),
+            (&wide_read, wide_uids, planned),
+        ] {
+            assert_eq!(membership_steps(&plan(&db, read, scope).await), planned);
+            let before = resolved(&db);
+            let response = db
+                .query_scoped(query::QueryRequest::read(read.clone()), scope)
+                .await
+                .unwrap();
+            assert_eq!(resolved(&db) - before, resolves);
+            assert_eq!(uids(&response["result"]), expected);
+        }
     }
     db.close().await.unwrap();
 }
