@@ -1,9 +1,9 @@
 //! Production contracts for the retained vector build planning cache.
 //!
 //! This feature-gated child of the vector lifecycle driver exercises the
-//! driver-owned [`VectorBuildCache`] slot against canonical operation and
-//! index records written by the production lifecycle entry points. The
-//! sessions it retains hold no rows, so no vector row family is written.
+//! driver-owned [`VectorBuildCache`] against canonical operation and index
+//! records written by the production lifecycle entry points. The sessions it
+//! retains hold no rows, so no vector row family is written.
 
 use std::num::NonZeroU64;
 
@@ -78,15 +78,16 @@ async fn create_build(
     (operation, record)
 }
 
-/// Proves the retained slot reuses only the exact committed checkpoint.
+/// Proves the retained cache reuses only the exact committed checkpoint.
 ///
 /// A session is released to the next step only for the operation, index
 /// revision, and progress it was committed at, and only for its own metric.
-/// Another operation's step leaves it in place, a stale checkpoint or a
-/// committed step without state forgets it, and the newest committed session
-/// replaces the slot. The committed state crosses the outbox boundary with a
-/// diagnostic that names it without exposing its rows, and source-scan and
-/// catch-up planning errors return from the step without offering a session.
+/// Another operation's step or commit leaves it in place, a stale checkpoint
+/// or a committed step without state forgets it, and each operation keeps its
+/// own session. Only a step progressing to Scan or CatchUp offers a session.
+/// The committed state crosses the outbox boundary with a diagnostic that
+/// names it without exposing its rows, and source-scan and catch-up planning
+/// errors return from the step without offering a session.
 pub(crate) async fn run() {
     let db = Db::builder(
         "vector-build-cache-production-contracts",
@@ -129,12 +130,13 @@ pub(crate) async fn run() {
         u64::try_from(cache.checkout::<Euclidean>(checkpoint).max_payload_bytes())
             .expect("session budget fits u64")
     };
-    let retained_checkpoint = || {
+    let retained_checkpoints = || {
         cache
             .retained
             .lock()
-            .as_ref()
+            .iter()
             .map(|retained| retained.checkpoint.clone())
+            .collect::<Vec<_>>()
     };
 
     let execution = VectorStepResult::ordinary(IndexOperationStepResult::Progressed(
@@ -147,6 +149,29 @@ pub(crate) async fn run() {
     )
     .into_execution();
     assert!(format!("{execution:?}").contains("CommittedStepState::VectorBuild"));
+    let validate = IndexOperationStepResult::Progressed(IndexOperationProgress::VectorBuild(
+        VectorBuildProgress::Constructing(VectorBuildStage::ValidateDescriptor(
+            PrefixScanProgress {
+                cursor: None,
+                counters: OperationCounters::default(),
+            },
+        )),
+    ));
+    for result in [validate, IndexOperationStepResult::TransientFailure] {
+        let execution = VectorStepResult::ordinary(result)
+            .retaining(
+                &first,
+                &first_record,
+                VectorBuildSession::<Euclidean>::new(
+                    NonZeroU64::new(MARKED).expect("budget is positive"),
+                ),
+            )
+            .into_execution();
+        assert!(
+            !format!("{execution:?}").contains("CommittedStepState::VectorBuild"),
+            "no later step checks out this session"
+        );
+    }
 
     assert_eq!(checkout_budget(&checkpoint), FRESH);
     for committed in [
@@ -154,20 +179,20 @@ pub(crate) async fn run() {
         CommittedOperationStep::Completed,
         CommittedOperationStep::TransientFailure,
     ] {
-        cache.after_commit(&first, committed, marked(&checkpoint));
-        assert!(retained_checkpoint().is_none(), "{committed:?}");
+        cache.after_commit(first.operation_id(), committed, marked(&checkpoint));
+        assert!(retained_checkpoints().is_empty(), "{committed:?}");
     }
 
     cache.after_commit(
-        &first,
+        first.operation_id(),
         CommittedOperationStep::Progressed,
         marked(&checkpoint),
     );
     assert_eq!(checkout_budget(&checkpoint), MARKED);
-    assert!(retained_checkpoint().is_none());
+    assert!(retained_checkpoints().is_empty());
 
     cache.after_commit(
-        &first,
+        first.operation_id(),
         CommittedOperationStep::Progressed,
         marked(&checkpoint),
     );
@@ -182,37 +207,50 @@ pub(crate) async fn run() {
     );
 
     cache.after_commit(
-        &first,
+        first.operation_id(),
         CommittedOperationStep::Progressed,
         marked(&checkpoint),
     );
     assert_eq!(checkout_budget(&other_operation), FRESH);
-    assert_eq!(retained_checkpoint(), Some(checkpoint.clone()));
-    cache.after_commit(&second, CommittedOperationStep::Progressed, None);
-    assert_eq!(retained_checkpoint(), Some(checkpoint.clone()));
+    assert_eq!(retained_checkpoints(), vec![checkpoint.clone()]);
+    cache.after_commit(
+        second.operation_id(),
+        CommittedOperationStep::Progressed,
+        None,
+    );
+    assert_eq!(retained_checkpoints(), vec![checkpoint.clone()]);
 
     assert_eq!(checkout_budget(&advanced), FRESH);
-    assert!(retained_checkpoint().is_none());
+    assert!(retained_checkpoints().is_empty());
 
     cache.after_commit(
-        &first,
-        CommittedOperationStep::Progressed,
-        marked(&checkpoint),
-    );
-    cache.after_commit(&first, CommittedOperationStep::Progressed, None);
-    assert!(retained_checkpoint().is_none());
-
-    cache.after_commit(
-        &first,
+        first.operation_id(),
         CommittedOperationStep::Progressed,
         marked(&checkpoint),
     );
     cache.after_commit(
-        &second,
+        first.operation_id(),
+        CommittedOperationStep::Progressed,
+        None,
+    );
+    assert!(retained_checkpoints().is_empty());
+
+    cache.after_commit(
+        first.operation_id(),
+        CommittedOperationStep::Progressed,
+        marked(&checkpoint),
+    );
+    cache.after_commit(
+        second.operation_id(),
         CommittedOperationStep::Progressed,
         marked(&other_operation),
     );
-    assert_eq!(retained_checkpoint(), Some(other_operation));
+    assert_eq!(
+        retained_checkpoints(),
+        vec![checkpoint.clone(), other_operation.clone()]
+    );
+    assert_eq!(checkout_budget(&other_operation), MARKED);
+    assert_eq!(checkout_budget(&checkpoint), MARKED);
 
     // Planning errors cross the step unchanged, before any session is offered.
     let ValidatedDynamicIndexDefinition::Vector(definition) = first_record.definition() else {

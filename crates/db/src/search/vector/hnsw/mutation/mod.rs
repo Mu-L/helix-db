@@ -71,6 +71,8 @@ const VECTOR_BUILD_SESSION_SIMHASH_OVERHEAD_BYTES: usize = 96;
 /// entry per KiB of budget also bounds how many tiny-payload entries, whose
 /// resident bookkeeping the fixed charges only estimate, a session can hold.
 const VECTOR_BUILD_SESSION_BUDGET_BYTES_PER_ENTRY: usize = 1024;
+/// Charged size from which a dropped build session frees off the dropping thread.
+const VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES: usize = 16 * 1024 * 1024;
 /// Conservative per-namespace bookkeeping charged against a build session budget.
 ///
 /// Covers one generation namespace's cache struct and hash-map slot, its
@@ -3103,6 +3105,38 @@ impl<D: Distance> VectorBuildSession<D> {
         session
     }
 
+    /// Creates a clean session retaining `simhashes` SimHashes in one namespace.
+    ///
+    /// Lifecycle driver contracts use it to retain sessions of an exact
+    /// charged size: one namespace plus one SimHash charge per entry.
+    #[cfg(test)]
+    pub(crate) fn with_test_simhashes(max_retained_bytes: NonZeroU64, simhashes: u64) -> Self {
+        let identity = VectorGenerationIdentity::try_new(
+            crate::encoding::v2::keys::scope::DataScope::LegacyUnscoped,
+            1,
+            "vector-build-session-fixture".to_string(),
+            1,
+            NonZeroU64::MIN,
+            1,
+            crate::index_lifecycle::IndexElementKind::Node,
+            VectorDimension::try_new(2).expect("fixture dimension is valid"),
+        )
+        .expect("fixture generation identity is valid");
+        let mut session = Self::new(max_retained_bytes);
+        let mut cache = session
+            .take_cache(&identity, 8, 4)
+            .expect("fixture degree limits are valid");
+        for node_id in 0..simhashes {
+            cache.put_simhash(
+                node_id,
+                Some(crate::search::vector::SimHash::from_bits(node_id)),
+            );
+        }
+        session.restore_cache(identity, cache);
+        session.admit_entity();
+        session
+    }
+
     /// Returns the eviction order of each kind's least recently used entry.
     fn namespace_victims(
         identity: &VectorGenerationIdentity,
@@ -3351,8 +3385,30 @@ impl<D: Distance> VectorBuildSession<D> {
         &mut self,
         txn: &MeasuredVectorTransaction<'_>,
     ) -> Result<(), HelixDbError> {
+        self.evict_until(self.max_payload_bytes, Some(txn))
+    }
+
+    /// Evicts least-recently-used entries until at most `max_bytes` are charged.
+    ///
+    /// A lifecycle driver shrinks retained sessions so the builds it retains
+    /// share one budget. A retained session holds no dirty neighbor row, so no
+    /// flush is needed; selecting one is an invariant violation. The session's
+    /// own budget and class caps keep applying.
+    pub(crate) fn shrink_to(&mut self, max_bytes: usize) -> Result<(), HelixDbError> {
+        self.evict_until(max_bytes.min(self.max_payload_bytes), None)
+    }
+
+    /// Evicts in global LRU order until every class cap and `max_bytes` hold.
+    ///
+    /// A dirty neighbor victim is flushed through `txn` first, and is an
+    /// invariant violation without one.
+    fn evict_until(
+        &mut self,
+        max_bytes: usize,
+        txn: Option<&MeasuredVectorTransaction<'_>>,
+    ) -> Result<(), HelixDbError> {
         loop {
-            let bytes_over = self.retained_bytes()? > self.max_payload_bytes;
+            let bytes_over = self.retained_bytes()? > max_bytes;
             let eligible = [
                 (
                     bytes_over || self.footprint.items > self.max_items,
@@ -3407,10 +3463,16 @@ impl<D: Distance> VectorBuildSession<D> {
                         .min()
                         .expect("indexed vector neighbor victim remains cached");
                     let dirty = cache.neighbor(row).is_some_and(CachedNeighbor::is_dirty);
-                    let flushed = if dirty {
-                        flush_build_session_neighbor(txn, &victim.identity, &mut cache, row)
-                    } else {
-                        Ok(())
+                    let flushed = match (dirty, txn) {
+                        (false, _) => Ok(()),
+                        (true, Some(txn)) => {
+                            flush_build_session_neighbor(txn, &victim.identity, &mut cache, row)
+                        }
+                        (true, None) => Err(HelixDbError::InvariantViolation(
+                            "vector build session eviction met a dirty neighbor row without a \
+                             transaction to flush it"
+                                .to_string(),
+                        )),
                     };
                     flushed.map(|()| {
                         self.session_stats.dirty_neighbor_flushes = self
@@ -3511,6 +3573,29 @@ impl<D: Distance> VectorBuildSession<D> {
     #[cfg(any(test, feature = "production-coverage"))]
     pub(crate) const fn max_payload_bytes(&self) -> usize {
         self.max_payload_bytes
+    }
+}
+
+impl<D: Distance> Drop for VectorBuildSession<D> {
+    /// Frees a large session's entries on a background thread.
+    ///
+    /// A retained session can hold millions of allocations. Freeing them on
+    /// the async executor thread that drops the session would stall it, and
+    /// every task queued behind it, for the whole teardown. A session below
+    /// [`VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES`] frees inline, where a
+    /// thread spawn would cost more than the teardown.
+    fn drop(&mut self) {
+        if self
+            .retained_bytes()
+            .is_ok_and(|bytes| bytes < VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES)
+        {
+            return;
+        }
+        let caches = core::mem::take(&mut self.caches);
+        // A failed spawn drops the closure, and the caches with it, right here.
+        let _ = std::thread::Builder::new()
+            .name("vector-build-session-drop".to_string())
+            .spawn(move || drop(caches));
     }
 }
 
@@ -4284,6 +4369,93 @@ mod tests {
                 kept == entries,
                 "the least recently used SimHashes go first"
             );
+        }
+    }
+
+    #[test]
+    fn build_session_shrinks_clean_state_without_a_transaction() {
+        use crate::encoding::v2::keys::scope::DataScope;
+        use crate::search::vector::distance::Cosine;
+
+        let per_simhash = VECTOR_BUILD_SESSION_SIMHASH_OVERHEAD_BYTES + core::mem::size_of::<u64>();
+        let full = VECTOR_BUILD_SESSION_NAMESPACE_OVERHEAD_BYTES + 10 * per_simhash;
+        let mut session = VectorBuildSession::<Cosine>::with_test_simhashes(
+            NonZeroU64::new(1 << 20).unwrap(),
+            10,
+        );
+        assert_eq!(session.retained_bytes().unwrap(), full);
+
+        session.shrink_to(full - per_simhash).unwrap();
+        assert_eq!(session.simhash_count(), 9);
+        assert!(
+            session
+                .caches
+                .values()
+                .all(|cache| !cache.simhashes.contains_key(&0)),
+            "the least recently used SimHash goes first"
+        );
+        session.shrink_to(0).unwrap();
+        assert!(session.caches.is_empty());
+        assert_eq!(session.retained_bytes().unwrap(), 0);
+        assert_eq!(session.stats().simhash_evictions(), 10);
+
+        // A dirty row cannot be evicted without a transaction to flush it.
+        let identity = session_identity(DataScope::LegacyUnscoped, 85);
+        let row = MutationOpCache::<Cosine>::node_row_id(0, 1);
+        let mut dirty = VectorBuildSession::<Cosine>::new(NonZeroU64::new(1 << 20).unwrap());
+        let mut cache = dirty.take_cache(&identity, 8, 4).unwrap();
+        cache.install_loaded_neighbor(row, NeighborRowValue::KnownAbsent);
+        cache
+            .stage_loaded_neighbor(row, neighbors(1, vec![2]))
+            .unwrap();
+        dirty.restore_cache(identity.clone(), cache);
+        assert!(matches!(
+            dirty.shrink_to(0),
+            Err(HelixDbError::InvariantViolation(_))
+        ));
+        assert!(
+            dirty
+                .caches
+                .get(&identity)
+                .unwrap()
+                .neighbor(row)
+                .unwrap()
+                .is_dirty(),
+            "a refused eviction keeps the dirty row"
+        );
+        assert_session_bookkeeping(&dirty);
+    }
+
+    #[test]
+    fn large_build_sessions_free_their_entries_off_the_dropping_thread() {
+        use crate::encoding::v2::keys::scope::DataScope;
+        use crate::search::vector::distance::Cosine;
+
+        let identity = session_identity(DataScope::LegacyUnscoped, 86);
+        let item = Arc::new(Item::<Cosine>::new(vec![1.0, 0.0]));
+        let session = |payload_bytes| {
+            let mut session = VectorBuildSession::<Cosine>::new(NonZeroU64::new(1 << 40).unwrap());
+            let mut cache = session.take_cache(&identity, 8, 4).unwrap();
+            cache.put_item(0, 1, Some(Arc::clone(&item)), payload_bytes);
+            session.restore_cache(identity.clone(), cache);
+            session
+        };
+
+        // A small session frees inline, before `drop` returns.
+        drop(session(8));
+        assert_eq!(Arc::strong_count(&item), 1);
+
+        // A large one hands its entries to a background thread that frees them.
+        let large = session(VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES);
+        assert!(large.retained_bytes().unwrap() >= VECTOR_BUILD_SESSION_BACKGROUND_DROP_BYTES);
+        drop(large);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while Arc::strong_count(&item) > 1 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a background drop frees the session's entries"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
 

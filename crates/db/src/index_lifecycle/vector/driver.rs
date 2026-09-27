@@ -7,9 +7,10 @@
 //! delta deletion, and the next durable checkpoint.
 //!
 //! The decoded rows planning reads are kept in one bounded
-//! [`VectorBuildSession`] that outlives its step only after that step commits:
-//! see [`RetainedVectorBuild`] for why a matching checkpoint proves the cached
-//! rows still equal the committed builder-exclusive generation.
+//! [`VectorBuildSession`] per build that outlives its step only after that step
+//! commits: see [`RetainedVectorBuild`] for why a matching checkpoint proves
+//! the cached rows still equal the committed builder-exclusive generation.
+//! Interleaved builds each retain their own session under one shared budget.
 //!
 //! No vector row codec is defined here. Physical reads and writes remain behind
 //! [`crate::search::vector::VectorIndex`] and the typed `encoding/v2` boundary.
@@ -119,76 +120,120 @@ impl VectorBuildCheckpoint {
 /// proves no other write intervened.
 pub(crate) struct RetainedVectorBuild {
     checkpoint: VectorBuildCheckpoint,
-    /// Type-erased `VectorBuildSession<D>` for the index's distance metric.
-    session: Box<dyn Any + Send>,
+    /// `VectorBuildSession<D>` for the index's distance metric.
+    session: Box<dyn RetainedBuildSession>,
 }
 
-/// Driver-owned slot holding the most recently committed build planning cache.
+/// Build planning session retained between committed steps, erased over its metric.
+trait RetainedBuildSession: Any + Send {
+    /// Returns the bytes this session charges against the driver's budget.
+    fn retained_bytes(&self) -> usize;
+
+    /// Evicts least-recently-used entries until at most `max_bytes` are charged.
+    fn shrink_to(&mut self, max_bytes: usize) -> Result<()>;
+}
+
+impl<D: Distance> RetainedBuildSession for VectorBuildSession<D> {
+    fn retained_bytes(&self) -> usize {
+        // An unmeasurable session counts as over any budget, so it is shrunk.
+        VectorBuildSession::retained_bytes(self).unwrap_or(usize::MAX)
+    }
+
+    fn shrink_to(&mut self, max_bytes: usize) -> Result<()> {
+        VectorBuildSession::shrink_to(self, max_bytes)
+    }
+}
+
+/// Most operations whose build planning sessions one driver retains at once.
 ///
-/// At most one retained session exists per driver; in-flight steps each own
-/// one more. Every session is bounded by `budget`.
+/// More concurrently interleaved builds than this evict the least recently
+/// committed session whole.
+const MAX_RETAINED_VECTOR_BUILDS: usize = 16;
+
+/// Driver-owned build planning sessions retained between committed steps.
+///
+/// Holds at most one session per operation and [`MAX_RETAINED_VECTOR_BUILDS`]
+/// in total, least recently committed first, so interleaved builds each check
+/// out their own session instead of evicting each other's. Retained sessions
+/// share `budget`: after every commit the largest shrink to one common cap
+/// until all fit, so interleaved builds converge to equal shares. Each
+/// in-flight step owns one more session bounded by `budget`, and dropping a
+/// large session frees its entries off the executor thread.
 struct VectorBuildCache {
     budget: NonZeroU64,
-    retained: parking_lot::Mutex<Option<RetainedVectorBuild>>,
+    retained: parking_lot::Mutex<Vec<RetainedVectorBuild>>,
 }
 
 impl VectorBuildCache {
     fn new(budget: NonZeroU64) -> Self {
         Self {
             budget,
-            retained: parking_lot::Mutex::new(None),
+            retained: parking_lot::Mutex::new(Vec::new()),
         }
     }
 
     /// Returns the retained session for exactly `checkpoint`, or a fresh one.
     ///
-    /// A retained session for the same operation at any other checkpoint is
-    /// stale and dropped; one for another operation is left in place.
+    /// A retained session for the same operation at any other checkpoint, or
+    /// of another metric, is stale and dropped; other operations' sessions stay.
     fn checkout<D: Distance>(&self, checkpoint: &VectorBuildCheckpoint) -> VectorBuildSession<D> {
-        let (reusable, stale) = {
-            let mut slot = self.retained.lock();
-            match slot.take() {
-                None => (None, None),
-                Some(retained) if retained.checkpoint == *checkpoint => (Some(retained), None),
-                Some(retained) if retained.checkpoint.operation_id != checkpoint.operation_id => {
-                    *slot = Some(retained);
-                    (None, None)
-                }
-                Some(retained) => (None, Some(retained)),
-            }
+        let retained = {
+            let mut retained = self.retained.lock();
+            retained
+                .iter()
+                .position(|retained| retained.checkpoint.operation_id == checkpoint.operation_id)
+                .map(|index| retained.remove(index))
         };
-        drop(stale);
-        let mut session = reusable
-            .and_then(|retained| retained.session.downcast::<VectorBuildSession<D>>().ok())
+        let mut session = retained
+            .filter(|retained| retained.checkpoint == *checkpoint)
+            .and_then(|retained| {
+                let session: Box<dyn Any> = retained.session;
+                session.downcast::<VectorBuildSession<D>>().ok()
+            })
             .map_or_else(|| VectorBuildSession::new(self.budget), |session| *session);
         session.reset_stats();
         session
     }
 
-    /// Stores committed state or forgets this operation's stale session.
+    /// Retains a committed step's session, or forgets the operation's session.
+    ///
+    /// The shared budget is then split max-min fairly: sessions under their
+    /// fair share keep every entry, and the rest shrink to the one cap that
+    /// exactly fills what remains. A session that cannot shrink is dropped.
     fn after_commit(
         &self,
-        operation: &IndexOperationRecord,
+        operation_id: IndexOperationId,
         committed: CommittedOperationStep,
         state: Option<CommittedStepState>,
     ) {
-        let displaced = {
-            let mut slot = self.retained.lock();
-            match (committed, state) {
-                (
-                    CommittedOperationStep::Progressed,
-                    Some(CommittedStepState::VectorBuild(retained)),
-                ) => slot.replace(*retained),
-                _ if slot.as_ref().is_some_and(|retained| {
-                    retained.checkpoint.operation_id == operation.operation_id()
-                }) =>
-                {
-                    slot.take()
-                }
-                _ => None,
-            }
+        let mut retained = self.retained.lock();
+        retained.retain(|retained| retained.checkpoint.operation_id != operation_id);
+        let (CommittedOperationStep::Progressed, Some(CommittedStepState::VectorBuild(next))) =
+            (committed, state)
+        else {
+            return;
         };
-        drop(displaced);
+        retained.push(*next);
+        if retained.len() > MAX_RETAINED_VECTOR_BUILDS {
+            retained.remove(0);
+        }
+        let mut sizes = retained
+            .iter()
+            .map(|retained| retained.session.retained_bytes())
+            .collect::<Vec<_>>();
+        sizes.sort_unstable();
+        let mut remaining = usize::try_from(self.budget.get()).unwrap_or(usize::MAX);
+        let count = sizes.len();
+        let Some(cap) = sizes.into_iter().enumerate().find_map(|(index, size)| {
+            let share = remaining / (count - index);
+            remaining = remaining.saturating_sub(size);
+            (size > share).then_some(share)
+        }) else {
+            return;
+        };
+        retained.retain_mut(|retained| {
+            retained.session.retained_bytes() <= cap || retained.session.shrink_to(cap).is_ok()
+        });
     }
 }
 
@@ -224,7 +269,10 @@ impl VectorIndexDriver {
         self
     }
 
-    /// Bounds each build planning cache retained across committed steps.
+    /// Bounds the build planning sessions retained across committed steps.
+    ///
+    /// Every retained session shares this budget, and each in-flight step's
+    /// session is bounded by it too.
     pub(crate) fn with_build_cache_bytes(mut self, budget: NonZeroU64) -> Self {
         self.build_cache = VectorBuildCache::new(budget);
         self
@@ -418,7 +466,8 @@ impl IndexOperationDriver for VectorIndexDriver {
         committed: CommittedOperationStep,
         state: Option<CommittedStepState>,
     ) {
-        self.build_cache.after_commit(operation, committed, state);
+        self.build_cache
+            .after_commit(operation.operation_id(), committed, state);
         if committed != CommittedOperationStep::Completed
             || !matches!(
                 operation.progress(),
@@ -1149,15 +1198,22 @@ impl VectorStepResult {
 
     /// Offers `session` for reuse once this step commits its progress.
     ///
-    /// Only a progressed step whose session holds no unflushed rows can mirror
-    /// committed state; every other outcome drops the session here.
+    /// Only a step that progressed to another Scan or CatchUp step, the only
+    /// stages that check a session out, and whose session holds no unflushed
+    /// rows can hand committed state to a later step; every other outcome
+    /// drops the session here.
     fn retaining<D: Distance>(
         mut self,
         operation: &IndexOperationRecord,
         record: &IndexRecordV2,
         session: VectorBuildSession<D>,
     ) -> Self {
-        let IndexOperationStepResult::Progressed(next) = &self.result else {
+        let IndexOperationStepResult::Progressed(
+            next @ IndexOperationProgress::VectorBuild(VectorBuildProgress::Constructing(
+                VectorBuildStage::Scan(_) | VectorBuildStage::CatchUp(_),
+            )),
+        ) = &self.result
+        else {
             return self;
         };
         if session.has_dirty_neighbors() {

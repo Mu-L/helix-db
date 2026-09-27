@@ -346,25 +346,39 @@ impl GoldenBuild {
     }
 }
 
-/// Returns the checkpoint of the session a driver retains, if any.
+/// Returns the checkpoint of the session a driver most recently retained.
 fn retained_checkpoint(driver: &VectorIndexDriver) -> Option<VectorBuildCheckpoint> {
     driver
         .build_cache
         .retained
         .lock()
-        .as_ref()
+        .last()
         .map(|retained| retained.checkpoint.clone())
 }
 
-/// Returns the budget-charged bytes of a retained Euclidean session.
+/// Returns the checkpoint of the session a driver retains for one operation.
+fn retained_checkpoint_for(
+    driver: &VectorIndexDriver,
+    operation_id: IndexOperationId,
+) -> Option<VectorBuildCheckpoint> {
+    driver
+        .build_cache
+        .retained
+        .lock()
+        .iter()
+        .find(|retained| retained.checkpoint.operation_id == operation_id)
+        .map(|retained| retained.checkpoint.clone())
+}
+
+/// Returns the budget-charged bytes of the most recently retained Euclidean session.
 fn retained_euclidean_bytes(driver: &VectorIndexDriver) -> Option<usize> {
-    driver.build_cache.retained.lock().as_ref().map(|retained| {
-        retained
-            .session
-            .downcast_ref::<VectorBuildSession<vector::distance::Euclidean>>()
-            .expect("golden fixture retains a Euclidean session")
-            .retained_bytes()
-            .expect("retained session bytes are measurable")
+    driver.build_cache.retained.lock().last().map(|retained| {
+        let session: &dyn Any = retained.session.as_ref();
+        assert!(
+            session.is::<VectorBuildSession<vector::distance::Euclidean>>(),
+            "golden fixture retains a Euclidean session"
+        );
+        retained.session.retained_bytes()
     })
 }
 
@@ -626,15 +640,15 @@ async fn build_cache_reuses_only_the_exact_committed_checkpoint() {
         CommittedOperationStep::Completed,
         CommittedOperationStep::TransientFailure,
     ] {
-        cache.after_commit(&first, committed, marked(&checkpoint));
+        cache.after_commit(first_id, committed, marked(&checkpoint));
         assert!(
-            cache.retained.lock().is_none(),
+            cache.retained.lock().is_empty(),
             "{committed:?} retains nothing"
         );
     }
 
     cache.after_commit(
-        &first,
+        first_id,
         CommittedOperationStep::Progressed,
         marked(&checkpoint),
     );
@@ -644,12 +658,12 @@ async fn build_cache_reuses_only_the_exact_committed_checkpoint() {
         "the exact checkpoint is reused"
     );
     assert!(
-        cache.retained.lock().is_none(),
+        cache.retained.lock().is_empty(),
         "checkout moves the session out"
     );
 
     cache.after_commit(
-        &first,
+        first_id,
         CommittedOperationStep::Progressed,
         marked(&checkpoint),
     );
@@ -665,61 +679,262 @@ async fn build_cache_reuses_only_the_exact_committed_checkpoint() {
     );
 
     cache.after_commit(
-        &first,
+        first_id,
         CommittedOperationStep::Progressed,
         marked(&checkpoint),
     );
     assert_eq!(checkout_budget(&other_operation), FRESH);
     assert_eq!(
-        retained_checkpoint_of(&cache),
-        Some(checkpoint.clone()),
+        retained_checkpoints(&cache),
+        vec![checkpoint.clone()],
         "another operation's step leaves the session in place"
     );
-    cache.after_commit(&second, CommittedOperationStep::Progressed, None);
-    assert_eq!(retained_checkpoint_of(&cache), Some(checkpoint.clone()));
+    cache.after_commit(second_id, CommittedOperationStep::Progressed, None);
+    assert_eq!(retained_checkpoints(&cache), vec![checkpoint.clone()]);
 
     assert_eq!(
         checkout_budget(&advanced),
         FRESH,
         "a stale checkpoint is dropped"
     );
-    assert!(cache.retained.lock().is_none());
+    assert!(cache.retained.lock().is_empty());
 
     cache.after_commit(
-        &first,
+        first_id,
         CommittedOperationStep::Progressed,
         marked(&checkpoint),
     );
-    cache.after_commit(&first, CommittedOperationStep::Progressed, None);
+    cache.after_commit(first_id, CommittedOperationStep::Progressed, None);
     assert!(
-        cache.retained.lock().is_none(),
+        cache.retained.lock().is_empty(),
         "a committed step of the same operation without state forgets it"
     );
 
     cache.after_commit(
-        &first,
+        first_id,
         CommittedOperationStep::Progressed,
         marked(&checkpoint),
     );
     cache.after_commit(
-        &second,
+        second_id,
         CommittedOperationStep::Progressed,
         marked(&other_operation),
     );
     assert_eq!(
-        retained_checkpoint_of(&cache),
-        Some(other_operation),
-        "the newest committed session replaces the slot"
+        retained_checkpoints(&cache),
+        vec![checkpoint.clone(), other_operation.clone()],
+        "another operation's commit keeps this operation's session"
     );
+    assert_eq!(checkout_budget(&checkpoint), MARKED);
+    assert_eq!(checkout_budget(&other_operation), MARKED);
     db.close().await.expect("checkpoint database closes");
 }
 
-fn retained_checkpoint_of(cache: &VectorBuildCache) -> Option<VectorBuildCheckpoint> {
+/// Returns the checkpoints a cache retains, least recently committed first.
+fn retained_checkpoints(cache: &VectorBuildCache) -> Vec<VectorBuildCheckpoint> {
     cache
         .retained
         .lock()
-        .as_ref()
+        .iter()
         .map(|retained| retained.checkpoint.clone())
+        .collect()
+}
+
+/// Wraps `session` as the committed state of a progressed step at `checkpoint`.
+fn committed_session(
+    checkpoint: &VectorBuildCheckpoint,
+    session: VectorBuildSession<vector::distance::Euclidean>,
+) -> Option<CommittedStepState> {
+    Some(CommittedStepState::VectorBuild(Box::new(
+        RetainedVectorBuild {
+            checkpoint: checkpoint.clone(),
+            session: Box::new(session),
+        },
+    )))
+}
+
+/// Returns a checkpoint of `checkpoint`'s shape for a new operation.
+fn another_operation(checkpoint: &VectorBuildCheckpoint) -> VectorBuildCheckpoint {
+    VectorBuildCheckpoint {
+        operation_id: IndexOperationId::new_v4(),
+        ..checkpoint.clone()
+    }
+}
+
+#[tokio::test]
+async fn retained_sessions_share_the_budget_max_min_fairly() {
+    type Euclidean = vector::distance::Euclidean;
+    let build = GoldenBuild::start("vector-build-cache-shared-budget").await;
+    let record = read_index(&build.db, build.scope, &build.definition).await;
+    let operation = build.operation().await;
+    let first = VectorBuildCheckpoint::new(&operation, &record, operation.progress().clone());
+    let second = another_operation(&first);
+    let third = another_operation(&first);
+    let per_simhash = 96 + core::mem::size_of::<u64>();
+    let namespace = 4_096;
+    let session = |simhashes| {
+        VectorBuildSession::<Euclidean>::with_test_simhashes(
+            NonZeroU64::new(1 << 20).expect("session budget is positive"),
+            simhashes,
+        )
+    };
+    assert_eq!(
+        RetainedBuildSession::retained_bytes(&session(400)),
+        namespace + 400 * per_simhash
+    );
+    const BUDGET: usize = 64 * 1024;
+    let cache = VectorBuildCache::new(
+        NonZeroU64::new(u64::try_from(BUDGET).expect("budget fits u64")).expect("positive"),
+    );
+    let sizes = || {
+        cache
+            .retained
+            .lock()
+            .iter()
+            .map(|retained| retained.session.retained_bytes())
+            .collect::<Vec<_>>()
+    };
+
+    // One session within the budget is kept whole.
+    cache.after_commit(
+        first.operation_id,
+        CommittedOperationStep::Progressed,
+        committed_session(&first, session(400)),
+    );
+    assert_eq!(sizes(), vec![namespace + 400 * per_simhash]);
+
+    // Two large sessions shrink to equal halves instead of one evicting the other.
+    cache.after_commit(
+        second.operation_id,
+        CommittedOperationStep::Progressed,
+        committed_session(&second, session(400)),
+    );
+    for size in sizes() {
+        assert!(
+            (BUDGET / 2 - per_simhash..=BUDGET / 2).contains(&size),
+            "{size}"
+        );
+    }
+
+    // A session under its fair share keeps every entry; the others split the rest.
+    let small = namespace + 10 * per_simhash;
+    cache.after_commit(
+        third.operation_id,
+        CommittedOperationStep::Progressed,
+        committed_session(&third, session(10)),
+    );
+    let cap = (BUDGET - small) / 2;
+    let shared = sizes();
+    assert_eq!(shared[2], small);
+    for size in &shared[..2] {
+        assert!((cap - per_simhash..=cap).contains(size), "{size}");
+    }
+    assert!(shared.iter().sum::<usize>() <= BUDGET);
+    assert_eq!(
+        retained_checkpoints(&cache),
+        vec![first.clone(), second.clone(), third.clone()]
+    );
+    build
+        .db
+        .close()
+        .await
+        .expect("shared budget database closes");
+}
+
+#[tokio::test]
+async fn retained_sessions_are_bounded_per_operation_and_in_count() {
+    type Euclidean = vector::distance::Euclidean;
+    let build = GoldenBuild::start("vector-build-cache-count-bound").await;
+    let record = read_index(&build.db, build.scope, &build.definition).await;
+    let operation = build.operation().await;
+    let first = VectorBuildCheckpoint::new(&operation, &record, operation.progress().clone());
+    let cache = VectorBuildCache::new(NonZeroU64::new(1 << 20).expect("budget is positive"));
+    let empty = || VectorBuildSession::<Euclidean>::new(NonZeroU64::MIN);
+    let checkpoints = core::iter::once(first.clone())
+        .chain((0..MAX_RETAINED_VECTOR_BUILDS).map(|_| another_operation(&first)))
+        .collect::<Vec<_>>();
+
+    // A newer commit of the same operation replaces its session in place.
+    cache.after_commit(
+        first.operation_id,
+        CommittedOperationStep::Progressed,
+        committed_session(&first, empty()),
+    );
+    cache.after_commit(
+        first.operation_id,
+        CommittedOperationStep::Progressed,
+        committed_session(&first, empty()),
+    );
+    assert_eq!(retained_checkpoints(&cache), vec![first.clone()]);
+
+    for checkpoint in &checkpoints[1..] {
+        cache.after_commit(
+            checkpoint.operation_id,
+            CommittedOperationStep::Progressed,
+            committed_session(checkpoint, empty()),
+        );
+    }
+    assert_eq!(
+        retained_checkpoints(&cache),
+        checkpoints[1..].to_vec(),
+        "the least recently committed session is evicted beyond the count bound"
+    );
+    build.db.close().await.expect("count bound database closes");
+}
+
+#[tokio::test]
+async fn interleaved_builds_each_keep_their_own_retained_session() {
+    let driver = driver();
+    let mut first = GoldenBuild::start("vector-build-cache-interleaved-first").await;
+    let mut second = GoldenBuild::start("vector-build-cache-interleaved-second").await;
+    for _ in 0..3 {
+        for build in [&mut first, &mut second] {
+            assert_eq!(
+                build.step(&driver).await,
+                CommittedOperationStep::Progressed
+            );
+        }
+        for build in [&first, &second] {
+            assert_eq!(
+                retained_checkpoint_for(&driver, build.operation_id)
+                    .map(|checkpoint| checkpoint.progress),
+                Some(build.operation().await.progress().clone()),
+                "each build retains the checkpoint its next step starts from"
+            );
+        }
+    }
+    assert_golden(first.finish(&driver).await, "first interleaved build");
+    assert_golden(second.finish(&driver).await, "second interleaved build");
+    assert!(driver.build_cache.retained.lock().is_empty());
+}
+
+#[tokio::test]
+async fn only_scan_and_catch_up_checkpoints_retain_a_session() {
+    let driver = driver();
+    let mut build = GoldenBuild::start("vector-build-cache-stage-scope").await;
+    loop {
+        assert_eq!(
+            build.step(&driver).await,
+            CommittedOperationStep::Progressed
+        );
+        let progress = build.operation().await.progress().clone();
+        let IndexOperationProgress::VectorBuild(VectorBuildProgress::Constructing(
+            VectorBuildStage::Scan(_) | VectorBuildStage::CatchUp(_),
+        )) = &progress
+        else {
+            assert_eq!(
+                retained_checkpoint(&driver),
+                None,
+                "no step checks out a session at {progress:?}"
+            );
+            break;
+        };
+        assert_eq!(
+            retained_checkpoint(&driver).map(|checkpoint| checkpoint.progress),
+            Some(progress)
+        );
+    }
+    assert_golden(build.finish(&driver).await, "stage-scoped retention");
 }
 
 /// Source mutations applied while a build is still scanning.
