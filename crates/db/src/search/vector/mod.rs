@@ -184,6 +184,7 @@ pub(crate) use cache::hydration::{
     hydrate_active_generations, VectorCacheHydrationBudget, VectorCacheHydrationOutcome,
     VectorCacheSnapshotSource,
 };
+pub(crate) use cache::reader_refresh::run_reader_refreshes;
 #[cfg(feature = "production-coverage")]
 pub(crate) use cache::registry::production_contracts::run as run_memory_registry_contracts;
 pub(crate) use cache::registry::{VectorCacheRegistry, VectorCacheVisibility};

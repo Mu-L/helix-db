@@ -527,14 +527,6 @@ impl VectorMemoryRefreshTask {
     }
 }
 
-/// Most doublings of the pause after consecutive abandoned reader refreshes.
-///
-/// The pause after `n` consecutive abandoned passes is `2^n` times as long as
-/// the last of them ran, so once the cap is reached a reader that keeps
-/// outrunning its rescans spends at most one part in `2^5 + 1` of its time on
-/// them.
-const READER_VECTOR_REFRESH_MAX_BACKOFF_DOUBLINGS: u32 = 5;
-
 struct VectorMemoryCache {
     registry: Arc<search::vector::VectorCacheRegistry>,
     simhasher_registry: Arc<search::vector::SimHasherRegistry>,
@@ -2682,88 +2674,73 @@ impl HelixDB {
         let runtime = Arc::downgrade(&self.inner);
         let budget = settings.budget();
         let interval = Duration::from_secs(settings.poll_interval_secs());
-        // Reader snapshots advance only when the poller applies new WAL or
-        // manifest state, and exact-sequence stores are attachable only at that
-        // state, so readers also refresh as soon as their status changes. A
-        // reader load the reader outruns is dropped, and every consecutive
-        // outrun pass doubles the pause before the next attempt relative to
-        // how long that pass ran.
-        let mut reader_status = match self.storage() {
-            HelixStorage::Reader(reader) => Some(reader.subscribe()),
-            HelixStorage::Writer(_) => None,
-        };
-        let (shutdown, mut shutdown_rx) = watch::channel(false);
+        let (shutdown, shutdown_rx) = watch::channel(false);
         let (initial_refresh_tx, initial_refresh) = watch::channel(false);
-        let handle = tokio::spawn(async move {
-            let mut initial_refresh_tx = Some(initial_refresh_tx);
-            let mut abandoned_passes = 0_u32;
-            loop {
-                if *shutdown_rx.borrow() {
-                    break;
-                }
-                let Some(inner) = runtime.upgrade() else {
-                    break;
+        let pass_shutdown = shutdown_rx.clone();
+        // A pass holds the database only while it runs, so a waiting loop
+        // never keeps a closed database alive.
+        let refresh = move || {
+            let runtime = runtime.clone();
+            let mut shutdown = pass_shutdown.clone();
+            async move {
+                let database = HelixDB {
+                    inner: runtime.upgrade()?,
                 };
-                let database = HelixDB { inner };
-                let started = tokio::time::Instant::now();
-                let result = database
-                    .refresh_loaded_vector_memory_caches(budget, Some(&mut shutdown_rx))
-                    .await;
-                drop(database);
-                let pause = match result {
-                    Ok(search::vector::VectorCacheHydrationOutcome::Settled) => {
-                        abandoned_passes = 0;
-                        None
-                    }
-                    Ok(search::vector::VectorCacheHydrationOutcome::Outrun) => {
-                        tracing::debug!("reader advanced during vector memory refresh");
-                        abandoned_passes = abandoned_passes
-                            .saturating_add(1)
-                            .min(READER_VECTOR_REFRESH_MAX_BACKOFF_DOUBLINGS);
-                        Some(started.elapsed().saturating_mul(1 << abandoned_passes))
-                    }
-                    Err(err) => {
-                        tracing::warn!(error = %err, "failed to refresh vector memory stores");
-                        None
-                    }
-                };
-                if let Some(initial_refresh_tx) = initial_refresh_tx.take() {
-                    let _ = initial_refresh_tx.send(true);
-                }
-                let reader_status_closed = tokio::select! {
-                    changed = shutdown_rx.changed() => {
-                        match changed {
-                            Ok(()) => {
-                                if *shutdown_rx.borrow() {
+                Some(
+                    match database
+                        .refresh_loaded_vector_memory_caches(budget, Some(&mut shutdown))
+                        .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            tracing::warn!(%error, "failed to refresh vector memory stores");
+                            search::vector::VectorCacheHydrationOutcome::Settled
+                        }
+                    },
+                )
+            }
+        };
+        let handle = match self.storage() {
+            // Reader snapshots advance only when the poller applies new WAL or
+            // manifest state, and exact-sequence stores attach only at that
+            // state, so readers refresh after each advance, paced by how long
+            // their passes run.
+            HelixStorage::Reader(reader) => tokio::spawn(search::vector::run_reader_refreshes(
+                reader.subscribe(),
+                |status: &slatedb::DbStatus| status.durable_seq,
+                interval,
+                shutdown_rx,
+                initial_refresh_tx,
+                refresh,
+            )),
+            // Commit-fenced writer stores stay attached across sequences, so
+            // the writer refreshes on its interval.
+            HelixStorage::Writer(_) => {
+                let mut shutdown_rx = shutdown_rx;
+                tokio::spawn(async move {
+                    loop {
+                        // Checked on its own so the flag's guard is released
+                        // before the pass awaits.
+                        if *shutdown_rx.borrow() {
+                            break;
+                        }
+                        if refresh().await.is_none() {
+                            break;
+                        }
+                        initial_refresh_tx
+                            .send_if_modified(|refreshed| !std::mem::replace(refreshed, true));
+                        tokio::select! {
+                            changed = shutdown_rx.changed() => {
+                                if changed.is_err() || *shutdown_rx.borrow() {
                                     break;
                                 }
                             }
-                            Err(_) => break,
+                            () = tokio::time::sleep(interval) => {}
                         }
-                        false
                     }
-                    // An abandoned reader pass retries after its pause even if
-                    // the reader has settled meanwhile, so a store is published
-                    // once writes stop.
-                    () = async {
-                        match pause {
-                            Some(pause) => tokio::time::sleep(pause).await,
-                            None => std::future::pending().await,
-                        }
-                    } => false,
-                    _ = tokio::time::sleep(interval), if pause.is_none() => false,
-                    changed = async {
-                        match reader_status.as_mut() {
-                            Some(status) => status.changed().await,
-                            None => std::future::pending().await,
-                        }
-                    }, if pause.is_none() => changed.is_err(),
-                };
-                if reader_status_closed {
-                    reader_status = None;
-                }
+                })
             }
-        });
+        };
         *self.inner.caches.vector_memory.refresh_task.lock().await =
             Some(VectorMemoryRefreshTask {
                 shutdown,
