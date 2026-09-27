@@ -277,11 +277,13 @@ run_disk_cache_test() {
   assert_users_state nonempty "$(post_json "$port" dynamic-read.json)"
   docker stop "$container" >/dev/null
   assert_cache_file "$container" '/slate/foyer-storage-direct-fs-'
-  assert_cache_file "$container" '/object-store/.+[^/]$'
 
   docker start "$container" >/dev/null
   wait_for_http "http://127.0.0.1:${port}/readyz" "$container"
   assert_users_state nonempty "$(post_json "$port" dynamic-read.json)"
+  # SSTs written to HELIX_DATA_DIR are already local, so only reading one
+  # back caches it.
+  assert_cache_file "$container" '/object-store/.+[^/]$'
 }
 
 run_invalid_configuration_tests() {

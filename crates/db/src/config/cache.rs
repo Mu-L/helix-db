@@ -360,6 +360,31 @@ impl SlateObjectStoreCacheSettings {
     pub const fn max_open_file_handles(&self) -> usize {
         self.max_open_file_handles.get()
     }
+
+    /// These settings, caching the SSTs a writer flushes or compacts only
+    /// when `cache_puts` is set.
+    ///
+    /// ```
+    /// use db::config::{ObjectStoreWarmLevel, SlateObjectStoreCacheSettings};
+    ///
+    /// let settings = SlateObjectStoreCacheSettings::try_new(
+    ///     "/var/cache/helix/object-store",
+    ///     None,
+    ///     4096,
+    ///     true,
+    ///     ObjectStoreWarmLevel::Off,
+    ///     None,
+    ///     8,
+    /// )?;
+    /// let reads_only = settings.clone().with_cache_puts(false);
+    /// assert!(!reads_only.to_slate_options().cache_puts);
+    /// assert_eq!(reads_only.with_cache_puts(true), settings);
+    /// # Ok::<(), db::config::ConfigError>(())
+    /// ```
+    #[must_use]
+    pub fn with_cache_puts(self, cache_puts: bool) -> Self {
+        Self { cache_puts, ..self }
+    }
 }
 
 /// SlateDB runtime settings.

@@ -133,10 +133,13 @@ impl ServerConfig {
     ///         cache: CacheConfig::Hybrid(Box::new(cache)),
     ///     },
     /// };
-    /// assert!(matches!(
-    ///     config.db_config().cache().mode(),
-    ///     db::config::CacheMode::Hybrid { .. }
-    /// ));
+    /// let db::config::CacheMode::Hybrid { object_store, .. } =
+    ///     config.db_config().cache().mode().clone()
+    /// else {
+    ///     panic!("a hybrid cache builds hybrid tiers");
+    /// };
+    /// // SSTs written to a local data directory are not copied into the cache.
+    /// assert!(!object_store.to_slate_options().cache_puts);
     /// ```
     pub fn db_config(&self) -> db::DbConfig {
         match &self.storage {
@@ -149,14 +152,16 @@ impl ServerConfig {
                 cache: CacheConfig::Memory,
                 ..
             } => db::DbConfig::new(),
+            // SSTs in `HELIX_DATA_DIR` are already on local disk, so caching
+            // them as they are written would only write each one twice.
             StorageConfig::Disk {
                 cache: CacheConfig::Hybrid(cache),
                 ..
-            }
-            | StorageConfig::S3 {
+            } => cache.db_config(false),
+            StorageConfig::S3 {
                 cache: CacheConfig::Hybrid(cache),
                 ..
-            } => cache.db_config(),
+            } => cache.db_config(true),
         }
     }
 
@@ -307,9 +312,10 @@ impl CacheConfig {
 /// The full-text tier is filled by searches only; startup warms nothing into
 /// it.
 ///
-/// The object-store tier also caches SSTs this server flushes or compacts, so
-/// a single-process server reads its own writes back from local disk. Only one
-/// server may use a cache directory at a time.
+/// With S3 storage the object-store tier also caches SSTs this server flushes
+/// or compacts, so it reads its own writes back from local disk. With
+/// `HELIX_DATA_DIR` those SSTs are already local, so the tier caches only the
+/// SSTs the server reads. Only one server may use a cache directory at a time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HybridCache {
     root: PathBuf,
@@ -376,7 +382,7 @@ impl HybridCache {
                 root.join("object-store"),
                 Some(object_store_bytes),
                 object_store_defaults.part_size_bytes,
-                true,
+                false,
                 db::config::ObjectStoreWarmLevel::Off,
                 object_store_defaults.scan_interval,
                 object_store_defaults.max_open_file_handles,
@@ -431,14 +437,18 @@ impl HybridCache {
     }
 
     /// Build the DB runtime config with these caches and every other default.
-    pub fn db_config(&self) -> db::DbConfig {
+    ///
+    /// `cache_sst_writes` makes the object-store tier also keep the SSTs the
+    /// server flushes or compacts, which only pays off when the durable store
+    /// is remote.
+    fn db_config(&self, cache_sst_writes: bool) -> db::DbConfig {
         let config = db::DbConfig::new();
         let cache = config
             .cache()
             .clone()
             .with_mode(db::config::CacheMode::Hybrid {
                 slate_db: self.slate_db.clone(),
-                object_store: self.object_store.clone(),
+                object_store: self.object_store.clone().with_cache_puts(cache_sst_writes),
                 slate_warm: db::config::SlateWarmConfig::default(),
                 fts: Some(self.fts.clone()),
             });
@@ -896,6 +906,10 @@ mod tests {
             .unwrap();
         assert_eq!(slate_db.memory_bytes(), 128 * MIB);
         assert_eq!(object_store_bytes, disk_bytes / 2);
+        assert!(
+            !object_store.to_slate_options().cache_puts,
+            "SSTs written to HELIX_DATA_DIR are not copied into the cache"
+        );
         assert_eq!(slate_db.disk().bytes(), 384 * MIB);
         assert_eq!(
             object_store_bytes + slate_db.disk().bytes() + fts.disk_bytes() as usize,

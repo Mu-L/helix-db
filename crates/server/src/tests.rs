@@ -542,12 +542,24 @@ async fn hybrid_disk_cache_serves_reopened_reads_from_local_disk() {
 
     // 24 MiB of Foyer disk tier in its minimum 64 KiB partitions.
     assert_eq!(files_below(&cache_root.join("slate")).len(), 384);
+    assert_eq!(
+        files_below(&cache_root.join("object-store")),
+        BTreeMap::new(),
+        "the SST flushed to HELIX_DATA_DIR on close is not copied into the cache"
+    );
+    assert!(cache_root.join("fts").is_dir());
+
+    // Reading the flushed SST back caches it on local disk.
+    let reader = open_database(&config).await.unwrap();
+    let router = http::router(ServerState::new(Arc::clone(&reader), None));
+    assert_eq!(post_query(router, &read).await["count"], 1);
+    reader.close().await.unwrap();
+    drop(reader);
     let cached = files_below(&cache_root.join("object-store"));
     assert!(
         !cached.is_empty(),
-        "the SST flushed on close is cached on local disk"
+        "the SST read back is cached on local disk"
     );
-    assert!(cache_root.join("fts").is_dir());
 
     // With every SST gone from durable storage, the reopened server can
     // only answer from the disk caches.
