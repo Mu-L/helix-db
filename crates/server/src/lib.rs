@@ -60,12 +60,18 @@ struct ServerDatabase {
 }
 
 /// Opens the configured database, first locking a hybrid disk cache's
-/// directory and allowing the open files it needs. Every runner opens
-/// storage through here.
+/// directory, checking its budget against free space in the background, and
+/// allowing the open files it needs. Every runner opens storage through here.
 async fn open_database(config: &ServerConfig) -> ServerResult<ServerDatabase> {
     // Before storage touches the cache, which would delete block-cache
     // partitions another server still has open.
     let cache_lock = config.hybrid_cache().map(HybridCache::claim).transpose()?;
+    // Detached: it only warns, and may stat every cached file.
+    #[cfg(unix)]
+    config
+        .hybrid_cache()
+        .cloned()
+        .map(|cache| tokio::task::spawn_blocking(move || cache.warn_on_disk_shortfall()));
     #[cfg(unix)]
     config
         .required_open_files()

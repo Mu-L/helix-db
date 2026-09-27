@@ -458,7 +458,7 @@ impl HybridCache {
 
     /// Claims this cache directory for one server: takes the exclusive lock
     /// that keeps every other server off it until the returned file is
-    /// dropped, then warns when the disk budget does not fit its filesystem.
+    /// dropped.
     ///
     /// The tiers assume one owner: a second server with a smaller budget
     /// would delete the block-cache partitions the first still has open. The
@@ -483,9 +483,18 @@ impl HybridCache {
                 ServerConfigError::CacheDirectory { path, source }
             }
         })?;
-        // Only a warning: the budget is still enforced, and free space
-        // changes as the data and other files grow.
-        #[cfg(unix)]
+        Ok(file)
+    }
+
+    /// Logs a warning when the disk budget does not fit the cache's
+    /// filesystem. Only a warning: the budget is still enforced, and free
+    /// space changes as the data and other files grow.
+    ///
+    /// It blocks, possibly on a walk of every cached file (see
+    /// [`Self::disk_shortfall`]), so the server runs it on a blocking thread
+    /// without delaying startup.
+    #[cfg(unix)]
+    pub(crate) fn warn_on_disk_shortfall(&self) {
         match self.disk_shortfall() {
             Ok(None) => {}
             Ok(Some(shortfall)) => tracing::warn!(
@@ -500,7 +509,6 @@ impl HybridCache {
                 "could not compare HELIX_DISK_CACHE_BYTES with the free space for the disk cache"
             ),
         }
-        Ok(file)
     }
 
     /// Bytes by which the disk budget exceeds the room its filesystem leaves
@@ -508,17 +516,20 @@ impl HybridCache {
     /// space the cache's files already occupy, so a full cache still fits
     /// after a restart.
     ///
-    /// This walks every file below the root once, which at the largest
-    /// budget is on the order of 10^5 files.
+    /// Only when free space alone falls short does this walk every file below
+    /// the root, which at the largest budget is on the order of 10^5 files.
     #[cfg(unix)]
     fn disk_shortfall(&self) -> std::io::Result<Option<u64>> {
         let filesystem = rustix::fs::statvfs(&self.root)?;
-        let room = filesystem
-            .f_bavail
-            .saturating_mul(filesystem.f_frsize)
-            .saturating_add(allocated_bytes(&self.root)?);
-        Ok((self.disk_bytes as u64)
-            .checked_sub(room)
+        let free = filesystem.f_bavail.saturating_mul(filesystem.f_frsize);
+        let Some(beyond_free) = (self.disk_bytes as u64)
+            .checked_sub(free)
+            .filter(|&bytes| bytes > 0)
+        else {
+            return Ok(None);
+        };
+        Ok(beyond_free
+            .checked_sub(allocated_bytes(&self.root)?)
             .filter(|&shortfall| shortfall > 0))
     }
 
@@ -597,20 +608,28 @@ fn parse_cache_bytes(
 
 /// Disk space the files below `directory` occupy, counting allocated blocks
 /// rather than lengths because block-cache partitions are sparse.
+///
+/// The tiers keep evicting while this walks them, so a file or subdirectory
+/// below `directory` that disappears meanwhile counts as empty instead of
+/// failing the walk.
 #[cfg(unix)]
 fn allocated_bytes(directory: &Path) -> std::io::Result<u64> {
     use std::os::unix::fs::MetadataExt;
 
     std::fs::read_dir(directory)?.try_fold(0_u64, |total, entry| {
-        let entry = entry?;
-        let metadata = entry.metadata()?;
-        let bytes = if metadata.is_dir() {
-            allocated_bytes(&entry.path())?
-        } else {
-            // `st_blocks` counts 512-byte units on every Unix.
-            metadata.blocks() * 512
-        };
-        Ok(total.saturating_add(bytes))
+        let bytes = entry.and_then(|entry| {
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                allocated_bytes(&entry.path())
+            } else {
+                // `st_blocks` counts 512-byte units on every Unix.
+                Ok(metadata.blocks() * 512)
+            }
+        });
+        match bytes {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(total),
+            bytes => Ok(total.saturating_add(bytes?)),
+        }
     })
 }
 
@@ -1309,7 +1328,7 @@ mod tests {
             None,
             "the minimum budget fits the test filesystem"
         );
-        drop(cache.claim().unwrap());
+        cache.warn_on_disk_shortfall();
 
         cache.disk_bytes = usize::MAX;
         let filesystem = rustix::fs::statvfs(cache.root()).unwrap();
@@ -1318,11 +1337,42 @@ mod tests {
             shortfall >= usize::MAX as u64 - filesystem.f_blocks * filesystem.f_frsize,
             "no filesystem leaves room for the whole address space"
         );
-        // Still only a warning.
-        drop(cache.claim().unwrap());
+        cache.warn_on_disk_shortfall();
 
         std::fs::remove_dir_all(cache.root()).unwrap();
         assert!(cache.disk_shortfall().is_err());
+        cache.warn_on_disk_shortfall();
+    }
+
+    /// An unreadable tier makes the walk fail, which shows that a budget
+    /// free space covers never walks. Root bypasses permissions.
+    #[cfg(unix)]
+    #[test]
+    fn disk_budget_within_free_space_skips_walking_the_cache() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let mut cache = HybridCache::try_new(
+            directory.path().join("cache"),
+            NonZeroUsize::new(MIB).unwrap(),
+            NonZeroUsize::new(MIN_CACHE_DISK_BYTES).unwrap(),
+        )
+        .unwrap();
+        let unreadable = cache.root().join("slate");
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let fits = cache.disk_shortfall();
+        cache.disk_bytes = usize::MAX;
+        let walked = cache.disk_shortfall();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(fits.unwrap(), None);
+        assert_eq!(
+            walked.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
     }
 
     #[test]
