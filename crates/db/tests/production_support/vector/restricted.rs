@@ -1582,6 +1582,63 @@ async fn bridge_simhash_reads_stay_within_the_rank_window() {
         .all(|result| candidates.contains(result.entity_id())));
 }
 
+#[cfg_attr(all(test, not(feature = "production-coverage")), test)]
+fn bridge_batches_double_after_short_rounds_and_halve_back_to_the_floor() {
+    let floor = BridgeBatchSize::FLOOR;
+    assert_eq!(floor.get(), BRIDGE_BATCH_SIZE);
+    // Rounds that find fewer candidates than their quota double the batch.
+    let grown = floor.after_round(0, 150).after_round(149, 150);
+    assert_eq!(grown.get(), 4 * BRIDGE_BATCH_SIZE);
+    // Rounds that fill their quota halve it, never below the floor.
+    assert_eq!(grown.after_round(150, 150).get(), 2 * BRIDGE_BATCH_SIZE);
+    assert_eq!(
+        grown
+            .after_round(150, 150)
+            .after_round(151, 150)
+            .after_round(1_000, 150),
+        floor
+    );
+    assert_eq!(
+        BridgeBatchSize(usize::MAX).after_round(0, 1).get(),
+        usize::MAX
+    );
+}
+
+#[cfg_attr(all(test, not(feature = "production-coverage")), tokio::test)]
+async fn disconnected_walks_spend_the_bridge_budget_in_logarithmic_rounds() {
+    // No allowed node is in the graph, so every bridge round finds nothing and
+    // the walk can only spend its bridge budget. A fixed 32-bridge batch would
+    // need one dependent round per 32 bridge rows.
+    const ENTITY_COUNT: u64 = 2_048;
+    let (db, index) = seed_index("restricted-disconnected-bridges", ENTITY_COUNT, 8).await;
+    let txn = db.begin(IsolationLevel::Snapshot).await.unwrap();
+    let candidates =
+        RestrictedVectorCandidates::from_ids(ENTITY_COUNT + 1..=ENTITY_COUNT + 1_000).unwrap();
+    let (results, stats) = filtered_search(
+        &index,
+        &txn,
+        &vector_for(1, ENTITY_COUNT, 8),
+        &SearchParams::new(10).unwrap(),
+        &candidates,
+    )
+    .await
+    .unwrap();
+
+    assert!(results.is_empty());
+    assert_eq!(stats.vector_payload_requests, 0);
+    let bridge_budget = stats.ef_filtered * 8;
+    assert_eq!(stats.bridge_rows, bridge_budget);
+    assert_eq!(
+        stats.termination,
+        Some(RestrictedSearchTermination::BridgeBudget)
+    );
+    // One companion-row check for the absent sampled seeds, then bridge rounds
+    // of 1 (the entry), 21 (its whole row), 128, 256, 512, and the last 282.
+    assert_eq!(bridge_budget, 1 + 21 + 128 + 256 + 512 + 282);
+    assert_eq!(stats.neighbor_multi_get_calls, 1 + 6);
+    assert!(stats.neighbor_multi_get_calls < bridge_budget / BRIDGE_BATCH_SIZE);
+}
+
 /// Seeds a full cosine-close beam behind a chain of opposite-direction bridges.
 async fn early_exit_search<D: Distance>(name: &str) -> (Vec<SearchResult>, RestrictedSearchStats) {
     let (db, index) = seed_filtered_graph::<D>(
@@ -2106,6 +2163,8 @@ pub(crate) async fn run() {
     simhash_guides_one_bounded_bridge_toward_the_relevant_disconnected_region().await;
     simhash_ranks_bridges_even_when_the_nearer_bridge_has_the_higher_id().await;
     bridge_simhash_reads_stay_within_the_rank_window().await;
+    bridge_batches_double_after_short_rounds_and_halve_back_to_the_floor();
+    disconnected_walks_spend_the_bridge_budget_in_logarithmic_rounds().await;
     beam_completion_waits_for_every_queued_bridge_for_every_metric().await;
     queued_bridges_are_expanded_whatever_their_rank_estimate().await;
     beam_completion_waits_for_a_queued_bridge_to_the_nearest_node().await;

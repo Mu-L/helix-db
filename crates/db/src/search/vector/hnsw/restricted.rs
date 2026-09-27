@@ -59,9 +59,10 @@ const DIRECTORY_MAX_ROWS: usize = 65_536;
 const DIRECTORY_MAX_DECODED_BYTES: usize = 4 * 1024 * 1024;
 const DIRECTORY_MAX_CONCURRENT_SCANS: usize = 8;
 const FRONTIER_BATCH_SIZE: usize = 16;
-/// Rejected bridges expanded per round. Dense filters rarely need them and
-/// sparse filters reach new allowed regions within a few rounds, so a small
-/// batch keeps layer-zero row reads proportional to useful work.
+/// Fewest rejected bridges expanded per round. Dense filters rarely need
+/// bridges, so rounds that fill their scoring quota stay near this floor and
+/// keep layer-zero row reads proportional to useful work; rounds that fall
+/// short grow the batch (see [`BridgeBatchSize`]).
 const BRIDGE_BATCH_SIZE: usize = 32;
 const FILTERED_BEAM_PERCENT: usize = 150;
 const FILTERED_BEAM_PERCENT_DENOMINATOR: usize = 100;
@@ -315,6 +316,34 @@ struct RestrictedScoringState<'a> {
     scored: &'a mut HashSet<NodeId>,
     beam_width: usize,
     stats: &'a mut RestrictedSearchStats,
+}
+
+/// Bridges expanded per walk round, never below [`BRIDGE_BATCH_SIZE`].
+///
+/// A round whose discoveries fall short of its scoring quota doubles the next
+/// batch, so sparse or disconnected scopes and large result counts reach new
+/// allowed regions, or spend the bridge budget, in logarithmically many
+/// dependent rounds. A round that fills its quota halves the batch back towards
+/// the floor. Callers still cap each batch by the remaining budgets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BridgeBatchSize(usize);
+
+impl BridgeBatchSize {
+    const FLOOR: Self = Self(BRIDGE_BATCH_SIZE);
+
+    const fn get(self) -> usize {
+        self.0
+    }
+
+    /// Batch for the round after one that found `eligible` unscored allowed
+    /// candidates towards a scoring quota of `quota`.
+    fn after_round(self, eligible: usize, quota: usize) -> Self {
+        if eligible < quota {
+            Self(self.0.saturating_mul(2))
+        } else {
+            Self((self.0 / 2).max(BRIDGE_BATCH_SIZE))
+        }
+    }
 }
 
 /// A queued bridge ranked by its own SimHash, ordered by query Hamming rank
@@ -1213,6 +1242,7 @@ impl<D: Distance> VectorIndex<D> {
         .await?;
 
         let mut expanded = HashSet::new();
+        let mut bridge_batch_size = BridgeBatchSize::FLOOR;
         if !allowed.contains(entry_point) {
             bridge_state.enqueue(query_hash, [(entry_point, 0)], stats);
         }
@@ -1285,7 +1315,7 @@ impl<D: Distance> VectorIndex<D> {
             let bridge_remaining = budgets.bridge_rows.saturating_sub(stats.bridge_rows);
             let bridge_batch_len = bridge_remaining
                 .min(routing_remaining)
-                .min(BRIDGE_BATCH_SIZE)
+                .min(bridge_batch_size.get())
                 .min(bridge_state.queue.len());
             let bridge_batch = self
                 .restricted_select_bridges(
@@ -1326,10 +1356,14 @@ impl<D: Distance> VectorIndex<D> {
             // The loop-top guard left payload budget, and routing and bridge
             // reads never score vectors.
             debug_assert!(stats.vector_payload_requests < budgets.vector_payloads);
-            let vector_remaining = budgets
+            let scoring_quota = budgets
                 .vector_payloads
-                .saturating_sub(stats.vector_payload_requests);
-            eligible.truncate(vector_remaining.min(budgets.ef_filtered));
+                .saturating_sub(stats.vector_payload_requests)
+                .min(budgets.ef_filtered);
+            if !bridge_batch.is_empty() {
+                bridge_batch_size = bridge_batch_size.after_round(eligible.len(), scoring_quota);
+            }
+            eligible.truncate(scoring_quota);
             if eligible.is_empty() {
                 continue;
             }
