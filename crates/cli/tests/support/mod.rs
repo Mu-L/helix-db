@@ -309,6 +309,11 @@ exit "${{HELIX_TEST_TOOL_EXIT_CODE:-0}}"
 fn install_fake_docker(bin: &Path) -> PathBuf {
     fs::create_dir_all(bin).expect("create fake docker bin");
 
+    // `cmd` expands every `%N` in a parenthesized block before it evaluates
+    // the block's condition, so an argument holding quotes, spaces, or
+    // parentheses aborts the whole script even when the block is skipped.
+    // `exec` forwards an arbitrary in-container command, so it must return
+    // before the first block that reads a positional argument past `%1`.
     #[cfg(windows)]
     {
         let script = bin.join("docker.cmd");
@@ -320,6 +325,7 @@ if /I "%1"=="%HELIX_TEST_RUNTIME_FAIL_COMMAND%" (
   echo simulated runtime failure 1>&2
   exit /b 42
 )
+if "%1"=="exec" exit /b 0
 if "%1"=="port" (
   if defined HELIX_TEST_RUNTIME_PORT_OUTPUT echo %HELIX_TEST_RUNTIME_PORT_OUTPUT%
   exit /b 0
@@ -456,6 +462,7 @@ if [ "$1" = "$HELIX_TEST_RUNTIME_FAIL_COMMAND" ]; then
   exit 42
 fi
 case "$1" in
+  exec) exit 0 ;;
   port) printf '%s\n' "$HELIX_TEST_RUNTIME_PORT_OUTPUT"; exit 0 ;;
   image)
     if [ "$HELIX_TEST_RUNTIME_IMAGE_MISSING" = "1" ] && [ ! -f "$HELIX_TEST_RUNTIME_LOG.pulled" ]; then exit 1; fi
