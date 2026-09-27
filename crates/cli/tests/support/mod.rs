@@ -309,6 +309,11 @@ exit "${{HELIX_TEST_TOOL_EXIT_CODE:-0}}"
 fn install_fake_docker(bin: &Path) -> PathBuf {
     fs::create_dir_all(bin).expect("create fake docker bin");
 
+    // `cmd` expands every `%N` in a parenthesized block before it evaluates
+    // the block's condition, so an argument holding quotes, spaces, or
+    // parentheses aborts the whole script even when the block is skipped.
+    // `exec` forwards an arbitrary in-container command, so it must return
+    // before the first block that reads a positional argument past `%1`.
     #[cfg(windows)]
     {
         let script = bin.join("docker.cmd");
@@ -320,6 +325,7 @@ if /I "%1"=="%HELIX_TEST_RUNTIME_FAIL_COMMAND%" (
   echo simulated runtime failure 1>&2
   exit /b 42
 )
+if "%1"=="exec" exit /b 0
 if "%1"=="port" (
   if defined HELIX_TEST_RUNTIME_PORT_OUTPUT echo %HELIX_TEST_RUNTIME_PORT_OUTPUT%
   exit /b 0
@@ -328,12 +334,8 @@ if "%1"=="image" (
   if "%HELIX_TEST_RUNTIME_IMAGE_MISSING%"=="1" (
     if not exist "%HELIX_TEST_RUNTIME_LOG%.pulled" exit /b 1
   )
-  if "%5"=="quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e" (
+  if "%5"=="ghcr.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882" (
     echo sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-    exit /b 0
-  )
-  if "%5"=="quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727" (
-    echo sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
     exit /b 0
   )
   echo sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -460,12 +462,12 @@ if [ "$1" = "$HELIX_TEST_RUNTIME_FAIL_COMMAND" ]; then
   exit 42
 fi
 case "$1" in
+  exec) exit 0 ;;
   port) printf '%s\n' "$HELIX_TEST_RUNTIME_PORT_OUTPUT"; exit 0 ;;
   image)
     if [ "$HELIX_TEST_RUNTIME_IMAGE_MISSING" = "1" ] && [ ! -f "$HELIX_TEST_RUNTIME_LOG.pulled" ]; then exit 1; fi
     case "$5" in
-      quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e) echo sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc; exit 0 ;;
-      quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727) echo sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd; exit 0 ;;
+      ghcr.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882) echo sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc; exit 0 ;;
     esac
     echo sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     exit 0
