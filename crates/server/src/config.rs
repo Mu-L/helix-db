@@ -465,25 +465,27 @@ impl HybridCache {
     /// lock is advisory and taken only on the server's open path, so a
     /// process embedding `db` may still open several databases on one cache.
     pub(crate) fn claim(&self) -> Result<std::fs::File, ServerConfigError> {
-        let path = self.root.join(CACHE_LOCK_FILE);
-        let file = std::fs::OpenOptions::new()
+        std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(&path)
-            .map_err(|source| ServerConfigError::CacheDirectory {
-                path: path.clone(),
-                source,
-            })?;
-        file.try_lock().map_err(|error| match error {
-            std::fs::TryLockError::WouldBlock => ServerConfigError::CacheDirectoryInUse {
-                path: self.root.clone(),
-            },
-            std::fs::TryLockError::Error(source) => {
-                ServerConfigError::CacheDirectory { path, source }
-            }
-        })?;
-        Ok(file)
+            .open(self.root.join(CACHE_LOCK_FILE))
+            .and_then(|file| file.try_lock().map(|()| file).map_err(std::io::Error::from))
+            // Contention converts to `WouldBlock`. Any other failure, in
+            // opening the lock file or in locking it, leaves the directory
+            // unlockable.
+            .map_err(|source| {
+                if source.kind() == std::io::ErrorKind::WouldBlock {
+                    ServerConfigError::CacheDirectoryInUse {
+                        path: self.root.clone(),
+                    }
+                } else {
+                    ServerConfigError::CacheDirectoryLock {
+                        path: self.root.clone(),
+                        source,
+                    }
+                }
+            })
     }
 
     /// Logs a warning when the disk budget does not fit the cache's
@@ -698,6 +700,15 @@ pub enum ServerConfigError {
     #[error("HELIX_DISK_CACHE_DIR: `{}` is not a writable directory", .path.display())]
     CacheDirectory {
         /// Unwritable directory.
+        path: PathBuf,
+        /// Filesystem error.
+        source: std::io::Error,
+    },
+    /// The cache directory's lock file could not be created or locked, for
+    /// example on a filesystem without `flock` support.
+    #[error("HELIX_DISK_CACHE_DIR: could not lock `{}`", .path.display())]
+    CacheDirectoryLock {
+        /// Cache directory.
         path: PathBuf,
         /// Filesystem error.
         source: std::io::Error,
@@ -1282,10 +1293,16 @@ mod tests {
         drop(cache.claim().unwrap());
 
         std::fs::remove_dir_all(&root).unwrap();
+        let error = cache.claim().unwrap_err();
         assert!(matches!(
-            cache.claim().unwrap_err(),
-            ServerConfigError::CacheDirectory { path, .. } if path == root.join(CACHE_LOCK_FILE)
+            &error,
+            ServerConfigError::CacheDirectoryLock { path, source }
+                if *path == root && source.kind() == std::io::ErrorKind::NotFound
         ));
+        assert_eq!(
+            error.to_string(),
+            format!("HELIX_DISK_CACHE_DIR: could not lock `{}`", root.display())
+        );
     }
 
     #[cfg(unix)]
