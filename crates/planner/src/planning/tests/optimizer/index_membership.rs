@@ -13,6 +13,19 @@ fn membership_indexes() -> IndexCatalogSnapshot {
         )
 }
 
+/// Statistics proving that `name = g3` selects 5,000 of 50,000 groups, so
+/// the source stays an index read and the expanded stream is large enough to
+/// pay for reading the membership bitmaps. Without them the point source
+/// keeps its small estimate through the expansions.
+fn large_ctx() -> PlannerContext {
+    let mut large = ctx(membership_indexes());
+    large.stats = large
+        .stats
+        .with_node_eq_cardinality(ScopedPropertyKey::try_new("Group", "name").unwrap(), 5_000)
+        .with_node_label_cardinality(NonEmptyString::new("Group").unwrap(), 50_000);
+    large
+}
+
 fn attributes_where(predicate: Predicate) -> Traversal<helix_ast::traversal::OnNodes, ReadOnly> {
     g().n_with_label_where("Group", Predicate::eq("name", "g3"))
         .in_(Some("IN_GROUP"))
@@ -56,7 +69,7 @@ fn post_expansion_equality_filter_uses_index_membership_after_out_and_in() {
             .in_(Some("LINKS"))
             .where_(Predicate::eq("kind", "B")),
     ] {
-        let plan = executable_traversal(traversal.values(vec!["kind"]), ctx(membership_indexes()));
+        let plan = executable_traversal(traversal.values(vec!["kind"]), large_ctx());
         let membership = only_membership(&plan);
 
         assert_eq!(membership.label.as_ref(), "Attribute");
@@ -77,7 +90,7 @@ fn post_expansion_equality_filter_uses_index_membership_after_out_and_in() {
         assert!(filter_predicates(&plan).is_empty(), "{:#?}", plan.steps());
         assert!(has_exec_op_family(&plan, ExecOpFamily::Expand));
         assert_eq!(
-            crate::diagnostics::analyze(&plan, &ctx(membership_indexes()))
+            crate::diagnostics::analyze(&plan, &large_ctx())
                 .statistics
                 .residual_filters,
             0
@@ -93,7 +106,7 @@ fn post_expansion_membership_keeps_unindexed_conjuncts_as_a_residual_filter() {
             Predicate::contains("title", "x"),
         ]))
         .values(vec!["kind"]),
-        ctx(membership_indexes()),
+        large_ctx(),
     );
 
     assert_eq!(
@@ -125,7 +138,7 @@ fn post_expansion_membership_covers_in_and_multiple_indexed_conjuncts_but_not_ra
             PropertyValue::StringArray(vec!["A".to_owned(), "B".to_owned()]),
         ))
         .values(vec!["kind"]),
-        ctx(membership_indexes()),
+        large_ctx(),
     );
     assert!(matches!(
         &only_membership(&is_in).set,
@@ -138,7 +151,7 @@ fn post_expansion_membership_covers_in_and_multiple_indexed_conjuncts_but_not_ra
     // conjuncts keep the per-row filter, alone or behind an equality set.
     let range = executable_traversal(
         attributes_where(Predicate::gte("rank", 3)).values(vec!["kind"]),
-        ctx(membership_indexes()),
+        large_ctx(),
     );
     assert!(memberships(&range).is_empty(), "{:#?}", range.steps());
     assert_eq!(filter_predicates(&range), [&Predicate::gte("rank", 3)]);
@@ -148,7 +161,7 @@ fn post_expansion_membership_covers_in_and_multiple_indexed_conjuncts_but_not_ra
             Predicate::gte("rank", 3),
         ]))
         .values(vec!["kind"]),
-        ctx(membership_indexes()),
+        large_ctx(),
     );
     assert_eq!(
         only_membership(&ranged).predicate.predicate(),
@@ -156,24 +169,13 @@ fn post_expansion_membership_covers_in_and_multiple_indexed_conjuncts_but_not_ra
     );
     assert_eq!(filter_predicates(&ranged), [&Predicate::gte("rank", 3)]);
 
-    // Two serial bitmap reads only pay off once the stream is known to be
-    // larger than the unknown-fan-out default.
-    let both_predicate = Predicate::and(vec![
-        Predicate::eq("kind", "B"),
-        Predicate::eq("status", "live"),
-    ]);
-    let default_stream = executable_traversal(
-        attributes_where(both_predicate.clone()).values(vec!["kind"]),
-        ctx(membership_indexes()),
-    );
-    assert!(memberships(&default_stream).is_empty());
-    let mut large_stream = ctx(membership_indexes());
-    large_stream.stats = large_stream
-        .stats
-        .with_node_eq_cardinality(ScopedPropertyKey::try_new("Group", "name").unwrap(), 5_000);
     let both = executable_traversal(
-        attributes_where(both_predicate).values(vec!["kind"]),
-        large_stream,
+        attributes_where(Predicate::and(vec![
+            Predicate::eq("kind", "B"),
+            Predicate::eq("status", "live"),
+        ]))
+        .values(vec!["kind"]),
+        large_ctx(),
     );
     assert!(matches!(
         &only_membership(&both).set,
@@ -190,7 +192,7 @@ fn label_scoped_post_expansion_membership_rejects_other_labels_without_reads() {
         attributes_where(Predicate::eq("kind", "B"))
             .has_label("Attribute")
             .values(vec!["kind"]),
-        ctx(membership_indexes()),
+        large_ctx(),
     );
     let membership = only_membership(&plan);
 
@@ -208,7 +210,7 @@ fn null_unindexed_and_edge_stream_filters_keep_the_per_row_filter() {
         attributes_where(Predicate::eq("color", "red")),
         attributes_where(Predicate::contains("kind", "B")),
     ] {
-        let plan = executable_traversal(traversal.values(vec!["kind"]), ctx(membership_indexes()));
+        let plan = executable_traversal(traversal.values(vec!["kind"]), large_ctx());
         assert!(memberships(&plan).is_empty(), "{:#?}", plan.steps());
         assert_eq!(filter_predicates(&plan).len(), 1);
     }
@@ -218,7 +220,7 @@ fn null_unindexed_and_edge_stream_filters_keep_the_per_row_filter() {
             .out_e(Some("HAS_ATTRIBUTE"))
             .where_(Predicate::eq("kind", "B"))
             .values(vec!["kind"]),
-        ctx(membership_indexes()),
+        large_ctx(),
     );
     assert!(memberships(&edges).is_empty(), "{:#?}", edges.steps());
     assert_eq!(filter_predicates(&edges).len(), 1);
@@ -226,7 +228,7 @@ fn null_unindexed_and_edge_stream_filters_keep_the_per_row_filter() {
 
 #[test]
 fn late_bound_parameters_keep_runtime_classified_membership() {
-    let mut planner_ctx = ctx(membership_indexes());
+    let mut planner_ctx = large_ctx();
     planner_ctx.late_bound_params = [
         NonEmptyString::new("kind").unwrap(),
         NonEmptyString::new("kinds").unwrap(),
@@ -291,7 +293,7 @@ fn tiny_bounded_inputs_keep_the_per_row_filter() {
             .limit(2)
             .where_(Predicate::eq("kind", "B"))
             .values(vec!["kind"]),
-        ctx(membership_indexes()),
+        large_ctx(),
     );
 
     assert!(memberships(&plan).is_empty(), "{:#?}", plan.steps());
@@ -299,10 +301,35 @@ fn tiny_bounded_inputs_keep_the_per_row_filter() {
 }
 
 #[test]
+fn unknown_fan_out_alone_keeps_the_per_row_filter() {
+    // Without statistics the point source keeps its small estimate through
+    // both expansions, so the label-sized set reads never look cheaper than
+    // reading the stream's own records.
+    for predicate in [
+        Predicate::eq("kind", "B"),
+        Predicate::and(vec![
+            Predicate::eq("$label", "Attribute"),
+            Predicate::eq("kind", "B"),
+        ]),
+        Predicate::and(vec![
+            Predicate::eq("kind", "B"),
+            Predicate::eq("status", "live"),
+        ]),
+    ] {
+        let plan = executable_traversal(
+            attributes_where(predicate.clone()).values(vec!["kind"]),
+            ctx(membership_indexes()),
+        );
+        assert!(memberships(&plan).is_empty(), "{:#?}", plan.steps());
+        assert_eq!(filter_predicates(&plan), [&predicate]);
+    }
+}
+
+#[test]
 fn post_expansion_membership_feeds_counts_and_variable_pipelines() {
     let count = executable_traversal(
         attributes_where(Predicate::eq("kind", "B")).count(),
-        ctx(membership_indexes()),
+        large_ctx(),
     );
     let counted = count
         .steps()

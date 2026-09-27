@@ -383,7 +383,7 @@ fn membership_contract_prices_set_and_label_reads_against_record_reads() {
 }
 
 #[test]
-fn row_estimates_fan_out_after_expansion_and_shrink_after_membership() {
+fn row_estimates_carry_through_expansion_and_shrink_after_membership() {
     let storage = cost::StorageCostProfile::default();
     let stats = crate::context::StatsSnapshot::default();
     let unknown = access_delivered(properties::ElementKind::Node);
@@ -405,10 +405,9 @@ fn row_estimates_fan_out_after_expansion_and_shrink_after_membership() {
             )
         };
 
-    assert_eq!(
-        after(&expand, &unknown, 1),
-        storage.default_unknown_scan_rows
-    );
+    // An unknown fan-out never inflates the estimate that prices index
+    // membership against the per-row filter.
+    assert_eq!(after(&expand, &unknown, 1), cost::EstimatedRows::rows(1));
     assert_eq!(
         after(&expand, &unknown, 50_000),
         cost::EstimatedRows::rows(50_000)

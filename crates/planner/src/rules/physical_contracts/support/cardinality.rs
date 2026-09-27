@@ -43,11 +43,12 @@ pub(in crate::rules) fn estimated_pipeline_rows(
 
 /// Row estimate after one stream-pipeline operator.
 ///
-/// An expansion without a proven output bound fans out by an unknown factor,
-/// so its estimate never drops below the unknown-scan default. An index
-/// membership keeps at most as many rows as its set is estimated to hold.
-/// Every other operator keeps its input estimate unless it proves a tighter
-/// bound.
+/// An index membership keeps at most as many rows as its set is estimated to
+/// hold. Every other operator, including an expansion, keeps its input
+/// estimate unless it proves a tighter bound. An expansion's fan-out is
+/// unknown without statistics, and an unknown fan-out alone must never make
+/// the label-sized reads of an index membership look cheaper than the
+/// per-row filter they replace.
 pub(in crate::rules) fn estimated_rows_after_op(
     op: &logical::StreamPipelineOp,
     delivered: &properties::DeliveredProperties,
@@ -56,11 +57,11 @@ pub(in crate::rules) fn estimated_rows_after_op(
     stats: &context::StatsSnapshot,
 ) -> cost::EstimatedRows {
     let fallback = match op {
-        logical::StreamPipelineOp::Expand { .. } => rows.max(storage.default_unknown_scan_rows),
         logical::StreamPipelineOp::IndexMembership { plan } => {
             rows.min(super::pipeline::membership_set_contract(plan, storage, stats).estimated_rows)
         }
-        logical::StreamPipelineOp::Filter { .. }
+        logical::StreamPipelineOp::Expand { .. }
+        | logical::StreamPipelineOp::Filter { .. }
         | logical::StreamPipelineOp::Window { .. }
         | logical::StreamPipelineOp::Limit { .. }
         | logical::StreamPipelineOp::Skip { .. }
