@@ -50,17 +50,34 @@ pub async fn run_from_env() -> ServerResult<()> {
     run_with_shutdown(config, shutdown_signal()).await
 }
 
-/// Opens the configured database, first allowing the open files a hybrid
-/// disk cache needs. Every runner opens storage through here.
-async fn open_database(config: &ServerConfig) -> ServerResult<Arc<HelixDB>> {
+/// A database opened by a runner, with the lock that keeps other servers off
+/// its hybrid disk cache.
+struct ServerDatabase {
+    db: Arc<HelixDB>,
+    /// Exclusive lock on the hybrid cache directory, if there is one. It is
+    /// released only after `db` closes.
+    cache_lock: Option<std::fs::File>,
+}
+
+/// Opens the configured database, first locking a hybrid disk cache's
+/// directory and allowing the open files it needs. Every runner opens
+/// storage through here.
+async fn open_database(config: &ServerConfig) -> ServerResult<ServerDatabase> {
+    // Before storage touches the cache, which would delete block-cache
+    // partitions another server still has open.
+    let cache_lock = config
+        .hybrid_cache()
+        .map(HybridCache::lock)
+        .transpose()?;
     #[cfg(unix)]
     config
         .required_open_files()
         .map(ensure_open_file_limit)
         .transpose()?;
-    Ok(Arc::new(
-        HelixDB::open_for_server(config.db_source(), config.db_config()).await?,
-    ))
+    Ok(ServerDatabase {
+        db: Arc::new(HelixDB::open_for_server(config.db_source(), config.db_config()).await?),
+        cache_lock,
+    })
 }
 
 /// Raises the soft open-file limit to the hard limit for a hybrid disk cache.
@@ -187,8 +204,8 @@ where
 
 /// Open the configured database and run all transports until Ctrl-C.
 pub async fn run_until_ctrl_c(config: ServerConfig) -> ServerResult<()> {
-    let db = open_database(&config).await?;
-    run_open_database_until_shutdown(config, db, async {
+    let database = open_database(&config).await?;
+    run_open_database_until_shutdown(config, database, async {
         tokio::signal::ctrl_c().await?;
         Ok(())
     })
@@ -219,8 +236,8 @@ pub async fn run_with_shutdown(
     config: ServerConfig,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> ServerResult<()> {
-    let db = open_database(&config).await?;
-    run_open_database_until_shutdown(config, db, async move {
+    let database = open_database(&config).await?;
+    run_open_database_until_shutdown(config, database, async move {
         shutdown.await;
         Ok(())
     })
@@ -230,9 +247,10 @@ pub async fn run_with_shutdown(
 /// Runs transports for one already-open exact database identity.
 async fn run_open_database_until_shutdown(
     config: ServerConfig,
-    db: Arc<HelixDB>,
+    database: ServerDatabase,
     shutdown: impl Future<Output = ServerResult<()>> + Send + 'static,
 ) -> ServerResult<()> {
+    let ServerDatabase { db, cache_lock } = database;
     let (query_metrics, query_metrics_runtime) = server_query_metrics();
     let state = ServerState::new(Arc::clone(&db), query_metrics);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -259,9 +277,14 @@ async fn run_open_database_until_shutdown(
         if let Some(runtime) = query_metrics_runtime {
             runtime.shutdown().await;
         }
-        db.close()
+        let closed = db
+            .close()
             .await
-            .map_err(|error| Box::new(error) as Box<dyn Error + Send + Sync + 'static>)
+            .map_err(|error| Box::new(error) as Box<dyn Error + Send + Sync + 'static>);
+        // The next server may take the cache only once storage is closed.
+        drop(db);
+        drop(cache_lock);
+        closed
     })
     .await
 }

@@ -601,8 +601,9 @@ Lowering the budget is not a reliable fix. Run natively on macOS, the limit is a
 capped by `sysctl kern.maxfilesperproc`.
 
 Startup also fails with a message naming the variable when a size is invalid or
-out of range, a size is set without `HELIX_DISK_CACHE_DIR`, or the cache directory
-is not writable.
+out of range, a size is set without `HELIX_DISK_CACHE_DIR`, the cache directory is
+not writable, or another running server already uses it. Stop the old container
+before starting its replacement on the same cache directory.
 
 ## Stop or inspect
 
