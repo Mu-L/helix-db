@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
-use std::io::Read;
+use std::io::{self, Read};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -936,29 +936,40 @@ impl FtsCache {
                 // its lease seen here. A copy of the leases taken earlier
                 // would miss a later lease and delete the file while it is
                 // hashed or opened.
-                {
+                let removed = {
                     let leases = cache.artifact_leases.lock();
                     if leases.contains_key(&entry.sha256) {
                         continue;
                     }
-                    fs::remove_file(&entry.path).map_err(|error| {
-                        HelixDbError::Config(format!(
-                            "failed to evict FTS artifact '{}': {error}",
-                            entry.path.display()
-                        ))
-                    })?;
-                    if let Some(metadata) = cache.metadata_path(entry.sha256) {
+                    let removed = fs::remove_file(&entry.path);
+                    if removed.is_ok()
+                        && let Some(metadata) = cache.metadata_path(entry.sha256)
+                    {
                         let _ = fs::remove_file(metadata);
                     }
+                    removed
+                };
+                match removed {
+                    Ok(()) => {
+                        atomic_saturating_sub(&cache.disk_artifact_count, 1);
+                        atomic_saturating_sub(&cache.disk_artifact_bytes, entry.size);
+                        cache.stats.disk_evictions.fetch_add(1, Ordering::Relaxed);
+                    }
+                    // Another trim listed it too and evicted it first, so
+                    // that trim counts the eviction; this one carries on.
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(HelixDbError::Config(format!(
+                            "failed to evict FTS artifact '{}': {error}",
+                            entry.path.display()
+                        )));
+                    }
                 }
-                atomic_saturating_sub(&cache.disk_artifact_count, 1);
-                atomic_saturating_sub(&cache.disk_artifact_bytes, entry.size);
                 cache
                     .validated
                     .lock()
                     .retain(|key| key.sha256 != entry.sha256);
                 total = total.saturating_sub(entry.size);
-                cache.stats.disk_evictions.fetch_add(1, Ordering::Relaxed);
             }
             Ok(())
         })
@@ -1669,6 +1680,64 @@ mod tests {
             (1, 0, 1),
             "only the older artifact is evicted"
         );
+    }
+
+    /// Concurrent trims, such as the startup trim and one after an
+    /// admission, can list the same victim. The one that finds it already
+    /// gone neither fails nor counts it, and still trims to the budget.
+    #[tokio::test]
+    async fn cleanup_continues_past_artifacts_another_trim_evicted() {
+        let database = "fts-cache-concurrent-trims";
+        let disk = tempfile::tempdir().expect("disk cache");
+        let cache = cache(
+            database,
+            Arc::new(InMemory::new()),
+            Some(disk.path().to_path_buf()),
+            1,
+            2,
+            Duration::from_secs(1),
+        );
+        let [gone, evicted, kept] = [[0xb0; 32], [0xb1; 32], [0xb2; 32]];
+        for (last_access_unix_ms, hash) in [gone, evicted, kept].into_iter().enumerate() {
+            tokio_fs::write(cache.artifact_path(hash).expect("artifact path"), b"aa")
+                .await
+                .expect("artifact");
+            let metadata = serde_json::to_vec(&ArtifactMetadata {
+                size_bytes: 2,
+                last_access_unix_ms: last_access_unix_ms as u64,
+            })
+            .expect("serialize metadata");
+            tokio_fs::write(cache.metadata_path(hash).expect("metadata path"), metadata)
+                .await
+                .expect("write metadata");
+        }
+        *cache.before_eviction.lock() = Some(Box::new({
+            let other_trim = [
+                cache.artifact_path(gone).expect("artifact path"),
+                cache.metadata_path(gone).expect("metadata path"),
+            ];
+            move |sha256| {
+                if sha256 == gone {
+                    for path in &other_trim {
+                        fs::remove_file(path).expect("the other trim evicts it first");
+                    }
+                }
+            }
+        }));
+
+        cache
+            .cleanup_disk()
+            .await
+            .expect("a victim that is already gone does not fail the trim");
+        let remaining = [gone, evicted, kept].map(|hash| {
+            cache
+                .artifact_path(hash)
+                .expect("artifact path")
+                .try_exists()
+                .expect("artifact status")
+        });
+        assert_eq!(remaining, [false, false, true]);
+        assert_eq!(cache.snapshot().disk_evictions, 1);
     }
 
     /// Validation is remembered per key, but only while the validated file
