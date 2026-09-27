@@ -1213,7 +1213,7 @@ async fn run_build_session_limit_contract<D: Distance>() {
 
     let dirty_identity = session_identity(DataScope::LegacyUnscoped, 42);
     let mut dirty_session =
-        VectorBuildSession::<D>::with_test_limits(NonZeroU64::new(4096).unwrap(), 8, 1, 8);
+        VectorBuildSession::<D>::with_test_limits(NonZeroU64::new(1 << 20).unwrap(), 8, 1, 8);
     let mut dirty_cache = dirty_session.take_cache(&dirty_identity, 8, 4).unwrap();
     let dirty_row = MutationOpCache::<D>::node_row_id(0, 10);
     dirty_cache.install_loaded_neighbor(dirty_row, NeighborRowValue::KnownAbsent);
