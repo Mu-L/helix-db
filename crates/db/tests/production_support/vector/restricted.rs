@@ -1272,36 +1272,117 @@ fn bridge_enqueue_prefers_known_ranks_and_queues_each_node_once() {
             (2, None),
         ]),
         known_hamming: HashMap::from([(2, 5)]),
-        queued: HashSet::new(),
-        frontier: BinaryHeap::new(),
+        queue: BridgeQueue::default(),
     };
     let mut stats = RestrictedSearchStats::default();
 
     bridge_state.enqueue(query_hash, [(1, 60), (2, 61), (3, 62), (1, 0)], &mut stats);
 
     assert_eq!(stats.bridge_frontier_pushes, 3);
-    let entries = std::iter::from_fn(|| bridge_state.frontier.pop())
-        .map(|Reverse(entry)| entry)
+    assert_eq!(bridge_state.queue.len(), 3);
+    let ranked = std::iter::from_fn(|| bridge_state.queue.pop_ranked_ahead_of_estimates())
         .collect::<Vec<_>>();
     assert_eq!(
-        entries,
+        ranked,
         vec![
-            BridgeEntry {
+            RankedBridge {
                 hamming: 3,
-                source: BridgeRankSource::Exact,
                 node_id: 1,
             },
-            BridgeEntry {
+            RankedBridge {
                 hamming: 5,
-                source: BridgeRankSource::Exact,
                 node_id: 2,
             },
-            BridgeEntry {
-                hamming: 62,
-                source: BridgeRankSource::Inherited,
-                node_id: 3,
-            },
         ]
+    );
+    assert_eq!(bridge_state.queue.pop_estimated(usize::MAX), vec![3]);
+    assert!(bridge_state.queue.is_empty());
+}
+
+#[cfg_attr(all(test, not(feature = "production-coverage")), test)]
+fn estimated_bridges_keep_their_lowest_rediscovered_estimate() {
+    // Node 1 has rank 4. Node 7 is first reached from a far row and node 8
+    // from a row whose estimate ties node 1's rank.
+    let query_hash = crate::search::vector::SimHash::from_bits(0);
+    let mut bridge_state = RestrictedBridgeState {
+        simhash_cache: HashMap::from([(
+            1,
+            Some(crate::search::vector::SimHash::from_bits(0b1111)),
+        )]),
+        known_hamming: HashMap::new(),
+        queue: BridgeQueue::default(),
+    };
+    let mut stats = RestrictedSearchStats::default();
+    bridge_state.enqueue(query_hash, [(1, 60), (7, 36), (8, 4)], &mut stats);
+
+    // A close row rediscovers 7 and lowers its estimate; a farther row cannot
+    // raise 8's, and a ranked bridge ignores estimates.
+    bridge_state.enqueue(query_hash, [(7, 3), (8, 30), (1, 0)], &mut stats);
+    assert_eq!(stats.bridge_frontier_pushes, 4);
+    assert_eq!(bridge_state.queue.len(), 3);
+
+    // Estimate 3 undercuts rank 4, so the ranked bridge waits for 7.
+    assert_eq!(bridge_state.queue.pop_ranked_ahead_of_estimates(), None);
+    assert_eq!(bridge_state.queue.pop_estimated(1), vec![7]);
+    // A ranked bridge wins a tie with an estimate.
+    assert_eq!(
+        bridge_state.queue.pop_ranked_ahead_of_estimates(),
+        Some(RankedBridge {
+            hamming: 4,
+            node_id: 1,
+        })
+    );
+    assert_eq!(bridge_state.queue.pop_ranked_ahead_of_estimates(), None);
+    // 7's superseded estimate of 36 is skipped rather than popped twice.
+    assert_eq!(bridge_state.queue.pop_estimated(usize::MAX), vec![8]);
+    assert!(bridge_state.queue.is_empty());
+    assert_eq!(bridge_state.queue.best_estimate(), None);
+
+    // Popped bridges are never queued again.
+    bridge_state.enqueue(query_hash, [(1, 0), (7, 0), (8, 0)], &mut stats);
+    assert!(bridge_state.queue.is_empty());
+    assert_eq!(stats.bridge_frontier_pushes, 4);
+}
+
+#[cfg_attr(all(test, not(feature = "production-coverage")), tokio::test)]
+async fn bridges_beyond_the_rank_window_are_ranked_before_expansion() {
+    // Entry 5 faces the query, so bridges 100, 101, and 102 all inherit a low
+    // estimate. The rank window ranks 100 and 101 as orthogonal; 102 still
+    // holds the lowest estimate but faces away. Only one more bridge row is
+    // affordable: expanding 102 on its estimate would reach only 1003.
+    let rows = [
+        (5, vec![1.0, 0.05], vec![100, 101, 102]),
+        (100, vec![0.0, 1.0], vec![1_002]),
+        (101, vec![0.0, 1.0], Vec::new()),
+        (102, vec![-1.0, 0.0], vec![1_003]),
+        (1_002, vec![1.0, 0.0], Vec::new()),
+        (1_003, vec![-1.0, 0.0], Vec::new()),
+    ];
+    let (results, stats) = explicit_budget_search(
+        "restricted-bridge-ranked-before-expansion",
+        5,
+        &rows,
+        [1_002, 1_003],
+        FilteredGraphBudgets {
+            ef_filtered: 1,
+            routing_rows: 100,
+            bridge_rows: 2,
+            vector_payloads: 10,
+            sampled_seeds: 0,
+            directory_seeds: 0,
+        },
+    )
+    .await;
+
+    assert_eq!(results, vec![1_002]);
+    assert_eq!(stats.bridge_rows, 2);
+    assert_eq!(stats.vector_payload_requests, 1);
+    // Entry 5, the window of 100 and 101, the open slot for 102, and the
+    // payload key of 1002.
+    assert_eq!(stats.simhash_row_requests, 5);
+    assert_eq!(
+        stats.termination,
+        Some(RestrictedSearchTermination::BridgeBudget)
     );
 }
 
@@ -2020,6 +2101,8 @@ pub(crate) async fn run() {
     directoryless_bridge_missing_simhash_fails_closed().await;
     directoryless_bridge_corrupt_simhash_fails_closed().await;
     bridge_enqueue_prefers_known_ranks_and_queues_each_node_once();
+    estimated_bridges_keep_their_lowest_rediscovered_estimate();
+    bridges_beyond_the_rank_window_are_ranked_before_expansion().await;
     simhash_guides_one_bounded_bridge_toward_the_relevant_disconnected_region().await;
     simhash_ranks_bridges_even_when_the_nearer_bridge_has_the_higher_id().await;
     bridge_simhash_reads_stay_within_the_rank_window().await;

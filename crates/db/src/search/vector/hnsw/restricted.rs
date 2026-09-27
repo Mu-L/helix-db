@@ -68,8 +68,11 @@ const FILTERED_BEAM_PERCENT_DENOMINATOR: usize = 100;
 const FILTERED_SAMPLED_SEEDS: usize = 64;
 const FILTERED_DIRECTORY_SEEDS: usize = 256;
 const MAX_RESTRICTED_RESULT_COUNT: usize = 800;
-/// Bridges resolved per selected bridge before ranking a batch.
+/// Estimated bridges ranked per selected bridge by a batch's first SimHash read.
 const BRIDGE_RANK_WINDOW: usize = 2;
+/// Dependent SimHash reads that may rank estimated bridges while selecting one
+/// batch: a [`BRIDGE_RANK_WINDOW`] per slot, then one per slot still open.
+const BRIDGE_RANK_READS: usize = 2;
 /// Rank penalty applied to each graph hop an inherited rank crosses.
 const BRIDGE_HOP_PENALTY_BITS: u32 = 1;
 /// Inherited rank when the discovering row has no known rank (uncorrelated).
@@ -314,31 +317,128 @@ struct RestrictedScoringState<'a> {
     stats: &'a mut RestrictedSearchStats,
 }
 
-/// Origin of a bridge's query Hamming rank.
-///
-/// Exact ranks come from the bridge's own SimHash row. Inherited ranks are the
-/// discovering row's rank plus one hop; they cost no read until the bridge is
-/// about to be expanded. Exact ranks win ties.
+/// A queued bridge ranked by its own SimHash, ordered by query Hamming rank
+/// then node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum BridgeRankSource {
-    Exact,
-    Inherited,
+struct RankedBridge {
+    hamming: u32,
+    node_id: NodeId,
 }
 
-/// Bridge-frontier entry ordered by query Hamming rank, rank source, then node.
+/// A queued bridge whose rank is still inherited from a discovering row,
+/// ordered by that estimate then node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct BridgeEntry {
-    hamming: u32,
-    source: BridgeRankSource,
+struct EstimatedBridge {
+    estimate: u32,
     node_id: NodeId,
+}
+
+/// Rejected nodes waiting to be expanded as bridges; each node is queued once.
+///
+/// A ranked bridge carries its own query Hamming rank. An estimated bridge
+/// carries the lowest rank inherited from any row that discovered it (that
+/// row's rank plus one hop), which costs no read. Heap entries superseded by a
+/// lower estimate or by ranking are skipped when popped. Only ranked bridges
+/// leave the queue for expansion.
+#[derive(Debug, Default)]
+struct BridgeQueue {
+    /// Every node ever queued; expanded bridges stay so they are never re-queued.
+    queued: HashSet<NodeId>,
+    ranked: BinaryHeap<Reverse<RankedBridge>>,
+    /// Current estimate of every queued bridge that is not yet ranked.
+    estimates: HashMap<NodeId, u32>,
+    estimated: BinaryHeap<Reverse<EstimatedBridge>>,
+}
+
+impl BridgeQueue {
+    /// Bridges still waiting to be expanded.
+    fn len(&self) -> usize {
+        self.ranked.len() + self.estimates.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.ranked.is_empty() && self.estimates.is_empty()
+    }
+
+    /// Queues an unseen node, ranked when `rank` is known. A still-estimated
+    /// bridge rediscovered with a lower estimate takes it; ranked and expanded
+    /// bridges keep their place. Returns whether a heap entry was pushed.
+    fn offer(&mut self, node_id: NodeId, rank: Option<u32>, inherited: u32) -> bool {
+        if self.queued.insert(node_id) {
+            let Some(hamming) = rank else {
+                self.estimates.insert(node_id, inherited);
+                self.estimated.push(Reverse(EstimatedBridge {
+                    estimate: inherited,
+                    node_id,
+                }));
+                return true;
+            };
+            self.ranked.push(Reverse(RankedBridge { hamming, node_id }));
+            return true;
+        }
+        let Some(estimate) = self.estimates.get_mut(&node_id) else {
+            return false;
+        };
+        if inherited >= *estimate {
+            return false;
+        }
+        *estimate = inherited;
+        self.estimated.push(Reverse(EstimatedBridge {
+            estimate: inherited,
+            node_id,
+        }));
+        true
+    }
+
+    /// Lowest current estimate, discarding superseded heap entries.
+    fn best_estimate(&mut self) -> Option<u32> {
+        while let Some(Reverse(head)) = self.estimated.peek().copied() {
+            if self.estimates.get(&head.node_id) == Some(&head.estimate) {
+                return Some(head.estimate);
+            }
+            self.estimated.pop();
+        }
+        None
+    }
+
+    /// Pops the best ranked bridge unless an estimate is lower than its rank;
+    /// ranked bridges win ties.
+    fn pop_ranked_ahead_of_estimates(&mut self) -> Option<RankedBridge> {
+        let Reverse(head) = self.ranked.peek().copied()?;
+        if self
+            .best_estimate()
+            .is_some_and(|estimate| estimate < head.hamming)
+        {
+            return None;
+        }
+        self.pop_ranked()
+    }
+
+    fn pop_ranked(&mut self) -> Option<RankedBridge> {
+        self.ranked.pop().map(|Reverse(bridge)| bridge)
+    }
+
+    /// Pops up to `count` estimated bridges with the lowest current estimates.
+    fn pop_estimated(&mut self, count: usize) -> Vec<NodeId> {
+        let mut popped = Vec::new();
+        while popped.len() < count {
+            let Some(Reverse(head)) = self.estimated.pop() else {
+                break;
+            };
+            if self.estimates.get(&head.node_id) == Some(&head.estimate) {
+                self.estimates.remove(&head.node_id);
+                popped.push(head.node_id);
+            }
+        }
+        popped
+    }
 }
 
 struct RestrictedBridgeState {
     simhash_cache: HashMap<NodeId, Option<crate::search::vector::SimHash>>,
     /// Query Hamming ranks known without a SimHash row (directory seeds).
     known_hamming: HashMap<NodeId, u32>,
-    queued: HashSet<NodeId>,
-    frontier: BinaryHeap<Reverse<BridgeEntry>>,
+    queue: BridgeQueue,
 }
 
 impl RestrictedBridgeState {
@@ -350,7 +450,8 @@ impl RestrictedBridgeState {
         }
     }
 
-    /// Queues unseen rejected nodes without reading their SimHash rows.
+    /// Queues rejected nodes with their inherited estimates without reading
+    /// their SimHash rows.
     fn enqueue(
         &mut self,
         query_hash: crate::search::vector::SimHash,
@@ -358,23 +459,10 @@ impl RestrictedBridgeState {
         stats: &mut RestrictedSearchStats,
     ) {
         for (node_id, inherited) in candidates {
-            if !self.queued.insert(node_id) {
-                continue;
+            let rank = self.hamming(node_id, query_hash);
+            if self.queue.offer(node_id, rank, inherited) {
+                stats.bridge_frontier_pushes = stats.bridge_frontier_pushes.saturating_add(1);
             }
-            let entry = match self.hamming(node_id, query_hash) {
-                Some(hamming) => BridgeEntry {
-                    hamming,
-                    source: BridgeRankSource::Exact,
-                    node_id,
-                },
-                None => BridgeEntry {
-                    hamming: inherited,
-                    source: BridgeRankSource::Inherited,
-                    node_id,
-                },
-            };
-            self.frontier.push(Reverse(entry));
-            stats.bridge_frontier_pushes = stats.bridge_frontier_pushes.saturating_add(1);
         }
     }
 }
@@ -803,66 +891,54 @@ impl<D: Distance> VectorIndex<D> {
         Ok(())
     }
 
-    /// Reads SimHash rows for inherited-rank bridges and returns their exact ranks.
+    /// Reads SimHash rows for estimated bridges and queues them ranked.
     ///
     /// Bridge routing never reads or scores vector payloads. A bridge without its
     /// mandatory SimHash companion is index corruption, not an absent candidate
     /// that can be skipped.
-    async fn restricted_resolve_bridges(
+    async fn restricted_rank_bridges(
         &self,
         read: &(impl DbReadOps + Send + Sync),
         query_hash: crate::search::vector::SimHash,
-        entries: Vec<BridgeEntry>,
+        node_ids: Vec<NodeId>,
         bridge_state: &mut RestrictedBridgeState,
         stats: &mut RestrictedSearchStats,
-    ) -> Result<Vec<BridgeEntry>, HelixDbError> {
-        let inherited = entries
-            .iter()
-            .filter(|entry| entry.source == BridgeRankSource::Inherited)
-            .map(|entry| entry.node_id)
-            .collect::<Vec<_>>();
-        if !inherited.is_empty() {
-            let reads = self
-                .fill_simhash_cache_for_nodes_counted::<false>(
-                    read,
-                    &inherited,
-                    &mut bridge_state.simhash_cache,
+    ) -> Result<(), HelixDbError> {
+        let reads = self
+            .fill_simhash_cache_for_nodes_counted::<false>(
+                read,
+                &node_ids,
+                &mut bridge_state.simhash_cache,
+                "ranking traversal-scoped rejected bridge nodes",
+            )
+            .await?;
+        stats.simhash_row_requests = stats.simhash_row_requests.saturating_add(reads.reads);
+        stats.simhash_multi_get_calls = stats
+            .simhash_multi_get_calls
+            .saturating_add(reads.multi_get_calls);
+        for node_id in node_ids {
+            let Some(Some(simhash)) = bridge_state.simhash_cache.get(&node_id).copied() else {
+                return Err(self.missing_simhash_error(
+                    node_id,
                     "ranking traversal-scoped rejected bridge nodes",
-                )
-                .await?;
-            stats.simhash_row_requests = stats.simhash_row_requests.saturating_add(reads.reads);
-            stats.simhash_multi_get_calls = stats
-                .simhash_multi_get_calls
-                .saturating_add(reads.multi_get_calls);
+                ));
+            };
+            bridge_state.queue.ranked.push(Reverse(RankedBridge {
+                hamming: simhash.hamming_distance(&query_hash),
+                node_id,
+            }));
         }
-        entries
-            .into_iter()
-            .map(|entry| match entry.source {
-                BridgeRankSource::Exact => Ok(entry),
-                BridgeRankSource::Inherited => {
-                    let Some(Some(simhash)) =
-                        bridge_state.simhash_cache.get(&entry.node_id).copied()
-                    else {
-                        return Err(self.missing_simhash_error(
-                            entry.node_id,
-                            "ranking traversal-scoped rejected bridge nodes",
-                        ));
-                    };
-                    Ok(BridgeEntry {
-                        hamming: simhash.hamming_distance(&query_hash),
-                        source: BridgeRankSource::Exact,
-                        node_id: entry.node_id,
-                    })
-                }
-            })
-            .collect()
+        Ok(())
     }
 
-    /// Pops the `count` most promising bridges with exact SimHash ranks.
+    /// Pops up to `count` bridges for expansion, each ranked by its own SimHash.
     ///
-    /// The top `BRIDGE_RANK_WINDOW * count` entries are resolved and re-queued
-    /// first, so inherited estimates only order the queue; expansion order uses
-    /// each bridge's own SimHash. SimHash reads stay within
+    /// Estimates only order the queue. A ranked bridge is taken unless an
+    /// estimate is lower than its rank; the lowest estimates are then ranked in
+    /// at most [`BRIDGE_RANK_READS`] SimHash reads, first
+    /// `BRIDGE_RANK_WINDOW * count` bridges and then one per slot still open.
+    /// Slots open after the last read take the best ranked bridges, so an
+    /// estimated bridge is never expanded and SimHash reads stay within
     /// `(BRIDGE_RANK_WINDOW + 1) * count` per batch.
     async fn restricted_select_bridges(
         &self,
@@ -871,21 +947,27 @@ impl<D: Distance> VectorIndex<D> {
         count: usize,
         bridge_state: &mut RestrictedBridgeState,
         stats: &mut RestrictedSearchStats,
-    ) -> Result<Vec<BridgeEntry>, HelixDbError> {
-        let window = (0..count.saturating_mul(BRIDGE_RANK_WINDOW))
-            .map_while(|_| bridge_state.frontier.pop().map(|Reverse(entry)| entry))
-            .collect::<Vec<_>>();
-        let ranked = self
-            .restricted_resolve_bridges(read, query_hash, window, bridge_state, stats)
-            .await?;
-        bridge_state
-            .frontier
-            .extend(ranked.into_iter().map(Reverse));
-        let selected = (0..count)
-            .map_while(|_| bridge_state.frontier.pop().map(|Reverse(entry)| entry))
-            .collect::<Vec<_>>();
-        self.restricted_resolve_bridges(read, query_hash, selected, bridge_state, stats)
-            .await
+    ) -> Result<Vec<RankedBridge>, HelixDbError> {
+        let mut selected = Vec::with_capacity(count);
+        let mut window = count.saturating_mul(BRIDGE_RANK_WINDOW);
+        for _ in 0..BRIDGE_RANK_READS {
+            let open = count - selected.len();
+            selected.extend(
+                std::iter::from_fn(|| bridge_state.queue.pop_ranked_ahead_of_estimates())
+                    .take(open),
+            );
+            let open = count - selected.len();
+            if open == 0 {
+                return Ok(selected);
+            }
+            let estimated = bridge_state.queue.pop_estimated(window);
+            self.restricted_rank_bridges(read, query_hash, estimated, bridge_state, stats)
+                .await?;
+            window = open;
+        }
+        let open = count - selected.len();
+        selected.extend(std::iter::from_fn(|| bridge_state.queue.pop_ranked()).take(open));
+        Ok(selected)
     }
 
     async fn restricted_exact_scan(
@@ -1079,8 +1161,7 @@ impl<D: Distance> VectorIndex<D> {
                 .iter()
                 .map(|(hamming, node_id, _)| (*node_id, *hamming))
                 .collect(),
-            queued: HashSet::new(),
-            frontier: BinaryHeap::new(),
+            queue: BridgeQueue::default(),
         };
         let sampled_ids = allowed.deterministic_sample_ids(budgets.sampled_seeds);
         let mut attempted = sampled_ids.iter().copied().collect::<HashSet<_>>();
@@ -1144,7 +1225,7 @@ impl<D: Distance> VectorIndex<D> {
             // SimHash ranks only order bridges; none is a bound on distance, so
             // the beam is complete only once no queued bridge can be expanded.
             let bridges_pending =
-                !bridge_state.frontier.is_empty() && stats.bridge_rows < budgets.bridge_rows;
+                !bridge_state.queue.is_empty() && stats.bridge_rows < budgets.bridge_rows;
             let beam_complete = !bridges_pending
                 && top
                     .peek()
@@ -1154,7 +1235,7 @@ impl<D: Distance> VectorIndex<D> {
                 stats.termination = Some(RestrictedSearchTermination::BeamComplete);
                 break;
             }
-            if frontier.is_empty() && bridge_state.frontier.is_empty() {
+            if frontier.is_empty() && bridge_state.queue.is_empty() {
                 stats.termination = Some(RestrictedSearchTermination::Exhausted);
                 break;
             }
@@ -1205,7 +1286,7 @@ impl<D: Distance> VectorIndex<D> {
             let bridge_batch_len = bridge_remaining
                 .min(routing_remaining)
                 .min(BRIDGE_BATCH_SIZE)
-                .min(bridge_state.frontier.len());
+                .min(bridge_state.queue.len());
             let bridge_batch = self
                 .restricted_select_bridges(
                     read,
@@ -1237,7 +1318,7 @@ impl<D: Distance> VectorIndex<D> {
                     }
                 }
                 bridge_state.enqueue(query_hash, rejected.drain(..), stats);
-            } else if routing_batch.is_empty() && !bridge_state.frontier.is_empty() {
+            } else if routing_batch.is_empty() && !bridge_state.queue.is_empty() {
                 stats.termination = Some(RestrictedSearchTermination::BridgeBudget);
                 break;
             }
