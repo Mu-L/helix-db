@@ -2413,6 +2413,8 @@ impl HelixDB {
     }
 
     /// Wait for owned startup warm tasks and the initial vector refresh to finish.
+    ///
+    /// With FTS warming off, the FTS task trims a disk tier to its budget.
     pub async fn wait_for_startup_cache_warm(&self) {
         if let Some(task) = self.inner.caches.startup_tasks.slate.lock().await.take() {
             task.wait().await;
@@ -2730,7 +2732,27 @@ impl HelixDB {
                 });
                 *self.inner.caches.startup_tasks.fts.lock().await = Some(CacheWarmTask { handle });
             }
-            config::CacheWarmMode::Off => {}
+            // Without a warm, a disk tier is otherwise trimmed only after a
+            // search admits a split. Trimming it once here makes a budget
+            // smaller than the previous run's apply from startup.
+            config::CacheWarmMode::Off => {
+                let (CacheMode::Hybrid { fts: Some(_), .. }, Some(cache)) = (
+                    self.inner.config.db().cache().mode(),
+                    &self.inner.caches.fts,
+                ) else {
+                    return Ok(());
+                };
+                let cache = Arc::downgrade(cache);
+                let handle = tokio::spawn(async move {
+                    let Some(cache) = cache.upgrade() else {
+                        return;
+                    };
+                    if let Err(error) = cache.cleanup_disk().await {
+                        tracing::warn!(%error, "FTS startup disk cleanup failed");
+                    }
+                });
+                *self.inner.caches.startup_tasks.fts.lock().await = Some(CacheWarmTask { handle });
+            }
         }
         Ok(())
     }
