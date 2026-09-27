@@ -72,7 +72,8 @@ const MAX_RESTRICTED_RESULT_COUNT: usize = 800;
 /// Estimated bridges ranked per selected bridge by a batch's first SimHash read.
 const BRIDGE_RANK_WINDOW: usize = 2;
 /// Dependent SimHash reads that may rank estimated bridges while selecting one
-/// batch: a [`BRIDGE_RANK_WINDOW`] per slot, then one per slot still open.
+/// batch: a [`BRIDGE_RANK_WINDOW`] per slot, then one per slot still open once
+/// the first read's ranked bridges are taken.
 const BRIDGE_RANK_READS: usize = 2;
 /// Rank penalty applied to each graph hop an inherited rank crosses.
 const BRIDGE_HOP_PENALTY_BITS: u32 = 1;
@@ -962,12 +963,13 @@ impl<D: Distance> VectorIndex<D> {
 
     /// Pops up to `count` bridges for expansion, each ranked by its own SimHash.
     ///
-    /// Estimates only order the queue. A ranked bridge is taken unless an
-    /// estimate is lower than its rank; the lowest estimates are then ranked in
-    /// at most [`BRIDGE_RANK_READS`] SimHash reads, first
-    /// `BRIDGE_RANK_WINDOW * count` bridges and then one per slot still open.
-    /// Slots open after the last read take the best ranked bridges, so an
-    /// estimated bridge is never expanded and SimHash reads stay within
+    /// Estimates only order the queue. Before each of at most
+    /// [`BRIDGE_RANK_READS`] SimHash reads, ranked bridges are taken while no
+    /// estimate is lower than their rank. The first read then ranks the
+    /// `BRIDGE_RANK_WINDOW * count` lowest estimates, and each later read ranks
+    /// one per slot still open once the bridges ranked so far are taken. Slots
+    /// open after the last read take the best ranked bridges, so an estimated
+    /// bridge is never expanded and SimHash reads stay within
     /// `(BRIDGE_RANK_WINDOW + 1) * count` per batch.
     async fn restricted_select_bridges(
         &self,
@@ -978,8 +980,7 @@ impl<D: Distance> VectorIndex<D> {
         stats: &mut RestrictedSearchStats,
     ) -> Result<Vec<RankedBridge>, HelixDbError> {
         let mut selected = Vec::with_capacity(count);
-        let mut window = count.saturating_mul(BRIDGE_RANK_WINDOW);
-        for _ in 0..BRIDGE_RANK_READS {
+        for rank_read in 0..BRIDGE_RANK_READS {
             let open = count - selected.len();
             selected.extend(
                 std::iter::from_fn(|| bridge_state.queue.pop_ranked_ahead_of_estimates())
@@ -989,10 +990,14 @@ impl<D: Distance> VectorIndex<D> {
             if open == 0 {
                 return Ok(selected);
             }
+            let window = if rank_read == 0 {
+                count.saturating_mul(BRIDGE_RANK_WINDOW)
+            } else {
+                open
+            };
             let estimated = bridge_state.queue.pop_estimated(window);
             self.restricted_rank_bridges(read, query_hash, estimated, bridge_state, stats)
                 .await?;
-            window = open;
         }
         let open = count - selected.len();
         selected.extend(std::iter::from_fn(|| bridge_state.queue.pop_ranked()).take(open));

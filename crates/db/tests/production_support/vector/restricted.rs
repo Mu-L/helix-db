@@ -1386,6 +1386,66 @@ async fn bridges_beyond_the_rank_window_are_ranked_before_expansion() {
     );
 }
 
+#[cfg_attr(all(test, not(feature = "production-coverage")), tokio::test)]
+async fn later_rank_reads_rank_one_bridge_per_slot_still_open() {
+    // Bridges 10 to 13 hold the lowest estimate and fill the first read's
+    // window of two per slot, but only 10 faces the query. Bridges 14 and 15
+    // also face it and wait behind a higher estimate.
+    let rows = [
+        (10, vec![1.0, 0.0], Vec::new()),
+        (11, vec![-1.0, 0.0], Vec::new()),
+        (12, vec![-1.0, 0.0], Vec::new()),
+        (13, vec![-1.0, 0.0], Vec::new()),
+        (14, vec![1.0, 0.0], Vec::new()),
+        (15, vec![1.0, 0.0], Vec::new()),
+    ];
+    let (db, index) =
+        seed_filtered_graph::<Cosine>("restricted-later-rank-read-window", 10, &rows).await;
+    let txn = db.begin(IsolationLevel::Snapshot).await.unwrap();
+    let query_hash = index
+        .simhash_cache(2)
+        .unwrap()
+        .simhasher()
+        .hash_from_slice(&[1.0, 0.0])
+        .unwrap();
+    let mut bridge_state = RestrictedBridgeState {
+        simhash_cache: HashMap::new(),
+        known_hamming: HashMap::new(),
+        queue: BridgeQueue::default(),
+    };
+    let mut stats = RestrictedSearchStats::default();
+    bridge_state.enqueue(
+        query_hash,
+        [(10, 0), (11, 0), (12, 0), (13, 0), (14, 5), (15, 5)],
+        &mut stats,
+    );
+
+    let selected = index
+        .restricted_select_bridges(&txn, query_hash, 2, &mut bridge_state, &mut stats)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        selected,
+        vec![
+            RankedBridge {
+                hamming: 0,
+                node_id: 10,
+            },
+            RankedBridge {
+                hamming: 0,
+                node_id: 14,
+            },
+        ]
+    );
+    // The first read ranks 10 to 13 and 10 takes a slot, so the second read
+    // ranks only 14 for the one slot still open; 15 keeps its estimate.
+    assert_eq!(stats.simhash_multi_get_calls, 2);
+    assert_eq!(stats.simhash_row_requests, 2 * BRIDGE_RANK_WINDOW + 1);
+    assert_eq!(bridge_state.queue.best_estimate(), Some(5));
+    assert_eq!(bridge_state.queue.len(), 4);
+}
+
 async fn assert_directoryless_filtered_metric<D: Distance>(name: &str) {
     let (db, index) = seed_three_edge_filtered_gulf::<D>(name).await;
     let txn = db.begin(IsolationLevel::Snapshot).await.unwrap();
@@ -2160,6 +2220,7 @@ pub(crate) async fn run() {
     bridge_enqueue_prefers_known_ranks_and_queues_each_node_once();
     estimated_bridges_keep_their_lowest_rediscovered_estimate();
     bridges_beyond_the_rank_window_are_ranked_before_expansion().await;
+    later_rank_reads_rank_one_bridge_per_slot_still_open().await;
     simhash_guides_one_bounded_bridge_toward_the_relevant_disconnected_region().await;
     simhash_ranks_bridges_even_when_the_nearer_bridge_has_the_higher_id().await;
     bridge_simhash_reads_stay_within_the_rank_window().await;
