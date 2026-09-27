@@ -181,7 +181,7 @@ pub(crate) use cache::commit::{commit_fenced, VectorCacheWriteSet};
 #[cfg(feature = "production-coverage")]
 pub(crate) use cache::hydration::production_contracts::run as run_hydration_contracts;
 pub(crate) use cache::hydration::{
-    hydrate_active_generations, unless_reader_advances, VectorCacheHydrationBudget,
+    hydrate_active_generations, VectorCacheHydrationBudget, VectorCacheHydrationOutcome,
     VectorCacheSnapshotSource,
 };
 #[cfg(feature = "production-coverage")]

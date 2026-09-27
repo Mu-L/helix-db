@@ -2301,12 +2301,24 @@ impl HelixDB {
     /// Writer and reader storage both hydrate from SlateDB snapshots whose
     /// sequence is the one request read views report, so a published store is
     /// attached only to request snapshots it is proven current for.
+    ///
+    /// On a reader node this returns [`HelixDbError::RequestReadViewChanged`]
+    /// when the reader applied newer state during a scope's catalog read or a
+    /// store's load: that scope or store was skipped, every other one was
+    /// refreshed, and a retry refreshes the rest.
     pub async fn refresh_vector_memory_cache(&self) -> Result<()> {
-        self.refresh_loaded_vector_memory_caches(
-            self.inner.config.db().cache().vector_memory().budget(),
-            None,
-        )
-        .await
+        match self
+            .refresh_loaded_vector_memory_caches(
+                self.inner.config.db().cache().vector_memory().budget(),
+                None,
+            )
+            .await?
+        {
+            search::vector::VectorCacheHydrationOutcome::Settled => Ok(()),
+            search::vector::VectorCacheHydrationOutcome::Outrun => {
+                Err(HelixDbError::RequestReadViewChanged)
+            }
+        }
     }
 
     /// Snapshot shared FTS split-cache state.
@@ -2562,12 +2574,13 @@ impl HelixDB {
     /// A bounded global budget is divided deterministically across scopes before
     /// per-index admission. The inventory is reread on every pass, so tenant
     /// scopes loaded after task startup participate without restarting the
-    /// worker.
+    /// worker. A reader that advances during one scope's catalog read skips
+    /// only that scope, and the pass reports it as outrun.
     async fn refresh_loaded_vector_memory_caches(
         &self,
         budget: config::VectorMemoryBudget,
         mut shutdown: Option<&mut watch::Receiver<bool>>,
-    ) -> Result<()> {
+    ) -> Result<search::vector::VectorCacheHydrationOutcome> {
         let scopes = self
             .inner
             .runtime_state
@@ -2579,6 +2592,7 @@ impl HelixDB {
                 "vector memory loaded scope count exceeds u64".to_string(),
             )
         })?;
+        let mut outcome = search::vector::VectorCacheHydrationOutcome::Settled;
         for (ordinal, scope) in scopes.into_iter().enumerate() {
             if shutdown.as_ref().is_some_and(|rx| *rx.borrow()) {
                 break;
@@ -2596,14 +2610,16 @@ impl HelixDB {
                 }
                 None => None,
             };
-            self.refresh_one_vector_memory_scope(
-                scope,
-                search::vector::VectorCacheHydrationBudget::from_optional_bytes(scope_budget),
-                shutdown.as_deref_mut(),
-            )
-            .await?;
+            outcome = outcome.max(
+                self.refresh_one_vector_memory_scope(
+                    scope,
+                    search::vector::VectorCacheHydrationBudget::from_optional_bytes(scope_budget),
+                    shutdown.as_deref_mut(),
+                )
+                .await?,
+            );
         }
-        Ok(())
+        Ok(outcome)
     }
 
     /// Hydrates one scope from exact Active handles and this node's snapshots.
@@ -2612,8 +2628,16 @@ impl HelixDB {
         scope: DataScope,
         budget: search::vector::VectorCacheHydrationBudget,
         shutdown: Option<&mut watch::Receiver<bool>>,
-    ) -> Result<()> {
-        self.refresh_runtime_catalog(scope).await?;
+    ) -> Result<search::vector::VectorCacheHydrationOutcome> {
+        match self.refresh_runtime_catalog(scope).await {
+            Ok(()) => {}
+            // The reader applied newer state during the catalog read, so the
+            // scope keeps its stores until a later pass.
+            Err(HelixDbError::RequestReadViewChanged) => {
+                return Ok(search::vector::VectorCacheHydrationOutcome::Outrun);
+            }
+            Err(error) => return Err(error),
+        }
         let active = self.active_index_handles_loaded(scope);
         let source = match self.storage() {
             HelixStorage::Reader(reader) => {
@@ -2643,8 +2667,8 @@ impl HelixDB {
             config::VectorMemoryHydrationMode::BlockingThenBackground { .. } if allow_blocking => {
                 match self.refresh_vector_memory_cache().await {
                     Ok(()) => {}
-                    // A reader poller advanced during the catalog read; the
-                    // background loop retries on the next status change.
+                    // A reader poller advanced during a catalog read or a
+                    // load; the background loop refreshes what was skipped.
                     Err(HelixDbError::RequestReadViewChanged) => {
                         tracing::debug!("reader advanced during blocking vector memory warm");
                     }
@@ -2661,12 +2685,9 @@ impl HelixDB {
         // Reader snapshots advance only when the poller applies new WAL or
         // manifest state, and exact-sequence stores are attachable only at that
         // state, so readers also refresh as soon as their status changes. A
-        // reader pass is abandoned once the reader advances past it, because
-        // its stores could never attach, and every consecutive abandonment
-        // doubles the pause before the next attempt relative to how long the
-        // abandoned pass ran. Rescans the reader keeps outrunning therefore
-        // occupy a shrinking fraction of the node instead of running back to
-        // back, while passes that finish between advances run on every one.
+        // reader load the reader outruns is dropped, and every consecutive
+        // outrun pass doubles the pause before the next attempt relative to
+        // how long that pass ran.
         let mut reader_status = match self.storage() {
             HelixStorage::Reader(reader) => Some(reader.subscribe()),
             HelixStorage::Writer(_) => None,
@@ -2685,26 +2706,16 @@ impl HelixDB {
                 };
                 let database = HelixDB { inner };
                 let started = tokio::time::Instant::now();
-                let pass =
-                    database.refresh_loaded_vector_memory_caches(budget, Some(&mut shutdown_rx));
-                let result = match reader_status.as_mut() {
-                    Some(status) => {
-                        search::vector::unless_reader_advances(
-                            status,
-                            |status| status.durable_seq,
-                            pass,
-                        )
-                        .await
-                    }
-                    None => pass.await,
-                };
+                let result = database
+                    .refresh_loaded_vector_memory_caches(budget, Some(&mut shutdown_rx))
+                    .await;
                 drop(database);
                 let pause = match result {
-                    Ok(()) => {
+                    Ok(search::vector::VectorCacheHydrationOutcome::Settled) => {
                         abandoned_passes = 0;
                         None
                     }
-                    Err(HelixDbError::RequestReadViewChanged) => {
+                    Ok(search::vector::VectorCacheHydrationOutcome::Outrun) => {
                         tracing::debug!("reader advanced during vector memory refresh");
                         abandoned_passes = abandoned_passes
                             .saturating_add(1)

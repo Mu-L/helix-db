@@ -54,34 +54,39 @@ impl VectorCacheSnapshotSource<'_> {
     }
 }
 
-/// Runs one reader refresh pass unless the reader applies newer state first.
+/// Resolves with the reader's applied sequence once it rises above `current_through`.
 ///
-/// A reader store attaches only to request snapshots at the exact sequence it
-/// was hydrated at, so a pass the reader outruns can only publish stores that
-/// never serve. The pass is dropped, releasing every reservation and scan it
-/// holds, as soon as `sequence` reports a value above the one observed when it
-/// started, and [`HelixDbError::RequestReadViewChanged`] reports that it was
-/// abandoned. Status changes that keep the sequence, and a closed status
-/// channel, never abandon the pass.
-pub(crate) async fn unless_reader_advances<T>(
+/// `sequence` projects the applied sequence out of a reader status. Status
+/// changes that keep it, such as manifest-only updates, never resolve this,
+/// and neither does a closed status channel: a closed reader applies no newer
+/// state.
+pub(crate) async fn reader_advances_past<T>(
     status: &mut watch::Receiver<T>,
     sequence: impl Fn(&T) -> u64,
-    pass: impl std::future::Future<Output = Result<()>>,
-) -> Result<()> {
-    let started = sequence(&status.borrow_and_update());
-    let advanced = async {
-        if status
-            .wait_for(|status| sequence(status) > started)
-            .await
-            .is_err()
-        {
-            std::future::pending::<()>().await;
-        }
+    current_through: u64,
+) -> u64 {
+    let Ok(advanced) = status
+        .wait_for(|status| sequence(status) > current_through)
+        .await
+    else {
+        return std::future::pending().await;
     };
-    tokio::select! {
-        result = pass => result,
-        () = advanced => Err(HelixDbError::RequestReadViewChanged),
-    }
+    sequence(&advanced)
+}
+
+/// Whether a reader outran any load of one hydration pass.
+///
+/// Ordered so that combining passes keeps the outrun one:
+/// `Settled < Outrun`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum VectorCacheHydrationOutcome {
+    /// Every target was retained, published, discarded by a crossing commit,
+    /// or skipped as unavailable.
+    Settled,
+    /// A reader node applied newer state while at least one target was
+    /// loading, and that target's store was dropped unpublished because it
+    /// could never attach.
+    Outrun,
 }
 
 /// Runtime share assigned to one scope after the configured global budget is split.
@@ -124,6 +129,15 @@ impl VectorCacheHydrationBudget {
 /// node, which never runs retirement, entries of `scope` outside the validated
 /// inventory are released before any load so dropped generations are not
 /// retained.
+///
+/// A reader store attaches only to request snapshots at the exact sequence it
+/// was hydrated at, so a load the reader outruns could never serve. Each
+/// reader load races the reader's status: once the reader applies state past
+/// that target's snapshot, only that load is dropped with its reservation,
+/// which keeps a published store or returns an initial entry to `Vacant`,
+/// and the pass continues with the next target on a fresh snapshot. The pass
+/// then reports [`VectorCacheHydrationOutcome::Outrun`]. Writer loads always
+/// run to completion.
 pub(crate) async fn hydrate_active_generations(
     source: VectorCacheSnapshotSource<'_>,
     scope: DataScope,
@@ -131,7 +145,12 @@ pub(crate) async fn hydrate_active_generations(
     registry: &VectorCacheRegistry,
     budget: VectorCacheHydrationBudget,
     mut shutdown: Option<&mut watch::Receiver<bool>>,
-) -> Result<()> {
+) -> Result<VectorCacheHydrationOutcome> {
+    let mut reader_status = match source {
+        VectorCacheSnapshotSource::Writer(_) => None,
+        VectorCacheSnapshotSource::Reader(reader) => Some(reader.subscribe()),
+    };
+    let mut outcome = VectorCacheHydrationOutcome::Settled;
     let inventory = source.snapshot().await?;
     let mut targets = Vec::new();
     let mut physical_ids = HashSet::new();
@@ -246,7 +265,7 @@ pub(crate) async fn hydrate_active_generations(
         },
     );
     if target_count == 0 {
-        return Ok(());
+        return Ok(outcome);
     }
 
     let mut admitted_bytes = 0u64;
@@ -279,6 +298,12 @@ pub(crate) async fn hydrate_active_generations(
             }
             VectorCacheHydration::Initial(_) | VectorCacheHydration::Refresh(_) => {}
         }
+        // The status is read before the snapshot: the poller reports a new
+        // sequence before it installs the state, so a sequence above both
+        // values proves the reader moved past this snapshot.
+        let reader_observed = reader_status
+            .as_ref()
+            .map(|status| status.borrow().durable_seq);
         let snapshot = source.snapshot().await?;
         let retained_bytes = match &mut hydration {
             VectorCacheHydration::Refresh(refresh) => {
@@ -294,13 +319,35 @@ pub(crate) async fn hydrate_active_generations(
                     handle.physical_index_id(),
                     snapshot.seq(),
                 ));
-                let loaded = store
-                    .load_descriptor_bound_with_budget(
-                        snapshot.as_ref(),
-                        admission,
-                        shutdown.as_deref_mut(),
-                    )
-                    .await;
+                let load = store.load_descriptor_bound_with_budget(
+                    snapshot.as_ref(),
+                    admission,
+                    shutdown.as_deref_mut(),
+                );
+                // An advance that is ready with a finished load still wins:
+                // that store is already stale.
+                let loaded = match reader_status.as_mut().zip(reader_observed) {
+                    Some((status, observed)) => tokio::select! {
+                        biased;
+                        _ = reader_advances_past(
+                            status,
+                            |reader: &slatedb::DbStatus| reader.durable_seq,
+                            observed.max(snapshot.seq()),
+                        ) => None,
+                        loaded = load => Some(loaded),
+                    },
+                    None => Some(load.await),
+                };
+                let Some(loaded) = loaded else {
+                    // Dropping the reservation keeps a refreshed entry's
+                    // published store or returns an initial entry to `Vacant`.
+                    tracing::debug!(
+                        physical_index_id = handle.physical_index_id(),
+                        "reader advanced during a vector cache load"
+                    );
+                    outcome = VectorCacheHydrationOutcome::Outrun;
+                    continue;
+                };
                 let summary = match loaded {
                     Ok(summary) => summary,
                     // Dropping the reservation returns an initial entry to
@@ -344,7 +391,7 @@ pub(crate) async fn hydrate_active_generations(
             }
         }
     }
-    Ok(())
+    Ok(outcome)
 }
 
 #[cfg(any(test, feature = "production-coverage"))]
@@ -359,7 +406,13 @@ mod tests {
     }
 
     use bytes::Bytes;
+    use futures::stream::BoxStream;
     use slatedb::object_store::memory::InMemory;
+    use slatedb::object_store::{
+        path::Path, CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta,
+        ObjectStore, PutMultipartOptions, PutOptions, PutPayload, PutResult,
+        Result as ObjectStoreResult,
+    };
     use slatedb::{Db, IsolationLevel};
 
     use super::*;
@@ -987,55 +1040,243 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reader_pass_is_abandoned_once_the_reader_sequence_advances() {
-        let (status, mut observed) = watch::channel(5_u64);
-        let outruns = async {
-            status.send_replace(6);
-            std::future::pending::<Result<()>>().await
-        };
+    async fn reader_advance_resolves_only_above_the_current_sequence() {
+        let (status, mut observed) = watch::channel((5_u64, 0_u64));
+        assert_eq!(
+            reader_advances_past(&mut observed, |(sequence, _)| *sequence, 4).await,
+            5,
+            "a sequence already above the bound resolves at once"
+        );
 
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            unless_reader_advances(&mut observed, |sequence| *sequence, outruns),
+        let mut advance = Box::pin(reader_advances_past(
+            &mut observed,
+            |(sequence, _)| *sequence,
+            5,
+        ));
+        for manifest in 1..=3 {
+            status.send_replace((5, manifest));
+            assert!(
+                futures::poll!(advance.as_mut()).is_pending(),
+                "a manifest-only status change keeps the sequence"
+            );
+        }
+        status.send_replace((7, 3));
+        assert_eq!(advance.await, 7);
+    }
+
+    /// How the gated object store treats reads of compacted SSTs.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SstReads {
+        Open,
+        Held,
+    }
+
+    /// In-memory object store that can hold reads of compacted SSTs, so a
+    /// reader load stays in flight while the reader replays newer WAL.
+    #[derive(Debug)]
+    struct GatedSstStore {
+        inner: InMemory,
+        reads: watch::Sender<SstReads>,
+        /// Counts compacted SST reads that found the gate held.
+        held_reads: watch::Sender<usize>,
+    }
+
+    impl std::fmt::Display for GatedSstStore {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("gated-sst-memory")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ObjectStore for GatedSstStore {
+        async fn put_opts(
+            &self,
+            location: &Path,
+            payload: PutPayload,
+            options: PutOptions,
+        ) -> ObjectStoreResult<PutResult> {
+            self.inner.put_opts(location, payload, options).await
+        }
+
+        async fn put_multipart_opts(
+            &self,
+            location: &Path,
+            options: PutMultipartOptions,
+        ) -> ObjectStoreResult<Box<dyn MultipartUpload>> {
+            self.inner.put_multipart_opts(location, options).await
+        }
+
+        async fn get_opts(
+            &self,
+            location: &Path,
+            options: GetOptions,
+        ) -> ObjectStoreResult<GetResult> {
+            if location.as_ref().contains("/compacted/") {
+                let mut reads = self.reads.subscribe();
+                if *reads.borrow_and_update() == SstReads::Held {
+                    self.held_reads.send_modify(|held| *held += 1);
+                }
+                reads
+                    .wait_for(|reads| *reads == SstReads::Open)
+                    .await
+                    .expect("the gate outlives its store");
+            }
+            self.inner.get_opts(location, options).await
+        }
+
+        fn delete_stream(
+            &self,
+            locations: BoxStream<'static, ObjectStoreResult<Path>>,
+        ) -> BoxStream<'static, ObjectStoreResult<Path>> {
+            self.inner.delete_stream(locations)
+        }
+
+        fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, ObjectStoreResult<ObjectMeta>> {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&Path>,
+        ) -> ObjectStoreResult<ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy_opts(
+            &self,
+            from: &Path,
+            to: &Path,
+            options: CopyOptions,
+        ) -> ObjectStoreResult<()> {
+            self.inner.copy_opts(from, to, options).await
+        }
+    }
+
+    #[tokio::test]
+    async fn reader_drops_only_the_load_it_outruns_and_loads_later_targets_fresh() {
+        let path = "vector-cache-reader-outrun";
+        let gate = Arc::new(GatedSstStore {
+            inner: InMemory::new(),
+            reads: watch::Sender::new(SstReads::Open),
+            held_reads: watch::Sender::new(0),
+        });
+        let object_store: Arc<dyn ObjectStore> = Arc::clone(&gate) as Arc<dyn ObjectStore>;
+        let db = Db::builder(path, Arc::clone(&object_store))
+            .build()
+            .await
+            .unwrap();
+        let scope = DataScope::LegacyUnscoped;
+        let (outrun, outrun_handle) = active_vector(scope, 7, 71, false);
+        let (fresh, fresh_handle) = active_vector(scope, 8, 81, false);
+        let upper_vector = |physical_index_id, node_id| {
+            DataKey::Data {
+                scope,
+                kind: DataKeyKind::Vector(VectorKey::UpperVector(VectorUpperVectorKey::new(
+                    physical_index_id,
+                    node_id,
+                ))),
+            }
+            .to_bytes()
+        };
+        let transaction = db.begin(IsolationLevel::Snapshot).await.unwrap();
+        transaction
+            .put(upper_vector(71, 1), Bytes::from_static(b"outrun"))
+            .unwrap();
+        transaction
+            .put(upper_vector(81, 1), Bytes::from_static(b"fresh"))
+            .unwrap();
+        transaction.commit().await.unwrap();
+        // Both rows live only in a compacted SST, so each load reads through the gate.
+        db.flush_with_options(slatedb::config::FlushOptions {
+            flush_type: slatedb::config::FlushType::MemTable,
+        })
+        .await
+        .unwrap();
+        let reader = slatedb::DbReader::open(
+            path,
+            object_store,
+            None,
+            slatedb::config::DbReaderOptions {
+                manifest_poll_interval: std::time::Duration::from_millis(10),
+                wal_poll_interval: std::time::Duration::from_millis(10),
+                ..slatedb::config::DbReaderOptions::default()
+            },
         )
         .await
-        .expect("an advance abandons a pass that never finishes");
+        .unwrap();
+        let hydrated_seq = reader.snapshot().await.unwrap().seq();
+        let registry = VectorCacheRegistry::default();
 
-        assert!(matches!(outcome, Err(HelixDbError::RequestReadViewChanged)));
-    }
-
-    #[tokio::test]
-    async fn reader_pass_finishes_across_status_changes_that_keep_the_sequence() {
-        let (status, mut observed) = watch::channel((5_u64, 0_u64));
-        let manifest_only = async {
-            for manifest in 1..=3 {
-                status.send_replace((5, manifest));
-                tokio::task::yield_now().await;
-            }
-            Err(HelixDbError::InvariantViolation("pass result".to_string()))
-        };
-
-        let outcome =
-            unless_reader_advances(&mut observed, |(sequence, _)| *sequence, manifest_only).await;
-
-        assert!(
-            matches!(outcome, Err(HelixDbError::InvariantViolation(message)) if message == "pass result"),
-            "the pass's own outcome is returned unchanged"
+        gate.reads.send_replace(SstReads::Held);
+        let hydrate = hydrate_active_generations(
+            VectorCacheSnapshotSource::Reader(&reader),
+            scope,
+            vec![fresh, outrun],
+            &registry,
+            VectorCacheHydrationBudget::Unbounded,
+            None,
         );
+        let advance = async {
+            // The first target in canonical order is loading and waits on the gate.
+            gate.held_reads
+                .subscribe()
+                .wait_for(|held| *held > 0)
+                .await
+                .unwrap();
+            db.put(b"unrelated-graph-row", Bytes::from_static(b"row"))
+                .await
+                .unwrap();
+            reader
+                .subscribe()
+                .wait_for(|status| status.durable_seq > hydrated_seq)
+                .await
+                .unwrap();
+            gate.reads.send_replace(SstReads::Open);
+        };
+        let (outcome, ()) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            tokio::join!(hydrate, advance)
+        })
+        .await
+        .expect("the pass finishes once the gate opens");
+
+        assert_eq!(outcome.unwrap(), VectorCacheHydrationOutcome::Outrun);
+        assert!(
+            matches!(
+                registry.resident_guard_for(&outrun_handle),
+                Err(
+                    super::super::registry::VectorCacheReadGuardError::Unavailable(
+                        super::super::registry::VectorCacheLifecycle::Vacant
+                    )
+                )
+            ),
+            "the outrun load publishes nothing and leaves its entry for the next pass"
+        );
+        let fresh_guard = registry.resident_guard_for(&fresh_handle).unwrap();
+        assert!(
+            fresh_guard.store().visible_seq() > hydrated_seq,
+            "the next target loads from a fresh snapshot the reader has not moved past"
+        );
+        assert_eq!(
+            fresh_guard.store().visible_seq(),
+            reader.snapshot().await.unwrap().seq()
+        );
+        assert_eq!(
+            fresh_guard.store().get_upper_vector(1).as_deref(),
+            Some(b"fresh".as_slice())
+        );
+        drop(fresh_guard);
+        reader.close().await.unwrap();
+        db.close().await.unwrap();
     }
 
     #[tokio::test]
-    async fn reader_pass_finishes_after_its_status_channel_closes() {
+    async fn reader_advance_never_resolves_after_its_status_channel_closes() {
         let (status, mut observed) = watch::channel(5_u64);
         drop(status);
 
-        let outcome = unless_reader_advances(&mut observed, |sequence| *sequence, async {
-            tokio::task::yield_now().await;
-            Ok(())
-        })
-        .await;
-
-        assert!(outcome.is_ok());
+        let mut advance = Box::pin(reader_advances_past(&mut observed, |sequence| *sequence, 5));
+        assert!(futures::poll!(advance.as_mut()).is_pending());
+        assert!(futures::poll!(advance.as_mut()).is_pending());
     }
 
     #[tokio::test]
