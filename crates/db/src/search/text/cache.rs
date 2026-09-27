@@ -681,6 +681,9 @@ impl FtsCache {
         let Some(path) = self.artifact_path(split.blob.sha256) else {
             return Ok(None);
         };
+        // Leased before the first check, so eviction cannot delete the
+        // artifact while it is hashed and then report it corrupt.
+        let lease = DiskArtifactLease::acquire(split.blob.sha256, &self.artifact_leases);
         if !tokio_fs::try_exists(&path).await.unwrap_or(false) {
             self.stats.disk_misses.fetch_add(1, Ordering::Relaxed);
             return Ok(None);
@@ -689,7 +692,6 @@ impl FtsCache {
             .await?;
         let path_for_open = path.clone();
         let split_for_open = split.clone();
-        let lease = DiskArtifactLease::acquire(split.blob.sha256, &self.artifact_leases);
         let opened = tokio::task::spawn_blocking(move || {
             let footer = read_footer_cache_entry_from_file(&path_for_open, &split_for_open)?;
             let directory = open_split_directory_from_file(&path_for_open)?;
@@ -772,6 +774,9 @@ impl FtsCache {
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
             .clone();
         let guard = gate.lock().await;
+        // Held until the artifact has metadata: eviction would otherwise
+        // delete it mid-validation, or once published, as never used.
+        let _lease = DiskArtifactLease::acquire(split.blob.sha256, &self.artifact_leases);
         let key = TextSplitCacheKey::from(split);
         if let Some(path) = self.artifact_path(split.blob.sha256)
             && tokio_fs::try_exists(&path).await.unwrap_or(false)
@@ -1478,6 +1483,75 @@ mod tests {
             .await
             .expect("evictable status"));
         drop(lease);
+    }
+
+    /// A restarted cache hashes an artifact on first use. Eviction running
+    /// meanwhile, with the artifact over budget and never recorded as used,
+    /// must skip it as leased rather than delete it mid-validation.
+    #[tokio::test]
+    async fn cleanup_spares_artifacts_while_they_are_validated() {
+        let database = "fts-cache-validation-lease";
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (bytes, split) = valid_split(17);
+        put_split(&store, database, bytes, &split).await;
+        let disk = tempfile::tempdir().expect("disk cache");
+        let restarted = || {
+            cache(
+                database,
+                Arc::clone(&store),
+                Some(disk.path().to_path_buf()),
+                split.total_size_bytes,
+                split.total_size_bytes - 1,
+                Duration::from_secs(1),
+            )
+        };
+        let publisher = restarted();
+        publisher
+            .ensure_artifact(&split)
+            .await
+            .expect("first hydration");
+        let metadata = publisher
+            .metadata_path(split.blob.sha256)
+            .expect("metadata path");
+
+        tokio_fs::remove_file(&metadata)
+            .await
+            .expect("forget the first use");
+        let opening = restarted();
+        let (opened, cleanup) =
+            tokio::join!(opening.get_or_open_split(&split), opening.cleanup_disk());
+        assert_eq!(opened.expect("disk open").total_docs(), 1);
+        cleanup.expect("cleanup");
+        let state = opening.snapshot();
+        assert_eq!(
+            (
+                state.disk_hits,
+                state.disk_corruptions,
+                state.disk_evictions
+            ),
+            (1, 0, 0)
+        );
+
+        tokio_fs::remove_file(&metadata)
+            .await
+            .expect("forget the disk open");
+        let hydrating = restarted();
+        let (reused, cleanup) =
+            tokio::join!(hydrating.ensure_artifact(&split), hydrating.cleanup_disk());
+        assert_eq!(
+            reused.expect("reuse"),
+            0,
+            "the artifact is not downloaded again"
+        );
+        cleanup.expect("cleanup");
+        assert_eq!(hydrating.snapshot().disk_evictions, 0);
+        assert!(tokio_fs::try_exists(
+            hydrating
+                .artifact_path(split.blob.sha256)
+                .expect("artifact path")
+        )
+        .await
+        .expect("artifact status"));
     }
 
     #[tokio::test]
