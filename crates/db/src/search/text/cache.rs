@@ -42,6 +42,11 @@ const METADATA_DIR: &str = "metadata";
 const STAGING_DIR: &str = "staging";
 const DEMAND_TRACKER_LIMIT: usize = 4096;
 const ACCESS_WRITE_INTERVAL: Duration = Duration::from_secs(60);
+/// Age past which `cleanup_disk` removes a staging file. A download writes
+/// its staging file as each chunk arrives and a hydration removes it
+/// however it ends, so one untouched this long was left by a killed
+/// process, never by a download still in flight in any handle.
+const STAGING_ORPHAN_AGE: Duration = Duration::from_secs(60 * 60);
 
 /// Validated cache tier retained by the FTS runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -309,6 +314,8 @@ impl Drop for DiskArtifactLease {
 /// Removes a hydration's staging file when dropped, which includes an
 /// aborted hydration dropped mid-download. After the rename that publishes
 /// it, the staging name no longer exists and the removal finds nothing.
+/// Only a killed process leaves a staging file, which `cleanup_disk`
+/// removes once it is [`STAGING_ORPHAN_AGE`] old.
 ///
 /// The unlink is synchronous because `Drop` cannot await, and one unlink is
 /// short enough to run on a runtime thread.
@@ -813,12 +820,19 @@ impl FtsCache {
         let result = async {
             let response = self.object_store.get(&object_path).await?;
             let mut stream = response.into_stream();
-            let mut file = tokio_fs::File::create(&staging).await.map_err(|error| {
-                HelixDbError::Config(format!(
-                    "failed to create FTS staging file '{}': {error}",
-                    staging.display()
-                ))
-            })?;
+            // Created synchronously, with no await between the guard and the
+            // file. An abort during an asynchronous create would run the
+            // guard first, and the create would then finish on the blocking
+            // pool and leave the file. One create is short enough to run on
+            // a runtime thread.
+            let mut file = fs::File::create(&staging)
+                .map(tokio_fs::File::from_std)
+                .map_err(|error| {
+                    HelixDbError::Config(format!(
+                        "failed to create FTS staging file '{}': {error}",
+                        staging.display()
+                    ))
+                })?;
             while let Some(chunk) = stream.try_next().await? {
                 file.write_all(&chunk).await.map_err(|error| {
                     HelixDbError::Config(format!(
@@ -873,20 +887,42 @@ impl FtsCache {
     }
 
     /// Evicts the least recently used disk artifacts down to the disk budget,
-    /// skipping leased ones and any used within the grace period.
+    /// skipping leased ones and any used within the grace period. First it
+    /// removes staging files older than [`STAGING_ORPHAN_AGE`], which only
+    /// a killed process leaves behind.
     ///
     /// Runs on the blocking pool, because each eviction unlinks
     /// synchronously while it holds the lease lock.
     pub(crate) async fn cleanup_disk(self: &Arc<Self>) -> Result<(), HelixDbError> {
-        let (Some(disk), Some(blob_dir)) = (self.config.disk(), self.blob_dir()) else {
+        let (Some(disk), Some(blob_dir), Some(staging_dir)) =
+            (self.config.disk(), self.blob_dir(), self.staging_dir())
+        else {
             return Ok(());
         };
         let budget = disk.bytes() as u64;
         let cache = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
+            let now = SystemTime::now();
+            fs::read_dir(&staging_dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.extension().is_some_and(|extension| extension == "tmp")
+                        && fs::metadata(path)
+                            .and_then(|metadata| metadata.modified())
+                            .is_ok_and(|modified| {
+                                now.duration_since(modified).unwrap_or_default()
+                                    >= STAGING_ORPHAN_AGE
+                            })
+                })
+                .for_each(|path| {
+                    let _ = fs::remove_file(path);
+                });
+
             let entries = read_disk_entries(&blob_dir, cache.metadata_dir().as_deref())?;
             let mut total = entries.iter().map(|entry| entry.size).sum::<u64>();
-            let now = SystemTime::now();
             for entry in entries {
                 if total <= budget {
                     break;
@@ -2014,6 +2050,41 @@ mod tests {
             ),
             (1, 0, 0)
         );
+    }
+
+    /// A process killed mid-download leaves its staging file behind. A trim
+    /// removes one nothing has written to for an hour, even with the blobs
+    /// under budget, and keeps a younger one a download may still own.
+    #[tokio::test]
+    async fn cleanup_removes_only_abandoned_staging_files() {
+        let database = "fts-cache-staging-sweep";
+        let disk = tempfile::tempdir().expect("disk cache");
+        let cache = cache(
+            database,
+            Arc::new(InMemory::new()),
+            Some(disk.path().to_path_buf()),
+            1,
+            1,
+            Duration::from_secs(1),
+        );
+        let staging = cache.staging_dir().expect("staging directory");
+        let [abandoned, in_flight] =
+            ["abandoned", "in-flight"].map(|name| staging.join(format!("{name}.tmp")));
+        for path in [&abandoned, &in_flight] {
+            fs::write(path, b"partial").expect("staging file");
+        }
+        fs::File::options()
+            .write(true)
+            .open(&abandoned)
+            .and_then(|file| {
+                file.set_modified(SystemTime::now() - STAGING_ORPHAN_AGE - Duration::from_secs(60))
+            })
+            .expect("age the abandoned download");
+
+        cache.cleanup_disk().await.expect("cleanup");
+        let remaining =
+            [&abandoned, &in_flight].map(|path| path.try_exists().expect("staging status"));
+        assert_eq!(remaining, [false, true]);
     }
 
     #[tokio::test]
