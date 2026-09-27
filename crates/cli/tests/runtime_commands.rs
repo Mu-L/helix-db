@@ -282,6 +282,25 @@ fn seaweedfs_readiness_failure_stops_before_starting_helix() {
     }
 }
 
+/// `cmd` reads a digit between a delimiter and `>` as a handle number, so a
+/// Windows fake that writes anything after `%*` silently drops the log line of
+/// a command whose last argument ends in, say, `=0`. Checked on every platform
+/// so the mistake fails before it reaches Windows CI.
+#[test]
+fn windows_fakes_expand_forwarded_arguments_only_at_the_end_of_a_line() {
+    let tools = support::FAKE_TOOLS.map(support::windows_fake_tool);
+    let scripts: Vec<&str> = std::iter::once(support::WINDOWS_FAKE_DOCKER)
+        .chain(tools.iter().map(String::as_str))
+        .collect();
+    assert!(scripts.iter().all(|script| script.contains("%*")));
+    let misplaced: Vec<&str> = scripts
+        .iter()
+        .flat_map(|script| script.lines())
+        .filter(|line| line.contains("%*") && !line.ends_with("%*"))
+        .collect();
+    assert!(misplaced.is_empty(), "{misplaced:#?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hash_suffixed_legacy_resources_are_adopted_on_upgrade() {
     let server = MockServer::start().await;

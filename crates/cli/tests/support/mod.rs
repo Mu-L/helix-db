@@ -213,12 +213,16 @@ impl CliFixture {
     }
 }
 
+/// The tools [`CliFixture::with_fake_tools`] installs.
+#[allow(dead_code)]
+pub const FAKE_TOOLS: [&str; 8] = [
+    "cargo", "node", "npm", "npx", "curl", "claude", "codex", "opencode",
+];
+
 #[allow(dead_code)]
 fn install_fake_tools(directory: &Path) {
     fs::create_dir_all(directory).expect("create fake tool directory");
-    for tool in [
-        "cargo", "node", "npm", "npx", "curl", "claude", "codex", "opencode",
-    ] {
+    for tool in FAKE_TOOLS {
         install_fake_tool(directory, tool);
     }
 }
@@ -226,7 +230,19 @@ fn install_fake_tools(directory: &Path) {
 #[cfg(windows)]
 #[allow(dead_code)]
 fn install_fake_tool(directory: &Path, tool: &str) {
-    let script = directory.join(format!("{tool}.cmd"));
+    fs::write(
+        directory.join(format!("{tool}.cmd")),
+        windows_fake_tool(tool),
+    )
+    .expect("write fake Windows tool");
+}
+
+/// The Windows fake for `tool`, which the CLI runs as `cmd /C call <tool>.cmd`.
+///
+/// It logs its arguments the way [`WINDOWS_FAKE_DOCKER`] does, and for the
+/// same reason: the redirection comes first and `%*` ends the line.
+#[allow(dead_code)]
+pub fn windows_fake_tool(tool: &str) -> String {
     let log_command = if tool == "node" {
         r#"if "%~1"=="--input-type" if defined HELIX_TEST_TOOL_LOG >>"%HELIX_TEST_TOOL_LOG%" echo(node --input-type=module
 if not "%~1"=="--input-type" if defined HELIX_TEST_TOOL_LOG >>"%HELIX_TEST_TOOL_LOG%" echo(node %*"#
@@ -234,10 +250,8 @@ if not "%~1"=="--input-type" if defined HELIX_TEST_TOOL_LOG >>"%HELIX_TEST_TOOL_
     } else {
         format!(r#"if defined HELIX_TEST_TOOL_LOG >>"%HELIX_TEST_TOOL_LOG%" echo({tool} %*"#)
     };
-    fs::write(
-        script,
-        format!(
-            r#"@echo off
+    format!(
+        r#"@echo off
 {log_command}
 set "HELIX_TEST_TOOL_FIRST_ARGUMENT=%~1"
 if "{tool}"=="node" if "%~1"=="--input-type" set "HELIX_TEST_TOOL_FIRST_ARGUMENT=--input-type=module"
@@ -259,9 +273,7 @@ if defined HELIX_TEST_TOOL_STDERR echo %HELIX_TEST_TOOL_STDERR% 1>&2
 if defined HELIX_TEST_TOOL_EXIT_CODE exit /b %HELIX_TEST_TOOL_EXIT_CODE%
 exit /b 0
 "#
-        ),
     )
-    .expect("write fake Windows tool");
 }
 
 #[cfg(not(windows))]
@@ -306,29 +318,24 @@ exit "${{HELIX_TEST_TOOL_EXIT_CODE:-0}}"
     fs::set_permissions(script, permissions).unwrap();
 }
 
-fn install_fake_docker(bin: &Path) -> PathBuf {
-    fs::create_dir_all(bin).expect("create fake docker bin");
-
-    // `cmd` expands every `%N` in a parenthesized block before it evaluates
-    // the block's condition, so an argument holding quotes, spaces, or
-    // parentheses aborts the whole script even when the block is skipped.
-    // `exec` forwards an arbitrary in-container command, so it must return
-    // before the first block that reads a positional argument past `%1`.
-    //
-    // Nothing may follow `%*` on a line. `cmd` reads a digit that sits between
-    // a delimiter (whitespace, `,`, `;`, or `=`) and `>` as a handle number,
-    // so `echo %*>>log` with a last argument of `-s3.port.lance=0` redirects
-    // stdin (handle 0) to the log and echoes the arguments to stdout instead.
-    // With the redirection first, the arguments end the line just as they
-    // ended the `cmd /C call` line that delivered them, so whatever survived
-    // that line survives this one. `echo(` also prints a first argument such
-    // as `off` or `/?` instead of acting on it. The fake tools log the same way.
-    #[cfg(windows)]
-    {
-        let script = bin.join("docker.cmd");
-        fs::write(
-            &script,
-            r#"@echo off
+/// The Windows fake runtime, which the CLI runs as `cmd /C call docker.cmd`.
+///
+/// `cmd` expands every `%N` in a parenthesized block before it evaluates the
+/// block's condition, so an argument holding quotes, spaces, or parentheses
+/// aborts the whole script even when the block is skipped. `exec` forwards an
+/// arbitrary in-container command, so it must return before the first block
+/// that reads a positional argument past `%1`.
+///
+/// Nothing may follow `%*` on a line. `cmd` reads a digit that sits between a
+/// delimiter (whitespace, `,`, `;`, or `=`) and `>` as a handle number, so
+/// `echo %*>>log` with a last argument of `-s3.port.lance=0` redirects stdin
+/// (handle 0) to the log and echoes the arguments to stdout instead. With the
+/// redirection first, the arguments end the line just as they ended the
+/// `cmd /C call` line that delivered them, so whatever survived that line
+/// survives this one. `echo(` also prints a first argument such as `off` or
+/// `/?` instead of acting on it.
+#[allow(dead_code)]
+pub const WINDOWS_FAKE_DOCKER: &str = r#"@echo off
 if defined HELIX_TEST_RUNTIME_LOG >>"%HELIX_TEST_RUNTIME_LOG%" echo(%*
 if /I "%1"=="%HELIX_TEST_RUNTIME_FAIL_COMMAND%" (
   echo simulated runtime failure 1>&2
@@ -449,9 +456,15 @@ if "%1"=="volume" (
   exit /b 1
 )
 exit /b 0
-"#,
-        )
-        .expect("write fake docker cmd");
+"#;
+
+fn install_fake_docker(bin: &Path) -> PathBuf {
+    fs::create_dir_all(bin).expect("create fake docker bin");
+
+    #[cfg(windows)]
+    {
+        let script = bin.join("docker.cmd");
+        fs::write(&script, WINDOWS_FAKE_DOCKER).expect("write fake docker cmd");
         script
     }
 
