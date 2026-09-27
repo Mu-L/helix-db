@@ -320,6 +320,10 @@ impl Drop for StagingFileGuard {
     }
 }
 
+/// Test hook that `cleanup_disk` calls with an eviction candidate's hash.
+#[cfg(test)]
+type EvictionHook = Box<dyn FnMut([u8; 32]) + Send>;
+
 pub(crate) struct FtsCache {
     db_path: String,
     object_store: Arc<dyn ObjectStore>,
@@ -336,6 +340,11 @@ pub(crate) struct FtsCache {
     stats: FtsStats,
     disk_artifact_count: AtomicU64,
     disk_artifact_bytes: AtomicU64,
+    /// Called by `cleanup_disk` with each eviction candidate's hash just
+    /// before it checks that candidate's lease, so a test can lease or
+    /// remove the artifact at that exact point.
+    #[cfg(test)]
+    before_eviction: Mutex<Option<EvictionHook>>,
 }
 
 impl FtsCache {
@@ -388,6 +397,8 @@ impl FtsCache {
             stats: FtsStats::default(),
             disk_artifact_count: AtomicU64::new(disk_artifact_count),
             disk_artifact_bytes: AtomicU64::new(disk_artifact_bytes),
+            #[cfg(test)]
+            before_eviction: Mutex::new(None),
         })
     }
 
@@ -890,48 +901,69 @@ impl FtsCache {
 
     /// Evicts the least recently used disk artifacts down to the disk budget,
     /// skipping leased ones and any used within the grace period.
-    pub(crate) async fn cleanup_disk(&self) -> Result<(), HelixDbError> {
-        let Some(disk) = self.config.disk() else {
+    ///
+    /// Runs on the blocking pool, because each eviction unlinks
+    /// synchronously while it holds the lease lock.
+    pub(crate) async fn cleanup_disk(self: &Arc<Self>) -> Result<(), HelixDbError> {
+        let (Some(disk), Some(blob_dir)) = (self.config.disk(), self.blob_dir()) else {
             return Ok(());
         };
-        let Some(blob_dir) = self.blob_dir() else {
-            return Ok(());
-        };
-        let entries = read_disk_entries(&blob_dir, self.metadata_dir().as_deref()).await?;
-        let mut total = entries.iter().map(|entry| entry.size).sum::<u64>();
-        if total <= disk.bytes() as u64 {
-            return Ok(());
-        }
-        let now = SystemTime::now();
-        let leased = self.artifact_leases.lock().clone();
-        for entry in entries {
-            if total <= disk.bytes() as u64 {
-                break;
+        let budget = disk.bytes() as u64;
+        let cache = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            let entries = read_disk_entries(&blob_dir, cache.metadata_dir().as_deref())?;
+            let mut total = entries.iter().map(|entry| entry.size).sum::<u64>();
+            let now = SystemTime::now();
+            for entry in entries {
+                if total <= budget {
+                    break;
+                }
+                if now.duration_since(entry.last_access).unwrap_or_default()
+                    < cache.config.generation_grace_period()
+                {
+                    continue;
+                }
+                #[cfg(test)]
+                {
+                    if let Some(hook) = cache.before_eviction.lock().as_mut() {
+                        hook(entry.sha256);
+                    }
+                }
+                // The lease check and the unlinks happen under the lease
+                // lock, which `DiskArtifactLease::acquire` also takes. A
+                // reader that leases this artifact at any point either
+                // finds it gone at its first check, a plain miss, or has
+                // its lease seen here. A copy of the leases taken earlier
+                // would miss a later lease and delete the file while it is
+                // hashed or opened.
+                {
+                    let leases = cache.artifact_leases.lock();
+                    if leases.contains_key(&entry.sha256) {
+                        continue;
+                    }
+                    fs::remove_file(&entry.path).map_err(|error| {
+                        HelixDbError::Config(format!(
+                            "failed to evict FTS artifact '{}': {error}",
+                            entry.path.display()
+                        ))
+                    })?;
+                    if let Some(metadata) = cache.metadata_path(entry.sha256) {
+                        let _ = fs::remove_file(metadata);
+                    }
+                }
+                atomic_saturating_sub(&cache.disk_artifact_count, 1);
+                atomic_saturating_sub(&cache.disk_artifact_bytes, entry.size);
+                cache
+                    .validated
+                    .lock()
+                    .retain(|key| key.sha256 != entry.sha256);
+                total = total.saturating_sub(entry.size);
+                cache.stats.disk_evictions.fetch_add(1, Ordering::Relaxed);
             }
-            if leased.contains_key(&entry.sha256)
-                || now.duration_since(entry.last_access).unwrap_or_default()
-                    < self.config.generation_grace_period()
-            {
-                continue;
-            }
-            tokio_fs::remove_file(&entry.path).await.map_err(|error| {
-                HelixDbError::Config(format!(
-                    "failed to evict FTS artifact '{}': {error}",
-                    entry.path.display()
-                ))
-            })?;
-            atomic_saturating_sub(&self.disk_artifact_count, 1);
-            atomic_saturating_sub(&self.disk_artifact_bytes, entry.size);
-            self.validated
-                .lock()
-                .retain(|key| key.sha256 != entry.sha256);
-            if let Some(metadata) = self.metadata_path(entry.sha256) {
-                let _ = tokio_fs::remove_file(metadata).await;
-            }
-            total = total.saturating_sub(entry.size);
-            self.stats.disk_evictions.fetch_add(1, Ordering::Relaxed);
-        }
-        Ok(())
+            Ok(())
+        })
+        .await
+        .map_err(|error| HelixDbError::Config(format!("FTS disk cleanup task failed: {error}")))?
     }
 
     async fn note_access(&self, sha256: [u8; 32], size: u64) {
@@ -1067,52 +1099,45 @@ struct DiskEntry {
     last_access: SystemTime,
 }
 
-async fn read_disk_entries(
+fn read_disk_entries(
     blob_dir: &Path,
     metadata_dir: Option<&Path>,
 ) -> Result<Vec<DiskEntry>, HelixDbError> {
-    let blob_dir = blob_dir.to_path_buf();
-    let metadata_dir = metadata_dir.map(Path::to_path_buf);
-    tokio::task::spawn_blocking(move || {
-        let mut entries = Vec::new();
-        for entry in fs::read_dir(&blob_dir).map_err(|error| {
-            HelixDbError::Config(format!(
-                "failed to scan FTS cache '{}': {error}",
-                blob_dir.display()
-            ))
-        })? {
-            let entry = entry.map_err(|error| HelixDbError::Config(error.to_string()))?;
-            let path = entry.path();
-            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-                continue;
-            };
-            let Some(sha256) = parse_sha(stem) else {
-                continue;
-            };
-            let size = entry
-                .metadata()
-                .map_err(|error| HelixDbError::Config(error.to_string()))?
-                .len();
-            let metadata = metadata_dir
-                .as_ref()
-                .map(|dir| dir.join(format!("{stem}.json")))
-                .and_then(|path| fs::read(path).ok())
-                .and_then(|bytes| serde_json::from_slice::<ArtifactMetadata>(&bytes).ok());
-            let last_access = metadata
-                .map(|metadata| UNIX_EPOCH + Duration::from_millis(metadata.last_access_unix_ms))
-                .unwrap_or(UNIX_EPOCH);
-            entries.push(DiskEntry {
-                sha256,
-                path,
-                size,
-                last_access,
-            });
-        }
-        entries.sort_by_key(|entry| entry.last_access);
-        Ok(entries)
-    })
-    .await
-    .map_err(|error| HelixDbError::Config(format!("FTS disk scan task failed: {error}")))?
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(blob_dir).map_err(|error| {
+        HelixDbError::Config(format!(
+            "failed to scan FTS cache '{}': {error}",
+            blob_dir.display()
+        ))
+    })? {
+        let entry = entry.map_err(|error| HelixDbError::Config(error.to_string()))?;
+        let path = entry.path();
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let Some(sha256) = parse_sha(stem) else {
+            continue;
+        };
+        let size = entry
+            .metadata()
+            .map_err(|error| HelixDbError::Config(error.to_string()))?
+            .len();
+        let metadata = metadata_dir
+            .map(|dir| dir.join(format!("{stem}.json")))
+            .and_then(|path| fs::read(path).ok())
+            .and_then(|bytes| serde_json::from_slice::<ArtifactMetadata>(&bytes).ok());
+        let last_access = metadata
+            .map(|metadata| UNIX_EPOCH + Duration::from_millis(metadata.last_access_unix_ms))
+            .unwrap_or(UNIX_EPOCH);
+        entries.push(DiskEntry {
+            sha256,
+            path,
+            size,
+            last_access,
+        });
+    }
+    entries.sort_by_key(|entry| entry.last_access);
+    Ok(entries)
 }
 
 fn disk_usage_sync(root: Option<&Path>) -> Result<(u64, u64), HelixDbError> {
@@ -1574,6 +1599,76 @@ mod tests {
         )
         .await
         .expect("artifact status"));
+    }
+
+    /// Cleanup checks each lease as it unlinks that artifact, so a lease
+    /// taken after cleanup listed its victims, here while it evicts an
+    /// older one, still keeps the artifact for the open that took it.
+    #[tokio::test]
+    async fn cleanup_spares_artifacts_leased_after_its_scan() {
+        let database = "fts-cache-late-lease";
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (bytes, split) = valid_split(20);
+        put_split(&store, database, bytes, &split).await;
+        let disk = tempfile::tempdir().expect("disk cache");
+        let cache = cache(
+            database,
+            store,
+            Some(disk.path().to_path_buf()),
+            split.total_size_bytes,
+            1,
+            Duration::from_secs(1),
+        );
+        cache
+            .ensure_artifact(&split)
+            .await
+            .expect("first hydration");
+        let older = [0xa0; 32];
+        tokio_fs::write(cache.artifact_path(older).expect("older path"), b"aa")
+            .await
+            .expect("older artifact");
+        for (last_access_unix_ms, (hash, size_bytes)) in
+            [(older, 2), (split.blob.sha256, split.blob.size_bytes)]
+                .into_iter()
+                .enumerate()
+        {
+            let metadata = serde_json::to_vec(&ArtifactMetadata {
+                size_bytes,
+                last_access_unix_ms: last_access_unix_ms as u64,
+            })
+            .expect("serialize metadata");
+            tokio_fs::write(cache.metadata_path(hash).expect("metadata path"), metadata)
+                .await
+                .expect("write metadata");
+        }
+        let late_lease = Arc::new(Mutex::new(None));
+        *cache.before_eviction.lock() = Some(Box::new({
+            let leases = Arc::clone(&cache.artifact_leases);
+            let late_lease = Arc::clone(&late_lease);
+            move |sha256| {
+                if sha256 == split.blob.sha256 {
+                    *late_lease.lock() = Some(DiskArtifactLease::acquire(sha256, &leases));
+                }
+            }
+        }));
+
+        cache.cleanup_disk().await.expect("cleanup");
+        assert!(
+            late_lease.lock().is_some(),
+            "cleanup reached the split after evicting the older artifact"
+        );
+        let opened = cache.get_or_open_split(&split).await.expect("disk open");
+        assert_eq!(opened.total_docs(), 1);
+        let state = cache.snapshot();
+        assert_eq!(
+            (
+                state.disk_hits,
+                state.disk_corruptions,
+                state.disk_evictions
+            ),
+            (1, 0, 1),
+            "only the older artifact is evicted"
+        );
     }
 
     /// Validation is remembered per key, but only while the validated file
