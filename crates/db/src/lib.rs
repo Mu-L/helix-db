@@ -538,8 +538,9 @@ const READER_VECTOR_REFRESH_MAX_BACKOFF_DOUBLINGS: u32 = 5;
 struct VectorMemoryCache {
     registry: Arc<search::vector::VectorCacheRegistry>,
     simhasher_registry: Arc<search::vector::SimHasherRegistry>,
-    /// How managed searches and mutations fetch row batches the resident
-    /// cache does not hold, fixed by whether SlateDB has a block cache.
+    /// How managed searches, mutations and lifecycle builds fetch row batches
+    /// the resident cache does not hold, fixed by whether SlateDB has a block
+    /// cache.
     batch_reads: search::vector::VectorBatchReads,
     refresh_task: Mutex<Option<VectorMemoryRefreshTask>>,
 }
@@ -1481,7 +1482,8 @@ impl HelixDB {
                 Arc::clone(&vector_memory.registry),
                 Arc::clone(&vector_memory.simhasher_registry),
             )
-            .with_scan_tuning(lifecycle_throughput.scan()),
+            .with_scan_tuning(lifecycle_throughput.scan())
+            .with_batch_reads(vector_memory.batch_reads),
         );
         let secondary_scheduling = index_scheduling.resolve(match secondary_tuning.worker_mode() {
             config::SecondaryIndexLifecycleWorkerMode::Enabled => {
