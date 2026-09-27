@@ -606,8 +606,9 @@ capped by `sysctl kern.maxfilesperproc`.
 
 Startup also fails with a message naming the variable when a size is invalid or
 out of range, a size is set without `HELIX_DISK_CACHE_DIR`, the cache directory is
-not writable, or another running server already uses it. Stop the old container
-before starting its replacement on the same cache directory.
+not writable or cannot be locked (some network and FUSE filesystems do not support
+locks), or another running server already uses it. Stop the old container before
+starting its replacement on the same cache directory.
 
 ## Stop or inspect
 
