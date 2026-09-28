@@ -82,8 +82,7 @@ must be writable by the container's `65532:65532` user and group.
 By default the server caches SlateDB blocks and full-text splits in memory only,
 so every cold read goes to the object store. Set `HELIX_DISK_CACHE_DIR` with S3 or
 `HELIX_DATA_DIR` storage to add memory-plus-disk caches on local disk, ideally
-NVMe. Published images up to and including v0.0.6 predate this and ignore these
-variables; use an image built from this checkout or a later release.
+NVMe. It needs v0.0.7 or later; v0.0.6 and earlier ignore these variables.
 
 ```bash
 sudo mkdir -p /data/helix-cache
