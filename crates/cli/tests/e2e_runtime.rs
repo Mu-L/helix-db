@@ -169,13 +169,7 @@ fn local_runtime_lifecycle_and_query_smoke() {
         fixture
             .command()
             .current_dir(&project)
-            .args([
-                "query",
-                "dev",
-                "--file",
-                "examples/request.json",
-                "--compact",
-            ])
+            .args(["query", "dev", "--file", "examples/request.json", "--json"])
             .assert()
             .success(),
     );
@@ -189,7 +183,7 @@ fn local_runtime_lifecycle_and_query_smoke() {
         .current_dir(&project)
         .args(["query", "dev", "--file"])
         .arg(&write_request)
-        .arg("--compact")
+        .arg("--json")
         .assert()
         .success();
 
@@ -202,7 +196,7 @@ fn local_runtime_lifecycle_and_query_smoke() {
             .current_dir(&project)
             .args(["query", "dev", "--file"])
             .arg(&read_request)
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );
@@ -287,7 +281,7 @@ fn disk_runtime_persists_data_across_stop_and_start() {
         .current_dir(&project)
         .args(["query", "dev", "--file"])
         .arg(&write_request)
-        .arg("--compact")
+        .arg("--json")
         .assert()
         .success();
     // A restart must retain the image even when project settings now name an
@@ -309,7 +303,7 @@ fn disk_runtime_persists_data_across_stop_and_start() {
             .current_dir(&project)
             .args(["query", "dev", "--file"])
             .arg(&read_request)
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );
@@ -335,7 +329,7 @@ fn disk_runtime_persists_data_across_stop_and_start() {
             .current_dir(&project)
             .args(["query", "dev", "--file"])
             .arg(&read_request)
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );

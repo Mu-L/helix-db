@@ -65,7 +65,7 @@ database = "tenant:tenant-1"
             .current_dir(&project)
             .args(["query", "--body"])
             .arg(request.to_string())
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );
@@ -77,17 +77,9 @@ async fn cloud_query_accepts_an_explicit_typed_database_target() {
     let server = MockServer::start().await;
     let fixture = CliFixture::new().with_http_base(server.uri());
     fixture.write_credentials("user@example.com", "session-access");
-    let project = fixture.root().join("explicit-cloud-query");
+    // A typed database target needs no helix.toml at all.
+    let project = fixture.root().join("no-project-here");
     fs::create_dir_all(&project).unwrap();
-    fs::write(
-        project.join("helix.toml"),
-        r#"[project]
-name = "explicit-cloud-query"
-
-[local.dev]
-"#,
-    )
-    .unwrap();
     let request = serde_json::json!({
         "request_type":"read",
         "query":{"queries":[],"returns":[]}
@@ -115,7 +107,7 @@ name = "explicit-cloud-query"
             .current_dir(&project)
             .args(["query", "tenant:tenant-2", "--body"])
             .arg(request.to_string())
-            .arg("--compact")
+            .arg("--json")
             .assert()
             .success(),
     );
@@ -152,8 +144,10 @@ database = "tenant:tenant-1"
             .assert()
             .failure(),
     );
-    assert!(error.contains("Cannot derive an unambiguous query target"));
-    assert!(error.contains("preview, production"));
+    assert!(error.contains("no default query target"), "{error}");
+    assert!(error.contains("candidates:"), "{error}");
+    assert!(error.contains("preview"), "{error}");
+    assert!(error.contains("production"), "{error}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -334,7 +328,7 @@ async fn query_command_preserves_the_shared_transport_corpus() {
                     &server.address().ip().to_string(),
                     "--port",
                     &server.address().port().to_string(),
-                    "--compact",
+                    "--json",
                 ])
                 .assert()
                 .success(),

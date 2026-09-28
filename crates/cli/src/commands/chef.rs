@@ -1212,10 +1212,7 @@ async fn seed_starter_data() -> Result<()> {
             None,
             None,
             None,
-            false,
-            None,
-            None,
-            false,
+            Default::default(),
         )
     })
     .await

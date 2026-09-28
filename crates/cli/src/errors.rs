@@ -139,11 +139,15 @@ impl CliError {
             .then(|| "candidates:".to_owned())
             .into_iter()
             .chain(self.candidates.iter().map(|candidate| {
-                format!(
-                    "  {:<name_width$}  {}",
-                    candidate.name,
-                    style(&candidate.id).dim().for_stderr()
-                )
+                if candidate.name == candidate.id {
+                    format!("  {}", candidate.id)
+                } else {
+                    format!(
+                        "  {:<name_width$}  {}",
+                        candidate.name,
+                        style(&candidate.id).dim().for_stderr()
+                    )
+                }
             }));
         std::iter::once(header)
             .chain(
@@ -445,15 +449,21 @@ mod tests {
             .with_context("first line\nsecond line")
             .with_caused_by("invalid value\nmore detail")
             .with_hint("fix the value")
-            .with_candidates(vec![Candidate {
-                id: "ws-1".into(),
-                name: "Acme".into(),
-            }])
+            .with_candidates(vec![
+                Candidate {
+                    id: "ws-1".into(),
+                    name: "Acme".into(),
+                },
+                Candidate {
+                    id: "dev".into(),
+                    name: "dev".into(),
+                },
+            ])
             .render();
         let plain = console::strip_ansi_codes(&rendered);
         assert_eq!(
             plain,
-            "■  careful\n│  first line\n│  second line\n│  caused by: invalid value\n│    more detail\n│  hint: fix the value\n│  candidates:\n│    Acme  ws-1\n"
+            "■  careful\n│  first line\n│  second line\n│  caused by: invalid value\n│    more detail\n│  hint: fix the value\n│  candidates:\n│    Acme  ws-1\n│    dev\n"
         );
     }
 

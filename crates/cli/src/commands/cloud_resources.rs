@@ -347,8 +347,13 @@ pub async fn run_api(action: CloudApiAction) -> Result<()> {
                 .await?
         }
     };
-    println!("{}", serde_json::to_string_pretty(&value)?);
-    Ok(())
+    crate::output::emit(&value, |value| {
+        println!(
+            "{}",
+            crate::output::json::pretty(value, console::colors_enabled())
+        );
+        Ok(())
+    })
 }
 
 fn resolve_database(database: Option<String>) -> Result<DatabaseReference> {

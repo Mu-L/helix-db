@@ -208,20 +208,14 @@ Docs: https://docs.helix-db.com/cli/command-reference/query"#)]
         #[arg(long, value_name = "PORT", help_heading = "Connection")]
         port: Option<u16>,
         /// Pre-warm caches with X-Helix-Warm (read requests only)
-        #[arg(long, help_heading = "Output")]
+        #[arg(long, help_heading = "Connection")]
         warm: bool,
-        /// Print compact single-line JSON
-        #[arg(long, help_heading = "Output")]
-        compact: bool,
     },
 
     /// Open an interactive v3 JSON query shell
     Shell {
         /// Instance or typed database; defaults to dev or the sole linked target
         instance: Option<String>,
-        /// Print compact single-line JSON
-        #[arg(long)]
-        compact: bool,
     },
 
     /// Log in to Helix Cloud and inspect the session
@@ -643,14 +637,19 @@ async fn main() -> Result<()> {
             warm,
             host,
             port,
-            compact,
             ..
         }) => {
-            commands::query::run(instance, file, body, ts, ts_file, warm, host, port, compact).await
+            commands::query::run(
+                instance,
+                file,
+                body,
+                ts,
+                ts_file,
+                commands::query::LocalOverrides { warm, host, port },
+            )
+            .await
         }
-        Some(Commands::Shell { instance, compact }) => {
-            commands::shell::run(instance, compact).await
-        }
+        Some(Commands::Shell { instance }) => commands::shell::run(instance).await,
         Some(Commands::Auth { action }) => commands::auth::run(action).await,
         Some(Commands::Config { action }) => commands::config::run(action).await,
         Some(Commands::Workspace { action }) => commands::config::run_workspace(action).await,
@@ -1543,6 +1542,9 @@ mod tests {
         // Options are grouped under scannable headings.
         assert!(help.contains("Input (pick one):"), "input heading missing");
         assert!(help.contains("Connection:"), "connection heading missing");
-        assert!(help.contains("Output:"), "output heading missing");
+        assert!(
+            !help.contains("--compact"),
+            "--compact was replaced by --json"
+        );
     }
 }

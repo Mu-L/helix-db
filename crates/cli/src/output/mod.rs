@@ -284,10 +284,9 @@ pub fn next_steps<S: AsRef<str>>(steps: &[S]) {
     note("Next steps", &body);
 }
 
-/// Print a failed command's error to stderr: the cliclack-styled block in
-/// human mode, or `{"error": {...}}` in JSON mode.
-pub fn report_error(report: &eyre::Report) {
-    let error = CliError::from_report(report);
+/// Print an error to stderr without ending the process: the cliclack-styled
+/// block in human mode, or `{"error": {...}}` in JSON mode.
+pub fn print_error(error: &CliError) {
     match OutputMode::current() {
         OutputMode::Json => {
             /// Field order is part of the contract, so serialize a struct
@@ -296,16 +295,19 @@ pub fn report_error(report: &eyre::Report) {
             struct Envelope<'a> {
                 error: &'a CliError,
             }
-            let json = serde_json::to_string(&Envelope { error: &error })
+            let json = serde_json::to_string(&Envelope { error })
                 .expect("CliError holds only strings and always serializes");
             eprintln!("{json}");
         }
-        OutputMode::Human(_) => {
-            eprint!("{}", error.render());
-            if SESSION_OPEN.swap(false, Ordering::Relaxed) {
-                eprintln!("{}", style("└").dim().for_stderr());
-            }
-        }
+        OutputMode::Human(_) => eprint!("{}", error.render()),
+    }
+}
+
+/// Report the error that failed the command, closing any open session.
+pub fn report_error(report: &eyre::Report) {
+    print_error(&CliError::from_report(report));
+    if !OutputMode::current().is_json() && SESSION_OPEN.swap(false, Ordering::Relaxed) {
+        eprintln!("{}", style("└").dim().for_stderr());
     }
 }
 
