@@ -85,15 +85,11 @@ capacity of the machines that serve it while latency and cost stay low.
 
 ## Next steps
 
-  <Card title="Get started" icon="rocket" href="/database/helix-db/start-here/quickstart" cta="Start building">
     Start a local instance and run the generated query.
-  </Card>
-  <Card title="Understand the data model" icon="diagram-project" href="/database/helix-db/core-concepts/data-model" cta="Explore the model">
+
     Learn how nodes, edges, properties, and indexes represent your data.
-  </Card>
-  <Card title="Plan a Cloud workload" icon="cloud" href="mailto:founders@helix-db.com" cta="Contact the founders">
+
     Discuss large-scale Helix Cloud workloads with the founding team.
-  </Card>
 
 # Get started
 
@@ -108,8 +104,6 @@ instance.
 - Docker, or Podman configured as described below
 - A terminal on macOS or Linux, or PowerShell on Windows
 
-  <Step title="Install the CLI">
-
 macOS and Linux:
 
 ```bash
@@ -123,9 +117,6 @@ irm https://raw.githubusercontent.com/HelixDB/helix-db/main/crates/cli/install.p
 ```
 
 If the CLI is already installed, run [`helix update`](/cli/command-reference/update).
-
-  </Step>
-  <Step title="Create a local project">
 
 Create and enter an empty directory, then initialize it:
 
@@ -150,9 +141,6 @@ If you use Podman, set `container_runtime = "podman"` under `[project]` in
 `helix.toml` before you start the generated instance. New projects otherwise
 default to Docker.
 
-  </Step>
-  <Step title="Start the generated instance">
-
 ```bash
 helix start dev
 ```
@@ -163,9 +151,6 @@ and waits for the database health check before it returns.
 The default storage mode is in-memory. Stopping the instance removes its data.
 Use `helix start dev --disk` when you need local persistence.
 
-  </Step>
-  <Step title="Run the generated query">
-
 ```bash
 helix query dev --file examples/request.json
 ```
@@ -174,17 +159,12 @@ The generated request counts nodes with the `User` label. A new database
 returns a `node_count` of zero. Edit the JSON file and run the same command
 again to iterate.
 
-  </Step>
-  <Step title="Stop the instance">
-
 ```bash
 helix stop dev
 ```
 
 `helix stop` is idempotent, so it also exits successfully when the instance is
 already stopped.
-
-  </Step>
 
 ## Use an SDK
 
@@ -210,33 +190,23 @@ python -m pip install helix-db==0.3.4
 
 Continue with the full setup guide for your language:
 
-  <Card title="Rust SDK" icon="code" href="/database/helix-db/start-here/sdk-setup/rust-project-setup">
     Build and execute typed Rust queries.
-  </Card>
-  <Card title="TypeScript SDK" icon="code" href="/database/helix-db/start-here/sdk-setup/typescript-project-setup">
+
     Build and execute TypeScript queries.
-  </Card>
-  <Card title="Go SDK" icon="code" href="/database/helix-db/start-here/sdk-setup/go-project-setup">
+
     Build and execute Go queries.
-  </Card>
-  <Card title="Python SDK" icon="code" href="/database/helix-db/start-here/sdk-setup/python-project-setup">
+
     Build and execute synchronous or asynchronous Python queries.
-  </Card>
 
 ## Next steps
 
-  <Card title="Query walkthrough" icon="route" href="/database/helix-db/core-concepts/overview">
     Learn how SDK builders become the JSON request sent to HelixDB.
-  </Card>
-  <Card title="Data model" icon="diagram-project" href="/database/helix-db/core-concepts/data-model">
+
     Learn how nodes, edges, labels, and properties fit together.
-  </Card>
-  <Card title="Writing data" icon="pen" href="/database/helix-db/query-guides/writing-data">
+
     Add, update, and remove graph data.
-  </Card>
-  <Card title="CLI reference" icon="terminal" href="/cli/command-reference">
+
     See every current CLI command and option.
-  </Card>
 
 # Deployment options
 
@@ -281,15 +251,11 @@ TypeScript, and Python ship embedded runtimes; the Go SDK is currently HTTP-only
 
 ## Next steps
 
-  <Card title="Local server" icon="computer" href="/database/helix-db/start-here/local-development/local-server">
     Run the server locally with memory or persistent storage.
-  </Card>
-  <Card title="Helix Cloud" icon="cloud" href="/database/helix-cloud/start-here/using-the-cloud">
+
     Create a managed database and connect to it.
-  </Card>
-  <Card title="Embedded" icon="microchip" href="/database/helix-db/start-here/local-development/embedded-database">
+
     Open a writer or reader and review current SDK availability.
-  </Card>
 
 # Local server
 
@@ -354,8 +320,6 @@ AWS_SECRET_ACCESS_KEY=your-secret-key
 # AWS_SESSION_TOKEN=your-session-token
 ```
 
-  <Tab title="S3-compatible">
-
 ```bash
 helix start dev \
   --storage-uri s3://helix-db/my-app \
@@ -366,17 +330,12 @@ helix start dev \
 
 Add `--s3-allow-http` only for a plain HTTP endpoint.
 
-  </Tab>
-  <Tab title="AWS S3">
-
 ```bash
 helix start dev \
   --storage-uri s3://my-bucket/my-app \
   --s3-region eu-west-2 \
   --persist
 ```
-
-  </Tab>
 
 `--persist` stores the resolved configuration in `helix.toml`. Helix does not delete
 externally managed object-store data during stop, restart, or prune.
@@ -623,18 +582,13 @@ helix stop dev
 
 ## Next steps
 
-  <Card title="Get started" icon="rocket" href="/database/helix-db/start-here/quickstart">
     Create a project and run your first query.
-  </Card>
-  <Card title="Embedded database" icon="microchip" href="/database/helix-db/start-here/local-development/embedded-database">
+
     Open HelixDB directly inside your process.
-  </Card>
-  <Card title="Helix Cloud" icon="cloud" href="/database/helix-cloud/start-here/using-the-cloud">
+
     Move the same application requests to a managed cluster.
-  </Card>
-  <Card title="Local CLI workflow" icon="terminal" href="/cli/workflows/local">
+
     Manage instances and raw requests.
-  </Card>
 
 # Embedded database
 
@@ -836,12 +790,9 @@ reader = Client.embedded_reader(Disk("/data/helix", "app"))
 
 ## Next steps
 
-  <Card title="Local server" icon="computer" href="/database/helix-db/start-here/local-development/local-server">
     Run the production-shaped HTTP interface on your machine.
-  </Card>
-  <Card title="Deployment options" icon="server" href="/database/helix-db/start-here/run-modes">
+
     Compare local server, embedded, and Cloud execution.
-  </Card>
 
 # SDK setup
 
@@ -858,18 +809,13 @@ your application's language:
 | Go | `github.com/helixdb/helix-db/sdks/go` | Yes | Not yet |
 | Python | `helix-db` (imported as `helixdb`) | Sync and async | Yes, with `helix-db-embedded` |
 
-  <Card title="Rust" icon="rust" href="/database/helix-db/start-here/sdk-setup/rust-project-setup">
     Typed DSL, `#[query]` macro, and async HTTP client.
-  </Card>
-  <Card title="TypeScript" icon="square-js" href="/database/helix-db/start-here/sdk-setup/typescript-project-setup">
+
     Typed DSL and async client for Node.js 20 or newer.
-  </Card>
-  <Card title="Go" icon="golang" href="/database/helix-db/start-here/sdk-setup/go-project-setup">
+
     Query builder and HTTP client.
-  </Card>
-  <Card title="Python" icon="python" href="/database/helix-db/start-here/sdk-setup/python-project-setup">
+
     Synchronous and asynchronous clients.
-  </Card>
 
 ## Next steps
 
@@ -975,12 +921,9 @@ cargo check --manifest-path sdks/rust/Cargo.toml --example readme_macros_query
 
 ## Next steps
 
-  <Card title="Query tutorial" icon="route" href="/database/helix-db/core-concepts/overview">
     Learn the batch and traversal model.
-  </Card>
-  <Card title="Reading data" icon="database" href="/database/helix-db/query-guides/reading-data">
+
     Select data by ID, label, or indexed property.
-  </Card>
 
 # TypeScript SDK
 
@@ -1067,12 +1010,9 @@ npm --prefix sdks/typescript test
 
 ## Next steps
 
-  <Card title="Query tutorial" icon="route" href="/database/helix-db/core-concepts/overview">
     Build reads, writes, and parameters.
-  </Card>
-  <Card title="Embedded database" icon="microchip" href="/database/helix-db/start-here/local-development/embedded-database">
+
     Open HelixDB directly inside your process.
-  </Card>
 
 # Go SDK
 
@@ -1153,12 +1093,9 @@ go test ./...
 
 ## Next steps
 
-  <Card title="Parameters" icon="sliders" href="/database/helix-db/query-guides/parameters">
     Bind typed values and bounds.
-  </Card>
-  <Card title="Troubleshooting" icon="wrench" href="/database/helix-db/query-guides/troubleshooting">
+
     Diagnose validation, conflict, and runtime failures.
-  </Card>
 
 # Python SDK
 
@@ -1284,12 +1221,9 @@ python -m unittest discover sdks/python/tests
 
 ## Next steps
 
-  <Card title="Query tutorial" icon="route" href="/database/helix-db/core-concepts/overview">
     Follow the shared batch and traversal model.
-  </Card>
-  <Card title="Embedded database" icon="microchip" href="/database/helix-db/start-here/local-development/embedded-database">
+
     Open an in-process writer or reader.
-  </Card>
 
 # Roadmap
 
@@ -1498,27 +1432,19 @@ query examples.
 
 ## Next steps
 
-  <Card title="Query walkthrough" icon="rocket" href="/database/helix-db/core-concepts/overview">
     See this model in one query, operation by operation.
-  </Card>
-  <Card title="Writing data" icon="pen" href="/database/helix-db/query-guides/writing-data">
+
     Create nodes and directed relationships, then update or remove them.
-  </Card>
-  <Card title="Reading data" icon="database" href="/database/helix-db/query-guides/reading-data">
+
     Select graph data by ID, label, property, or previous result.
-  </Card>
-  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+
     Follow outgoing and incoming relationships through the graph.
-  </Card>
-  <Card title="Secondary indexes" icon="list" href="/database/helix-db/query-guides/secondary-indexes">
+
     Accelerate exact, unique, ordered, and range lookups.
-  </Card>
-  <Card title="Text indexes" icon="align-left" href="/database/helix-db/query-guides/text-indexes">
+
     Add BM25-ranked search to string properties.
-  </Card>
-  <Card title="Vector indexes" icon="vector-square" href="/database/helix-db/query-guides/vector-indexes">
+
     Rank numeric embeddings by distance.
-  </Card>
 
 # Build and run a query
 
@@ -2274,18 +2200,13 @@ A label scan reads every `User`. Add a
 
 ## Next steps
 
-  <Card title="Writing data" icon="pen" href="/database/helix-db/query-guides/writing-data">
     Use a write batch for graph mutations.
-  </Card>
-  <Card title="Reading data" icon="database" href="/database/helix-db/query-guides/reading-data">
+
     Choose an efficient source for a traversal.
-  </Card>
-  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+
     Follow relationships and keep correlated values.
-  </Card>
-  <Card title="Add parameters" icon="sliders" href="/database/helix-db/query-guides/parameters">
+
     Separate runtime values from the stable AST.
-  </Card>
 
 # Writing data
 
@@ -2444,12 +2365,9 @@ unless the full request is safe to replay.
 
 ## Next steps
 
-  <Card title="Typed parameters" icon="sliders" href="/database/helix-db/query-guides/parameters">
     Pass request-specific values without changing the AST shape.
-  </Card>
-  <Card title="Secondary indexes" icon="list" href="/database/helix-db/query-guides/secondary-indexes">
+
     Accelerate equality, uniqueness, and range lookups.
-  </Card>
 
 # Reading data
 
@@ -2632,12 +2550,9 @@ routes.
 
 ## Next steps
 
-  <Card title="Traverse relationships" icon="route" href="/database/helix-db/query-guides/traversals">
     Follow outgoing and incoming edges.
-  </Card>
-  <Card title="Filter and order" icon="filter" href="/database/helix-db/query-guides/filtering">
+
     Narrow and page the current stream.
-  </Card>
 
 # Traverse relationships
 
@@ -2926,12 +2841,9 @@ them during projection; see [Project correlated bindings](/database/helix-db/que
 
 ## Next steps
 
-  <Card title="Project response rows" icon="table-columns" href="/database/helix-db/query-guides/projections">
     Shape current values and named bindings.
-  </Card>
-  <Card title="Branch and repeat" icon="code-branch" href="/database/helix-db/query-guides/advanced">
+
     Compose optional, union, choose, and repeat operations.
-  </Card>
 
 # Filtering
 
@@ -3054,15 +2966,11 @@ See [Full-text search prefiltering](/database/helix-db/query-guides/prefiltering
 
 ## Next steps
 
-  <Card title="Typed parameters" icon="sliders" href="/database/helix-db/query-guides/parameters">
     Move request-specific filter values out of the AST.
-  </Card>
-  <Card title="Secondary indexes" icon="gauge-high" href="/database/helix-db/query-guides/secondary-indexes">
+
     Back equality and range predicates with an index.
-  </Card>
-  <Card title="Prefiltered search" icon="filter" href="/database/helix-db/query-guides/prefiltering">
+
     Rank only the records a traversal reaches.
-  </Card>
 
 # Shape query results
 
@@ -3442,12 +3350,9 @@ inside the transaction instead of materializing every row in the client.
 
 ## Next steps
 
-  <Card title="Bindings and branches" icon="code-branch" href="/database/helix-db/query-guides/advanced">
     Preserve row-local values across optional and union operations.
-  </Card>
-  <Card title="Vector search" icon="magnifying-glass" href="/database/helix-db/query-guides/vector-indexes">
+
     Create an index, rank vector hits, and preserve distance metadata.
-  </Card>
 
 # Bind typed query parameters
 
@@ -3627,12 +3532,9 @@ the request at runtime and send it to `POST /v2/query`.
 
 ## Next steps
 
-  <Card title="Writing data" icon="pen" href="/database/helix-db/query-guides/writing-data">
     Pass runtime values into create, update, and delete operations.
-  </Card>
-  <Card title="Reading data" icon="database" href="/database/helix-db/query-guides/reading-data">
+
     Apply parameters to indexed sources and filters.
-  </Card>
 
 # Branch, repeat, and condition queries
 
@@ -3789,12 +3691,9 @@ all work performed before that operation.
 
 ## Next steps
 
-  <Card title="Projection and bindings" icon="table-columns" href="/database/helix-db/query-guides/projections">
     Emit stable rows from correlated paths.
-  </Card>
-  <Card title="Parameters" icon="sliders" href="/database/helix-db/query-guides/parameters">
+
     Bind values and bounds at request time.
-  </Card>
 
 # Secondary indexes
 
@@ -3905,12 +3804,9 @@ the source data, then retry the same operation instead of creating a new definit
 
 ## Next steps
 
-  <Card title="Troubleshoot index operations" icon="wrench" href="/database/helix-db/query-guides/troubleshooting#index-operation-is-blocked">
     Resolve blocked builds and lifecycle errors.
-  </Card>
-  <Card title="Filtering" icon="filter" href="/database/helix-db/query-guides/filtering">
+
     Match predicates to source and post-traversal filters.
-  </Card>
 
 # Vector indexes
 
@@ -4134,18 +4030,13 @@ bound from the surrounding plan can lower it. Prefiltered searches have their ow
 
 ## Next steps
 
-  <Card title="Project search results" icon="table-columns" href="/database/helix-db/query-guides/projections">
     Preserve ranked hit metadata before continuing a traversal.
-  </Card>
-  <Card title="Text indexes" icon="align-left" href="/database/helix-db/query-guides/text-indexes">
+
     Rank string properties with BM25 keyword search.
-  </Card>
-  <Card title="Troubleshoot index operations" icon="wrench" href="/database/helix-db/query-guides/troubleshooting#index-operation-is-blocked">
+
     Resolve blocked builds and lifecycle errors.
-  </Card>
-  <Card title="Limits" icon="gauge" href="/database/helix-cloud/operate/limits#vector-indexes">
+
     Review supported property types and search limits.
-  </Card>
 
 # Text indexes
 
@@ -4331,18 +4222,13 @@ Prefiltered searches have their own [limits](/database/helix-db/query-guides/pre
 
 ## Next steps
 
-  <Card title="Project search results" icon="table-columns" href="/database/helix-db/query-guides/projections">
     Preserve ranked hit metadata before continuing a traversal.
-  </Card>
-  <Card title="Vector indexes" icon="vector-square" href="/database/helix-db/query-guides/vector-indexes">
+
     Rank embeddings by semantic similarity.
-  </Card>
-  <Card title="Troubleshoot index operations" icon="wrench" href="/database/helix-db/query-guides/troubleshooting#index-operation-is-blocked">
+
     Resolve blocked builds and lifecycle errors.
-  </Card>
-  <Card title="Limits" icon="gauge" href="/database/helix-cloud/operate/limits#text-indexes">
+
     Review analyzers, supported types, and search limits.
-  </Card>
 
 # Prefiltered search
 
@@ -4793,18 +4679,13 @@ stream. Go has separate node and edge methods.
 
 ## Next steps
 
-  <Card title="Vector indexes" icon="vector-square" href="/database/helix-db/query-guides/vector-indexes">
     Create the dimensioned index used for ranking.
-  </Card>
-  <Card title="Text indexes" icon="align-left" href="/database/helix-db/query-guides/text-indexes">
+
     Create the BM25 index used for full-text ranking.
-  </Card>
-  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+
     Build the candidate set by following relationships.
-  </Card>
-  <Card title="Project search results" icon="table-columns" href="/database/helix-db/query-guides/projections">
+
     Preserve ranked hit metadata before continuing a traversal.
-  </Card>
 
 # HelixDB HTTP API and OpenAPI specification
 
@@ -5394,42 +5275,6 @@ Page type: Tutorial
 Use Helix Cloud to create a workspace, choose a monthly plan shared by its
 databases, provision a database, and create API keys.
 
-    </Frame>
-  </Step>
-
-  <Step title="Create a workspace and choose a plan">
-    Enter a workspace name, choose a monthly plan, and select **Create
-    workspace**. The plan's read and write allowances are shared by every
-    database in the workspace. You can change the plan later from **Billing**.
-
-    <Frame>
-      <img src="/images/helix-cloud/dashboard/02-create-workspace.png" alt="Create a workspace form with workspace name and monthly plan options" />
-    </Frame>
-  </Step>
-
-  <Step title="Create a database">
-    Enter a database name and select **Create Database**. Helix Cloud generates
-    its URL slug. The database has isolated data and uses the workspace's shared
-    monthly allowance. Database creation creates a default read-write API key
-    and displays its token once. Save it immediately in the application's
-    secrets manager; Helix cannot show it again.
-
-    <Frame>
-      <img src="/images/helix-cloud/dashboard/03-create-database.png" alt="Create a Database form with a database name field" />
-    </Frame>
-  </Step>
-
-  <Step title="Copy the connection details">
-    Wait for the database status to become **Active**, then open it. In
-    **Connect**, copy the endpoint and database ID. To connect an application
-    directly to the gateway, use **API Keys** to explicitly create a read-only
-    or read-write key and copy its value when it is shown once.
-
-    <Frame>
-      <img src="/images/helix-cloud/dashboard/04-database-details.png" alt="Active database details page with connection details, workspace plan, API keys, and query insights" />
-    </Frame>
-  </Step>
-
 ## Test the connection
 
 Set the three values copied from the database page, then count the database's
@@ -5474,18 +5319,13 @@ to source control.
 
 ## Next steps
 
-  <Card title="Connect an application" icon="plug" href="/database/helix-cloud/start-here/working-with-enterprise">
     Connect from an SDK and understand Cloud request routing.
-  </Card>
-  <Card title="Security" icon="lock" href="/database/helix-cloud/operate/security">
+
     Review authentication, encryption, and API key handling.
-  </Card>
-  <Card title="TypeScript SDK setup" icon="code" href="/database/helix-db/start-here/sdk-setup/typescript-project-setup">
+
     Install the SDK and connect a Node.js application.
-  </Card>
-  <Card title="Query walkthrough" icon="rocket" href="/database/helix-db/core-concepts/overview">
+
     Build and run a query step by step.
-  </Card>
 
 # Connect to Helix Cloud
 
@@ -5611,18 +5451,13 @@ execution. A managed cluster with no eligible warming target returns
 
 ## Next steps
 
-  <Card title="Architecture" icon="sitemap" href="/database/helix-cloud/start-here/architecture">
     Understand readers, the writer, storage, and routing.
-  </Card>
-  <Card title="Guarantees" icon="shield-check" href="/database/helix-cloud/operate/guarantees">
+
     Review transaction and durability behavior.
-  </Card>
-  <Card title="Security" icon="lock" href="/database/helix-cloud/operate/security">
+
     Handle authentication and tenant isolation.
-  </Card>
-  <Card title="Cloud CLI workflow" icon="terminal" href="/cli/workflows/helix_cloud">
+
     Authenticate and connect a project.
-  </Card>
 
 # Architecture
 
@@ -5710,18 +5545,13 @@ regardless of cache state; caching affects latency, not correctness.
 
 ## Next steps
 
-  <Card title="Data Model" icon="diagram-project" href="/database/helix-db/core-concepts/data-model">
     Nodes, edges, properties, and the labeled multigraph model.
-  </Card>
-  <Card title="Indexing" icon="layer-group" href="/database/helix-db/query-guides/secondary-indexes">
+
     Secondary, vector, and text indexes over the property graph.
-  </Card>
-  <Card title="Reading data" icon="magnifying-glass" href="/database/helix-db/query-guides/reading-data">
+
     Select and traverse graph data with the SDKs.
-  </Card>
-  <Card title="Guarantees" icon="shield-check" href="/database/helix-cloud/operate/guarantees">
+
     Consistency, durability, and isolation under this architecture.
-  </Card>
 
 # Helix Cloud MCP
 
@@ -6659,11 +6489,6 @@ need a gateway URL, application key, service credential, or sync step.
 If a command cannot derive one target, pass an explicit workspace/project or `cluster:<id>` /
 `tenant:<id>`. Stable links live only in the current project's `helix.toml`.
 
-  <Card title="Local workflow" href="/cli/workflows/local">Run and query a local instance</Card>
-  <Card title="Cloud workflow" href="/cli/workflows/helix_cloud">Use the session-authenticated Cloud CLI</Card>
-  <Card title="Command reference" href="/cli/command-reference">See every retained command</Card>
-  <Card title="Troubleshooting" href="/cli/troubleshooting">Resolve common errors</Card>
-
 # Local development
 
 Page type: Guide
@@ -6687,8 +6512,7 @@ helix chef
 
 Use the manual flow below when you want to scaffold and run each step yourself.
 
-  <Step title="Scaffold a project">
-    ```bash
+```bash
     mkdir my-helix-app
     cd my-helix-app
     helix init local
@@ -6697,10 +6521,8 @@ Use the manual flow below when you want to scaffold and run each step yourself.
     `helix init local` creates `helix.toml`, `.helix/`, `AGENTS.md`,
     `examples/request.json`, and `.gitignore` entries for local state. Bare
     `helix init` asks whether to set up a local or Cloud project.
-  </Step>
 
-  <Step title="Start the local runtime">
-    ```bash
+```bash
     helix start dev
     ```
 
@@ -6709,17 +6531,14 @@ Use the manual flow below when you want to scaffold and run each step yourself.
     For attached log streaming use `helix start dev --foreground` and stop with Ctrl-C.
 
     For persistent local storage use `helix start dev --disk`, or initialize the project with `helix init local --disk` to make disk mode the default for that instance.
-  </Step>
 
-  <Step title="Send the example query">
-    ```bash
+```bash
     helix query dev --file examples/request.json
     ```
 
     The example counts `User` nodes. Try `--compact` to print on one line, or
     `--warm` to populate the standalone process caches while returning the normal
     response.
-  </Step>
 
 Default local storage is in-memory. `helix stop` or `helix restart` wipes in-memory data — keep your seed data in JSON request files so you can replay it, or use `--disk` for persistent local storage.
 
@@ -6847,12 +6666,9 @@ innermost input. See [`helix query`](/cli/command-reference/query) for the reque
 
 ## Next steps
 
-  <Card title="Helix Cloud workflow" icon="cloud" href="/cli/workflows/helix_cloud">
     Authenticate, link a project, and query a remote cluster
-  </Card>
-  <Card title="CLI Command Reference" icon="terminal" href="/cli/command-reference">
+
     Every command, subcommand, and flag
-  </Card>
 
 # Helix Cloud CLI workflow
 
@@ -6862,31 +6678,26 @@ Use the CLI to sign in to Helix Cloud, link a project to a Cloud database, and r
 queries against it. You need a Helix Cloud account and at least one database; see
 [Get started with Helix Cloud](/database/helix-cloud/start-here/using-the-cloud).
 
-  <Step title="Authenticate with WorkOS">
-    ```bash
+```bash
     helix auth login
     helix auth status
     ```
-  </Step>
-  <Step title="Discover a target">
-    ```bash
+
+```bash
     helix workspace list
     helix project list --workspace-id <workspace-id>
     helix database list --project <project-id>
     ```
-  </Step>
-  <Step title="Link the current project and database">
-    ```bash
+
+```bash
     helix project link <project-id>
     helix add cloud --name production --database tenant:<tenant-id>
     ```
-  </Step>
-  <Step title="Run a query through the broker">
-    ```bash
+
+```bash
     helix query production --file request.json
     helix shell production
     ```
-  </Step>
 
 ## How Cloud queries are authorized
 
@@ -6914,12 +6725,9 @@ Neither can be used to sign in to the CLI.
 
 ## Next steps
 
-  <Card title="CLI configuration" icon="gear" href="/cli/configuration">
     How `helix.toml` stores project and database links.
-  </Card>
-  <Card title="helix query" icon="terminal" href="/cli/command-reference/query">
+
     Request formats and Cloud query behavior.
-  </Card>
 
 # CLI configuration
 
@@ -8556,7 +8364,6 @@ Page type: Concept
 Plain-language answers about graph databases, vector search, full-text search, AI agent
 memory, and modern database architecture.
 
-  <Card title="Learn about graph databases" icon="diagram-project">
     A graph database stores entities as nodes and relationships as edges, so questions
     about how things connect are direct to ask.
 
@@ -8566,8 +8373,6 @@ memory, and modern database architecture.
     [What is a property graph?](/learn/graph-databases/what-is-a-property-graph)
     [What is the difference between a property graph and RDF?](/learn/graph-databases/property-graph-vs-rdf)
 
-  </Card>
-  <Card title="Learn about vector search" icon="vector-square">
     Vector search finds items by meaning, comparing embeddings instead of matching
     words. It powers semantic search, recommendations, and retrieval for LLMs.
 
@@ -8578,8 +8383,6 @@ memory, and modern database architecture.
     [What is filtered vector search?](/learn/vector-search/filtered-vector-search)
     [What is the difference between cosine, Euclidean, and Manhattan distance?](/learn/vector-search/vector-distance-metrics)
 
-  </Card>
-  <Card title="Learn about full-text search" icon="magnifying-glass">
     Full-text search ranks documents by the words they contain. It finds exact names,
     IDs, and rare terms that embeddings tend to blur.
 
@@ -8587,8 +8390,6 @@ memory, and modern database architecture.
     [What is BM25?](/learn/full-text-search/what-is-bm25)
     [What is hybrid search?](/learn/full-text-search/hybrid-search)
 
-  </Card>
-  <Card title="Learn about AI memory and RAG" icon="brain">
     Retrieval and memory give a language model the right context: relevant documents for
     each question, and what it knows about users and past conversations.
 
@@ -8597,24 +8398,18 @@ memory, and modern database architecture.
     [What is AI agent memory?](/learn/ai-memory/what-is-ai-agent-memory)
     [How do you build long-term memory for AI agents?](/learn/ai-memory/long-term-memory-for-ai-agents)
 
-  </Card>
-  <Card title="Learn about database architecture" icon="layer-group">
     Where a database keeps its data decides how far it scales and what it costs.
     Separating storage from compute changes both.
 
     [Why build a database on object storage?](/learn/database-architecture/object-storage-databases)
     [Do you need separate graph, vector, and text databases?](/learn/database-architecture/one-database-for-graph-vector-and-text)
 
-  </Card>
-  <Card title="Build with HelixDB" icon="rocket">
     HelixDB is an open-source graph database with native vector search and BM25
     full-text search, built on object storage.
 
     [Get started in a few commands](/database/helix-db/start-here/quickstart)
     [Read the introduction](/database/helix-db/start-here/introduction)
     [Understand the data model](/database/helix-db/core-concepts/data-model)
-
-  </Card>
 
 # What is a graph database?
 
@@ -8629,14 +8424,12 @@ express and typically efficient to run. Graph databases are used for recommendat
 fraud detection, knowledge graphs, access control, network topology, and retrieving
 context for AI applications.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Define a graph database and its building blocks: nodes, edges, properties, and labels
     - Explain how a graph database follows stored relationships instead of joining tables
     - Compare the main graph query languages: GQL, openCypher, Gremlin, and SPARQL
     - Recognize when a graph database fits a workload and when another database fits better
-  </Card>
 
 ## How does a graph database work?
 
@@ -8832,30 +8625,21 @@ content and the facts connected to it. See
 
 ## Related topics
 
-  <Card title="Graph vs relational databases" icon="table" href="/learn/graph-databases/graph-vs-relational-database">
     How multi-hop questions differ from joins, and when each model fits.
-  </Card>
-  <Card title="What is a property graph?" icon="tags" href="/learn/graph-databases/what-is-a-property-graph">
+
     Labels and properties on nodes and edges, and how to model them.
-  </Card>
-  <Card title="Property graph vs RDF" icon="scale-balanced" href="/learn/graph-databases/property-graph-vs-rdf">
+
     How labeled property graphs and RDF triples model the same facts.
-  </Card>
-  <Card title="What is a knowledge graph?" icon="brain" href="/learn/graph-databases/what-is-a-knowledge-graph">
+
     Entities, relationships, and provenance for search and LLMs.
-  </Card>
-  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
+
     Retrieval that follows relationships, compared with vector RAG.
-  </Card>
-  <Card title="What is RAG?" icon="magnifying-glass" href="/learn/ai-memory/what-is-rag">
+
     Grounding a model's answer in data retrieved at query time.
-  </Card>
-  <Card title="HelixDB data model" icon="diagram-project" href="/database/helix-db/core-concepts/data-model">
+
     How HelixDB represents nodes, edges, properties, and indexes.
-  </Card>
-  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+
     Follow outgoing and incoming relationships in a HelixDB query.
-  </Card>
 
 # What is the difference between a graph database and a relational database?
 
@@ -8868,14 +8652,12 @@ typically the better choice for tabular records, aggregation, and reporting; gra
 databases suit questions that follow connections across many hops; many applications
 use both.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Compare how relational and graph databases model and store relationships
     - Explain how joins and traversals handle multi-hop and variable-depth queries
     - Choose a graph database, a relational database, or both for a given workload
     - Describe which relational concepts carry over to HelixDB
-  </Card>
 
 ## How do the two models compare side by side?
 
@@ -9084,18 +8866,13 @@ evolves, but define constraints wherever integrity matters.
 
 ## Related topics
 
-  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
     Nodes, edges, traversals, and when a graph is the right model.
-  </Card>
-  <Card title="What is a property graph?" icon="tags" href="/learn/graph-databases/what-is-a-property-graph">
+
     Labels and typed properties on nodes and edges.
-  </Card>
-  <Card title="What is the difference between a property graph and RDF?" icon="code-compare" href="/learn/graph-databases/property-graph-vs-rdf">
+
     Labeled nodes and edges compared with subject-predicate-object triples.
-  </Card>
-  <Card title="Do you need separate graph, vector, and text databases?" icon="cubes" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
+
     The hidden costs of stitching separate stores together.
-  </Card>
 
 # What is a knowledge graph?
 
@@ -9109,14 +8886,12 @@ following connections and cite its sources. Knowledge graphs are commonly stored
 graph databases and used to ground search, recommendations, and large language model
 (LLM) applications in connected, verifiable facts.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Describe the parts of a knowledge graph, from entities to provenance
     - Compare a knowledge graph with a graph database
     - Explain how a knowledge graph is built, including extraction and entity resolution
     - Describe how a knowledge graph is kept current as sources change
-  </Card>
 
 ## What is in a knowledge graph?
 
@@ -9169,36 +8944,29 @@ You build a knowledge graph by defining an ontology, extracting entities and
 relationships from your sources, resolving duplicate entities, recording provenance, and
 loading the result into a database.
 
-  <Step title="Define the ontology">
     List the entity types, relationship types, and required attributes your questions
     need. Start small; a focused schema is easier to extract into and to query.
-  </Step>
-  <Step title="Collect sources">
+
     Structured records such as account and product tables map to entities almost
     directly. Unstructured sources such as documents, tickets, and conversations need
     extraction.
-  </Step>
-  <Step title="Extract entities and relationships">
+
     For unstructured text, the application runs an extraction pipeline: split each
     document into chunks, ask an LLM or another extraction model to return the entities
     and relationships it finds in a fixed format that matches the ontology, and reject
     output that does not validate against the schema.
-  </Step>
-  <Step title="Resolve entities">
+
     Decide when two mentions refer to the same thing. One ticket says "the billing
     page" and another says "the invoices screen"; both may mean one feature. Typical
     techniques combine exact identifiers, normalized names, embedding similarity to find
     candidates, and rules or review to confirm a merge.
-  </Step>
-  <Step title="Record provenance">
+
     Link each extracted fact to the chunk and document it came from, with the extraction
     time and a confidence value. Provenance supports citations, audits, and later
     corrections.
-  </Step>
-  <Step title="Load, index, and query">
+
     Write entities, relationships, and provenance together, and add indexes for the
     lookups and searches your application runs.
-  </Step>
 
 ## How do you keep a knowledge graph fresh?
 
@@ -9292,24 +9060,17 @@ vectors to find relevant starting points, and the graph to follow facts from the
 
 ## Related topics
 
-  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
     Nodes, edges, traversals, and when a graph is the right model.
-  </Card>
-  <Card title="What is a property graph?" icon="tags" href="/learn/graph-databases/what-is-a-property-graph">
+
     Labeled nodes and edges with typed properties on both.
-  </Card>
-  <Card title="Property graph vs RDF" icon="code-compare" href="/learn/graph-databases/property-graph-vs-rdf">
+
     Two ways to model a knowledge graph, compared side by side.
-  </Card>
-  <Card title="What is RAG?" icon="book-open" href="/learn/ai-memory/what-is-rag">
+
     Grounding a model's answer in data retrieved at query time.
-  </Card>
-  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
+
     Retrieval that follows relationships, compared with vector RAG.
-  </Card>
-  <Card title="What is AI agent memory?" icon="memory" href="/learn/ai-memory/what-is-ai-agent-memory">
+
     Working, episodic, and semantic memory for LLM agents.
-  </Card>
 
 # What is a property graph?
 
@@ -9323,14 +9084,12 @@ properties, so a relationship such as "purchased, through the web store, with a 
 note" is a single record. The property graph model is used by many graph databases and
 by the GQL and openCypher query languages.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Describe the parts of a property graph and how they fit together
     - Explain why property graphs typically allow repeated edges between the same nodes
     - Apply rules of thumb to decide what becomes a node, an edge, or a property
     - Describe how HelixDB implements the labeled property graph model
-  </Card>
 
 ## What are the parts of a property graph?
 
@@ -9470,24 +9229,17 @@ typed SDK builders instead of a text language.
 
 ## Related topics
 
-  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
     Nodes, edges, traversals, and when a graph is the right model.
-  </Card>
-  <Card title="Property graph vs RDF" icon="scale-balanced" href="/learn/graph-databases/property-graph-vs-rdf">
+
     Triples, IRIs, edge properties, and when each graph model fits.
-  </Card>
-  <Card title="What is a knowledge graph?" icon="brain" href="/learn/graph-databases/what-is-a-knowledge-graph">
+
     Entities, relationships, and provenance for search and LLMs.
-  </Card>
-  <Card title="Graph vs relational database" icon="table" href="/learn/graph-databases/graph-vs-relational-database">
+
     How graphs and tables store relationships, and when each fits.
-  </Card>
-  <Card title="HelixDB data model" icon="book" href="/database/helix-db/core-concepts/data-model">
+
     Labels, properties, multigraph edges, and indexes in HelixDB.
-  </Card>
-  <Card title="Secondary indexes" icon="list" href="/database/helix-db/query-guides/secondary-indexes">
+
     Equality and range lookups on nodes and edges, plus unique lookups on nodes.
-  </Card>
 
 # What is the difference between a property graph and RDF?
 
@@ -9503,14 +9255,12 @@ reification or RDF-star. Property graphs typically fit application workloads bui
 traversal, and RDF typically fits linked data, shared vocabularies, and merging data from
 many sources.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Describe the RDF building blocks: triples, IRIs, literals, and `rdf:type`
     - Compare property graphs and RDF on identity, typing, schema, and query languages
     - Explain how each model stores data about a relationship, including RDF-star
     - Choose a model for a workload and map data from one model to the other
-  </Card>
 
 ## What are the building blocks of RDF?
 
@@ -9736,24 +9486,17 @@ in separate tooling.
 
 ## Related topics
 
-  <Card title="What is a property graph?" icon="tags" href="/learn/graph-databases/what-is-a-property-graph">
     Labeled nodes and edges with typed properties on both.
-  </Card>
-  <Card title="What is a knowledge graph?" icon="brain" href="/learn/graph-databases/what-is-a-knowledge-graph">
+
     Entities, relationships, and provenance for search and LLMs.
-  </Card>
-  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+
     Nodes, edges, traversals, and when a graph is the right model.
-  </Card>
-  <Card title="Graph vs relational database" icon="table" href="/learn/graph-databases/graph-vs-relational-database">
+
     How graphs and tables store relationships, and when each fits.
-  </Card>
-  <Card title="HelixDB data model" icon="book" href="/database/helix-db/core-concepts/data-model">
+
     Labels, properties, multigraph edges, and indexes in HelixDB.
-  </Card>
-  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+
     Follow edges between nodes with HelixDB queries.
-  </Card>
 
 # What is vector search?
 
@@ -9768,14 +9511,12 @@ words, which is why vector search is often called semantic search. Large collect
 are usually searched with an approximate nearest neighbor index, which gives up a small
 amount of accuracy in exchange for much lower latency.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain how vector search matches by meaning using embeddings
     - Describe the indexing and query paths of a vector search system
     - Compare exact and approximate nearest neighbor search, including recall and top-k
     - Recognize when vector search fails and when to add keyword search or filters
-  </Card>
 
 ## How does vector search work?
 
@@ -9931,30 +9672,21 @@ problems in the embedding model, chunking, or filters that recall cannot see.
 
 ## Related topics
 
-  <Card title="What are vector embeddings?" icon="cube" href="/learn/vector-search/what-are-vector-embeddings">
     How models turn inputs into vectors, and how dimensions and chunking work.
-  </Card>
-  <Card title="What is HNSW?" icon="diagram-project" href="/learn/vector-search/what-is-hnsw">
+
     How HNSW and IVF indexes find approximate nearest neighbors.
-  </Card>
-  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+
     What a vector database stores and when you need one.
-  </Card>
-  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
+
     Restrict results by metadata, permissions, or graph membership.
-  </Card>
-  <Card title="What is the difference between cosine, Euclidean, and Manhattan distance?" icon="ruler" href="/learn/vector-search/vector-distance-metrics">
+
     Cosine, Euclidean, Manhattan, and dot product compared.
-  </Card>
-  <Card title="What is hybrid search?" icon="layer-group" href="/learn/full-text-search/hybrid-search">
+
     Combine vector search with keyword search.
-  </Card>
-  <Card title="What is retrieval-augmented generation (RAG)?" icon="book-open" href="/learn/ai-memory/what-is-rag">
+
     Ground a language model's answers in retrieved data.
-  </Card>
-  <Card title="Vector indexes" icon="vector-square" href="/database/helix-db/query-guides/vector-indexes">
+
     Create a vector index and run nearest neighbor search in HelixDB.
-  </Card>
 
 # What are vector embeddings?
 
@@ -9967,14 +9699,12 @@ similar meaning land close together, which lets software compare meaning by meas
 the distance between vectors. Embeddings are the input to vector search, recommendation,
 clustering, and retrieval-augmented generation (RAG).
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain how an embedding model turns inputs into vectors that encode similarity
     - Calculate how much storage a collection of embeddings needs from its dimension
     - Explain why a change of embedding model requires re-embedding the whole collection
     - Distinguish dense embeddings from sparse embeddings
-  </Card>
 
 ## How does an embedding represent meaning?
 
@@ -10047,20 +9777,15 @@ can share a dimension and still arrange their spaces completely differently, so 
 vector from one model is meaningless against documents embedded by another. A common
 sequence:
 
-  <Step title="Record the model">
     Store the model name and version alongside each vector, so mixed data is detectable.
-  </Step>
-  <Step title="Embed into a new index">
+
     Re-embed the collection with the new model into a separate property or index, while
     queries keep using the old one. Embed new and updated items with both models until
     the switch, so the new index does not miss writes made during the backfill.
-  </Step>
-  <Step title="Switch queries">
+
     Once the new index is complete, switch queries to the new model and index together.
-  </Step>
-  <Step title="Remove the old vectors">
+
     Drop the old index and vectors after the new ones are verified.
-  </Step>
 
 Changing preprocessing, such as chunk size or text cleanup, also changes the vectors
 and calls for the same process.
@@ -10150,24 +9875,17 @@ input types.
 
 ## Related topics
 
-  <Card title="What is vector search?" icon="magnifying-glass" href="/learn/vector-search/what-is-vector-search">
     How embeddings are searched to find results by meaning.
-  </Card>
-  <Card title="Vector distance metrics" icon="ruler" href="/learn/vector-search/vector-distance-metrics">
+
     Cosine, Euclidean, Manhattan, and dot product compared.
-  </Card>
-  <Card title="What is HNSW?" icon="diagram-project" href="/learn/vector-search/what-is-hnsw">
+
     A widely used graph-based index for approximate nearest neighbor search.
-  </Card>
-  <Card title="What is RAG?" icon="book-open" href="/learn/ai-memory/what-is-rag">
+
     How retrieved chunks give a language model grounded context.
-  </Card>
-  <Card title="Hybrid search" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+
     Combine embedding-based search with keyword search.
-  </Card>
-  <Card title="Vector indexes" icon="vector-square" href="/database/helix-db/query-guides/vector-indexes">
+
     Create a vector index and run nearest neighbor search in HelixDB.
-  </Card>
 
 # What is a vector database?
 
@@ -10180,14 +9898,12 @@ search needs in production: durable storage, an approximate nearest neighbor ind
 updates and deletes, and filtering. The term covers both dedicated systems built only
 for vectors and general-purpose databases that support vector indexes.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Describe what a vector database stores and what it adds beyond a vector index
     - Decide when an application needs a vector database and where it should live
     - Explain where vector-only storage falls short for relationships and permissions
     - Compare vector databases with graph databases and full-text search engines
-  </Card>
 
 ## What does a vector database store?
 
@@ -10356,24 +10072,17 @@ queries embedded with the same model. See
 
 ## Related topics
 
-  <Card title="What is vector search?" icon="magnifying-glass" href="/learn/vector-search/what-is-vector-search">
     Nearest neighbor search, recall, and exact vs approximate results.
-  </Card>
-  <Card title="What are vector embeddings?" icon="cube" href="/learn/vector-search/what-are-vector-embeddings">
+
     How models turn text and images into vectors.
-  </Card>
-  <Card title="What is HNSW?" icon="diagram-project" href="/learn/vector-search/what-is-hnsw">
+
     A widely used layered graph index for approximate search.
-  </Card>
-  <Card title="What is RAG?" icon="book-open" href="/learn/ai-memory/what-is-rag">
+
     Grounding a language model's answer in retrieved data.
-  </Card>
-  <Card title="One database for graph, vector, and text" icon="layer-group" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
+
     The case for keeping retrieval in one transactional system.
-  </Card>
-  <Card title="Vector indexes" icon="vector-square" href="/database/helix-db/query-guides/vector-indexes">
+
     Create a vector index in HelixDB.
-  </Card>
 
 # What is HNSW?
 
@@ -10386,14 +10095,12 @@ bottom layer that holds every vector. A search jumps across the collection on th
 layers and then refines locally, which gives high recall at low latency in exchange for
 extra memory and more complex deletes.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain how HNSW organizes vectors into a layered graph and searches it
     - Describe what `M`, `efConstruction`, and `efSearch` control
     - Estimate HNSW memory use and recognize the cost of deletes
     - Compare HNSW with IVF and flat search and choose between them
-  </Card>
 
 ## How is an HNSW graph structured?
 
@@ -10595,24 +10302,17 @@ and insertion order affects which links are formed.
 
 ## Related topics
 
-  <Card title="What is vector search?" icon="magnifying-glass" href="/learn/vector-search/what-is-vector-search">
     Exact vs approximate search, recall, and top-k.
-  </Card>
-  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+
     Restrict results by metadata, permissions, or graph membership.
-  </Card>
-  <Card title="What are vector embeddings?" icon="cube" href="/learn/vector-search/what-are-vector-embeddings">
+
     How models turn text and other inputs into vectors.
-  </Card>
-  <Card title="Vector distance metrics" icon="ruler" href="/learn/vector-search/vector-distance-metrics">
+
     Cosine, Euclidean, Manhattan, and dot product compared.
-  </Card>
-  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+
     What a vector database stores and when you need one.
-  </Card>
-  <Card title="Vector indexes" icon="vector-square" href="/database/helix-db/query-guides/vector-indexes">
+
     Create a vector index and run nearest neighbor search in HelixDB.
-  </Card>
 
 # What is filtered vector search?
 
@@ -10625,14 +10325,12 @@ the filter after ranking (post-filtering), before ranking (pre-filtering), or du
 search, and that choice decides whether a query returns the true top k, fewer than
 k results, or nothing at all.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain why ANN indexes make filtering hard and why selectivity matters
     - Compare post-filtering, pre-filtering, and filtering during search
     - Diagnose why a filtered vector search returns fewer than k results
     - Distinguish ranking approximation from membership errors in permission filters
-  </Card>
 
 ## Why is filtering hard for vector indexes?
 
@@ -10839,24 +10537,17 @@ without copying them onto every vector.
 
 ## Related topics
 
-  <Card title="What is vector search?" icon="magnifying-glass" href="/learn/vector-search/what-is-vector-search">
     Embeddings, ANN indexes, recall, and top-k.
-  </Card>
-  <Card title="What is HNSW?" icon="diagram-project" href="/learn/vector-search/what-is-hnsw">
+
     How a layered graph index finds approximate nearest neighbors.
-  </Card>
-  <Card title="What is retrieval-augmented generation (RAG)?" icon="book-open" href="/learn/ai-memory/what-is-rag">
+
     Ground model answers in retrieved, permission-checked data.
-  </Card>
-  <Card title="What is hybrid search?" icon="layer-group" href="/learn/full-text-search/hybrid-search">
+
     Combine filtered vector and keyword results.
-  </Card>
-  <Card title="Prefiltered search guide" icon="filter" href="/database/helix-db/query-guides/prefiltering">
+
     Run traversal-scoped vector and BM25 search in HelixDB.
-  </Card>
-  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+
     Build candidate sets by following relationships.
-  </Card>
 
 # What is the difference between cosine, Euclidean, and Manhattan distance?
 
@@ -10868,14 +10559,12 @@ the straight-line gap between two points, and Manhattan distance sums the gap al
 dimension. The right choice is usually the metric your embedding model was trained for,
 which its provider normally documents.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain what cosine, Euclidean, Manhattan, and dot product measure
     - Compare how the metrics rank the same vectors when vector lengths differ
     - Describe why cosine and Euclidean distance agree on normalized vectors
     - Choose a metric that fits the embedding model and whether vectors are normalized
-  </Card>
 
 ## What are cosine, Euclidean, and Manhattan distance?
 
@@ -11013,24 +10702,17 @@ longer vectors.
 
 ## Related topics
 
-  <Card title="What are vector embeddings?" icon="cubes" href="/learn/vector-search/what-are-vector-embeddings">
     How models turn inputs into vectors, and why a model change means re-embedding.
-  </Card>
-  <Card title="What is vector search?" icon="vector-square" href="/learn/vector-search/what-is-vector-search">
+
     Embeddings, nearest neighbors, and approximate search.
-  </Card>
-  <Card title="What is HNSW?" icon="diagram-project" href="/learn/vector-search/what-is-hnsw">
+
     A layered graph index widely used for approximate nearest neighbor search.
-  </Card>
-  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
+
     Return the right top k when results must match a filter.
-  </Card>
-  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+
     What a vector store does and where vector-only storage falls short.
-  </Card>
-  <Card title="HelixDB vector indexes" icon="code" href="/database/helix-db/query-guides/vector-indexes">
+
     Create a vector index and run nearest-neighbor search.
-  </Card>
 
 # What is full-text search?
 
@@ -11042,14 +10724,12 @@ normalized terms, records which documents contain each term in an inverted index
 at query time looks up the query's terms and scores the matching documents with a
 relevance function such as BM25. The result is a ranked list, not a yes-or-no filter.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain how full-text search analyzes, indexes, queries, and ranks documents
     - Describe how an inverted index and an analyzer decide which documents match
     - Compare full-text search with SQL `LIKE` pattern matching
     - Choose when full-text search fits a query and when vector search or another index fits better
-  </Card>
 
 ## How does full-text search work?
 
@@ -11058,22 +10738,17 @@ terms, looks up the query's terms, and ranks the matching documents. Most system
 these stages whether they index support tickets, product descriptions, or chat
 transcripts.
 
-  <Step title="Analyze">
     An analyzer turns raw text into a list of terms: it splits the text into tokens,
     then normalizes them, for example by lowercasing or stemming.
-  </Step>
-  <Step title="Index">
+
     Each term is added to an inverted index that maps the term to the documents that
     contain it.
-  </Step>
-  <Step title="Query">
+
     The query string goes through the same analyzer, and the engine looks up each
     resulting term in the index to collect candidate documents.
-  </Step>
-  <Step title="Rank">
+
     A scoring function assigns every candidate a relevance score, and the engine
     returns the top results.
-  </Step>
 
 Much of the work happens at write time. At query time the engine reads only the
 postings lists for the query's terms instead of scanning every document.
@@ -11230,18 +10905,13 @@ databases?](/learn/database-architecture/one-database-for-graph-vector-and-text)
 
 ## Related topics
 
-  <Card title="What is BM25?" icon="square-root-variable" href="/learn/full-text-search/what-is-bm25">
     A widely used ranking function for keyword search, explained.
-  </Card>
-  <Card title="What is hybrid search?" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+
     Combining keyword and vector results into one ranking, often with rank fusion.
-  </Card>
-  <Card title="What is vector search?" icon="vector-square" href="/learn/vector-search/what-is-vector-search">
+
     Embeddings, nearest neighbors, and approximate search.
-  </Card>
-  <Card title="Text indexes guide" icon="align-left" href="/database/helix-db/query-guides/text-indexes">
+
     Create BM25 indexes and run ranked search in HelixDB.
-  </Card>
 
 # What is BM25?
 
@@ -11253,14 +10923,12 @@ score that rewards terms that are rare across the collection, gives diminishing 
 for repeated occurrences, and adjusts for document length. It is the default relevance
 function in many full-text search engines.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain what BM25 scores and why many search engines default to it
     - Describe how IDF, saturation (`k1`), and length normalization (`b`) shape a score
     - Work through a BM25 calculation and explain why the documents rank as they do
     - Compare BM25 with TF-IDF and recognize when it fits better than vector search
-  </Card>
 
 ## What is the BM25 formula?
 
@@ -11442,18 +11110,13 @@ title can count for more than the same match in the body.
 
 ## Related topics
 
-  <Card title="What is full-text search?" icon="magnifying-glass" href="/learn/full-text-search/what-is-full-text-search">
     Inverted indexes, analyzers, and relevance ranking.
-  </Card>
-  <Card title="What is hybrid search?" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+
     Combining keyword and vector results with rank fusion.
-  </Card>
-  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
+
     Pre-filtering, post-filtering, and returning the right top k.
-  </Card>
-  <Card title="Prefiltered search guide" icon="align-left" href="/database/helix-db/query-guides/prefiltering">
+
     Rank only the records a traversal reaches in HelixDB.
-  </Card>
 
 # What is hybrid search?
 
@@ -11465,14 +11128,12 @@ search catches exact names, IDs, and error codes; vector search catches paraphra
 and related concepts. Fusing them, often with reciprocal rank fusion, gives results
 that hold up for both kinds of query.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain why BM25 and vector search fail in complementary ways
     - Describe the hybrid pipeline: retrieve from both indexes, fuse, optionally rerank
     - Calculate reciprocal rank fusion scores and compare them with weighted blending
     - Recognize when hybrid search is worth its extra cost
-  </Card>
 
 ## How do keyword search and vector search differ?
 
@@ -11512,20 +11173,16 @@ flowchart LR
     R --> O["Final top results"]
 ```
 
-  <Step title="Retrieve from both indexes">
     Run BM25 and vector search for the same query, usually in parallel. Embed the query
     with the same model that embedded the documents. Retrieve more candidates from each
     search than you plan to return, so good results from one list are not cut off
     before fusion.
-  </Step>
-  <Step title="Fuse the lists">
+
     Combine the two rankings into one with a fusion method such as reciprocal rank
     fusion.
-  </Step>
-  <Step title="Rerank, optionally">
+
     Score the fused top results with a slower, more accurate model, then return the
     final top results.
-  </Step>
 
 Apply the same filters, such as tenant or access control, to both searches, ideally
 before ranking. Filtering after ranking can leave a list with fewer than k results, or
@@ -11678,24 +11335,17 @@ same filters, for example within one transaction. See
 
 ## Related topics
 
-  <Card title="What is BM25?" icon="square-root-variable" href="/learn/full-text-search/what-is-bm25">
     The ranking function behind most keyword search, explained.
-  </Card>
-  <Card title="What is vector search?" icon="vector-square" href="/learn/vector-search/what-is-vector-search">
+
     Nearest neighbors, approximate search, and recall.
-  </Card>
-  <Card title="What are vector embeddings?" icon="cubes" href="/learn/vector-search/what-are-vector-embeddings">
+
     How models turn text and other inputs into comparable vectors.
-  </Card>
-  <Card title="What is retrieval-augmented generation (RAG)?" icon="book" href="/learn/ai-memory/what-is-rag">
+
     Grounding model answers in retrieved context.
-  </Card>
-  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
+
     Pre-filtering, post-filtering, and returning the right top k.
-  </Card>
-  <Card title="Prefiltered search guide" icon="align-left" href="/database/helix-db/query-guides/prefiltering">
+
     Rank only the records a traversal reaches in HelixDB.
-  </Card>
 
 # What is retrieval-augmented generation (RAG)?
 
@@ -11709,14 +11359,12 @@ answers can reflect private and recent content and cite their sources. The quali
 RAG answer is bounded by retrieval, because the model cannot use a passage that was
 never retrieved.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Describe how a RAG pipeline indexes content and answers questions
     - Compare RAG with fine-tuning and with long context windows
     - Diagnose common causes of wrong RAG answers and how to prevent them
     - Evaluate a RAG system on retrieval recall, groundedness, and citation accuracy
-  </Card>
 
 ## How does RAG work?
 
@@ -11899,24 +11547,17 @@ paragraphs, and tune on an evaluation set.
 
 ## Related topics
 
-  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
     Retrieval that follows relationships between entities and documents.
-  </Card>
-  <Card title="What is hybrid search?" icon="magnifying-glass" href="/learn/full-text-search/hybrid-search">
+
     Combine BM25 and vector search to match exact terms and meaning.
-  </Card>
-  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+
     Nodes, edges, and properties, and why stored relationships help AI retrieval.
-  </Card>
-  <Card title="What are vector embeddings?" icon="vector-square" href="/learn/vector-search/what-are-vector-embeddings">
+
     How text becomes vectors that can be compared by meaning.
-  </Card>
-  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
+
     Rank only the chunks a user is allowed to see.
-  </Card>
-  <Card title="What is AI agent memory?" icon="brain" href="/learn/ai-memory/what-is-ai-agent-memory">
+
     Per-user memory built on the same retrieval techniques.
-  </Card>
 
 # What is GraphRAG?
 
@@ -11930,14 +11571,12 @@ center on one entity, or ask about a whole collection. In exchange, it adds an i
 step that extracts entities and relationships, typically with model calls, and needs
 ongoing work to keep the graph accurate.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain how GraphRAG retrieves context through entities and relationships, not only similar chunks
     - Recognize the question types where vector-only RAG falls short
     - Compare GraphRAG with vector RAG on retrieval unit, indexing cost, freshness, and explainability
     - Decide when GraphRAG is worth its extraction and maintenance cost
-  </Card>
 
 ## Where does vector RAG fall short?
 
@@ -12057,25 +11696,19 @@ where those failures cluster.
 You implement GraphRAG by adding entity extraction and graph-aware retrieval on top of a
 standard chunk-and-embed pipeline, then checking it against vector-only retrieval.
 
-  <Step title="Define the schema">
     Choose entity types, relationship types, and how documents and chunks are stored.
-  </Step>
-  <Step title="Index the content">
+
     Chunk documents, compute embeddings, and index chunk text for vector and keyword
     search.
-  </Step>
-  <Step title="Extract and resolve">
+
     Extract entities and relationships from each chunk, merge duplicate entities, and
     link each chunk to the entities it mentions.
-  </Step>
-  <Step title="Retrieve with the graph">
+
     Find entry points, traverse a bounded neighborhood, search within it, and fuse the
     results into context with citations.
-  </Step>
-  <Step title="Evaluate">
+
     Compare answers with vector-only retrieval on multi-hop, entity, and summary
     questions.
-  </Step>
 
 ## How does HelixDB support GraphRAG?
 
@@ -12131,30 +11764,21 @@ similarity and keywords, then expand through relationships. See
 
 ## Related topics
 
-  <Card title="What is retrieval-augmented generation (RAG)?" icon="book-open" href="/learn/ai-memory/what-is-rag">
     The standard chunk, embed, retrieve, and generate pipeline.
-  </Card>
-  <Card title="What is a knowledge graph?" icon="share-nodes" href="/learn/graph-databases/what-is-a-knowledge-graph">
+
     Entities, relationships, and provenance for search and LLMs.
-  </Card>
-  <Card title="What is hybrid search?" icon="magnifying-glass" href="/learn/full-text-search/hybrid-search">
+
     Combine vector similarity with BM25 keyword ranking.
-  </Card>
-  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
+
     Rank only the candidates that pass a filter or traversal.
-  </Card>
-  <Card title="How do you build long-term memory for AI agents?" icon="brain" href="/learn/ai-memory/long-term-memory-for-ai-agents">
+
     Apply graph-plus-search retrieval to per-user agent memory.
-  </Card>
-  <Card title="Do you need separate graph, vector, and text databases?" icon="layer-group" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
+
     Trade-offs of keeping all three access paths in one system.
-  </Card>
-  <Card title="Prefiltered search" icon="vector-square" href="/database/helix-db/query-guides/prefiltering">
+
     Rank only the nodes a traversal reaches in a HelixDB query.
-  </Card>
-  <Card title="Traversals" icon="route" href="/database/helix-db/query-guides/traversals">
+
     Follow outgoing and incoming relationships in a HelixDB query.
-  </Card>
 
 # What is AI agent memory?
 
@@ -12166,14 +11790,12 @@ earlier sessions, and how it should carry out recurring tasks. Because the model
 is stateless, memory lives in an external store that the agent writes to as it learns
 something and reads from when it needs context, typically before generating a reply.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain why a model's context window cannot serve as an agent's long-term memory
     - Describe the main types of agent memory, from working memory to the user profile
     - Outline the memory lifecycle from ingestion through forgetting and recall
     - Identify the storage and retrieval requirements a memory layer must meet
-  </Card>
 
 ## Why is a context window not memory?
 
@@ -12356,24 +11978,17 @@ expiry, decay, and deletion in detail.
 
 ## Related topics
 
-  <Card title="Building long-term memory" icon="brain" href="/learn/ai-memory/long-term-memory-for-ai-agents">
     Data model, write path, forgetting, and recall for agent memory.
-  </Card>
-  <Card title="What is RAG?" icon="book-open" href="/learn/ai-memory/what-is-rag">
+
     Ground a model's answers in data retrieved at query time.
-  </Card>
-  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
+
     Retrieval over entities and relationships, not only text chunks.
-  </Card>
-  <Card title="What is hybrid search?" icon="magnifying-glass" href="/learn/full-text-search/hybrid-search">
+
     Combine vector similarity with BM25 keyword ranking.
-  </Card>
-  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
+
     Restrict similarity search to the records a user may see.
-  </Card>
-  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+
     Store embeddings and find the nearest ones to a query.
-  </Card>
 
 # How do you build long-term memory for AI agents?
 
@@ -12387,14 +12002,12 @@ their sources, entities, and earlier versions, and index them for semantic and e
 recall. Writes catch duplicates and updates; reads search only current memories the user
 may see, expand through relationships, and assemble a compact context for the model.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Describe the components of an agent memory system and where each runs
     - Design a scoped, versioned memory data model
     - Explain how the write path deduplicates, updates, and forgets memories
     - Describe the read path from scoping to context assembly
-  </Card>
 
 ## What are the parts of an agent memory architecture?
 
@@ -12451,28 +12064,24 @@ The write path extracts candidate facts in context, finds similar existing memor
 classifies each candidate as new, duplicate, update, or extension, and writes the result
 atomically.
 
-  <Step title="Extract with context">
     Give the extractor the current message, recent turns including the previous
     assistant message, related memories, and the current date, so short answers resolve
     in context. Ask for structured output: content, kind, confidence, entities, source,
     and scope.
-  </Step>
-  <Step title="Find deduplication candidates">
+
     Search the user's current memories with vector search for similar facts and keyword
     search for shared names. Check for an exact content match inside the write
     transaction, or use a scoped content hash as an idempotency key, so retried writes
     are idempotent.
-  </Step>
-  <Step title="Classify the relationship">
+
     A similarity threshold alone cannot tell a restatement from a correction, so
     adjudicate with rules or an LLM.
-  </Step>
-  <Step title="Write atomically">
+
     Write the new memory, its ownership and provenance edges, its entity and category
     links, and any invalidation of an older version together, so recall never sees a
     half-applied change. An update writes a new memory with its own embedding and never
     edits an existing memory's text.
-  </Step>
+
 ```text
 Existing memory: The user's team deploys the billing service on Fridays.
 Assistant:       Is that still the release schedule?
@@ -12603,24 +12212,17 @@ without migrating stored data.
 
 ## Related topics
 
-  <Card title="What is AI agent memory?" icon="brain" href="/learn/ai-memory/what-is-ai-agent-memory">
     Memory types, the memory lifecycle, and what a memory layer needs.
-  </Card>
-  <Card title="What is GraphRAG?" icon="share-nodes" href="/learn/ai-memory/what-is-graphrag">
+
     Retrieval that follows relationships between entities and sources.
-  </Card>
-  <Card title="What is hybrid search?" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+
     Combine vector similarity with BM25 keyword ranking.
-  </Card>
-  <Card title="What is filtered vector search?" icon="filter" href="/learn/vector-search/filtered-vector-search">
+
     Why search inside a candidate set instead of filtering afterward.
-  </Card>
-  <Card title="What are vector embeddings?" icon="cubes" href="/learn/vector-search/what-are-vector-embeddings">
+
     How models turn content into vectors, and when to re-embed.
-  </Card>
-  <Card title="What is BM25?" icon="square-root-variable" href="/learn/full-text-search/what-is-bm25">
+
     The keyword ranking behind exact recall of names and IDs.
-  </Card>
 
 # Why build a database on object storage?
 
@@ -12633,14 +12235,12 @@ servers, compute can scale with query load, and losing a server loses only cache
 cost is slower reads on a cache miss and a floor on write latency, so these systems
 depend on good caching and batched writes.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Explain how a database uses object storage as its source of truth and local disks as cache
     - Compare local-disk and object-storage databases on durability, scaling, and latency
     - Describe the cold-read, write-latency, and caching tradeoffs of the design
     - Recognize when object storage lowers cost and when it is a poor fit
-  </Card>
 
 ## How do traditional databases store data?
 
@@ -12810,21 +12410,15 @@ without being offered as a serverless service.
 
 ## Related topics
 
-  <Card title="Graph, vector, and text in one database" icon="cubes" href="/learn/database-architecture/one-database-for-graph-vector-and-text">
     The hidden costs of stitching separate stores together.
-  </Card>
-  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+
     Nodes, edges, traversals, and when a graph is the right model.
-  </Card>
-  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+
     Storage and indexing for embeddings, and where vector-only storage falls short.
-  </Card>
-  <Card title="Helix Cloud architecture" icon="cloud" href="/database/helix-cloud/start-here/architecture">
+
     The gateway, writer, readers, caches, and object storage.
-  </Card>
-  <Card title="Helix Cloud tradeoffs" icon="scale-balanced" href="/database/helix-cloud/operate/tradeoffs">
+
     What the architecture is optimized for, and where it is not.
-  </Card>
 
 # Do you need separate graph, vector, and text databases?
 
@@ -12839,14 +12433,12 @@ with graph and search results from the same snapshot. Separate systems still mak
 when search is a standalone product, when the workload is pure similarity search with
 no relationships or filters, or when another system of record cannot move.
 
-  <Card title="Learning objectives" icon="graduation-cap">
     After reading this article you will be able to:
 
     - Describe a stack of separate graph, vector, and search stores
     - Explain the costs of separate stores, from sync pipelines to permission drift
     - Compare separate stores with one database that indexes the same records
     - Recognize workloads where separate systems are the better choice
-  </Card>
 
 ## What does a stack of separate stores look like?
 
@@ -13004,22 +12596,15 @@ specific need later. It means you add the seams only when a workload justifies t
 
 ## Related topics
 
-  <Card title="What is RAG?" icon="book-open" href="/learn/ai-memory/what-is-rag">
     Grounding model answers in data retrieved at query time.
-  </Card>
-  <Card title="Filtered vector search" icon="filter" href="/learn/vector-search/filtered-vector-search">
+
     Pre-filtering, post-filtering, and returning the right top k.
-  </Card>
-  <Card title="Hybrid search" icon="code-merge" href="/learn/full-text-search/hybrid-search">
+
     Combining keyword and vector results with rank fusion.
-  </Card>
-  <Card title="What is a vector database?" icon="database" href="/learn/vector-search/what-is-a-vector-database">
+
     How vector stores index embeddings, and where they fall short.
-  </Card>
-  <Card title="What is a graph database?" icon="diagram-project" href="/learn/graph-databases/what-is-a-graph-database">
+
     Nodes, edges, and traversals for connected data.
-  </Card>
-  <Card title="Databases on object storage" icon="cloud" href="/learn/database-architecture/object-storage-databases">
+
     Separating storage from compute, and what it means for cost.
-  </Card>
 
